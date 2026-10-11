@@ -2628,7 +2628,7 @@
             event.stopPropagation();
             event.preventDefault();
         }
-        closeHistoryItemMenu();
+        historyPanel.closeMenu();
         const group = historySubagentGroupOwnedBy(sessionId);
         if (!group || group.getAttribute('data-force-expanded') === '1') return;
         const expand = group.classList.contains('is-collapsed');
@@ -4757,11 +4757,37 @@
     });
     slashPalette.bind();
 
-    // History panel search/filter controller: query/debounce/abort state, the
-    // `/project` + `/agent` filter chips and slash palette, search-result paint
-    // and the active-search hard gate on full-list loads live in
-    // chat_history_panel.js (CuttleChatHistoryPanel). The page supplies row/
-    // header renderers, project resolution and session/attention capabilities.
+    // History row/header markup lives in chat_history_view.js
+    // (CuttleChatHistoryView.createRenderers). The page binds its
+    // session/attention/project capabilities once and hands the renderers to
+    // the history panel controller and the full-list paint.
+    const historyView = CuttleChatHistoryView.createRenderers({
+        escapeHtml,
+        escapeHtmlInline,
+        currentSessionId: () => session.current(),
+        sessionIdsEqual,
+        sessionShowsHistorySpinner,
+        sessionHistoryAttentionKind,
+        resolveSessionProjectInfo,
+        projectChipHtml,
+        historyBranchFor,
+        chatTitleParts,
+        historyAttentionIconHTML,
+        openPaneEntriesForSession,
+        historyOpenPaneBadgeHTML,
+        historySubagentToggleTitle,
+        formatHistoryLastMessageAge,
+        resolveHistoryLastMessageMs,
+        historyRunningIconHTML,
+        formatChatDisplayId,
+    });
+
+    // History panel search/filter + row-menu/modal controller: query/debounce/
+    // abort state, the `/project` + `/agent` filter chips and slash palette,
+    // search-result paint, the active-search hard gate, and the row overflow
+    // menu + rename/delete modal lifecycle live in chat_history_panel.js
+    // (CuttleChatHistoryPanel). The page supplies row/header renderers, project
+    // resolution, session/attention capabilities and action effects.
     const historyPanel = CuttleChatHistoryPanel.create({
         win: window,
         doc: document,
@@ -4780,10 +4806,10 @@
         applyGeneratingFlagsFromSessions,
         isChatSessionDeleted,
         getTerminalHistoryEntries,
-        createAuthHistoryItemHTML,
-        createHistoryItemHTML,
-        createTerminalHistoryItemHTML,
-        createHistorySectionHeaderHTML,
+        createAuthHistoryItemHTML: historyView.createAuthHistoryItemHTML,
+        createHistoryItemHTML: historyView.createHistoryItemHTML,
+        createTerminalHistoryItemHTML: historyView.createTerminalHistoryItemHTML,
+        createHistorySectionHeaderHTML: historyView.createHistorySectionHeaderHTML,
         renderHistoryGroupBody,
         paintHistoryEntries,
         entryIsStarred,
@@ -4795,8 +4821,23 @@
         syncHistoryRunningIndicators,
         syncHistoryUnreadIndicators,
         applyHistorySubagentExpandState,
-        closeHistoryItemMenu,
         refreshLocalOpenPanes,
+        // Row menu + modal orchestration capabilities.
+        buildSessionMenuHTML,
+        refreshGitPushMenuMode,
+        closeChatChromeMenu,
+        isTerminalSessionId,
+        getChatSessionDisplayTitle,
+        readTerminalSessionRegistry,
+        writeTerminalSessionRegistry,
+        fetchWithTimeout,
+        currentSessionId: () => session.current(),
+        sessionIdsEqual,
+        toAuthDbSessionId,
+        deleteChatSession,
+        persistRenamedTitle,
+        refreshChatHistoryList,
+        updateChatSessionTitle,
     });
 
     const slashCtx = slashPalette.ctx;
@@ -6241,15 +6282,6 @@
         scheduleSlashChipCompactLabels(document.getElementById('chatHistory'));
     }
 
-    /** Meta line above the name: chips, badges, state dots. Empty → hidden by CSS. */
-    function historyItemMetaHTML(parts) {
-        const html = (parts || [])
-            .filter(Boolean)
-            .map((s) => String(s).trim())
-            .join('');
-        return '<div class="history-item-meta">' + html + '</div>';
-    }
-
     /** Meta line element, created on demand so live indicator updates have a home. */
     function historyItemMetaEl(item) {
         if (!item) return null;
@@ -7576,8 +7608,8 @@
     }
 
     function isHistoryPanelUiBusy() {
-        if (isHistoryDeleteModalOpen()) return true;
-        if (isHistoryRenameModalOpen()) return true;
+        if (historyPanel.isDeleteModalOpen()) return true;
+        if (historyPanel.isRenameModalOpen()) return true;
         if (isHistoryItemMenuOpen()) return true;
         // Full list rebuilds destroy the ⋮ button mid-click and close the menu.
         return !!document.querySelector(
@@ -7643,9 +7675,9 @@
     }
 
     function closeChatHistoryPanel() {
-        closeHistoryItemMenu();
-        closeHistoryDeleteModal();
-        closeHistoryRenameModal();
+        historyPanel.closeMenu();
+        historyPanel.closeDeleteModal();
+        historyPanel.closeRenameModal();
         if (window.CuttleTooltips && typeof window.CuttleTooltips.hide === 'function') {
             window.CuttleTooltips.hide();
         }
@@ -7673,18 +7705,18 @@
     document.addEventListener('keydown', function (e) {
         if (e.key !== 'Escape') return;
         const menu = document.getElementById('historyItemOverflowMenu');
-        if (isHistoryDeleteModalOpen()) {
-            closeHistoryDeleteModal();
+        if (historyPanel.isDeleteModalOpen()) {
+            historyPanel.closeDeleteModal();
             e.preventDefault();
             return;
         }
-        if (isHistoryRenameModalOpen()) {
-            closeHistoryRenameModal();
+        if (historyPanel.isRenameModalOpen()) {
+            historyPanel.closeRenameModal();
             e.preventDefault();
             return;
         }
         if (menu && !menu.hidden) {
-            closeHistoryItemMenu();
+            historyPanel.closeMenu();
             e.preventDefault();
             return;
         }
@@ -7741,74 +7773,6 @@
     async function ensureAuthChatSession() {
         // Sessions are created on first message by /api/chat — never pre-create empties.
         return session.current();
-    }
-
-    function createHistorySectionHeaderHTML(title, opts) {
-        const showRefresh = !(opts && opts.showRefresh === false);
-        const project = opts && opts.project;
-        const collapsible = !!(opts && opts.collapsible && project && project.key);
-        const expanded = !(opts && opts.collapsed);
-        const count = Number(opts && opts.count) || 0;
-        const hasError = !!(opts && opts.hasError);
-        const hasUnread = !!(opts && opts.hasUnread) || hasError;
-        const hasQueued = !!(opts && opts.hasQueued);
-        const hasPaused = !!(opts && opts.hasPaused);
-        const refreshBtn = showRefresh
-            ? `<button type="button" class="history-refresh-btn" id="chatHistoryRefreshBtn" onclick="window.refreshChatHistoryList(event)" title="Refresh chats" aria-label="Refresh chat list">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="23 4 23 10 17 10"/>
-                        <polyline points="1 20 1 14 7 14"/>
-                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-                    </svg>
-                </button>`
-            : '';
-        const newChatBtn = (project && project.key !== '__none__' && project.key !== '__discord__')
-            ? `<button type="button" class="history-new-chat-btn"
-                    data-project-id="${escapeHtml(project.id != null ? String(project.id) : '')}"
-                    data-project-name="${escapeHtml(project.name || '')}"
-                    data-project-path="${escapeHtml(project.path || '')}"
-                    onclick="window.newChatForProject(event)"
-                    title="New chat in ${escapeHtml(project.name || 'this project')}"
-                    aria-label="New chat in ${escapeHtml(project.name || 'this project')}">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
-                        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                    </svg>
-                </button>`
-            : '';
-        const chevron = collapsible
-            ? `<span class="history-section-chevron" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="6 9 12 15 18 9"/>
-                    </svg>
-               </span>`
-            : '';
-        const countClass = hasError
-            ? ' has-unread has-unread-error'
-            : (hasUnread
-                ? ' has-unread'
-                : (hasQueued ? ' has-queued' : (!hasUnread && hasPaused ? ' has-paused-queue' : '')));
-        const countHtml = collapsible && count > 0
-            ? `<span class="history-section-count${countClass}" title="${count} chat${count === 1 ? '' : 's'}">${count}</span>`
-            : '';
-        const attentionDot = hasError
-            ? `<span class="history-section-unread-dot is-error" title="Unread error" aria-label="Unread error"></span>`
-            : (hasUnread
-                ? `<span class="history-section-unread-dot" title="Unread" aria-label="Unread"></span>`
-                : (hasQueued
-                    ? `<span class="history-section-queued-dot" title="Queued prompt" aria-label="Queued prompt"></span>`
-                    : (hasPaused
-                        ? `<span class="history-section-paused-dot" title="Paused queue" aria-label="Paused queued prompt"></span>`
-                        : '')));
-        const headerAttrs = collapsible
-            ? ` role="button" tabindex="0" data-project-key="${escapeHtml(String(project.key))}" aria-expanded="${expanded ? 'true' : 'false'}" onclick="window.toggleHistoryProjectCollapse(event)" onkeydown="window.toggleHistoryProjectCollapseKey(event)"`
-            : '';
-        return `
-            <div class="history-section-header${collapsible ? ' is-collapsible' : ''}"${headerAttrs}>
-                ${chevron}
-                <div class="history-section-title">${attentionDot}${escapeHtml(title)}${countHtml}</div>
-                <div class="history-section-actions" onclick="event.stopPropagation()">${newChatBtn}${refreshBtn}</div>
-            </div>
-        `;
     }
 
     /** "+" on a project heading: fresh chat already scoped to that project. */
@@ -10116,24 +10080,10 @@
         return sessionLifecycle().saveChatSession(message, role, opts);
     }
 
+    // Owned by chat_history_view.js (CuttleChatHistoryView.historyActionIcons) —
+    // thin alias so the shared chrome menu builder keeps a page-local name.
     function _historyActionIcons() {
-        return {
-            // Match in-chat chrome hamburger (3 lines), not a vertical kebab.
-            hamburger: '<span class="chat-chrome-hamburger" aria-hidden="true"><span></span><span></span><span></span></span>',
-            copy: '<svg class="chat-id-badge-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="18" cy="5" r="3" stroke="currentColor" stroke-width="2"/><circle cx="6" cy="12" r="3" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="19" r="3" stroke="currentColor" stroke-width="2"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><svg class="chat-id-badge-check" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-            pencil: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>',
-            trash: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
-            download: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
-            archive: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
-            unarchive: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><polyline points="12 12 12 16"/><polyline points="9.5 13.5 12 11 14.5 13.5"/></svg>',
-            starOutline: '<svg class="chat-star-menu-icon chat-star-menu-icon--outline" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.8 6.7 19.6l1-5.8-4.2-4.1 5.9-.9L12 3.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
-            starFilled: '<svg class="chat-star-menu-icon chat-star-menu-icon--filled" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.8 6.7 19.6l1-5.8-4.2-4.1 5.9-.9L12 3.5z"/></svg>',
-            unread: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="5" fill="currentColor" opacity="0.9"/><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.6" opacity="0.45"/></svg>',
-            gitPush: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 19V5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 12l7-7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-            terminal: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><polyline points="4 17 10 11 4 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="19" x2="20" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-            voice: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-            subagents: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="2.2" stroke="currentColor" stroke-width="2"/><circle cx="6" cy="18" r="2.2" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="12" r="2.2" stroke="currentColor" stroke-width="2"/><path d="M8.3 7.2c2.1 2 2.1 7.6 0 9.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8.4 12H15.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-        };
+        return CuttleChatHistoryView.historyActionIcons();
     }
 
     /** True until /api/terminal/status says otherwise — shared by both overflow menus. */
@@ -10267,7 +10217,7 @@
     }
 
     function closeAllSessionMenus() {
-        closeHistoryItemMenu();
+        historyPanel.closeMenu();
         closeChatChromeMenu();
     }
 
@@ -10390,121 +10340,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         } catch (e) {
             (window.showToast || function () {})('Export failed: ' + String((e && e.message) || e), 'error');
         }
-    }
-
-    function historyStarredIconHTML() {
-        return '<span class="history-starred-icon" title="Starred" aria-label="Starred">★</span>';
-    }
-
-    function createHistoryDeleteActionsHTML(sessionId, opts) {
-        const icons = _historyActionIcons();
-        const includeRename = !!(opts && opts.includeRename);
-        const lastMs = Number(opts && opts.lastMessageMs) || 0;
-        const sid = String(sessionId).replace(/'/g, "\\'");
-        const timeHtml = lastMs > 0
-            ? `<time class="chat-time" datetime="${new Date(lastMs).toISOString()}" data-ts="${lastMs}" title="${escapeHtmlInline(new Date(lastMs).toLocaleString())}">${escapeHtmlInline(formatHistoryLastMessageAge(lastMs))}</time>`
-            : '';
-        const openHtml = historyOpenPaneBadgeHTML(sessionId);
-        return `
-            <div class="chat-actions" data-include-rename="${includeRename ? '1' : '0'}">
-                ${openHtml}
-                ${timeHtml}
-                <button type="button" class="chat-action-button chat-menu-btn"
-                    onclick="window.chatPageToggleHistoryMenu('${sid}', event)"
-                    title="Chat actions"
-                    aria-label="Chat actions"
-                    aria-haspopup="menu"
-                    aria-expanded="false">
-                    ${icons.hamburger}
-                </button>
-            </div>
-        `;
-    }
-
-    function historyItemEl(sessionId, event) {
-        const fromEvent = event && event.currentTarget && typeof event.currentTarget.closest === 'function'
-            ? event.currentTarget.closest('.chat-history-item')
-            : null;
-        if (fromEvent) return fromEvent;
-        if (sessionId == null || sessionId === '') return null;
-        return document.querySelector(`.chat-history-item[data-session-id="${CSS.escape(String(sessionId))}"]`);
-    }
-
-    function historyItemOverflowMenuEl() {
-        let el = document.getElementById('historyItemOverflowMenu');
-        if (el) {
-            el.className = 'history-item-menu chat-chrome-menu-dropdown';
-            return el;
-        }
-        el = document.createElement('div');
-        el.id = 'historyItemOverflowMenu';
-        // Reuse in-chat chrome dropdown skin; history-item-menu only pins fixed coords.
-        el.className = 'history-item-menu chat-chrome-menu-dropdown';
-        el.setAttribute('role', 'menu');
-        el.hidden = true;
-        document.body.appendChild(el);
-        return el;
-    }
-
-    function closeHistoryItemMenu() {
-        document.querySelectorAll('.chat-history-item.menu-open').forEach((item) => {
-            item.classList.remove('menu-open');
-            const btn = item.querySelector('.chat-menu-btn');
-            if (btn) btn.setAttribute('aria-expanded', 'false');
-        });
-        const menu = document.getElementById('historyItemOverflowMenu');
-        if (menu) {
-            menu.hidden = true;
-            menu.innerHTML = '';
-        }
-    }
-
-    function positionHistoryItemMenu(btn, menu) {
-        if (!btn || !menu) return;
-        const rect = btn.getBoundingClientRect();
-        const menuW = menu.offsetWidth || 160;
-        const menuH = menu.offsetHeight || 120;
-        let top = rect.bottom + 4;
-        let left = rect.right - menuW;
-        if (left < 8) left = 8;
-        if (left + menuW > window.innerWidth - 8) {
-            left = Math.max(8, window.innerWidth - menuW - 8);
-        }
-        if (top + menuH > window.innerHeight - 8) {
-            top = Math.max(8, rect.top - menuH - 4);
-        }
-        menu.style.top = top + 'px';
-        menu.style.left = left + 'px';
-    }
-
-    function toggleHistoryItemMenu(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const item = historyItemEl(sessionId, event);
-        if (!item) return;
-        const alreadyOpen = item.classList.contains('menu-open');
-        closeHistoryItemMenu();
-        if (alreadyOpen) return;
-
-        closeHistoryDeleteModal();
-        closeHistoryRenameModal();
-        closeChatChromeMenu();
-        item.classList.add('menu-open');
-        const btn = item.querySelector('.chat-menu-btn');
-        if (btn) btn.setAttribute('aria-expanded', 'true');
-
-        const actions = item.querySelector('.chat-actions');
-        const includeRename = !!(actions && actions.getAttribute('data-include-rename') === '1');
-        const menu = historyItemOverflowMenuEl();
-        menu.innerHTML = buildSessionMenuHTML(sessionId, {
-            includeRename,
-            includeDelete: true,
-        });
-        menu.hidden = false;
-        positionHistoryItemMenu(btn, menu);
-        refreshGitPushMenuMode(menu);
     }
 
     async function toggleStarChatSession(sessionId, event) {
@@ -10649,12 +10484,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         await refreshArchivedSessions();
     }
 
-    let pendingDeleteSessionId = null;
-
-    function historyDeleteModalEl() {
-        return document.getElementById('historyDeleteModal');
-    }
-
     let _gitPushConfirmResolve = null;
 
     function gitPushConfirmModalEl() {
@@ -10716,111 +10545,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
             e.preventDefault();
             closeGitPushConfirmModal(false);
         });
-    }
-
-    function isHistoryDeleteModalOpen() {
-        const modal = historyDeleteModalEl();
-        return !!(modal && !modal.hidden);
-    }
-
-    function closeHistoryDeleteModal() {
-        pendingDeleteSessionId = null;
-        const modal = historyDeleteModalEl();
-        if (modal) modal.hidden = true;
-        const confirmBtn = document.getElementById('historyDeleteConfirm');
-        if (confirmBtn) {
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = 'Delete';
-        }
-    }
-
-    function historyDeleteLabel(item, sessionId) {
-        const titleEl = item && item.querySelector('.chat-title');
-        const title = titleEl ? String(titleEl.textContent || '').trim() : '';
-        if (title) return title;
-        if (sessionId != null && sessionId !== '') {
-            const fallback = String(getChatSessionDisplayTitle(sessionId) || '').trim();
-            if (fallback) return fallback;
-        }
-        return 'this chat';
-    }
-
-    function openHistoryDeleteModal(sessionId, item) {
-        const modal = historyDeleteModalEl();
-        if (!modal) return;
-        pendingDeleteSessionId = sessionId;
-        const isTerminal = !!(item && item.getAttribute('data-kind') === 'terminal')
-            || isTerminalSessionId(sessionId);
-        const heading = document.getElementById('historyDeleteTitle');
-        const subtitle = document.getElementById('historyDeleteSubtitle');
-        if (heading) heading.textContent = isTerminal ? 'Delete terminal?' : 'Delete chat?';
-        if (subtitle) {
-            subtitle.textContent = '"' + historyDeleteLabel(item, sessionId) + '" will be removed. This cannot be undone.';
-        }
-        modal.hidden = false;
-        const cancel = document.getElementById('historyDeleteCancel');
-        if (cancel) cancel.focus();
-    }
-
-    function setupHistoryDeleteModal() {
-        const modal = historyDeleteModalEl();
-        if (!modal || modal.dataset.bound === '1') return;
-        modal.dataset.bound = '1';
-        const cancelBtn = document.getElementById('historyDeleteCancel');
-        const confirmBtn = document.getElementById('historyDeleteConfirm');
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                closeHistoryDeleteModal();
-            });
-        }
-        if (confirmBtn) {
-            confirmBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                confirmDeleteChatSession(pendingDeleteSessionId, e);
-            });
-        }
-        modal.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (e.target === modal) closeHistoryDeleteModal();
-        });
-    }
-
-    function requestDeleteChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        closeAllSessionMenus();
-        const item = historyItemEl(sessionId, event);
-        openHistoryDeleteModal(sessionId, item);
-    }
-
-    function cancelDeleteChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        closeHistoryDeleteModal();
-    }
-
-    async function confirmDeleteChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const sid = (sessionId != null && sessionId !== '') ? sessionId : pendingDeleteSessionId;
-        if (sid == null || sid === '') return;
-        const confirmBtn = document.getElementById('historyDeleteConfirm');
-        if (confirmBtn) {
-            confirmBtn.disabled = true;
-            confirmBtn.textContent = 'Deleting…';
-        }
-        try {
-            await deleteChatSession(sid);
-        } finally {
-            closeHistoryDeleteModal();
-        }
     }
 
     async function deleteChatSession(sessionId) {
@@ -10904,352 +10628,14 @@ function downloadTranscriptMarkdown(text, sessionId) {
         historyPanel.reloadKeepingSearch();
     }
     
-    let pendingRenameSessionId = null;
-    let pendingRenameKind = 'chat'; // chat | terminal | local
-    let renameEditMode = false;
-    let renameSuggestGen = 0;
-    let renameSuggestInFlight = false;
-    let renameAvoidTitles = [];
 
-    function historyRenameModalEl() {
-        return document.getElementById('historyRenameModal');
-    }
-
-    function isHistoryRenameModalOpen() {
-        const modal = historyRenameModalEl();
-        return !!(modal && !modal.hidden);
-    }
-
-    function setHistoryRenameStatus(msg, isError) {
-        const status = document.getElementById('historyRenameStatus');
-        if (!status) return;
-        if (!msg) {
-            status.hidden = true;
-            status.textContent = '';
-            status.classList.remove('is-error');
-            return;
-        }
-        status.hidden = false;
-        status.textContent = msg;
-        status.classList.toggle('is-error', !!isError);
-    }
-
-    function descriptiveRenameTitle(fullTitle) {
-        const parsed = parseTitleSlashChips(String(fullTitle || ''));
-        const body = String(parsed.body || '').trim();
-        if (body) return body;
-        // Title was only slash chips — leave the editable field empty.
-        if (parsed.chips && parsed.chips.length) return '';
-        return String(fullTitle || '').trim();
-    }
-
-    function rememberRenameAvoid(title) {
-        const t = descriptiveRenameTitle(title);
-        if (!t) return;
-        const key = t.toLowerCase();
-        if (renameAvoidTitles.some((x) => String(x).toLowerCase() === key)) return;
-        renameAvoidTitles.push(t);
-        if (renameAvoidTitles.length > 12) renameAvoidTitles = renameAvoidTitles.slice(-12);
-    }
-
-    function syncHistoryRenamePreviewFromInput() {
-        const input = document.getElementById('historyRenameInput');
-        const preview = document.getElementById('historyRenamePreview');
-        if (!preview) return;
-        preview.textContent = input ? String(input.value || '') : '';
-    }
-
-    function setHistoryRenameSuggesting(loading) {
-        const loadingEl = document.getElementById('historyRenameLoading');
-        const preview = document.getElementById('historyRenamePreview');
-        const previewWrap = document.getElementById('historyRenamePreviewWrap');
-        const input = document.getElementById('historyRenameInput');
-        const editBtn = document.getElementById('historyRenameEdit');
-        if (loading) {
-            renameEditMode = false;
-            if (previewWrap) previewWrap.hidden = false;
-            if (loadingEl) loadingEl.hidden = false;
-            if (preview) preview.hidden = true;
-            if (input) input.hidden = true;
-            if (editBtn) {
-                editBtn.hidden = true;
-                editBtn.classList.remove('is-editing');
-                const pencil = editBtn.querySelector('.history-rename-edit-pencil');
-                const check = editBtn.querySelector('.history-rename-edit-check');
-                if (pencil) pencil.hidden = false;
-                if (check) check.hidden = true;
-            }
-            return;
-        }
-        if (loadingEl) loadingEl.hidden = true;
-        applyHistoryRenameEditMode(renameEditMode);
-    }
-
-    function applyHistoryRenameEditMode(editing) {
-        renameEditMode = !!editing;
-        const previewWrap = document.getElementById('historyRenamePreviewWrap');
-        const preview = document.getElementById('historyRenamePreview');
-        const loadingEl = document.getElementById('historyRenameLoading');
-        const input = document.getElementById('historyRenameInput');
-        const editBtn = document.getElementById('historyRenameEdit');
-        const hasText = !!(input && String(input.value || '').trim());
-        if (loadingEl) loadingEl.hidden = true;
-        if (renameEditMode) {
-            if (previewWrap) previewWrap.hidden = true;
-            if (preview) preview.hidden = true;
-            if (input) {
-                input.hidden = false;
-                try { input.focus({ preventScroll: true }); } catch (_) { try { input.focus(); } catch (__) {} }
-                try { input.select(); } catch (_) {}
-            }
-        } else {
-            syncHistoryRenamePreviewFromInput();
-            if (previewWrap) previewWrap.hidden = false;
-            if (preview) preview.hidden = false;
-            if (input) input.hidden = true;
-        }
-        if (editBtn) {
-            editBtn.hidden = !hasText && !renameEditMode;
-            editBtn.classList.toggle('is-editing', renameEditMode);
-            editBtn.title = renameEditMode ? 'Done editing' : 'Edit name';
-            editBtn.setAttribute('aria-label', renameEditMode ? 'Done editing' : 'Edit chat name');
-            const pencil = editBtn.querySelector('.history-rename-edit-pencil');
-            const check = editBtn.querySelector('.history-rename-edit-check');
-            if (pencil) pencil.hidden = renameEditMode;
-            if (check) check.hidden = !renameEditMode;
-        }
-    }
-
-    function closeHistoryRenameModal() {
-        pendingRenameSessionId = null;
-        pendingRenameKind = 'chat';
-        renameEditMode = false;
-        renameSuggestGen += 1;
-        renameSuggestInFlight = false;
-        renameAvoidTitles = [];
-        const modal = historyRenameModalEl();
-        if (modal) modal.hidden = true;
-        const saveBtn = document.getElementById('historyRenameSave');
-        if (saveBtn) {
-            saveBtn.disabled = false;
-            saveBtn.textContent = 'Save';
-        }
-        const resuggestBtn = document.getElementById('historyRenameResuggest');
-        if (resuggestBtn) resuggestBtn.disabled = false;
-        setHistoryRenameStatus('', false);
-        const input = document.getElementById('historyRenameInput');
-        if (input) input.value = '';
-        const preview = document.getElementById('historyRenamePreview');
-        if (preview) preview.textContent = '';
-    }
-
-    function resolveRenameCurrentTitle(sessionId, kind) {
-        if (kind === 'terminal') {
-            const map = readTerminalSessionRegistry();
-            const session = map[String(sessionId)];
-            return (session && (session.title || session.shell)) || 'Terminal';
-        }
-        if (kind === 'local') {
-            try {
-                const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                const session = sessions[sessionId] || sessions[String(sessionId)];
-                if (session && session.title) return String(session.title);
-            } catch (_) {}
-        }
-        return getChatSessionDisplayTitle(sessionId) || 'Chat';
-    }
-
-    async function suggestHistoryRenameTitle(opts) {
-        const force = !!(opts && opts.force);
-        const input = document.getElementById('historyRenameInput');
-        const saveBtn = document.getElementById('historyRenameSave');
-        const resuggestBtn = document.getElementById('historyRenameResuggest');
-        const sessionId = pendingRenameSessionId;
-        if (sessionId == null || sessionId === '') return null;
-
-        if (!force && input && String(input.value || '').trim() && pendingRenameKind !== 'chat') {
-            applyHistoryRenameEditMode(false);
-            return String(input.value).trim();
-        }
-
-        const canSuggest = pendingRenameKind === 'chat' && isAuthMode() && toAuthDbSessionId(sessionId) != null;
-        if (!canSuggest) {
-            const current = descriptiveRenameTitle(resolveRenameCurrentTitle(sessionId, pendingRenameKind));
-            if (input) input.value = current;
-            setHistoryRenameSuggesting(false);
-            applyHistoryRenameEditMode(false);
-            setHistoryRenameStatus('Pencil to edit', false);
-            return current;
-        }
-
-        const gen = ++renameSuggestGen;
-        renameSuggestInFlight = true;
-        if (saveBtn) saveBtn.disabled = true;
-        if (resuggestBtn) resuggestBtn.disabled = true;
-        setHistoryRenameSuggesting(true);
-        setHistoryRenameStatus('', false);
-        try {
-            const authSid = toAuthDbSessionId(sessionId);
-            const body = {};
-            if (force && renameAvoidTitles.length) {
-                body.avoid = renameAvoidTitles.slice();
-            } else if (input && String(input.value || '').trim()) {
-                // First open still may want to avoid the currently shown name on re-open.
-                rememberRenameAvoid(input.value);
-            }
-            const resp = await fetchWithTimeout(
-                `/api/auth/sessions/${encodeURIComponent(authSid)}/suggest-title`,
-                {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                },
-                90000
-            );
-            if (gen !== renameSuggestGen) return null;
-            const data = await resp.json().catch(() => ({}));
-            if (!resp.ok || !data.success) {
-                throw new Error((data && data.error) || ('HTTP ' + resp.status));
-            }
-            const title = descriptiveRenameTitle(
-                String(data.title || '').trim()
-                || resolveRenameCurrentTitle(sessionId, pendingRenameKind)
-            );
-            if (input) input.value = title;
-            rememberRenameAvoid(title);
-            setHistoryRenameSuggesting(false);
-            applyHistoryRenameEditMode(false);
-            const src = data.source === 'llm'
-                ? 'Suggested'
-                : (data.source === 'fallback' ? 'From first message' : 'Current title');
-            setHistoryRenameStatus(src + ' — pencil to edit', false);
-            return title;
-        } catch (err) {
-            if (gen !== renameSuggestGen) return null;
-            const fallback = descriptiveRenameTitle(resolveRenameCurrentTitle(sessionId, pendingRenameKind));
-            if (input) input.value = fallback;
-            setHistoryRenameSuggesting(false);
-            applyHistoryRenameEditMode(true);
-            setHistoryRenameStatus(
-                'Could not auto-suggest — edit manually (' + ((err && err.message) || 'error') + ')',
-                true
-            );
-            return fallback;
-        } finally {
-            if (gen === renameSuggestGen) {
-                renameSuggestInFlight = false;
-                if (saveBtn) saveBtn.disabled = false;
-                if (resuggestBtn) resuggestBtn.disabled = false;
-            }
-        }
-    }
-
-    function openHistoryRenameModal(sessionId, item) {
-        const modal = historyRenameModalEl();
-        if (!modal) return;
-        closeHistoryDeleteModal();
-        pendingRenameSessionId = sessionId;
-        renameAvoidTitles = [];
-        const isTerminal = !!(item && item.getAttribute('data-kind') === 'terminal')
-            || isTerminalSessionId(sessionId);
-        if (isTerminal) {
-            pendingRenameKind = 'terminal';
-        } else if (isAuthMode() && toAuthDbSessionId(sessionId) != null) {
-            pendingRenameKind = 'chat';
-        } else {
-            pendingRenameKind = 'local';
-        }
-
-        const heading = document.getElementById('historyRenameTitle');
-        if (heading) {
-            heading.textContent = pendingRenameKind === 'terminal' ? 'Rename terminal' : 'Rename chat';
-        }
-        const resuggestBtn = document.getElementById('historyRenameResuggest');
-        if (resuggestBtn) {
-            resuggestBtn.hidden = pendingRenameKind !== 'chat';
-        }
-
-        const currentFull = resolveRenameCurrentTitle(sessionId, pendingRenameKind);
-        const current = descriptiveRenameTitle(currentFull);
-        rememberRenameAvoid(current);
-        const input = document.getElementById('historyRenameInput');
-        if (input) input.value = current;
-
-        modal.hidden = false;
-        if (pendingRenameKind === 'chat') {
-            setHistoryRenameSuggesting(true);
-            suggestHistoryRenameTitle({ force: true });
-        } else {
-            setHistoryRenameSuggesting(false);
-            applyHistoryRenameEditMode(false);
-            setHistoryRenameStatus('Pencil to edit', false);
-        }
-    }
-
-    function setupHistoryRenameModal() {
-        const modal = historyRenameModalEl();
-        if (!modal || modal.dataset.bound === '1') return;
-        modal.dataset.bound = '1';
-        const cancelBtn = document.getElementById('historyRenameCancel');
-        const saveBtn = document.getElementById('historyRenameSave');
-        const resuggestBtn = document.getElementById('historyRenameResuggest');
-        const editBtn = document.getElementById('historyRenameEdit');
-        const input = document.getElementById('historyRenameInput');
-
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                closeHistoryRenameModal();
-            });
-        }
-        if (saveBtn) {
-            saveBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                confirmRenameChatSession(pendingRenameSessionId, e);
-            });
-        }
-        if (resuggestBtn) {
-            resuggestBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                suggestHistoryRenameTitle({ force: true });
-            });
-        }
-        if (editBtn) {
-            editBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (renameSuggestInFlight) return;
-                applyHistoryRenameEditMode(!renameEditMode);
-            });
-        }
-        if (input) {
-            input.addEventListener('input', () => {
-                if (renameEditMode) return;
-                syncHistoryRenamePreviewFromInput();
-            });
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (renameEditMode) {
-                        applyHistoryRenameEditMode(false);
-                    } else {
-                        confirmRenameChatSession(pendingRenameSessionId, e);
-                    }
-                }
-            });
-        }
-        modal.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (e.target === modal) closeHistoryRenameModal();
-        });
-    }
-
-    async function persistRenamedTitle(sessionId, newTitle) {
+    // Rename persistence effect (panel owns the modal; the page owns the API and
+    // the terminal shell postMessage contract). `renameKind` comes from the panel.
+    async function persistRenamedTitle(sessionId, newTitle, renameKind) {
         const title = String(newTitle || '').trim();
         if (!title) return false;
 
-        if (isTerminalSessionId(sessionId) || pendingRenameKind === 'terminal') {
+        if (isTerminalSessionId(sessionId) || renameKind === 'terminal') {
             const map = readTerminalSessionRegistry();
             const session = map[String(sessionId)];
             if (!session) return false;
@@ -11304,56 +10690,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         localStorage.setItem('chatSessions', JSON.stringify(sessions));
         rememberChatSessionTitle(sessionId, title);
         return true;
-    }
-
-    async function confirmRenameChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const sid = (sessionId != null && sessionId !== '') ? sessionId : pendingRenameSessionId;
-        if (sid == null || sid === '') return;
-        const input = document.getElementById('historyRenameInput');
-        const newTitle = descriptiveRenameTitle(input ? String(input.value || '').trim() : '');
-        if (!newTitle) {
-            setHistoryRenameStatus('Enter a name (agent badges stay separate)', true);
-            applyHistoryRenameEditMode(true);
-            return;
-        }
-        const saveBtn = document.getElementById('historyRenameSave');
-        if (saveBtn) {
-            saveBtn.disabled = true;
-            saveBtn.textContent = 'Saving…';
-        }
-        try {
-            const ok = await persistRenamedTitle(sid, newTitle);
-            if (!ok) {
-                setHistoryRenameStatus('Could not rename this chat', true);
-                return;
-            }
-            closeHistoryRenameModal();
-            // refreshChatHistoryList already re-applies search/filters when active.
-            await refreshChatHistoryList();
-            if (session.current() != null && sessionIdsEqual(session.current(), sid)) {
-                updateChatSessionTitle(sid);
-            }
-        } catch (err) {
-            setHistoryRenameStatus((err && err.message) || 'Rename failed', true);
-        } finally {
-            if (saveBtn) {
-                saveBtn.disabled = false;
-                saveBtn.textContent = 'Save';
-            }
-        }
-    }
-
-    function renameChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-        }
-        closeAllSessionMenus();
-        const item = historyItemEl(sessionId, event);
-        openHistoryRenameModal(sessionId, item);
     }
 
     function historyRunningIconHTML() {
@@ -11821,7 +11157,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const count = visible.length;
         let itemsHtml = '';
         visible.forEach((s) => {
-            itemsHtml += createAuthHistoryItemHTML(s, {});
+            itemsHtml += historyView.createAuthHistoryItemHTML(s, {});
         });
         // Header template + section class live in CuttleChatHistoryArchive;
         // the page keeps container/row-DOM wiring (it owns the row renderer
@@ -11855,7 +11191,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             const title = options.emptyTitle || 'No chats yet';
             const text = options.emptyText || 'Start a new conversation';
             CuttleChatHistoryView.paint(historyContainer, `
-                ${createHistorySectionHeaderHTML('Your chats')}
+                ${historyView.createHistorySectionHeaderHTML('Your chats')}
                 <div class="empty-state">
                     <div class="empty-state-icon">${icon}</div>
                     <div class="empty-state-title">${escapeHtml(title)}</div>
@@ -11883,7 +11219,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             ].join('');
             const safeKey = escapeHtml(String(group.project.key));
             html += `<div class="history-section${sectionClass}" data-project-key="${safeKey}" data-has-error="${unreadError ? '1' : '0'}" data-has-unread="${unread ? '1' : '0'}" data-has-queued="${queuedAny ? '1' : '0'}" data-has-paused="${pausedAny ? '1' : '0'}">`;
-            html += createHistorySectionHeaderHTML(group.project.name, {
+            html += historyView.createHistorySectionHeaderHTML(group.project.name, {
                 showRefresh: showRefresh && groupIdx === 0,
                 project: group.project,
                 collapsible: true,
@@ -11906,179 +11242,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         });
     }
 
-    function createAuthHistoryItemHTML(s, extraOpts) {
-        const sid = s.id;
-        const title = s.session_name || (`Chat ${sid}`);
-        const active = sessionIdsEqual(session.current(), sid) ? ' active' : '';
-        const running = sessionShowsHistorySpinner(sid);
-        const runningClass = running ? ' is-running' : '';
-        const attention = sessionHistoryAttentionKind(sid, s);
-        const unreadClass = attention === 'input' ? ' has-input' : (attention === 'unread' || attention === 'error') ? ' has-unread' : '';
-        const errorClass = attention === 'error' ? ' has-unread-error' : '';
-        const queuedClass = attention === 'queued' ? ' has-queued' : '';
-        const pausedClass = attention === 'paused' ? ' has-paused-queue' : '';
-        const starred = !!Number(s.starred);
-        const starredClass = starred ? ' is-starred' : '';
-        const runningIcon = running ? historyRunningIconHTML() : '';
-        const starredIcon = starred ? historyStarredIconHTML() : '';
-        const count = Number(s.message_count) || 0;
-        const origin = String(s.origin || '').trim().toLowerCase();
-        const parentId = s.parent_session_id != null ? String(s.parent_session_id) : '';
-        const itemOpts = extraOpts || {};
-        const childCount = Math.max(0, Number(itemOpts.subagentChildCount) || 0);
-        const subExpanded = !!itemOpts.subagentExpanded;
-        const subForce = !!itemOpts.subagentForceExpanded;
-        const subagentClass = (origin === 'subagent' || parentId) ? ' is-subagent' : '';
-        const hasSubagentsClass = childCount > 0 ? ' has-subagents' : '';
-        const discordName = String(s.discord_username || '').trim();
-        const participants = Array.isArray(s.discord_participants) ? s.discord_participants : [];
-        const participantNames = participants
-            .map((p) => String((p && (p.discord_username || p.discord_user_id)) || '').trim())
-            .filter(Boolean);
-        const isDiscordOrigin = origin === 'discord_dm' || origin === 'discord_guild';
-        const discordTip = participantNames.length
-            ? ('Discord · ' + participantNames.join(', '))
-            : (discordName ? ('Discord · ' + discordName) : 'Discord');
-        const discordBadge = (isDiscordOrigin || participantNames.length)
-            ? `<span class="history-kind-badge" title="${escapeHtml(discordTip)}">Discord</span>`
-            : '';
-        const subagentBadge = (origin === 'subagent' || parentId)
-            ? `<span class="history-kind-badge history-subagent-badge" title="Sub-agent of ${escapeHtml(parentId ? ('CH-' + String(parentId).padStart(6, '0')) : 'parent chat')}">Subagent</span>`
-            : '';
-        const projInfo = resolveSessionProjectInfo(sid, s);
-        const projectChip = projInfo
-            ? projectChipHtml(projInfo, {
-                history: true,
-                worktree: !!String(s.checkout_uid || '').trim(),
-                branch: historyBranchFor(s),
-            })
-            : '';
-        const badge = count > 0
-            ? `<span class="history-msg-badge" title="${count} message${count === 1 ? '' : 's'}" aria-label="${count} messages">
-                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                <span class="history-msg-count">${count}</span>
-               </span>`
-            : '';
-        const subToggleTitle = historySubagentToggleTitle(childCount, subExpanded, subForce);
-        const subCountBadge = childCount > 0
-            ? `<button type="button" class="history-subagent-count-badge" data-child-count="${childCount}" title="${escapeHtml(subToggleTitle)}" aria-label="${escapeHtml(subToggleTitle)}" onclick="window.toggleHistorySubagentGroup('${sid}', event)">
-                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8.4 7.2c2.2 2 2.2 7.6 0 9.6"/><path d="M8.5 12H15.5"/></svg>
-                <span class="history-msg-count">${childCount}</span>
-               </button>`
-            : '';
-        const subToggle = childCount > 0
-            ? `<button type="button" class="history-subagent-toggle" data-child-count="${childCount}" aria-expanded="${subExpanded ? 'true' : 'false'}" aria-controls="history-subagents-${escapeHtml(String(sid))}-kids" title="${escapeHtml(subToggleTitle)}" aria-label="${escapeHtml(subToggleTitle)}" onclick="window.toggleHistorySubagentGroup('${sid}', event)">
-                <span class="history-subagent-chevron" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="6 9 12 15 18 9"/>
-                    </svg>
-                </span>
-               </button>`
-            : '';
-        const parts = chatTitleParts(title, sid);
-        const openClass = openPaneEntriesForSession(sid).length ? ' is-open-pane' : '';
-        const snippet = String(s.search_snippet || s.snippet || '').trim();
-        const isContentMatch = String(s.match || '').toLowerCase() === 'content';
-        const snippetText = snippet || (isContentMatch ? 'Matched in message body' : '');
-        const snippetHtml = snippetText
-            ? `<div class="history-search-snippet${isContentMatch ? ' is-content-match' : ''}">${escapeHtml(snippetText)}</div>`
-            : '';
-        const contentBadge = isContentMatch
-            ? `<span class="history-kind-badge history-match-badge" title="Matched in message body">In messages</span>`
-            : '';
-        return `<div class="chat-history-item${active}${runningClass}${unreadClass}${errorClass}${queuedClass}${pausedClass}${starredClass}${openClass}${subagentClass}${hasSubagentsClass}" data-session-id="${sid}" data-parent-session-id="${escapeHtml(parentId)}" data-search-match="${isContentMatch ? 'content' : 'title'}" data-chat-title="${escapeHtml(title).replace(/"/g, '&quot;')}" onclick="window.chatPageLoadSession('${sid}')">
-            ${historyAttentionIconHTML(attention)}
-            ${subToggle}
-            <div class="history-item-body">
-                ${historyItemMetaHTML([parts.chipsHtml, projectChip, discordBadge, subagentBadge, contentBadge, subCountBadge, badge, starredIcon, runningIcon])}
-                <div class="chat-title">${parts.titleHtml}</div>
-                ${snippetHtml}
-            </div>
-            ${createHistoryDeleteActionsHTML(sid, { includeRename: true, starred, lastMessageMs: resolveHistoryLastMessageMs(s) })}
-        </div>`;
-    }
-    
-    function createHistoryItemHTML(session) {
-        const isActive = session.current() === session.id;
-        const running = sessionShowsHistorySpinner(session.id);
-        const attention = sessionHistoryAttentionKind(session.id, session);
-        const starred = !!session.starred;
-        const parts = chatTitleParts(session.title, session.id);
-        const openClass = openPaneEntriesForSession(session.id).length ? ' is-open-pane' : '';
-        const isContentMatch = String(session.match || '').toLowerCase() === 'content';
-        const contentBadge = isContentMatch
-            ? '<span class="history-kind-badge history-match-badge" title="Matched in message body">In messages</span>'
-            : '';
-        const snippet = String(session.search_snippet || session.snippet || '').trim();
-        const snippetText = snippet || (isContentMatch ? 'Matched in message body' : '');
-        const snippetHtml = snippetText
-            ? `<div class="history-search-snippet${isContentMatch ? ' is-content-match' : ''}">${escapeHtml(snippetText)}</div>`
-            : '';
-        const projInfo = resolveSessionProjectInfo(session.id, session);
-        const projectChip = projInfo
-            ? projectChipHtml(projInfo, {
-                history: true,
-                worktree: !!String(session.checkout_uid || '').trim(),
-                branch: historyBranchFor(session),
-            })
-            : '';
-        const meta = historyItemMetaHTML([
-            '<span class="chat-icon">💬</span>',
-            parts.chipsHtml,
-            projectChip,
-            contentBadge,
-            starred ? historyStarredIconHTML() : '',
-            running ? historyRunningIconHTML() : '',
-        ]);
-        const unreadClass = attention === 'input' ? ' has-input' : (attention === 'unread' || attention === 'error') ? ' has-unread' : '';
-        const errorClass = attention === 'error' ? ' has-unread-error' : '';
-        const queuedClass = attention === 'queued' ? ' has-queued' : '';
-        const pausedClass = attention === 'paused' ? ' has-paused-queue' : '';
-        return `
-            <div class="chat-history-item ${isActive ? 'active' : ''}${running ? ' is-running' : ''}${unreadClass}${errorClass}${queuedClass}${pausedClass}${starred ? ' is-starred' : ''}${openClass}" 
-                 data-session-id="${session.id}"
-                 data-search-match="${isContentMatch ? 'content' : 'title'}"
-                 data-chat-title="${escapeHtml(String(session.title || '')).replace(/"/g, '&quot;')}"
-                 onclick="window.chatPageLoadSession('${session.id}')">
-                ${historyAttentionIconHTML(attention)}
-                <div class="history-item-body">
-                    ${meta}
-                    <div class="chat-title">${parts.titleHtml}</div>
-                    ${snippetHtml}
-                </div>
-                ${createHistoryDeleteActionsHTML(session.id, { includeRename: true, starred, lastMessageMs: resolveHistoryLastMessageMs(session) })}
-            </div>
-        `;
-    }
-
-    function createTerminalHistoryItemHTML(session) {
-        const sid = String(session.id).replace(/'/g, "\\'");
-        const displayId = formatChatDisplayId(session.id) || '';
-        const title = session.title || session.shell || 'Terminal';
-        const starred = !!session.starred;
-        const openClass = openPaneEntriesForSession(session.id).length ? ' is-open-pane' : '';
-        const meta = historyItemMetaHTML([
-            '<span class="chat-icon" aria-hidden="true">⌨️</span>',
-            '<span class="history-kind-badge" title="Terminal session">Terminal</span>',
-            displayId
-                ? `<span class="history-chat-handle" title="${escapeHtml(displayId)}">${escapeHtml(displayId)}</span>`
-                : '',
-            starred ? historyStarredIconHTML() : '',
-        ]);
-        return `
-            <div class="chat-history-item is-terminal${starred ? ' is-starred' : ''}${openClass}"
-                 data-session-id="${escapeHtml(String(session.id))}"
-                 data-kind="terminal"
-                 onclick="window.chatPageOpenTerminalSession('${sid}')">
-                <div class="history-item-body">
-                    ${meta}
-                    <div class="chat-title">${escapeHtml(title)}</div>
-                </div>
-                ${createHistoryDeleteActionsHTML(session.id, { includeRename: true, starred, lastMessageMs: resolveHistoryLastMessageMs(session) })}
-            </div>
-        `;
-    }
-    
     // Message Handling
     /** Id of the follow-up currently being edited in the queue panel (or null). */
     let editingFollowupId = null;
@@ -15511,9 +14674,9 @@ function downloadTranscriptMarkdown(text, sessionId) {
             const t = e.target;
             if (t.closest?.('#historyItemOverflowMenu')) return;
             if (t.closest?.('.chat-menu-btn')) return;
-            closeHistoryItemMenu();
+            historyPanel.closeMenu();
         }, true);
-        window.addEventListener('resize', closeHistoryItemMenu);
+        window.addEventListener('resize', function () { historyPanel.closeMenu(); });
         window.addEventListener('resize', () => scheduleSlashChipCompactLabels(document));
         if (typeof ResizeObserver === 'function') {
             try {
@@ -15530,11 +14693,10 @@ function downloadTranscriptMarkdown(text, sessionId) {
         }
         const historyScroll = document.getElementById('chatHistory');
         if (historyScroll) {
-            historyScroll.addEventListener('scroll', closeHistoryItemMenu, { passive: true });
+            historyScroll.addEventListener('scroll', function () { historyPanel.closeMenu(); }, { passive: true });
         }
-        setupHistoryDeleteModal();
+        historyPanel.setupModals();
         setupGitPushConfirmModal();
-        setupHistoryRenameModal();
 
         // Cross-device: refresh open session when tab becomes visible / focused
         const syncIfVisible = function () {
@@ -15682,11 +14844,11 @@ function downloadTranscriptMarkdown(text, sessionId) {
     window.chatPageToggleArchiveSession = toggleArchiveChatSession;
     window.chatPageToggleArchiveSection = toggleArchiveSection;
     window.chatPageToggleArchiveSectionKey = toggleArchiveSectionKey;
-    window.chatPageRequestDeleteSession = requestDeleteChatSession;
-    window.chatPageCancelDeleteSession = cancelDeleteChatSession;
-    window.chatPageConfirmDeleteSession = confirmDeleteChatSession;
+    window.chatPageRequestDeleteSession = (sessionId, event) => historyPanel.requestDelete(sessionId, event);
+    window.chatPageCancelDeleteSession = (sessionId, event) => historyPanel.cancelDelete(sessionId, event);
+    window.chatPageConfirmDeleteSession = (sessionId, event) => historyPanel.confirmDelete(sessionId, event);
     window.chatPageDeleteSession = deleteChatSession;
-    window.chatPageRenameSession = renameChatSession;
+    window.chatPageRenameSession = (sessionId, event) => historyPanel.renameSession(sessionId, event);
     window.chatPageToggleStarSession = toggleStarChatSession;
     window.chatPageToggleCurrentStar = toggleCurrentChatStar;
     window.chatPageToggleCurrentStarFromMenu = toggleCurrentChatStarFromMenu;
@@ -15811,7 +14973,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         }
     }, true);
 
-    window.chatPageToggleHistoryMenu = toggleHistoryItemMenu;
+    window.chatPageToggleHistoryMenu = (sessionId, event) => historyPanel.toggleMenu(sessionId, event);
     window.searchChats = (opts) => historyPanel.search(opts);
     window.onHistorySearchInput = (ev) => historyPanel.onInput(ev);
     window.clearHistorySearch = () => historyPanel.clear();
@@ -16003,7 +15165,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         if (!btn || !dropdown) return;
         const open = forceOpen == null ? dropdown.hidden : !!forceOpen;
         if (open) {
-            closeHistoryItemMenu();
+            historyPanel.closeMenu();
             fillChatChromeMenu();
         }
         dropdown.hidden = !open;

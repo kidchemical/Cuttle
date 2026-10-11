@@ -1,25 +1,37 @@
 /* ================================================================
    Cuttle Chat — history panel controller (chat_history_panel.js).
-   Owner: the sidebar history panel's SEARCH/FILTER slice — the search
-   query/debounce/abort state machine, the `/project` + `/agent`
-   filter chips and slash palette, and the search-result paint (title
-   vs content tiers). Full-list paint (`loadChatHistory`) lives here
-   too because it shares the active-search hard gate: an auth-changed
-   or poll refresh must never wipe an in-flight search or its chips.
+   Owner: the sidebar history panel's SEARCH/FILTER slice and history
+   row-menu / rename-delete modal lifecycle. This controller owns:
 
-   Pure search helpers (`entrySearchMatchRank`) live in
-   `chat_history_view.js`. Row/header markup, project grouping and
-   attention projection remain page/view owners (commits 2–4) and are
-   injected here as narrow capabilities.
+   - the search query/debounce/abort state machine, the `/project` +
+     `/agent` filter chips and slash palette, and the search-result
+     paint (title vs content tiers). Full-list paint (`loadChatHistory`)
+     lives here too because it shares the active-search hard gate: an
+     auth-changed or poll refresh must never wipe an in-flight search or
+     its chips;
+   - the history row overflow menu (`#historyItemOverflowMenu`) mounting,
+     positioning and lifecycle, and the pane-centered rename/delete
+     modals. The markup stays in `chat_page.html`; the controller binds
+     it, it does not relocate it. Action EFFECTS (delete/rename
+     persistence, terminal actions, title update) stay in the page and
+     are injected.
+
+   Pure search helpers (`entrySearchMatchRank`) and history row/header
+   markup (`createRenderers`) live in `chat_history_view.js`. Project
+   grouping and attention projection remain page/view owners (commits
+   3–4) and are injected here as narrow capabilities.
 
    Interface: `create(deps)` → one controller per chat frame exposing
    `search`, `onInput`, `onKeydown`, `clear`, `load`,
    `reloadKeepingSearch`, `isSearchActive`, `refreshSearchIndicators`,
    `repaintIfSearchActive`, `filtersActive`, `renderFilterChips`,
    `matchesFilters`, `sessionHaystack`, `localMatchesSearch`,
-   `hideSlashPalette`. The page keeps the `window.*` inline-handler
-   names as thin forwarders and routes history-refresh call sites
-   through this controller.
+   `hideSlashPalette`, `closeMenu`, `toggleMenu`, `requestDelete`,
+   `cancelDelete`, `confirmDelete`, `isDeleteModalOpen`,
+   `closeDeleteModal`, `renameSession`, `closeRenameModal`,
+   `isRenameModalOpen`, `setupModals`. The page keeps the `window.*`
+   inline-handler names as thin forwarders and routes history-refresh
+   call sites through this controller.
 
    deps: { win, doc, storage, fetch, escapeHtml,
            parseSessionTimestamp, formatChatDisplayId,
@@ -35,7 +47,14 @@
            rememberActiveHistorySessions, refreshArchivedSessions,
            isArchivedSessionsLoaded, syncHistoryRunningIndicators,
            syncHistoryUnreadIndicators, applyHistorySubagentExpandState,
-           closeHistoryItemMenu, refreshLocalOpenPanes }.
+           refreshLocalOpenPanes,
+           buildSessionMenuHTML, refreshGitPushMenuMode,
+           closeChatChromeMenu, isTerminalSessionId,
+           getChatSessionDisplayTitle, readTerminalSessionRegistry,
+           writeTerminalSessionRegistry, fetchWithTimeout,
+           currentSessionId, sessionIdsEqual, toAuthDbSessionId,
+           deleteChatSession, persistRenamedTitle,
+           refreshChatHistoryList, updateChatSessionTitle }.
    Loaded after chat_history_view.js and before chat_page.js.
    ================================================================ */
 (function (root) {
@@ -70,6 +89,600 @@
         };
         let historySlashPaletteItems = [];
         let historySlashPaletteIndex = 0;
+
+        // ---- History row overflow menu ------------------------------------
+        function historyItemEl(sessionId, event) {
+            const fromEvent = event && event.currentTarget && typeof event.currentTarget.closest === 'function'
+                ? event.currentTarget.closest('.chat-history-item')
+                : null;
+            if (fromEvent) return fromEvent;
+            if (sessionId == null || sessionId === '') return null;
+            const escaped = (win.CSS && win.CSS.escape) ? win.CSS.escape(String(sessionId)) : String(sessionId);
+            return doc.querySelector(`.chat-history-item[data-session-id="${escaped}"]`);
+        }
+
+        function historyItemOverflowMenuEl() {
+            let el = doc.getElementById('historyItemOverflowMenu');
+            if (el) {
+                el.className = 'history-item-menu chat-chrome-menu-dropdown';
+                return el;
+            }
+            el = doc.createElement('div');
+            el.id = 'historyItemOverflowMenu';
+            // Reuse in-chat chrome dropdown skin; history-item-menu only pins fixed coords.
+            el.className = 'history-item-menu chat-chrome-menu-dropdown';
+            el.setAttribute('role', 'menu');
+            el.hidden = true;
+            doc.body.appendChild(el);
+            return el;
+        }
+
+        function closeHistoryItemMenu() {
+            doc.querySelectorAll('.chat-history-item.menu-open').forEach((item) => {
+                item.classList.remove('menu-open');
+                const btn = item.querySelector('.chat-menu-btn');
+                if (btn) btn.setAttribute('aria-expanded', 'false');
+            });
+            const menu = doc.getElementById('historyItemOverflowMenu');
+            if (menu) {
+                menu.hidden = true;
+                menu.innerHTML = '';
+            }
+        }
+
+        function positionHistoryItemMenu(btn, menu) {
+            if (!btn || !menu) return;
+            const rect = btn.getBoundingClientRect();
+            const menuW = menu.offsetWidth || 160;
+            const menuH = menu.offsetHeight || 120;
+            let top = rect.bottom + 4;
+            let left = rect.right - menuW;
+            if (left < 8) left = 8;
+            if (left + menuW > win.innerWidth - 8) {
+                left = Math.max(8, win.innerWidth - menuW - 8);
+            }
+            if (top + menuH > win.innerHeight - 8) {
+                top = Math.max(8, rect.top - menuH - 4);
+            }
+            menu.style.top = top + 'px';
+            menu.style.left = left + 'px';
+        }
+
+        function toggleHistoryItemMenu(sessionId, event) {
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+            const item = historyItemEl(sessionId, event);
+            if (!item) return;
+            const alreadyOpen = item.classList.contains('menu-open');
+            closeHistoryItemMenu();
+            if (alreadyOpen) return;
+
+            closeHistoryDeleteModal();
+            closeHistoryRenameModal();
+            deps.closeChatChromeMenu();
+            item.classList.add('menu-open');
+            const btn = item.querySelector('.chat-menu-btn');
+            if (btn) btn.setAttribute('aria-expanded', 'true');
+
+            const actions = item.querySelector('.chat-actions');
+            const includeRename = !!(actions && actions.getAttribute('data-include-rename') === '1');
+            const menu = historyItemOverflowMenuEl();
+            menu.innerHTML = deps.buildSessionMenuHTML(sessionId, {
+                includeRename,
+                includeDelete: true,
+            });
+            menu.hidden = false;
+            positionHistoryItemMenu(btn, menu);
+            deps.refreshGitPushMenuMode(menu);
+        }
+
+        // ---- Delete confirmation modal ------------------------------------
+        let pendingDeleteSessionId = null;
+
+        function historyDeleteModalEl() {
+            return doc.getElementById('historyDeleteModal');
+        }
+
+        function isHistoryDeleteModalOpen() {
+            const modal = historyDeleteModalEl();
+            return !!(modal && !modal.hidden);
+        }
+
+        function closeHistoryDeleteModal() {
+            pendingDeleteSessionId = null;
+            const modal = historyDeleteModalEl();
+            if (modal) modal.hidden = true;
+            const confirmBtn = doc.getElementById('historyDeleteConfirm');
+            if (confirmBtn) {
+                confirmBtn.disabled = false;
+                confirmBtn.textContent = 'Delete';
+            }
+        }
+
+        function historyDeleteLabel(item, sessionId) {
+            const titleEl = item && item.querySelector('.chat-title');
+            const title = titleEl ? String(titleEl.textContent || '').trim() : '';
+            if (title) return title;
+            if (sessionId != null && sessionId !== '') {
+                const fallback = String(deps.getChatSessionDisplayTitle(sessionId) || '').trim();
+                if (fallback) return fallback;
+            }
+            return 'this chat';
+        }
+
+        function openHistoryDeleteModal(sessionId, item) {
+            const modal = historyDeleteModalEl();
+            if (!modal) return;
+            pendingDeleteSessionId = sessionId;
+            const isTerminal = !!(item && item.getAttribute('data-kind') === 'terminal')
+                || deps.isTerminalSessionId(sessionId);
+            const heading = doc.getElementById('historyDeleteTitle');
+            const subtitle = doc.getElementById('historyDeleteSubtitle');
+            if (heading) heading.textContent = isTerminal ? 'Delete terminal?' : 'Delete chat?';
+            if (subtitle) {
+                subtitle.textContent = '"' + historyDeleteLabel(item, sessionId) + '" will be removed. This cannot be undone.';
+            }
+            modal.hidden = false;
+            const cancel = doc.getElementById('historyDeleteCancel');
+            if (cancel) cancel.focus();
+        }
+
+        function setupHistoryDeleteModal() {
+            const modal = historyDeleteModalEl();
+            if (!modal || modal.dataset.bound === '1') return;
+            modal.dataset.bound = '1';
+            const cancelBtn = doc.getElementById('historyDeleteCancel');
+            const confirmBtn = doc.getElementById('historyDeleteConfirm');
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    closeHistoryDeleteModal();
+                });
+            }
+            if (confirmBtn) {
+                confirmBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    confirmDeleteChatSession(pendingDeleteSessionId, e);
+                });
+            }
+            modal.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (e.target === modal) closeHistoryDeleteModal();
+            });
+        }
+
+        function requestDeleteChatSession(sessionId, event) {
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+            closeHistoryItemMenu();
+            deps.closeChatChromeMenu();
+            const item = historyItemEl(sessionId, event);
+            openHistoryDeleteModal(sessionId, item);
+        }
+
+        function cancelDeleteChatSession(sessionId, event) {
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+            closeHistoryDeleteModal();
+        }
+
+        async function confirmDeleteChatSession(sessionId, event) {
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+            const sid = (sessionId != null && sessionId !== '') ? sessionId : pendingDeleteSessionId;
+            if (sid == null || sid === '') return;
+            const confirmBtn = doc.getElementById('historyDeleteConfirm');
+            if (confirmBtn) {
+                confirmBtn.disabled = true;
+                confirmBtn.textContent = 'Deleting…';
+            }
+            try {
+                await deps.deleteChatSession(sid);
+            } finally {
+                closeHistoryDeleteModal();
+            }
+        }
+
+        // ---- Rename modal -------------------------------------------------
+        let pendingRenameSessionId = null;
+        let pendingRenameKind = 'chat'; // chat | terminal | local
+        let renameEditMode = false;
+        let renameSuggestGen = 0;
+        let renameSuggestInFlight = false;
+        let renameAvoidTitles = [];
+
+        function historyRenameModalEl() {
+            return doc.getElementById('historyRenameModal');
+        }
+
+        function isHistoryRenameModalOpen() {
+            const modal = historyRenameModalEl();
+            return !!(modal && !modal.hidden);
+        }
+
+        function setHistoryRenameStatus(msg, isError) {
+            const status = doc.getElementById('historyRenameStatus');
+            if (!status) return;
+            if (!msg) {
+                status.hidden = true;
+                status.textContent = '';
+                status.classList.remove('is-error');
+                return;
+            }
+            status.hidden = false;
+            status.textContent = msg;
+            status.classList.toggle('is-error', !!isError);
+        }
+
+        function descriptiveRenameTitle(fullTitle) {
+            const parsed = deps.parseTitleSlashChips(String(fullTitle || ''));
+            const body = String(parsed.body || '').trim();
+            if (body) return body;
+            // Title was only slash chips — leave the editable field empty.
+            if (parsed.chips && parsed.chips.length) return '';
+            return String(fullTitle || '').trim();
+        }
+
+        function rememberRenameAvoid(title) {
+            const t = descriptiveRenameTitle(title);
+            if (!t) return;
+            const key = t.toLowerCase();
+            if (renameAvoidTitles.some((x) => String(x).toLowerCase() === key)) return;
+            renameAvoidTitles.push(t);
+            if (renameAvoidTitles.length > 12) renameAvoidTitles = renameAvoidTitles.slice(-12);
+        }
+
+        function syncHistoryRenamePreviewFromInput() {
+            const input = doc.getElementById('historyRenameInput');
+            const preview = doc.getElementById('historyRenamePreview');
+            if (!preview) return;
+            preview.textContent = input ? String(input.value || '') : '';
+        }
+
+        function setHistoryRenameSuggesting(loading) {
+            const loadingEl = doc.getElementById('historyRenameLoading');
+            const preview = doc.getElementById('historyRenamePreview');
+            const previewWrap = doc.getElementById('historyRenamePreviewWrap');
+            const input = doc.getElementById('historyRenameInput');
+            const editBtn = doc.getElementById('historyRenameEdit');
+            if (loading) {
+                renameEditMode = false;
+                if (previewWrap) previewWrap.hidden = false;
+                if (loadingEl) loadingEl.hidden = false;
+                if (preview) preview.hidden = true;
+                if (input) input.hidden = true;
+                if (editBtn) {
+                    editBtn.hidden = true;
+                    editBtn.classList.remove('is-editing');
+                    const pencil = editBtn.querySelector('.history-rename-edit-pencil');
+                    const check = editBtn.querySelector('.history-rename-edit-check');
+                    if (pencil) pencil.hidden = false;
+                    if (check) check.hidden = true;
+                }
+                return;
+            }
+            if (loadingEl) loadingEl.hidden = true;
+            applyHistoryRenameEditMode(renameEditMode);
+        }
+
+        function applyHistoryRenameEditMode(editing) {
+            renameEditMode = !!editing;
+            const previewWrap = doc.getElementById('historyRenamePreviewWrap');
+            const preview = doc.getElementById('historyRenamePreview');
+            const loadingEl = doc.getElementById('historyRenameLoading');
+            const input = doc.getElementById('historyRenameInput');
+            const editBtn = doc.getElementById('historyRenameEdit');
+            const hasText = !!(input && String(input.value || '').trim());
+            if (loadingEl) loadingEl.hidden = true;
+            if (renameEditMode) {
+                if (previewWrap) previewWrap.hidden = true;
+                if (preview) preview.hidden = true;
+                if (input) {
+                    input.hidden = false;
+                    try { input.focus({ preventScroll: true }); } catch (_) { try { input.focus(); } catch (__) {} }
+                    try { input.select(); } catch (_) {}
+                }
+            } else {
+                syncHistoryRenamePreviewFromInput();
+                if (previewWrap) previewWrap.hidden = false;
+                if (preview) preview.hidden = false;
+                if (input) input.hidden = true;
+            }
+            if (editBtn) {
+                editBtn.hidden = !hasText && !renameEditMode;
+                editBtn.classList.toggle('is-editing', renameEditMode);
+                editBtn.title = renameEditMode ? 'Done editing' : 'Edit name';
+                editBtn.setAttribute('aria-label', renameEditMode ? 'Done editing' : 'Edit chat name');
+                const pencil = editBtn.querySelector('.history-rename-edit-pencil');
+                const check = editBtn.querySelector('.history-rename-edit-check');
+                if (pencil) pencil.hidden = renameEditMode;
+                if (check) check.hidden = !renameEditMode;
+            }
+        }
+
+        function closeHistoryRenameModal() {
+            pendingRenameSessionId = null;
+            pendingRenameKind = 'chat';
+            renameEditMode = false;
+            renameSuggestGen += 1;
+            renameSuggestInFlight = false;
+            renameAvoidTitles = [];
+            const modal = historyRenameModalEl();
+            if (modal) modal.hidden = true;
+            const saveBtn = doc.getElementById('historyRenameSave');
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save';
+            }
+            const resuggestBtn = doc.getElementById('historyRenameResuggest');
+            if (resuggestBtn) resuggestBtn.disabled = false;
+            setHistoryRenameStatus('', false);
+            const input = doc.getElementById('historyRenameInput');
+            if (input) input.value = '';
+            const preview = doc.getElementById('historyRenamePreview');
+            if (preview) preview.textContent = '';
+        }
+
+        function resolveRenameCurrentTitle(sessionId, kind) {
+            if (kind === 'terminal') {
+                const map = deps.readTerminalSessionRegistry();
+                const entry = map[String(sessionId)];
+                return (entry && (entry.title || entry.shell)) || 'Terminal';
+            }
+            if (kind === 'local') {
+                try {
+                    const sessions = JSON.parse(storage.getItem('chatSessions') || '{}');
+                    const local = sessions[sessionId] || sessions[String(sessionId)];
+                    if (local && local.title) return String(local.title);
+                } catch (_) {}
+            }
+            return deps.getChatSessionDisplayTitle(sessionId) || 'Chat';
+        }
+
+        async function suggestHistoryRenameTitle(opts) {
+            const force = !!(opts && opts.force);
+            const input = doc.getElementById('historyRenameInput');
+            const saveBtn = doc.getElementById('historyRenameSave');
+            const resuggestBtn = doc.getElementById('historyRenameResuggest');
+            const sessionId = pendingRenameSessionId;
+            if (sessionId == null || sessionId === '') return null;
+
+            if (!force && input && String(input.value || '').trim() && pendingRenameKind !== 'chat') {
+                applyHistoryRenameEditMode(false);
+                return String(input.value).trim();
+            }
+
+            const canSuggest = pendingRenameKind === 'chat' && deps.isAuthMode() && deps.toAuthDbSessionId(sessionId) != null;
+            if (!canSuggest) {
+                const current = descriptiveRenameTitle(resolveRenameCurrentTitle(sessionId, pendingRenameKind));
+                if (input) input.value = current;
+                setHistoryRenameSuggesting(false);
+                applyHistoryRenameEditMode(false);
+                setHistoryRenameStatus('Pencil to edit', false);
+                return current;
+            }
+
+            const gen = ++renameSuggestGen;
+            renameSuggestInFlight = true;
+            if (saveBtn) saveBtn.disabled = true;
+            if (resuggestBtn) resuggestBtn.disabled = true;
+            setHistoryRenameSuggesting(true);
+            setHistoryRenameStatus('', false);
+            try {
+                const authSid = deps.toAuthDbSessionId(sessionId);
+                const body = {};
+                if (force && renameAvoidTitles.length) {
+                    body.avoid = renameAvoidTitles.slice();
+                } else if (input && String(input.value || '').trim()) {
+                    // First open still may want to avoid the currently shown name on re-open.
+                    rememberRenameAvoid(input.value);
+                }
+                const resp = await deps.fetchWithTimeout(
+                    `/api/auth/sessions/${encodeURIComponent(authSid)}/suggest-title`,
+                    {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body),
+                    },
+                    90000
+                );
+                if (gen !== renameSuggestGen) return null;
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok || !data.success) {
+                    throw new Error((data && data.error) || ('HTTP ' + resp.status));
+                }
+                const title = descriptiveRenameTitle(
+                    String(data.title || '').trim()
+                    || resolveRenameCurrentTitle(sessionId, pendingRenameKind)
+                );
+                if (input) input.value = title;
+                rememberRenameAvoid(title);
+                setHistoryRenameSuggesting(false);
+                applyHistoryRenameEditMode(false);
+                const src = data.source === 'llm'
+                    ? 'Suggested'
+                    : (data.source === 'fallback' ? 'From first message' : 'Current title');
+                setHistoryRenameStatus(src + ' — pencil to edit', false);
+                return title;
+            } catch (err) {
+                if (gen !== renameSuggestGen) return null;
+                const fallback = descriptiveRenameTitle(resolveRenameCurrentTitle(sessionId, pendingRenameKind));
+                if (input) input.value = fallback;
+                setHistoryRenameSuggesting(false);
+                applyHistoryRenameEditMode(true);
+                setHistoryRenameStatus(
+                    'Could not auto-suggest — edit manually (' + ((err && err.message) || 'error') + ')',
+                    true
+                );
+                return fallback;
+            } finally {
+                if (gen === renameSuggestGen) {
+                    renameSuggestInFlight = false;
+                    if (saveBtn) saveBtn.disabled = false;
+                    if (resuggestBtn) resuggestBtn.disabled = false;
+                }
+            }
+        }
+
+        function openHistoryRenameModal(sessionId, item) {
+            const modal = historyRenameModalEl();
+            if (!modal) return;
+            closeHistoryDeleteModal();
+            pendingRenameSessionId = sessionId;
+            renameAvoidTitles = [];
+            const isTerminal = !!(item && item.getAttribute('data-kind') === 'terminal')
+                || deps.isTerminalSessionId(sessionId);
+            if (isTerminal) {
+                pendingRenameKind = 'terminal';
+            } else if (deps.isAuthMode() && deps.toAuthDbSessionId(sessionId) != null) {
+                pendingRenameKind = 'chat';
+            } else {
+                pendingRenameKind = 'local';
+            }
+
+            const heading = doc.getElementById('historyRenameTitle');
+            if (heading) {
+                heading.textContent = pendingRenameKind === 'terminal' ? 'Rename terminal' : 'Rename chat';
+            }
+            const resuggestBtn = doc.getElementById('historyRenameResuggest');
+            if (resuggestBtn) {
+                resuggestBtn.hidden = pendingRenameKind !== 'chat';
+            }
+
+            const currentFull = resolveRenameCurrentTitle(sessionId, pendingRenameKind);
+            const current = descriptiveRenameTitle(currentFull);
+            rememberRenameAvoid(current);
+            const input = doc.getElementById('historyRenameInput');
+            if (input) input.value = current;
+
+            modal.hidden = false;
+            if (pendingRenameKind === 'chat') {
+                setHistoryRenameSuggesting(true);
+                suggestHistoryRenameTitle({ force: true });
+            } else {
+                setHistoryRenameSuggesting(false);
+                applyHistoryRenameEditMode(false);
+                setHistoryRenameStatus('Pencil to edit', false);
+            }
+        }
+
+        function setupHistoryRenameModal() {
+            const modal = historyRenameModalEl();
+            if (!modal || modal.dataset.bound === '1') return;
+            modal.dataset.bound = '1';
+            const cancelBtn = doc.getElementById('historyRenameCancel');
+            const saveBtn = doc.getElementById('historyRenameSave');
+            const resuggestBtn = doc.getElementById('historyRenameResuggest');
+            const editBtn = doc.getElementById('historyRenameEdit');
+            const input = doc.getElementById('historyRenameInput');
+
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    closeHistoryRenameModal();
+                });
+            }
+            if (saveBtn) {
+                saveBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    confirmRenameChatSession(pendingRenameSessionId, e);
+                });
+            }
+            if (resuggestBtn) {
+                resuggestBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    suggestHistoryRenameTitle({ force: true });
+                });
+            }
+            if (editBtn) {
+                editBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (renameSuggestInFlight) return;
+                    applyHistoryRenameEditMode(!renameEditMode);
+                });
+            }
+            if (input) {
+                input.addEventListener('input', () => {
+                    if (renameEditMode) return;
+                    syncHistoryRenamePreviewFromInput();
+                });
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (renameEditMode) {
+                            applyHistoryRenameEditMode(false);
+                        } else {
+                            confirmRenameChatSession(pendingRenameSessionId, e);
+                        }
+                    }
+                });
+            }
+            modal.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (e.target === modal) closeHistoryRenameModal();
+            });
+        }
+
+        async function confirmRenameChatSession(sessionId, event) {
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+            const sid = (sessionId != null && sessionId !== '') ? sessionId : pendingRenameSessionId;
+            if (sid == null || sid === '') return;
+            const input = doc.getElementById('historyRenameInput');
+            const newTitle = descriptiveRenameTitle(input ? String(input.value || '').trim() : '');
+            if (!newTitle) {
+                setHistoryRenameStatus('Enter a name (agent badges stay separate)', true);
+                applyHistoryRenameEditMode(true);
+                return;
+            }
+            const saveBtn = doc.getElementById('historyRenameSave');
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.textContent = 'Saving…';
+            }
+            try {
+                const ok = await deps.persistRenamedTitle(sid, newTitle, pendingRenameKind);
+                if (!ok) {
+                    setHistoryRenameStatus('Could not rename this chat', true);
+                    return;
+                }
+                closeHistoryRenameModal();
+                // refreshChatHistoryList already re-applies search/filters when active.
+                await deps.refreshChatHistoryList();
+                if (deps.currentSessionId() != null && deps.sessionIdsEqual(deps.currentSessionId(), sid)) {
+                    deps.updateChatSessionTitle(sid);
+                }
+            } catch (err) {
+                setHistoryRenameStatus((err && err.message) || 'Rename failed', true);
+            } finally {
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = 'Save';
+                }
+            }
+        }
+
+        function renameChatSession(sessionId, event) {
+            if (event) {
+                event.stopPropagation();
+            }
+            closeHistoryItemMenu();
+            deps.closeChatChromeMenu();
+            const item = historyItemEl(sessionId, event);
+            openHistoryRenameModal(sessionId, item);
+        }
 
         function historyFiltersActive() {
             return historySearchFilters.projects.length > 0
@@ -660,7 +1273,7 @@
         }
 
         function searchChats(opts) {
-            deps.closeHistoryItemMenu();
+            closeHistoryItemMenu();
             opts = opts || {};
             const rawFull = (doc.getElementById('searchInput') && doc.getElementById('searchInput').value) || '';
             const clear = doc.getElementById('historySearchClear');
@@ -856,7 +1469,7 @@
                 softRefreshHistorySearchIndicators();
                 return;
             }
-            deps.closeHistoryItemMenu();
+            closeHistoryItemMenu();
             deps.refreshLocalOpenPanes();
             const historyContainer = doc.getElementById('chatHistory');
             if (!historyContainer) return;
@@ -931,6 +1544,20 @@
             sessionHaystack: historySessionHaystack,
             localMatchesSearch: localSessionMatchesSearch,
             hideSlashPalette: hideHistorySlashPalette,
+            closeMenu: closeHistoryItemMenu,
+            toggleMenu: toggleHistoryItemMenu,
+            requestDelete: requestDeleteChatSession,
+            cancelDelete: cancelDeleteChatSession,
+            confirmDelete: confirmDeleteChatSession,
+            isDeleteModalOpen: isHistoryDeleteModalOpen,
+            closeDeleteModal: closeHistoryDeleteModal,
+            renameSession: renameChatSession,
+            closeRenameModal: closeHistoryRenameModal,
+            isRenameModalOpen: isHistoryRenameModalOpen,
+            setupModals: function () {
+                setupHistoryDeleteModal();
+                setupHistoryRenameModal();
+            },
         };
     }
 
