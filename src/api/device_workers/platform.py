@@ -93,6 +93,9 @@ def list_workers(*, online_only: bool = False) -> Dict[str, Any]:
         w["wrong_branch"] = bool(
             (not is_self) and local_branch and peer_branch and peer_branch != local_branch
         )
+        w["update_source"] = str(
+            meta.get("update_source") or w.get("update_source") or "official"
+        ).strip().lower() or "official"
         # Disk rev is what the worker advertises as cuttle_git_rev; boot is the
         # rev loaded into the live claim loop. Differ ⇒ stale process (CH-000478).
         stale_process = bool(

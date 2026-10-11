@@ -509,6 +509,37 @@ def update_timeouts_setting():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# --- device update source (backend: managers.settings_manager) --------------
+
+@settings_bp.route('/settings/update-source', methods=['GET'])
+@authenticated_required
+def get_update_source_setting():
+    """This install's update channel: 'official' (git remote / release) or 'host'."""
+    from managers.settings_manager import get_settings_manager
+    block = get_settings_manager().get_setting('device_workers') or {}
+    src = str((block or {}).get('update_source') or 'official').strip().lower()
+    return jsonify({'success': True, 'update_source': 'host' if src == 'host' else 'official'})
+
+
+@settings_bp.route('/settings/update-source', methods=['POST'])
+@owner_required
+def update_update_source_setting():
+    """Body: { update_source: 'official'|'host' }."""
+    try:
+        from managers.settings_manager import get_settings_manager
+        data = request.get_json() or {}
+        src = str(data.get('update_source') or '').strip().lower()
+        if src not in ('official', 'host'):
+            return jsonify({'success': False, 'error': 'update_source must be official or host'}), 400
+        manager = get_settings_manager()
+        manager.update_setting(
+            'device_workers', lambda current: {**(current or {}), 'update_source': src}
+        )
+        return jsonify({'success': True, 'update_source': src})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # --- agent adapters (backends: agent_harness.steer / catalog / agent_defaults)
 
 def _agent_adapters_payload() -> dict:

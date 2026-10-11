@@ -846,6 +846,23 @@ body.is-reordering-spaces iframe {
     color: #fff;
 }
 
+/* Channel chip: OFFICIAL (upstream) / HOST (this paired host). Text carries the
+   meaning; blue/green reinforces it (never color-only). */
+.shell-win-update-chip {
+    display: inline-block;
+    padding: 0 5px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    line-height: 14px;
+    background: rgba(255, 255, 255, 0.22);
+    color: #fff;
+}
+.shell-win-update-chip[hidden] {
+    display: none !important;
+}
+
 /* Mesh / git self-update (version behind host) — green download cue */
 .shell-win-btn.shell-win-update.is-mesh-update {
     background: #2da44e;

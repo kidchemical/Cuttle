@@ -45,6 +45,7 @@ let cuttleTitlebarCancelHide = null;
     const closeBtn = document.getElementById('shellWinClose');
     const drag = document.getElementById('shellTitlebarDrag');
     const updateBtn = document.getElementById('shellWinUpdate');
+    const updateChip = document.getElementById('shellWinUpdateChip');
     const hostBtn = document.getElementById('shellTitlebarHost');
     const workersBtn = document.getElementById('shellTitlebarWorkers');
 
@@ -133,6 +134,15 @@ let cuttleTitlebarCancelHide = null;
         return !!(desktopCfg && desktopCfg.clientMode);
     };
 
+    // Configured update channel for this device: 'host' (follow the paired
+    // Host) or 'official' (follow upstream / release). A thin Client defaults
+    // to its Host; a local install defaults to upstream.
+    const configuredUpdateSource = () => {
+        const s = String((desktopCfg && desktopCfg.updateSource) || '').toLowerCase();
+        if (s === 'host' || s === 'official') return s;
+        return isRemoteClient() ? 'host' : 'official';
+    };
+
     const refreshUpdateBtn = () => {
         if (!updateBtn) return;
         const asarOn = asarUpdateAvailable && isRemoteClient();
@@ -145,11 +155,32 @@ let cuttleTitlebarCancelHide = null;
         updateBtn.classList.toggle('is-asar-update', asarOn && !preferMesh);
         if (!on) {
             updateBtn.classList.remove('is-busy');
+            if (updateChip) { updateChip.hidden = true; updateChip.textContent = ''; }
             return;
         }
         updateBtn.classList.remove('is-busy');
         const label = updateBtn.querySelector('.shell-win-update-label');
         if (label) label.textContent = 'Update';
+        // Channel chip: always show which channel the (single) button updates.
+        const decision = (typeof cuttleUpdateChannels === 'function')
+            ? cuttleUpdateChannels({
+                configuredSource: configuredUpdateSource(),
+                host: { available: meshOn },
+                official: { available: false },
+            })
+            : null;
+        const activeChannel = decision && decision.buttons[0] ? decision.buttons[0].source : '';
+        meshUpdate.channel = activeChannel;
+        if (updateChip) {
+            if (activeChannel) {
+                updateChip.hidden = false;
+                updateChip.textContent = activeChannel === 'host' ? 'HOST' : 'OFFICIAL';
+                updateChip.dataset.source = activeChannel;
+            } else {
+                updateChip.hidden = true;
+                updateChip.textContent = '';
+            }
+        }
         if (preferMesh) {
             const local = meshUpdate.localVersion || '?';
             const host = meshUpdate.hostVersion || '?';
@@ -422,6 +453,8 @@ let cuttleTitlebarCancelHide = null;
                 body: JSON.stringify({
                     target: meshUpdate.target,
                     submitted_by: 'titlebar',
+                    // Channel: follow the paired Host's working tree, or upstream.
+                    update_source: meshUpdate.channel || configuredUpdateSource(),
                     // Host Electron refresh should not kill cuttle_daemon.
                     no_daemon: !isClient,
                 }),

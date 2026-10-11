@@ -14,6 +14,7 @@
         const button = root.querySelector('[data-release-check]');
         const autoToggle = root.querySelector('[data-release-auto-toggle]');
         const autoCheckbox = root.querySelector('[data-release-auto-check]');
+        const sourceSelect = root.querySelector('[data-update-source]');
         let identity = '';
 
         function autoChecksEnabled() {
@@ -94,6 +95,36 @@
                 checked.textContent = 'Could not copy. Select the version text to copy it.';
             }
         });
+        async function loadUpdateSource() {
+            if (!sourceSelect) return;
+            try {
+                const response = await fetch('/api/settings/update-source', { cache: 'no-store' });
+                if (!response.ok) return;
+                const data = await response.json();
+                sourceSelect.value = String(data.update_source || 'official') === 'host' ? 'host' : 'official';
+            } catch (_) { /* keep default selection */ }
+        }
+        if (sourceSelect) {
+            sourceSelect.addEventListener('change', async () => {
+                const choice = sourceSelect.value === 'host' ? 'host' : 'official';
+                try {
+                    const response = await fetch('/api/settings/update-source', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ update_source: choice }),
+                    });
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save');
+                    if (window.showToast) {
+                        window.showToast('Update source set to ' + choice.toUpperCase(), 'success');
+                    }
+                } catch (error) {
+                    if (window.showToast) window.showToast(String(error.message || error), 'error');
+                    loadUpdateSource();
+                }
+            });
+            loadUpdateSource();
+        }
         if (autoEnabled) load(false);
         else showManualOnly();
     }

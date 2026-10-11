@@ -590,10 +590,14 @@ async function requestWorkerSelfUpdate(workerId, btn) {
         btn.textContent = '…';
     }
     try {
+        const wk = (deviceWorkers || []).find(function (w) {
+            return String((w && w.worker_id) || '') === wid;
+        });
+        const source = String((wk && wk.update_source) || 'official').toLowerCase() === 'host' ? 'host' : 'official';
         const r = await fetch('/api/workers/self-update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ target: wid, submitted_by: 'jobs-ui' }),
+            body: JSON.stringify({ target: wid, submitted_by: 'jobs-ui', update_source: source }),
         });
         const data = await r.json().catch(function () { return {}; });
         if (!r.ok || !data.success) {

@@ -120,6 +120,7 @@ async function probeAndResolve(parsed) {
 /** Apply a connected target and persist its endpoint policy in one place. */
 function applyConnectTarget({ host, httpPort, httpsPort, clientMode, policy }) {
     applyDesktopTarget({ host, httpPort, httpsPort, clientMode });
+    const existing = loadDesktopConfig();
     saveDesktopConfig({
         mode: clientMode ? 'client' : 'local',
         host,
@@ -128,7 +129,10 @@ function applyConnectTarget({ host, httpPort, httpsPort, clientMode, policy }) {
         scheme: policy.scheme,
         endpoint: policy,
         lastError: '',
-        workerMode: loadDesktopConfig().workerMode !== false,
+        workerMode: existing.workerMode !== false,
+        // Default the update channel to the paired Host (Scenario B); an
+        // explicit user choice of 'official' is preserved.
+        updateSource: String(existing.updateSource || '').toLowerCase() === 'official' ? 'official' : 'host',
     });
 }
 
@@ -567,6 +571,8 @@ function publicDesktopConfig() {
         httpPort: FLASK_HTTP_PORT,
         httpsPort: FLASK_HTTPS_PORT,
         scheme: cfg.scheme || '',
+        // Configured update channel ('host' | 'official'); empty = infer from role.
+        updateSource: String(cfg.updateSource || ''),
         // Selected-endpoint policy for web clients (pool-switch companion
         // resolution): kind/single/companion-known. Absent on legacy configs.
         endpoint: cfg.endpoint || null,

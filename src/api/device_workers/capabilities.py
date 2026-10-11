@@ -245,6 +245,18 @@ def git_upstream() -> str:
     return _git_stdout("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
 
 
+def update_source() -> str:
+    """This device's update channel from settings: 'official' or 'host'."""
+    try:
+        from managers.settings_manager import get_settings_manager
+
+        block = get_settings_manager().get_setting("device_workers") or {}
+        src = str((block or {}).get("update_source") or "official").strip().lower()
+        return "host" if src == "host" else "official"
+    except Exception:
+        return "official"
+
+
 def git_revs_differ(a: str, b: str) -> bool:
     """True when both revs are present and do not refer to the same commit."""
     left = (a or "").strip().lower()
@@ -373,6 +385,7 @@ def collect_capabilities(
         "boot_git_rev": boot,
         "git_branch": git_branch(),
         "git_upstream": git_upstream(),
+        "update_source": update_source(),
         "boot_at": boot_at(),
         "stale_process": bool(boot and disk_rev and git_revs_differ(boot, disk_rev)),
     }
