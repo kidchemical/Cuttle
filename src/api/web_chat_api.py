@@ -5,11 +5,9 @@ Connects the landing page to the local bot functionality
 """
 
 import json
-import asyncio
 import threading
 import time
 import re
-from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context, make_response, redirect
 from flask_cors import CORS
 import sys
@@ -19,10 +17,6 @@ import uuid
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, Optional
-
-# Imports for SSL certificate generation
-import ssl
-from datetime import datetime
 
 # Add project root to path (parent of api directory, which is 'src')
 script_dir = Path(__file__).parent
@@ -69,9 +63,7 @@ from core.runtime_paths import query_logs_dir as _query_logs_dir
 
 
 from api.chat_status_phases import (
-    PHASE_LLM,
     PHASE_ROUTE,
-    PHASE_TOOL,
     emit_pipeline_status,
 )
 
@@ -97,7 +89,7 @@ except ImportError as e:
 
 # Import authentication
 try:
-    from api.auth_api import auth_bp
+    from api.auth_api import auth_bp, pairing_bp
     from api.auth_db import get_auth_db
     from api.auth_session import get_request_session_token
 except ImportError as e:
@@ -233,7 +225,6 @@ from api.http_authz import (
     is_owner_user,
     loopback_or_authenticated,
     loopback_or_owner,
-    loopback_required,
     owner_required,
     request_is_loopback,
     require_authenticated,
@@ -247,6 +238,10 @@ _require_session_actor = require_session_actor
 
 # Register authentication blueprint
 app.register_blueprint(auth_bp)
+try:
+    app.register_blueprint(pairing_bp)
+except Exception as _pairing_routes_err:
+    print(f"[PAIRING] Failed to register routes: {_pairing_routes_err}")
 
 from api.usage_live import usage_live_bp
 app.register_blueprint(usage_live_bp)
@@ -257,6 +252,13 @@ try:
     app.register_blueprint(workers_bp)
 except Exception as _workers_err:
     print(f"[DEVICE_WORKERS] Failed to register routes: {_workers_err}")
+
+# Shared media HTTP (file operations and route behavior owned by api.shared_media)
+try:
+    from api.shared_media import shared_media_bp
+    app.register_blueprint(shared_media_bp)
+except Exception as _shared_media_err:
+    print(f"[SHARED MEDIA] Failed to register routes: {_shared_media_err}")
 
 # Unified Jobs surface (read model + control in api.jobs; bootstrap only here)
 try:
@@ -361,12 +363,65 @@ try:
 except Exception as _git_err:
     print(f"[GIT] Failed to register routes: {_git_err}")
 
+# Phase 6A route families
+try:
+    from api.agent_router.routes import agent_router_bp
+    app.register_blueprint(agent_router_bp)
+except Exception as _router_err:
+    print(f"[ROUTER] Failed to register routes: {_router_err}")
+try:
+    from api.agent_harness.routes import agent_harness_bp, configure_context_routes
+    configure_context_routes(lambda data: _resolve_request_project_path(data), lambda session: _require_session_actor(session))
+    app.register_blueprint(agent_harness_bp)
+except Exception as _harness_routes_err:
+    print(f"[AGENT HARNESS] Failed to register routes: {_harness_routes_err}")
+try:
+    from api.settings_routes import provider_keys_bp
+    app.register_blueprint(provider_keys_bp)
+except Exception as _provider_keys_err:
+    print(f"[PROVIDER KEYS] Failed to register routes: {_provider_keys_err}")
+
 # Claude Code palette pins (owned by the Claude agent slice)
 try:
     from api.agent_harness.agents.claude.routes import claude_bp
     app.register_blueprint(claude_bp)
 except Exception as _claude_err:
     print(f"[CLAUDE] Failed to register routes: {_claude_err}")
+
+# Muse Code palette pins (owned by the Muse agent slice)
+try:
+    from api.agent_harness.agents.muse.routes import muse_bp
+    app.register_blueprint(muse_bp)
+except Exception as _muse_err:
+    print(f"[MUSE] Failed to register routes: {_muse_err}")
+
+# Hermes palette pins (owned by the Hermes agent slice)
+try:
+    from api.agent_harness.agents.hermes.routes import hermes_bp
+    app.register_blueprint(hermes_bp)
+except Exception as _hermes_err:
+    print(f"[HERMES] Failed to register routes: {_hermes_err}")
+
+# Codex palette pins (owned by the Codex agent slice)
+try:
+    from api.agent_harness.agents.codex.routes import codex_bp
+    app.register_blueprint(codex_bp)
+except Exception as _codex_err:
+    print(f"[CODEX] Failed to register routes: {_codex_err}")
+
+# OpenCode palette pins (owned by the OpenCode agent slice)
+try:
+    from api.agent_harness.agents.opencode.routes import opencode_bp
+    app.register_blueprint(opencode_bp)
+except Exception as _opencode_err:
+    print(f"[OPENCODE] Failed to register routes: {_opencode_err}")
+
+# Cursor Agent model palette (owned by the Cursor agent slice)
+try:
+    from api.agent_harness.agents.cursor.routes import cursor_bp
+    app.register_blueprint(cursor_bp)
+except Exception as _cursor_err:
+    print(f"[CURSOR] Failed to register routes: {_cursor_err}")
 
 # Router editor decision-only tools (transport in api.agent_router.routes)
 try:
@@ -375,12 +430,31 @@ try:
 except Exception as _router_editor_err:
     print(f"[ROUTER] Failed to register editor routes: {_router_editor_err}")
 
+# Supervised task HTTP transport (task policy and storage stay in the owner).
+try:
+    from api.agent_router.supervised.routes import supervised_bp
+    app.register_blueprint(supervised_bp)
+except Exception as _supervised_routes_err:
+    print(f"[SUPERVISED] Failed to register routes: {_supervised_routes_err}")
+
 # Chat activity push stream (transport in api.activity_stream)
 try:
     from api.activity_stream import activity_bp
     app.register_blueprint(activity_bp)
 except Exception as _activity_err:
     print(f"[ACTIVITY] Failed to register routes: {_activity_err}")
+
+try:
+    from api.mobile_companion import mobile_companion_bp
+    app.register_blueprint(mobile_companion_bp)
+except Exception as _mobile_companion_err:
+    print(f"[MOBILE] Failed to register companion routes: {_mobile_companion_err}")
+
+try:
+    from api.flask_restart import flask_restart_bp
+    app.register_blueprint(flask_restart_bp)
+except Exception as _flask_restart_err:
+    print(f"[FLASK RESTART] Failed to register routes: {_flask_restart_err}")
 
 try:
     from api.jev.watch import ensure_started as _jev_watch_start
@@ -476,10 +550,6 @@ _chat_live_status = _live_status_svc._STORE
 _chat_live_status_lock = _live_status_svc._LOCK
 _CHAT_LIVE_STATUS_TTL = _live_status_svc.TTL_SECONDS
 _CHAT_LIVE_STATUS_CONNECTING_TTL = _live_status_svc.CONNECTING_TTL_SECONDS
-
-
-def _live_status_ttl_seconds(entry: dict) -> float:
-    return _live_status_svc._ttl_seconds(entry)
 
 # Serialize local LLM (Ollama) requests: Ollama processes one request at a time per model.
 # When multiple pipelines call Ollama, later requests wait; we emit "Waiting for local LLM..." for the UI.
@@ -620,15 +690,6 @@ def emit_chat_status(session_id: str, message: str) -> None:
     )
 
 
-def _require_mobile_token(token: Optional[str]) -> bool:
-    """Validate the mobile companion shared token."""
-    try:
-        from api.mobile_companion import verify_mobile_token
-        return verify_mobile_token(token)
-    except Exception:
-        return False
-
-
 def _emit_chat_complete_mobile(session_id: str, result: dict) -> None:
     try:
         from api.mobile_companion import chat_complete_payload, emit_mobile_event
@@ -674,24 +735,6 @@ def _rewrite_assistant_response_actions(res: Optional[dict], session_id, project
         rewrite_assistant_response_actions as _owned_rewrite,
     )
     return _owned_rewrite(res, session_id, project_path or '')
-
-
-def _persist_auth_launch_gate_reply(db, chat_session_id, user_message: str, launch_reply: dict) -> None:
-    """Save button-click + launch-gate assistant reply for authenticated web chat."""
-    if not db or chat_session_id is None or not launch_reply:
-        return
-    hist_user, user_meta = _button_click_history(user_message)
-    asst_meta = {'type': launch_reply.get('type')}
-    try:
-        db.add_message(chat_session_id, 'user', hist_user, metadata=user_meta)
-        db.add_message(
-            chat_session_id,
-            'assistant',
-            launch_reply.get('response', '') or '',
-            metadata=asst_meta if asst_meta.get('type') else None,
-        )
-    except Exception as e:
-        print(f"[CHAT] persist launch-gate reply failed: {e}")
 
 
 def process_message_with_bot(
@@ -1264,96 +1307,6 @@ def _with_muse_chat_context(prompt: str, chat_session_id=None) -> str:
     if not blocks:
         return prompt
     return "\n\n".join(blocks) + "\n\n---\n\n" + prompt
-
-
-@app.route('/api/mobile/events', methods=['GET'])
-def mobile_events_stream():
-    """SSE stream for the Capacitor mobile app (and Android companion). Query params: device_id, token"""
-    try:
-        device_id = (request.args.get('device_id') or '').strip()
-        token = (request.args.get('token') or '').strip()
-        if not device_id:
-            return jsonify({'success': False, 'error': 'device_id required'}), 400
-        if not _require_mobile_token(token):
-            return jsonify({'success': False, 'error': 'unauthorized'}), 401
-
-        from api.mobile_companion import register_device_queue, unregister_device_queue
-        q = register_device_queue(device_id)
-        print(f"[MOBILE] SSE connected device_id={device_id}", flush=True)
-
-        def generate():
-            yield f"data: {json.dumps({'type': 'status', 'message': 'connected', 'device_id': device_id})}\n\n"
-            last_keepalive = time.time()
-            try:
-                while True:
-                    try:
-                        ev = q.get(timeout=1.0)
-                    except Exception:
-                        if time.time() - last_keepalive > 10:
-                            yield ": keepalive\n\n"
-                            last_keepalive = time.time()
-                        continue
-                    yield f"data: {ev.to_sse_data()}\n\n"
-            finally:
-                try:
-                    unregister_device_queue(device_id)
-                except Exception:
-                    pass
-
-        return Response(
-            stream_with_context(generate()),
-            mimetype='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'X-Accel-Buffering': 'no',
-                'Connection': 'keep-alive'
-            }
-        )
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/mobile/poll', methods=['GET'])
-def mobile_events_poll():
-    """Short JSON long-poll for the Capacitor app. Query: device_id, token, timeout (1-25)."""
-    try:
-        device_id = (request.args.get('device_id') or '').strip()
-        token = (request.args.get('token') or '').strip()
-        if not device_id:
-            return jsonify({'success': False, 'error': 'device_id required'}), 400
-        if not _require_mobile_token(token):
-            return jsonify({'success': False, 'error': 'unauthorized'}), 401
-        try:
-            timeout_s = int(request.args.get('timeout') or 20)
-        except (TypeError, ValueError):
-            timeout_s = 20
-        timeout_s = max(0, min(25, timeout_s))
-        from api.mobile_companion import drain_events
-        wait = 0.05 if timeout_s <= 0 else float(timeout_s)
-        events = drain_events(device_id, timeout_s=wait)
-        return jsonify({'success': True, 'events': events})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/mobile/reply', methods=['POST'])
-def mobile_submit_reply():
-    """Reply endpoint for Android notification actions. Body: { token, interaction_id, answer }"""
-    try:
-        data = request.get_json() or {}
-        token = (data.get('token') or '').strip()
-        if not _require_mobile_token(token):
-            return jsonify({'success': False, 'error': 'unauthorized'}), 401
-        interaction_id = (data.get('interaction_id') or '').strip()
-        answer = (data.get('answer') or '').strip()
-        if not interaction_id or not answer:
-            return jsonify({'success': False, 'error': 'interaction_id and answer required'}), 400
-
-        from api.mobile_companion import submit_interaction_answer
-        ok = submit_interaction_answer(interaction_id, answer)
-        return jsonify({'success': ok})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 def _generate_chat_stream(process_fn, session_id_for_status, on_result=None, on_claimed=None):
@@ -2417,81 +2370,6 @@ def serve_output(filename):
     return resp
 
 
-@app.route('/api/shared-media/stage', methods=['POST'])
-@owner_required
-def api_shared_media_stage():
-    """Copy a local image/video into /output/shared/ for chat previews (LAN-safe)."""
-    try:
-        from api.shared_media import stage_file
-
-        data = request.get_json(silent=True) or {}
-        raw_path = (data.get('path') or data.get('src') or '').strip()
-        if not raw_path:
-            return jsonify({'success': False, 'error': 'path required'}), 400
-        preferred = (data.get('filename') or data.get('name') or '').strip() or None
-        result = stage_file(raw_path, preferred_name=preferred)
-        status = 200 if result.get('success') else 400
-        return jsonify(result), status
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/shared-media/poster', methods=['POST', 'GET'])
-@authenticated_required
-def api_shared_media_poster():
-    """Ensure a mid-frame poster exists for a staged /output/shared video."""
-    try:
-        from api.shared_media import ensure_poster_for_shared_url
-
-        if request.method == 'GET':
-            url = (request.args.get('url') or request.args.get('src') or '').strip()
-        else:
-            data = request.get_json(silent=True) or {}
-            url = (data.get('url') or data.get('src') or '').strip()
-        if not url:
-            return jsonify({'success': False, 'error': 'url required'}), 400
-        result = ensure_poster_for_shared_url(url)
-        status = 200 if result.get('success') else 400
-        return jsonify(result), status
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/shared-media/meta', methods=['GET', 'POST'])
-@authenticated_required
-def api_shared_media_meta():
-    """Return original filename/path for a staged /output/shared media URL."""
-    try:
-        from api.shared_media import read_stage_meta
-
-        if request.method == 'GET':
-            url = (request.args.get('url') or request.args.get('src') or '').strip()
-        else:
-            data = request.get_json(silent=True) or {}
-            url = (data.get('url') or data.get('src') or '').strip()
-        if not url:
-            return jsonify({'success': False, 'error': 'url required'}), 400
-        result = read_stage_meta(url)
-        status = 200 if result.get('success') else 400
-        return jsonify(result), status
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/shared-media/purge', methods=['POST', 'GET'])
-def api_shared_media_purge():
-    """Delete staged shared-media files older than TTL (default 7 days)."""
-    _user, err = loopback_or_owner()
-    if err:
-        return err
-    try:
-        from api.shared_media import purge_expired
-
-        result = purge_expired()
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
 @app.route('/logs/')
 def serve_logs_directory():
     """Serve the logs directory listing"""
@@ -2510,341 +2388,18 @@ def serve_logs(filename):
     )
     return resp
 
-@app.route('/api/test-api-key', methods=['POST'])
-@owner_required
-def test_api_key():
-    """Test an API key for validity"""
-    try:
-        data = request.get_json()
-        api_type = data.get('api_type')
-        api_key = (data.get('api_key') or '').strip()
-        # OpenRouter's management key is owned by api.openrouter_management
-        # (env then <home>/.env). Empty input tests the saved key and reports
-        # the live credit balance.
-        if api_type == 'openrouter':
-            from api import openrouter_management
-            result = openrouter_management.probe(api_key or None)
-            return jsonify({
-                'success': bool(result.get('success')),
-                'message': result.get('message') or 'OpenRouter test failed',
-            })
-
-        # Empty input tests the saved key (env, then <home>/.env).
-        saved_names = {
-            'openai': ('OPENAI_API_KEY', 'API_KEY'),
-            'anthropic': ('ANTHROPIC_API_KEY',),
-            'discord': ('DISCORD_BOT_TOKEN', 'DISCORD_TOKEN'),
-            'elevenlabs': ('ELEVENLABS_API_KEY',),
-            'google': ('GEMINI_API_KEY', 'GOOGLE_API_KEY'),
-        }
-        if not api_key and api_type in saved_names:
-            api_key = _read_env_credential(saved_names[api_type])
-            if not api_key:
-                return jsonify({
-                    'success': False,
-                    'message': 'No key saved. Paste a key to test it.'
-                }), 400
-
-        print(f"[API_TEST] Testing {api_type} key")
-
-        if not api_type or not api_key:
-            return jsonify({
-                'success': False,
-                'message': 'API type and key are required'
-            }), 400
-        
-        if api_type == 'openai':
-            return test_openai_key(api_key)
-        elif api_type == 'anthropic':
-            return test_anthropic_key(api_key)
-        elif api_type == 'discord':
-            return test_discord_key(api_key)
-        elif api_type in ('elevenlabs', 'google'):
-            from api.tts_providers import check_key
-            ok, message = check_key(api_type, api_key)
-            return jsonify({'success': ok, 'message': message})
-        else:
-            return jsonify({
-                'success': False,
-                'message': f'Unknown API type: {api_type}'
-            }), 400
-            
-    except Exception as e:
-        print(f"[API_TEST] Error: {e}")
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 500
-
-def test_openai_key(api_key):
-    """Authenticated metadata read through the provider adapter; no generation."""
-    from api.model_providers.service import check_key
-    ok, message = check_key("openai", api_key)
-    return jsonify({'success': ok, 'message': message})
 
 
-def test_anthropic_key(api_key):
-    from api.model_providers.service import check_key
-    ok, message = check_key("anthropic", api_key)
-    return jsonify({'success': ok, 'message': message})
 
 
-def test_discord_key(token):
-    """Test Discord bot token"""
-    try:
-        print("[DISCORD_TEST] Starting test")
-        import requests
-        
-        # Validate token format first
-        if not token or len(token) < 50:
-            print("[DISCORD_TEST] Invalid format")
-            return jsonify({
-                'success': False,
-                'message': 'Invalid token format. Discord bot tokens should be longer'
-            })
-        
-        # Test the token by making a request to Discord's API
-        headers = {
-            'Authorization': f'Bot {token}',
-            'Content-Type': 'application/json'
-        }
-        
-        print(f"[DISCORD_TEST] Making API call to Discord...")
-        # Try to get bot information
-        response = requests.get(
-            'https://discord.com/api/v10/users/@me',
-            headers=headers,
-            timeout=10
-        )
-        
-        print(f"[DISCORD_TEST] Response status: {response.status_code}")
-        
-        if response.status_code == 200:
-            bot_data = response.json()
-            print(f"[DISCORD_TEST] Success! Bot: {bot_data.get('username', 'Unknown')}")
-            return jsonify({
-                'success': True,
-                'message': f'Valid Discord bot token (Bot: {bot_data.get("username", "Unknown")})'
-            })
-        elif response.status_code == 401:
-            print(f"[DISCORD_TEST] Auth failed")
-            return jsonify({
-                'success': False,
-                'message': 'Invalid Discord bot token'
-            })
-        else:
-            print(f"[DISCORD_TEST] HTTP error: {response.status_code}")
-            return jsonify({
-                'success': False,
-                'message': f'Discord API error: HTTP {response.status_code}'
-            })
-            
-    except requests.exceptions.Timeout as e:
-        print(f"[DISCORD_TEST] Timeout: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Request timed out. Please check your connection'
-        })
-    except requests.exceptions.RequestException as e:
-        print(f"[DISCORD_TEST] Request error: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'Network error: {str(e)}'
-        })
-    except Exception as e:
-        print(f"[DISCORD_TEST] General error: {e}")
-        return jsonify({
-            'success': False,
-            'message': f'Discord API error: {str(e)}'
-        })
-
-@app.route('/api/save-api-key', methods=['POST'])
-@owner_required
-def save_api_key():
-    """Save an API key securely.
-
-    Only the named credential is modified; every other line of ``<home>/.env``
-    (comments, blanks, ``export`` prefixes, unrelated keys) is preserved.
-    ``DISCORD_BOT_TOKEN`` is the canonical settings key — saving a Discord
-    token also clears a legacy ``DISCORD_TOKEN`` line so a stale shadowed
-    value cannot win at runtime. Saved values are applied to
-    ``os.environ`` immediately so new requests pick them up without a
-    Flask restart.
-    """
-    try:
-        data = request.get_json() or {}
-        api_type = (data.get('api_type') or '').strip().lower()
-        api_key = (data.get('api_key') or '').strip()
-
-        _key_names = {
-            'openai': 'OPENAI_API_KEY',
-            'anthropic': 'ANTHROPIC_API_KEY',
-            'discord': 'DISCORD_BOT_TOKEN',
-            'elevenlabs': 'ELEVENLABS_API_KEY',
-            'google': 'GEMINI_API_KEY',
-            'openrouter': 'OPENROUTER_MANAGEMENT_KEY',
-        }
-        if api_type not in _key_names:
-            return jsonify({
-                'success': False,
-                'message': f'Unknown API type: {data.get("api_type")}'
-            }), 400
-        if not api_key:
-            return jsonify({
-                'success': False,
-                'message': 'API type and key are required'
-            }), 400
-        if '•' in api_key or '…' in api_key:
-            # Display hints are not credentials — refuse to store one.
-            return jsonify({
-                'success': False,
-                'message': 'That looks like a masked hint, not a credential. Type or paste the full key.'
-            }), 400
-
-        env_name = _key_names[api_type]
-        env_file = _env_file()
-
-        lines: list = []
-        if env_file.exists():
-            with open(env_file, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-
-        found = False
-        out_lines: list = []
-        for line in lines:
-            stripped = line.strip()
-            # Preserve comments, blanks, and non-assignment lines verbatim.
-            if not stripped or stripped.startswith('#') or '=' not in line:
-                out_lines.append(line if line.endswith('\n') else line + '\n')
-                continue
-            lhs, _, _rhs = line.partition('=')
-            lhs_name = lhs.strip()
-            # Drop `export ` prefix when comparing, preserve it on write.
-            bare = lhs_name[7:].strip() if lhs_name.startswith('export ') else lhs_name
-            if bare == env_name:
-                prefix = lhs[:len(lhs) - len(lhs_name)] + (
-                    lhs_name[:len(lhs_name) - len(bare)] if bare != lhs_name else ''
-                )
-                out_lines.append(f'{prefix}{env_name}={api_key}\n')
-                found = True
-            elif api_type == 'discord' and bare == 'DISCORD_TOKEN':
-                # Converge on the canonical settings key; a legacy line
-                # would otherwise shadow the saved value at runtime.
-                continue
-            else:
-                out_lines.append(line if line.endswith('\n') else line + '\n')
-        if not found:
-            out_lines.append(f'{env_name}={api_key}\n')
-
-        env_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(env_file, 'w', encoding='utf-8') as f:
-            f.writelines(out_lines)
-
-        # Apply immediately for new requests (no Flask restart needed).
-        os.environ[env_name] = api_key
-        if api_type == 'discord':
-            os.environ.pop('DISCORD_TOKEN', None)
-
-        return jsonify({
-            'success': True,
-            'message': f'{api_type} API key saved successfully',
-            'configured': {api_type: True},
-            'hint': {api_type: _mask_credential_for_display(api_key)},
-        })
-
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 500
 
 
-def _mask_credential_for_display(value: str) -> str:
-    """Presence hint for a stored secret — never the secret itself."""
-    v = (value or '').strip()
-    if not v:
-        return ''
-    if len(v) < 12:
-        return '••••••••'
-    return f'{v[:4]}••••••••{v[-4:]}'
 
 
-def _read_env_credential(names) -> str:
-    """First non-empty value for one of ``names`` (env, then ``<home>/.env``)."""
-    if isinstance(names, str):
-        names = (names,)
-    for name in names:
-        v = (os.environ.get(name) or '').strip()
-        if v:
-            return v
-    try:
-        env_file = _env_file()
-        if env_file.exists():
-            with open(env_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    stripped = line.strip()
-                    if not stripped or stripped.startswith('#') or '=' not in line:
-                        continue
-                    lhs, _, rhs = line.partition('=')
-                    bare = lhs.strip()
-                    if bare.startswith('export '):
-                        bare = bare[7:].strip()
-                    if bare in names:
-                        v = rhs.strip().strip('"').strip("'")
-                        if v:
-                            return v
-    except OSError:
-        pass
-    return ''
 
 
-@app.route('/api/load-api-keys')
-@owner_required
-def load_api_keys():
-    """Credential-presence indicators for the Settings UI.
 
-    Never returns full secrets — only masked hints plus ``configured``
-    flags. The browser cannot reconstruct a key from this response; to
-    change a credential, POST the new value to ``/api/save-api-key``.
-    """
-    try:
-        openai_val = _read_env_credential('OPENAI_API_KEY')
-        anthropic_val = _read_env_credential('ANTHROPIC_API_KEY')
-        # Runtime precedence accepts the legacy name; the settings UI
-        # converges saves onto DISCORD_BOT_TOKEN (see save_api_key).
-        discord_val = _read_env_credential(('DISCORD_BOT_TOKEN', 'DISCORD_TOKEN'))
-        elevenlabs_val = _read_env_credential('ELEVENLABS_API_KEY')
-        google_val = _read_env_credential(('GEMINI_API_KEY', 'GOOGLE_API_KEY'))
-        # Owned by api.openrouter_management (env then <home>/.env).
-        from api import openrouter_management
-        openrouter_val = openrouter_management.management_key()
 
-        hints = {
-            'openai': _mask_credential_for_display(openai_val),
-            'anthropic': _mask_credential_for_display(anthropic_val),
-            'discord': _mask_credential_for_display(discord_val),
-            'elevenlabs': _mask_credential_for_display(elevenlabs_val),
-            'google': _mask_credential_for_display(google_val),
-            'openrouter': _mask_credential_for_display(openrouter_val),
-        }
-        return jsonify({
-            'success': True,
-            'api_keys': hints,
-            'configured': {
-                'openai': bool(openai_val),
-                'anthropic': bool(anthropic_val),
-                'discord': bool(discord_val),
-                'elevenlabs': bool(elevenlabs_val),
-                'google': bool(google_val),
-                'openrouter': bool(openrouter_val),
-            },
-        })
-
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 500
 
 def _parse_auth_db_session_id(chat_session_id):
     """Accept bare ints, ``db_session_<id>``, or ``CH-000155`` from clients."""
@@ -4050,324 +3605,46 @@ def chat_endpoint():
         # Must run even while a child worker is active; never waits on chat busy
         # or the pending-prompt queue (frontend also bypasses for these).
         #
-        # Exactly-once contract:
-        #   parse → authorize → mutate once → persist control id → terminal return.
-        # Never fall through into router/agent dispatch after recognizing a control
-        # command (even if post-mutation persist/formatting fails).
-        _sup_control_recognized = False
-        try:
-            from api.agent_router.supervised.control import (
-                classify_supervised_message,
-                is_supervised_control_message,
-                strip_sticky_agent_prefix as _strip_sup,
-            )
-            from api.agent_router.supervised.commands import (
-                handle_coordinate_command as _h_coord_task,
-                handle_coordinator_command as _h_coord_cfg,
-            )
+        # Exactly-once contract: classify/authorize/mutate/persist/terminal-return
+        # owned by api.chat_turn_workflow.run_supervised_control_lane; the route
+        # only frames SSE and jsonify. A recognized control always returns a body.
+        from api.chat_turn_workflow import (
+            run_supervised_control_lane as _run_supervised_control_lane,
+        )
 
-            _sup_msg = _strip_sup(message_content)
-            if is_supervised_control_message(_sup_msg):
-                _sup_control_recognized = True
-                message_content = _sup_msg
-                # Authorize / resolve session BEFORE mutation or _auth_user use.
-                _auth_user, chat_session_id, _created_new_session = _resolve_auth_chat_session(
-                    chat_session_id
+        _sup_body = _run_supervised_control_lane(
+            message_content,
+            session_id=chat_session_id,
+            data=data,
+            control_id_header=request.headers.get('X-Cuttle-Control-Id'),
+            resolve_auth_chat_session=_resolve_auth_chat_session,
+            resolve_project_path=_resolve_request_project_path,
+            get_auth_db=get_auth_db,
+        )
+        if _sup_body is not None:
+            _sup_sid = _sup_body.get('session_id', chat_session_id)
+            if wants_stream:
+                def _sup_control_stream():
+                    yield _sse_session_event(_sup_sid)
+                    yield f"data: {json.dumps({'type': 'response', **_sup_body}, ensure_ascii=False, default=str)}\n\n"
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                return Response(
+                    stream_with_context(_sup_control_stream()),
+                    mimetype="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "X-Accel-Buffering": "no",
+                        "Connection": "keep-alive",
+                    },
                 )
-                _kind, _args = classify_supervised_message(message_content)
-                _router_proj = _resolve_request_project_path({
-                    **(data or {}),
-                    'session_id': chat_session_id if chat_session_id is not None else data.get('session_id'),
-                })
-                _control_id = (
-                    (data or {}).get('control_request_id')
-                    or (data or {}).get('idempotency_key')
-                    or request.headers.get('X-Cuttle-Control-Id')
-                    or ''
-                )
-                _control_id = str(_control_id or '').strip()
-                # For /coordinate <prompt> starts: persist the user row first so the
-                # canonical coordinator bubble is created after it (correct order).
-                _pre_user_id = None
-                _is_coord_start = (
-                    _kind == "coordinate_start"
-                    and _auth_user
-                    and chat_session_id is not None
-                    and bool((_args or "").strip())
-                )
-                if _is_coord_start:
-                    try:
-                        _pre_user_id = get_auth_db().add_message(
-                            chat_session_id,
-                            "user",
-                            message_content,
-                            metadata={
-                                "origin": "supervised_control",
-                                "control_request_id": _control_id or None,
-                                "control_lane": True,
-                            },
-                        )
-                    except Exception as _upe:
-                        print(f"[CHAT] pre-persist supervised user failed: {_upe}")
-                if _kind == "coordinator_control":
-                    _sr = _h_coord_cfg(_args or "", session_id=chat_session_id) or {}
-                else:
-                    _sr = _h_coord_task(
-                        _args or "",
-                        session_id=chat_session_id,
-                        project_path=_router_proj,
-                        control_request_id=_control_id or None,
-                    ) or {}
-                _sr = dict(_sr)
-                if _pre_user_id is not None:
-                    _sr["parent_user_message_id"] = _pre_user_id
-                    _sr["user_message_id"] = _pre_user_id
-                    if _sr.get("task_id"):
-                        try:
-                            from api.agent_router.supervised.bubble import bind_canonical_bubble
-                            from api.agent_router.supervised.orchestrator import (
-                                ensure_canonical_response,
-                                update_canonical_response,
-                            )
-                            from api.agent_router.supervised.store import load_task as _lt0
+            return jsonify(_sup_body)
 
-                            _t0 = _lt0(_sr["task_id"])
-                            if _t0:
-                                bind_canonical_bubble(
-                                    _t0, parent_user_message_id=_pre_user_id
-                                )
-                                ensure_canonical_response(_t0)
-                                update_canonical_response(_t0, _sr.get("response"))
-                                _sr["coordinator_response_message_id"] = (
-                                    _t0.coordinator_response_message_id
-                                )
-                                _sr["assistant_message_id"] = (
-                                    _t0.coordinator_response_message_id
-                                )
-                        except Exception as _be:
-                            print(f"[CHAT] early bind supervised bubble failed: {_be}")
-                _sr["session_id"] = chat_session_id
-                _sr["control_lane"] = True
-                _sr["control_handled"] = True
-                if _control_id:
-                    _sr["control_request_id"] = _control_id
-                # Persist is best-effort AFTER mutation; failures must still return.
-                # Exactly-once history: never append a second user/assistant pair for
-                # an idempotent control_request_id or when delivery already owns the row.
-                _skip_persist = bool(
-                    _sr.get("skip_history_persist")
-                    or _sr.get("reconcile_only")
-                    or _sr.get("idempotent")
-                    or _sr.get("delivery_handled")
-                )
-                if (
-                    (not _skip_persist)
-                    and _auth_user
-                    and chat_session_id is not None
-                    and _sr.get("response")
-                ):
-                    try:
-                        _user_meta = {
-                            "origin": "supervised_control",
-                            "control_request_id": _control_id or None,
-                            "control_lane": True,
-                        }
-                        _uid = get_auth_db().add_message(
-                            chat_session_id,
-                            "user",
-                            message_content,
-                            metadata=_user_meta,
-                        )
-                        _asst_meta = {
-                            "origin": "supervised_control",
-                            "control_request_id": _control_id or None,
-                            "control_lane": True,
-                            "supervised_task_id": _sr.get("task_id"),
-                            "supervised_delivery_event_id": _sr.get(
-                                "supervised_delivery_event_id"
-                            ),
-                        }
-                        _aid = get_auth_db().add_message(
-                            chat_session_id,
-                            "assistant",
-                            _sr.get("response") or "",
-                            metadata=_asst_meta,
-                        )
-                        _sr["user_message_id"] = _uid
-                        _sr["assistant_message_id"] = _aid
-                        # Stamp control event with history ids when possible.
-                        if _control_id and _sr.get("task_id"):
-                            try:
-                                from api.agent_router.supervised.store import (
-                                    load_task as _lt,
-                                    record_control_event as _rce,
-                                )
-
-                                _t = _lt(_sr["task_id"])
-                                if _t:
-                                    _rce(
-                                        _t,
-                                        control_id=_control_id,
-                                        kind=str(_sr.get("type") or "control"),
-                                        result=_sr,
-                                        user_message_id=_uid,
-                                        assistant_message_id=_aid,
-                                    )
-                            except Exception:
-                                pass
-                    except Exception as _pe:
-                        print(f"[CHAT] persist supervised control failed: {_pe}")
-                        _sr["persist_error"] = str(_pe)[:200]
-                elif _skip_persist:
-                    _sr["history_reconcile_only"] = True
-                    # Canonical supervised bubble: persist the user turn once and
-                    # refresh the existing coordinator assistant row (never append).
-                    if (
-                        _auth_user
-                        and chat_session_id is not None
-                        and _sr.get("type") in (
-                            "supervised_started",
-                            "supervised_complete",
-                            "supervised_paid_blocked",
-                        )
-                        and _sr.get("task_id")
-                    ):
-                        try:
-                            from api.agent_router.supervised.bubble import bind_canonical_bubble
-                            from api.agent_router.supervised.orchestrator import (
-                                update_canonical_response,
-                            )
-                            from api.agent_router.supervised.store import load_task as _lt2
-
-                            _uid = None
-                            if not _sr.get("parent_user_message_id"):
-                                _uid = get_auth_db().add_message(
-                                    chat_session_id,
-                                    "user",
-                                    message_content,
-                                    metadata={
-                                        "origin": "supervised_control",
-                                        "control_request_id": _control_id or None,
-                                        "control_lane": True,
-                                        "supervised_task_id": _sr.get("task_id"),
-                                    },
-                                )
-                                _sr["parent_user_message_id"] = _uid
-                                _sr["user_message_id"] = _uid
-                            _t = _lt2(_sr["task_id"])
-                            if _t:
-                                bind_canonical_bubble(
-                                    _t,
-                                    parent_user_message_id=_sr.get("parent_user_message_id"),
-                                    coordinator_response_message_id=_sr.get(
-                                        "coordinator_response_message_id"
-                                    ),
-                                )
-                                update_canonical_response(_t, _sr.get("response"))
-                                _sr["coordinator_response_message_id"] = (
-                                    _t.coordinator_response_message_id
-                                )
-                                _sr["assistant_message_id"] = (
-                                    _t.coordinator_response_message_id
-                                )
-                        except Exception as _pe2:
-                            print(f"[CHAT] bind supervised canonical bubble failed: {_pe2}")
-                            _sr["persist_error"] = str(_pe2)[:200]
-                if wants_stream:
-                    def _sup_control_stream():
-                        yield _sse_session_event(chat_session_id)
-                        yield f"data: {json.dumps({'type': 'response', **_sr}, ensure_ascii=False, default=str)}\n\n"
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                    return Response(
-                        stream_with_context(_sup_control_stream()),
-                        mimetype="text/event-stream",
-                        headers={
-                            "Cache-Control": "no-cache",
-                            "X-Accel-Buffering": "no",
-                            "Connection": "keep-alive",
-                        },
-                    )
-                return jsonify(_sr)
-        except Exception as _sc_err:
-            print(f"[CHAT] supervised control handler failed: {_sc_err}", flush=True)
-            if _sup_control_recognized:
-                # Recognized control must NEVER fall through (prevents double apply).
-                _err_body = {
-                    'success': True,
-                    'response': (
-                        f"❌ Supervised control command failed after recognition: {_sc_err}. "
-                        "No further router/agent dispatch will run for this request."
-                    ),
-                    'type': 'supervised_control_error',
-                    'control_lane': True,
-                    'control_handled': True,
-                    'session_id': chat_session_id,
-                }
-                if wants_stream:
-                    def _sup_err_stream():
-                        yield _sse_session_event(chat_session_id)
-                        yield f"data: {json.dumps({'type': 'response', **_err_body}, ensure_ascii=False, default=str)}\n\n"
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                    return Response(
-                        stream_with_context(_sup_err_stream()),
-                        mimetype="text/event-stream",
-                        headers={
-                            "Cache-Control": "no-cache",
-                            "X-Accel-Buffering": "no",
-                            "Connection": "keep-alive",
-                        },
-                    )
-                return jsonify(_err_body)
-
-        # Check for slash commands
+        # Check for slash commands. `/help` text is owned by
+        # api.chat_turn_workflow.help_response (Phase 6B slice 4); the route
+        # only jsonifies.
         if message_content.startswith('/help'):
-            help_text = """**🦑 Cuttle Web Chat Commands**
-
-**Agent CLI commands:**
-• `/claude "prompt"` - Claude Code CLI
-• `/opencode "prompt"` - OpenCode CLI (`opencode run`, resumes per chat)
-• `/antigravity "prompt"` - Google Antigravity CLI (`agy`, auto-installs, resumes per chat)
-• `/cursor "prompt"` - Cursor Agent CLI (`agent -p`)
-• `/codex "prompt"` - OpenAI Codex CLI (`codex exec`, resumes per chat)
-• `/muse "prompt"` - Meta Muse Code CLI (`muse exec`, resumes per chat; native Windows / macOS / Linux)
-• `/muse model` - list Muse models; `/muse model muse-spark-1.3` pins one for this chat
-• `/muse effort` - list reasoning-effort levels; `/muse effort high` pins one for this chat
-• `/muse /usage` - Muse account + local session usage meters
-• `/codex /usage` - ChatGPT Codex plan windows (5-hour / weekly)
-• `/hermes /usage` - Hermes local insights (tokens, tools, models)
-• `/opencode /usage` - OpenCode local stats (cost, tools, models)
-• `/claude /usage` - Claude Code local session usage (tokens, models)
-• `/hermes "prompt"` - Hermes Agent using its configured provider
-• `/deepseek "prompt"` - DeepSeek Harness CLI (`dsh --profile headless`; Flash by default)
-
-**Agent router** (when no sticky agent is selected):
-• `/router status` - show mode, provider, default/escalation/fallbacks
-• `/router mode off|api|local|agent` - enable/disable routing brain
-• `/router evaluate <prompt>` - routing decision only (no agent run)
-• `/router evaluate batch [suite] --yes` - batch suite (routing brain only)
-• `/route <agent> <model> <prompt>` - one-task override
-• `/retry frontier` / `/retry fallback` - retry last failed routed turn
-
-**Flask restart** (daemon-owned; do not taskkill Flask yourself):
-• `/restart status` - daemon/Flask health + active tasks + pending restart
-• `/restart graceful` - restart only if idle
-• `/restart when-idle` - schedule after active work finishes
-• `/restart force --yes` - interrupt active work (requires confirmation)
-
-
-**Project commands** (from the chat project's ``.cuttle/commands/*.md``):
-• `/build`, `/deploy`, … — names come from each project
-• `/cmd <name>` — same, explicit form
-
-**Tips:**
-• Results show directly in chat; executions are logged in Query Reports"""
-            
-            return jsonify({
-                'success': True,
-                'response': help_text,
-                'session_id': chat_session_id,
-                'type': 'help'
-            })
+            from api.chat_turn_workflow import help_response as _help_response
+            return jsonify(_help_response(chat_session_id))
 
         # Authenticated chats: assign a DB session id before remaining slash-command
         # handlers so the first message (including /cursor) can update the URL immediately.
@@ -4476,335 +3753,113 @@ def chat_endpoint():
                 request_data=_current_request_data(),
             )
 
-        _launch_gate_sid = (
-            f"db_session_{chat_session_id}" if _auth_user and chat_session_id is not None
-            else (str(chat_session_id) if chat_session_id is not None else None)
+        # No-LLM launch gates — project-action confirm buttons and dynamic
+        # action forms. Owned by api.chat_turn_workflow.run_launch_gate_lane;
+        # the route only frames jsonify. Returns None for non-gate messages.
+        from api.chat_turn_workflow import (
+            run_launch_gate_lane as _run_launch_gate_lane,
         )
-        _mc_stripped = (message_content or '').strip()
 
-        # Project confirm actions (no LLM) — e.g. Discord post after <cuttle_confirm>.
-        if _launch_gate_sid and _mc_stripped.startswith('[button:project-action-'):
-            try:
-                from api.project_actions import handle_project_action_button
-                _action_reply = handle_project_action_button(
-                    _mc_stripped,
-                    session_id=str(_launch_gate_sid),
-                )
-            except Exception as _pa_err:
-                print(f"[CHAT] project action button failed: {_pa_err}", flush=True)
-                _action_reply = {
-                    'success': False,
-                    'response': f'Action failed: {_pa_err}',
-                    'type': 'project_action',
-                }
-            if _action_reply is not None:
-                body = dict(_action_reply)
-                body['session_id'] = chat_session_id
-                if _auth_user and chat_session_id is not None:
-                    try:
-                        _persist_auth_launch_gate_reply(
-                            get_auth_db(), chat_session_id, _mc_stripped, _action_reply
-                        )
-                    except Exception as _pe:
-                        print(f"[CHAT] persist project action reply failed: {_pe}", flush=True)
-                return jsonify(body)
-
-        # Dynamic action forms (no LLM) — choice / multi / form → allowlisted actions.
-        if _launch_gate_sid and _mc_stripped.startswith('[action-form:'):
-            try:
-                from api.action_forms import handle_action_form_chat_message
-                _form_reply = handle_action_form_chat_message(
-                    _mc_stripped,
-                    session_id=str(_launch_gate_sid),
-                )
-            except Exception as _af_err:
-                print(f"[CHAT] action form failed: {_af_err}", flush=True)
-                _form_reply = {
-                    'success': False,
-                    'response': f'Action form failed: {_af_err}',
-                    'type': 'action_form',
-                    'silent': False,
-                }
-            if _form_reply is not None:
-                body = dict(_form_reply)
-                body['session_id'] = chat_session_id
-                # Silent forms: toast + card lock only — no "Selected: …" user bubble.
-                if _auth_user and chat_session_id is not None and not body.get('silent'):
-                    try:
-                        _persist_auth_launch_gate_reply(
-                            get_auth_db(), chat_session_id, _mc_stripped, _form_reply
-                        )
-                    except Exception as _pe:
-                        print(f"[CHAT] persist action form reply failed: {_pe}", flush=True)
-                elif (
-                    _auth_user
-                    and chat_session_id is not None
-                    and body.get('silent')
-                    and body.get('success')
-                    and not body.get('reusable')
-                    and (body.get('lock') or 'form') == 'form'
-                    and body.get('form_id')
-                ):
-                    try:
-                        from api.action_forms import mark_action_form_consumed_in_history
-                        mark_action_form_consumed_in_history(
-                            session_id=f'db_session_{chat_session_id}',
-                            form_id=str(body.get('form_id')),
-                            selected=list(body.get('selected') or []),
-                            toast=str(body.get('toast') or ''),
-                        )
-                    except Exception as _pe:
-                        print(f"[CHAT] action form lock persist failed: {_pe}", flush=True)
-                return jsonify(body)
+        _launch_gate_body = _run_launch_gate_lane(
+            message_content,
+            session_id=chat_session_id,
+            auth_user=_auth_user,
+            get_auth_db=get_auth_db,
+            button_click_history=_button_click_history,
+        )
+        if _launch_gate_body is not None:
+            return jsonify(_launch_gate_body)
 
         # Expand project-local ``.cuttle/commands/*.md`` (e.g. /build, /cmd deploy).
         # Runs before /cursor handlers so ``/cursor /build`` becomes a full agent prompt.
-        try:
-            from api.project_commands import (
-                try_expand_message_project_command,
-                run_project_command_shell,
-                format_project_command_shell_reply,
-            )
-            _proj_path = _resolve_request_project_path({
-                **(data or {}),
-                'session_id': chat_session_id if chat_session_id is not None else data.get('session_id'),
-            })
-            _expanded = try_expand_message_project_command(message_content, _proj_path)
-            if _expanded and _expanded.get('action') == 'shell':
-                _cmd = _expanded.get('command') or {}
-                busy_resp = _reject_if_chat_busy(chat_session_id, wants_stream)
-                if busy_resp is not None:
-                    return busy_resp
-                result = run_project_command_shell(
-                    _cmd,
-                    _expanded.get('args') or '',
-                    session_id=chat_session_id,
-                )
-                body = format_project_command_shell_reply(_cmd, result)
-                reply = {
-                    'success': bool(result.get('success')),
-                    'response': body,
-                    'session_id': chat_session_id,
-                    'type': 'project_command',
-                }
-                if chat_session_id is not None:
-                    reply = _rewrite_assistant_response_actions(
-                        reply,
-                        f'db_session_{chat_session_id}',
-                        _proj_path or '',
-                    ) or reply
-                if _auth_user and chat_session_id is not None:
-                    try:
-                        _persist_user_turn(chat_session_id)
-                        _saver = _make_auth_assistant_saver(chat_session_id)
-                        if _saver:
-                            _saver({
-                                'success': bool(reply.get('success')),
-                                'response': reply.get('response') or body,
-                                'type': 'project_command',
-                            })
-                    except Exception as _pe:
-                        print(f"[CHAT] project command persist failed: {_pe}", flush=True)
-                return jsonify(reply)
-            if _expanded and _expanded.get('action') == 'prompt' and _expanded.get('message'):
-                print(
-                    f"[CHAT] project command /{(_expanded.get('command') or {}).get('name')} "
-                    f"expanded (sticky={_expanded.get('sticky')!r}) cwd={_proj_path!r}",
-                    flush=True,
-                )
-                message_content = _expanded['message']
-        except Exception as _pc_err:
-            print(f"[CHAT] project command expand failed: {_pc_err}", flush=True)
+        # Owned by api.chat_turn_workflow.run_shell_action_lane; the route keeps
+        # request capture, the busy SSE/409 transport and jsonify.
+        from api.chat_turn_workflow import (
+            run_shell_action_lane as _run_shell_action_lane,
+        )
 
-        # Agent router: /router (config), /route, /retry, /coordinator, /coordinate
-        try:
-            from api.agent_router.commands import (
-                parse_retry_command,
-                parse_route_command,
-                parse_router_command,
-            )
-            from api.agent_router.supervised.commands import (
-                parse_coordinate_command,
-                parse_coordinator_command,
-            )
-            from api.agent_router.supervised.control import (
-                is_coordinate_control,
-                is_supervised_control_message,
-            )
-            from api.agent_router.integration import handle_router_family_command
+        _shell_body, message_content, _shell_busy = _run_shell_action_lane(
+            message_content,
+            session_id=chat_session_id,
+            auth_user=_auth_user,
+            data=data,
+            resolve_project_path=_resolve_request_project_path,
+            persist_user_turn=_persist_user_turn,
+            make_saver=_make_auth_assistant_saver,
+            rewrite_actions=_rewrite_assistant_response_actions,
+        )
+        if _shell_busy:
+            busy_resp = _reject_if_chat_busy(chat_session_id, wants_stream)
+            if busy_resp is not None:
+                return busy_resp
+        if _shell_body is not None:
+            return jsonify(_shell_body)
 
-            _router_proj = _resolve_request_project_path({
-                **(data or {}),
-                'session_id': chat_session_id if chat_session_id is not None else data.get('session_id'),
-            })
-            _is_router_cfg = parse_router_command(message_content) is not None
-            _is_route_or_retry = (
-                parse_route_command(message_content) is not None
-                or parse_retry_command(message_content) is not None
+        # Agent router: /router (config), /route, /retry, /coordinator, /coordinate.
+        # Classification and both lanes are owned by api.chat_turn_workflow
+        # (Phase 6B slices 5-6); the route keeps request capture, the busy
+        # SSE/409 transport, SSE framing and jsonify.
+        from api.chat_turn_workflow import (
+            build_route_retry_stream_turn as _build_route_retry_stream_turn,
+            classify_router_family as _classify_router_family,
+            run_route_retry_sync_turn as _run_route_retry_sync_turn,
+            run_router_config_lane as _run_router_config_lane,
+        )
+
+        _router_family = _classify_router_family(
+            message_content,
+            data=data,
+            session_id=chat_session_id,
+            resolve_project_path=_resolve_request_project_path,
+        )
+        if _router_family['fallthrough_body'] is not None:
+            return jsonify(_router_family['fallthrough_body'])
+        _router_proj = _router_family['project_path']
+
+        if _router_family['router_cfg']:
+            _router_cfg_body = _run_router_config_lane(
+                message_content,
+                session_id=chat_session_id,
+                project_path=_router_proj,
+                auth_user=_auth_user,
+                persist_user_turn=_persist_user_turn,
+                get_auth_db=get_auth_db,
             )
-            # Control lane already handled earlier; keep classification for safety.
-            # Fallthrough of recognized control commands is forbidden (double-apply).
-            if is_supervised_control_message(message_content):
-                return jsonify({
-                    'success': True,
-                    'response': (
-                        '❌ Supervised control command was recognized but the early '
-                        'control lane did not return. Refusing fallthrough to prevent '
-                        'duplicate side effects.'
-                    ),
-                    'type': 'supervised_control_error',
-                    'control_lane': True,
-                    'control_handled': True,
-                    'session_id': chat_session_id,
-                })
-            if parse_coordinator_command(message_content) is not None:
-                _is_router_cfg = True
-            _coord_args = parse_coordinate_command(message_content)
-            if _coord_args is not None:
-                if is_coordinate_control(_coord_args):
-                    _is_router_cfg = True
-                else:
-                    _is_route_or_retry = True
-            if is_supervised_control_message(message_content):
-                _is_router_cfg = True
-                _is_route_or_retry = False
-        except Exception as _ar_err:
-            print(f"[CHAT] agent router parse failed: {_ar_err}", flush=True)
-            _is_router_cfg = False
-            _is_route_or_retry = False
-            _router_proj = None
+            return jsonify(_router_cfg_body)
 
-        if _is_router_cfg:
-            try:
-                from api.agent_router.integration import handle_router_family_command as _hrf
-                body = _hrf(
-                    message_content,
-                    session_id=chat_session_id,
-                    project_path=_router_proj,
-                ) or {}
-            except Exception as _ar_err:
-                body = {
-                    'success': True,
-                    'response': f'❌ **Agent router:** {_ar_err}',
-                    'type': 'router_error',
-                }
-            body = dict(body)
-            body['session_id'] = chat_session_id
-            if _auth_user and chat_session_id is not None:
-                try:
-                    _persist_user_turn(chat_session_id)
-                    get_auth_db().add_message(
-                        chat_session_id,
-                        'assistant',
-                        body.get('response') or '',
-                        metadata={'origin': 'agent_router'},
-                    )
-                except Exception as _pe:
-                    print(f"[CHAT] persist router reply failed: {_pe}")
-            return jsonify(body)
-
-        if _is_route_or_retry:
+        if _router_family['route_or_retry']:
             busy_resp = _reject_if_chat_busy(chat_session_id, wants_stream)
             if busy_resp is not None:
                 return busy_resp
             if wants_stream:
-                from api.chat_coordinator import (
-                    PreparedAgentTurn as _PreparedAgentTurn,
-                    StreamTurnIO as _StreamTurnIO,
-                )
-
-                def _stream_unreachable_router(_kind, _sel):
-                    raise RuntimeError('unreachable arm in router stream lane')
-
-                def _stream_run_router(status_queue=None):
-                    from api.agent_router.integration import handle_router_family_command as _hrf2
-                    return dict(_hrf2(
-                        message_content,
-                        session_id=chat_session_id,
-                        project_path=_router_proj,
-                        status_queue=status_queue,
-                    ) or {})
-
-                _stream_router_io = _StreamTurnIO(
-                    run_harness=_stream_unreachable_router,
-                    run_router=_stream_run_router,
-                    persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
-                    make_saver=lambda: _make_auth_assistant_saver(
-                        chat_session_id if _auth_user else None,
-                        project_path=_router_proj,
-                    ),
-                    notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
-                    format_shortcut=_stream_unreachable_router,
-                )
-                return _stream_agent_turn_response(
-                    _PreparedAgentTurn(
-                        message=message_content, session_id=chat_session_id,
-                        wants_stream=wants_stream,
-                        request_data=data or {}, project_path=_router_proj or '',
-                    ),
-                    io=_stream_router_io,
-                )
-            from api import chat_delivery as _chat_delivery
-            from api.chat_coordinator import (
-                AgentSelection as _AgentSelection,
-                AgentTurnIO as _AgentTurnIO,
-                PreparedAgentTurn as _PreparedAgentTurn,
-                submit_agent_turn as _submit_turn,
-            )
-            from api.chat_turn_workflow import (
-                result_kept_for_history as _result_kept_for_history,
-            )
-
-            def _guarded_router_saver():
-                _saver = _make_auth_assistant_saver(chat_session_id)
-                if _saver is None:
-                    return None
-
-                def _guarded(_body):
-                    try:
-                        _saver(_body)
-                    except Exception as _se:
-                        print(f"[CHAT] router persist failed: {_se}")
-
-                return _guarded
-
-            def _router_unreachable(*_a, **_k):
-                raise RuntimeError('unreachable arm in router sync lane')
-
-            def _router_run_family(status_queue=None):
-                from api.agent_router.integration import handle_router_family_command as _hrf2
-                return dict(_hrf2(
+                _router_prepared, _router_io = _build_route_retry_stream_turn(
                     message_content,
                     session_id=chat_session_id,
+                    data=data,
                     project_path=_router_proj,
-                    status_queue=status_queue,
-                ) or {})
-
-            _router_io = _AgentTurnIO(
-                run_harness=_router_unreachable,
-                run_router=_router_run_family,
-                persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
-                make_saver=_guarded_router_saver,
-                should_save=lambda _b: bool(
-                    _auth_user and _result_kept_for_history(_b)
-                ),
-                notify_mobile=None,
-                format_shortcut=_router_unreachable,
-            )
-            _turn_out = _submit_turn(
-                _PreparedAgentTurn(
-                    message=message_content, session_id=chat_session_id,
                     wants_stream=wants_stream,
-                    request_data=data or {}, project_path=_router_proj or '',
-                ),
-                io=_router_io, delivery=_chat_delivery, claim=True,
-                selection=_AgentSelection(kind='router_family'),
+                    auth_user=_auth_user,
+                    persist_user_turn=_persist_user_turn,
+                    make_saver=_make_auth_assistant_saver,
+                    notify_mobile=_emit_chat_complete_mobile,
+                )
+                return _stream_agent_turn_response(
+                    _router_prepared, io=_router_io
+                )
+            from api import chat_delivery as _chat_delivery
+            _lane_body, _lane_status = _run_route_retry_sync_turn(
+                message_content,
+                session_id=chat_session_id,
+                data=data,
+                project_path=_router_proj,
+                wants_stream=wants_stream,
+                auth_user=_auth_user,
+                persist_user_turn=_persist_user_turn,
+                make_saver=_make_auth_assistant_saver,
+                delivery=_chat_delivery,
             )
-            if _turn_out.status == 409:
-                return jsonify(_turn_out.body), 409
-            _lane_body = _turn_out.body
-            if isinstance(_lane_body, dict):
-                _lane_body.setdefault('session_id', chat_session_id)
+            if _lane_status == 409:
+                return jsonify(_lane_body), 409
             return jsonify(_lane_body)
 
         # Start a new command-dispatch chain here.
@@ -4817,122 +3872,64 @@ def chat_endpoint():
         _harness_match = _match_harness_slash(message_content, project_path=project_path)
         if _harness_match:
             _hid, prompt = _harness_match
+            # Harness lane (Phase 6B slice 7): the empty-prompt body, IO
+            # construction and coordinator submit are owned by
+            # api.chat_turn_workflow; the route keeps request capture, the
+            # busy SSE/409 transport, SSE framing and jsonify.
+            from api.chat_turn_workflow import (
+                build_harness_stream_turn as _build_harness_stream_turn,
+                harness_empty_prompt_body as _harness_empty_prompt_body,
+                run_harness_sync_turn as _run_harness_sync_turn,
+            )
+
             if not prompt:
-                return jsonify({
-                    'success': True,
-                    'response': (
-                        f'❌ Please provide a prompt after /{_hid}. '
-                        f'Example: `/{_hid} "summarize this repo"`'
-                    ),
-                    'session_id': chat_session_id,
-                    'type': f'{_hid}_error',
-                })
+                return jsonify(_harness_empty_prompt_body(_hid, chat_session_id))
             busy_resp = _reject_if_chat_busy(chat_session_id, wants_stream)
             if busy_resp is not None:
                 return busy_resp
-            if wants_stream:
-                from api.chat_coordinator import (
-                    PreparedAgentTurn as _PreparedAgentTurn,
-                    StreamTurnIO as _StreamTurnIO,
-                )
 
-                def _stream_format_shortcut(_kind, _sel):
-                    if _kind == "harness_empty_prompt":
-                        _eaid = _sel.agent_id or _hid
-                        return {
-                            'success': True,
-                            'response': (
-                                f'❌ Please provide a prompt after /{_eaid}. '
-                                f'Example: `/{_eaid} "summarize this repo"`'
-                            ),
-                            'session_id': chat_session_id,
-                            'type': f'{_eaid}_error',
-                        }
-                    raise RuntimeError(f'unexpected shortcut arm: {_kind}')
-
-                def _stream_unreachable_harness(*_a, **_k):
-                    raise RuntimeError('unreachable arm in harness stream lane')
-
-                _stream_harness_io = _StreamTurnIO(
-                    run_harness=lambda _aid, _prompt, status_queue=None: _run_pinned_harness_turn(
-                        _aid, _prompt, chat_session_id, project_path=project_path,
-                        status_queue=status_queue, **_ident_run_kw,
-                    ),
-                    run_router=_stream_unreachable_harness,
-                    persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
-                    make_saver=lambda: _make_auth_assistant_saver(
-                        chat_session_id if _auth_user else None,
-                        project_path=project_path,
-                    ),
-                    notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
-                    format_shortcut=_stream_format_shortcut,
-                )
-                return _stream_agent_turn_response(
-                    _PreparedAgentTurn(
-                        message=message_content, session_id=chat_session_id,
-                        wants_stream=wants_stream,
-                        request_data=data or {}, project_path=project_path or '',
-                    ),
-                    io=_stream_harness_io,
-                )
-            from api import chat_delivery as _chat_delivery
-            from api.chat_coordinator import (
-                AgentSelection as _AgentSelection,
-                AgentTurnIO as _AgentTurnIO,
-                PreparedAgentTurn as _PreparedAgentTurn,
-                submit_agent_turn as _submit_turn,
-            )
-            from api.chat_turn_workflow import (
-                result_kept_for_history as _result_kept_for_history,
-            )
-
-            def _guarded_harness_saver():
-                _saver = _make_auth_assistant_saver(
-                    chat_session_id,
-                    project_path=project_path,
-                )
-                if _saver is None:
-                    return None
-
-                def _guarded(_body):
-                    try:
-                        _saver(_body)
-                    except Exception as _se:
-                        print(f'[CHAT] harness persist failed: {_se}')
-
-                return _guarded
-
-            def _harness_unreachable(*_a, **_k):
-                raise RuntimeError('unreachable arm in harness sync lane')
-
-            _harness_io = _AgentTurnIO(
-                run_harness=lambda _aid, _prompt, status_queue=None: _run_pinned_harness_turn(
+            def _harness_run(_aid, _prompt, status_queue=None):
+                return _run_pinned_harness_turn(
                     _aid, _prompt, chat_session_id, project_path=project_path,
                     status_queue=status_queue, **_ident_run_kw,
-                ),
-                run_router=_harness_unreachable,
-                persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
-                make_saver=_guarded_harness_saver,
-                should_save=lambda _b: bool(
-                    _auth_user and _result_kept_for_history(_b)
-                ),
-                notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
-                format_shortcut=_harness_unreachable,
-            )
-            _turn_out = _submit_turn(
-                _PreparedAgentTurn(
-                    message=message_content, session_id=chat_session_id,
+                )
+
+            if wants_stream:
+                _harness_prepared, _harness_io = _build_harness_stream_turn(
+                    message_content,
+                    session_id=chat_session_id,
+                    data=data,
+                    project_path=project_path,
                     wants_stream=wants_stream,
-                    request_data=data or {}, project_path=project_path or '',
-                ),
-                io=_harness_io, delivery=_chat_delivery, claim=True,
-                selection=_AgentSelection(kind='harness', agent_id=_hid, prompt=prompt),
+                    agent_id=_hid,
+                    prompt=prompt,
+                    auth_user=_auth_user,
+                    persist_user_turn=_persist_user_turn,
+                    make_saver=_make_auth_assistant_saver,
+                    notify_mobile=_emit_chat_complete_mobile,
+                    run_harness=_harness_run,
+                )
+                return _stream_agent_turn_response(
+                    _harness_prepared, io=_harness_io
+                )
+            from api import chat_delivery as _chat_delivery
+            _lane_body, _lane_status = _run_harness_sync_turn(
+                message_content,
+                session_id=chat_session_id,
+                data=data,
+                project_path=project_path,
+                wants_stream=wants_stream,
+                agent_id=_hid,
+                prompt=prompt,
+                auth_user=_auth_user,
+                persist_user_turn=_persist_user_turn,
+                make_saver=_make_auth_assistant_saver,
+                notify_mobile=_emit_chat_complete_mobile,
+                delivery=_chat_delivery,
+                run_harness=_harness_run,
             )
-            if _turn_out.status == 409:
-                return jsonify(_turn_out.body), 409
-            _lane_body = _turn_out.body
-            if isinstance(_lane_body, dict) and chat_session_id is not None:
-                _lane_body.setdefault('session_id', chat_session_id)
+            if _lane_status == 409:
+                return jsonify(_lane_body), 409
             return jsonify(_lane_body)
 
         # Attachments were already analyzed above (before slash dispatch); history
@@ -4965,101 +3962,71 @@ def chat_endpoint():
 
             print("[API] POST /api/chat: authenticated user, processing message")
 
-            # Process message with bot (session kind for per-channel pipeline routing)
+            # Pipeline lane (Phase 6B slice 8): the sync/stream IO
+            # construction and coordinator submit are owned by
+            # api.chat_turn_workflow; the route keeps request capture, the
+            # busy 409 transport, SSE framing and jsonify. The shared
+            # saver (make_assistant_saver) is the sole eligibility policy;
+            # the ingress-resolved project_path is its fallback when the
+            # session carries no project (action_forms keeps live-session
+            # precedence for the card embed).
             from api.http_authz import is_owner_user as _is_owner_user
             _user_is_owner = _is_owner_user(user)
             _session_id = f"db_session_{chat_session_id}"
-            if not wants_stream:
-                from api.chat_turn_workflow import run_pipeline_sync_turn as _run_lane
-                from api.chat_turn_workflow import build_pipeline_body as _build_body
 
-                def _pipeline_save_assistant(_res):
-                    # Shared saver (make_assistant_saver) is the sole
-                    # eligibility policy: persist-anything lived here
-                    # ([ERR-20261001-001]). The ingress-resolved
-                    # project_path is supplied as the saver's fallback
-                    # so the turn's action context survives a missing
-                    # session project; action_forms remains authoritative
-                    # for live-session precedence. Return the (possibly
-                    # rewritten-in-place) result for the body.
-                    _saver = _make_auth_assistant_saver(
-                        chat_session_id,
-                        project_path=project_path,
-                    )
-                    if _saver is None:
-                        return _res
-                    _saver(_res)
-                    return _res
-
-                _lane_body, _lane_status = _run_lane(
-                    chat_session_id,
-                    delivery=_chat_delivery,
-                    persist_user=lambda: db.add_message(
-                        chat_session_id,
-                        'user',
-                        history_message,
-                        metadata=_user_msg_meta,
-                    ),
-                    run=lambda: process_message_with_bot(
-                        message_content, _session_id,
-                        session_kind='web_user', routing_key=f'web_user_{user["id"]}',
-                        is_owner=_user_is_owner, status_queue=None,
-                        ),
-                    save_assistant=_pipeline_save_assistant,
-                    build_body=lambda _res: _build_body(
-                        _res, chat_session_id,
-                        usage_meta_fn=_usage_meta_from_assistant_result,
-                    ),
+            def _pipeline_run(status_queue=None):
+                return process_message_with_bot(
+                    message_content, _session_id,
+                    session_kind='web_user', routing_key=f'web_user_{user["id"]}',
+                    is_owner=_user_is_owner, status_queue=status_queue,
                 )
-                if _lane_status == 409:
-                    return jsonify(_lane_body), 409
-                return jsonify(_lane_body)
-            from api.chat_coordinator import (
-                PreparedAgentTurn as _PreparedAgentTurn,
-                StreamTurnIO as _StreamTurnIO,
-            )
 
-            def _pipeline_unreachable(*_a, **_k):
-                raise RuntimeError('unreachable arm in pipeline stream lane')
-
-            # Shared saver (make_assistant_saver) is the sole eligibility
-            # policy: the persist-anything on_save lived here
-            # ([ERR-20261001-001], now unified). The factory runs in the
-            # request thread on first next(); the ingress-resolved
-            # project_path below is the saver's fallback when the
-            # session carries no project. Action_forms keeps live-session
-            # precedence for the card embed itself.
-            _stream_pipeline_io = _StreamTurnIO(
-                run_harness=_pipeline_unreachable,
-                run_router=_pipeline_unreachable,
-                persist_user=lambda: db.add_message(
+            def _pipeline_persist_user():
+                return db.add_message(
                     chat_session_id,
                     'user',
                     history_message,
                     metadata=_user_msg_meta,
-                ),
-                make_saver=lambda: _make_auth_assistant_saver(
+                )
+
+            def _pipeline_make_saver():
+                return _make_auth_assistant_saver(
                     chat_session_id,
                     project_path=project_path,
-                ),
+                )
+
+            if not wants_stream:
+                from api.chat_turn_workflow import (
+                    run_pipeline_sync_lane as _run_pipeline_sync_lane,
+                )
+                _lane_body, _lane_status = _run_pipeline_sync_lane(
+                    chat_session_id,
+                    delivery=_chat_delivery,
+                    persist_user=_pipeline_persist_user,
+                    run=lambda: _pipeline_run(status_queue=None),
+                    make_saver=_pipeline_make_saver,
+                    usage_meta_fn=_usage_meta_from_assistant_result,
+                )
+                if _lane_status == 409:
+                    return jsonify(_lane_body), 409
+                return jsonify(_lane_body)
+
+            from api.chat_turn_workflow import (
+                build_pipeline_stream_turn as _build_pipeline_stream_turn,
+            )
+            _pipeline_prepared, _pipeline_io = _build_pipeline_stream_turn(
+                message_content,
+                session_id=chat_session_id,
+                data=data,
+                project_path=project_path,
+                wants_stream=wants_stream,
+                persist_user=_pipeline_persist_user,
+                make_saver=_pipeline_make_saver,
                 notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
-                format_shortcut=_pipeline_unreachable,
-                run_pipeline=lambda status_queue=None: process_message_with_bot(
-                    message_content, _session_id,
-                    session_kind='web_user', routing_key=f'web_user_{user["id"]}',
-                    is_owner=_user_is_owner, status_queue=status_queue,
-                    ),
+                run_pipeline=_pipeline_run,
             )
             return _stream_pipeline_turn_response(
-                _PreparedAgentTurn(
-                    message=message_content, session_id=chat_session_id,
-                    wants_stream=wants_stream,
-                    request_data=data or {},
-                    # Unused: selection is explicit pipeline (no catalog
-                    # match) and the pipeline worker is not rewritten.
-                    project_path='',
-                ),
-                io=_stream_pipeline_io,
+                _pipeline_prepared, io=_pipeline_io
             )
         
         # Cookie was required above; missing resolve must not run a harness turn.
@@ -5150,7 +4117,6 @@ def health_check():
     from core.agent_cli_env import agent_cli_env
     import platform
     import shutil
-    import sys
 
     py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     cwd = str(actual_project_root.resolve())
@@ -5222,260 +4188,6 @@ def health_check():
         payload['env'] = {'redacted': True}
         payload['active_sessions'] = None
     return jsonify(payload)
-
-
-@app.route('/api/supervised/tasks/<task_id>/control', methods=['POST'])
-def supervised_task_control(task_id):
-    """Typed, model-free controls for the Activity disclosure."""
-    try:
-        from api.agent_router.supervised.control import session_owns_task
-        from api.agent_router.supervised.delivery import public_indicator
-        from api.agent_router.supervised.orchestrator import cancel_task, user_followup
-        from api.agent_router.supervised.store import load_task
-
-        data = request.get_json(silent=True) or {}
-        action = str(data.get('action') or '').strip().lower()
-        task = load_task(task_id)
-        if not task:
-            return jsonify({'success': False, 'error': 'Task not found.'}), 404
-        token = get_request_session_token()
-        db = get_auth_db()
-        user = db.verify_auth_session(token) if token else None
-        if not user:
-            return jsonify({'success': False, 'error': 'Unauthorized.'}), 401
-        parent = str(task.parent_session_id or '')
-        bare = parent[len('db_session_'):] if parent.startswith('db_session_') else parent
-        try:
-            session_id = int(bare)
-        except (TypeError, ValueError):
-            return jsonify({'success': False, 'error': 'Task has no authenticated session.'}), 403
-        if not db.get_chat_session(session_id, user['id']):
-            return jsonify({'success': False, 'error': 'Task belongs to another session.'}), 403
-        if not session_owns_task(session_id, task):
-            return jsonify({'success': False, 'error': 'Task belongs to another session.'}), 403
-        control_id = str(data.get('control_request_id') or f"ui_{task_id}_{action}_{uuid.uuid4().hex[:10]}")
-        if action == 'status':
-            result = {'success': True, 'acknowledgement': 'Activity refreshed.'}
-        elif action == 'followup':
-            instruction = str(data.get('instruction') or '').strip()
-            if not instruction:
-                return jsonify({'success': False, 'error': 'Instruction is required.'}), 400
-            result = user_followup(session_id, instruction, control_request_id=control_id)
-            result['acknowledgement'] = 'Instruction added.'
-        elif action == 'cancel':
-            result = cancel_task(session_id, control_request_id=control_id)
-            result['acknowledgement'] = 'Task cancelled.'
-        else:
-            return jsonify({'success': False, 'error': 'Unknown control action.'}), 400
-        latest = load_task(task_id) or task
-        result['supervised_task'] = public_indicator(latest)
-        result['control_request_id'] = control_id
-        return jsonify(result)
-    except Exception as e:
-        print(f'[CHAT] supervised typed control failed: {e}', flush=True)
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/supervised/tasks/<task_id>/runs/<run_id>/raw', methods=['GET'])
-def supervised_task_raw_artifact(task_id, run_id):
-    """Session/task-scoped read-only viewer for durable worker raw output.
-
-    Validates ownership and confines reads to the supervised task runs directory.
-    """
-    tid = str(task_id or '').strip()
-    rid = str(run_id or '').strip()
-    if not tid or not rid:
-        return jsonify({'success': False, 'error': 'task_id and run_id required'}), 400
-    if '/' in tid or '\\' in tid or '..' in tid or '/' in rid or '\\' in rid or '..' in rid:
-        return jsonify({'success': False, 'error': 'invalid id'}), 400
-
-    session_token = get_request_session_token()
-    if not session_token:
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
-    try:
-        db = get_auth_db()
-        user = db.verify_auth_session(session_token)
-        if not user:
-            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
-    except Exception as e:
-        return jsonify({'success': False, 'error': f'Unauthorized: {e}'}), 401
-
-    try:
-        from api.agent_router.supervised.store import load_task, store_dir
-        from api.agent_router.supervised.control import session_owns_task
-
-        task = load_task(tid)
-        if not task:
-            return jsonify({'success': False, 'error': 'Task not found'}), 404
-        parent = str(task.parent_session_id or '')
-        bare = parent[len('db_session_'):] if parent.startswith('db_session_') else parent
-        try:
-            db_sid = int(bare)
-        except (TypeError, ValueError):
-            db_sid = None
-        if db_sid is None or not db.get_chat_session(db_sid, user['id']):
-            return jsonify({'success': False, 'error': 'Forbidden'}), 403
-        if not session_owns_task(db_sid, task) and not session_owns_task(parent, task):
-            return jsonify({'success': False, 'error': 'Forbidden'}), 403
-
-        root = (store_dir() / tid / 'runs').resolve()
-        path = (root / f'{rid}.raw.txt').resolve()
-        try:
-            path.relative_to(root)
-        except ValueError:
-            return jsonify({'success': False, 'error': 'path rejected'}), 400
-        if not path.is_file():
-            return jsonify({'success': False, 'error': 'artifact not found'}), 404
-        size = path.stat().st_size
-        max_bytes = 2_000_000
-        data = path.read_bytes()[:max_bytes]
-        text = data.decode('utf-8', errors='replace')
-        as_download = (request.args.get('download') or '').strip() in ('1', 'true', 'yes')
-        if as_download or request.args.get('format') == 'text':
-            from flask import Response as FlaskResponse
-
-            return FlaskResponse(
-                text,
-                mimetype='text/plain; charset=utf-8',
-                headers={
-                    'Content-Disposition': (
-                        f'attachment; filename="{tid}_{rid}.raw.txt"'
-                        if as_download
-                        else 'inline'
-                    ),
-                    'X-Content-Type-Options': 'nosniff',
-                },
-            )
-        return jsonify({
-            'success': True,
-            'task_id': tid,
-            'run_id': rid,
-            'bytes': size,
-            'truncated': size > max_bytes,
-            'content': text,
-            'content_type': 'text/plain',
-        })
-    except Exception as e:
-        print(f'[CHAT] supervised raw artifact failed: {e}', flush=True)
-        return jsonify({'success': False, 'error': 'failed to read artifact'}), 500
-
-
-@app.route('/api/flask/restart/status', methods=['GET'])
-def api_flask_restart_status():
-    """Durable restart status + active work (survives Flask replacement)."""
-    _user, err = loopback_or_authenticated()
-    if err:
-        return err
-    try:
-        from api.flask_restart import status_snapshot, mark_outcome_visible, build_completion_message
-
-        snap = status_snapshot()
-        st = snap.get('status') or {}
-        consume = (request.args.get('consume') or '').strip().lower() in ('1', 'true', 'yes')
-        rid = st.get('restart_id')
-        if consume and rid and st.get('state') in ('healthy', 'failed', 'timed_out'):
-            if not st.get('client_notified'):
-                mark_outcome_visible(str(rid))
-                snap['completion_message'] = build_completion_message(st)
-                snap['status'] = {**st, 'client_notified': True, 'outcome_visible': True}
-        gen = os.environ.get('CUTTLE_FLASK_GENERATION')
-        snap['live_flask_pid'] = os.getpid()
-        snap['live_generation'] = int(gen) if gen and str(gen).isdigit() else None
-        try:
-            from api.flask_restart import shared_restart_form_id
-            snap['restart_form_id'] = shared_restart_form_id(
-                snap['live_generation'] if snap['live_generation'] is not None else None
-            )
-        except Exception:
-            snap['restart_form_id'] = None
-        return jsonify(snap)
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/flask/restart', methods=['POST'])
-@owner_required
-def api_flask_restart():
-    """Request a daemon-owned Flask restart (drain-first)."""
-    try:
-        from api.flask_restart import request_restart
-
-        data = request.get_json(silent=True) or {}
-        mode = (data.get('mode') or data.get('action') or 'graceful').strip().lower()
-        session_id = data.get('session_id')
-        confirm = bool(data.get('confirm') or data.get('force_confirm') or data.get('yes'))
-        notify_raw = data.get('chat_notify')
-        if notify_raw is None:
-            notify_raw = data.get('notify')
-        if notify_raw is None:
-            chat_notify = True
-        elif isinstance(notify_raw, str):
-            chat_notify = notify_raw.strip().lower() not in ('0', 'false', 'no', 'off', 'card', 'none')
-        else:
-            chat_notify = bool(notify_raw)
-        result = request_restart(
-            mode=mode,
-            session_id=session_id,
-            user_source=str(data.get('source') or 'api'),
-            force_confirm=confirm,
-            triggering_task_id=data.get('task_id'),
-            chat_notify=chat_notify,
-        )
-        code = 200 if result.get('success') or result.get('needs_confirm') or result.get('state') == 'rejected' else 400
-        if result.get('needs_confirm'):
-            code = 409
-        return jsonify(result), code
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e), 'type': 'flask_restart'}), 500
-
-
-@app.route('/api/flask/restart/notify', methods=['POST'])
-@loopback_required
-def api_flask_restart_notify():
-    """Daemon → new Flask: persist post-restart completion into the requesting chat once."""
-    try:
-        from api.flask_restart import read_status, write_status, build_completion_message
-
-        data = request.get_json(silent=True) or {}
-        rid = str(data.get('restart_id') or '').strip()
-        sid = data.get('session_id')
-        msg = (data.get('message') or '').strip()
-        st = read_status()
-        if not rid or str(st.get('restart_id')) != rid:
-            return jsonify({'success': False, 'error': 'restart_id mismatch'}), 400
-        if st.get('post_restart_message_written'):
-            return jsonify({'success': True, 'deduped': True})
-        if st.get('chat_notify') is False:
-            # Card-driven restart: the card polls status and shows the outcome,
-            # so a completion bubble would just be noise in the transcript.
-            write_status({**st, 'post_restart_message_written': True})
-            return jsonify({'success': True, 'skipped': 'chat_notify_disabled'})
-        if not msg:
-            msg = build_completion_message(st)
-        bare = str(sid or st.get('session_id') or '').strip()
-        if bare.startswith('db_session_'):
-            bare = bare[len('db_session_'):]
-        try:
-            sid_int = int(bare)
-        except (TypeError, ValueError):
-            write_status({**st, 'post_restart_message_written': True})
-            return jsonify({'success': True, 'skipped': 'no session'})
-        db = get_auth_db()
-        db.add_message(
-            sid_int,
-            'assistant',
-            msg,
-            metadata={
-                'type': 'flask_restart',
-                'restart_id': rid,
-                'kind': 'complete',
-                'delivery': 'persisted',
-            },
-        )
-        write_status({**st, 'post_restart_message_written': True})
-        return jsonify({'success': True})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/lan-ping', methods=['GET'])
@@ -5578,181 +4290,6 @@ def api_network_info():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/cursor-agent/models', methods=['GET'])
-def api_cursor_agent_models():
-    """List Cursor Agent CLI models for the chat slash palette (/model).
-
-    Optional query: path + session → preferred model / last reported / recent runs.
-    Optional ``refresh=1`` forces a fresh ``agent models`` CLI run.
-    """
-    try:
-        from api.cursor_agent_commands import (
-            list_cursor_agent_models,
-            refresh_cursor_agent_models,
-        )
-        from scripts.utilities.cursor_cli_session_store import (
-            load_cursor_agent_options,
-            load_cursor_agent_options_for_session,
-        )
-
-        refresh = (request.args.get('refresh') or '').strip().lower() in (
-            '1', 'true', 'yes', 'refresh',
-        )
-        if refresh:
-            refreshed = refresh_cursor_agent_models()
-            models = refreshed.get('models') or []
-            catalog_source = refreshed.get('source')
-            catalog_error = refreshed.get('error')
-            catalog_count = int(refreshed.get('count') or len(models))
-        else:
-            models = list_cursor_agent_models()
-            catalog_source = 'cache_or_cli'
-            catalog_error = None
-            catalog_count = len(models or [])
-        path = (request.args.get('path') or '').strip()
-        session = (request.args.get('session') or '').strip()
-        preferred = None
-        last_reported = None
-        recent = []
-        # Session alone is enough — path is optional (avoids Auto when project
-        # chip hasn't hydrated yet).
-        if session:
-            if path:
-                opts = load_cursor_agent_options(path, session) or {}
-            else:
-                opts = load_cursor_agent_options_for_session(session) or {}
-            preferred = opts.get('model')
-            last_reported = opts.get('last_reported_model')
-            recent = list(opts.get('recent_runs') or [])[-8:]
-            if not last_reported and recent:
-                last_reported = recent[-1].get('reported_model')
-        # Policy order: session pin → starred default → CLI default (auto).
-        session_pin = (preferred or '').strip()
-        starred = ''
-        if not session_pin:
-            try:
-                from api.agent_harness.agent_defaults import get_starred_model
-                starred = get_starred_model('cursor') or ''
-            except Exception:
-                starred = ''
-        preferred_id = session_pin or starred or 'auto'
-        preferred_source = 'session' if session_pin else ('starred' if starred else 'cli_default')
-        # `agent models` marks Cursor CLI's global current — rewrite to this
-        # chat's preferred model so the slash palette "(current)" is correct.
-        pref_l = preferred_id.lower()
-        annotated = []
-        for m in models or []:
-            mid = str(m.get('id') or '').strip()
-            annotated.append({
-                **m,
-                'current': bool(mid) and mid.lower() == pref_l,
-            })
-        return jsonify({
-            'success': True,
-            'models': annotated,
-            'preferredModel': preferred_id,
-            'preferredSource': preferred_source,
-            'starredModel': starred or None,
-            'lastReportedModel': last_reported,
-            'recentRuns': recent,
-            'source': catalog_source,
-            'count': catalog_count,
-            'error': catalog_error,
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'models': [],
-            'preferredModel': 'auto',
-            'lastReportedModel': None,
-            'recentRuns': [],
-        }), 500
-
-
-@app.route('/api/agent-context', methods=['GET'])
-@authenticated_required
-def api_agent_context_status():
-    """Context-window fill estimate for Cursor / Muse / OpenCode composer radial."""
-    try:
-        from api.agent_context import get_agent_context_status, normalize_agent_id
-
-        agent = normalize_agent_id(request.args.get('agent') or '')
-        if not agent:
-            return jsonify({
-                'success': False,
-                'supported': False,
-                'error': 'agent query required (cursor|muse|opencode)',
-            }), 400
-        session = (request.args.get('session') or '').strip()
-        path = (request.args.get('path') or '').strip()
-        if not path:
-            try:
-                path = _resolve_request_project_path({
-                    'session_id': session,
-                    'project_path': request.args.get('project_path'),
-                    'project_id': request.args.get('project_id'),
-                    'project_name': request.args.get('project_name'),
-                }) or ''
-            except Exception:
-                path = ''
-        status = get_agent_context_status(
-            chat_session_id=session or None,
-            agent_id=agent,
-            cwd=path or None,
-            live=str(request.args.get('live') or '').strip().lower() in (
-                '1', 'true', 'yes',
-            ),
-        )
-        code = 200 if status.get('success') else 400
-        return jsonify(status), code
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e), 'supported': False}), 500
-
-
-@app.route('/api/agent-context/compact', methods=['POST'])
-def api_agent_context_compact():
-    """Compact / summarize the sticky agent CLI session (Cursor, Muse, OpenCode)."""
-    try:
-        from api.agent_context import compact_agent_context, normalize_agent_id
-
-        data = request.get_json(silent=True) or {}
-        agent = normalize_agent_id(
-            data.get('agent') or request.args.get('agent') or ''
-        )
-        if not agent:
-            return jsonify({
-                'success': False,
-                'error': 'agent required (cursor|muse|opencode)',
-            }), 400
-        session = (
-            data.get('session')
-            or data.get('session_id')
-            or data.get('chat_session_id')
-            or request.args.get('session')
-            or ''
-        )
-        session = str(session).strip()
-        _user, _sid, err = _require_session_actor(session)
-        if err:
-            return err
-        path = (data.get('path') or data.get('project_path') or '').strip()
-        if not path:
-            try:
-                path = _resolve_request_project_path(data if isinstance(data, dict) else {}) or ''
-            except Exception:
-                path = ''
-        result = compact_agent_context(
-            chat_session_id=session or None,
-            agent_id=agent,
-            cwd=path or None,
-        )
-        code = 200 if result.get('success') else 400
-        return jsonify(result), code
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
 @app.route('/api/ollama-models', methods=['GET'])
 def ollama_models():
     """Return installed local-LLM model names for chat and settings.
@@ -5801,897 +4338,6 @@ def doctor_endpoint():
 # Pairing API (channel-level security: approve codes, list pending)
 # ============================================================================
 
-@app.route('/api/pairing/approve', methods=['POST'])
-@limiter.limit("5 per minute")
-@owner_required
-def pairing_approve():
-    """Approve a pairing code. Adds identity to allowlist."""
-    if not PAIRING_AVAILABLE:
-        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
-    try:
-        data = request.get_json() or {}
-        code = data.get('code', '').strip()
-        if not code:
-            return jsonify({'success': False, 'error': 'No code provided'}), 400
-        pm = get_pairing_manager()
-        ok, result = pm.approve(code)
-        if ok:
-            return jsonify({'success': True, 'approved': result})
-        return jsonify({'success': False, 'error': result}), 400
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/pairing/pending', methods=['GET'])
-@limiter.limit("5 per minute")
-@owner_required
-def pairing_pending():
-    """List pending pairing requests (for admin UI)."""
-    if not PAIRING_AVAILABLE:
-        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
-    try:
-        pm = get_pairing_manager()
-        return jsonify({'success': True, 'pending': pm.list_pending()})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/pairing/status', methods=['GET'])
-@owner_required
-def pairing_status():
-    """Get pairing/allowlist status for current channel (query: channel, identity)."""
-    if not PAIRING_AVAILABLE:
-        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
-    try:
-        channel = request.args.get('channel', 'webchat')
-        identity = request.args.get('identity', '')
-        settings = get_settings_manager()
-        channel_cfg = settings.get_channel_config(channel)
-        dm_policy = channel_cfg.get('dmPolicy', 'open')
-        allow_from = channel_cfg.get('allowFrom', ['*'])
-        pm = get_pairing_manager()
-        allowed = pm.is_allowed(channel, identity, dm_policy, allow_from)
-        return jsonify({
-            'success': True,
-            'channel': channel,
-            'identity': identity,
-            'allowed': allowed,
-            'dmPolicy': dm_policy,
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/muse/models', methods=['GET'])
-def api_muse_models():
-    """Muse Code models for the chat slash palette, plus this chat's pick."""
-    try:
-        from scripts.utilities.muse_cli_tool import (
-            list_muse_catalog_models,
-            muse_model_label,
-            resolve_muse_default_model,
-        )
-        from scripts.utilities.muse_cli_session_store import load_muse_model
-
-        from api.agent_harness.agent_defaults import get_starred_model as _starred_m
-
-        session = (request.args.get('session') or '').strip()
-        refresh = (request.args.get('refresh') or '').strip().lower() in (
-            '1', 'true', 'yes', 'refresh',
-        )
-        catalog = list_muse_catalog_models(refresh=refresh)
-        _sess = (load_muse_model(session) if session else None)
-        _star = _starred_m('muse')
-        _cli = resolve_muse_default_model()
-        preferred = _sess or _star or _cli
-        preferred_source = 'session' if _sess else ('starred' if _star else 'cli_default')
-        pref_l = (preferred or '').lower()
-        models = [
-            {**m, 'current': str(m.get('id') or '').lower() == pref_l}
-            for m in (catalog.get('models') or [])
-            if isinstance(m, dict)
-        ]
-        if preferred and not any(m.get('current') for m in models):
-            models.append({
-                'id': preferred,
-                'label': muse_model_label(preferred),
-                'description': 'Custom model id pinned for this chat',
-                'current': True,
-            })
-        return jsonify({
-            'success': True,
-            'models': models,
-            'preferredModel': preferred,
-            'preferredSource': preferred_source,
-            'starredModel': _star,
-            'sessionModel': _sess,
-            'defaultModel': resolve_muse_default_model(),
-            'source': catalog.get('source'),
-            'count': catalog.get('count'),
-            'error': catalog.get('error'),
-            'fetchedAt': catalog.get('fetched_at'),
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'models': [],
-            'preferredModel': 'muse-spark-1.3',
-        }), 500
-
-
-@app.route('/api/muse/model', methods=['POST'])
-def api_set_muse_model():
-    """Body: { session, model } — pin the Muse model for one chat ('' resets)."""
-    try:
-        from scripts.utilities.muse_cli_tool import muse_model_label, resolve_muse_default_model
-        from scripts.utilities.muse_cli_session_store import save_muse_model
-
-        data = request.get_json(silent=True) or {}
-        session = str(data.get('session') or data.get('session_id') or '').strip()
-        if not session:
-            return jsonify({'success': False, 'error': 'session is required'}), 400
-        _user, _sid, err = _require_session_actor(session)
-        if err:
-            return err
-        model = str(data.get('model') or '').strip()
-        if model.lower() in ('default', 'reset', 'clear'):
-            model = ''
-        from api.agent_harness.agent_defaults import get_starred_model as _starred_m2
-
-        saved = save_muse_model(session, model) or _starred_m2('muse') or resolve_muse_default_model()
-        return jsonify({
-            'success': True,
-            'preferredModel': saved,
-            'label': muse_model_label(saved),
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/muse/effort', methods=['GET'])
-def api_muse_effort():
-    """Muse reasoning-effort levels for the chat slash palette, plus this chat's pin."""
-    try:
-        from scripts.utilities.muse_cli_tool import MUSE_REASONING_EFFORTS
-        from scripts.utilities.muse_cli_session_store import load_muse_effort
-
-        from api.agent_harness.agent_defaults import get_starred_effort as _starred_me
-
-        session = (request.args.get('session') or '').strip()
-        _sess_e = (load_muse_effort(session) if session else None) or ''
-        _star_e = _starred_me('muse') or ''
-        preferred = _sess_e or _star_e
-        levels = [
-            {'id': str(e), 'current': str(e) == preferred}
-            for e in MUSE_REASONING_EFFORTS
-        ]
-        return jsonify({
-            'success': True,
-            'levels': levels,
-            'preferredEffort': preferred,
-            'preferredSource': 'session' if _sess_e else ('starred' if _star_e else 'none'),
-            'starredEffort': _star_e or None,
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e), 'levels': []}), 500
-
-
-@app.route('/api/muse/effort', methods=['POST'])
-def api_set_muse_effort():
-    """Body: { session, effort } — pin the Muse reasoning effort for one chat ('' resets)."""
-    try:
-        from scripts.utilities.muse_cli_tool import MUSE_REASONING_EFFORTS
-        from scripts.utilities.muse_cli_session_store import save_muse_effort
-
-        data = request.get_json(silent=True) or {}
-        session = str(data.get('session') or data.get('session_id') or '').strip()
-        if not session:
-            return jsonify({'success': False, 'error': 'session is required'}), 400
-        _user, _sid, err = _require_session_actor(session)
-        if err:
-            return err
-        effort = str(data.get('effort') or '').strip().lower()
-        known = [str(e) for e in MUSE_REASONING_EFFORTS]
-        if effort.lower() in ('default', 'reset', 'clear', 'none'):
-            # "none" was a list entry before the CLI declared it invalid;
-            # treat it as "no pin" rather than rejecting it.
-            effort = ''
-            effort = ''
-        if effort and effort not in known:
-            return jsonify({
-                'success': False,
-                'error': f"Unknown effort `{effort}`. Pick one of: {', '.join(known)}.",
-            }), 400
-        saved = save_muse_effort(session, effort) or ''
-        return jsonify({'success': True, 'preferredEffort': saved})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/hermes/models', methods=['GET'])
-def api_hermes_models():
-    """Hermes models for the chat slash palette, plus this chat's pick."""
-    try:
-        from scripts.utilities.hermes_cli_tool import (
-            hermes_model_label,
-            list_hermes_known_models,
-            resolve_hermes_default_model,
-        )
-        from scripts.utilities.hermes_cli_session_store import load_hermes_model
-
-        from api.agent_harness.agent_defaults import get_starred_model as _starred_h
-
-        session = (request.args.get('session') or '').strip()
-        _sess_h = (load_hermes_model(session) if session else None)
-        _star_h = _starred_h('hermes')
-        preferred = _sess_h or _star_h or resolve_hermes_default_model()
-        preferred_source = 'session' if _sess_h else ('starred' if _star_h else 'cli_default')
-        pref_l = (preferred or '').lower()
-        models = [
-            {**m, 'current': m['id'].lower() == pref_l}
-            for m in list_hermes_known_models()
-        ]
-        if not any(m['current'] for m in models):
-            models.append({
-                'id': preferred,
-                'label': hermes_model_label(preferred),
-                'description': 'Custom model id pinned for this chat',
-                'current': True,
-            })
-        return jsonify({
-            'success': True,
-            'models': models,
-            'preferredModel': preferred,
-            'preferredSource': preferred_source,
-            'starredModel': _star_h,
-            'sessionModel': _sess_h,
-            'defaultModel': resolve_hermes_default_model(),
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'models': [],
-            'preferredModel': 'qwen3-coder',
-        }), 500
-
-
-@app.route('/api/hermes/model', methods=['POST'])
-def api_set_hermes_model():
-    """Body: { session, model } — pin the Hermes model for one chat ('' resets)."""
-    try:
-        from scripts.utilities.hermes_cli_tool import (
-            hermes_model_label,
-            resolve_hermes_default_model,
-        )
-        from scripts.utilities.hermes_cli_session_store import save_hermes_model
-
-        data = request.get_json(silent=True) or {}
-        session = str(data.get('session') or data.get('session_id') or '').strip()
-        if not session:
-            return jsonify({'success': False, 'error': 'session is required'}), 400
-        _user, _sid, err = _require_session_actor(session)
-        if err:
-            return err
-        model = str(data.get('model') or '').strip()
-        if model.lower() in ('default', 'reset', 'clear'):
-            model = ''
-        from api.agent_harness.agent_defaults import get_starred_model as _starred_h2
-
-        saved = save_hermes_model(session, model) or _starred_h2('hermes') or resolve_hermes_default_model()
-        return jsonify({
-            'success': True,
-            'preferredModel': saved,
-            'label': hermes_model_label(saved),
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/hermes/effort', methods=['GET'])
-def api_hermes_effort():
-    """Hermes reasoning-effort levels for the chat slash palette, plus this chat's pin."""
-    try:
-        from scripts.utilities.hermes_cli_tool import HERMES_REASONING_EFFORTS
-        from scripts.utilities.hermes_cli_session_store import load_hermes_effort
-
-        from api.agent_harness.agent_defaults import get_starred_effort as _starred_he
-
-        session = (request.args.get('session') or '').strip()
-        _sess_he = (load_hermes_effort(session) if session else None) or ''
-        _star_he = _starred_he('hermes') or ''
-        preferred = _sess_he or _star_he
-        levels = [
-            {'id': str(e), 'current': str(e) == preferred}
-            for e in HERMES_REASONING_EFFORTS
-        ]
-        return jsonify({
-            'success': True,
-            'levels': levels,
-            'preferredEffort': preferred,
-            'preferredSource': 'session' if _sess_he else ('starred' if _star_he else 'none'),
-            'starredEffort': _star_he or None,
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e), 'levels': []}), 500
-
-
-@app.route('/api/hermes/effort', methods=['POST'])
-def api_set_hermes_effort():
-    """Body: { session, effort } — pin Hermes reasoning effort for one chat ('' resets)."""
-    try:
-        from scripts.utilities.hermes_cli_tool import HERMES_REASONING_EFFORTS
-        from scripts.utilities.hermes_cli_session_store import save_hermes_effort
-
-        data = request.get_json(silent=True) or {}
-        session = str(data.get('session') or data.get('session_id') or '').strip()
-        if not session:
-            return jsonify({'success': False, 'error': 'session is required'}), 400
-        _user, _sid, err = _require_session_actor(session)
-        if err:
-            return err
-        effort = str(data.get('effort') or '').strip().lower()
-        known = [str(e) for e in HERMES_REASONING_EFFORTS]
-        if effort.lower() in ('default', 'reset', 'clear'):
-            effort = ''
-        if effort and effort not in known:
-            return jsonify({
-                'success': False,
-                'error': f"Unknown effort `{effort}`. Pick one of: {', '.join(known)}.",
-            }), 400
-        saved = save_hermes_effort(session, effort) or ''
-        return jsonify({'success': True, 'preferredEffort': saved})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/codex/models', methods=['GET'])
-def api_codex_models():
-    """Codex models for the chat slash palette (``codex debug models`` + this chat's pick)."""
-    try:
-        from api.agent_harness.agents.codex.model_catalog import (
-            codex_common_reasoning_efforts,
-            codex_model_label,
-            list_codex_palette_models,
-        )
-        from scripts.utilities.codex_cli_session_store import load_codex_model
-
-        from api.agent_harness.agent_defaults import get_starred_model as _starred_c
-
-        session = (request.args.get('session') or '').strip()
-        refresh = (request.args.get('refresh') or '').strip().lower() in (
-            '1', 'true', 'yes', 'refresh',
-        )
-        q = (request.args.get('q') or '').strip() or None
-        try:
-            limit_raw = request.args.get('limit')
-            limit = int(limit_raw) if limit_raw not in (None, '') else None
-        except (TypeError, ValueError):
-            limit = None
-
-        catalog = list_codex_palette_models(refresh=refresh, q=q, limit=limit)
-        _sess_c = (load_codex_model(session) if session else None)
-        _star_c = _starred_c('codex')
-        preferred = _sess_c or _star_c or ''
-        preferred_source = 'session' if _sess_c else ('starred' if _star_c else 'cli_default')
-        pref_l = (preferred or '').lower()
-        models = [
-            {**m, 'current': str(m.get('id') or '').lower() == pref_l}
-            for m in (catalog.get('models') or [])
-            if isinstance(m, dict)
-        ]
-        if preferred and not any(m.get('current') for m in models):
-            models.insert(0, {
-                'id': preferred,
-                'label': codex_model_label(preferred),
-                'description': 'Custom model id pinned for this chat',
-                'current': True,
-            })
-        return jsonify({
-            'success': True,
-            'models': models,
-            'preferredModel': preferred,
-            'preferredSource': preferred_source,
-            'starredModel': _star_c,
-            'sessionModel': _sess_c,
-            'defaultModel': '',
-            'source': catalog.get('source'),
-            'count': catalog.get('count'),
-            'returned': catalog.get('returned'),
-            'commonEfforts': codex_common_reasoning_efforts(),
-            'fetchedAt': catalog.get('fetched_at'),
-            'error': catalog.get('error'),
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'models': [],
-            'preferredModel': '',
-        }), 500
-
-
-@app.route('/api/codex/model', methods=['POST'])
-def api_set_codex_model():
-    """Body: { session, model } — pin the Codex model for one chat ('' resets)."""
-    try:
-        from api.agent_harness.agents.codex.model_catalog import codex_model_label
-        from scripts.utilities.codex_cli_session_store import save_codex_model
-
-        data = request.get_json(silent=True) or {}
-        session = str(data.get('session') or data.get('session_id') or '').strip()
-        if not session:
-            return jsonify({'success': False, 'error': 'session is required'}), 400
-        _user, _sid, err = _require_session_actor(session)
-        if err:
-            return err
-        model = str(data.get('model') or '').strip()
-        if model.lower() in ('default', 'reset', 'clear'):
-            model = ''
-        from api.agent_harness.agent_defaults import get_starred_model as _starred_c2
-
-        saved = save_codex_model(session, model) or _starred_c2('codex') or ''
-        return jsonify({
-            'success': True,
-            'preferredModel': saved,
-            'label': codex_model_label(saved) if saved else '',
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/codex/effort', methods=['GET'])
-def api_codex_effort():
-    """Codex reasoning-effort levels for the chat slash palette, plus this chat's pin."""
-    try:
-        from api.agent_harness.agents.codex.model_catalog import codex_efforts_for_model
-        from scripts.utilities.codex_cli_session_store import (
-            load_codex_effort,
-            load_codex_model,
-        )
-
-        from api.agent_harness.agent_defaults import (
-            get_starred_effort as _starred_ce,
-            get_starred_model as _starred_cm,
-        )
-
-        session = (request.args.get('session') or '').strip()
-        model = (
-            (load_codex_model(session) if session else None)
-            or _starred_cm('codex')
-            or (request.args.get('model') or '').strip()
-        )
-        _sess_ce = (load_codex_effort(session) if session else None) or ''
-        _star_ce = _starred_ce('codex') or ''
-        preferred = _sess_ce or _star_ce
-        levels = [
-            {'id': str(e), 'current': str(e) == preferred}
-            for e in codex_efforts_for_model(model or None)
-        ]
-        return jsonify({
-            'success': True,
-            'levels': levels,
-            'model': model or '',
-            'preferredEffort': preferred,
-            'preferredSource': 'session' if _sess_ce else ('starred' if _star_ce else 'none'),
-            'starredEffort': _star_ce or None,
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e), 'levels': []}), 500
-
-
-@app.route('/api/codex/effort', methods=['POST'])
-def api_set_codex_effort():
-    """Body: { session, effort } — pin Codex ``model_reasoning_effort`` ('' resets)."""
-    try:
-        from api.agent_harness.agents.codex.model_catalog import codex_efforts_for_model
-        from scripts.utilities.codex_cli_session_store import (
-            load_codex_model,
-            save_codex_effort,
-        )
-        from api.agent_harness.agent_defaults import get_starred_model as _starred_cm
-
-        data = request.get_json(silent=True) or {}
-        session = str(data.get('session') or data.get('session_id') or '').strip()
-        if not session:
-            return jsonify({'success': False, 'error': 'session is required'}), 400
-        _user, _sid, err = _require_session_actor(session)
-        if err:
-            return err
-        effort = str(data.get('effort') or '').strip().lower()
-        if effort.lower() in ('default', 'reset', 'clear', 'none'):
-            effort = ''
-        model = (
-            str(data.get('model') or '').strip()
-            or load_codex_model(session)
-            or _starred_cm('codex')
-        )
-        known = codex_efforts_for_model(model or None)
-        if effort and effort not in known:
-            detail = (
-                f"Supported for `{model}`: {', '.join(known)}."
-                if model and known
-                else f"Common supported levels: {', '.join(known)}."
-                if known
-                else "No verified effort levels are available for the current model."
-            )
-            return jsonify({
-                'success': False,
-                'error': (
-                    f"Effort `{effort}` is not supported for the current Codex model. "
-                    f"{detail}"
-                ),
-                'model': model or '',
-                'levels': known,
-            }), 400
-        saved = save_codex_effort(session, effort) or ''
-        return jsonify({
-            'success': True,
-            'preferredEffort': saved,
-            'model': model or '',
-            'levels': known,
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/opencode/models', methods=['GET'])
-def api_opencode_models():
-    """OpenCode models for the chat slash palette (live catalog + this chat's pick)."""
-    try:
-        from api.agent_harness.agents.opencode.adapter import (
-            list_opencode_palette_models,
-            opencode_model_label,
-        )
-        from api.agent_harness.agents.opencode.session_store import load_opencode_model
-
-        from api.agent_harness.agent_defaults import get_starred_model as _starred_o
-
-        session = (request.args.get('session') or '').strip()
-        refresh = (request.args.get('refresh') or '').strip().lower() in (
-            '1', 'true', 'yes', 'refresh',
-        )
-        provider = (request.args.get('provider') or '').strip() or None
-        q = (request.args.get('q') or '').strip() or None
-        try:
-            limit_raw = request.args.get('limit')
-            limit = int(limit_raw) if limit_raw not in (None, '') else None
-        except (TypeError, ValueError):
-            limit = None
-
-        catalog = list_opencode_palette_models(
-            refresh=refresh, provider=provider, q=q, limit=limit
-        )
-        if refresh:
-            try:
-                from api.model_pricing import refresh_models_dev_pricing
-                refresh_models_dev_pricing(force=True)
-            except Exception as _price_exc:
-                print(f"[opencode] pricing refresh failed: {_price_exc}", flush=True)
-        _sess_o = (load_opencode_model(session) if session else None)
-        _star_o = _starred_o('opencode')
-        preferred = _sess_o or _star_o or ''
-        preferred_source = 'session' if _sess_o else ('starred' if _star_o else 'cli_default')
-        pref_l = (preferred or '').lower()
-        models = [
-            {**m, 'current': str(m.get('id') or '').lower() == pref_l}
-            for m in (catalog.get('models') or [])
-            if isinstance(m, dict)
-        ]
-        if preferred and not any(m.get('current') for m in models):
-            models.insert(0, {
-                'id': preferred,
-                'label': opencode_model_label(preferred),
-                'description': 'Custom model id pinned for this chat',
-                'current': True,
-            })
-        return jsonify({
-            'success': True,
-            'models': models,
-            'preferredModel': preferred,
-            'preferredSource': preferred_source,
-            'starredModel': _star_o,
-            'sessionModel': _sess_o,
-            'defaultModel': '',
-            'source': catalog.get('source'),
-            'count': catalog.get('count'),
-            'returned': catalog.get('returned'),
-            'fetchedAt': catalog.get('fetched_at'),
-            'error': catalog.get('error'),
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'models': [],
-            'preferredModel': 'openrouter/z-ai/glm-5.3-flash',
-        }), 500
-
-
-@app.route('/api/opencode/model', methods=['POST'])
-def api_set_opencode_model():
-    """Body: { session, model } — pin the OpenCode model for one chat ('' resets)."""
-    try:
-        from api.agent_harness.agents.opencode.adapter import (
-            DEFAULT_OPENCODE_MODEL,
-            opencode_model_label,
-        )
-        from api.agent_harness.agents.opencode.session_store import save_opencode_model
-
-        data = request.get_json(silent=True) or {}
-        session = str(data.get('session') or data.get('session_id') or '').strip()
-        if not session:
-            return jsonify({'success': False, 'error': 'session is required'}), 400
-        _user, _sid, err = _require_session_actor(session)
-        if err:
-            return err
-        model = str(data.get('model') or '').strip()
-        if model.lower() in ('default', 'reset', 'clear'):
-            model = ''
-        from api.agent_harness.agent_defaults import get_starred_model as _starred_o2
-
-        saved = save_opencode_model(session, model) or _starred_o2('opencode') or ''
-        return jsonify({
-            'success': True,
-            'preferredModel': saved,
-            'label': opencode_model_label(saved),
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/opencode/effort', methods=['GET'])
-def api_opencode_effort():
-    """OpenCode reasoning-effort levels for the chat slash palette, plus this chat's pin."""
-    try:
-        from api.agent_harness.agents.opencode.adapter import OPENCODE_REASONING_EFFORTS
-        from api.agent_harness.agents.opencode.session_store import load_opencode_effort
-
-        from api.agent_harness.agent_defaults import get_starred_effort as _starred_oe
-
-        session = (request.args.get('session') or '').strip()
-        _sess_oe = (load_opencode_effort(session) if session else None) or ''
-        _star_oe = _starred_oe('opencode') or ''
-        preferred = _sess_oe or _star_oe
-        levels = [
-            {'id': str(e), 'current': str(e) == preferred}
-            for e in OPENCODE_REASONING_EFFORTS
-        ]
-        return jsonify({
-            'success': True,
-            'levels': levels,
-            'preferredEffort': preferred,
-            'preferredSource': 'session' if _sess_oe else ('starred' if _star_oe else 'none'),
-            'starredEffort': _star_oe or None,
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e), 'levels': []}), 500
-
-
-@app.route('/api/opencode/effort', methods=['POST'])
-def api_set_opencode_effort():
-    """Body: { session, effort } — pin OpenCode ``--variant`` for one chat ('' resets)."""
-    try:
-        from api.agent_harness.agents.opencode.adapter import OPENCODE_REASONING_EFFORTS
-        from api.agent_harness.agents.opencode.session_store import save_opencode_effort
-
-        data = request.get_json(silent=True) or {}
-        session = str(data.get('session') or data.get('session_id') or '').strip()
-        if not session:
-            return jsonify({'success': False, 'error': 'session is required'}), 400
-        _user, _sid, err = _require_session_actor(session)
-        if err:
-            return err
-        effort = str(data.get('effort') or '').strip().lower()
-        known = [str(e) for e in OPENCODE_REASONING_EFFORTS]
-        if effort.lower() in ('default', 'reset', 'clear'):
-            effort = ''
-        if effort and effort not in known:
-            return jsonify({
-                'success': False,
-                'error': f"Unknown effort `{effort}`. Pick one of: {', '.join(known)}.",
-            }), 400
-        saved = save_opencode_effort(session, effort) or ''
-        return jsonify({'success': True, 'preferredEffort': saved})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/agents', methods=['GET'])
-def get_agents_catalog_api():
-    """Harness agent catalog (manifests + availability). Frontend drives palette from this."""
-    try:
-        from api.agent_harness.catalog import discovery_roots, public_catalog
-
-        project_path = (
-            request.args.get('path')
-            or request.args.get('project_path')
-            or ''
-        ).strip() or None
-        agents = public_catalog(project_path)
-        # Settings asks for `?live_models=1` so its dropdowns read the same live
-        # CLI/API catalog as the chat palette instead of the manifest snapshot.
-        # The chat page's plain `/api/agents` stays cheap (no CLI calls).
-        live = (request.args.get('live_models') or '').strip().lower() in (
-            '1', 'true', 'yes', 'live',
-        )
-        if live:
-            try:
-                from api.agent_harness.agent_models import enrich_agent_catalog
-
-                enrich_agent_catalog(agents)
-            except Exception as exc:  # noqa: BLE001 — keep the manifest snapshot
-                print(f"[api/agents] live model enrichment failed: {exc}", flush=True)
-        return jsonify({
-            'success': True,
-            'agents': agents,
-            'count': len(agents),
-            'live_models': live,
-            'roots': discovery_roots(project_path),
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/agent-defaults/<agent_id>', methods=['GET'])
-def get_agent_defaults_api(agent_id):
-    """Unified starred model/effort defaults for one agent (palette stars).
-
-    Query: ?session=<chat id>. Returns session pin, starred default, and the
-    effective preferred value in policy order (session → starred → CLI).
-    """
-    try:
-        from api.agent_harness.agent_defaults import (
-            get_starred_effort,
-            get_starred_model,
-            normalize_agent_id,
-        )
-
-        aid = normalize_agent_id(agent_id)
-        session = (request.args.get('session') or '').strip()
-        sess_m = sess_e = None
-        try:
-            if aid == 'muse' and session:
-                from scripts.utilities.muse_cli_session_store import (
-                    load_muse_effort,
-                    load_muse_model,
-                )
-
-                sess_m, sess_e = load_muse_model(session), load_muse_effort(session)
-            elif aid == 'hermes' and session:
-                from scripts.utilities.hermes_cli_session_store import (
-                    load_hermes_effort,
-                    load_hermes_model,
-                )
-
-                sess_m, sess_e = load_hermes_model(session), load_hermes_effort(session)
-            elif aid == 'opencode' and session:
-                from api.agent_harness.agents.opencode.session_store import (
-                    load_opencode_effort,
-                    load_opencode_model,
-                )
-
-                sess_m, sess_e = load_opencode_model(session), load_opencode_effort(session)
-            elif aid == 'codex' and session:
-                from scripts.utilities.codex_cli_session_store import (
-                    load_codex_effort,
-                    load_codex_model,
-                )
-
-                sess_m, sess_e = load_codex_model(session), load_codex_effort(session)
-            elif aid == 'cursor' and session:
-                from scripts.utilities.cursor_cli_session_store import load_cursor_agent_options
-
-                opts = load_cursor_agent_options('', session) or {}
-                sess_m = opts.get('model')
-        except Exception:
-            pass
-        star_m, star_e = get_starred_model(aid), get_starred_effort(aid)
-        return jsonify({
-            'success': True,
-            'agent': aid,
-            'sessionModel': sess_m,
-            'sessionEffort': sess_e,
-            'starredModel': star_m,
-            'starredEffort': star_e,
-            'preferredModel': sess_m or star_m or '',
-            'preferredModelSource': 'session' if sess_m else ('starred' if star_m else 'cli_default'),
-            'preferredEffort': (sess_e or star_e or ''),
-            'preferredEffortSource': 'session' if sess_e else ('starred' if star_e else 'none'),
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/agent-defaults/<agent_id>', methods=['POST'])
-@owner_required
-def set_agent_defaults_api(agent_id):
-    """Star (or clear) the global model/effort default for one agent.
-
-    Body: { starred_model?, starred_effort? } — empty string clears.
-    Cursor has no separate effort (baked into the model id); posting
-    starred_effort for cursor returns 400.
-    """
-    try:
-        from api.agent_harness.agent_defaults import (
-            get_starred_effort,
-            get_starred_model,
-            normalize_agent_id,
-            set_starred_effort,
-            set_starred_model,
-        )
-
-        aid = normalize_agent_id(agent_id)
-        if not aid:
-            return jsonify({'success': False, 'error': 'unknown agent'}), 404
-        from api.agent_harness.agent_defaults import agent_capabilities
-
-        caps = agent_capabilities(aid)
-        data = request.get_json(silent=True) or {}
-        if aid in ('codex', 'claude'):
-            model_key = 'starred_model' if 'starred_model' in data else 'starredModel'
-            effort_key = 'starred_effort' if 'starred_effort' in data else 'starredEffort'
-            has_model = 'starred_model' in data or 'starredModel' in data
-            has_effort = 'starred_effort' in data or 'starredEffort' in data
-            target_model = (
-                str(data.get(model_key) or '').strip()
-                if has_model
-                else (get_starred_model(aid) or '')
-            )
-            target_effort = (
-                str(data.get(effort_key) or '').strip().lower()
-                if has_effort
-                else (get_starred_effort(aid) or '')
-            )
-            if target_effort in ('default', 'reset', 'clear', 'none'):
-                target_effort = ''
-            if target_effort:
-                if aid == 'claude':
-                    from api.agent_harness.agents.claude.model_catalog import (
-                        claude_efforts_for_model as _efforts_for_model,
-                    )
-                    agent_label, default_note = 'Claude Code', ' for the CLI default model'
-                else:
-                    from api.agent_harness.agents.codex.model_catalog import (
-                        codex_efforts_for_model as _efforts_for_model,
-                    )
-                    agent_label, default_note = 'Codex', ' across all Codex models'
-
-                supported = _efforts_for_model(target_model or None)
-                if target_effort not in supported:
-                    model_note = (
-                        f" for `{target_model}`"
-                        if target_model
-                        else default_note
-                    )
-                    values = ', '.join(supported) or 'none verified'
-                    return jsonify({
-                        'success': False,
-                        'error': (
-                            f"{agent_label} effort `{target_effort}` is not supported{model_note}. "
-                            f"Supported levels: {values}."
-                        ),
-                    }), 400
-        out = {'success': True, 'agent': aid}
-        if 'starred_model' in data or 'starredModel' in data:
-            if not caps.get('supports_model_pin', True):
-                return jsonify({
-                    'success': False,
-                    'error': f'{aid} does not support pinning a model.',
-                }), 400
-            raw = data.get('starred_model', data.get('starredModel'))
-            out['starredModel'] = set_starred_model(aid, raw)
-        if 'starred_effort' in data or 'starredEffort' in data:
-            if not caps.get('supports_effort', True):
-                return jsonify({
-                    'success': False,
-                    'error': f'{aid} bakes effort into the model id — star a model instead.',
-                }), 400
-            raw = data.get('starred_effort', data.get('starredEffort'))
-            out['starredEffort'] = set_starred_effort(aid, raw)
-        return jsonify(out)
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
 @app.route('/api/chat/warnings', methods=['GET'])
 def get_chat_warnings_api():
     """Canonical per-chat warning/error log (badge drift, effort skips)."""
@@ -6727,238 +4373,12 @@ def clear_chat_warnings_api():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/agent-router/options', methods=['GET'])
-@owner_required
-def get_agent_router_options_api():
-    """Modes, models and agents for the Router editor page.
-
-    ``?live=1`` (the Router page's call) unions each agent's live CLI/API
-    catalog — the same store the chat palette uses — so target model dropdowns
-    match what is actually available. Plain calls stay static/cheap and spawn no
-    CLI. Owner-only: the payload includes the live ``current`` provider config
-    (endpoints, targets, fallbacks), same sensitivity class as
-    ``GET /api/router/config``.
-    """
-    try:
-        from api.agent_router.config import load_router_config
-        from api.agent_router.registry import (
-            CURSOR_KNOWN_MODELS,
-            KNOWN_AGENTS,
-            OPENAI_ROUTER_MODELS,
-        )
-        from api.agent_router.types import VALID_MODES
-        from scripts.utilities.muse_cli_tool import MUSE_KNOWN_MODELS
-
-        cfg = load_router_config()
-        static_models = {
-            'cursor': sorted(CURSOR_KNOWN_MODELS),
-            'codex': ['gpt-5-codex', 'gpt-5', 'o4-mini'],
-            'claude': ['sonnet', 'opus', 'haiku'],
-            'opencode': [],
-            'muse': [m['id'] for m in MUSE_KNOWN_MODELS],
-            'hermes': ['default'],
-        }
-        agent_models = dict(static_models)
-        agent_efforts = {}
-        manifests = []
-        try:
-            from api.agent_harness.catalog import list_agent_manifests
-
-            # Union (not override) — manifest lists are often shorter than the
-            # static known-model sets (e.g. Cursor's manifest lists 4 of 12).
-            manifests = list(list_agent_manifests())
-            for m in manifests:
-                merged = set(agent_models.get(m.id, [])) | set(m.models or [])
-                agent_models[m.id] = sorted(merged)
-                # Effort picker per target: Cursor bakes effort into the model id.
-                agent_efforts[m.id] = {
-                    'supported': bool(m.supports_effort),
-                    'levels': list(m.efforts or []),
-                    'model_levels': {k: list(v) for k, v in (m.model_efforts or {}).items()},
-                }
-        except Exception:
-            pass
-        # The Router page opts in (`?live=1`) to the same live CLI/API catalog
-        # the chat palette and Settings read, so its model dropdowns no longer
-        # drift from what is actually available. Plain calls stay static/cheap
-        # (auth probes, tests) and skip every CLI.
-        live = (request.args.get('live') or '').strip().lower() in (
-            '1', 'true', 'yes', 'live',
-        )
-        if live:
-            try:
-                from api.agent_harness.agent_models import enrich_router_models
-
-                fallbacks = {m.id: list(m.models or []) for m in manifests}
-                for aid, ids in static_models.items():
-                    fallbacks.setdefault(aid, list(ids))
-                enrich_router_models(agent_models, agent_efforts, fallbacks)
-            except Exception as exc:  # noqa: BLE001 — keep the static/manifest sets
-                print(f"[api/agent-router/options] live model enrichment failed: {exc}", flush=True)
-        return jsonify({
-            'success': True,
-            'modes': sorted(VALID_MODES),
-            'api_models': sorted(set(OPENAI_ROUTER_MODELS) | {'jev', 'jev-latest'}),
-            'agents': [
-                {'id': 'jev', 'label': 'Jev (TypeSafe System One)'},
-            ] + [
-                {'id': aid, 'label': info.get('label') or aid}
-                for aid, info in sorted(KNOWN_AGENTS.items())
-            ],
-            'agent_models': {**agent_models, 'jev': ['jev-latest']},
-            'agent_efforts': agent_efforts,
-            'brains': {
-                'jev': sorted(m for m in {'jev', 'jev-latest'}),
-                'openai': sorted(OPENAI_ROUTER_MODELS),
-            },
-            'current': {
-                'mode': cfg.provider.mode,
-                'api_model': cfg.provider.api_model,
-                'local_model': cfg.provider.local_model,
-                'local_endpoint': cfg.provider.local_endpoint,
-                'agent_id': cfg.provider.agent_id,
-                'agent_model': cfg.provider.agent_model,
-                'default_target': cfg.default_target.to_dict(),
-                'escalation_target': cfg.escalation_target.to_dict(),
-                'fallbacks': [t.to_dict() for t in cfg.fallbacks.ordered],
-            },
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/router/config', methods=['GET'])
-@owner_required
-def get_router_config_api():
-    """Full router state for the Router editor page (config + use cases + demotions + rage)."""
-    try:
-        from api.agent_router.config import load_router_config
-        from api.agent_router.drift import active_demotions
-        from api.agent_router.frustration import rage_config_to_dict
-        from api.agent_router.use_cases import load_use_cases
-
-        from api.agent_router.budget import accounts_payload, budget_settings
-        from api.agent_router.classify import classifier_settings
-
-        cfg = load_router_config()
-        # Live plan usage is fetched only when budget awareness is on or the
-        # page asks (?accounts=1 / refresh=1) — it calls vendor usage APIs.
-        want = request.args.get('accounts') == '1' or budget_settings()['enabled']
-        refresh = request.args.get('refresh') == '1'
-        return jsonify({
-            'success': True,
-            'config': cfg.to_dict(),
-            'use_cases': load_use_cases(),
-            'demotions': active_demotions(),
-            'rage': rage_config_to_dict(),
-            'classifier': classifier_settings(),
-            'budget': budget_settings(),
-            'accounts': accounts_payload(wait=True, force=refresh) if (want or refresh) else [],
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/router/config', methods=['PUT'])
-@owner_required
-def put_router_config_api():
-    """Update router config and/or the use-case table (same settings the agents edit)."""
-    try:
-        from api.agent_router.config import load_router_config, update_router_config
-        from api.agent_router.drift import active_demotions
-        from api.agent_router.frustration import rage_config_to_dict
-        from api.agent_router.use_cases import load_use_cases, save_use_cases
-
-        body = request.get_json(silent=True) or {}
-        if not isinstance(body, dict):
-            return jsonify({'success': False, 'error': 'Body must be a JSON object'}), 400
-
-        allowed = (
-            'mode', 'api_model', 'local_model', 'local_endpoint',
-            'agent_id', 'agent_model', 'default_target', 'escalation_target', 'fallbacks',
-        )
-        updates = {k: body[k] for k in allowed if k in body}
-
-        # Full-config saves (page / agents) always carry every provider field.
-        # Drop the empty ones that belong to a *different* mode than the one
-        # being saved, or validation would demand e.g. a local model while
-        # saving mode=api.
-        try:
-            active_mode = str(updates.get('mode') or '').strip().lower()
-            if not active_mode:
-                active_mode = str(load_router_config().provider.mode or 'off').strip().lower()
-            mode_fields = {
-                'api': ('api_model',),
-                'local': ('local_endpoint', 'local_model'),
-                'agent': ('agent_id', 'agent_model'),
-            }
-            for m, fields in mode_fields.items():
-                if m == active_mode:
-                    continue
-                for f in fields:
-                    if f in updates and not str(updates[f] or '').strip():
-                        del updates[f]
-        except Exception:
-            pass
-
-        error = None
-        if updates:
-            _cfg, error = update_router_config(**updates)
-
-        use_cases = body.get('use_cases')
-        if error is None and use_cases is not None:
-            if not isinstance(use_cases, list):
-                error = 'use_cases must be a list'
-            else:
-                _saved, uc_err = save_use_cases(use_cases)
-                error = uc_err
-
-        if error is None and body.get('rage') is not None:
-            from api.agent_router.frustration import save_rage_config
-
-            _saved, rage_err = save_rage_config(body.get('rage'))
-            error = rage_err
-
-        if error is None and body.get('classifier') is not None:
-            from api.agent_router.classify import save_classifier_settings
-
-            _saved, error = save_classifier_settings(body.get('classifier'))
-
-        if error is None and body.get('budget') is not None:
-            from api.agent_router.budget import save_budget_settings
-
-            _saved, error = save_budget_settings(body.get('budget'))
-
-        from api.agent_router.budget import accounts_payload, budget_settings
-        from api.agent_router.classify import classifier_settings
-
-        cfg = load_router_config()
-        return jsonify({
-            'success': error is None,
-            'error': error,
-            'config': cfg.to_dict(),
-            'use_cases': load_use_cases(),
-            'demotions': active_demotions(),
-            'rage': rage_config_to_dict(),
-            'classifier': classifier_settings(),
-            'budget': budget_settings(),
-            'accounts': accounts_payload(wait=True) if budget_settings()['enabled'] else [],
-        }), (200 if error is None else 400)
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 
-def _router_health_payload(report):
-    from api.agent_router.outcomes import metrics_summary
-
-    demoted = report.get('demotions') if isinstance(report, dict) else None
-    return {
-        'success': True,
-        'metrics': metrics_summary(days=7),
-        'report': report,
-        'demotions': demoted or {},
-        'generated_at': int(time.time()),
-    }
 
 
 @app.route('/api/turn-feedback', methods=['POST'])
@@ -7007,51 +4427,10 @@ def turn_feedback_api():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/router/health', methods=['GET'])
-@owner_required
-def get_router_health_api():
-    """7d metrics + current drift report + active demotions (read-only)."""
-    try:
-        from api.agent_router.drift import active_demotions, compute_drift
-
-        return jsonify(_router_health_payload({
-            'report': compute_drift(),
-            'demotions': active_demotions(),
-            'changes': [],
-        }))
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/router/health/refresh', methods=['POST'])
-@owner_required
-def refresh_router_health_api():
-    """Re-evaluate drift and apply/clear temporary demotions."""
-    try:
-        from api.agent_router.drift import evaluate_drift
-
-        report = evaluate_drift()
-        return jsonify(_router_health_payload(report))
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/router/demotion/clear', methods=['POST'])
-@owner_required
-def clear_router_demotion_api():
-    """Manually re-promote a demoted target."""
-    try:
-        from api.agent_router.drift import clear_demotion
-
-        body = request.get_json(silent=True) or {}
-        agent = str(body.get('agent') or '').strip()
-        model = str(body.get('model') or '').strip()
-        if not agent:
-            return jsonify({'success': False, 'error': 'agent is required'}), 400
-        removed = clear_demotion(agent, model)
-        return jsonify({'success': True, 'removed': removed})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ============================================================================
@@ -7410,27 +4789,6 @@ def _strip_invisible_leading(s: str) -> str:
     return s.lstrip('\ufeff\u200b\u200c\u200d\u2060')
 
 
-def _message_is_slash_remote_agent(msg: str) -> bool:
-    """Explicit slash forms that must use tool-remote-agent, not default OpenAI."""
-    if not isinstance(msg, str) or not msg.strip():
-        return False
-    t = _strip_invisible_leading(msg)
-    low = t.lower()
-    if re.match(r'^/claude(\s|$)', low):
-        return True
-    if re.match(r'^/opencode(\s|$)', low):
-        return True
-    if re.match(r'^/codex(\s|$)', low):
-        return True
-    if re.match(r'^/muse(\s|$)', low):
-        return True
-    if low.startswith('/cursor '):
-        return True
-    if low.startswith('claude '):
-        return True
-    return False
-
-
 # PIPELINE SETTINGS ENDPOINTS
 # =================================================================================
 
@@ -7689,8 +5047,6 @@ if __name__ == '__main__':
             get_lan_ipv4,
             resolve_bind_host,
             ensure_all_lan_firewall_rules,
-            windows_firewall_rule_active,
-            lan_portal_url,
             wifi_network_category,
         )
         settings = get_settings_manager()

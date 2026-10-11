@@ -350,6 +350,7 @@ def test_control_lane_idempotent_skips_second_persist(supervised_env, monkeypatc
 
 def test_raw_artifact_viewer_enforces_ownership(supervised_env, monkeypatch):
     from api import web_chat_api as wca
+    from api.agent_router.supervised import routes as supervised_routes
     from api.agent_router.supervised.orchestrator import create_supervised_task
     from api.agent_router.supervised.store import persist_raw_worker_output
 
@@ -364,7 +365,7 @@ def test_raw_artifact_viewer_enforces_ownership(supervised_env, monkeypatch):
         def get_chat_session(self, sid, uid):
             return {"id": sid} if sid == 55 and uid == 7 else None
 
-    monkeypatch.setattr(wca, "get_auth_db", lambda: FakeDB())
+    monkeypatch.setattr(supervised_routes, "get_auth_db", lambda: FakeDB())
     client = wca.app.test_client()
     url = f"/api/supervised/tasks/{task.task_id}/runs/wr_abc/raw"
     assert client.get(url).status_code == 401

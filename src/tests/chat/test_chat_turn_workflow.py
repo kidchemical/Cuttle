@@ -454,3 +454,596 @@ def test_sync_lane_suppresses_after_run_when_cancelled():
     assert status == 200 and body["response"] == "too late"
     assert calls == []
     chat_delivery.end(sid)
+
+
+def test_launch_gate_lane_ignores_normal_message():
+    """Non-gate messages return None so the route continues dispatch."""
+    from api.chat_turn_workflow import run_launch_gate_lane
+
+    assert run_launch_gate_lane(
+        "hello",
+        session_id=1,
+        auth_user=dict(USER),
+        get_auth_db=lambda: None,
+        button_click_history=lambda m: (m, None),
+    ) is None
+
+
+def test_launch_gate_lane_project_action_persists(monkeypatch):
+    """A project-action button is handled + persisted by the owner."""
+    from api.chat_turn_workflow import run_launch_gate_lane
+    import api.project_actions as project_actions
+
+    monkeypatch.setattr(
+        project_actions,
+        "handle_project_action_button",
+        lambda msg, session_id=None: {
+            "success": True, "response": "done", "type": "project_action",
+        },
+    )
+    db = FakeDB()
+    body = run_launch_gate_lane(
+        "[button:project-action-confirm] abc123",
+        session_id=777,
+        auth_user=dict(USER),
+        get_auth_db=lambda: db,
+        button_click_history=lambda m: (m, None),
+    )
+    assert body is not None
+    assert body["response"] == "done"
+    assert body["session_id"] == 777
+    assert [r["role"] for r in db.rows] == ["user", "assistant"]
+    assert db.rows[1]["content"] == "done"
+
+
+def test_launch_gate_lane_silent_form_locks_without_history(monkeypatch):
+    """Silent owned forms lock in history; no user/assistant rows are written."""
+    from api.chat_turn_workflow import run_launch_gate_lane
+    import api.action_forms as action_forms
+
+    marked = {}
+    monkeypatch.setattr(
+        action_forms,
+        "handle_action_form_chat_message",
+        lambda msg, session_id=None: {
+            "success": True, "response": "locked", "type": "action_form",
+            "silent": True, "lock": "form", "form_id": "f1",
+        },
+    )
+    monkeypatch.setattr(
+        action_forms,
+        "mark_action_form_consumed_in_history",
+        lambda **kw: marked.update(kw),
+    )
+    db = FakeDB()
+    body = run_launch_gate_lane(
+        "[action-form:f1]",
+        session_id=777,
+        auth_user=dict(USER),
+        get_auth_db=lambda: db,
+        button_click_history=lambda m: (m, None),
+    )
+    assert body is not None and body["session_id"] == 777
+    assert db.rows == []
+    assert marked.get("form_id") == "f1"
+    assert marked.get("session_id") == "db_session_777"
+
+
+def test_launch_gate_lane_wired_into_chat_route(workflow_env, monkeypatch):
+    """POST /api/chat routes a project-action button through the owner lane."""
+    wca, db = workflow_env
+    import api.project_actions as project_actions
+
+    monkeypatch.setattr(
+        project_actions,
+        "handle_project_action_button",
+        lambda msg, session_id=None: {
+            "success": True, "response": "gate-ok", "type": "project_action",
+        },
+    )
+    res = _post(wca, "[button:project-action-confirm] abc123")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["response"] == "gate-ok"
+    assert body["session_id"] == 777
+
+
+def _shell_lane(*args, **kwargs):
+    from api.chat_turn_workflow import run_shell_action_lane
+    return run_shell_action_lane(*args, **kwargs)
+
+
+def test_shell_action_lane_prompt_action_replaces_message(monkeypatch):
+    """A prompt project command expands into the message; never terminal."""
+    import api.project_commands as pc
+
+    monkeypatch.setattr(
+        pc,
+        "try_expand_message_project_command",
+        lambda msg, path: {
+            "action": "prompt", "message": "EXPANDED", "command": {"name": "build"},
+        },
+    )
+    body, mc, busy = _shell_lane(
+        "/build",
+        session_id=777,
+        auth_user=dict(USER),
+        data={},
+        resolve_project_path=lambda d: "/tmp/proj",
+        persist_user_turn=lambda sid: None,
+        make_saver=lambda sid: None,
+        rewrite_actions=lambda *a, **k: None,
+    )
+    assert body is None and mc == "EXPANDED" and busy is False
+
+
+def test_shell_action_lane_shell_action_persists(monkeypatch):
+    """A shell project command runs as no-LLM, persists, and returns a body."""
+    import api.project_commands as pc
+
+    monkeypatch.setattr(
+        pc,
+        "try_expand_message_project_command",
+        lambda msg, path: {
+            "action": "shell", "command": {"name": "deploy"}, "args": "prod",
+        },
+    )
+    monkeypatch.setattr(
+        pc, "run_project_command_shell",
+        lambda cmd, args, session_id=None: {"success": True, "output": "ok"},
+    )
+    monkeypatch.setattr(
+        pc, "format_project_command_shell_reply",
+        lambda cmd, result: "output-body",
+    )
+    persisted, saved = [], []
+    body, mc, busy = _shell_lane(
+        "/deploy prod",
+        session_id=777,
+        auth_user=dict(USER),
+        data={},
+        resolve_project_path=lambda d: "/tmp/proj",
+        persist_user_turn=lambda sid: persisted.append(sid),
+        make_saver=lambda sid: (lambda b: saved.append(b)),
+        rewrite_actions=lambda *a, **k: None,
+    )
+    assert body["response"] == "output-body" and body["session_id"] == 777
+    assert persisted == [777]
+    assert saved and saved[0]["response"] == "output-body"
+    assert busy is False
+
+
+def test_shell_action_lane_shell_busy_signals_route(monkeypatch):
+    """A busy chat returns the busy signal instead of running the shell."""
+    from api import chat_delivery
+    import api.project_commands as pc
+
+    sid = "b1-shell-busy"
+    monkeypatch.setattr(
+        pc,
+        "try_expand_message_project_command",
+        lambda msg, path: {
+            "action": "shell", "command": {"name": "deploy"}, "args": "",
+        },
+    )
+    assert chat_delivery.try_begin(sid) is True
+    try:
+        body, _mc, busy = _shell_lane(
+            "/deploy",
+            session_id=sid,
+            auth_user=dict(USER),
+            data={},
+            resolve_project_path=lambda d: "/tmp/proj",
+            persist_user_turn=lambda s: None,
+            make_saver=lambda s: None,
+            rewrite_actions=lambda *a, **k: None,
+        )
+        assert body is None and busy is True
+    finally:
+        chat_delivery.end(sid)
+
+
+def test_shell_action_lane_wired_into_chat_route(workflow_env, monkeypatch):
+    """POST /api/chat routes a shell project command through the owner lane."""
+    wca, db = workflow_env
+    import api.project_commands as pc
+
+    monkeypatch.setattr(
+        pc,
+        "try_expand_message_project_command",
+        lambda msg, path: {
+            "action": "shell", "command": {"name": "deploy"}, "args": "",
+        },
+    )
+    monkeypatch.setattr(
+        pc, "run_project_command_shell",
+        lambda cmd, args, session_id=None: {"success": True, "output": "ok"},
+    )
+    monkeypatch.setattr(
+        pc, "format_project_command_shell_reply",
+        lambda cmd, result: "cmd-output",
+    )
+    res = _post(wca, "/deploy")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["response"] == "cmd-output"
+    assert body["type"] == "project_command"
+
+
+# --------------------------------------------------------------------------
+# /help text lane (Phase 6B slice 4)
+# --------------------------------------------------------------------------
+
+
+def test_help_response_body_is_verbatim():
+    from api.chat_turn_workflow import help_response
+
+    body = help_response(42)
+    assert body["success"] is True
+    assert body["type"] == "help"
+    assert body["session_id"] == 42
+    assert body["response"].startswith("**🦑 Cuttle Web Chat Commands**")
+    assert "/cursor" in body["response"]
+    assert "/retry frontier" in body["response"]
+
+
+def test_help_lane_wired_into_chat_route(workflow_env):
+    wca, _db = workflow_env
+    res = _post(wca, "/help")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["type"] == "help"
+    assert body["success"] is True
+
+
+# --------------------------------------------------------------------------
+# Router-config + route/retry lanes (Phase 6B slices 5-6)
+# --------------------------------------------------------------------------
+
+
+def _classify(message, *, data=None, session_id=777, project="/tmp/proj"):
+    from api.chat_turn_workflow import classify_router_family
+
+    return classify_router_family(
+        message,
+        data=data or {},
+        session_id=session_id,
+        resolve_project_path=lambda _d: project,
+    )
+
+
+def test_classify_router_family_flags():
+    assert _classify("/router status")["router_cfg"] is True
+    assert _classify("/route cursor do it")["route_or_retry"] is True
+    assert _classify("/retry frontier")["route_or_retry"] is True
+    plain = _classify("/cursor hi")
+    assert plain["router_cfg"] is False and plain["route_or_retry"] is False
+    assert plain["project_path"] == "/tmp/proj"
+    assert plain["fallthrough_body"] is None
+
+
+def test_classify_router_family_parse_failure_falls_back(monkeypatch):
+    def boom(_m):
+        raise RuntimeError("parse down")
+
+    monkeypatch.setattr(
+        "api.agent_router.commands.parse_router_command", boom
+    )
+    out = _classify("/router status")
+    assert out["router_cfg"] is False and out["route_or_retry"] is False
+    assert out["project_path"] is None
+    assert out["fallthrough_body"] is None
+
+
+def test_router_config_lane_handles_and_persists(monkeypatch):
+    from api.chat_turn_workflow import run_router_config_lane
+    import api.agent_router.integration as integration
+
+    monkeypatch.setattr(
+        integration,
+        "handle_router_family_command",
+        lambda msg, session_id=None, project_path=None: {
+            "success": True, "response": "router-cfg", "type": "router_status",
+        },
+    )
+    db = FakeDB()
+    body = run_router_config_lane(
+        "/router status",
+        session_id=777,
+        project_path="/tmp/proj",
+        auth_user=dict(USER),
+        persist_user_turn=lambda sid: db.add_message(sid, "user", "/router status"),
+        get_auth_db=lambda: db,
+    )
+    assert body["response"] == "router-cfg"
+    assert body["session_id"] == 777
+    assert [r["role"] for r in db.rows] == ["user", "assistant"]
+    assert db.rows[1]["metadata"] == {"origin": "agent_router"}
+
+
+def test_router_config_lane_error_body(monkeypatch):
+    from api.chat_turn_workflow import run_router_config_lane
+    import api.agent_router.integration as integration
+
+    def boom(*_a, **_k):
+        raise RuntimeError("router down")
+
+    monkeypatch.setattr(integration, "handle_router_family_command", boom)
+    body = run_router_config_lane(
+        "/router status",
+        session_id=777,
+        project_path=None,
+        auth_user=None,
+        persist_user_turn=lambda sid: None,
+        get_auth_db=lambda: None,
+    )
+    assert body["type"] == "router_error"
+    assert "router down" in body["response"]
+    assert body["session_id"] == 777
+
+
+def test_route_retry_sync_turn_runs_router_and_persists(monkeypatch):
+    from api.chat_turn_workflow import run_route_retry_sync_turn
+    from api import chat_delivery
+    import api.agent_router.integration as integration
+
+    monkeypatch.setattr(
+        integration,
+        "handle_router_family_command",
+        lambda msg, session_id=None, project_path=None, status_queue=None: {
+            "success": True, "response": "routed", "type": "router_execution",
+        },
+    )
+    sid = "6b-retry-sync"
+    persisted = []
+    body, status = run_route_retry_sync_turn(
+        "/retry frontier",
+        session_id=sid,
+        data={},
+        project_path="/tmp/proj",
+        wants_stream=False,
+        auth_user=dict(USER),
+        persist_user_turn=lambda s: persisted.append(s),
+        make_saver=lambda _sid: None,
+        delivery=chat_delivery,
+    )
+    assert status == 200 and body["response"] == "routed"
+    assert body["session_id"] == sid
+    assert persisted == [sid]
+    assert chat_delivery.try_begin(sid) is True  # released
+    chat_delivery.end(sid)
+
+
+def test_route_retry_stream_turn_builds_prepared_and_io():
+    from api.chat_turn_workflow import build_route_retry_stream_turn
+
+    prepared, io = build_route_retry_stream_turn(
+        "/route cursor do it",
+        session_id=777,
+        data={},
+        project_path="/tmp/proj",
+        wants_stream=True,
+        auth_user=dict(USER),
+        persist_user_turn=lambda sid: None,
+        make_saver=lambda sid, project_path=None: None,
+        notify_mobile=lambda sid, body: None,
+    )
+    assert prepared.message == "/route cursor do it"
+    assert prepared.session_id == 777
+    assert prepared.project_path == "/tmp/proj"
+    assert callable(io.run_router)
+    assert io.run_harness is io.format_shortcut
+
+
+def test_route_retry_lane_wired_into_chat_route_sync(workflow_env, monkeypatch):
+    wca, db = workflow_env
+    import api.agent_router.integration as integration
+
+    monkeypatch.setattr(
+        integration,
+        "handle_router_family_command",
+        lambda msg, session_id=None, project_path=None, status_queue=None: {
+            "success": True, "response": "wired-routed", "type": "router_execution",
+        },
+    )
+    res = _post(wca, "/retry frontier")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["response"] == "wired-routed"
+    assert body["session_id"] == 777
+
+
+# --------------------------------------------------------------------------
+# Harness lane (Phase 6B slice 7)
+# --------------------------------------------------------------------------
+
+
+def test_harness_empty_prompt_body_is_verbatim():
+    from api.chat_turn_workflow import harness_empty_prompt_body
+
+    body = harness_empty_prompt_body("cursor", 42)
+    assert body["success"] is True
+    assert body["type"] == "cursor_error"
+    assert body["session_id"] == 42
+    assert 'prompt after /cursor' in body["response"]
+
+
+def test_build_harness_stream_turn_builds_prepared_and_io():
+    from api.chat_turn_workflow import build_harness_stream_turn
+
+    ran = []
+
+    def run_harness(agent_id, prompt, status_queue=None):
+        ran.append((agent_id, prompt))
+        return {"success": True, "response": "ok", "type": "cursor"}
+
+    prepared, io = build_harness_stream_turn(
+        "/cursor do it",
+        session_id=777,
+        data={},
+        project_path="/tmp/proj",
+        wants_stream=True,
+        agent_id="cursor",
+        prompt="do it",
+        auth_user=dict(USER),
+        persist_user_turn=lambda sid: None,
+        make_saver=lambda sid, project_path=None: None,
+        notify_mobile=lambda sid, body: None,
+        run_harness=run_harness,
+    )
+    assert prepared.message == "/cursor do it"
+    assert prepared.session_id == 777
+    assert prepared.project_path == "/tmp/proj"
+    assert io.run_harness is run_harness
+    shortcut = io.format_shortcut(
+        "harness_empty_prompt", type("S", (), {"agent_id": "cursor"})()
+    )
+    assert shortcut["type"] == "cursor_error"
+
+
+def test_run_harness_sync_turn_runs_persists_and_releases():
+    from api import chat_delivery
+    from api.chat_turn_workflow import run_harness_sync_turn
+
+    sid = "6b-harness-sync"
+    persisted = []
+    saved = []
+    body, status = run_harness_sync_turn(
+        "/cursor do it",
+        session_id=sid,
+        data={},
+        project_path="/tmp/proj",
+        wants_stream=False,
+        agent_id="cursor",
+        prompt="do it",
+        auth_user=dict(USER),
+        persist_user_turn=lambda s: persisted.append(s),
+        make_saver=lambda s, project_path=None: (lambda b: saved.append(b)),
+        notify_mobile=lambda s, b: None,
+        delivery=chat_delivery,
+        run_harness=lambda aid, prompt, status_queue=None: {
+            "success": True, "response": "ran", "type": "cursor",
+        },
+    )
+    assert status == 200 and body["response"] == "ran"
+    assert body["session_id"] == sid
+    assert persisted == [sid]
+    assert saved and saved[0]["response"] == "ran"
+    assert chat_delivery.try_begin(sid) is True  # released
+    chat_delivery.end(sid)
+
+
+def test_run_harness_sync_turn_busy_returns_409():
+    from api import chat_delivery
+    from api.chat_turn_workflow import run_harness_sync_turn
+
+    sid = "6b-harness-busy"
+    assert chat_delivery.try_begin(sid) is True
+    try:
+        body, status = run_harness_sync_turn(
+            "/cursor do it",
+            session_id=sid,
+            data={},
+            project_path="/tmp/proj",
+            wants_stream=False,
+            agent_id="cursor",
+            prompt="do it",
+            auth_user=dict(USER),
+            persist_user_turn=lambda s: None,
+            make_saver=lambda s, project_path=None: None,
+            notify_mobile=lambda s, b: None,
+            delivery=chat_delivery,
+            run_harness=lambda *a, **k: {"success": True},
+        )
+        assert status == 409 and body["error"] == "busy"
+    finally:
+        chat_delivery.end(sid)
+
+
+def test_harness_lane_wired_into_chat_route_sync(workflow_env, monkeypatch):
+    wca, db = workflow_env
+
+    def fake_run(agent_id, prompt, chat_session_id, **kwargs):
+        return {"success": True, "response": "harness-wired", "type": "cursor"}
+
+    res = _post(wca, "/cursor do it", runner=fake_run, monkeypatch=monkeypatch)
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["response"] == "harness-wired"
+    assert body["session_id"] == 777
+    assert [r["role"] for r in db.rows] == ["user", "assistant"]
+
+
+def test_harness_lane_wired_into_chat_route_empty_prompt(workflow_env):
+    wca, _db = workflow_env
+    res = _post(wca, "/cursor")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["type"] == "cursor_error"
+    assert "prompt after /cursor" in body["response"]
+
+
+# --------------------------------------------------------------------------
+# Pipeline lane (Phase 6B slice 8)
+# --------------------------------------------------------------------------
+
+
+def test_build_pipeline_stream_turn_builds_prepared_and_io():
+    from api.chat_turn_workflow import build_pipeline_stream_turn
+
+    def run_pipeline(status_queue=None):
+        return {"success": True, "response": "p", "type": "pipeline_execution"}
+
+    prepared, io = build_pipeline_stream_turn(
+        "plain probe",
+        session_id=777,
+        data={},
+        project_path="/tmp/proj",
+        wants_stream=True,
+        persist_user=lambda: None,
+        make_saver=lambda: None,
+        notify_mobile=lambda b: None,
+        run_pipeline=run_pipeline,
+    )
+    assert prepared.message == "plain probe"
+    assert prepared.session_id == 777
+    assert prepared.project_path == ""
+    assert io.run_pipeline is run_pipeline
+    assert io.run_harness is io.format_shortcut
+
+
+def test_run_pipeline_sync_lane_runs_saves_and_releases():
+    from api import chat_delivery
+    from api.chat_turn_workflow import run_pipeline_sync_lane
+
+    sid = "6b-pipeline-sync"
+    persisted = []
+    saved = []
+    body, status = run_pipeline_sync_lane(
+        sid,
+        delivery=chat_delivery,
+        persist_user=lambda: persisted.append(sid),
+        run=lambda: {"success": True, "response": "pipe", "type": "pipeline_execution"},
+        make_saver=lambda: (lambda b: saved.append(b)),
+        usage_meta_fn=lambda _r: None,
+    )
+    assert status == 200 and body["response"] == "pipe"
+    assert body["type"] == "pipeline_execution"
+    assert persisted == [sid]
+    assert saved and saved[0]["response"] == "pipe"
+    assert chat_delivery.try_begin(sid) is True  # released
+    chat_delivery.end(sid)
+
+
+def test_pipeline_lane_wired_into_chat_route_sync(workflow_env, monkeypatch):
+    wca, db = workflow_env
+    monkeypatch.setattr(
+        wca,
+        "process_message_with_bot",
+        lambda *a, **k: {"success": True, "response": "pipe-wired", "type": "pipeline_execution"},
+    )
+    res = _post(wca, "plain pipeline probe")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["response"] == "pipe-wired"
+    assert body["session_id"] == 777

@@ -484,6 +484,69 @@ move to `agents/cursor/`.
 - **Deferred items:** revisit `formatMessage` decomposition, the terminal
   session list, and anything recorded as "kept".
 
+### Phase 7 results (2026-10-11, branch `refactor/work`)
+
+**Ceilings lowered** (`test_composition_root_growth.py`) to the post-refactor
+baseline; `web_chat_api.py` was already pinned at 5,106 by Phase 6D.
+
+| File | Baseline `62aca76` | Phase 7 | Δ |
+|---|---:|---:|---:|
+| `chat_page.js` | 23,052 | 13,405 | −9,647 |
+| `app_shell.js` | 8,089 | 4,182 | −3,907 |
+| `web_chat_api.py` | 7,741 | 5,106 | −2,635 |
+
+**Enforcement added.** `test_architecture_boundaries.py` gains
+`test_phase7_route_families_delegate_to_owners` (no moved route family stays
+inline on the monolith; each owner defines its blueprint and the monolith
+registers it) and `test_phase7_owner_modules_are_scanned_and_never_reverse_import`
+(each owner is inside the acyclic scan and points away from the monolith).
+`test_composition_root_delegation.py` (new) pins, per frontend owner, that the
+owner declares its namespace and the composition root holds a thin call site —
+without re-slicing function bodies.
+
+**Audit.**
+- **One owner per state machine — confirmed.** Session identity: `chat_session.js`
+  is the only writer (`open`/`adopt`/`create`; page reads via `current()`).
+  History panel/search/grouping: `chat_history_panel.js` over pure
+  `chat_history_view`/`chat_history_archive`. Provider selection, turn
+  lifecycle, sync claim, follow-up queue, attention, pane map, Spaces and rail
+  each have one owner. No second writer was found.
+- **Duplication (recorded, not removed).** The six provider
+  loader/persist/build families still exist as near-identical per-provider
+  functions inside `chat_agent_controls.js`; they were *moved as-is* because
+  plan §2A requires per-provider characterization before collapsing, and
+  collapsing changes behavior. No identical function bodies exist between
+  `chat_page.js` and any owner.
+- **Dead code.** `_strip_invisible_leading` (`web_chat_api.py`) became dead when
+  Phase 6D dropped its only caller `_message_is_slash_remote_agent`; three
+  supervised tests still monkeypatch it (now vacuously). Recorded. Also
+  pre-existing and only test-referenced: `_no_cache_ui_assets`,
+  `_live_status_keys`, `_clear_live_status_on_stream_done`,
+  `_handle_muse_model_command`, `_with_muse_chat_context`,
+  `_cuttle_req_timer_start`/`_end` (already single-reference at `62aca76`).
+- **Kept decisions (unchanged).** 3C message-sync timer stays page-side
+  (consumer of `chat_session` identity, not a writer). 5A pane *layout tree*
+  stays in `app_shell.js`; 5B pane *lifecycle* is `shell_panes.js`. 5D
+  workspace persistence folded into pane lifecycle. The terminal session list
+  stays in the page (small, entangled with the history list).
+
+**Pre-existing e2e blocker (not created by Phase 7).** The offline suite is
+green (4,257 passed / 56 skipped / 0 failed) and every quality gate passes. The
+`src/tests/e2e/` browser run is **not** green on this branch: 21 failed / 274
+passed / 22 skipped. All failures pre-date Phase 7 (Phase 7 changed only docs +
+quality tests; no production or e2e file changed). Two causes, both from
+earlier phases merged into `refactor/work`:
+- `test_chat_draft_controls.py` calls the Spaces global `addSpace()`, which
+  Phase 5C moved into the `shell_spaces.js` controller (no global shim). Fails
+  with `ReferenceError: addSpace is not defined` (8 cases).
+- `test_chat_stop_resend.py` / `test_shadow_chat_stop_resend.py` /
+  `test_shadow_widget_order.py` (13 cases) hit the shadow guard's unexpected
+  `GET /api/worktrees` + `GET /api/git/repos` (worktrees merged from `dev`), and
+  two assert `0 > 0` for painted messages.
+
+These are follow-ups for the owning phases; they are recorded here rather than
+fixed in Phase 7 (behavior-preserving scope).
+
 ## 5. Decisions
 
 Decided at the Phase 0 review (2026-10-09):
