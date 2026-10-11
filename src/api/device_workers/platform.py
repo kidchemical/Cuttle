@@ -29,6 +29,7 @@ def list_workers(*, online_only: bool = False) -> Dict[str, Any]:
     from api.device_workers.capabilities import (
         cuttle_git_rev as local_cuttle_git_rev,
         cuttle_version as local_cuttle_version,
+        git_branch as local_git_branch,
         git_revs_differ,
     )
 
@@ -39,6 +40,7 @@ def list_workers(*, online_only: bool = False) -> Dict[str, Any]:
     out: List[Dict[str, Any]] = []
     local_ver = local_cuttle_version()
     local_rev = local_cuttle_git_rev()
+    local_branch = local_git_branch()
     for w in workers:
         is_self = str(w.get("worker_id") or "") == self_id
         w = dict(w)
@@ -80,6 +82,17 @@ def list_workers(*, online_only: bool = False) -> Dict[str, Any]:
         w["git_mismatch"] = rev_mismatch
         boot_rev = str(meta.get("boot_git_rev") or w.get("boot_git_rev") or "").strip()
         w["boot_git_rev"] = boot_rev
+        # Tracking branch/upstream (advertised by the worker heartbeat). A Client
+        # on a different branch than the Host can never fast-forward to the
+        # Host's rev — Update would no-op forever. Surface it so Devices shows
+        # *why* instead of a silent success.
+        peer_branch = str(meta.get("git_branch") or w.get("git_branch") or "").strip()
+        peer_upstream = str(meta.get("git_upstream") or w.get("git_upstream") or "").strip()
+        w["git_branch"] = peer_branch
+        w["git_upstream"] = peer_upstream
+        w["wrong_branch"] = bool(
+            (not is_self) and local_branch and peer_branch and peer_branch != local_branch
+        )
         # Disk rev is what the worker advertises as cuttle_git_rev; boot is the
         # rev loaded into the live claim loop. Differ ⇒ stale process (CH-000478).
         stale_process = bool(
@@ -117,6 +130,7 @@ def list_workers(*, online_only: bool = False) -> Dict[str, Any]:
         "self_worker_id": self_id,
         "host_cuttle_version": local_ver,
         "host_git_rev": local_rev,
+        "host_git_branch": local_branch,
         "online_remote": online_remote,
         "online_total": sum(1 for w in out if w.get("online")),
         "outdated_workers": [

@@ -14,6 +14,7 @@ const MESH_JOBS_PAGE_SIZE = 25;
 let devicesEnabled = true;
 let selfWorkerId = '';
 let hostCuttleVersion = '';
+let hostGitBranch = '';
 let viewingWorkerId = '';
 
 async function getDesktopViewerConfig() {
@@ -382,6 +383,7 @@ async function loadDevices() {
         devicesEnabled = wdata.enabled !== false;
         selfWorkerId = String(wdata.self_worker_id || '').trim();
         hostCuttleVersion = String(wdata.host_cuttle_version || '').trim();
+        hostGitBranch = String(wdata.host_git_branch || '').trim();
         viewingWorkerId = await resolveViewingWorkerId(selfWorkerId);
         meshJobs = jdata.jobs || [];
         const pageCount = Math.max(1, Math.ceil(meshJobs.length / MESH_JOBS_PAGE_SIZE));
@@ -445,14 +447,26 @@ function renderDevices() {
         const cpu = load.cpu_pct != null ? Math.round(load.cpu_pct) + '%' : '—';
         const gpu = load.gpu_pct != null ? Math.round(load.gpu_pct) + '%' : '—';
         const ver = String(w.cuttle_version || (w.meta && w.meta.cuttle_version) || '').trim() || '—';
+        const branch = String(w.git_branch || (w.meta && w.meta.git_branch) || '').trim();
+        const wrongBranch = !!w.wrong_branch;
         const mismatch = !!w.version_mismatch || !!w.needs_update || !!w.stale_process;
         let verHtml = escapeHtml(ver);
         if (mismatch && ver !== '—') {
-            const why = w.stale_process
-                ? 'Running worker process is older than on-disk git (needs reload/Update)'
-                : ('Host is ' + (hostCuttleVersion || '?'));
+            const why = wrongBranch
+                ? ('Tracking ' + (branch || '?') + ', but host is on ' + (hostGitBranch || '?')
+                    + '. Update cannot fast-forward across branches — switch this device to the host branch.')
+                : (w.stale_process
+                    ? 'Running worker process is older than on-disk git (needs reload/Update)'
+                    : ('Host is ' + (hostCuttleVersion || '?')));
             verHtml = '<span style="color:var(--warning, #d29922)" title="' +
                 escapeHtml(why) + '">' + escapeHtml(ver) + ' ⚠</span>';
+        }
+        if (branch) {
+            const bTitle = wrongBranch
+                ? ('On ' + branch + ' (host on ' + (hostGitBranch || '?') + ')')
+                : ('Tracking branch ' + branch);
+            verHtml += ' <span style="opacity:.6;font-size:11px" title="' +
+                escapeHtml(bTitle) + '">' + escapeHtml(branch) + '</span>';
         }
         let latency = '—';
         if (w.last_rtt_ms != null && isFinite(Number(w.last_rtt_ms))) {
@@ -585,8 +599,39 @@ async function requestWorkerSelfUpdate(workerId, btn) {
         if (!r.ok || !data.success) {
             throw new Error(data.error || ('HTTP ' + r.status));
         }
+        if (window.showToast) window.showToast('Updating ' + wid + '…', 'info');
+        const jobId = String(
+            (data.job && (data.job.id || data.job.job_id)) || data.job_id || ''
+        ).trim();
+        // Wait for the preservation pull so a no-op (already at upstream / wrong
+        // branch) or dirty-tree failure is reported instead of a false "queued".
+        let final = data.job || null;
+        if (jobId) {
+            const deadline = Date.now() + 180000;
+            while (Date.now() < deadline) {
+                await new Promise(function (res) { setTimeout(res, 1500); });
+                try {
+                    const sr = await fetch('/api/workers/jobs/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                    const sj = await sr.json().catch(function () { return {}; });
+                    final = (sj && (sj.job || sj)) || final;
+                    const st = String((final && final.status) || '').toLowerCase();
+                    if (st === 'succeeded' || st === 'failed' || st === 'cancelled') break;
+                } catch (_) { /* keep waiting */ }
+            }
+        }
+        const st = String((final && final.status) || '').toLowerCase();
+        if (st === 'failed' || st === 'cancelled') {
+            throw new Error(String(
+                (final && (final.error || (final.result && final.result.error))) || 'Self-update failed'
+            ));
+        }
+        const jr = (final && final.result) || {};
         if (window.showToast) {
-            window.showToast('Self-update queued for ' + wid, 'success');
+            if (jr.advanced === false) {
+                window.showToast(wid + ': ' + (jr.note || 'nothing to update'), 'info');
+            } else {
+                window.showToast('Updated ' + wid + ' → ' + (jr.head || '?') + '.', 'success');
+            }
         }
         await loadDevices();
     } catch (e) {

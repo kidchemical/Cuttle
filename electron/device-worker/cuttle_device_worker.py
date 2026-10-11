@@ -637,6 +637,18 @@ def _cuttle_self_update_local(params: Dict[str, Any]) -> Dict[str, Any]:
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         start_new_session=posix, close_fds=True,
     )
+    advanced = bool(pull.get("advanced"))
+    branch = str(pull.get("branch") or "")
+    upstream = str(pull.get("upstream") or "")
+    if advanced:
+        note = "Preservation checks and fast-forward succeeded; detached updater rechecks before relaunch."
+    else:
+        where = f"{branch}@{pull.get('head')}" if branch else str(pull.get("head") or "HEAD")
+        note = (
+            f"no-op: checkout already at {where}"
+            f" ({upstream or 'no upstream configured'}); nothing to fast-forward. "
+            "Restarting anyway — if this device should track another branch, switch it first."
+        )
     return {
         "ok": True,
         "kind": "cuttle_self_update",
@@ -650,12 +662,36 @@ def _cuttle_self_update_local(params: Dict[str, Any]) -> Dict[str, Any]:
         "skip_pull": True,
         "stashed": bool(pull.get("stashed")),
         "head": pull.get("head"),
+        "before": pull.get("before"),
+        "advanced": advanced,
+        "branch": branch,
+        "upstream": upstream,
+        "note": note,
     }
 
 
 def _git_update_checkout_local(repo: Path, log_path: Path | None = None, helper_path: Path | None = None) -> Dict[str, Any]:
-    """Run the shared preservation contract; never stash, reset, or clean."""
+    """Run the shared preservation contract; never stash, reset, or clean.
+
+    Reports before/after HEAD so a no-op fast-forward (already at upstream, or
+    tracking the wrong branch) is surfaced honestly instead of as success.
+    """
     helper = helper_path or repo / ".cuttle_global" / "scripts" / "client-update-checkout.py"
+
+    def _git(*args: str) -> str:
+        try:
+            return subprocess.run(
+                ["git", "-C", str(repo), *args],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return ""
+
+    before = _git("rev-parse", "--short", "HEAD")
+    branch = _git("rev-parse", "--abbrev-ref", "HEAD")
     try:
         result = subprocess.run(
             [sys.executable, str(helper), "--repo", str(repo)],
@@ -668,14 +704,26 @@ def _git_update_checkout_local(repo: Path, log_path: Path | None = None, helper_
             with log_path.open("a", encoding="utf-8") as log:
                 log.write("\n---- preservation update ----\n" + output)
         if result.returncode:
-            return {"ok": False, "error": output or "checkout update refused", "log": output}
-        head = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, check=True, timeout=30,
-        ).stdout.strip()
-        return {"ok": True, "stashed": False, "head": head, "log": output}
+            return {
+                "ok": False,
+                "error": output or "checkout update refused",
+                "log": output,
+                "branch": branch,
+                "before": before,
+            }
+        head = _git("rev-parse", "--short", "HEAD")
+        return {
+            "ok": True,
+            "stashed": False,
+            "head": head,
+            "before": before,
+            "advanced": bool(before and head and before != head),
+            "branch": branch,
+            "upstream": _git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"),
+            "log": output,
+        }
     except (OSError, subprocess.SubprocessError) as exc:
-        return {"ok": False, "error": f"checkout update refused: {exc}"}
+        return {"ok": False, "error": f"checkout update refused: {exc}", "branch": branch, "before": before}
 
 def _blender_render_local(params: Dict[str, Any]) -> Dict[str, Any]:
     import subprocess

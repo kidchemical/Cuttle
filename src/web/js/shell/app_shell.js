@@ -153,8 +153,14 @@ let cuttleTitlebarCancelHide = null;
         if (preferMesh) {
             const local = meshUpdate.localVersion || '?';
             const host = meshUpdate.hostVersion || '?';
-            updateBtn.title = `Update available — ${local} → ${host} (git pull + restart)`;
-            updateBtn.setAttribute('aria-label', `Update Cuttle from ${local} to ${host}`);
+            if (meshUpdate.wrongBranch) {
+                updateBtn.title = `Wrong branch — on ${meshUpdate.branch || '?'}, host is on ${meshUpdate.hostBranch || '?'}. `
+                    + 'Update cannot fast-forward across branches; switch this device to the host branch.';
+                updateBtn.setAttribute('aria-label', `Wrong branch: ${meshUpdate.branch || '?'} vs host ${meshUpdate.hostBranch || '?'}`);
+            } else {
+                updateBtn.title = `Update available — ${local} → ${host} (git pull + restart)`;
+                updateBtn.setAttribute('aria-label', `Update Cuttle from ${local} to ${host}`);
+            }
         } else {
             updateBtn.title = 'Update Cuttle desktop shell (download from host)';
             updateBtn.setAttribute('aria-label', 'Update Cuttle desktop shell');
@@ -251,6 +257,7 @@ let cuttleTitlebarCancelHide = null;
     const applyMeshUpdateFromWorkers = (data) => {
         const hostVer = String((data && data.host_cuttle_version) || '').trim();
         const hostRev = String((data && data.host_git_rev) || '').trim();
+        const hostBranch = String((data && data.host_git_branch) || '').trim();
         const list = Array.isArray(data && data.workers) ? data.workers : [];
         const isClient = !!(desktopCfg && desktopCfg.clientMode);
         // Never fall back to host self_worker_id on a Client — that compared
@@ -325,6 +332,9 @@ let cuttleTitlebarCancelHide = null;
             localRev: myRev,
             hostRev,
             samePackageVersion: !!(myVer && hostVer && myVer === hostVer),
+            wrongBranch: !!(me && me.wrong_branch),
+            branch: String((me && me.git_branch) || '').trim(),
+            hostBranch,
         };
         refreshUpdateBtn();
     };
