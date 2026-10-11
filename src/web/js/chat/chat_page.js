@@ -7441,11 +7441,9 @@
     function updateSessionUsageSummary(entries) {
         const panel = document.getElementById('chatSessionUsage');
         const totals = document.getElementById('chatSessionUsageTotals');
-        const include = document.getElementById('chatSessionUsageSubagents');
         if (!panel || !totals) return;
         const enabled = localStorage.getItem('cuttleShowSessionUsageEstimate') === 'true';
         panel.hidden = !enabled;
-        if (include) include.checked = localStorage.getItem('cuttleSessionUsageIncludeSubagents') === 'true';
         if (!enabled) return;
         const list = Array.isArray(entries) ? entries : [];
         const normalized = list.map((entry) => CuttleChatUsage.normalize(entry && entry.usage, entry && entry.metadata)).filter(Boolean);
@@ -7485,17 +7483,9 @@
         } catch (_) {}
     }
 
-    const sessionUsageIncludeSubagents = document.getElementById('chatSessionUsageSubagents');
-    if (sessionUsageIncludeSubagents) {
-        sessionUsageIncludeSubagents.checked = localStorage.getItem('cuttleSessionUsageIncludeSubagents') === 'true';
-        sessionUsageIncludeSubagents.addEventListener('change', () => {
-            localStorage.setItem('cuttleSessionUsageIncludeSubagents', sessionUsageIncludeSubagents.checked ? 'true' : 'false');
-            refreshSessionUsageSummary();
-        });
-    }
     if (typeof window !== 'undefined' && window.addEventListener) {
         window.addEventListener('storage', (event) => {
-            if (event && event.key === 'cuttleShowSessionUsageEstimate') refreshSessionUsageSummary();
+            if (event && ['cuttleShowSessionUsageEstimate', 'cuttleSessionUsageIncludeSubagents'].includes(event.key)) refreshSessionUsageSummary();
         });
     }
 
