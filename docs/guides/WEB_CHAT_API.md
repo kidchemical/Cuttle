@@ -66,6 +66,8 @@ is a logged, nonfatal `try/except`:
 | Action forms | `api.action_form_routes` (`action_forms_bp`, url prefix `/api`) | blueprint — transport; logic in `api.action_forms` / `api.project_actions` |
 | Git | `api.git_routes` (`git_bp`, url prefix `/api`) | blueprint — transport; behavior in `api.git_service` |
 | Claude Code palette pins (`/api/claude/models\|model\|effort`) | `api.agent_harness.agents.claude.routes` (`claude_bp`, url prefix `/api/claude`) | blueprint — owned by the Claude agent slice; catalog in `agents/claude/model_catalog.py` |
+| Provider palette pins (`/api/muse\|/api/hermes\|/api/codex\|/api/opencode/{models,model,effort}`) | `api.agent_harness.agents.<id>.routes` (`muse_bp`/`hermes_bp`/`codex_bp`/`opencode_bp`, matching url prefixes) | blueprints — one per agent slice; contract identical to Claude's |
+| Cursor Agent models (`/api/cursor-agent/models`) | `api.agent_harness.agents.cursor.routes` (`cursor_bp`, url prefix `/api/cursor-agent`) | blueprint — owned by the Cursor agent slice |
 | Router editor | `api.agent_router.routes` (`router_editor_bp`, url prefix `/api/router`) | blueprint — decision-only tools |
 | Activity stream | `api.activity_stream` (`activity_bp`, url prefix `/api`) | blueprint — chat activity push stream |
 | Tasks gizmos | `api.gizmos.tasks_routes.tasks_bp` | scoped routes under `/api/gizmos/tasks` |
@@ -132,14 +134,13 @@ routes each).
 |---|---|
 | `/api/router`, `/api/agent-router`, `/api/agents` | `api.agent_router` |
 | `/api/sessions`, `/api/clear-session` | overlap with `auth_api` sessions |
-| `/api/muse` `/api/hermes` `/api/codex` `/api/opencode` | harness catalog — avoid new per-agent forks |
 | `/api/shared-media` | `api.shared_media` |
 | `/api/shell` | pane layout (root-owned; agent read via `python -m api.panes_cli`) |
 | `/api/chat` + steer/cancel/pending/live-status | `chat_turn*` / `chat_coordinator` / `chat_delivery` / `chat_run_registry` |
 | `/api/flask/restart*`, `/api/status`, `/api/health` | `flask_restart`; health is **not** the daemon liveness probe (`/api/status` is) |
 | `/api/local-llm/status`, `/api/ollama-models` | user-managed local server status and model discovery for router/completion providers |
 | `/api/pairing` | user/DM pairing (not worker pairing) |
-| `/api/cursor-agent`, `/api/project-commands` | harness catalog / `api.project_commands` |
+| `/api/project-commands` | `api.project_commands` |
 | `/api/mobile`, `/api/supervised`, `/api/agent-context`, `/api/agent-defaults` | respective owners |
 | HTML shells (`/`, `/chat_page.html`, Jobs, Dashboards, …) | static; fine to keep in the composition root |
 | Static `/css` `/js` `/output` `/logs` `/sounds` | |

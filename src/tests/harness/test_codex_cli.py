@@ -437,8 +437,10 @@ def test_codex_models_endpoints(tmp_path: Path, monkeypatch):
         )
         assert denied.status_code == 401  # pins require a signed-in caller
 
+        from api.agent_harness.agents.codex import routes as codex_routes
+
         monkeypatch.setattr(
-            w, "_require_session_actor",
+            codex_routes, "_require_session_actor",
             lambda session_id: ({"id": 1}, session_id, None),
         )
         listed = client.get("/api/codex/models?session=api-sess").get_json()

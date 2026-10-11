@@ -50,7 +50,10 @@ CEILINGS = {
     # moved to api.chat_turn_workflow (harness_empty_prompt_body,
     # build_harness_stream_turn, run_harness_sync_turn, build_pipeline_stream_turn,
     # run_pipeline_sync_lane); route keeps capture, busy SSE/409, SSE framing, jsonify.
-    "src/api/web_chat_api.py": 5846,
+    # -703 (2026-10-11): Phase 6C — per-provider model/effort palette HTTP moved to
+    # agents/<id>/routes.py blueprints (muse/hermes/codex/opencode, plus cursor
+    # /api/cursor-agent/models); route contract unchanged.
+    "src/api/web_chat_api.py": 5143,
 }
 NET_GROWTH_LIMIT = 150
 TRAILER = "Composition-Root-Growth:"
