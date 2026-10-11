@@ -5,11 +5,9 @@ Connects the landing page to the local bot functionality
 """
 
 import json
-import asyncio
 import threading
 import time
 import re
-from datetime import datetime
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context, make_response, redirect
 from flask_cors import CORS
 import sys
@@ -19,10 +17,6 @@ import uuid
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, Optional
-
-# Imports for SSL certificate generation
-import ssl
-from datetime import datetime
 
 # Add project root to path (parent of api directory, which is 'src')
 script_dir = Path(__file__).parent
@@ -69,9 +63,7 @@ from core.runtime_paths import query_logs_dir as _query_logs_dir
 
 
 from api.chat_status_phases import (
-    PHASE_LLM,
     PHASE_ROUTE,
-    PHASE_TOOL,
     emit_pipeline_status,
 )
 
@@ -233,7 +225,6 @@ from api.http_authz import (
     is_owner_user,
     loopback_or_authenticated,
     loopback_or_owner,
-    loopback_required,
     owner_required,
     request_is_loopback,
     require_authenticated,
@@ -559,10 +550,6 @@ _chat_live_status = _live_status_svc._STORE
 _chat_live_status_lock = _live_status_svc._LOCK
 _CHAT_LIVE_STATUS_TTL = _live_status_svc.TTL_SECONDS
 _CHAT_LIVE_STATUS_CONNECTING_TTL = _live_status_svc.CONNECTING_TTL_SECONDS
-
-
-def _live_status_ttl_seconds(entry: dict) -> float:
-    return _live_status_svc._ttl_seconds(entry)
 
 # Serialize local LLM (Ollama) requests: Ollama processes one request at a time per model.
 # When multiple pipelines call Ollama, later requests wait; we emit "Waiting for local LLM..." for the UI.
@@ -4130,7 +4117,6 @@ def health_check():
     from core.agent_cli_env import agent_cli_env
     import platform
     import shutil
-    import sys
 
     py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     cwd = str(actual_project_root.resolve())
@@ -4803,27 +4789,6 @@ def _strip_invisible_leading(s: str) -> str:
     return s.lstrip('\ufeff\u200b\u200c\u200d\u2060')
 
 
-def _message_is_slash_remote_agent(msg: str) -> bool:
-    """Explicit slash forms that must use tool-remote-agent, not default OpenAI."""
-    if not isinstance(msg, str) or not msg.strip():
-        return False
-    t = _strip_invisible_leading(msg)
-    low = t.lower()
-    if re.match(r'^/claude(\s|$)', low):
-        return True
-    if re.match(r'^/opencode(\s|$)', low):
-        return True
-    if re.match(r'^/codex(\s|$)', low):
-        return True
-    if re.match(r'^/muse(\s|$)', low):
-        return True
-    if low.startswith('/cursor '):
-        return True
-    if low.startswith('claude '):
-        return True
-    return False
-
-
 # PIPELINE SETTINGS ENDPOINTS
 # =================================================================================
 
@@ -5082,8 +5047,6 @@ if __name__ == '__main__':
             get_lan_ipv4,
             resolve_bind_host,
             ensure_all_lan_firewall_rules,
-            windows_firewall_rule_active,
-            lan_portal_url,
             wifi_network_category,
         )
         settings = get_settings_manager()

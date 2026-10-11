@@ -53,7 +53,11 @@ CEILINGS = {
     # -703 (2026-10-11): Phase 6C — per-provider model/effort palette HTTP moved to
     # agents/<id>/routes.py blueprints (muse/hermes/codex/opencode, plus cursor
     # /api/cursor-agent/models); route contract unchanged.
-    "src/api/web_chat_api.py": 5143,
+    # -37 (2026-10-11): Phase 6D — dependency cleanup: dropped unused top-level
+    # imports (asyncio/ssl/datetime/PHASE_LLM/PHASE_TOOL/loopback_required) and the
+    # dead _live_status_ttl_seconds / _message_is_slash_remote_agent shims whose
+    # callers moved; no route or behavior change.
+    "src/api/web_chat_api.py": 5106,
 }
 NET_GROWTH_LIMIT = 150
 TRAILER = "Composition-Root-Growth:"
