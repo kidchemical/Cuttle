@@ -17,6 +17,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from flask import Blueprint, jsonify, request
+
+from api.auth_db import get_auth_db
+from api.http_authz import loopback_or_authenticated, loopback_required, owner_required
+
+flask_restart_bp = Blueprint("flask_restart", __name__)
+
 from core.runtime_paths import flask_restart_request_path
 from core.runtime_paths import flask_restart_status_path
 from core.runtime_paths import logs_dir
@@ -1258,3 +1265,116 @@ def handle_restart_slash(
         success=bool(result.get("success")),
     )
     return result
+
+
+# HTTP transport for the daemon-owned restart protocol.
+@flask_restart_bp.route('/api/flask/restart/status', methods=['GET'])
+def api_flask_restart_status():
+    """Durable restart status + active work (survives Flask replacement)."""
+    _user, err = loopback_or_authenticated()
+    if err:
+        return err
+    try:
+        snap = status_snapshot()
+        st = snap.get('status') or {}
+        consume = (request.args.get('consume') or '').strip().lower() in ('1', 'true', 'yes')
+        rid = st.get('restart_id')
+        if consume and rid and st.get('state') in ('healthy', 'failed', 'timed_out'):
+            if not st.get('client_notified'):
+                mark_outcome_visible(str(rid))
+                snap['completion_message'] = build_completion_message(st)
+                snap['status'] = {**st, 'client_notified': True, 'outcome_visible': True}
+        gen = os.environ.get('CUTTLE_FLASK_GENERATION')
+        snap['live_flask_pid'] = os.getpid()
+        snap['live_generation'] = int(gen) if gen and str(gen).isdigit() else None
+        try:
+            snap['restart_form_id'] = shared_restart_form_id(
+                snap['live_generation'] if snap['live_generation'] is not None else None
+            )
+        except Exception:
+            snap['restart_form_id'] = None
+        return jsonify(snap)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@flask_restart_bp.route('/api/flask/restart', methods=['POST'])
+@owner_required
+def api_flask_restart():
+    """Request a daemon-owned Flask restart (drain-first)."""
+    try:
+        data = request.get_json(silent=True) or {}
+        mode = (data.get('mode') or data.get('action') or 'graceful').strip().lower()
+        session_id = data.get('session_id')
+        confirm = bool(data.get('confirm') or data.get('force_confirm') or data.get('yes'))
+        notify_raw = data.get('chat_notify')
+        if notify_raw is None:
+            notify_raw = data.get('notify')
+        if notify_raw is None:
+            chat_notify = True
+        elif isinstance(notify_raw, str):
+            chat_notify = notify_raw.strip().lower() not in ('0', 'false', 'no', 'off', 'card', 'none')
+        else:
+            chat_notify = bool(notify_raw)
+        result = request_restart(
+            mode=mode,
+            session_id=session_id,
+            user_source=str(data.get('source') or 'api'),
+            force_confirm=confirm,
+            triggering_task_id=data.get('task_id'),
+            chat_notify=chat_notify,
+        )
+        code = 200 if result.get('success') or result.get('needs_confirm') or result.get('state') == 'rejected' else 400
+        if result.get('needs_confirm'):
+            code = 409
+        return jsonify(result), code
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e), 'type': 'flask_restart'}), 500
+
+
+@flask_restart_bp.route('/api/flask/restart/notify', methods=['POST'])
+@loopback_required
+def api_flask_restart_notify():
+    """Daemon → new Flask: persist post-restart completion into the requesting chat once."""
+    try:
+        data = request.get_json(silent=True) or {}
+        rid = str(data.get('restart_id') or '').strip()
+        sid = data.get('session_id')
+        msg = (data.get('message') or '').strip()
+        st = read_status()
+        if not rid or str(st.get('restart_id')) != rid:
+            return jsonify({'success': False, 'error': 'restart_id mismatch'}), 400
+        if st.get('post_restart_message_written'):
+            return jsonify({'success': True, 'deduped': True})
+        if st.get('chat_notify') is False:
+            # Card-driven restart: the card polls status and shows the outcome,
+            # so a completion bubble would just be noise in the transcript.
+            write_status({**st, 'post_restart_message_written': True})
+            return jsonify({'success': True, 'skipped': 'chat_notify_disabled'})
+        if not msg:
+            msg = build_completion_message(st)
+        bare = str(sid or st.get('session_id') or '').strip()
+        if bare.startswith('db_session_'):
+            bare = bare[len('db_session_'):]
+        try:
+            sid_int = int(bare)
+        except (TypeError, ValueError):
+            write_status({**st, 'post_restart_message_written': True})
+            return jsonify({'success': True, 'skipped': 'no session'})
+        db = get_auth_db()
+        db.add_message(
+            sid_int,
+            'assistant',
+            msg,
+            metadata={
+                'type': 'flask_restart',
+                'restart_id': rid,
+                'kind': 'complete',
+                'delivery': 'persisted',
+            },
+        )
+        write_status({**st, 'post_restart_message_written': True})
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
