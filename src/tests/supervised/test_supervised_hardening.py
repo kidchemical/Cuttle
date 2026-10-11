@@ -388,8 +388,13 @@ def test_js_activity_card_not_pending_queue(supervised_env):
     assert "activityCardStateFromTask" not in helper
     assert "followupQueue" in html
     assert "Pending-prompt queue only" in html or "never used for supervised" in html
-    # Control lane forces non-stream
-    assert "controlLane ? false : true" in js or "controlLane ? false" in js
+    # Control lane forces non-stream. 4A pt3: that transport choice is owned
+    # by chat_generation.planSubmit (JSON-only for the control lane); the page
+    # just feeds the resolved choice to the transport.
+    gen = (REPO_ROOT / "src/web/js/chat/chat_generation.js").read_text(encoding="utf-8")
+    assert "firstTransportStream: !controlLane" in gen
+    assert "body.stream = false" in gen
+    assert "fetchChatPayload(submitPlan.firstTransportStream)" in js
 
 
 def test_node_supervised_control_helpers(supervised_env):

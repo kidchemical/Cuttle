@@ -33,7 +33,10 @@ CEILINGS = {
     # changes/git path + history worktree badge — page-owned state/effects only.
     # Decisions live in chat_project.js / chat_worktrees.js / chat_chip_config.js.
     "src/web/js/chat/chat_page.js": 23420,
-    "src/web/js/shell/app_shell.js": 8200,
+    # +80 (2026-10-11): titlebar update spinner + update-channel chip and the
+    # deferred-restart modal merged from dev (Phase 1). Shell-owned DOM wiring;
+    # pure channel/role decisions live in shell/desktop_update_policy.js.
+    "src/web/js/shell/app_shell.js": 8280,
     "src/api/web_chat_api.py": 7750,
 }
 NET_GROWTH_LIMIT = 150

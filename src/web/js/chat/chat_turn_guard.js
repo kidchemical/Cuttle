@@ -54,12 +54,33 @@
         return !!snapshot.isViewing(boundSessionId);
     }
 
+    /**
+     * Session-adopt gate for an SSE `session` event: a turn must never
+     * yank the open chat to a different id mid-turn. A stale turn (New
+     * Chat / history switch bumped the generation) never adopts — the
+     * welcome splash has currentSessionId == null and must not re-adopt
+     * the prior chat. Otherwise adopt only when there is no open
+     * session, when the event matches the viewed session, or when the
+     * turn's own bound session is still the viewed one (id drift).
+     * snapshot: { currentSessionId, sessionIdsEqual(a, b), isViewing }.
+     * Reuses the same staleness truth (`isStale`) as the paint gate.
+     */
+    function shouldAdoptStreamSession(
+        turnNavGen, generation, boundSessionId, sid, snapshot
+    ) {
+        if (isStale(turnNavGen, generation)) return false;
+        if (snapshot.currentSessionId == null) return true;
+        if (snapshot.sessionIdsEqual(snapshot.currentSessionId, sid)) return true;
+        return boundSessionId != null && !!snapshot.isViewing(boundSessionId);
+    }
+
     const api = {
         createGeneration,
         bump,
         capture,
         isStale,
         canPaintHere,
+        shouldAdoptStreamSession,
     };
 
     const ns = (root.CuttleTurnGuard = root.CuttleTurnGuard || {});

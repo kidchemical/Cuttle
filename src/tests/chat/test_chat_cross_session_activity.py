@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 CHAT_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
+MOD_PR = CHAT_JS.parent / "chat_pending_result.js"
 
 
 def _src() -> str:
@@ -61,28 +62,21 @@ def _fn_body(src: str, name: str) -> str:
     raise AssertionError(f"unbalanced braces for {name!r}")
 
 
-def _sse_event_arms(src: str) -> dict[str, str]:
-    """Map SSE arms inside fetchChatPayload's stream loop.
+def _sse_session_arm(src: str) -> str:
+    """The SSE `session` arm inside fetchChatPayload's stream loop.
 
     Event classification is owned by chat_pending_result.js
-    (``classifyStreamEvent``); the page applies the gated paint/adopt
-    effects per ``streamEv.kind`` arm.
+    (``classifyStreamEvent``) and the per-event paint/final plan by
+    ``planStreamEvent``; the page keeps only the session arm (it owns
+    canonicalization and the turn-guard adopt gate).
     """
     assert "CuttleChatPendingResult.classifyStreamEvent(" in src
-    arms: dict[str, str] = {}
-    status_m = re.search(
-        r"if \(streamEv\.kind === 'status'\) \{[\s\S]*?(?=\} else if \(streamEv\.kind ===)",
-        src,
-    )
-    assert status_m, "SSE status arm not found"
-    arms["status"] = status_m.group(0)
     session_m = re.search(
-        r"else if \(streamEv\.kind === 'session'\) \{[\s\S]*?(?=\} else if \(streamEv\.kind ===)",
+        r"if \(streamEv\.kind === 'session'\) \{[\s\S]*?continue;",
         src,
     )
     assert session_m, "SSE session arm not found"
-    arms["session"] = session_m.group(0)
-    return arms
+    return session_m.group(0)
 
 
 def test_nav_generation_token_exists():
@@ -96,25 +90,36 @@ def test_nav_generation_token_exists():
     assert "CuttleTurnGuard.isStale(" in src
 
 
-def test_sse_status_updates_gated_by_turn_view():
+def test_sse_status_paint_gated_by_turn_view():
     """Live status from an in-flight SSE must not paint after New Chat."""
-    arms = _sse_event_arms(_src())
-    status = arms["status"]
-    assert "updateTypingStatus(" in status
-    assert "canPaintTurnHere()" in status
+    src = _src()
+    # The paint decision moved to the owner (planStreamEvent): the page
+    # feeds it the turn's paint gate and applies the returned status text.
+    assert "CuttleChatPendingResult.planStreamEvent(" in src
+    assert "canPaint: canPaintTurnHere()" in src
+    assert "updateTypingStatus(streamPlan.paintStatus)" in src
 
 
 def test_pending_status_poll_gated_by_turn_view():
     """Detached pending waiter must not write typing status into another chat."""
-    body = _fn_body(_src(), "async function collectPendingResult")
+    # 4C moved the pending waiter orchestration into the owner's recovery
+    # controller; the page delegates via createRecoveryController. The gate
+    # (only paint for the open session) lives in the controller's
+    # collectPendingResult host callbacks.
+    src = _src()
+    assert "CuttleChatPendingResult.createRecoveryController(" in src
+    body = _fn_body(
+        MOD_PR.read_text(encoding="utf-8"),
+        "async function collectPendingResult",
+    )
     assert "opts.navGen" in body or "turnNavGen" in body
     ungated = []
-    for m in re.finditer(r"updateTypingStatus\([^)]*\)", body):
+    for m in re.finditer(r"host\.paintStatus\([^)]*\)", body):
         start = max(0, m.start() - 160)
         prelude = body[start : m.start()]
-        if "canPaintTurnHere()" not in prelude and "isViewingSession(" not in prelude:
+        if "host.isViewing(sessionId)" not in prelude:
             ungated.append(m.group(0))
-    assert body.count("updateTypingStatus(") >= 1, "collectPendingResult should paint status"
+    assert body.count("host.isViewing(sessionId)") >= 1, "collectPendingResult should gate paints"
     assert not ungated, f"ungated status paints in collectPendingResult: {ungated}"
 
 
@@ -128,14 +133,13 @@ def test_detach_does_not_reenable_orphan_pending_waiter():
 
 def test_sse_session_adopt_not_from_zombie_when_welcome():
     """A background turn must not adopt into the New Chat welcome splash."""
-    arms = _sse_event_arms(_src())
-    session = arms["session"]
+    session = _sse_session_arm(_src())
     assert "adoptChatSessionId(" in session
-    # Zombie adopt gate, now via the owned staleness predicate (same contract:
-    # a turn from before the navigation bump never adopts into the new UI).
-    assert "!CuttleTurnGuard.isStale(turnNavGen, turnGeneration)" in session
-    # Welcome null path may remain, but only under the nav-gen gate.
-    if "currentSessionId == null" in session:
-        null_idx = session.index("currentSessionId == null")
-        window = session[max(0, null_idx - 200) : null_idx + 40]
-        assert "turnNavGen === chatNavGeneration" in window or "turnNavGen" in session
+    # Zombie adopt gate now lives in the owner (CuttleTurnGuard
+    # .shouldAdoptStreamSession); the page feeds it the nav generation and
+    # the live session snapshot. Same contract: a turn from before the
+    # navigation bump never adopts into the new UI (behavior pinned in
+    # test_chat_turn_guard.py::test_stream_session_adopt_gate).
+    assert "CuttleTurnGuard.shouldAdoptStreamSession(" in session
+    assert "turnNavGen, turnGeneration" in session
+    assert "currentSessionId: session.current()" in session

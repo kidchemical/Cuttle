@@ -176,6 +176,10 @@ let messageSyncTimer = null;
 // queue contents live in the owned module state (Slice 9C)
 globalThis.CuttleFollowupQueue = require(process.env.MOD_FQ);
 const followupQueue = CuttleFollowupQueue.createQueueState();
+// 4D: the page delegates follow-up execution + drain timers to the controller.
+function followupController() {
+  return { cancelDrain() {}, getState() { return followupQueue; } };
+}
 let sendDispatchGuard = true;
 const chatVoice = { onGenerationStarted() {} };
 // ---- effect log + stubs for leaves outside stop-state ownership ----
@@ -195,6 +199,10 @@ function setWelcomeComposerEnabled(b) { fx.push(['welcome', b]); }
 function refocusChatInputIfAppropriate() {}
 function clearStreamStatusPoll() { fx.push(['poll', 'clear']); }
 function watchDetachedSessionForCompletion(id) { fx.push(['watch', id]); }
+// 4C: the page delegates recovery to CuttleChatPendingResult's controller.
+function recoveryController() {
+  return { watchDetachedSessionForCompletion(id) { fx.push(['watch', id]); } };
+}
 function startMessageSync() { fx.push(['sync', 'start']); }
 function scheduleNextMessageSync() { fx.push(['sync', 'next']); }
 function stopMessageSync() { fx.push(['sync', 'stop']); }

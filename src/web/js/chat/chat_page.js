@@ -617,21 +617,59 @@
     let inFlightUserMessage = null;
 
     // Follow-up queue while a reply is generating. On idle, the whole queue is
-    // combined into one agent turn (not drained one-by-one).
-    // Follow-up queue contents + persistence/take flags, owned by
-    // chat_followup_queue.js (composes chat_activity.js item decisions).
-    // followupDrainTimer stays here: raw timer handle for the scheduler.
-    let followupQueue = CuttleFollowupQueue.createQueueState();
-    const followupQueues = CuttleFollowupQueue.createRegistry((key) => getSessionPrefs(key)?.[followupWriteField]);
-    function adoptFollowupQueue(sessionId, opts = {}) {
-        followupQueue = followupQueues.adopt(String(canonicalizeChatSessionId(sessionId) || 'new'), followupQueue, !!opts.transfer);
-        editingFollowupId = null;
-        if (opts.transfer && followupQueue.items.length && isAuthMode()) {
-            persistFollowupPut(toAuthDbSessionId(sessionId), followupQueue);
+    // combined into one agent turn (not drained one-by-one). Queue state, the
+    // edit state machine and the enqueue/pause/resume/take/drain/steer
+    // transitions are owned by chat_followup_queue.js (createController); the
+    // page supplies transport, persistence, DOM render and timers via the host.
+    // Built lazily so page constants declared later are initialized.
+    let _followupController = null;
+    function followupController() {
+        if (!_followupController) {
+            _followupController = CuttleFollowupQueue.createController({
+                activity: CuttleChatActivity,
+                clock: { now: () => Date.now(), rand: () => Math.random() },
+                sessionIdsEqual: sessionIdsEqual,
+                canonicalizeSessionId: (id) => canonicalizeChatSessionId(id),
+                toAuthDbSessionId: (id) => toAuthDbSessionId(id),
+                currentSession: () => session.current(),
+                isAuthMode: isAuthMode,
+                isSessionGenerating: isSessionGenerating,
+                healStaleGenerating: healStaleGeneratingState,
+                followupAuthSid: followupAuthSid,
+                getPrefs: (sid) => getSessionPrefs(sid),
+                setPrefs: (sid, patch) => updateSessionPrefs(sid, patch),
+                writeField: () => followupWriteField,
+                claimField: () => followupClaimField,
+                restoreQueue: (key) => getSessionPrefs(key)?.[followupWriteField],
+                serializeMutation: (key, fn) => sessionMutations.enqueue(key, fn),
+                putFollowups: (sid, body) => followupPutRequest(sid, body),
+                takeFollowups: (sid, body) => followupTakeRequest(sid, body),
+                steer: (sid, text) => followupSteerRequest(sid, text),
+                render: renderFollowupQueue,
+                patchLiveSession: patchLiveSessionFollowupQueue,
+                broadcastActivity: () => scheduleChatActivityBroadcast(),
+                showChatArea: showFollowupChatArea,
+                addUserMessage: (text, opts) => addMessageToUI(text, 'user', opts),
+                autoScroll: () => transcriptNav.autoScrollChatToBottom(true),
+                saveUserMessage: (text, opts) => saveChatSession(text, 'user', opts),
+                recordPromptHistory: recordPromptHistory,
+                processMessage: processMessage,
+                toast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+                steerLabel: (agent) => ({ codex: 'Codex', muse: 'Muse Code' })[agent],
+                setTimeout: (fn, ms) => setTimeout(fn, ms),
+                clearTimeout: (id) => clearTimeout(id),
+                formatWithAttachments: formatMessageWithAttachments,
+                stickyPrefixFor: (raw) => {
+                    const sticky = getStickySlashCommandFromMessage(raw);
+                    return sticky ? sticky.prefix : '';
+                },
+            });
         }
+        return _followupController;
     }
-
-    let followupDrainTimer = null;
+    function adoptFollowupQueue(sessionId, opts = {}) {
+        followupController().adopt(sessionId, opts);
+    }
     /** Uploaded file refs awaiting the next send: {filename, path, mime, size?} */
     let pendingAttachments = [];
     function _pendingKey(sid) { return `cuttle.pendingAttachments.${sid || 'anon'}`; }
@@ -890,7 +928,7 @@
             // processMessage's pending waiter exits on suppress/nav-gen; poll in
             // the background so a real finish still chirps (without the old
             // false "painted" shortcut that fired on switch).
-            watchDetachedSessionForCompletion(keepRunningId);
+            recoveryController().watchDetachedSessionForCompletion(keepRunningId);
         }
         if (messageSyncTimer) scheduleNextMessageSync();
         inFlightUserMessage = null;
@@ -1164,7 +1202,7 @@
             hasRemoteWait: !!document.getElementById('typing-indicator-remote'),
             sessionRunning: session.current() != null
                 && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current())),
-            queueLength: followupQueue.items.length,
+            queueLength: followupController().getState().items.length,
         });
         if (decision.kind === 'finish') {
             finishLocalStreamFromServerSync();
@@ -1920,11 +1958,11 @@
         return CuttleChatActivity.parseFollowupQueue(raw);
     }
 
-    /** Resolve followup_queue for a session (open chat uses live followupQueue.items). */
+    /** Resolve followup_queue for a session (open chat uses the live controller state). */
     function followupQueueForSession(sessionId, sessionObj) {
         if (sessionId == null || sessionId === '') return [];
         if (session.current() != null && sessionIdsEqual(session.current(), sessionId)) {
-            return followupQueue.items.slice();
+            return followupController().getState().items.slice();
         }
         let obj = sessionObj;
         if (!obj && isAuthMode()) {
@@ -2174,110 +2212,6 @@
     const _chirpedReadyAtBySession = Object.create(null);
     const completionNotificationPendingId = 'pending:' + Date.now() + ':' + Math.random().toString(36).slice(2);
     const CHIRP_SESSION_COOLDOWN_MS = 8000;
-    /** Background pending polls after leaving a chat mid-turn (sessionId → cancel fn). */
-    const _detachedCompletionWatchers = Object.create(null);
-
-    function cancelDetachedSessionCompletionWatch(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        const sid = String(canonicalizeChatSessionId(sessionId));
-        const bare = toAuthDbSessionId(sessionId);
-        const keys = [sid, String(sessionId)];
-        if (bare) {
-            keys.push(String(bare), `db_session_${bare}`);
-        }
-        keys.forEach((k) => {
-            const cancel = _detachedCompletionWatchers[k];
-            if (typeof cancel === 'function') {
-                try { cancel(); } catch (_) {}
-            }
-            delete _detachedCompletionWatchers[k];
-        });
-    }
-
-    /**
-     * After detachLocalGenerationForNavigation, the in-flight processMessage
-     * waiter stops (stopState.abortSuppressed / nav-gen). Keep a quiet poll so a
-     * finished reply still marks unread + chirps — only when pending has a
-     * real body and the server is no longer generating.
-     */
-    function watchDetachedSessionForCompletion(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        const sid = String(canonicalizeChatSessionId(sessionId));
-        if (inAppShell && window.parent.cuttleActivityBroker) {
-            window.parent.cuttleActivityBroker.refresh();
-            return;
-        }
-        cancelDetachedSessionCompletionWatch(sid);
-        let cancelled = false;
-        _detachedCompletionWatchers[sid] = () => { cancelled = true; };
-        const startedAt = Date.now();
-        const maxMs = 90 * 60 * 1000;
-        const pollMs = 4000;
-
-        (async () => {
-            try {
-                while (!cancelled && (Date.now() - startedAt) < maxMs) {
-                    // No "returned home" check before the first await: navigation
-                    // detaches while currentSessionId still names the chat being
-                    // left. Re-opening the chat cancels this watch outright.
-                    let data = null;
-                    try {
-                        const resp = await fetchWithTimeout(
-                            `/api/chat-pending-result?session_id=${encodeURIComponent(sid)}`,
-                            { credentials: 'include', cache: 'no-store' },
-                            8000
-                        );
-                        data = await resp.json();
-                    } catch (_) {
-                        data = null;
-                    }
-                    if (cancelled) break;
-                    if (session.current() != null && sessionIdsEqual(session.current(), sid)) break;
-
-                    // Owned by chat_generation.js — one poll-step decision;
-                    // the page owns transport, sleeps, chirp, and flag paint.
-                    let body = '';
-                    if (data && data.success && data.pending && data.result) {
-                        body = String(data.result.response || data.result.output || '').trim();
-                    }
-                    const step = {
-                        cancelled: false,
-                        returnedHome: false,
-                        body: body,
-                        generating: !!(data && data.generating),
-                        liveActive: false,
-                    };
-                    if (!step.body && !step.generating) {
-                        const live = await fetchChatLiveStatus(sid).catch(() => null);
-                        if (cancelled) break;
-                        step.liveActive = liveStatusLooksActive(live);
-                    }
-                    const action = CuttleChatGeneration.classifyDetachedPoll(step);
-                    if (action === 'notify-done') {
-                        try { consumeParkedChatResult(sid); } catch (_) {}
-                        setHistorySessionRunning(sid, false);
-                        notifyAssistantResponseReady(sid, {
-                            isError: data.result.success === false,
-                        });
-                        break;
-                    }
-                    if (action === 'keep-waiting') {
-                        setHistorySessionRunning(sid, true);
-                        await new Promise((r) => setTimeout(r, pollMs));
-                        continue;
-                    }
-                    if (action === 'stop') break;
-                    // Idle, no parked body — spin down; opening the chat loads history.
-                    setHistorySessionRunning(sid, false);
-                    break;
-                }
-            } finally {
-                if (_detachedCompletionWatchers[sid]) {
-                    delete _detachedCompletionWatchers[sid];
-                }
-            }
-        })();
-    }
 
     // Owned by chat_activity.js — DOM/state gather, domain decides.
     function notifyAssistantResponseReady(sessionId, opts = {}) {
@@ -7240,7 +7174,7 @@
             } catch (_) {}
             await syncSessionMessagesFromServer();
             if (isLoadingThisSession() && !stopState.userStopped) {
-                const recovered = await recoverChatResultFromServer(session.current());
+                const recovered = await recoveryController().recoverChatResultFromServer(session.current());
                 if (recovered && String(recovered.response || '').trim()) {
                     if (consumeCancelledAgentReply(recovered.response)) {
                         finishLocalStreamFromServerSync();
@@ -7334,7 +7268,7 @@
                 detachLocalGenerationForNavigation: detachLocalGenerationForNavigation,
                 isAuthMode: isAuthMode,
                 releaseManualUnreadHoldIfLeaving: releaseManualUnreadHoldIfLeaving,
-                cancelDetachedSessionCompletionWatch: cancelDetachedSessionCompletionWatch,
+                cancelDetachedSessionCompletionWatch: (sid) => recoveryController().cancelDetachedSessionCompletionWatch(sid),
                 adoptFollowupQueue: adoptFollowupQueue,
                 setHistorySessionRunning: setHistorySessionRunning,
                 updateChatIdBadge: updateChatIdBadge,
@@ -7401,8 +7335,8 @@
                 },
                 getAuth: function () { return window.CuttleAuth; },
                 getNetDebug: function () { return window.CuttleNetDebug; },
-                getFollowupQueue: function () { return followupQueue; },
-                getEditingFollowupId: function () { return editingFollowupId; },
+                getFollowupQueue: function () { return followupController().getState(); },
+                getEditingFollowupId: function () { return followupController().getEditingId(); },
                 setHubLiveStatusCache: function (v) { hubLiveStatusCache = v; },
                 setLastSeenServerMessageId: function (v) { lastSeenServerMessageId = v; },
                 setDeferOpenChatGeneratingFromSessions: function (v) { deferOpenChatGeneratingFromSessions = v; },
@@ -8049,399 +7983,59 @@
             && !CuttleChatActivity.liveStatusPredatesReply(liveStatus, reply);
     }
 
-    const SUPERVISED_PHASE_LABELS = (window.CuttleSupervised && window.CuttleSupervised.PHASE_LABELS) || {
-        coordinating: 'Planning task…',
-        delegated: 'Working…',
-        worker_running: 'Working…',
-        follow_up: 'Working…',
-        reviewing: 'Reviewing results…',
-        awaiting_user: 'Awaiting your input…',
-        approved: 'Done',
-        cancelled: 'Cancelled',
-        failed: 'Failed',
-        escalated: 'Escalated',
-        budget_exhausted: 'Budget exhausted',
-        created: 'Thinking…',
-    };
-
-    const _supervisedJumpAck = new Set(
-        (function () {
-            try {
-                return JSON.parse(sessionStorage.getItem('cuttle_supervised_jump_ack') || '[]');
-            } catch (_) {
-                return [];
-            }
-        })()
-    );
-    let _supervisedBubbleObserver = null;
-
-    function acknowledgeSupervisedJump(eventId) {
-        const id = String(eventId || '');
-        if (!id) return;
-        _supervisedJumpAck.add(id);
-        try {
-            sessionStorage.setItem(
-                'cuttle_supervised_jump_ack',
-                JSON.stringify(Array.from(_supervisedJumpAck).slice(-40))
-            );
-        } catch (_) {}
-    }
-
-    function scrollToSupervisedBubble(bubble, opts) {
-        const highlight = !opts || opts.highlight !== false;
-        if (!bubble) return;
-        try {
-            bubble.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        } catch (_) {
-            try { bubble.scrollIntoView(); } catch (__) {}
+    // Supervised activity cards: the rendering/coordination decisions live in
+    // supervised_control.js (CuttleSupervised.createController); the page keeps
+    // thin delegating call sites and supplies DOM/transport/session effects.
+    let _supervisedController = null;
+    function supervisedController() {
+        if (!_supervisedController) {
+            _supervisedController = CuttleSupervised.createController({
+                win: window,
+                formatMessage: formatMessage,
+                stripLegacyAgentChrome: stripLegacyAgentChrome,
+                activateEnhancements: activateEnhancements,
+                currentSession: () => session.current(),
+                sessionIdsEqual: sessionIdsEqual,
+                toAuthDbSessionId: toAuthDbSessionId,
+                fetch: (url, opts) => fetch(url, opts),
+                toast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+                copyTextToClipboard: typeof copyTextToClipboard === 'function'
+                    ? copyTextToClipboard
+                    : null,
+                addUserMessage: (text, opts) => addMessageToUI(text, 'user', opts),
+                autoScroll: () => transcriptNav.autoScrollChatToBottom(true),
+                processMessage: processMessage,
+            });
         }
-        if (highlight) {
-            bubble.classList.add('supervised-bubble-highlight');
-            setTimeout(() => bubble.classList.remove('supervised-bubble-highlight'), 1600);
-        }
+        return _supervisedController;
     }
 
     function showSupervisedJumpNotification(task) {
-        const CS = window.CuttleSupervised;
-        if (!CS || !task || !task.terminal) return;
-        const ev = (task.delivery && task.delivery.terminal_event_id)
-            || task.supervised_delivery_event_id
-            || (String(task.task_id) + ':' + String(task.phase || ''));
-        if (!CS.shouldShowJumpNotification(task, _supervisedJumpAck)) return;
-        let bar = document.getElementById('supervisedJumpNotify');
-        if (!bar) {
-            bar = document.createElement('div');
-            bar.id = 'supervisedJumpNotify';
-            bar.className = 'supervised-jump-notify';
-            bar.setAttribute('role', 'status');
-            bar.setAttribute('aria-live', 'polite');
-            document.body.appendChild(bar);
-        }
-        const label = (CS.jumpLabel && CS.jumpLabel(task.phase))
-            || 'Background task completed';
-        bar.innerHTML = '';
-        const text = document.createElement('span');
-        text.textContent = label + ' · ';
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'supervised-jump-notify-btn';
-        btn.textContent = 'Jump to result';
-        btn.setAttribute('aria-label', label + '. Jump to result');
-        btn.addEventListener('click', () => {
-            acknowledgeSupervisedJump(ev);
-            const box = document.getElementById('chatMessages');
-            const bubble = CS.findCanonicalBubbleEl
-                ? CS.findCanonicalBubbleEl(box, task)
-                : null;
-            scrollToSupervisedBubble(bubble);
-            bar.hidden = true;
-        });
-        bar.appendChild(text);
-        bar.appendChild(btn);
-        bar.hidden = false;
-        bar.dataset.eventId = ev;
+        return supervisedController().showJumpNotification(task);
     }
 
     function upsertSupervisedActivityCard(task) {
-        const CS = window.CuttleSupervised;
-        if (!CS || !task || !task.task_id) return;
-        if (
-            task.parent_session_id != null
-            && session.current() != null
-            && String(task.parent_session_id) !== String(session.current())
-            && String(task.parent_session_id) !== String(toAuthDbSessionId(session.current()))
-        ) {
-            const bare = String(session.current()).replace(/^db_session_/, '');
-            if (String(task.parent_session_id) !== bare) return;
-        }
-        const state = CS.activityStateFromTask(task);
-        if (!state) return;
-        const box = document.getElementById('chatMessages');
-        if (!box) return;
-
-        box.querySelectorAll('.message.system.supervised-activity-row').forEach((row) => {
-            try { row.remove(); } catch (_) {}
-        });
-
-        let bubble = CS.findCanonicalBubbleEl
-            ? CS.findCanonicalBubbleEl(box, task)
-            : box.querySelector(
-                `.message.assistant[data-supervised-task-id="${CSS.escape(String(task.task_id))}"]`
-            );
-        if (!bubble && task.coordinator_response_message_id) {
-            bubble = box.querySelector(
-                `.message[data-message-id="${CSS.escape(String(task.coordinator_response_message_id))}"]`
-            );
-        }
-        if (!bubble) return;
-
-        bubble.dataset.supervisedTaskId = String(task.task_id);
-        bubble.classList.add('supervised-coordinator-message');
-        if (task.coordinator_response_message_id != null) {
-            bubble.dataset.messageId = String(task.coordinator_response_message_id);
-        }
-
-        const contentEl = bubble.querySelector('.message-content');
-        if (contentEl) {
-            const nextRaw = String(
-                task.bubble_content
-                || (task.terminal && task.final_response)
-                || bubble.dataset.rawContent
-                || ''
-            );
-            let html;
-            if (nextRaw && /cuttle_supervised_activity|Working…|Planning|Reviewing|Thinking/i.test(nextRaw)) {
-                bubble.dataset.rawContent = nextRaw;
-                html = formatMessage(stripLegacyAgentChrome(nextRaw));
-            } else if (!task.terminal && CS.buildWorkingBubbleHtml) {
-                html = CS.buildWorkingBubbleHtml(state);
-                bubble.dataset.rawContent = state.phase_label || 'Working…';
-            } else {
-                const disclosure = CS.buildActivityDisclosureHtml
-                    ? CS.buildActivityDisclosureHtml(state)
-                    : '';
-                const body = String(task.final_response || nextRaw || state.phase_label || '');
-                bubble.dataset.rawContent = nextRaw || body;
-                html = formatMessage(stripLegacyAgentChrome(body)) + disclosure;
-            }
-            contentEl.innerHTML = html;
-            try { activateEnhancements(bubble); } catch (_) {}
-        }
-
-        const disclosure = bubble.querySelector('.supervised-activity-disclosure, .supervised-activity-card');
-        if (disclosure) wireSupervisedActivityCard(disclosure);
-
-        if (task.terminal) {
-            showSupervisedJumpNotification(task);
-        }
-        observeSupervisedCanonicalBubble(bubble, task);
+        return supervisedController().upsertActivityCard(task);
     }
 
     function wireSupervisedActivityCard(card) {
-        if (!card || card.__wiredSupervised) return;
-        card.__wiredSupervised = true;
-        card.addEventListener('click', async (ev) => {
-            const btn = ev.target && ev.target.closest
-                ? ev.target.closest('[data-supervised-action]')
-                : null;
-            if (!btn) return;
-            ev.preventDefault();
-            const action = btn.getAttribute('data-supervised-action');
-            const taskId = btn.getAttribute('data-task-id')
-                || card.getAttribute('data-supervised-task-id')
-                || (card.closest('[data-supervised-task-id]')
-                    && card.closest('[data-supervised-task-id]').getAttribute('data-supervised-task-id'));
-            if (action === 'followup') {
-                const form = card.querySelector('.supervised-activity-followup-form');
-                if (form) form.hidden = false;
-                const ta = card.querySelector('.supervised-activity-followup-input');
-                if (ta) ta.focus();
-                return;
-            }
-            if (action === 'followup_cancel') {
-                const form = card.querySelector('.supervised-activity-followup-form');
-                if (form) form.hidden = true;
-                return;
-            }
-            if (action === 'followup_submit') {
-                const ta = card.querySelector('.supervised-activity-followup-input');
-                const text = (ta && ta.value || '').trim();
-                if (!text) return;
-                btn.disabled = true;
-                try {
-                    await dispatchSupervisedTaskControl(taskId, 'followup', { instruction: text });
-                    if (ta) ta.value = '';
-                    const form = card.querySelector('.supervised-activity-followup-form');
-                    if (form) form.hidden = true;
-                } finally {
-                    btn.disabled = false;
-                }
-                return;
-            }
-            if (action === 'status') {
-                btn.disabled = true;
-                try {
-                    await dispatchSupervisedTaskControl(taskId, 'status');
-                } finally {
-                    btn.disabled = false;
-                }
-                return;
-            }
-            if (action === 'cancel') {
-                btn.disabled = true;
-                try {
-                    await dispatchSupervisedTaskControl(taskId, 'cancel');
-                } finally {
-                    btn.disabled = false;
-                }
-                return;
-            }
-            if (action === 'view_report') {
-                const reportUrl = btn.getAttribute('data-report-url')
-                    || (window.__lastSupervisedTask
-                        && window.__lastSupervisedTask.raw_report_url)
-                    || '';
-                if (reportUrl) {
-                    window.open(reportUrl + (reportUrl.includes('?') ? '&' : '?') + 'format=text', '_blank', 'noopener');
-                } else {
-                    (window.showToast || function () {})('No worker report artifact yet.', 'info');
-                }
-                return;
-            }
-            if (action === 'copy_details') {
-                const pre = card.querySelector('.supervised-activity-details-md');
-                const detailsText = (pre && (pre.textContent || pre.innerText) || '').trim();
-                if (!detailsText) {
-                    (window.showToast || function () {})('No activity details to copy.', 'info');
-                    return;
-                }
-                const copyFn = (typeof copyTextToClipboard === 'function')
-                    ? copyTextToClipboard
-                    : async (t) => {
-                        if (navigator.clipboard && window.isSecureContext) {
-                            await navigator.clipboard.writeText(t);
-                            return true;
-                        }
-                        return false;
-                    };
-                try {
-                    const ok = await copyFn(detailsText);
-                    (window.showToast || function () {})(
-                        ok ? 'Copied activity details' : 'Could not copy details',
-                        ok ? 'success' : 'error'
-                    );
-                } catch (_) {
-                    (window.showToast || function () {})('Could not copy details', 'error');
-                }
-                return;
-            }
-            if (action === 'view_activity') {
-                await dispatchSupervisedTaskControl(taskId, 'status');
-            }
-        });
+        return supervisedController().wireActivityCard(card);
     }
 
-    async function dispatchSupervisedTaskControl(taskId, action, params = {}) {
-        const key = `${taskId}:${action}:${params.instruction || ''}`;
-        if (!dispatchSupervisedTaskControl._inflight) dispatchSupervisedTaskControl._inflight = new Set();
-        if (dispatchSupervisedTaskControl._inflight.has(key)) return null;
-        dispatchSupervisedTaskControl._inflight.add(key);
-        try {
-            const response = await fetch(`/api/supervised/tasks/${encodeURIComponent(taskId)}/control`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action, ...params, session_id: session.current() }),
-            });
-            const body = await response.json();
-            if (!response.ok || body.success === false) throw new Error(body.error || `HTTP ${response.status}`);
-            if (body.supervised_task) upsertSupervisedActivityCard(body.supervised_task);
-            (window.showToast || function () {})(body.acknowledgement || 'Updated.', 'success');
-            return body;
-        } catch (err) {
-            (window.showToast || function () {})(String(err && err.message || err), 'error');
-            return null;
-        } finally {
-            dispatchSupervisedTaskControl._inflight.delete(key);
-        }
+    function dispatchSupervisedTaskControl(taskId, action, params) {
+        return supervisedController().dispatchTaskControl(taskId, action, params);
     }
 
-    async function dispatchSupervisedControlMessage(message, opts = {}) {
-        const onceKey = opts.onceKey || '';
-        if (onceKey && dispatchSupervisedControlMessage._inflight
-            && dispatchSupervisedControlMessage._inflight.has(onceKey)) {
-            return;
-        }
-        if (!dispatchSupervisedControlMessage._inflight) {
-            dispatchSupervisedControlMessage._inflight = new Set();
-        }
-        if (onceKey) dispatchSupervisedControlMessage._inflight.add(onceKey);
-        try {
-            const outbound = String(message || '').trim();
-            if (!isImmediateControlLaneMessage(outbound)) return;
-            const userTs = Date.now();
-            addMessageToUI(outbound, 'user', { timestamp: userTs });
-            transcriptNav.autoScrollChatToBottom(true);
-            await processMessage(outbound, { controlLane: true });
-        } finally {
-            if (onceKey) dispatchSupervisedControlMessage._inflight.delete(onceKey);
-        }
+    async function dispatchSupervisedControlMessage(message, opts) {
+        return supervisedController().dispatchControlMessage(message, opts);
     }
 
     function observeSupervisedCanonicalBubble(bubble, task) {
-        if (!bubble || typeof IntersectionObserver === 'undefined') return;
-        if (_supervisedBubbleObserver) {
-            try { _supervisedBubbleObserver.disconnect(); } catch (_) {}
-        }
-        const el = document.getElementById('supervisedTaskIndicator');
-        if (!el) return;
-        _supervisedBubbleObserver = new IntersectionObserver((entries) => {
-            const entry = entries[0];
-            const active = task && !task.terminal;
-            if (!active) {
-                el.hidden = true;
-                return;
-            }
-            el.hidden = !!(entry && entry.isIntersecting);
-        }, { root: document.getElementById('chatMessages'), threshold: 0.12 });
-        _supervisedBubbleObserver.observe(bubble);
+        return supervisedController().observeCanonicalBubble(bubble, task);
     }
 
-    /** Tiny off-screen chip — never a worker card or pending-prompt modal. */
     function updateSupervisedTaskIndicator(liveStatus, sessionId) {
-        const el = document.getElementById('supervisedTaskIndicator');
-        if (!el) return;
-        if (
-            sessionId != null
-            && session.current() != null
-            && !sessionIdsEqual(sessionId, session.current())
-        ) {
-            return;
-        }
-        const task = liveStatus && liveStatus.supervised_task;
-        window.__lastSupervisedTask = task || null;
-        if (task && task.task_id) {
-            upsertSupervisedActivityCard(task);
-        }
-        if (!task || !task.task_id || task.terminal) {
-            el.hidden = true;
-            el.classList.remove('is-terminal');
-            return;
-        }
-        const phaseEl = document.getElementById('supervisedTaskPhase');
-        const metaEl = document.getElementById('supervisedTaskMeta');
-        const detailEl = document.getElementById('supervisedTaskDetail');
-        if (phaseEl) phaseEl.textContent = 'Background task working';
-        if (metaEl) metaEl.textContent = '';
-        if (detailEl) detailEl.textContent = 'Jump to task';
-        el.classList.remove('is-terminal');
-        el.setAttribute('role', 'button');
-        el.setAttribute('tabindex', '0');
-        el.setAttribute('aria-label', 'Background task working. Jump to task.');
-        el.onclick = () => {
-            const box = document.getElementById('chatMessages');
-            const CS = window.CuttleSupervised;
-            const bubble = CS && CS.findCanonicalBubbleEl
-                ? CS.findCanonicalBubbleEl(box, task)
-                : null;
-            scrollToSupervisedBubble(bubble);
-        };
-        el.onkeydown = (ev) => {
-            if (ev.key === 'Enter' || ev.key === ' ') {
-                ev.preventDefault();
-                el.click();
-            }
-        };
-        const box = document.getElementById('chatMessages');
-        const CS = window.CuttleSupervised;
-        const bubble = CS && CS.findCanonicalBubbleEl
-            ? CS.findCanonicalBubbleEl(box, task)
-            : null;
-        if (!bubble) {
-            el.hidden = false;
-        } else {
-            observeSupervisedCanonicalBubble(bubble, task);
-        }
+        return supervisedController().updateTaskIndicator(liveStatus, sessionId);
     }
 
     function updateRemoteWaitingFromMessages(messages, liveStatus) {
@@ -8530,77 +8124,63 @@
         }
     }
 
-    // A finished reply whose SSE stream died (refresh, network blip, Flask
-    // hiccup) is parked server-side. Collect it instead of losing the run.
-    // Owned by chat_pending_result.js — thin adapter: the page owns the
-    // pending/live transport, paint, clock, and turn/stop guards; the wait
-    // decisions live in the owner. After stream detach: one short poll at a
-    // time — 2s dual GETs were starving chat reloads / YouTube while a long
-    // agent ran.
-    async function collectPendingResult(sessionId, opts = {}) {
-        return CuttleChatPendingResult.waitForPendingResult(sessionId, opts, {
-            isStaleNav: () => CuttleTurnGuard.isStale(opts.navGen, turnGeneration),
-            isStopped: () => stopState.userStopped || stopState.abortSuppressed,
-            hasReplyForTurn: () => !!(inFlightUserMessage && turnAlreadyShowsAssistantReply()),
-            fetchPending: async (sid) => {
-                const resp = await fetchWithTimeout(
-                    `/api/chat-pending-result?session_id=${encodeURIComponent(sid)}`,
-                    { credentials: 'include', cache: 'no-store' },
-                    8000
-                );
-                return resp.json();
-            },
-            // Prefer hub cache for live-status when in the app shell (no extra GET).
-            fetchLive: (sid) => (inAppShell && shellHubSeen)
-                ? (getCachedHubLiveStatus(sid) || fetchChatLiveStatus(sid))
-                : fetchChatLiveStatus(sid),
-            liveLooksActive: (live) => liveStatusLooksActive(live),
-            recoverFromHistory: (sid) => recoverChatResultFromServer(sid),
-            onLiveStatus: (live) => {
-                if (isViewingSession(sessionId)) updateTypingStatus(live.status);
-            },
-            onReportUrl: (url) => {
-                if (isViewingSession(sessionId)) updateTypingIndicatorQueryLink(url);
-            },
-            consume: (sid) => consumeParkedChatResult(sid),
-            netDebug: (name, info) => {
-                try {
-                    window.CuttleNetDebug && window.CuttleNetDebug.event(name, info);
-                } catch (_) {}
-            },
-            sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-            now: () => Date.now(),
-        });
-    }
-
-    /** Ack/consume a parked reply after the browser actually received it via SSE. */
-    // Owned by chat_pending_result.js — thin adapter: the page owns the URL.
-    function consumeParkedChatResult(sessionId) {
-        CuttleChatPendingResult.consumeParkedChatResult(sessionId, (sid) => {
-            try {
-                fetchWithTimeout(
-                    `/api/chat-pending-result?session_id=${encodeURIComponent(sid)}&consume=1`,
-                    { credentials: 'include', cache: 'no-store' },
-                    5000
-                ).catch(() => {});
-            } catch (_) {}
-        });
-    }
-
-    /**
-     * After a Flask restart, recover durable restart status + chat history without
-     * requiring the user to send another message ("yo…did you finish?").
-     */
-    let _restartRecoverInFlight = false;
-    let _lastRestartNotifiedId = null;
-    // Owned by chat_pending_result.js — thin adapter: the page holds the
-    // in-flight guard + notified-id set and owns status/health transport,
-    // paint, and history sync effects; the poll decisions live in the owner.
-    async function recoverAfterFlaskRestart(opts = {}) {
-        if (_restartRecoverInFlight) return null;
-        _restartRecoverInFlight = true;
-        try {
-            return await CuttleChatPendingResult.waitForServerRecovery(opts, {
+    // Recovery (detached-turn completion, parked-result retrieval, history
+    // recovery, post-restart recovery) is owned by chat_pending_result.js as
+    // one controller per chat root. The page supplies every effect — transport
+    // URLs, paint, clock, turn/stop guards, the history-running chirp — as an
+    // explicit `host`; the sequencing and the guard/registry state live in the
+    // owner. Built lazily so page constants declared later are initialized.
+    let _recoveryController = null;
+    function recoveryController() {
+        if (!_recoveryController) {
+            _recoveryController = CuttleChatPendingResult.createRecoveryController({
+                sessionIdsEqual: sessionIdsEqual,
+                canonicalizeSessionId: (id) => canonicalizeChatSessionId(id),
+                toAuthDbSessionId: (id) => toAuthDbSessionId(id),
+                currentSession: () => session.current(),
+                isStaleNav: (navGen) => CuttleTurnGuard.isStale(navGen, turnGeneration),
+                isStopped: () => stopState.userStopped || stopState.abortSuppressed,
+                hasReplyForTurn: () => !!(inFlightUserMessage && turnAlreadyShowsAssistantReply()),
+                isViewing: (sid) => isViewingSession(sid),
+                isAuthMode: () => isAuthMode(),
+                inFlightUserText: () => inFlightUserMessage,
+                norm: (text) => normalizeMessageContentForMatch(text),
+                alreadyOnScreen: (role, content) => uiAlreadyHasMessage(role, content),
+                isCancelledText: (text) => isCancelledAgentText(text),
+                normalizeUsage: (usage) => normalizeUsagePayload(usage),
+                liveLooksActive: (live) => liveStatusLooksActive(live),
+                fetchPending: async (sid) => {
+                    const resp = await fetchWithTimeout(
+                        `/api/chat-pending-result?session_id=${encodeURIComponent(sid)}`,
+                        { credentials: 'include', cache: 'no-store' },
+                        8000
+                    );
+                    return resp.json();
+                },
+                fetchLive: (sid) => fetchChatLiveStatus(sid),
+                // Prefer hub cache for live-status when in the app shell (no extra GET).
+                fetchLiveForRecovery: (sid) => (inAppShell && shellHubSeen)
+                    ? (getCachedHubLiveStatus(sid) || fetchChatLiveStatus(sid))
+                    : fetchChatLiveStatus(sid),
+                consumeFetch: (sid) => {
+                    try {
+                        fetchWithTimeout(
+                            `/api/chat-pending-result?session_id=${encodeURIComponent(sid)}&consume=1`,
+                            { credentials: 'include', cache: 'no-store' },
+                            5000
+                        ).catch(() => {});
+                    } catch (_) {}
+                },
+                fetchMessages: async (authSid, limit) => {
+                    const resp = await fetchWithTimeout(
+                        sessionMessagesUrl(authSid, { limit }),
+                        { credentials: 'include', cache: 'no-store' },
+                        8000
+                    );
+                    if (!resp.ok) return { ok: false };
+                    return { ok: true, data: await resp.json() };
+                },
+                pageSize: CHAT_HISTORY_PAGE_SIZE,
                 fetchRestartStatus: async () => {
                     const resp = await fetchWithTimeout(
                         '/api/flask/restart/status?consume=1',
@@ -8616,18 +8196,32 @@
                     }, 4000);
                     return !!h.ok;
                 },
-                syncMessages: () => syncSessionMessagesFromServer(),
                 paintStatus: (text) => updateTypingStatus(text),
+                paintQueryLink: (url) => updateTypingIndicatorQueryLink(url),
+                paintSyncing: () => updateTypingStatus('Working… (syncing reply)'),
                 clearTyping: () => removeTypingIndicator(),
+                setHistoryRunning: (sid, on) => setHistorySessionRunning(sid, on),
+                notifyReady: (sid, opts) => notifyAssistantResponseReady(sid, opts),
+                syncMessages: () => syncSessionMessagesFromServer(),
                 toast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+                tryDetachedWatchViaBroker: () => {
+                    if (inAppShell && window.parent.cuttleActivityBroker) {
+                        window.parent.cuttleActivityBroker.refresh();
+                        return true;
+                    }
+                    return false;
+                },
+                classifyDetachedPoll: (step) => CuttleChatGeneration.classifyDetachedPoll(step),
+                netDebug: (name, info) => {
+                    try {
+                        window.CuttleNetDebug && window.CuttleNetDebug.event(name, info);
+                    } catch (_) {}
+                },
                 sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
                 now: () => Date.now(),
-                wasNotified: (id) => id === _lastRestartNotifiedId,
-                markNotified: (id) => { _lastRestartNotifiedId = id; },
             });
-        } finally {
-            _restartRecoverInFlight = false;
         }
+        return _recoveryController;
     }
 
     /**
@@ -8861,53 +8455,6 @@
      * well under a second), so the card adopts whatever restart is in flight.
      */
 
-    /**
-     * When pending-result is empty after a detached stream, pull the assistant
-     * reply that follows this turn's user message from auth history (DB).
-     */
-    // Owned by chat_pending_result.js — thin adapter: the page owns the
-    // messages transport; match decisions live in the owner.
-    async function recoverChatResultFromServer(sessionId) {
-        return CuttleChatPendingResult.recoverChatResult(sessionId, {
-            isAuthMode: () => isAuthMode(),
-            toAuthDbSessionId: (sid) => toAuthDbSessionId(sid),
-            fetchMessages: async (authSid, limit) => {
-                const resp = await fetchWithTimeout(
-                    sessionMessagesUrl(authSid, { limit }),
-                    { credentials: 'include', cache: 'no-store' },
-                    8000
-                );
-                if (!resp.ok) return { ok: false };
-                return { ok: true, data: await resp.json() };
-            },
-            pageSize: CHAT_HISTORY_PAGE_SIZE,
-            inFlightText: inFlightUserMessage,
-            norm: (text) => normalizeMessageContentForMatch(text),
-            alreadyOnScreen: (role, content) => uiAlreadyHasMessage(role, content),
-            isCancelledText: (text) => isCancelledAgentText(text),
-            normalizeUsage: (usage) => normalizeUsagePayload(usage),
-            netDebug: (name, info) => {
-                try {
-                    window.CuttleNetDebug && window.CuttleNetDebug.event(name, info);
-                } catch (_) {}
-            },
-        });
-    }
-
-    /** Extra history polls before giving up with "No response received." */
-    // Owned by chat_pending_result.js — thin adapter.
-    async function recoverChatResultWithRetries(sessionId, attempts, gapMs) {
-        return CuttleChatPendingResult.recoverChatResultWithRetries(
-            sessionId, attempts, gapMs, {
-                isStopped: () => stopState.userStopped || stopState.abortSuppressed,
-                recover: (sid) => recoverChatResultFromServer(sid),
-                isViewing: () => isViewingSession(sessionId),
-                paintSyncing: () => updateTypingStatus('Working… (syncing reply)'),
-                sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-            }
-        );
-    }
-
     function fetchWithTimeout(url, opts = {}, timeoutMs = 5000) {
         const ctrl = new AbortController();
         const timer = setTimeout(() => {
@@ -8995,7 +8542,7 @@
             stopButton.style.display = 'none';
         }
         setWelcomeComposerEnabled(true);
-        if (followupQueue.items.length && !stopState.waitingSuppressed) {
+        if (followupController().getState().items.length && !stopState.waitingSuppressed) {
             scheduleFollowupDrain(80);
         }
     }
@@ -10126,7 +9673,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             && !currentStillRunning
             && !generation.loading
             && !stopState.waitingSuppressed
-            && followupQueue.items.length
+            && followupController().getState().items.length
         ) {
             scheduleFollowupDrain(80);
         }
@@ -10291,91 +9838,37 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
 
     // Message Handling
-    /** Id of the follow-up currently being edited in the queue panel (or null). */
-    let editingFollowupId = null;
-    /** Prior paused flag for the item under edit (restored on save/cancel). */
-    let editingFollowupWasPaused = false;
-
+    // Follow-up edit state + transitions are owned by the queue controller;
+    // these are the thin call sites the edit UI and keyboard handlers use.
     function followupEditableText(item) {
-        if (!item) return '';
-        if (item.rawMessage != null) return String(item.rawMessage);
-        return String(item.content || '');
+        return CuttleFollowupQueue.followupEditableText(item);
     }
 
-    function beginEditFollowup(id) {
-        if (!id || !followupQueue.items.some((x) => x.id === id)) return;
-        const item = followupQueue.items.find((x) => x.id === id);
-        if (!item) return;
-        editingFollowupId = id;
-        editingFollowupWasPaused = !!item.paused;
-        // Soft-pause so /followups/take cannot yank the message mid-edit.
-        if (!item.paused) {
-            CuttleFollowupQueue.setPaused(followupQueue, id, true);
-            persistFollowupPut();
-        }
-        clearTimeout(followupDrainTimer);
-        followupDrainTimer = null;
-        renderFollowupQueue();
-    }
+    function beginEditFollowup(id) { followupController().beginEdit(id); }
 
-    function finishEditFollowup(opts = {}) {
-        const resumeDrain = opts.resumeDrain !== false;
-        const id = editingFollowupId;
-        editingFollowupId = null;
-        if (id) {
-            const item = followupQueue.items.find((x) => x.id === id);
-            if (item) CuttleFollowupQueue.setPaused(followupQueue, id, editingFollowupWasPaused);
-        }
-        editingFollowupWasPaused = false;
-        renderFollowupQueue();
-        persistFollowupPut();
-        if (
-            resumeDrain
-            && followupQueue.items.some((x) => !x.paused)
-            && !isSessionGenerating()
-        ) {
-            scheduleFollowupDrain(180);
-        }
-    }
+    function finishEditFollowup(opts = {}) { followupController().finishEdit(opts); }
 
-    function cancelEditFollowup() {
-        finishEditFollowup({ resumeDrain: true });
-    }
+    function cancelEditFollowup() { followupController().cancelEdit(); }
 
-    function saveEditFollowup(id, nextText) {
-        if (!id) return;
-        const item = followupQueue.items.find((x) => x.id === id);
-        if (!item) return;
-        const text = String(nextText ?? '').trim();
-        if (!text && !(item.attachments && item.attachments.length)) {
-            // Empty with no attachments — drop it rather than keeping a blank send.
-            editingFollowupId = null;
-            editingFollowupWasPaused = false;
-            removeFollowup(id);
-            return;
-        }
-        item.rawMessage = text;
-        item.content = formatMessageWithAttachments(text, item.attachments || []);
-        finishEditFollowup({ resumeDrain: true });
-    }
+    function saveEditFollowup(id, nextText) { followupController().saveEdit(id, nextText); }
 
     function renderFollowupQueue() {
         const root = document.getElementById('followupQueue');
         if (!root) return;
-        patchLiveSessionFollowupQueue(session.current(), followupQueue.items);
-        if (!followupQueue.items.length) {
-            editingFollowupId = null;
+        const ctl = followupController();
+        ctl.pruneEditing();
+        const queueItems = ctl.getState().items;
+        const editingId = ctl.getEditingId();
+        patchLiveSessionFollowupQueue(session.current(), queueItems);
+        if (!queueItems.length) {
             root.hidden = true;
             root.innerHTML = '';
             syncHistoryUnreadIndicators();
             return;
         }
-        if (editingFollowupId && !followupQueue.items.some((x) => x.id === editingFollowupId)) {
-            editingFollowupId = null;
-        }
         root.hidden = false;
-        const items = followupQueue.items.map((item, idx) => {
-            const isEditing = item.id === editingFollowupId;
+        const itemsHtml = queueItems.map((item, idx) => {
+            const isEditing = item.id === editingId;
             if (isEditing) {
                 const editVal = escapeHtml(followupEditableText(item));
                 return `
@@ -10430,18 +9923,18 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 </div>
             `;
         }).join('');
-        const otherPaused = followupQueue.items.filter(
-            (x) => x.paused && x.id !== editingFollowupId
+        const otherPaused = queueItems.filter(
+            (x) => x.paused && x.id !== editingId
         ).length;
-        const titleBits = [`Queued · ${followupQueue.items.length}`];
-        if (editingFollowupId) titleBits.push('editing · send paused');
+        const titleBits = [`Queued · ${queueItems.length}`];
+        if (editingId) titleBits.push('editing · send paused');
         if (otherPaused) titleBits.push(`${otherPaused} paused`);
         root.innerHTML = `
             <div class="followup-queue-header">
                 <span class="followup-queue-title">${titleBits.join(' · ')}</span>
                 <button type="button" class="followup-queue-clear" id="followupQueueClear">Clear all</button>
             </div>
-            <div class="followup-queue-list">${items}</div>
+            <div class="followup-queue-list">${itemsHtml}</div>
         `;
         root.querySelector('#followupQueueClear')?.addEventListener('click', clearFollowupQueue);
         root.querySelectorAll('[data-remove-followup]').forEach((btn) => {
@@ -10538,11 +10031,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         return toAuthDbSessionId(session.current());
     }
 
-    // Owned by chat_activity.js — thin adapter.
-    function followupQueueFingerprint(items) {
-        return CuttleChatActivity.followupQueueFingerprint(items);
-    }
-
     function patchLiveSessionFollowupQueue(sessionId, followups) {
         if (sessionId == null) return;
         const s = findAuthServerSession(sessionId);
@@ -10556,103 +10044,29 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
 
     function applyServerFollowups(list, revision) {
-        // Don't clobber an in-progress take, unsynced edits, a queue edit,
-        // or an identical list (owned reconcile decision).
-        if (followupQueue.dirty && !followupQueue.takeInFlight) {
-            persistFollowupPut();
-            return;
-        }
-        const r = CuttleFollowupQueue.reconcileServerList(followupQueue, list,
-            { editingId: editingFollowupId, revision }, CuttleChatActivity);
-        if (!r.applied && r.reason !== 'same') return;
-        patchLiveSessionFollowupQueue(session.current(), followupQueue.items);
-        renderFollowupQueue();
-        if ((followupQueue.items.some((x) => !x.paused) || getSessionPrefs(session.current())?.[followupClaimField]) && !isSessionGenerating() && !editingFollowupId) {
-            scheduleFollowupDrain(250);
-        }
-        try { scheduleChatActivityBroadcast(); } catch (_) {}
+        followupController().applyServerList(list, revision);
     }
 
-    function rememberUnsyncedQueue(sid, state) {
-        updateSessionPrefs(sid, {[followupWriteField]: state.dirty ? {
-            items: state.items, base: state.base, revision: state.revision,
-        } : null});
+    // ---- follow-up transport (owned by the page) ----
+    async function followupPutRequest(sid, body) {
+        const response = await fetch('/api/auth/sessions/' + sid + '/followups', {
+            method: 'PUT', credentials: 'include', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await response.json().catch(() => ({}));
+        return { ok: response.ok, status: response.status, data };
     }
 
-    async function persistFollowupAppend(item) {
-        // Rebased revisioned PUT also handles appends. Keeping one mutation path
-        // means a failed append retains its intent and cannot be dropped by a GET.
-        return persistFollowupPut();
+    async function followupTakeRequest(sid, body) {
+        const response = await fetch('/api/auth/sessions/' + sid + '/followups/take', {
+            method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await response.json().catch(() => ({}));
+        return { ok: response.ok, status: response.status, data };
     }
 
-    async function persistFollowupPut(sid = followupAuthSid(), state = followupQueue) {
-        if (!sid) return true;
-        CuttleFollowupQueue.markDirty(state);
-        rememberUnsyncedQueue(sid, state);
-        if (state.write) return state.write;
-        const write = sessionMutations.enqueue(sid + ':followups', async () => {
-            for (let attempt = 0; attempt < 4; attempt++) {
-                const version = state.editVersion;
-                let desired = JSON.parse(JSON.stringify(state.items));
-                const base = JSON.parse(JSON.stringify(state.base));
-                const response = await fetch('/api/auth/sessions/' + sid + '/followups', {
-                    method: 'PUT', credentials: 'include', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({followups: desired, revision: state.revision}),
-                });
-                const data = await response.json();
-                if (response.status === 409 && data.conflict) {
-                    state.revision = data.revision;
-                    state.items = CuttleFollowupQueue.mergeEdits(base, state.items, data.followups);
-                    state.base = data.followups;
-                    rememberUnsyncedQueue(sid, state);
-                    continue;
-                }
-                if (!response.ok || !data.success) throw new Error(data.error || 'Queue sync failed');
-                state.revision = data.revision;
-                state.base = data.followups || desired;
-                CuttleFollowupQueue.markClean(state, version);
-                rememberUnsyncedQueue(sid, state);
-                patchLiveSessionFollowupQueue(sid, state.base);
-                if (!state.dirty) {
-                    state.items = state.base;
-                    if (followupQueue === state && sessionIdsEqual(session.current(), sid)) renderFollowupQueue();
-                    return true;
-                }
-            }
-            return false;
-        }).catch(() => false).finally(() => { state.write = null; });
-        state.write = write;
-        return write;
-    }
-
-    function enqueueFollowup(message, opts = {}) {
-        const item = CuttleFollowupQueue.enqueue(followupQueue, {
-            content: message,
-            attachments: opts.attachments,
-            rawMessage: opts.rawMessage,
-            paused: opts.paused,
-        }, { now: () => Date.now(), rand: () => Math.random() });
-        renderFollowupQueue();
-        persistFollowupAppend(item);
-        return item;
-    }
-
-    const STEER_AGENT_LABELS = { codex: 'Codex', muse: 'Muse Code' };
-    let steeringText = '';
-
-    /**
-     * Codex / Muse Code accept input while a turn runs — hand the follow-up to
-     * the live turn instead of queueing it. The server persists the user row;
-     * resolves false (caller queues) when nothing steerable is running.
-     */
-    async function trySteerRunningTurn(message, attachments) {
-        const sid = session.current();
-        const text = String(message || '').trim();
-        if (sid == null || sid === '' || !text) return false;
-        if (Array.isArray(attachments) && attachments.length) return false;
-        if (steeringText === text) return true;
-        steeringText = text;
-        let data = null;
+    async function followupSteerRequest(sid, text) {
         try {
             const resp = await fetch('/api/chat-steer', {
                 method: 'POST',
@@ -10660,164 +10074,39 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ session_id: sid, message: text }),
             });
-            data = await resp.json().catch(() => null);
+            return await resp.json().catch(() => null);
         } catch (_) {
-            data = null;
-        } finally {
-            steeringText = '';
+            return null;
         }
-        if (!data || !data.steered) return false;
-        if (sessionIdsEqual(session.current(), sid)) {
-            addMessageToUI(text, 'user', {
-                timestamp: Date.now(),
-                steered: true,
-                steered_agent: data.agent,
-            });
-            transcriptNav.autoScrollChatToBottom(true);
-            saveChatSession(text, 'user');
-        }
-        recordPromptHistory(text);
-        const label = STEER_AGENT_LABELS[data.agent] || data.agent || 'agent';
-        (window.showToast || function () {})(`Sent into the running ${label} turn.`, 'success');
-        return true;
     }
 
-    function toggleFollowupPaused(id) {
-        if (!id) return;
-        const current = followupQueue.items.find((x) => x.id === id);
-        if (!current) return;
-        const item = CuttleFollowupQueue.setPaused(followupQueue, id, !current.paused);
-        renderFollowupQueue();
-        persistFollowupPut();
-        if (!item.paused && !isSessionGenerating()) scheduleFollowupDrain(120);
-    }
-
-    function removeFollowup(id) {
-        if (!id) return;
-        if (editingFollowupId === id) {
-            editingFollowupId = null;
-            editingFollowupWasPaused = false;
-        }
-        CuttleFollowupQueue.removeItem(followupQueue, id);
-        renderFollowupQueue();
-        persistFollowupPut();
-    }
-
-    function clearFollowupQueue() {
-        editingFollowupId = null;
-        editingFollowupWasPaused = false;
-        CuttleFollowupQueue.clearAll(followupQueue);
-        renderFollowupQueue();
-        persistFollowupPut();
-    }
-
-    function scheduleFollowupDrain(delayMs = 120) {
-        if (editingFollowupId) return;
-        clearTimeout(followupDrainTimer);
-        followupDrainTimer = setTimeout(() => {
-            drainNextFollowup();
-        }, delayMs);
-    }
-
-    /**
-     * Merge every pending follow-up into one outbound turn so the agent sees
-     * the full queue at once (instead of N serial replies).
-     * Sticky slash prefix from the first item is kept on the combined message
-     * so /cursor · /claude routing still works.
-     */
-    // Owned by chat_activity.js — DOM/state gather, domain decides.
-    function combineFollowupBatch(items) {
-        return CuttleChatActivity.combineFollowupBatch(items, {
-            stickyPrefixFor: (raw) => {
-                const sticky = getStickySlashCommandFromMessage(raw);
-                return sticky ? sticky.prefix : '';
-            },
-            formatWithAttachments: formatMessageWithAttachments,
-        });
-    }
-
-    async function drainNextFollowup() {
-        // Wait until this chat is fully idle (no local stream, no remote run).
-        if (editingFollowupId) return;
-        healStaleGeneratingState();
-        if (isSessionGenerating()) return;
-        // Re-check after heal — edit may have started while we were waiting.
-        if (editingFollowupId) return;
-        const origin = session.current();
-        const state = followupQueue;
-        if (state.takeInFlight) return;
-        let batch = [];
-        const sid = followupAuthSid();
-        if (sid) {
-            if (state.dirty && !await persistFollowupPut()) return;
-            if (editingFollowupId || !sessionIdsEqual(session.current(), origin) || followupQueue !== state) return;
-            const claimId = getSessionPrefs(sid)?.[followupClaimField] || ('queue-' + Date.now() + '-' + Math.random().toString(36).slice(2));
-            updateSessionPrefs(sid, {[followupClaimField]: claimId});
-            const takeVersion = state.editVersion;
-            CuttleFollowupQueue.beginTake(state);
-            try {
-                const response = await fetch('/api/auth/sessions/' + sid + '/followups/take', {
-                    method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({revision: state.revision, claim_id: claimId}),
-                });
-                const data = await response.json();
-                if (response.status === 409) {
-                    updateSessionPrefs(sid, {[followupClaimField]: null});
-                    state.revision = data.revision;
-                    state.items = state.editVersion !== takeVersion
-                        ? CuttleFollowupQueue.mergeEdits(state.base, state.items, data.followups || [])
-                        : data.followups || [];
-                    state.base = data.followups || [];
-                    rememberUnsyncedQueue(sid, state);
-                    return;
-                }
-                if (!response.ok || !data.success) return;
-                const editedDuringTake = state.editVersion !== takeVersion;
-                const editedItems = state.items;
-                state.revision = data.revision;
-                state.items = data.remaining || [];
-                state.base = state.items.slice();
-                batch = data.followups || [];
-                if (editedDuringTake || editingFollowupId || !sessionIdsEqual(session.current(), origin) || followupQueue !== state) {
-                    // Restore to the captured chat when navigation or editing
-                    // races the claim; retain the write if the network fails.
-                    state.items = editedDuringTake ? editedItems : [...batch, ...state.items];
-                    state.editVersion++;
-                    state.dirty = true;
-                    rememberUnsyncedQueue(sid, state);
-                    updateSessionPrefs(sid, {[followupClaimField]: null});
-                    await persistFollowupPut(sid, state);
-                    return;
-                }
-                updateSessionPrefs(sid, {[followupClaimField]: null});
-            } catch (_) { return; }
-            finally { CuttleFollowupQueue.endTake(state); }
-        } else {
-            batch = CuttleFollowupQueue.resolveTake(state, editingFollowupId, null, CuttleChatActivity);
-        }
-        // Keep editing state if the edited item remained in the queue.
-        if (editingFollowupId && !followupQueue.items.some((x) => x.id === editingFollowupId)) {
-            editingFollowupId = null;
-            editingFollowupWasPaused = false;
-        }
-        renderFollowupQueue();
-        const combined = combineFollowupBatch(batch);
-        if (!combined) return;
-        const atts = combined.attachments || [];
-        const displayMessage = combined.displayMessage;
-        const message = combined.message;
+    function showFollowupChatArea() {
         const chatArea = document.getElementById('chatArea');
         if (chatArea && chatArea.style.display === 'none') {
             document.getElementById('welcomeScreen').style.display = 'none';
             chatArea.style.display = 'flex';
             if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
         }
-        addMessageToUI(displayMessage, 'user', { timestamp: Date.now(), attachments: atts });
-        transcriptNav.autoScrollChatToBottom(true);
-        saveChatSession(displayMessage, 'user', { attachments: atts });
-        recordPromptHistory(message);
-        await processMessage(message, { attachments: atts });
     }
+
+    // ---- thin call sites (caller contracts; decisions live in the controller) ----
+    function enqueueFollowup(message, opts = {}) {
+        return followupController().enqueue(message, opts);
+    }
+
+    async function trySteerRunningTurn(message, attachments) {
+        return followupController().steer(message, attachments);
+    }
+
+    function toggleFollowupPaused(id) { followupController().togglePaused(id); }
+
+    function removeFollowup(id) { followupController().remove(id); }
+
+    function clearFollowupQueue() { followupController().clear(); }
+
+    function scheduleFollowupDrain(delayMs = 120) { followupController().requestDrain(delayMs); }
+
+    async function drainNextFollowup() { return followupController().drain(); }
 
     async function requestServerCancelCurrentRun(opts = {}) {
         const sid = session.current();
@@ -10910,8 +10199,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const cancelJobs = (!inflight && watchIds.length > 0) || isProjectShellTurn(inflight);
         CuttleStopState.requestStop(stopState);
         inFlightUserMessage = null;
-        clearTimeout(followupDrainTimer);
-        followupDrainTimer = null;
+        followupController().cancelDrain();
         // Keep the stopped activity and durable notice immediately; cancellation
         // can take seconds, and its acknowledgment must not replace the notice.
         retainStoppedAgentBubble();
@@ -10956,8 +10244,21 @@ function downloadTranscriptMarkdown(text, sessionId) {
 
     async function processMessage(message, opts = {}) {
         const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
-        const controlLane = !!opts.controlLane || isImmediateControlLaneMessage(message);
-        const stickyCmd = getStickySlashCommandFromMessage(message);
+        // PREPARE stage — the pre-submit send decision record (control-lane
+        // classification, sticky/slash meta, pending typing badge) is owned
+        // by chat_generation.js; the page passes resolvers + applies effects.
+        const sendPlan = CuttleChatGeneration.prepareSend({
+            message,
+            controlLaneOpt: !!opts.controlLane,
+            isImmediateControl: isImmediateControlLaneMessage,
+            stickyOf: getStickySlashCommandFromMessage,
+            slashMetaOf: slashCommandMetaFromUserMessage,
+            pendingSlashOf: pendingSlashForTypingIndicator,
+            sessionKey: String(canonicalizeChatSessionId(session.current()) || ''),
+        });
+        const controlLane = sendPlan.controlLane;
+        const stickyCmd = sendPlan.stickyCmd;
+        const replySlash = sendPlan.replySlash;
         let responseData = null;
         // This turn's generation-lock token: end calls below release only
         // if no newer turn (or detach) has since claimed generation.
@@ -10985,18 +10286,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
         // Welcome composer is only for the first turn
         setWelcomeComposerEnabled(false);
 
-        const replySlash = slashCommandMetaFromUserMessage(message);
-
         // New turn owns the typing indicator — drop the previous turn's
         // sub-agent orbs first so they never bleed into a turn that uses none.
         // Live-status / stream syncs repopulate when this turn spawns sub-agents.
         try { subagentLaunchers.clearLive(); } catch (_) {}
         // Add typing indicator — pass slash meta so chip appears immediately
-        const pendingSlash = replySlash
-            ? pendingSlashForTypingIndicator(replySlash, stickyCmd)
-            : null;
-        turnBadgeBySession.set(String(canonicalizeChatSessionId(session.current()) || ''), pendingSlash);
-        addTypingIndicator(pendingSlash);
+        turnBadgeBySession.set(sendPlan.badgeKey, sendPlan.pendingSlash);
+        addTypingIndicator(sendPlan.pendingSlash);
 
         let skipFollowupDrain = false;
         let controlController = null;
@@ -11020,51 +10316,51 @@ function downloadTranscriptMarkdown(text, sessionId) {
         try {
             await ensureAuthChatSession();
             // Send to API with project context (stream for status updates; JSON fallback if SSE fails)
-            const requestBody = {
+            // SUBMIT stage — the outbound request body, the origin session
+            // binding, and the transport policy (SSE-vs-JSON, control-lane
+            // JSON-only) are owned by chat_generation.js (planSubmit). The page
+            // gathers the values, applies the page-owned identity/project
+            // mutators, and owns the fetch/SSE transport.
+            const submitPlan = CuttleChatGeneration.planSubmit({
                 message: message,
-                session_id: authSessionIdForRequest(),
-                stream: true,
-            };
-            // Stable per-send id so a stream=false retry cannot mint a second
-            // chat when this first POST still has a null session_id (CH-000559).
-            requestBody.chat_request_id =
-                'ct_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+                sessionId: authSessionIdForRequest(),
+                currentSessionId: session.current(),
+                controlLane: controlLane,
+                stickyAgent: stickyAgentOverrideForRequest(message),
+                attachments: attachments.length
+                    ? CuttleChatAttachments.requestAttachmentPayload(attachments)
+                    : null,
+                controlRequestIdOpt: opts.controlRequestId,
+                // Stable per-send id so a stream=false retry cannot mint a
+                // second chat when this first POST still has a null session_id
+                // (CH-000559).
+                newChatRequestId: () => (
+                    'ct_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10)
+                ),
+                newControlRequestId: () => (
+                    (window.CuttleSupervised
+                        && window.CuttleSupervised.newControlRequestId
+                        && window.CuttleSupervised.newControlRequestId())
+                    || (`cr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`)
+                ),
+                canonicalize: canonicalizeChatSessionId,
+            });
+            const requestBody = submitPlan.body;
             // Pin this turn to the chat that sent it. Switching chats updates
             // currentSessionId; recovery/paint must keep using the origin id
             // or the reply lands in the newly opened transcript (phone bug).
-            boundSessionId = canonicalizeChatSessionId(
-                requestBody.session_id != null && requestBody.session_id !== ''
-                    ? requestBody.session_id
-                    : session.current()
-            );
-            const agentOverride = stickyAgentOverrideForRequest(message);
-            if (agentOverride) requestBody.sticky_agent = agentOverride;
+            boundSessionId = submitPlan.boundSessionId;
             // New-chat model/effort picks (dirty, no session yet) must travel
             // with this POST — adopt-time pin POSTs race the agent + badge.
             attachAgentIdentityToRequest(requestBody);
             if (controlLane) {
-                // Exactly-once control-lane idempotency key (server dedupes).
-                // Prefer a stable id for this turn; never regenerate on transport retry.
-                if (!opts.controlRequestId) {
-                    requestBody.control_request_id =
-                        (window.CuttleSupervised
-                            && window.CuttleSupervised.newControlRequestId
-                            && window.CuttleSupervised.newControlRequestId())
-                        || (`cr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
-                } else {
-                    requestBody.control_request_id = opts.controlRequestId;
-                }
-                inFlightControlRequestId = requestBody.control_request_id;
+                // Control-lane idempotency key is chosen by the owner.
+                inFlightControlRequestId = submitPlan.controlRequestId;
                 // Stamp the latest unmarked user bubble so sync can claim by control id.
                 const userEl = claimUnmarkedMessageEl('user', message);
                 if (userEl) {
-                    userEl.dataset.controlRequestId = requestBody.control_request_id;
+                    userEl.dataset.controlRequestId = submitPlan.controlRequestId;
                 }
-                // Control lane: JSON only — avoid SSE detach/retry double POST.
-                requestBody.stream = false;
-            }
-            if (attachments.length) {
-                requestBody.attachments = CuttleChatAttachments.requestAttachmentPayload(attachments);
             }
 
             // Include current project if available (path + id + name so /cursor
@@ -11124,10 +10420,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     let sawProgress = false;
                     try { window.CuttleNetDebug && window.CuttleNetDebug.event('stream-hold', 'POST /api/chat'); } catch (_) {}
 
-                    // Bytes/framing live in chat_stream.js; the page keeps
-                    // request, classification, session, paint, and turn
-                    // effects. onEvents applies the whole batch, then
-                    // reports stop — last final frame wins, as before.
+                    // Bytes/framing live in chat_stream.js; event
+                    // classification, the per-event effect plan (paint gating +
+                    // final-event selection) and session adoption live in
+                    // chat_pending_result.js / chat_turn_guard.js; the page
+                    // keeps request, DOM paint, and turn effects. onEvents
+                    // applies the whole batch, then reports stop — last final
+                    // frame wins, as before.
                     const streamOutcome = await CuttleChatStream.readEvents(response.body, {
                         holdMs: STREAM_HOLD_MAX_MS,
                         readTimeoutMs: STREAM_READ_TIMEOUT_MS,
@@ -11136,50 +10435,54 @@ function downloadTranscriptMarkdown(text, sessionId) {
                             for (const ev of events) {
                                 try {
                                     // Owned by chat_pending_result.js — event
-                                    // classification; the page applies paint,
-                                    // session-adopt, and finalResult effects.
+                                    // classification + per-event effect plan;
+                                    // the page applies DOM paint, session-adopt,
+                                    // and finalResult effects.
                                     const streamEv = CuttleChatPendingResult.classifyStreamEvent(ev);
-                                    if (streamEv.kind === 'status') {
-                                        sawProgress = true;
-                                        if (canPaintTurnHere()) updateTypingStatus(streamEv.message);
-                                    } else if (streamEv.kind === 'session') {
+                                    if (streamEv.kind === 'session') {
                                         const sid = canonicalizeChatSessionId(streamEv.sessionId);
                                         requestBody.session_id = sid;
                                         if (boundSessionId == null) boundSessionId = sid;
                                         // Never yank the open chat to a different id mid-turn.
-                                        // turnNavGen gates zombies after New Chat (welcome is
-                                        // currentSessionId == null — must not re-adopt chat A).
-                                        if (
-                                            !CuttleTurnGuard.isStale(turnNavGen, turnGeneration)
-                                            && (
-                                                session.current() == null
-                                                || sessionIdsEqual(session.current(), sid)
-                                                || (boundSessionId != null && isViewingSession(boundSessionId))
-                                            )
-                                        ) {
+                                        // The freshness/binding truth table lives in
+                                        // CuttleTurnGuard.shouldAdoptStreamSession; a stale
+                                        // turn after New Chat (welcome is
+                                        // currentSessionId == null) must not re-adopt chat A.
+                                        if (CuttleTurnGuard.shouldAdoptStreamSession(
+                                            turnNavGen, turnGeneration, boundSessionId, sid, {
+                                                currentSessionId: session.current(),
+                                                sessionIdsEqual: sessionIdsEqual,
+                                                isViewing: (id) => isViewingSession(id),
+                                            }
+                                        )) {
                                             adoptChatSessionId(sid);
                                         }
-                                    } else if (streamEv.kind === 'busy') {
-                                        finalResult = streamEv.result;
-                                    } else if (streamEv.kind === 'query') {
-                                        sawProgress = true;
-                                        if (canPaintTurnHere() && ev.slash_command) {
-                                            rememberTurnBadge([], { active: true, slash_command: ev.slash_command });
-                                            refreshTypingIndicatorHeaderBadges();
-                                        }
-                                        if (streamEv.reportUrl && canPaintTurnHere()) {
-                                            updateTypingIndicatorQueryLink(streamEv.reportUrl);
-                                            const qid = streamEv.queryId || '';
-                                            (window.showToast || function() {})('Running…', 'info', {
-                                                linkUrl: qid
-                                                    ? ('/query_log.html?id=' + encodeURIComponent(qid))
-                                                    : streamEv.reportUrl,
-                                                linkText: 'View query log'
-                                            });
-                                        }
-                                    } else if (streamEv.kind === 'response') {
-                                        finalResult = ev;
+                                        continue;
                                     }
+                                    const streamPlan = CuttleChatPendingResult.planStreamEvent(
+                                        streamEv, ev, {
+                                            canPaint: canPaintTurnHere(),
+                                            slashCommand: !!ev.slash_command,
+                                        }
+                                    );
+                                    if (streamPlan.progress) sawProgress = true;
+                                    if (streamPlan.paintStatus != null) {
+                                        updateTypingStatus(streamPlan.paintStatus);
+                                    }
+                                    if (streamPlan.paintBadge) {
+                                        rememberTurnBadge([], { active: true, slash_command: ev.slash_command });
+                                        refreshTypingIndicatorHeaderBadges();
+                                    }
+                                    if (streamPlan.paintLink) {
+                                        updateTypingIndicatorQueryLink(streamPlan.reportUrl);
+                                        (window.showToast || function() {})('Running…', 'info', {
+                                            linkUrl: streamPlan.queryId
+                                                ? ('/query_log.html?id=' + encodeURIComponent(streamPlan.queryId))
+                                                : streamPlan.reportUrl,
+                                            linkText: 'View query log'
+                                        });
+                                    }
+                                    if (streamPlan.final != null) finalResult = streamPlan.final;
                                 } catch (e) { /* skip */ }
                             }
                             return finalResult != null;
@@ -11199,25 +10502,16 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     if (finalResult) {
                         try { window.CuttleNetDebug && window.CuttleNetDebug.event('stream-done', 'got response event'); } catch (_) {}
                         // Pop parked copy now that the browser actually got the SSE event.
-                        consumeParkedChatResult(
+                        recoveryController().consumeParkedChatResult(
                             finalResult.session_id
                             || turnSessionId()
                             || requestBody.session_id
                         );
-                        return {
-                            ...finalResult,
-                            success: finalResult.success,
-                            response: finalResult.response,
-                            session_id: finalResult.session_id,
-                            type: finalResult.response_type,
-                            query_id: finalResult.query_id,
-                            report_url: finalResult.report_url,
-                            cursor_run: finalResult.cursor_run || null,
-                            usage: finalResult.usage || null,
-                            // Must forward busy so processMessage can enqueue
-                            // the turn instead of rendering a "Still working" bubble.
-                            busy: !!finalResult.busy,
-                        };
+                        // Final-result shaping (response_type -> type,
+                        // cursor_run/usage/busy normalization) is owned by
+                        // chat_pending_result.js; the page forwards the shaped
+                        // payload so processMessage can enqueue a busy turn.
+                        return CuttleChatPendingResult.shapeStreamFinalResult(finalResult);
                     }
                     // Detached or stream ended without a final event — wait for
                     // the parked reply (short polls; does not hold a socket open).
@@ -11228,12 +10522,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     const pendingDeps = {
                         // Unfocused split panes poll slower so the focused
                         // pane keeps connection-pool headroom.
-                        wait: (sid) => collectPendingResult(sid, {
+                        wait: (sid) => recoveryController().collectPendingResult(sid, {
                             waitMs: 90 * 60 * 1000,
                             pollMs: pendingPollMs,
                             navGen: turnNavGen,
                         }),
-                        retries: (sid) => recoverChatResultWithRetries(sid, 5, 1600),
+                        retries: (sid) => recoveryController().recoverChatResultWithRetries(sid, 5, 1600),
                         fetchLive: (sid) => fetchChatLiveStatus(sid).catch(() => null),
                         liveLooksActive: (live) => liveStatusLooksActive(live),
                         canPaint: () => canPaintTurnHere(),
@@ -11267,10 +10561,16 @@ function downloadTranscriptMarkdown(text, sessionId) {
             try {
                 // Control-lane: force non-stream so we never fall through SSE detach
                 // into a second POST with the same control_request_id.
-                data = await fetchChatPayload(controlLane ? false : true);
+                data = await fetchChatPayload(submitPlan.firstTransportStream);
             } catch (streamErr) {
-                if (streamErr && streamErr.name === 'AbortError') throw streamErr;
-                if (controlLane) {
+                // SUBMIT fallback policy is owned by chat_generation.js
+                // (classifySubmitFailure); the page owns transport + recovery.
+                const submitFailure = CuttleChatGeneration.classifySubmitFailure({
+                    controlLane: controlLane,
+                    errorName: streamErr && streamErr.name,
+                });
+                if (submitFailure === 'abort') throw streamErr;
+                if (submitFailure === 'control-recover') {
                     // Do not transport-retry control commands — server may have
                     // already applied; recover from history / live status instead.
                     console.warn('[Cuttle Chat] Control-lane request failed; not retrying POST:', streamErr);
@@ -11279,7 +10579,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     // page owns transport/guards.
                     const laneOutcome = await CuttleChatPendingResult.recoverControlLaneFailure(
                         sid, streamErr, {
-                            retries: (rsid) => recoverChatResultWithRetries(rsid, 3, 800),
+                            retries: (rsid) => recoveryController().recoverChatResultWithRetries(rsid, 3, 800),
                             controlRequestId: requestBody.control_request_id,
                         }
                     );
@@ -11307,12 +10607,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
                             paintStatus: (text) => updateTypingStatus(text),
                             // Flask restart may be in progress — recover durable
                             // status + history without another user message.
-                            recoverServer: (opts) => recoverAfterFlaskRestart(opts),
-                            wait: (wsid) => collectPendingResult(wsid, {
+                            recoverServer: (opts) => recoveryController().recoverAfterFlaskRestart(opts),
+                            wait: (wsid) => recoveryController().collectPendingResult(wsid, {
                                 waitMs: 90 * 60 * 1000,
                                 navGen: turnNavGen,
                             }),
-                            retries: (rsid) => recoverChatResultWithRetries(rsid, 5, 1600),
+                            retries: (rsid) => recoveryController().recoverChatResultWithRetries(rsid, 5, 1600),
                             fetchLive: (fsid) => fetchChatLiveStatus(fsid),
                             waitOpts: {},
                         }
@@ -11391,7 +10691,29 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 boundSessionId = canonicalizeChatSessionId(data.session_id);
             }
 
-            if (!canPaintTurnHere()) {
+            // Finalize disposition is owned by chat_pending_result.js — the
+            // page gathers the snapshot (turn identity / cancellation / busy)
+            // and applies the matching effect below. Branch order lives in
+            // the owner; do not re-derive it here.
+            const finalizeDisp = CuttleChatPendingResult.classifyTurnFinalize({
+                canPaint: canPaintTurnHere(),
+                stopped: stopState.userStopped,
+                cancelledText: isCancelledAgentText(data && (data.response || data.output)),
+                busy: !!(data && data.busy),
+                controlLane: controlLane,
+                noReply: !!(data && data.no_reply),
+                success: !!(data && data.success),
+                hasResponse: !!(data && String(data.response || data.output || '').trim()),
+                responseTruthy: !!(data && data.response),
+                uiSystem: !!(data && data.ui === 'system'),
+                hasNotice: !!(data && data.notice),
+                preferredModelSet: !!(
+                    data
+                    && data.preferred_model
+                    && /Model set to/i.test(String(data.response || data.output || ''))
+                ),
+            });
+            if (finalizeDisp.kind === 'not-here') {
                 // Switched chats while this turn was in flight. Reply is already
                 // on the server under the origin session — never append it to the
                 // open transcript (refresh used to "fix" the phantom bubble).
@@ -11424,27 +10746,15 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         });
                     }
                 }
-            } else if (stopState.userStopped) {
+            } else if (finalizeDisp.kind === 'cancelled') {
                 consumeCancelledAgentReply(data && (data.response || data.output));
                 // Stop already cleaned UI; don't append a partial/error reply.
-            } else if (consumeCancelledAgentReply(data && (data.response || data.output))) {
-                // Late cancel confirmation without a local Stop click (other pane / dropped stream).
-            } else if (
-                !data.busy
-                && (
-                    data.ui === 'system'
-                    || data.notice
-                    || (
-                        data.preferred_model
-                        && /Model set to/i.test(String(data.response || data.output || ''))
-                    )
-                )
-            ) {
+            } else if (finalizeDisp.kind === 'system-notice') {
                 const notice = String(data.notice || '').trim()
                     || ('⚡ Model: ' + preferredModelLabel(data.preferred_model));
                 if (notice) addSystemMessage(notice, { persist: true, kind: 'model-change' });
                 if (data.session_id) adoptChatSessionId(data.session_id);
-            } else if (data.busy && !controlLane) {
+            } else if (finalizeDisp.kind === 'busy-queue') {
                 // Previous reply is still generating — queue this turn as a
                 // follow-up instead of faking an assistant bubble or racing again.
                 skipFollowupDrain = true;
@@ -11480,7 +10790,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         status: 'Still working on your previous message…',
                     });
                 });
-            } else if (data.no_reply || (data.success && !(String(data.response || data.output || '').trim()))) {
+            } else if (finalizeDisp.kind === 'wait-sync') {
                 // Detached stream with no parked payload yet — don't fake
                 // "No response received." Message sync / pending poll will
                 // attach the real reply when the worker finishes.
@@ -11492,7 +10802,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         updateRemoteWaitingFromMessages([], live);
                     }
                 }).catch(() => {});
-            } else if (data.success && data.response) {
+            } else if (finalizeDisp.kind === 'assistant') {
                 // Canonical supervised bubble: update in place; never append a
                 // second worker/result participant for this task.
                 const CS = window.CuttleSupervised;
@@ -11835,7 +11145,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             message,
             normalizedMessage: normalizeMessageContentForMatch(message),
             inFlightMessage: normalizeMessageContentForMatch(inFlightUserMessage),
-            queuedMessages: followupQueue.items.map((x) => normalizeMessageContentForMatch(x.content)),
+            queuedMessages: followupController().getState().items.map((x) => normalizeMessageContentForMatch(x.content)),
         });
         if (plan.action === 'ignore-guard') {
             // Unreachable here (guard already returned above); kept so the
@@ -12230,12 +11540,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
         saveChatSession(message, 'user');
         recordPromptHistory(spokenText || message);
         applyStickySlashAfterComposerSend(message);
-        const controlLane = isImmediateControlLaneMessage(message);
-        if (!controlLane) {
-            beginLocalGeneration();
-            inFlightUserMessage = message;
-        }
-        await processMessage(message, { controlLane });
+        // Turn lifecycle (control-lane classification, busy-lock begin, in-flight
+        // tracking, prepare/submit/stream/finalize) is owned by the shared
+        // turn-submission interface: processMessage over chat_generation. Voice
+        // is a thin submitter, exactly like the terminal/button/action-card and
+        // supervised lanes — never a second execution lifecycle.
+        await processMessage(message);
     }
 
     const chatVoice = CuttleChatVoice.create({
@@ -12623,29 +11933,30 @@ function downloadTranscriptMarkdown(text, sessionId) {
         }
         // SSE can stall on Electron/HTTPS while the agent keeps updating live-status.
         // Poll with short timeouts so typing text still moves and connections free up.
-        let lastStatus = '';
-        let stagnantTicks = 0;
+        // Cadence, the tick branch decision and the {lastStatus, stagnantTicks}
+        // bookkeeping are owned by chat_stream_transport.js; the page keeps the
+        // timer, the live-status fetch, DOM paint and the recovery effects.
+        const pollState = CuttleChatStreamTransport.createStatusPollState();
         streamStatusPollTimer = setInterval(async () => {
-            if (!isLoadingThisSession() || session.current() == null) {
+            const gate = CuttleChatStreamTransport.planStatusPollStart({
+                loadingThisSession: isLoadingThisSession(),
+                sessionId: session.current(),
+                backgrounded: pageIsBackgrounded(),
+            });
+            if (gate.stop) {
                 clearStreamStatusPoll();
                 return;
             }
-            if (pageIsBackgrounded()) return;
+            if (gate.skip) return;
             const live = await fetchChatLiveStatus(session.current());
-            if (!live) return;
-            if (live.status) {
-                if (live.status === lastStatus) stagnantTicks += 1;
-                else {
-                    stagnantTicks = 0;
-                    lastStatus = live.status;
-                }
-                updateTypingStatus(live.status);
-            }
-            try { subagentLaunchers.syncLive(live.subagents); } catch (_) {}
-            if (live.report_url) updateTypingIndicatorQueryLink(live.report_url);
+            const plan = CuttleChatStreamTransport.planStatusPollLive(
+                pollState, live, liveStatusLooksActive(live));
+            if (plan.skip) return;
+            if (plan.paintStatus != null) updateTypingStatus(plan.paintStatus);
+            try { subagentLaunchers.syncLive(plan.subagents); } catch (_) {}
+            if (plan.reportUrl) updateTypingIndicatorQueryLink(plan.reportUrl);
 
-            const stillGoing = liveStatusLooksActive(live);
-            if (!stillGoing) {
+            if (plan.recover) {
                 // Run finished server-side — pull the reply even if SSE/pending stalled.
                 clearStreamStatusPoll();
                 try {
@@ -12656,7 +11967,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 } catch (_) {}
                 await syncSessionMessagesFromServer();
                 if (isLoadingThisSession()) {
-                    const recovered = await recoverChatResultFromServer(session.current());
+                    const recovered = await recoveryController().recoverChatResultFromServer(session.current());
                     if (recovered && String(recovered.response || '').trim()) {
                         if (consumeCancelledAgentReply(recovered.response)) {
                             finishLocalStreamFromServerSync();
@@ -12681,67 +11992,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
             }
             // Same tool status for a long time while still "active" — nudge pending
             // recovery in case the worker died without clearing live-status.
-            if (stagnantTicks >= 24) { // ~24 * 3.5s ≈ 84s
-                stagnantTicks = 0;
+            if (plan.resync) {
                 try {
                     await syncSessionMessagesFromServer();
                 } catch (_) {}
             }
-        }, 3500);
-    }
-    // Companion-HTTP target for an HTTPS pool stall (armConnectingWatchdog).
-    // Pure except for the injected getDesktopConfig: resolves to
-    // { probeUrl, destBase, httpPort } or null (fail closed — the caller
-    // shows a generic message instead of guessing an unrelated endpoint).
-    // Local paired mode requires matching host and HTTPS port. Explicit
-    // single targets never auto-downgrade. Only true legacy
-    // default-mode (exact https://127.0.0.1|localhost:8080 with no config
-    // available, e.g. plain browser) keeps the documented :8000 companion.
-    function poolStallSameHost(cfgHost, normHost, loopback127) {
-        const cfgNorm = String(cfgHost || '').trim().replace(/^\[|\]$/g, '').toLowerCase();
-        if (!cfgNorm) return false;
-        if (cfgNorm === normHost) return true;
-        return !!(loopback127 && (cfgNorm === '127.0.0.1' || cfgNorm === 'localhost'));
-    }
-    function poolStallTarget(host, httpPort) {
-        return {
-            probeUrl: `http://${host}:${httpPort}/api/status`,
-            destBase: `http://${host}:${httpPort}`,
-            httpPort,
-        };
-    }
-    async function poolStallHttpTarget({ origin, getDesktopConfig }) {
-        const m = /^https:\/\/(\[[^\]]+\]|[^/:]+):(\d+)$/i.exec(String(origin || ''));
-        if (!m) return null;
-        const host = m[1];
-        const httpsPort = Number(m[2]);
-        if (!Number.isSafeInteger(httpsPort) || httpsPort < 1 || httpsPort > 65535) return null;
-        const normHost = host.replace(/^\[|\]$/g, '').toLowerCase();
-        const loopback127 = normHost === '127.0.0.1' || normHost === 'localhost';
-        let cfg = null;
-        try {
-            cfg = typeof getDesktopConfig === 'function' ? await getDesktopConfig() : null;
-        } catch (_) {
-            cfg = null;
-        }
-        // Explicit connections never change protocol, including saved configs
-        // that contain companion metadata from an older desktop build.
-        const ep = cfg ? cfg.endpoint : null;
-        if (ep && ep.kind === 'single') return null;
-        // A local paired target knows both owner-resolved listeners.
-        if (cfg && Number(cfg.httpsPort) === httpsPort
-            && poolStallSameHost(cfg.host, normHost, loopback127)) {
-            const httpPort = Number(cfg.httpPort);
-            if (Number.isSafeInteger(httpPort) && httpPort >= 1 && httpPort <= 65535) {
-                return poolStallTarget(host, httpPort);
-            }
-            return null;
-        }
-        // Plain-browser legacy compatibility: no desktop config is available.
-        if (!cfg && loopback127 && httpsPort === 8080) {
-            return poolStallTarget('127.0.0.1', 8000);
-        }
-        return null;
+        }, CuttleChatStreamTransport.STATUS_POLL_MS);
     }
     function armConnectingWatchdog() {
         clearConnectingWatchdog();
@@ -12750,15 +12006,19 @@ function downloadTranscriptMarkdown(text, sessionId) {
             const el = document.getElementById('typing-status')
                 || document.querySelector('#typing-indicator .typing-status');
             if (!el) return;
-            const text = (el.textContent || '').trim();
-            if (text !== 'Connecting...' && text.indexOf('Still connecting') < 0) return;
+            // Label gate, live-status preemption, probe interpretation and
+            // pool-stall target resolution are owned by
+            // chat_stream_transport.js; the page keeps the timer, DOM reads,
+            // fetch, navigation and message paint.
+            if (!CuttleChatStreamTransport.watchdogWantsLive(el.textContent)) return;
 
             // Prefer live generation status over a health probe (SSE may be stalled).
             if (session.current() != null) {
                 const live = await fetchChatLiveStatus(session.current());
-                if (live && (live.active || live.generating) && live.status) {
-                    updateTypingStatus(live.status);
-                    if (live.report_url) updateTypingIndicatorQueryLink(live.report_url);
+                const livePlan = CuttleChatStreamTransport.planWatchdogAfterLive(live);
+                if (livePlan.kind === 'live') {
+                    updateTypingStatus(livePlan.status);
+                    if (livePlan.reportUrl) updateTypingIndicatorQueryLink(livePlan.reportUrl);
                     return;
                 }
             }
@@ -12768,16 +12028,17 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 const r = await fetchWithTimeout('/api/status', {
                     credentials: 'include',
                     cache: 'no-store',
-                }, 4000);
-                if (!document.getElementById('typing-indicator')) return;
+                }, CuttleChatStreamTransport.WATCHDOG_PROBE_MS);
                 const cur = document.getElementById('typing-status')
                     || document.querySelector('#typing-indicator .typing-status');
-                if (!cur || (cur.textContent || '').indexOf('Still connecting') < 0) return;
-                if (r.ok) {
-                    cur.textContent = 'Server is up — waiting for chat stream…';
-                } else {
-                    cur.textContent = `Server health HTTP ${r.status} — try refreshing or restart Flask`;
-                }
+                const probe = CuttleChatStreamTransport.planWatchdogProbe({
+                    ok: r.ok,
+                    status: r.status,
+                    hasIndicator: !!document.getElementById('typing-indicator'),
+                    stillConnecting: !!cur && (cur.textContent || '').indexOf('Still connecting') >= 0,
+                });
+                if (probe.abort) return;
+                cur.textContent = probe.message;
             } catch (_) {
                 if (!document.getElementById('typing-indicator')) return;
                 const cur = document.getElementById('typing-status')
@@ -12788,19 +12049,19 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     // known — poolStallHttpTarget never guesses an unrelated
                     // default for custom/explicit origins.
                     const inElectron = !!(window.electron && window.electron.isElectron);
-                    const stallTarget = await poolStallHttpTarget({
+                    const stallTarget = await CuttleChatStreamTransport.poolStallHttpTarget({
                         origin: window.location.origin || '',
                         getDesktopConfig: inElectron && window.electron.desktop && window.electron.desktop.getConfig
                             ? () => window.electron.desktop.getConfig()
                             : null,
                     });
                     if (stallTarget) {
-                        cur.textContent = `HTTPS pool stalled — switching to HTTP portal (:${stallTarget.httpPort})…`;
+                        cur.textContent = CuttleChatStreamTransport.poolStallSwitchMessage(stallTarget.httpPort);
                         try {
                             const probe = await fetchWithTimeout(stallTarget.probeUrl, {
                                 cache: 'no-store',
                                 mode: 'cors',
-                            }, 3000);
+                            }, CuttleChatStreamTransport.POOL_STALL_PROBE_MS);
                             if (probe && probe.ok) {
                                 const dest = stallTarget.destBase + (window.location.pathname || '/app_shell.html')
                                     + (window.location.search || '') + (window.location.hash || '');
@@ -12815,37 +12076,29 @@ function downloadTranscriptMarkdown(text, sessionId) {
                             }
                         } catch (_) { /* fall through */ }
                     }
-                    cur.textContent = inElectron
-                        ? 'Cannot reach Cuttle API — Electron connection pool stalled. Quit Cuttle.exe fully and reopen (or use the HTTP portal for your connected host).'
-                        : 'Cannot reach Cuttle API quickly — stream may be stalled. Try Stop, or open the HTTP portal for this host.';
+                    cur.textContent = CuttleChatStreamTransport.watchdogStallMessage(inElectron);
                 }
             }
-        }, 12000);
+        }, CuttleChatStreamTransport.WATCHDOG_MS);
     }
 
     function updateTypingStatus(statusText) {
-        const next = statusText || 'Connecting...';
-        chatVoice.onAgentStatus(next);
         const indicator = document.getElementById('typing-indicator');
         const el = indicator ? indicator.querySelector('.typing-status') : document.getElementById('typing-status');
-        if (el) {
-            if (el.textContent === next) {
-                if (next !== 'Connecting...' && next.indexOf('Still connecting') < 0) {
-                    clearConnectingWatchdog();
-                }
-                return;
-            }
-            clearConnectingWatchdog();
-            el.textContent = next;
+        const plan = CuttleChatStreamTransport.planTypingStatusUpdate({
+            statusText: statusText,
+            hasIndicator: !!indicator,
+            currentText: el ? el.textContent : null,
+        });
+        chatVoice.onAgentStatus(plan.text);
+        if (plan.paint && el) {
+            el.textContent = plan.text;
             el.style.display = 'block';
             el.style.visibility = 'visible';
             transcriptNav.autoScrollChatToBottom();
-        } else {
-            clearConnectingWatchdog();
         }
-        if (!statusText || statusText === 'Connecting...') {
-            armConnectingWatchdog();
-        }
+        if (plan.clearWatchdog) clearConnectingWatchdog();
+        if (plan.armWatchdog) armConnectingWatchdog();
     }
     
     function updateTypingIndicatorQueryLink(reportUrl) {

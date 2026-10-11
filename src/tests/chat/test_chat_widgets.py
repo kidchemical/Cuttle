@@ -832,13 +832,17 @@ def test_assistant_reply_path_refreshes_widget_strip():
     """Server rewrites tags to pin chips before the client paints — so
     formatMessage never upserts. processMessage must refresh the strip after
     painting an assistant reply (Electron otherwise needs a hard refresh).
+    The branch choice is owned by chat_pending_result.classifyTurnFinalize;
+    the page applies the 'assistant' effect.
     """
     src = CHAT_JS.read_text(encoding="utf-8")
-    # Narrow to the success+response paint block inside processMessage.
-    idx = src.find("} else if (data.success && data.response) {")
+    # The finalize disposition comes from the owner (no inline branch order).
+    assert "CuttleChatPendingResult.classifyTurnFinalize({" in src
+    # Narrow to the assistant paint block the page applies.
+    idx = src.find("} else if (finalizeDisp.kind === 'assistant') {")
     assert idx >= 0
     # Look ahead for the notify + end of that branch's local-generation cleanup.
-    chunk = src[idx : idx + 12000]
+    chunk = src[idx : idx + 16000]
     assert "refreshChatWidgets()" in chunk, (
         "after painting a successful assistant reply, processMessage must call "
         "refreshChatWidgets() — tags are already rewritten server-side so the "

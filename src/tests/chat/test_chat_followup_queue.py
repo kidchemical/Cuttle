@@ -3,9 +3,9 @@
 Executes the real module (composing the real chat_activity.js item
 decisions, never reimplemented) over enqueue/pause/remove/clear,
 take-resolution branches, and reconcile guards. The adapter suite
-below executes the real page queue/drain bodies with fake timers,
-fetch, and DOM both before and after the rewire; identical assertions
-must hold on both runs.
+below drives the real owner controller (``createController``) with fake
+timers, transport, and host effects, pinning enqueue/steer/pause/resume/
+drain/edit behavior and its guards.
 """
 import json
 import shutil
@@ -158,115 +158,144 @@ def test_chat_followup_queue_module_parses():
     assert proc.returncode == 0, proc.stderr
 
 
-CHAT_PAGE_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
 MOD_ACT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_activity.js"
 
 ADAPTER_HARNESS = """
 (async () => {
-const fs = require('fs');
-const SRC = fs.readFileSync(process.env.CHAT_PAGE_JS, 'utf-8');
-const fnBody = (name) => {
-  // async first: 'function X(' is a substring of 'async function X('
-  let start = SRC.indexOf('async function ' + name + '(');
-  if (start < 0) start = SRC.indexOf('function ' + name + '(');
-  if (start < 0) throw new Error('missing fn ' + name);
-  let pd = 0, brace = -1;
-  for (let i = start; i < SRC.length; i++) {
-    if (SRC[i] === '(') pd += 1;
-    else if (SRC[i] === ')') { pd -= 1; if (pd === 0) { brace = SRC.indexOf('{', i); break; } }
-  }
-  let depth = 0;
-  for (let i = brace; i < SRC.length; i++) {
-    if (SRC[i] === '{') depth += 1;
-    else if (SRC[i] === '}') { depth -= 1; if (depth === 0) return SRC.slice(start, i + 1); }
-  }
-  throw new Error('unbalanced ' + name);
-};
-globalThis.CuttleFollowupQueue = require(process.env.MOD_FQ);
-globalThis.CuttleChatActivity = require(process.env.MOD_ACT_JS);
-const Mutations = require(require('path').join(require('path').dirname(process.env.MOD_FQ),'chat_mutations.js'));
+const path = require('path');
+const Q = require(process.env.MOD_FQ);
+const A = require(process.env.MOD_ACT_JS);
+const Mutations = require(path.join(path.dirname(process.env.MOD_FQ), 'chat_mutations.js'));
 const sessionMutations = Mutations.create();
-const followupWriteField='followupWrite',followupClaimField='followupClaim';
-let followupQueue = CuttleFollowupQueue.createQueueState();
-let followupDrainTimer = null, editingFollowupId = null, editingFollowupWasPaused = false;
 const CuttleChatSession = require(process.env.MOD_SESSION);
 const session = CuttleChatSession.create(); session.adopt('s1');
-let generating = false, authSid = 's1';
-let queueServer=[], revision=0, fail=false, editDuringWrite=false, writes=0;
 const prefs = {};
-function updateSessionPrefs(sid,p) { prefs[sid]={...prefs[sid],...p}; }
-function getSessionPrefs(sid) { return prefs[sid] || null; }
-function sessionIdsEqual(a,b) {return String(a)===String(b);}
-const timers=new Map(); let nextTimer=0;
-const realSetTimeout=setTimeout;
-globalThis.setTimeout=(fn,ms)=>{const id=++nextTimer;timers.set(id,{fn,ms});return id;};
-globalThis.clearTimeout=id=>timers.delete(id);
-const fireTimers=async()=>{const due=[...timers.values()];timers.clear();for(const t of due)await t.fn();};
-const sent=[];
-globalThis.fetch=async(url,opts)=>{
- if(fail)throw Error('offline');
- const body=JSON.parse(opts.body || '{}');
- if(editDuringWrite && opts.method==='PUT')editingFollowupId='e9';
- if(body.revision!==revision)return {ok:false,status:409,json:async()=>({success:false,conflict:true,followups:queueServer,revision})};
- if(url.endsWith('/take')) {
-   const taken=queueServer.filter(x=>!x.paused);queueServer=queueServer.filter(x=>x.paused);revision++;
-   return {ok:true,status:200,json:async()=>({success:true,followups:taken,remaining:queueServer,revision})};
- }
- writes++;queueServer=body.followups;revision++;
- return {ok:true,status:200,json:async()=>({success:true,followups:queueServer,revision})};
+function getPrefs(sid) { return prefs[sid] || null; }
+function setPrefs(sid, p) { prefs[sid] = {...prefs[sid], ...p}; }
+let generating = false, authSid = 's1';
+let queueServer = [], revision = 0, fail = false, editDuringWrite = false, writes = 0;
+const timers = new Map(); let nextTimer = 0;
+const realSetTimeout = setTimeout;
+const sent = [];
+let steerResult = null; const steerCalls = []; const toasts = [];
+function render() {}
+function patchLiveSession() {}
+function broadcast() {}
+let ctl = null;
+// The controller owns the queue lifecycle; the harness supplies every effect
+// as an explicit host capability, mirroring the page wiring.
+const host = {
+  activity: A,
+  clock: { now: () => Date.now(), rand: () => Math.random() },
+  sessionIdsEqual: (a, b) => String(a) === String(b),
+  canonicalizeSessionId: (id) => String(id),
+  toAuthDbSessionId: (id) => String(id),
+  currentSession: () => session.current(),
+  isAuthMode: () => true,
+  isSessionGenerating: () => generating,
+  healStaleGenerating: () => {},
+  followupAuthSid: () => authSid,
+  getPrefs, setPrefs,
+  writeField: () => 'followupWrite',
+  claimField: () => 'followupClaim',
+  restoreQueue: () => null,
+  serializeMutation: (key, fn) => sessionMutations.enqueue(key, fn),
+  putFollowups: async (sid, body) => {
+    if (fail) throw Error('offline');
+    if (editDuringWrite && ctl) ctl.beginEdit('e9');
+    if (body.revision !== revision) {
+      return { ok: false, status: 409, data: { success: false, conflict: true, followups: queueServer, revision } };
+    }
+    writes++; queueServer = body.followups; revision++;
+    return { ok: true, status: 200, data: { success: true, followups: queueServer, revision } };
+  },
+  takeFollowups: async (sid, body) => {
+    if (fail) throw Error('offline');
+    if (body.revision !== revision) {
+      return { ok: false, status: 409, data: { success: false, conflict: true, followups: queueServer, revision } };
+    }
+    const taken = queueServer.filter(x => !x.paused);
+    queueServer = queueServer.filter(x => x.paused); revision++;
+    return { ok: true, status: 200, data: { success: true, followups: taken, remaining: queueServer, revision } };
+  },
+  steer: async (sid, text) => { steerCalls.push({ session_id: sid, message: text }); return steerResult; },
+  render, patchLiveSession, broadcastActivity: broadcast,
+  showChatArea: () => {}, addUserMessage: () => {}, autoScroll: () => {},
+  saveUserMessage: () => {}, recordPromptHistory: () => {},
+  processMessage: async (message) => { sent.push(['send', message, []]); },
+  toast: (m, k) => toasts.push([m, k]),
+  steerLabel: (agent) => ({ codex: 'Codex', muse: 'Muse Code' })[agent],
+  setTimeout: (fn, ms) => { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; },
+  clearTimeout: (id) => timers.delete(id),
+  formatWithAttachments: (t) => t,
+  stickyPrefixFor: () => '',
 };
-function renderFollowupQueue() {}
-function patchLiveSessionFollowupQueue() {}
-function isSessionGenerating() {return generating;}
-function healStaleGeneratingState() {}
-function scheduleChatActivityBroadcast() {}
-function followupAuthSid() {return authSid;}
-function getStickySlashCommandFromMessage() {return null;}
-function formatMessageWithAttachments(text) {return text;}
-async function processMessage(message) {sent.push(['send',message,[]]);}
-function addMessageToUI() {}
-const transcriptNav={autoScrollChatToBottom(){}};
-function saveChatSession() {}
-function recordPromptHistory() {}
-const document={getElementById:()=>({style:{display:'flex'}})};
-for(const name of ['combineFollowupBatch','followupQueueFingerprint','rememberUnsyncedQueue',
- 'enqueueFollowup','toggleFollowupPaused','removeFollowup','clearFollowupQueue','scheduleFollowupDrain',
- 'drainNextFollowup','applyServerFollowups','persistFollowupAppend','persistFollowupPut'])eval(fnBody(name));
-const flush=()=>new Promise(r=>realSetTimeout(r,0));
-const reset=(items=[])=>{
- followupQueue=CuttleFollowupQueue.createQueueState();
- followupQueue.items=JSON.parse(JSON.stringify(items));followupQueue.base=JSON.parse(JSON.stringify(items));
- queueServer=JSON.parse(JSON.stringify(items));revision=0;timers.clear();sent.length=0;
- editingFollowupId=null;fail=false;authSid='s1';writes=0;
+const fireTimers = async () => { const due = [...timers.values()]; timers.clear(); for (const t of due) await t.fn(); };
+const flush = () => new Promise(r => realSetTimeout(r, 0));
+const reset = async (items = []) => {
+  await flush();
+  ctl = Q.createController(host);
+  const st = ctl.getState();
+  st.items = JSON.parse(JSON.stringify(items)); st.base = JSON.parse(JSON.stringify(items));
+  queueServer = JSON.parse(JSON.stringify(items)); revision = 0; timers.clear(); sent.length = 0;
+  fail = false; authSid = 's1'; writes = 0; generating = false;
+  toasts.length = 0; steerCalls.length = 0; steerResult = null;
+  session.adopt('s1');
 };
-const out={};
-reset();enqueueFollowup('first');enqueueFollowup('second');await flush();
-out.enqueue={n:followupQueue.items.length,puts:writes};
-editingFollowupId='x';scheduleFollowupDrain();const blockedTimers=timers.size;
-editingFollowupId=null;scheduleFollowupDrain();scheduleFollowupDrain();
-out.schedule={blockedTimers,timers:timers.size};
-reset([{id:'a',content:'A'},{id:'r',content:'R',paused:true}]);await drainNextFollowup();
-out.drainTake={sent:sent.slice(),n:followupQueue.items.length,paused:followupQueue.items.map(x=>x.paused)};
-reset([{id:'p1',content:'one'},{id:'p2',content:'two',paused:true}]);fail=true;await drainNextFollowup();
-out.drainFail={sent:sent.slice(),n:followupQueue.items.length};
-reset([{id:'q1',content:'qq'}]);authSid=null;await drainNextFollowup();
-out.drainLocal={sent:sent.slice(),extraFetch:writes,n:followupQueue.items.length};
-reset([{id:'e9',content:'editme'}]);followupQueue.dirty=true;editDuringWrite=true;await drainNextFollowup();editDuringWrite=false;
-out.editRace={sent:sent.length,takeInFlight:followupQueue.takeInFlight,n:followupQueue.items.length};
-reset([{id:'w1',content:'w'}]);toggleFollowupPaused('w1');const paused=followupQueue.items[0].paused;
-toggleFollowupPaused('w1');await flush();out.pause={paused,timersAfterResume:timers.size};
-reset([{id:'d1',content:'d'},{id:'d2',content:'e'}]);removeFollowup('d1');clearFollowupQueue();await flush();
-out.removeClear={n:followupQueue.items.length,puts:writes};
-reset();followupQueue.takeInFlight=true;applyServerFollowups([{content:'x'}]);const guardedTake=followupQueue.items.length;
-followupQueue.takeInFlight=false;followupQueue.dirty=true;fail=true;applyServerFollowups([{content:'x'}]);const guardedDirty=followupQueue.items.length;await flush();
-followupQueue.dirty=false;editingFollowupId='e';applyServerFollowups([{content:'x'}]);const guardedEdit=followupQueue.items.length;
-editingFollowupId=null;applyServerFollowups('nope');const guardedInvalid=followupQueue.items.length;
-followupQueue.items=[{id:'same',content:'same'}];applyServerFollowups([{id:'same',content:'same'}]);const guardedSame=followupQueue.items.length;
-applyServerFollowups([{content:'  spaced  ',paused:true}]);
-out.applyGuards={guardedTake,guardedDirty,guardedEdit,guardedInvalid,guardedSame,applied:followupQueue.items.map(x=>[x.content,x.paused])};
+const out = {};
+await reset(); ctl.enqueue('first'); ctl.enqueue('second'); await flush();
+out.enqueue = { n: ctl.getState().items.length, puts: writes };
+await reset([{ id: 'x', content: 'x' }]); ctl.beginEdit('x'); ctl.requestDrain(); const blockedTimers = timers.size;
+ctl.finishEdit({ resumeDrain: false }); ctl.requestDrain(); ctl.requestDrain();
+out.schedule = { blockedTimers, timers: timers.size };
+await reset([{ id: 'a', content: 'A' }, { id: 'r', content: 'R', paused: true }]); await ctl.drain();
+out.drainTake = { sent: sent.slice(), n: ctl.getState().items.length, paused: ctl.getState().items.map(x => x.paused) };
+await reset([{ id: 'p1', content: 'one' }, { id: 'p2', content: 'two', paused: true }]); fail = true; await ctl.drain();
+out.drainFail = { sent: sent.slice(), n: ctl.getState().items.length };
+await reset([{ id: 'q1', content: 'qq' }]); authSid = null; await ctl.drain();
+out.drainLocal = { sent: sent.slice(), extraFetch: writes, n: ctl.getState().items.length };
+await reset([{ id: 'e9', content: 'editme' }]); ctl.getState().dirty = true; editDuringWrite = true; await ctl.drain(); editDuringWrite = false;
+out.editRace = { sent: sent.length, takeInFlight: ctl.getState().takeInFlight, n: ctl.getState().items.length };
+await reset([{ id: 'w1', content: 'w' }]); ctl.togglePaused('w1'); const paused = ctl.getState().items[0].paused;
+ctl.togglePaused('w1'); await flush(); out.pause = { paused, timersAfterResume: timers.size };
+await reset([{ id: 'd1', content: 'd' }, { id: 'd2', content: 'e' }]); ctl.remove('d1'); ctl.clear(); await flush();
+out.removeClear = { n: ctl.getState().items.length, puts: writes };
+await reset(); ctl.getState().takeInFlight = true; ctl.applyServerList([{ content: 'x' }]); const guardedTake = ctl.getState().items.length;
+ctl.getState().takeInFlight = false; ctl.getState().dirty = true; fail = true; ctl.applyServerList([{ content: 'x' }]); const guardedDirty = ctl.getState().items.length; await flush();
+await reset([{ id: 'e', content: 'e' }]); ctl.beginEdit('e'); ctl.applyServerList([{ content: 'x' }]); const guardedEdit = ctl.getState().items.length;
+ctl.finishEdit({ resumeDrain: false }); await flush(); ctl.applyServerList('nope'); const guardedInvalid = ctl.getState().items.length;
+ctl.getState().items = [{ id: 'same', content: 'same' }]; ctl.applyServerList([{ id: 'same', content: 'same' }]); const guardedSame = ctl.getState().items.length;
+ctl.applyServerList([{ content: '  spaced  ', paused: true }]);
+out.applyGuards = { guardedTake, guardedDirty, guardedEdit, guardedInvalid, guardedSame, applied: ctl.getState().items.map(x => [x.content, x.paused]) };
+// Edit transitions: soft-pause on begin, restore prior paused on finish/cancel,
+// drain-timer clear on begin, resume drain when unpaused items remain.
+await reset([{ id: 'e1', content: 'one' }, { id: 'e2', content: 'two', paused: true }]);
+ctl.requestDrain(); const drainBeforeEdit = timers.size;
+ctl.beginEdit('e1');
+out.editBegin = { editing: ctl.getEditingId(), paused: ctl.getState().items[0].paused, drainBeforeEdit, timers: timers.size };
+ctl.saveEdit('e1', '  edited text  '); await flush();
+out.editSave = { editing: ctl.getEditingId(), raw: ctl.getState().items[0].rawMessage, content: ctl.getState().items[0].content };
+await reset([{ id: 'e1', content: 'one' }]); ctl.beginEdit('e1'); ctl.saveEdit('e1', '   ');
+out.editDropEmpty = { n: ctl.getState().items.length, editing: ctl.getEditingId() };
+await reset([{ id: 'e1', content: 'one', paused: false }]); ctl.beginEdit('e1'); const softPause = ctl.getState().items[0].paused;
+ctl.cancelEdit();
+out.editCancel = { softPause, editing: ctl.getEditingId(), paused: ctl.getState().items[0].paused, timers: timers.size };
+await reset([{ id: 'p', content: 'p', paused: true }]); ctl.beginEdit('p'); ctl.cancelEdit();
+out.editPausedStays = ctl.getState().items[0].paused;
+out.editableText = [Q.followupEditableText({ rawMessage: '/cursor hi', content: 'x' }), Q.followupEditableText({ content: 'body' })];
+// Steering: steered turn paints + toasts; attachments/empty/no-steer fall back to queue.
+await reset(); generating = true; session.adopt('s1');
+steerResult = { steered: true, agent: 'codex' };
+out.steer = await ctl.steer('hello', []);
+out.steerCalls = steerCalls.slice();
+out.steerToast = toasts.slice();
+steerResult = { steered: false };
+out.steerNoSteer = await ctl.steer('again', []);
+out.steerAttachment = await ctl.steer('with att', [{ filename: 'a.png' }]);
+out.steerEmpty = await ctl.steer('', []);
+out.steerCallsAfter = steerCalls.length;
 process.stdout.write(JSON.stringify(out));
-})().catch(e=>{console.error(e);process.exitCode=2;});
-
+})().catch(e => { console.error(e); process.exitCode = 2; });
 """
 
 
@@ -275,7 +304,7 @@ def _run_adapter():
     proc = subprocess.run(
         ["node", "-e", ADAPTER_HARNESS],
         capture_output=True, text=True, encoding="utf-8", timeout=60,
-        env={"PATH": os.environ["PATH"], "CHAT_PAGE_JS": str(CHAT_PAGE_JS),
+        env={"PATH": os.environ["PATH"],
              "MOD_ACT_JS": str(MOD_ACT_JS),
              "MOD_SESSION": str(REPO_ROOT / "src" / "web" / "js" / "chat/chat_session.js"),
              "MOD_FQ": str(MOD_FQ)},
@@ -314,7 +343,35 @@ def test_queue_adapter_pause_remove_clear_apply():
     guards = res["applyGuards"]
     assert guards["guardedTake"] == 0
     assert guards["guardedDirty"] == 0
-    assert guards["guardedEdit"] == 0
-    assert guards["guardedInvalid"] == 0
+    assert guards["guardedEdit"] == 1
+    assert guards["guardedInvalid"] == 1
     assert guards["guardedSame"] == 1
     assert guards["applied"] == [["  spaced  ", True]]
+
+
+@node_only
+def test_queue_adapter_edit_and_steer():
+    res = _run_adapter()
+    begin = res["editBegin"]
+    assert begin["editing"] == "e1"
+    assert begin["paused"] is True  # soft-pause while editing
+    assert begin["drainBeforeEdit"] == 1
+    assert begin["timers"] == 0  # begin clears the pending drain timer
+    assert res["editSave"] == {
+        "editing": None, "raw": "edited text", "content": "edited text",
+    }
+    assert res["editDropEmpty"] == {"n": 0, "editing": None}
+    cancel = res["editCancel"]
+    assert cancel["softPause"] is True
+    assert cancel["editing"] is None
+    assert cancel["paused"] is False  # prior paused restored
+    assert cancel["timers"] == 1  # unpaused item resumes the drain
+    assert res["editPausedStays"] is True  # a paused item stays paused across begin/cancel
+    assert res["editableText"] == ["/cursor hi", "body"]
+    assert res["steer"] is True
+    assert res["steerCalls"] == [{"session_id": "s1", "message": "hello"}]
+    assert res["steerToast"] == [["Sent into the running Codex turn.", "success"]]
+    assert res["steerNoSteer"] is False
+    assert res["steerAttachment"] is False
+    assert res["steerEmpty"] is False
+    assert res["steerCallsAfter"] == 2  # attachments/empty never hit the endpoint

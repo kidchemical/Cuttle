@@ -215,6 +215,7 @@ async function scenario(cfg) {
   let followupQueue = CuttleFollowupQueue.createQueueState();
   cfg.queued.forEach((content) => CuttleFollowupQueue.enqueue(followupQueue,
     { content }, { now: () => 1, rand: () => 0.5 }));
+  const followupController = () => ({ getState: () => followupQueue });
   let sendDispatchGuard = false;
   const CuttleChatSession = require(process.env.MOD_SESSION);
   const session = CuttleChatSession.create(); session.adopt('CH-duptest');
