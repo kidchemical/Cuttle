@@ -1,8 +1,10 @@
 # Sub-agents (child chats)
 
 Fan-out, voting, mixed harnesses, or a task split across agents → spawn **real
-child chats** with `python -m api.subagents`, not background CLI subagents. Supervised
-children keep their owned `--wait` path. How-to: `.cuttle_global/docs/subagents.md`.
+child chats** with `python -m api.subagents`. That CLI is the only durable
+subagent path: never a subagent facility built into your own CLI — whatever it
+runs lives inside this turn and dies with it. Supervised children keep their
+owned `--wait` path. How-to: `.cuttle_global/docs/subagents.md`.
 
 ## When to spawn (do this without being asked)
 
@@ -11,7 +13,7 @@ one sequential reply, for example:
 
 - Several options / votes / critiques of the same prompt (dinner, design, review)
 - Parallel investigation (logs vs code vs docs) that you will synthesize
-- A job that splits cleanly across harnesses (one Cursor Auto, one Grok, one Codex)
+- A job that splits cleanly across harnesses or models (one lane per harness)
 - Multi-step work you want visible as separate chats the user can open
 
 Do **not** spawn for a single straightforward question, a tiny edit, or work you
@@ -22,11 +24,11 @@ can finish this turn yourself.
 ```text
 python -m api.subagents spawn --parent CH-…… --wait --json \
   --collect all \
-  --child "{\"title\":\"A\",\"agent\":\"cursor\",\"message\":\"…\"}" \
-  --child "{\"title\":\"B\",\"agent\":\"cursor\",\"model\":\"grok-4.6\",\"effort\":\"low\",\"message\":\"…\"}"
+  --child "{\"title\":\"A\",\"agent\":\"<harness>\",\"message\":\"…\"}" \
+  --child "{\"title\":\"B\",\"agent\":\"<harness>\",\"model\":\"<model>\",\"effort\":\"low\",\"message\":\"…\"}"
 ```
 
-`profile` on a child (`"scout"` or `{"name":"Judge","avatar":"⚖️","agent":"codex"}`)
+`profile` on a child (`"scout"` or `{"name":"Judge","avatar":"⚖️","agent":"<harness>"}`)
 sets the speaker name/avatar and optional harness. `python -m api.subagents profiles list`.
 
 Then synthesize **one** parent reply. Include the child `CH-` handles as bare
