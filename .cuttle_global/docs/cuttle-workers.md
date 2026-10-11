@@ -53,6 +53,30 @@ Electron alone cannot safely pull+restart itself (same class of problem as killi
 
 Connect Electron Client to the host at least once first (writes `desktop-config.json`).
 
+## Update channels (official vs host)
+
+A device updates toward one of two channels (`device_workers.update_source`; chip on
+the titlebar Update button; Settings → 📦 Cuttle updates):
+
+| Channel | Source | Mechanism |
+|---|---|---|
+| **OFFICIAL** | upstream git remote / published release | `git fetch` + `--ff-only` the configured upstream; packaged Clients use the GitHub release / host asar |
+| **HOST** (Scenario B) | the paired Cuttle PC's working tree | host serves a self-contained `git bundle` of its branch (`/api/desktop/git[/bundle]`, pinned HTTPS); Client fast-forwards from it — **no forge push needed** |
+
+- **Precedence:** one button normally (the configured channel's chip always shows).
+  Show both only when both channels are ahead **and diverge** — the user picks; there is
+  no silent default. `desktop_update_policy.updateChannels` owns this decision.
+- A source-checkout Client defaulting to HOST follows the Host's working tree, so a
+  dev can edit the Host and push to LAN Clients without a GitHub round-trip. Release
+  installs never offer HOST (there is no checkout to serve) — `updateSource: release`.
+- **Branch must match.** The updater fast-forwards the *current* branch. A Client on
+  `main` while the Host is on `dev` can never fast-forward — it used to no-op silently.
+  The heartbeat carries `git_branch`/`git_upstream`; Devices/titlebar flag
+  `wrong_branch`, and `--source host` refuses with `wrong branch: on 'main', host serves 'dev'`.
+  Switch the Client to the Host's branch to follow it.
+- Self-updates report `advanced` + a `no-op` note; the UI surfaces "nothing to update"
+  instead of a false success.
+
 ## Shell: three tiers
 
 | Type | What | Default |
