@@ -585,7 +585,12 @@ def _cuttle_self_update_local(params: Dict[str, Any]) -> Dict[str, Any]:
         raise RuntimeError(f"updater missing: {script}")
 
     # Refuse unsafe checkouts before scheduling any lifecycle.
-    pull = _git_update_checkout_local(repo, log_file, script.parent / "client-update-checkout.py")
+    update_source = str(params.get("update_source") or "official").strip().lower()
+    if update_source not in ("official", "host"):
+        update_source = "official"
+    pull = _git_update_checkout_local(
+        repo, log_file, script.parent / "client-update-checkout.py", source=update_source
+    )
     if not pull.get("ok"):
         raise RuntimeError(str(pull.get("error") or "checkout update refused"))
 
@@ -670,11 +675,12 @@ def _cuttle_self_update_local(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _git_update_checkout_local(repo: Path, log_path: Path | None = None, helper_path: Path | None = None) -> Dict[str, Any]:
+def _git_update_checkout_local(repo: Path, log_path: Path | None = None, helper_path: Path | None = None, *, source: str = "official") -> Dict[str, Any]:
     """Run the shared preservation contract; never stash, reset, or clean.
 
     Reports before/after HEAD so a no-op fast-forward (already at upstream, or
     tracking the wrong branch) is surfaced honestly instead of as success.
+    ``source='host'`` fast-forwards from the Host-served git bundle.
     """
     helper = helper_path or repo / ".cuttle_global" / "scripts" / "client-update-checkout.py"
 
@@ -692,10 +698,13 @@ def _git_update_checkout_local(repo: Path, log_path: Path | None = None, helper_
 
     before = _git("rev-parse", "--short", "HEAD")
     branch = _git("rev-parse", "--abbrev-ref", "HEAD")
+    argv = [sys.executable, str(helper), "--repo", str(repo)]
+    if source and source != "official":
+        argv += ["--source", str(source)]
     try:
         result = subprocess.run(
-            [sys.executable, str(helper), "--repo", str(repo)],
-            capture_output=True, text=True, timeout=240, cwd=str(repo),
+            argv,
+            capture_output=True, text=True, timeout=300, cwd=str(repo),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         output = (result.stdout or "") + (result.stderr or "")

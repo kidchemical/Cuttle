@@ -930,15 +930,22 @@ def submit_self_update(
     restart_daemon: bool = True,
     submitted_by: str = "platform",
     host: str = "",
+    update_source: str = "official",
 ) -> Dict[str, Any]:
     """Enqueue cuttle_self_update on a Client worker (preservation checks + fast-forward, then relaunch).
 
     Embeds the Host's current updater scripts so Clients still on an old
     checkout run the latest updater even before git pull succeeds.
+    ``update_source`` selects the channel: ``official`` (configured upstream /
+    git remote) or ``host`` (this Host's served git bundle — Scenario B).
     """
+    source = str(update_source or "official").strip().lower()
+    if source not in ("official", "host"):
+        source = "official"
     params: Dict[str, Any] = {
         "restart_electron": bool(restart_electron),
         "restart_daemon": bool(restart_daemon),
+        "update_source": source,
     }
     if repo:
         params["repo"] = repo

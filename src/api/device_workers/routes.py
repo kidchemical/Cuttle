@@ -217,6 +217,7 @@ def self_update_worker():
         restart_electron=not bool(data.get("no_electron")),
         restart_daemon=not bool(data.get("no_daemon")),
         submitted_by=str(data.get("submitted_by") or "jobs-ui").strip() or "jobs-ui",
+        update_source=str(data.get("update_source") or "official").strip() or "official",
     )
     code = 200 if result.get("success") else 400
     return jsonify(result), code

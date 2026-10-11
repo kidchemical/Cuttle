@@ -147,6 +147,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_su.add_argument("--no-electron", action="store_true")
     p_su.add_argument("--no-daemon", action="store_true")
     p_su.add_argument("--submitted-by", default="platform")
+    p_su.add_argument("--update-source", default="official", choices=["official", "host"],
+                      help="official = git remote; host = this Host's served bundle")
 
     p_probe = sub.add_parser("probe", help="Ping a worker and measure mesh RTT")
     p_probe.add_argument("--target", default="")
@@ -358,6 +360,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             restart_electron=not bool(args.no_electron or env("no_electron")),
             restart_daemon=not bool(args.no_daemon or env("no_daemon")),
             submitted_by=str(args.submitted_by or env("submitted_by") or "platform"),
+            update_source=str(args.update_source or env("update_source") or "official"),
         )
     elif args.cmd == "probe":
         target = str(args.target or env("target") or env("target_worker_id") or env("worker_id") or "").strip()

@@ -904,7 +904,7 @@ def test_shell_recipe_allowlist_and_self_update_schedules(tmp_path, monkeypatch)
     monkeypatch.setattr(
         ex,
         "_git_update_checkout",
-        lambda repo, log_path=None, helper_path=None: {"ok": True, "stashed": False, "head": "abc1234", "log": ""},
+        lambda repo, log_path=None, helper_path=None, **kwargs: {"ok": True, "stashed": False, "head": "abc1234", "log": ""},
     )
 
     result = ex.execute_job({"type": "cuttle_self_update", "params": {"repo": str(tmp_path)}})

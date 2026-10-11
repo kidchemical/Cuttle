@@ -405,6 +405,13 @@ try:
 except Exception as _desktop_err:
     print(f"[DESKTOP] Failed to register desktop electron routes: {_desktop_err}")
 
+# Host-served git bundle (Scenario B: LAN Client follows the Host working tree)
+try:
+    from api.desktop_git import register_desktop_git_routes
+    register_desktop_git_routes(app)
+except Exception as _desktop_git_err:
+    print(f"[DESKTOP] Failed to register desktop git routes: {_desktop_git_err}")
+
 # Android Capacitor shell updates (LAN APK, same idea as Electron app.asar)
 try:
     from api.mobile_android_update import register_mobile_android_update_routes
