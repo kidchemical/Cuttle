@@ -292,6 +292,34 @@
                 </div>
             </div>
 
+            <div class="settings-group" id="timeoutsSettings">
+                <h3 class="settings-title"><span class="emoji">⏱️</span> Timeouts <span class="settings-scope" data-scope="server" title="Stored in this server's settings; applies to every chat it runs.">This server</span><button type="button" class="cuttle-info" data-tooltip="How long an agent turn may run, and how long Cuttle waits for a subagent round before cancelling its unfinished work. Raise these for long coding tasks." aria-label="About Timeouts">i</button></h3>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Agent run limit</strong>
+                        <div class="setting-description">Maximum seconds for one agent turn before Cuttle stops the harness. Streaming CLIs treat this as an idle budget, so a productive turn keeps going.</div>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" id="agentRunTimeoutSeconds" class="setting-input" min="60" max="86400" step="60" inputmode="numeric" aria-label="Agent run limit in seconds">
+                        <span class="setting-description">seconds</span>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Subagent supervision limit</strong>
+                        <div class="setting-description">How long a <code>--wait</code> subagent round may run before Cuttle cancels the work that has not finished.</div>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" id="subagentWaitTimeoutSeconds" class="setting-input" min="60" max="86400" step="60" inputmode="numeric" aria-label="Subagent supervision limit in seconds">
+                        <span class="setting-description">seconds</span>
+                    </div>
+                </div>
+                <div class="provider-picker">
+                    <button type="button" class="control-button btn-start" onclick="saveTimeoutsSettings()"><span class="emoji">💾</span> Save timeouts</button>
+                </div>
+                <div id="timeoutsStatus" class="setting-description" role="status" aria-live="polite"></div>
+            </div>
+
             <div class="settings-group">
                 <h3 class="settings-title"><span class="emoji">➕</span> Add your own agent <span class="settings-scope" data-scope="mixed" title="Instance and project roots are read straight from disk; a project root only runs after you opt in.">This instance + project</span><button type="button" class="cuttle-info" data-tooltip="Drop a folder named after the agent with a manifest.yaml and an adapter.py. It joins the catalog next reload — no Cuttle fork, no core change." aria-label="About ➕ Add your own agent This instance + project">i</button></h3>
 
@@ -2010,6 +2038,49 @@
             }
         }
 
+        async function loadTimeoutsSettings() {
+            try {
+                const r = await fetch('/api/settings/timeouts');
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Failed to load');
+                const agentEl = document.getElementById('agentRunTimeoutSeconds');
+                const subEl = document.getElementById('subagentWaitTimeoutSeconds');
+                if (agentEl && d.agent_run_seconds != null) agentEl.value = String(d.agent_run_seconds);
+                if (subEl && d.subagent_wait_seconds != null) subEl.value = String(d.subagent_wait_seconds);
+            } catch (e) {
+                (window.showToast || alert)('Could not load timeout settings: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function saveTimeoutsSettings() {
+            const agentEl = document.getElementById('agentRunTimeoutSeconds');
+            const subEl = document.getElementById('subagentWaitTimeoutSeconds');
+            const statusEl = document.getElementById('timeoutsStatus');
+            const payload = {};
+            if (agentEl && agentEl.value !== '') payload.agent_run_seconds = parseInt(agentEl.value, 10);
+            if (subEl && subEl.value !== '') payload.subagent_wait_seconds = parseInt(subEl.value, 10);
+            if (!Object.keys(payload).length) {
+                if (statusEl) statusEl.textContent = 'Enter at least one timeout.';
+                return;
+            }
+            try {
+                const r = await fetch('/api/settings/timeouts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Save failed');
+                if (agentEl && d.agent_run_seconds != null) agentEl.value = String(d.agent_run_seconds);
+                if (subEl && d.subagent_wait_seconds != null) subEl.value = String(d.subagent_wait_seconds);
+                if (statusEl) statusEl.textContent = '';
+                (window.showToast || alert)('Timeouts saved', 'info');
+            } catch (e) {
+                if (statusEl) statusEl.textContent = e.message || String(e);
+                (window.showToast || alert)('Failed to save timeouts: ' + (e.message || e), 'error');
+            }
+        }
+
         async function toggleLanAccess(event) {
             // Label + nested checkbox would otherwise fire this twice per click.
             if (event) event.preventDefault();
@@ -2578,6 +2649,7 @@
                     loadAgentCatalog();
                     loadCompletionProviders();
                     loadGitAutoCommitSetting();
+                    loadTimeoutsSettings();
                 });
                 tabs.register('providers', function () {
                     loadApiKeys();
@@ -2596,6 +2668,7 @@
                 loadAgentCatalog();
                 loadGitAutoCommitSetting();
                 loadCompletionProviders();
+                loadTimeoutsSettings();
                 loadChatTtsSettings();
                 loadApiKeys();
                 loadExperimentalFlags();

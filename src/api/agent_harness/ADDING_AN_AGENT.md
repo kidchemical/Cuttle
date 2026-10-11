@@ -15,7 +15,7 @@ wrapper returning `AgentResult`.
 
 Shared project context (rules, inventory, handoff) comes from **Cuttle Brain** —
 `src/api/cuttle_brain/` — not from copying each vendor’s skill registry. See
-[file:////path/to/Cuttle/src/api/cuttle_brain/CONTEXT_COMPILER.md](file:////path/to/Cuttle/src/api/cuttle_brain/CONTEXT_COMPILER.md).
+[`CONTEXT_COMPILER.md`](../cuttle_brain/CONTEXT_COMPILER.md).
 
 ## Where folders live (discovery)
 
@@ -336,7 +336,8 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 1. **Write the folder** — `manifest.yaml` + `adapter.py`. Keep CLI-specific quirks in the adapter.
    Put first-party agents under the bundled root; put experiments / third-party packs under
    `<home>/personal/agents/` or `{project}/.cuttle/agents/`.
-   For a bundled agent, add a declarative installer when an official source exists.
+   For a bundled agent, add `executable_names` + `missing_cli_hint`/`install_hint`
+   guidance only (never installer or update logic — see **CLI installation (BYO-CLI)**).
 2. **Inspect the real CLI.** Install it, run `--version`, `--help`, and any `help` subcommand,
    then map its non-interactive prompt, structured output, resume, model, timeout, permission,
    and **auth** flags from actual output. Do not infer flags from another agent.
@@ -421,7 +422,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 | `muse` | `muse exec` (WSL) | `--prompt-file` for long prompts; `/muse model` in adapter |
 | `claude` | `claude -p` | per-chat `--resume`; `/claude model [refresh]` + `/claude effort` pins → `--model` / `--effort`; catalog from SDK `initialize` (no turn) |
 | `opencode` | `opencode run` | native CLI authentication |
-| `antigravity` | `agy` | auto-install |
+| `antigravity` | `agy` | user-managed install (BYO-CLI) |
 | `hermes` | `hermes chat -Q -q` | local or OpenRouter via config.yaml; `requires_cloud: false`; per-chat `--resume` + state.db status poll |
 | `deepseek` | `dsh --profile headless` | Flash by default (`smoke_model` = Flash); no native per-chat resume; needs `DEEPSEEK_API_KEY`. Tentacle for DeepSeek Harness — steal kernel ideas separately ([`MODULARITY.md`](../../../docs/guides/MODULARITY.md)); do not treat dsh as Cuttle’s core. |
 

@@ -78,9 +78,29 @@
     let branchCache = { path: '', branch: '', at: 0 };
     let branchInFlight = false;
 
+    // Persist the last-known branch per project path so the chip shows it
+    // immediately on a cold start (before the async refresh returns) — without
+    // this the branch segment blinks away after a reload / phone reopen.
+    const BRANCH_LS_PREFIX = 'cuttle.chipBranch.';
+    function readPersistedBranch(path) {
+        try {
+            return (root.localStorage && root.localStorage.getItem(BRANCH_LS_PREFIX + path)) || '';
+        } catch (_) {
+            return '';
+        }
+    }
+    function writePersistedBranch(path, branch) {
+        try {
+            if (!root.localStorage) return;
+            if (branch) root.localStorage.setItem(BRANCH_LS_PREFIX + path, branch);
+            else root.localStorage.removeItem(BRANCH_LS_PREFIX + path);
+        } catch (_) {}
+    }
+
     function branchFor(path) {
-        if (!path || branchCache.path !== path) return '';
-        return branchCache.branch || '';
+        if (!path) return '';
+        if (branchCache.path === path) return branchCache.branch || '';
+        return readPersistedBranch(path);
     }
 
     function distinctBranchLabel(repos) {
@@ -101,7 +121,7 @@
         if (!force && branchCache.path === path && (now - branchCache.at) < 5000) return;
         if (branchInFlight) return;
         branchInFlight = true;
-        const prev = branchCache.path === path ? branchCache.branch : '';
+        const prev = branchCache.path === path ? branchCache.branch : readPersistedBranch(path);
         try {
             const qs = new URLSearchParams();
             qs.set('path', path);
@@ -113,6 +133,7 @@
             const repos = (data && data.success && Array.isArray(data.repos)) ? data.repos : [];
             const branch = distinctBranchLabel(repos);
             branchCache = { path, branch, at: Date.now() };
+            writePersistedBranch(path, branch);
             if (branch !== prev && typeof onChange === 'function') onChange();
         } catch (_) {
             if (branchCache.path === path) branchCache.at = Date.now();

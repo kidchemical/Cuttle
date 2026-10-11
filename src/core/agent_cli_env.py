@@ -48,6 +48,13 @@ _AUTH_OVERRIDES = frozenset({
     "OPENROUTER_MANAGEMENT_KEY",
 })
 
+# Shell-derived working-directory hints. The parent's values can be stale — the
+# daemon may inherit a ``PWD`` that no longer matches its real cwd — and a guest
+# CLI can trust ``PWD`` over ``getcwd()``, editing the wrong checkout. The child
+# is always launched with an explicit cwd, so drop these and let the CLI resolve
+# its real directory.
+_CWD_HINTS = frozenset({"PWD", "OLDPWD"})
+
 
 def agent_cli_env(source: Optional[Mapping[str, str]] = None) -> dict[str, str]:
     """Keep runtime/native config paths; never pass host provider credentials.
@@ -59,6 +66,7 @@ def agent_cli_env(source: Optional[Mapping[str, str]] = None) -> dict[str, str]:
     env = {
         key: value for key, value in source.items()
         if key.upper() not in _AUTH_OVERRIDES
+        and key.upper() not in _CWD_HINTS
         and not key.upper().endswith(("API_KEY", "API_TOKEN", "AUTH_TOKEN"))
     }
     env.update(_operation_context.get())

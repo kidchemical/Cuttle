@@ -7,6 +7,10 @@
 
 This file is the home for *what Cuttle is*, *how plugins/sockets should feel*, and *what to steal from DeepSeek Harness without becoming it*. Day-to-day how-to for adding a CLI still lives in [`src/api/agent_harness/ADDING_AN_AGENT.md`](../../src/api/agent_harness/ADDING_AN_AGENT.md).
 
+> **Note:** the product thesis is stable; implementation-state claims (e.g. "what
+> is still a privileged core") are a 2026-08 snapshot — verify against
+> [`docs/architecture/repository-map.md`](../architecture/repository-map.md) before acting.
+
 ---
 
 ## Product goals

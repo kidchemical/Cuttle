@@ -47,7 +47,9 @@ inspect the envelope. Day-to-day, Flask injects it — no extra round-trip.
 | `memory/` (future) | Retrieved snippets via Brain; not a full dump. |
 
 Native vendor files (Cursor skills, etc.) stay optional compatibility —
-never the Cuttle source of truth. Repo-level agent brief is `AGENTS.md`.
+never the Cuttle source of truth. The repo-level agent brief `AGENTS.md` is
+**not a compiler layer**: the Brain never injects it; only vendor CLIs that read
+it natively (e.g. Claude Code, Hermes) see it.
 
 ## Hot-swap / resume
 
