@@ -71,8 +71,11 @@ def test_live_waiting_uses_this_turn_not_previous_assistant():
 
 def test_pending_wait_does_not_require_typing_indicator_gone():
     src = CHAT_JS.read_text(encoding="utf-8")
-    assert "CuttleChatPendingResult.waitForPendingResult(" in src
+    # 4C moved the recovery controller into chat_pending_result.js; the page
+    # delegates by constructing the controller with its recovery host.
+    assert "CuttleChatPendingResult.createRecoveryController(" in src
     mod = MOD_PR.read_text(encoding="utf-8")
+    assert "waitForPendingResult(" in mod
     assert "pending-skip-ui-has-reply" in mod
     assert (
         "if (inFlightUserMessage && turnAlreadyShowsAssistantReply()\n"

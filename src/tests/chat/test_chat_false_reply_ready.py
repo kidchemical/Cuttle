@@ -87,8 +87,13 @@ def test_background_notify_requires_nonempty_body():
 
 
 def test_detached_watcher_only_notifies_on_pending_body():
-    body = _fn_body(_src(), "function watchDetachedSessionForCompletion")
-    assert "/api/chat-pending-result" in body
-    assert "notifyAssistantResponseReady(sid" in body
+    # 4C moved the detached-completion watch into chat_pending_result.js's
+    # recovery controller; the pending transport URL stays page-owned (injected
+    # via host.fetchPending).
+    mod = MOD_PR.read_text(encoding="utf-8")
+    body = _fn_body(mod, "function watchDetachedSessionForCompletion")
+    assert "host.fetchPending(sid)" in body
+    assert "host.notifyReady(sid" in body
     assert "data.pending && data.result" in body
     assert ".trim()" in body
+    assert "/api/chat-pending-result" in _src()

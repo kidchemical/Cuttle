@@ -756,18 +756,34 @@ def test_page_delegates_lifecycle_to_owner():
         "CuttleChatPendingResult.planStreamEvent(",
         "CuttleChatPendingResult.shapeStreamFinalResult(",
         "CuttleChatPendingResult.classifyTurnFinalize(",
-        "CuttleChatPendingResult.waitForPendingResult(",
-        "CuttleChatPendingResult.recoverChatResult(",
-        "CuttleChatPendingResult.recoverChatResultWithRetries(",
-        "CuttleChatPendingResult.consumeParkedChatResult(",
         "CuttleChatPendingResult.classifyServerMessage(",
         "CuttleChatPendingResult.decideStaleHeal(",
         "CuttleChatPendingResult.recoverAfterStreamDetach(",
         "CuttleChatPendingResult.recoverAfterTransportFailure(",
         "CuttleChatPendingResult.recoverControlLaneFailure(",
-        "CuttleChatPendingResult.waitForServerRecovery(",
+        # 4C: the recovery orchestration (detached watch, parked-result /
+        # history adapters, post-restart poll) lives behind one owner
+        # controller the page builds with its transport/DOM/timer host.
+        "CuttleChatPendingResult.createRecoveryController(",
+        "recoveryController().collectPendingResult(",
+        "recoveryController().consumeParkedChatResult(",
+        "recoveryController().recoverChatResultFromServer(",
+        "recoveryController().recoverChatResultWithRetries(",
+        "recoveryController().recoverAfterFlaskRestart(",
+        "recoveryController().watchDetachedSessionForCompletion(",
+        "recoveryController().cancelDetachedSessionCompletionWatch(",
     ]:
         assert call in src, f"missing delegation {call}"
+    # The controller (owner) delegates to the module's decision/async owners.
+    mod = MOD_PR.read_text(encoding="utf-8")
+    for owner in [
+        "waitForPendingResult(",
+        "recoverChatResult(",
+        "recoverChatResultWithRetries(",
+        "consumeParkedChatResult(",
+        "waitForServerRecovery(",
+    ]:
+        assert owner in mod, f"owner missing {owner}"
     # Thin adapters intentionally keep the original page function names
     # (caller contracts); what must be gone is the inline decision bodies,
     # now owned by the module (checked as literals).
@@ -784,3 +800,157 @@ def test_page_delegates_lifecycle_to_owner():
         assert gone not in src, f"page still owns {gone}"
     html = CHAT_PAGE_HTML.read_text(encoding="utf-8")
     assert "chat_pending_result.js?v=" in html
+
+
+CONTROLLER_HARNESS = """
+(async () => {
+const PR = require(process.env.MOD_PR);
+const out = {};
+let now = 1000;
+const mkHost = (o) => {
+  o = o || {};
+  const log = [];
+  const host = {
+    sessionIdsEqual: (a, b) => String(a) === String(b),
+    canonicalizeSessionId: (id) => String(id),
+    toAuthDbSessionId: (id) => String(id),
+    currentSession: () => ('current' in o ? o.current : 'other'),
+    isStaleNav: () => false,
+    isStopped: () => false,
+    hasReplyForTurn: () => false,
+    isViewing: () => !!o.viewing,
+    isAuthMode: () => true,
+    inFlightUserText: () => null,
+    norm: (s) => String(s || '').trim().toLowerCase(),
+    alreadyOnScreen: () => false,
+    isCancelledText: (t) => /cancelled/i.test(String(t || '')),
+    normalizeUsage: (u) => u || null,
+    liveLooksActive: (l) => !!(l && (l.active || l.generating)),
+    fetchPending: async () => o.pending,
+    fetchLive: async () => o.live || null,
+    fetchLiveForRecovery: async () => o.live || null,
+    consumeFetch: (sid) => log.push('consume:' + sid),
+    fetchMessages: async () => ({ ok: true, data: { success: true, messages: o.messages || [] } }),
+    pageSize: 20,
+    fetchRestartStatus: async () => o.status,
+    fetchHealthOk: async () => !!o.healthy,
+    paintStatus: (t) => log.push('paint:' + t),
+    paintQueryLink: (u) => log.push('link:' + u),
+    paintSyncing: () => log.push('syncing'),
+    clearTyping: () => log.push('clear'),
+    setHistoryRunning: (sid, on) => log.push('running:' + sid + ':' + on),
+    notifyReady: (sid, opts) => log.push('notify:' + sid + ':' + (opts && opts.isError)),
+    syncMessages: async () => log.push('sync'),
+    toast: (m, k) => log.push('toast:' + k),
+    tryDetachedWatchViaBroker: () => !!o.brokered,
+    classifyDetachedPoll: (step) => step.body
+      ? 'notify-done'
+      : ((step.generating || step.liveActive) ? 'keep-waiting' : 'spin-down'),
+    netDebug: () => {},
+    sleep: async (ms) => { now += (ms || 1); },
+    now: () => now,
+  };
+  return { host, log };
+};
+const settle = () => new Promise((r) => setTimeout(r, 15));
+// detached watch: a real parked body notifies, consumes, clears running
+{
+  const { host, log } = mkHost({ current: 'other', pending: {
+    success: true, pending: true, generating: false,
+    result: { success: true, response: 'hi' } } });
+  PR.createRecoveryController(host).watchDetachedSessionForCompletion('s9');
+  await settle();
+  out.watchNotify = log;
+}
+// in-app shell: the activity broker owns the watch, nothing local happens
+{
+  const { host, log } = mkHost({ brokered: true });
+  PR.createRecoveryController(host).watchDetachedSessionForCompletion('s9');
+  await settle();
+  out.watchBroker = log;
+}
+// parked hit: shaped result + consume ack, no repair
+{
+  now = 1000;
+  const { host, log } = mkHost({ pending: { success: true, pending: true,
+    result: { success: true, response: 'parked', session_id: 's1', type: 'chat' } } });
+  out.collectHit = await PR.createRecoveryController(host)
+    .collectPendingResult('s1', { waitMs: 5, pollMs: 1, navGen: 1 });
+  out.collectHitLog = log;
+}
+// live status is painted ONLY when the waiter's session is on screen
+{
+  now = 1000;
+  const off = mkHost({ viewing: false, pending: { success: true, generating: true },
+    live: { active: true, status: 'Working' } });
+  await PR.createRecoveryController(off.host)
+    .collectPendingResult('s1', { waitMs: 1, pollMs: 1, navGen: 1 });
+  out.collectOffLog = off.log;
+  now = 1000;
+  const on = mkHost({ viewing: true, pending: { success: true, generating: true },
+    live: { active: true, status: 'Working' } });
+  await PR.createRecoveryController(on.host)
+    .collectPendingResult('s1', { waitMs: 1, pollMs: 1, navGen: 1 });
+  out.collectOnLog = on.log;
+}
+// consume ack forwards to the page transport (null session is a no-op)
+{
+  const { host, log } = mkHost({});
+  const c = PR.createRecoveryController(host);
+  c.consumeParkedChatResult('s7');
+  c.consumeParkedChatResult(null);
+  out.consume = log;
+}
+// post-restart recovery: a second call coalesces while the first is in flight
+{
+  let resolveFirst;
+  const first = new Promise((r) => { resolveFirst = r; });
+  let calls = 0;
+  const { host, log } = mkHost({});
+  host.fetchRestartStatus = async () => { calls += 1; return first; };
+  const c = PR.createRecoveryController(host);
+  const p1 = c.recoverAfterFlaskRestart({ waitMs: 9999, pollMs: 1 });
+  out.restartSecond = await c.recoverAfterFlaskRestart({ waitMs: 9999, pollMs: 1 });
+  resolveFirst({ status: { state: 'healthy', restart_id: 'r1' }, completion_message: 'done!' });
+  out.restartFirst = await p1;
+  out.restartCalls = calls;
+  out.restartLog = log;
+}
+process.stdout.write(JSON.stringify(out));
+})().catch((e) => { console.error('HARNESS-ERROR', e); process.exit(2); });
+"""
+
+
+def _run_controller():
+    import os
+    proc = subprocess.run(
+        ["node", "-e", CONTROLLER_HARNESS],
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
+        env={"PATH": os.environ["PATH"], "MOD_PR": str(MOD_PR)},
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    return json.loads(proc.stdout)
+
+
+@node_only
+def test_recovery_controller_orchestration():
+    res = _run_controller()
+    # Detached watch: parked body -> consume + running-clear + notify.
+    assert res["watchNotify"] == ["consume:s9", "running:s9:false", "notify:s9:false"]
+    # App shell delegates the watch to the activity broker (no local poll).
+    assert res["watchBroker"] == []
+    # Parked hit returns the shaped result and acks the parked copy.
+    assert res["collectHit"] == {
+        "success": True, "response": "parked", "session_id": "s1", "type": "chat",
+    }
+    assert res["collectHitLog"] == ["consume:s1"]
+    # Live status paints only for the on-screen session (turn-view gate).
+    assert not [x for x in res["collectOffLog"] if x.startswith("paint:")]
+    assert "paint:Working" in res["collectOnLog"]
+    # Consume forwards a non-null ack only.
+    assert res["consume"] == ["consume:s7"]
+    # Post-restart recovery coalesces; the first instance completes.
+    assert res["restartSecond"] is None
+    assert res["restartFirst"]["completion_message"] == "done!"
+    assert res["restartCalls"] == 1
+    assert "sync" in res["restartLog"] and "clear" in res["restartLog"]

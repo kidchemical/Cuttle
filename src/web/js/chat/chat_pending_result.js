@@ -16,6 +16,11 @@
        control-lane) — closes the carried 9B send-catch integration gap
        at the decision level
      * post-restart server recovery poll
+     * recovery controller (createRecoveryController): the detached-turn
+       completion watch + cancel registry, the parked-result retrieval /
+       consume adapters, history-recovery adapters, and post-restart
+       recovery guard state — one instance per chat root; every effect
+       (transport, DOM, timers) is injected by the page via `host`
    Pure where possible (classify, decide, and find helpers take data plus
    return decisions; no document, no window, no fetch, no timers). Async
    flows take ALL effects as explicit `deps`: transport fetchers, paint
@@ -725,9 +730,232 @@
         }
     }
 
+    // ---------- Recovery controller (detached watch / parked / restart) ----------
+
+    /**
+     * One instance per chat root. Consolidates the recovery orchestration that
+     * used to be spread across the page: the detached-completion watch (with
+     * its cancel registry), the parked-result retrieval adapters, the history
+     * recovery adapters, and post-restart recovery (with its in-flight guard
+     * and notified-id set). The page keeps every effect — transport fetches,
+     * DOM paint, timers/sleeps, the busy lock, session guards — and passes
+     * them as explicit `host` capabilities; the sequencing and the guard/
+     * registry state live here, never in the page.
+     *
+     * host:
+     *  sessionIdsEqual(a, b), canonicalizeSessionId(id), toAuthDbSessionId(id),
+     *  currentSession();
+     *  isStaleNav(navGen), isStopped(), hasReplyForTurn(), isViewing(sid),
+     *  isAuthMode(), inFlightUserText(), norm(text),
+     *  alreadyOnScreen(role, content), isCancelledText(text),
+     *  normalizeUsage(usage), liveLooksActive(live);
+     *  fetchPending(sid), fetchLive(sid), fetchLiveForRecovery(sid),
+     *  consumeFetch(sid), fetchMessages(authSid, limit), pageSize,
+     *  fetchRestartStatus(), fetchHealthOk();
+     *  paintStatus(text), paintQueryLink(url), paintSyncing(), clearTyping(),
+     *  setHistoryRunning(sid, on), notifyReady(sid, opts), syncMessages(),
+     *  toast(msg, kind), tryDetachedWatchViaBroker(),
+     *  classifyDetachedPoll(step), netDebug(name, info), sleep(ms), now().
+     */
+    function createRecoveryController(host) {
+        host = host || {};
+        // Post-restart recovery owns its single in-flight guard + notified set.
+        let restartRecoverInFlight = false;
+        let lastRestartNotifiedId = null;
+        // Background pending polls after leaving a chat (sessionId -> cancel fn).
+        const detachedWatchers = Object.create(null);
+
+        /** Ack/consume a parked reply; the module owns the ack contract. */
+        function consumeParked(sessionId) {
+            consumeParkedChatResult(sessionId, (sid) => host.consumeFetch(sid));
+        }
+
+        /** History recovery for the open session (parked + retries share it). */
+        async function recoverHistory(sessionId) {
+            return recoverChatResult(sessionId, {
+                isAuthMode: () => host.isAuthMode(),
+                toAuthDbSessionId: (sid) => host.toAuthDbSessionId(sid),
+                fetchMessages: (authSid, limit) => host.fetchMessages(authSid, limit),
+                pageSize: host.pageSize,
+                inFlightText: host.inFlightUserText(),
+                norm: (text) => host.norm(text),
+                alreadyOnScreen: (role, content) => host.alreadyOnScreen(role, content),
+                isCancelledText: (text) => host.isCancelledText(text),
+                normalizeUsage: (usage) => host.normalizeUsage(usage),
+                netDebug: (name, info) => host.netDebug(name, info),
+            });
+        }
+
+        /** Pending-result waiter adapter (parked results + live status). */
+        async function collectPendingResult(sessionId, opts) {
+            opts = opts || {};
+            return waitForPendingResult(sessionId, opts, {
+                isStaleNav: () => host.isStaleNav(opts.navGen),
+                isStopped: () => host.isStopped(),
+                hasReplyForTurn: () => host.hasReplyForTurn(),
+                fetchPending: (sid) => host.fetchPending(sid),
+                fetchLive: (sid) => host.fetchLiveForRecovery(sid),
+                liveLooksActive: (live) => host.liveLooksActive(live),
+                recoverFromHistory: (sid) => recoverHistory(sid),
+                onLiveStatus: (live) => {
+                    if (host.isViewing(sessionId)) host.paintStatus(live.status);
+                },
+                onReportUrl: (url) => {
+                    if (host.isViewing(sessionId)) host.paintQueryLink(url);
+                },
+                consume: (sid) => consumeParked(sid),
+                netDebug: (name, info) => host.netDebug(name, info),
+                sleep: (ms) => host.sleep(ms),
+                now: () => host.now(),
+            });
+        }
+
+        /** Extra history polls before giving up with "No response received." */
+        async function recoverHistoryWithRetries(sessionId, attempts, gapMs) {
+            return recoverChatResultWithRetries(sessionId, attempts, gapMs, {
+                isStopped: () => host.isStopped(),
+                recover: (sid) => recoverHistory(sid),
+                isViewing: () => host.isViewing(sessionId),
+                paintSyncing: () => host.paintSyncing(),
+                sleep: (ms) => host.sleep(ms),
+            });
+        }
+
+        /**
+         * Post-restart recovery: durable restart status + history without
+         * another user message. One in-flight recovery per controller.
+         */
+        async function recoverAfterFlaskRestart(opts) {
+            opts = opts || {};
+            if (restartRecoverInFlight) return null;
+            restartRecoverInFlight = true;
+            try {
+                return await waitForServerRecovery(opts, {
+                    fetchRestartStatus: () => host.fetchRestartStatus(),
+                    fetchHealthOk: () => host.fetchHealthOk(),
+                    syncMessages: () => host.syncMessages(),
+                    paintStatus: (text) => host.paintStatus(text),
+                    clearTyping: () => host.clearTyping(),
+                    toast: (msg, kind) => host.toast(msg, kind),
+                    sleep: (ms) => host.sleep(ms),
+                    now: () => host.now(),
+                    wasNotified: (id) => id === lastRestartNotifiedId,
+                    markNotified: (id) => { lastRestartNotifiedId = id; },
+                });
+            } finally {
+                restartRecoverInFlight = false;
+            }
+        }
+
+        function cancelDetachedSessionCompletionWatch(sessionId) {
+            if (sessionId == null || sessionId === '') return;
+            const sid = String(host.canonicalizeSessionId(sessionId));
+            const bare = host.toAuthDbSessionId(sessionId);
+            const keys = [sid, String(sessionId)];
+            if (bare) {
+                keys.push(String(bare), `db_session_${bare}`);
+            }
+            keys.forEach((k) => {
+                const cancel = detachedWatchers[k];
+                if (typeof cancel === 'function') {
+                    try { cancel(); } catch (_) {}
+                }
+                delete detachedWatchers[k];
+            });
+        }
+
+        /**
+         * After navigation detaches a turn, keep a quiet poll so a finished
+         * reply still marks unread + chirps — only when pending has a real
+         * body and the server is no longer generating. The poll-step decision
+         * is injected (`classifyDetachedPoll`); the page owns every effect.
+         */
+        function watchDetachedSessionForCompletion(sessionId) {
+            if (sessionId == null || sessionId === '') return;
+            const sid = String(host.canonicalizeSessionId(sessionId));
+            if (host.tryDetachedWatchViaBroker()) return;
+            cancelDetachedSessionCompletionWatch(sid);
+            let cancelled = false;
+            detachedWatchers[sid] = () => { cancelled = true; };
+            const startedAt = host.now();
+            const maxMs = DETACHED_WAIT_MS;
+            const pollMs = DEFAULT_POLL_MS;
+
+            (async () => {
+                try {
+                    while (!cancelled && (host.now() - startedAt) < maxMs) {
+                        // No "returned home" check before the first await:
+                        // navigation detaches while currentSessionId still names
+                        // the chat being left. Re-opening cancels this watch.
+                        let data = null;
+                        try {
+                            data = await host.fetchPending(sid);
+                        } catch (_) {
+                            data = null;
+                        }
+                        if (cancelled) break;
+                        if (host.currentSession() != null
+                            && host.sessionIdsEqual(host.currentSession(), sid)) break;
+
+                        let body = '';
+                        if (data && data.success && data.pending && data.result) {
+                            body = String(data.result.response || data.result.output || '').trim();
+                        }
+                        const step = {
+                            cancelled: false,
+                            returnedHome: false,
+                            body: body,
+                            generating: !!(data && data.generating),
+                            liveActive: false,
+                        };
+                        if (!step.body && !step.generating) {
+                            const live = await host.fetchLive(sid).catch(() => null);
+                            if (cancelled) break;
+                            step.liveActive = host.liveLooksActive(live);
+                        }
+                        const action = host.classifyDetachedPoll(step);
+                        if (action === 'notify-done') {
+                            try { consumeParked(sid); } catch (_) {}
+                            host.setHistoryRunning(sid, false);
+                            host.notifyReady(sid, {
+                                isError: data.result.success === false,
+                            });
+                            break;
+                        }
+                        if (action === 'keep-waiting') {
+                            host.setHistoryRunning(sid, true);
+                            await host.sleep(pollMs);
+                            continue;
+                        }
+                        if (action === 'stop') break;
+                        // Idle, no parked body — spin down; opening the chat
+                        // loads history.
+                        host.setHistoryRunning(sid, false);
+                        break;
+                    }
+                } finally {
+                    if (detachedWatchers[sid]) {
+                        delete detachedWatchers[sid];
+                    }
+                }
+            })();
+        }
+
+        return {
+            collectPendingResult: collectPendingResult,
+            consumeParkedChatResult: consumeParked,
+            recoverChatResultFromServer: recoverHistory,
+            recoverChatResultWithRetries: recoverHistoryWithRetries,
+            recoverAfterFlaskRestart: recoverAfterFlaskRestart,
+            watchDetachedSessionForCompletion: watchDetachedSessionForCompletion,
+            cancelDetachedSessionCompletionWatch: cancelDetachedSessionCompletionWatch,
+        };
+    }
+
     var api = {
         DETACHED_WAIT_MS: DETACHED_WAIT_MS,
         DEFAULT_POLL_MS: DEFAULT_POLL_MS,
+        createRecoveryController: createRecoveryController,
         classifyStreamEvent: classifyStreamEvent,
         planStreamEvent: planStreamEvent,
         shapeStreamFinalResult: shapeStreamFinalResult,

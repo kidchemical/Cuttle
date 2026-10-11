@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 CHAT_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
+MOD_PR = CHAT_JS.parent / "chat_pending_result.js"
 
 
 def _src() -> str:
@@ -101,15 +102,24 @@ def test_sse_status_paint_gated_by_turn_view():
 
 def test_pending_status_poll_gated_by_turn_view():
     """Detached pending waiter must not write typing status into another chat."""
-    body = _fn_body(_src(), "async function collectPendingResult")
+    # 4C moved the pending waiter orchestration into the owner's recovery
+    # controller; the page delegates via createRecoveryController. The gate
+    # (only paint for the open session) lives in the controller's
+    # collectPendingResult host callbacks.
+    src = _src()
+    assert "CuttleChatPendingResult.createRecoveryController(" in src
+    body = _fn_body(
+        MOD_PR.read_text(encoding="utf-8"),
+        "async function collectPendingResult",
+    )
     assert "opts.navGen" in body or "turnNavGen" in body
     ungated = []
-    for m in re.finditer(r"updateTypingStatus\([^)]*\)", body):
+    for m in re.finditer(r"host\.paintStatus\([^)]*\)", body):
         start = max(0, m.start() - 160)
         prelude = body[start : m.start()]
-        if "canPaintTurnHere()" not in prelude and "isViewingSession(" not in prelude:
+        if "host.isViewing(sessionId)" not in prelude:
             ungated.append(m.group(0))
-    assert body.count("updateTypingStatus(") >= 1, "collectPendingResult should paint status"
+    assert body.count("host.isViewing(sessionId)") >= 1, "collectPendingResult should gate paints"
     assert not ungated, f"ungated status paints in collectPendingResult: {ungated}"
 
 
