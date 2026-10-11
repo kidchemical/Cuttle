@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from tests.browser_guard import launch_chromium
+from tests.e2e.control_helpers import choose
 
 REPO = Path(__file__).resolve().parents[3]
 WEB = REPO / "src" / "web"
@@ -555,8 +556,8 @@ def test_gizmos_app_creates_without_an_agent(tmp_path):
         state["enabled"] = True
         page.locator("#refreshGizmos").click()
         page.locator("#gizmosCreate").wait_for(state="visible")
-        page.locator("#gizmoCreateAgent").select_option("claude")
-        page.locator("#gizmoCreateDock").select_option("float")
+        choose(page, page.locator("#gizmoCreateAgent"), "claude")
+        choose(page, page.locator("#gizmoCreateDock"), "float")
         page.locator("#gizmosCreateForm button[type=submit]").click()
         page.locator('[data-gizmo-item="usage-meter-1"]').wait_for()
         assert state["created"] == [{"type": "usage_meter", "placement": {"dock": "float"},

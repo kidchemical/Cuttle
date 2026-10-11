@@ -14,7 +14,9 @@ delta, never a failed refresh.
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -60,6 +62,34 @@ def _normalize(models: Any) -> List[Dict[str, str]]:
     return rows
 
 
+def _normalize_full(models: Any) -> List[Dict[str, Any]]:
+    """Keep discovered metadata needed to reconstruct effective capabilities.
+
+    The id/label/resolved fields remain the stable input to catalog diffs;
+    this companion shape also retains only known JSON-safe CLI metadata.
+    """
+    allowed = (
+        "description", "efforts", "variant_levels", "supports_variant",
+        "supports_effort", "reasoning", "context", "cost", "current",
+        "favorite", "provider", "resolved_model", "displayName",
+    )
+    rows: List[Dict[str, Any]] = []
+    source_rows = list(models or [])
+    by_id = {
+        str(r.get("id") or "").strip().lower(): r
+        for r in source_rows if isinstance(r, dict) and str(r.get("id") or "").strip()
+    }
+    for base in _normalize(source_rows):
+        raw = by_id.get(base["id"].lower(), {})
+        row: Dict[str, Any] = dict(base)
+        for key in allowed:
+            value = raw.get(key)
+            if isinstance(value, (str, int, float, bool, list, dict)):
+                row[key] = value
+        rows.append(row)
+    return rows
+
+
 def load_snapshot(agent: str) -> Optional[List[Dict[str, str]]]:
     """The last catalog snapshot for ``agent``, or ``None`` when absent/stale."""
     path = _snapshot_path(agent)
@@ -83,18 +113,37 @@ def load_snapshot(agent: str) -> Optional[List[Dict[str, str]]]:
     return _normalize(raw)
 
 
+def load_catalog(agent: str) -> Optional[Dict[str, Any]]:
+    """Read the last successful full catalog and timestamp, if present."""
+    path = _snapshot_path(agent)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("models"), list):
+        return None
+    rows = _normalize_full(data["models"])
+    if not rows:
+        return None
+    return {"models": rows, "fetched_at": float(data.get("fetched_at") or 0)}
+
+
 def save_snapshot(agent: str, models: Any) -> None:
     """Persist ``models`` as the new snapshot; failures are non-fatal."""
     path = _snapshot_path(agent)
     payload = {
         "version": _CACHE_VERSION,
         "fetched_at": time.time(),
-        "models": _normalize(models),
+        "models": _normalize_full(models),
     }
     try:
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        tmp.replace(path)
+        fd, staging = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(payload, stream, indent=2)
+            os.replace(staging, path)
+        finally:
+            Path(staging).unlink(missing_ok=True)
     except OSError:
         pass
 

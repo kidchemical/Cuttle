@@ -13,9 +13,11 @@
            pageSize: 60,                // rows per page (infinite scroll)
            searchPlaceholder: 'Search…',
            focusSearch: 'auto',         // true | false | 'auto' (desktop only)
+           floating: true,             // opt-in viewport overlay (app pages)
+           searchable: false,          // same menu for short option lists
        });
    Controller: { element, trigger, searchInput, sync, open, close,
-                 isOpen, destroy }.
+                 isOpen, setPresentation, destroy }.
 
    Any component that repopulates the select's <option>s (or toggles
    `disabled` / `hidden`) is picked up automatically via MutationObserver.
@@ -25,6 +27,7 @@
 
     const DEFAULT_PAGE_SIZE = 60;
     const OPEN_SELECTOR = '.cuttle-combo.is-open';
+    let nextId = 0;
 
     function shouldAutoFocusSearch(focusSearch) {
         if (focusSearch === true) return true;
@@ -46,9 +49,16 @@
 
     function enhance(select, options) {
         if (!select || !select.ownerDocument) return null;
-        if (select.__cuttleSearchable) return select.__cuttleSearchable;
+        if (select.__cuttleSearchable) {
+            if (options && (options.floating !== undefined || options.searchable !== undefined)) {
+                select.__cuttleSearchable.setPresentation(options);
+            }
+            return select.__cuttleSearchable;
+        }
         const doc = select.ownerDocument;
         const opts = options || {};
+        let floating = opts.floating === true;
+        let searchable = opts.searchable !== false;
         const pageSize = Number(opts.pageSize) > 0 ? Number(opts.pageSize) : DEFAULT_PAGE_SIZE;
 
         const wrap = doc.createElement('div');
@@ -90,6 +100,11 @@
         const list = doc.createElement('ul');
         list.className = 'cuttle-combo-list';
         list.setAttribute('role', 'listbox');
+        list.id = 'cuttle-select-list-' + (++nextId);
+        list.tabIndex = -1;
+        trigger.setAttribute('aria-controls', list.id);
+        search.setAttribute('aria-controls', list.id);
+        search.hidden = !searchable;
         panel.appendChild(search);
         panel.appendChild(list);
 
@@ -101,6 +116,7 @@
         let filtered = [];
         let rendered = 0;
         let observer = null;
+        let attachmentObserver = null;
 
         function selectedLabel() {
             const opt = select.selectedIndex >= 0 ? select.options[select.selectedIndex] : null;
@@ -157,11 +173,17 @@
                 const li = doc.createElement('li');
                 li.className = 'cuttle-combo-option';
                 li.setAttribute('role', 'option');
+                li.id = list.id + '-' + i;
+                li.setAttribute('aria-selected', String(opt.value === select.value));
+                li.setAttribute('aria-disabled', String(opt.disabled));
                 li.dataset.value = opt.value;
                 li.textContent = opt.textContent || '';
                 if (opt.value === select.value) li.classList.add('is-selected');
                 if (opt.disabled) li.classList.add('is-disabled');
-                li.addEventListener('click', () => choose(opt.value));
+                li.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    if (!opt.disabled) choose(opt.value);
+                });
                 fragment.appendChild(li);
             }
             list.appendChild(fragment);
@@ -185,12 +207,56 @@
             }
             sync();
             close();
+            if (floating) trigger.focus({ preventScroll: true });
+        }
+
+        function positionPanel() {
+            if (!floating || !wrap.classList.contains('is-open')) return;
+            if (!trigger.isConnected) { close(); return; }
+            const rect = trigger.getBoundingClientRect();
+            const viewport = root.visualViewport;
+            const width = viewport ? viewport.width : root.innerWidth;
+            const height = viewport ? viewport.height : root.innerHeight;
+            const top = viewport ? viewport.offsetTop : 0;
+            const left = viewport ? viewport.offsetLeft : 0;
+            if (rect.bottom < top || rect.top > top + height) { close(); return; }
+            const below = top + height - rect.bottom - 12;
+            const above = rect.top - top - 12;
+            const upwards = below < 180 && above > below;
+            const available = Math.max(60, upwards ? above : below);
+            const panelHeight = Math.min(280, available);
+            panel.style.width = Math.min(Math.max(rect.width, 180), width - 16) + 'px';
+            panel.style.left = Math.max(left + 8, Math.min(rect.left, left + width - parseFloat(panel.style.width) - 8)) + 'px';
+            panel.style.setProperty('--combo-list-height', Math.max(24, panelHeight - (searchable ? 42 : 0) - 10) + 'px');
+            panel.style.top = (upwards ? Math.max(top + 8, rect.top - panel.offsetHeight - 6) : rect.bottom + 6) + 'px';
+        }
+
+        function onScroll(event) {
+            if (panel.contains(event.target)) return;
+            positionPanel();
         }
 
         function close() {
             wrap.classList.remove('is-open');
             panel.hidden = true;
             trigger.setAttribute('aria-expanded', 'false');
+            trigger.removeAttribute('aria-activedescendant');
+            search.removeAttribute('aria-activedescendant');
+            if (floating) {
+                if (panel.contains(doc.activeElement)) trigger.focus({ preventScroll: true });
+                if (attachmentObserver) { attachmentObserver.disconnect(); attachmentObserver = null; }
+                if (panel.hidePopover) { try { panel.hidePopover(); } catch (_) {} }
+                panel.classList.remove('cuttle-combo-popup');
+                panel.removeAttribute('popover');
+                wrap.insertBefore(panel, select);
+                root.removeEventListener('resize', positionPanel);
+                doc.removeEventListener('scroll', onScroll, true);
+                if (root.visualViewport) {
+                    root.visualViewport.removeEventListener('resize', positionPanel);
+                    root.visualViewport.removeEventListener('scroll', positionPanel);
+                }
+            }
+            return floating;
         }
 
         function open() {
@@ -200,10 +266,30 @@
             panel.hidden = false;
             trigger.setAttribute('aria-expanded', 'true');
             search.value = '';
-            if (shouldAutoFocusSearch(opts.focusSearch)) {
+            rebuild();
+            if (floating) {
+                // Keep popovers inside a native modal's DOM subtree; the
+                // browser makes body siblings of a modal dialog inert.
+                (select.closest('dialog[open]') || doc.body).appendChild(panel);
+                panel.classList.add('cuttle-combo-popup');
+                panel.setAttribute('popover', 'manual');
+                if (panel.showPopover) { try { panel.showPopover(); } catch (_) {} }
+                positionPanel();
+                if (typeof root.MutationObserver === 'function') {
+                    attachmentObserver = new root.MutationObserver(() => { if (!trigger.isConnected) close(); });
+                    attachmentObserver.observe(doc.body, {childList: true, subtree: true});
+                }
+                root.addEventListener('resize', positionPanel);
+                doc.addEventListener('scroll', onScroll, true);
+                if (root.visualViewport) {
+                    root.visualViewport.addEventListener('resize', positionPanel);
+                    root.visualViewport.addEventListener('scroll', positionPanel);
+                }
+            }
+            if (searchable && shouldAutoFocusSearch(opts.focusSearch)) {
                 try { search.focus({ preventScroll: true }); } catch (_) { search.focus(); }
             }
-            rebuild();
+            if (!searchable) moveActive(0);
         }
 
         function activeOptions() {
@@ -215,10 +301,15 @@
             const options = activeOptions();
             if (!options.length) return;
             let idx = options.findIndex((o) => o.classList.contains('is-active'));
-            if (idx === -1) idx = delta > 0 ? -1 : 0;
+            if (idx === -1) {
+                idx = floating ? options.findIndex((o) => o.classList.contains('is-selected')) : -1;
+                if (idx === -1) idx = delta > 0 ? -1 : 0;
+            }
             idx = (idx + delta + options.length) % options.length;
             options.forEach((o) => o.classList.remove('is-active'));
             options[idx].classList.add('is-active');
+            trigger.setAttribute('aria-activedescendant', options[idx].id);
+            search.setAttribute('aria-activedescendant', options[idx].id);
             try { options[idx].scrollIntoView({ block: 'nearest' }); } catch (_) {}
         }
 
@@ -228,17 +319,40 @@
             else open();
         });
         trigger.addEventListener('keydown', (e) => {
+            if (floating && e.key === 'Tab') close();
+            if (floating && !searchable && wrap.classList.contains('is-open')) {
+                if (['ArrowDown', 'ArrowUp', 'Enter', ' ', 'Home', 'End'].includes(e.key)) {
+                    e.preventDefault();
+                    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                        const rows = activeOptions();
+                        if (e.key === 'ArrowDown' && rows[rows.length - 1]?.classList.contains('is-active')) loadMore();
+                        moveActive(e.key === 'ArrowDown' ? 1 : -1);
+                    }
+                    else if (e.key === 'Home' || e.key === 'End') {
+                        while (rendered < filtered.length) loadMore();
+                        const rows = activeOptions();
+                        rows.forEach(row => row.classList.remove('is-active'));
+                        const row = e.key === 'Home' ? rows[0] : rows[rows.length - 1];
+                        if (row) { row.classList.add('is-active'); moveActive(0); }
+                    } else {
+                        const active = list.querySelector('.is-active');
+                        if (active) choose(active.dataset.value);
+                    }
+                    return;
+                }
+            }
             // Enter/Space already activate the button (click); only
             // ArrowDown/Escape need explicit handling here.
-            if (e.key === 'ArrowDown') {
+            if (e.key === 'ArrowDown' || (floating && e.key === 'ArrowUp')) {
                 e.preventDefault();
                 open();
             } else if (e.key === 'Escape') {
+                if (floating) e.preventDefault();
                 e.stopPropagation();
                 close();
             }
         });
-        search.addEventListener('input', rebuild);
+        search.addEventListener('input', () => { rebuild(); positionPanel(); });
         search.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -262,6 +376,9 @@
                 } else {
                     moveActive(down ? 1 : -1);
                 }
+            } else if (floating && e.key === 'Tab') {
+                close();
+                trigger.focus({ preventScroll: true });
             }
         });
         list.addEventListener('scroll', () => {
@@ -291,6 +408,7 @@
             });
             observer.observe(select, {
                 childList: true,
+                subtree: true,
                 attributes: true,
                 attributeFilter: ['disabled', 'hidden'],
             });
@@ -304,7 +422,15 @@
             open,
             close,
             isOpen: () => wrap.classList.contains('is-open'),
+            setPresentation(next) {
+                close();
+                if (next.floating !== undefined) floating = next.floating === true;
+                if (next.searchable !== undefined) searchable = next.searchable !== false;
+                search.hidden = !searchable;
+                if (next.className) String(next.className).split(/\s+/).forEach(c => { if (c) wrap.classList.add(c); });
+            },
             destroy() {
+                close();
                 if (observer) observer.disconnect();
                 if (wrap.parentNode) {
                     wrap.parentNode.insertBefore(select, wrap);
@@ -327,12 +453,12 @@
             if (e.key !== 'Escape') return;
             const open = root.document.querySelector(OPEN_SELECTOR);
             if (!open) return;
-            if (typeof open.__cuttleClose === 'function') open.__cuttleClose();
+            if (typeof open.__cuttleClose === 'function' && open.__cuttleClose()) e.preventDefault();
             e.stopImmediatePropagation();
         });
         root.document.addEventListener('pointerdown', (e) => {
             const target = e.target;
-            if (target && target.closest && target.closest('.cuttle-combo')) return;
+            if (target && target.closest && target.closest('.cuttle-combo, .cuttle-combo-popup')) return;
             closeOpenCombos(null);
         });
     }

@@ -732,12 +732,6 @@ def _handle_opencode_effort_slash(
     if not match:
         return None
     arg = (match.group(2) or "").strip().strip('"').strip("'").lower()
-    known = [str(e) for e in OPENCODE_REASONING_EFFORTS]
-    # Bare "effort the login flow" is a task, not an effort switch.
-    if not match.group(1) and arg and arg not in known and arg not in (
-        "list", "ls", "?", "default", "reset", "clear",
-    ):
-        return None
     from api.agent_harness.agent_defaults import (
         get_starred_effort as _se_o,
         resolve_effective_model as _resolve_mo,
@@ -750,6 +744,20 @@ def _handle_opencode_effort_slash(
         cli_default=None,
     )
     active_model = active_model or ""
+    known = [str(e) for e in OPENCODE_REASONING_EFFORTS]
+    try:
+        from api.agent_harness.agents.opencode.model_catalog import catalog_variant_levels
+
+        discovered = catalog_variant_levels(active_model)
+        if discovered is not None:
+            known = discovered
+    except Exception:
+        pass
+    # Bare "effort the login flow" is a task, not an effort switch.
+    if not match.group(1) and arg and arg not in known and arg not in (
+        "list", "ls", "?", "default", "reset", "clear",
+    ):
+        return None
     base_meta = {
         "agent_model": active_model,
         "model_source": _model_source,

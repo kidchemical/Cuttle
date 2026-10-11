@@ -48,13 +48,13 @@
 
             if (!taskMode) {
                 el('backgroundInheritance').textContent =
-                    'Default chain — every task follows this unless it sets its own.';
+                    'Default chain';
             } else if (hasOverride) {
                 el('backgroundInheritance').textContent =
-                    'This task uses its own chain. Reset to Default to follow the Default again.';
+                    'Custom chain for this task';
             } else {
                 el('backgroundInheritance').textContent =
-                    'This task follows the Default: ' + summarize(preferences.chain) + '.';
+                    'Uses Default · ' + summarize(preferences.chain);
             }
 
             if (active) chain().forEach((saved, index) => paintRow(saved, index));
@@ -96,12 +96,16 @@
             const refresh = node('button', 'Refresh models'); refresh.type = 'button'; refresh.className = 'control-button';
             const remove = node('button', 'Remove'); remove.type = 'button'; remove.className = 'control-button';
             const up = node('button', 'Move up'); up.type = 'button'; up.disabled = index === 0; up.className = 'control-button';
-            const status = node('div'), explanation = node('div'); status.className = explanation.className = 'setting-description'; status.setAttribute('role', 'status');
+            const status = node('div'), explanation = node('button', 'i');
+            status.className = 'setting-description'; status.setAttribute('role', 'status');
+            explanation.type = 'button'; explanation.className = 'cuttle-info';
+            explanation.setAttribute('aria-label', 'About background executor ' + (index + 1) + ' tuning');
             const tuning = node('div'); tuning.className = 'provider-picker';
             const label = (text, input) => { const n = node('label', text + ' '); n.appendChild(input); return n; };
             tuning.appendChild(label('Authentication', auth)); tuning.appendChild(label('Reasoning effort', effort)); tuning.appendChild(label('Temperature', temperature));
             controls.append(target, model, custom, refresh, up, remove);
-            card.append(controls, tuning, status, explanation); el('backgroundChain').appendChild(card);
+            tuning.appendChild(explanation);
+            card.append(controls, tuning, status); el('backgroundChain').appendChild(card);
             if (root.CuttleSearchableSelect) {
                 root.CuttleSearchableSelect.enhance(target, {
                     label: target.getAttribute('aria-label') || 'Executor',
@@ -143,9 +147,9 @@
                 }
                 temperature.disabled = !supported; temperature.min = control.min === undefined ? 0 : control.min; temperature.max = control.max === undefined ? 2 : control.max;
                 if (t && t.kind === 'cli') {
-                    explanation.textContent = 'Uses the saved CLI login and its allowance. Login: ' + t.auth_command + '. Temperature is unavailable in this CLI. Helpers use isolated text requests with coding tools disabled.';
-                } else explanation.textContent = supported ? 'Temperature: ' + temperature.min + '–' + temperature.max + '. Blank uses the task default.' : reason;
-                if (t && t.model_from === 'env' && !valueModel()) explanation.textContent += ' Model environment override: ' + t.effective_model + '.';
+                    explanation.dataset.tooltip = 'Uses the saved CLI login and its allowance. Login: ' + t.auth_command + '. Temperature is unavailable in this CLI. Helpers use isolated text requests with coding tools disabled.';
+                } else explanation.dataset.tooltip = supported ? 'Temperature: ' + temperature.min + '–' + temperature.max + '. Blank uses the task default.' : reason;
+                if (t && t.model_from === 'env' && !valueModel()) explanation.dataset.tooltip += ' Model environment override: ' + t.effective_model + '.';
             }
             function paint(wanted) {
                 model.replaceChildren(); const t = current();

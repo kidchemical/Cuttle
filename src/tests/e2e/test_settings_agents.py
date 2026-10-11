@@ -3,6 +3,7 @@ import json
 from urllib.parse import urlparse
 
 from playwright.sync_api import expect
+from .control_helpers import choose
 from .test_shared_diff_modal import browser, static_server, apply_request_guard, IsolatedAPI  # noqa: F401
 
 AGENTS = [
@@ -140,7 +141,7 @@ def test_subagent_model_and_effort_only_show_for_non_native_choice(browser, stat
 
         with page.expect_response(lambda response: response.url.endswith('/api/settings/agent-adapters')
                                   and response.request.method == 'POST') as saved:
-            card.locator('.agent-config-row').filter(has_text='Default subagent').locator('select').select_option('alpha')
+            choose(page, card.locator('.agent-config-row').filter(has_text='Default subagent').locator('select'), 'alpha')
         expect(model_row).to_be_visible()
         expect(effort_row).to_be_visible()
         assert json.loads(saved.value.request.post_data)['subagents'] == {

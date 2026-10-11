@@ -220,12 +220,17 @@ def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
             return False, 'allow_project_adapters must be true or false', {}
         clean['allow_project_adapters'] = data['allow_project_adapters']
     if 'subagents' in data:
-        from api.agent_harness.catalog import list_agents
+        from api.agent_harness.catalog import get_agent, list_agents
+        from api.agent_harness.agent_models import (
+            load_agent_catalog, catalog_model_ids, catalog_model_efforts,
+            effective_effort_options,
+        )
         raw = data['subagents']
         if not isinstance(raw, dict) or not raw:
             return False, 'subagents must map parent agent ids to preferences', {}
         known = {str(a).lower() for a in list_agents()}
         out = {}
+        catalogs = {}
         for parent, pref in raw.items():
             aid = str(parent or '').strip().lower()
             if aid not in known or not isinstance(pref, dict):
@@ -238,15 +243,28 @@ def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
             if target == 'native' and (model or effort):
                 return False, 'Native subagent preference cannot pin model or effort', {}
             if target != 'native':
-                pair = __import__('api.agent_harness.catalog', fromlist=['get_agent']).get_agent(target)
+                pair = get_agent(target)
                 if pair is None:
                     return False, f'Unknown subagent agent {target}', {}
                 manifest = pair[0]
-                if model and (not manifest.supports_model_pin or model not in manifest.models):
+                # Settings offers the live CLI catalog, so saves must validate
+                # against that same owner rather than the manifest snapshot.
+                if target not in catalogs and (model or effort):
+                    rows, _source = load_agent_catalog(target, manifest.models)
+                    catalogs[target] = (catalog_model_ids(rows), catalog_model_efforts(rows))
+                model_ids, live_efforts = catalogs.get(target, (manifest.models, {}))
+                if model and (not manifest.supports_model_pin or model not in model_ids):
                     return False, f'Unsupported model for {target}', {}
-                valid_efforts = (manifest.model_efforts.get(model, []) if model and manifest.model_efforts else manifest.efforts)
-                if effort and (not manifest.supports_effort or effort not in valid_efforts):
-                    return False, f'Unsupported effort for {target}', {}
+                if effort:
+                    live_supported, valid_efforts = effective_effort_options(
+                        live_efforts,
+                        model,
+                        manifest.supports_effort,
+                        manifest.efforts,
+                        manifest.model_efforts,
+                    )
+                    if not live_supported or effort not in valid_efforts:
+                        return False, f'Unsupported effort for {target}', {}
             out[aid] = {'agent': target, 'model': model, 'effort': effort}
         clean['subagents'] = out
     if not clean:

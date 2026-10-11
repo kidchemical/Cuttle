@@ -9,9 +9,11 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261007hdr2">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261011settingsCompactControls">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261011pageControls2">
     <link rel="stylesheet" href="css/searchable_select.css?v=20261011closedComboFix2">
 <link rel="stylesheet" href="/css/storage_settings.css?v=20261007">
+<link rel="stylesheet" href="/css/page_controls.css?v=20261011pageControls2">
+<script defer src="/js/shared/page_controls.js?v=20261011pageControls2"></script>
 </head>
 <body class="compact-shell-page" data-page="settings">
     <div class="page-content cuttle-page">
@@ -297,8 +299,7 @@
             </div>
 
             <div class="settings-group" id="backgroundHelpersSettings">
-                <h3 class="settings-title">🧠 Background helpers <span class="settings-scope" data-scope="server">All devices</span></h3>
-                <p class="setting-description">Choose how Cuttle generates titles, commit suggestions, enhanced prompts, narration, and routing decisions. Each task follows the Default chain unless you give it its own. CLI helpers use your existing CLI login and allowance.</p>
+                <h3 class="settings-title">🧠 Background helpers <span class="settings-scope" data-scope="server">All devices</span><button type="button" class="cuttle-info" data-tooltip="Choose how Cuttle generates titles, commit suggestions, enhanced prompts, narration, and routing decisions. Each task follows the Default chain unless you give it its own. CLI helpers use your existing CLI login and allowance." aria-label="About Background helpers">i</button></h3>
                 <div class="setting-control setting-control--stack">
                     <label>Configure <select id="backgroundTask" class="setting-input" aria-label="Background task"></select></label>
                     <label id="backgroundOverrideRow" hidden><input id="backgroundOverride" type="checkbox"> Use a chain for this task</label>
@@ -369,10 +370,7 @@
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Run project adapters</strong>
-                        <div class="setting-description" id="projectAdaptersNote">
-                            Load <code>adapter.py</code> from a project's <code>.cuttle/agents/</code>. That is
-                            third-party code running on this server, so it stays off until you opt in.
-                        </div>
+                        <button type="button" class="cuttle-info" id="projectAdaptersNote" data-tooltip="Load adapter.py from a project's .cuttle/agents/. That is third-party code running on this server, so it stays off until you opt in." aria-label="About Run project adapters">i</button>
                     </div>
                     <div class="setting-control">
                         <label class="toggle-switch" id="projectAdaptersToggle" onclick="toggleProjectAdapters(event)">
@@ -407,7 +405,6 @@
             </section>
 
             <section class="settings-panel" id="panel-experimental" role="tabpanel" aria-labelledby="tab-experimental" tabindex="0" hidden>
-            <div class="settings-intro">Try new features. Their tools live in Apps or the relevant settings tab.</div>
             <div class="settings-group">
                 <h3 class="settings-title"><span class="emoji">🧪</span> Features <span class="settings-scope" data-scope="server" title="Stored in settings.json — these apply to every device and client that talks to this Cuttle.">All devices</span><button type="button" class="cuttle-info" data-tooltip="Experimental features may change. Each switch shows its current state. Set CUTTLE_EXPERIMENTAL=0 in Cuttle's .env (~/.local/share/cuttle or %LOCALAPPDATA%\\Cuttle) to force all experiments off." aria-label="About experiments">i</button></h3>
                 <div id="experimentalFlagList" class="experimental-flag-list">
@@ -777,9 +774,9 @@
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
     <script src="/js/settings/settings_releases.js?v=20261011androidRow"></script>
     <script src="/js/settings/settings_storage.js?v=20261007"></script>
-    <script src="/js/shared/searchable_select.js?v=20261011closedComboFix2"></script>
+    <script src="/js/shared/searchable_select.js?v=20261011pageControls2"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261011allModelOptions"></script>
-    <script src="/js/settings/settings_background_helpers.js?v=20261011allModelOptions"></script>
+    <script src="/js/settings/settings_background_helpers.js?v=20261011pageControls2"></script>
     <script src="/js/settings/settings_voice_providers.js?v=20261009b"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
@@ -1192,9 +1189,14 @@
         function agentConfigRow(labelText, control, title) {
             const row = document.createElement('label');
             row.className = 'agent-config-row';
-            if (title) row.title = title;
             const label = document.createElement('span');
             label.textContent = labelText;
+            if (title) {
+                const info = document.createElement('button');
+                info.type = 'button'; info.className = 'cuttle-info'; info.textContent = 'i';
+                info.dataset.tooltip = title; info.setAttribute('aria-label', 'About ' + labelText);
+                label.appendChild(info);
+            }
             row.appendChild(label);
             row.appendChild(control);
             return row;
@@ -1232,6 +1234,7 @@
             enhanceModelSelect(subModel, 'Subagent model');
             const subEffortRow = agentConfigRow('Subagent effort', subEffort);
             let chosenSub = { agent: cliSelect.value, model: subagent.model || '', effort: subagent.effort || '' };
+            let persistedSub = {...chosenSub};
             const selectedCli = () => catalog.find(a => a.id === chosenSub.agent);
             const renderSubChoices = () => {
                 const target = selectedCli();
@@ -1245,13 +1248,22 @@
                 subEffort.disabled = !target || !target.supports_effort || !levels.length;
             };
             const saveSubagent = async () => {
-                const pref = chosenSub.agent === 'native' ? {agent:'native', model:'', effort:''} : chosenSub;
+                const pref = chosenSub.agent === 'native' ? {agent:'native', model:'', effort:''} : {...chosenSub};
+                cliSelect.disabled = subModel.disabled = subEffort.disabled = true;
                 try {
                     const r = await fetch('/api/settings/agent-adapters', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({subagents:{[agent.id]:pref}})});
                     const d = await r.json(); if (!r.ok || !d.success) throw new Error(d.error || 'Save failed');
                     adapterConfig.subagents = d.subagents;
                     chosenSub = {...pref};
-                } catch (e) { (window.showToast || alert)('Could not save subagent preference: ' + (e.message || e), 'error'); }
+                    persistedSub = {...pref};
+                } catch (e) {
+                    chosenSub = {...persistedSub};
+                    cliSelect.value = chosenSub.agent;
+                    (window.showToast || alert)('Could not save subagent preference: ' + (e.message || e), 'error');
+                } finally {
+                    cliSelect.disabled = false;
+                    renderSubChoices();
+                }
             };
             cliSelect.addEventListener('change', () => { chosenSub = {agent:cliSelect.value, model:'', effort:''}; renderSubChoices(); saveSubagent(); });
             subModel.addEventListener('change', () => { chosenSub.model=subModel.value; const target=selectedCli(); if (target && !agentEffortChoices(target, chosenSub.model).includes(chosenSub.effort)) chosenSub.effort=''; renderSubChoices(); saveSubagent(); });

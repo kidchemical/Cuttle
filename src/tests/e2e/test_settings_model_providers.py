@@ -2,6 +2,7 @@
 import json
 from urllib.parse import urlparse
 from playwright.sync_api import expect
+from .control_helpers import choose
 from .test_settings_agents import AgentWorld, open_settings
 from .test_shared_diff_modal import browser, static_server  # noqa: F401
 
@@ -48,19 +49,19 @@ class ProviderWorld(AgentWorld):
 
 
 def show_helpers(page):
-    expect(page.locator('#defaultAgentSelect')).to_be_enabled()
+    expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
     page.evaluate("CuttleSettingsTabs.setTab('agents')")
-    expect(page.get_by_label('Background model 1', exact=True)).to_have_value('saved-model')
+    expect(page.locator('select[aria-label="Background model 1"]')).to_have_value('saved-model')
 
 
 def test_picker_custom_refresh_temperature_failure_and_phone(browser, static_server):
     world = ProviderWorld(); page = open_settings(browser, static_server, world, width=390)
     try:
         show_helpers(page)
-        select = page.get_by_label('Background model 1', exact=True)
+        select = page.locator('select[aria-label="Background model 1"]')
         expect(page.locator('#backgroundChain')).to_contain_text('Account model list')
         assert select.locator('option[value="alpha-image"]').count() == 0
-        select.select_option('alpha-new')
+        choose(page, select, 'alpha-new')
         temperature = page.get_by_label('Background temperature 1', exact=True)
         expect(temperature).to_be_enabled(); expect(temperature).to_have_attribute('max','1'); temperature.fill('.65')
         page.get_by_role('button',name='Refresh models',exact=True).click()
@@ -70,7 +71,7 @@ def test_picker_custom_refresh_temperature_failure_and_phone(browser, static_ser
         world.fail_models = True; page.get_by_role('button',name='Refresh models',exact=True).click()
         expect(page.locator('#backgroundChain')).to_contain_text('selection is preserved')
         expect(select).to_have_value('alpha-new')
-        select.select_option('__custom__')
+        choose(page, select, '__custom__')
         custom = page.get_by_label('Custom background model 1', exact=True); expect(custom).to_be_visible(); custom.fill('future/custom')
         world.fail_save = True; page.evaluate('saveCompletionProviders()')
         expect(page.locator('.cuttle-toast').last).to_contain_text('Save failed'); expect(custom).to_have_value('future/custom')
@@ -86,17 +87,17 @@ def test_cli_auth_effort_fallback_and_task_override(browser, static_server):
     world = ProviderWorld(); page = open_settings(browser, static_server, world)
     try:
         show_helpers(page)
-        page.get_by_label('Background executor 1',exact=True).select_option('cli:beta')
-        page.get_by_label('Background model 1',exact=True).select_option('beta-new')
+        choose(page, page.locator('select[aria-label="Background executor 1"]'), 'cli:beta')
+        choose(page, page.locator('select[aria-label="Background model 1"]'), 'beta-new')
         expect(page.get_by_label('Background temperature 1',exact=True)).to_be_disabled()
-        auth = page.locator('#backgroundChain').get_by_label('Authentication'); expect(auth).to_have_value('subscription')
-        page.locator('#backgroundChain').get_by_label('Reasoning effort').select_option('low')
+        auth = page.locator('#backgroundChain label').filter(has_text='Authentication').locator('select'); expect(auth).to_have_value('subscription')
+        choose(page, page.locator('#backgroundChain label').filter(has_text='Reasoning effort').locator('select'), 'low')
         page.locator('#backgroundAdd').click()
-        expect(page.get_by_label('Background executor 2',exact=True)).to_be_visible()
-        page.locator('#backgroundTask').select_option('titles')
+        expect(page.locator('select[aria-label="Background executor 2"]').locator('..')).to_be_visible()
+        choose(page, page.locator('#backgroundTask'), 'titles')
         expect(page.locator('#backgroundOverride')).not_to_be_checked()
         page.locator('#backgroundOverride').check()
-        page.get_by_label('Background executor 1',exact=True).select_option('cli:beta')
+        choose(page, page.locator('select[aria-label="Background executor 1"]'), 'cli:beta')
         expect(page.locator('#backgroundChain')).to_contain_text('CLI model catalog')
         page.evaluate('saveCompletionProviders()')
         expect(page.locator('.cuttle-toast').last).to_contain_text('settings saved')
@@ -113,10 +114,10 @@ def test_stale_catalog_cannot_overwrite_new_target(browser, static_server):
     world = ProviderWorld(); world.delay = True; page = open_settings(browser, static_server, world)
     try:
         show_helpers(page)
-        page.get_by_label('Background executor 1',exact=True).select_option('cli:beta')
-        expect(page.get_by_label('Background model 1',exact=True)).to_contain_text('beta-new')
+        choose(page, page.locator('select[aria-label="Background executor 1"]'), 'cli:beta')
+        expect(page.locator('select[aria-label="Background model 1"]')).to_contain_text('beta-new')
         expect(page.locator('#backgroundChain')).to_contain_text('CLI model catalog')
         assert world.pending is not None
         world.pending.fulfill(content_type='application/json',body=json.dumps(world.result('alpha')))
-        expect(page.get_by_label('Background model 1',exact=True)).not_to_contain_text('alpha-new')
+        expect(page.locator('select[aria-label="Background model 1"]')).not_to_contain_text('alpha-new')
     finally: page.close()

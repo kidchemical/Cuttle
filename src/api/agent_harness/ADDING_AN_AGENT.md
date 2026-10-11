@@ -329,6 +329,22 @@ set CUTTLE_AGENT_SMOKE_MODEL=deepseek-v4-flash
 | `CUTTLE_AGENT_SMOKE_MODEL_<ID>` | Per-agent override (`MUSE`, `DEEPSEEK`, …) |
 
 Model resolution: per-agent env → global env → `manifest.smoke_model` → `manifest.default_model`.
+
+### Model catalog and per-model capabilities
+
+Treat manifest `models`, `efforts`, and `model_efforts` as the connector's
+offline defaults. When a bundled connector can discover its installed CLI's
+catalog, register that loader in `api.agent_harness.agent_models`; return model
+rows with ids and any native per-model `efforts` or `supports_variant` /
+`variant_levels` facts. The shared catalog normalizes those facts and saves the
+last successful rows in the Cuttle home cache. Settings, subagent preference
+validation, the Agent Router, and slash effort commands consume the effective
+catalog, while the manifest supplies values when discovery is unavailable.
+
+Never write discovered/account-local model lists into the shipped
+`manifest.yaml`. Keep connector behavior and explicit compatibility overrides
+there; let the runtime catalog refresh model availability and native model
+capabilities for this installation.
 Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 
 ## Required steps (in order)
