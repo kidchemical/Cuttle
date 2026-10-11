@@ -15,7 +15,7 @@ is the explicit daemon shutdown path, while UI relaunch/update preserves it.
 
 ## What is Cuttle
 
-Cuttle is a persistent, autonomous AI agent framework. It runs as a system-tray (or headless) daemon that manages a Flask API (port 8080) and vendor agent CLIs. Web chat uses starred slash agents (`/cursor`, …) and the agent router. Discord is **optional agent-ops** (REST read/post), not an inbound gateway.
+Cuttle is a persistent, autonomous AI agent framework. It runs as a system-tray (or headless) daemon that manages a Flask API (default HTTPS port 8080; other listeners in `src/api/server_ports.py`) and vendor agent CLIs. Web chat uses starred slash agents (`/cursor`, …) and the agent router. Discord is **optional agent-ops** (REST read/post), not an inbound gateway.
 
 Project config lives under `.cuttle/` (commands, actions, docs, rules, `GLOBAL.ini` for global-layer selection); shared global config under `.cuttle_global/`. Prefer that over inventing parallel paths. Extension categories: [`docs/architecture/extension-boundaries.md`](docs/architecture/extension-boundaries.md).
 
@@ -118,7 +118,7 @@ funnel + SSE pump proven at runtime; manifest schema).
 | Chat execution | one shared executor; sync turns via `api.chat_coordinator.submit_agent_turn` (`run_harness`, `/api/sessions/send` unclaimed), stream agent turns via `api.chat_coordinator.submit_agent_stream_turn` (SSE framing/live-status stays route transport; pipeline arms owned with never-None no-LLM fallback, compat unclaimed) | `AgentTurnIO`/`StreamTurnIO` + `PreparedAgentTurn` | coordinator + seam + boundary + P5-E/P5-F oracle suites |
 | Vendor CLI behavior | `src/api/agent_harness/agents/<id>/` via catalog; kernel coordinates, never installs (BYO-CLI guidance only) | `build_adapter()` / `Adapter` | harness suites |
 | Project drop-in adapter | catalog contract: opt-in, validate-before-import, relative-only on-demand namespaced load | `manifest.yaml` + `adapter.py` | `test_harness_project_adapters.py` |
-| External service op | `src/api/discord_ops/` pattern (`discord.post`); never branches in project actions, never a chat surface | `python -m api.discord_cli` | discord suites |
+| External service op | `src/api/discord_ops/` pattern (`discord.post`); integration behavior lives in the owner, project actions only dispatch (never a chat surface) | `discord.post` / `python -m api.discord_cli` (reads) | discord suites |
 | Flask/daemon lifetime | daemon owns; Flask only via `/restart` → `src/api/flask_restart.py` | `flask.restart` action form | restart suites |
 | New experimental feature | one `FlagSpec` row in `src/api/experimental/features.py`; gates call `api.experimental.is_enabled()` (settings key `experimental_flags`, kill switch `CUTTLE_EXPERIMENTAL=0`); Settings → Experimental tab renders from the registry | `is_enabled(id)` / `python -m api.experimental list` | `test_experimental_flags.py` |
 | Gizmos (experimental) | `src/api/gizmos/` — `catalog` (types) / `usage` (normalized plan-usage providers) / `service` (validation, placement) / `store` (SQLite + revision) / `routes`; client `CuttleGizmos.*` (pure) + `CuttleGizmosShell` (docks, drag, popover); Electron pop-outs via `gizmo-popouts-sync` | `python -m api.gizmos`; `/api/gizmos`; Apps → Gizmos | `src/tests/gizmos/` |
@@ -134,7 +134,7 @@ compose; they do not own domain decisions. Details:
 
 ### Tools for agents
 
-Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cuttle-owned verbs for agents are `python -m api.<module>` (see `.cuttle_global/docs/agent-ops-cli.md`). **`/cursor`** runs `scripts.utilities.cursor_cli_tool` via the Cursor harness adapter. Discord feature posts use `discord.post` + `python -m api.discord_cli`. Cuttle ships no bundled tool integrations: personal or device integrations (lighting, 3D generation, …) belong in their own CLI or in the owning project's `.cuttle/`, not in core.
+Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cuttle-owned verbs for agents are `python -m api.<module>` (see `.cuttle_global/docs/agent-ops-cli.md`). **`/cursor`** runs `scripts.utilities.cursor_cli_tool` via the Cursor harness adapter. Discord reads use `python -m api.discord_cli`; feature posts use the `discord.post` action. Cuttle ships no bundled general-purpose device integrations: personal or device integrations (lighting, 3D generation, …) belong in their own CLI or in the owning project's `.cuttle/`, not in core.
 
 ### Agent Router (execution harness selection)
 
@@ -186,7 +186,7 @@ Portable lessons belong in `AGENTS.md`, architecture docs, or tests; public bugs
 ## Important Conventions
 
 - Turn dispatch lives in owned services, not the entry module: `api.agent_harness.runners` (all harness CLI entries), `api.chat_turn` (request/selection seam), `api.chat_coordinator` (shared transport-neutral submit: `PreparedAgentTurn`/`select_agent_turn`/`submit_agent_turn`; route lanes submit claimed, legacy surfaces unclaimed), `api.chat_turn_workflow` (lane orchestration), `api.chat_turn_persist` (saver/user persist). `process_message_with_bot` in `web_chat_api.py` is only the compat entry for `/api/sessions/send`.
-- Flask runs on port **8080** (not 5000)
+- Flask's default HTTPS listener is port **8080** (not 5000); companion/phone ports come from `src/api/server_ports.py`
 - Discord token is read from `<home>/.env` — the daemon loads this before child processes; Discord is REST-only, with no inbound bot subprocess
 - **Project commands**: `{project}/.cuttle/commands/*.md` (YAML frontmatter + body) appear in the chat `/` palette for that project. See `.cuttle_global/skills/cuttle-project-commands/SKILL.md`. Invoke as `/{name}` or `/cmd {name}` (works after sticky `/cursor` too).
 

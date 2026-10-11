@@ -8,10 +8,11 @@ chat server. Client worker mode is enabled by default and can be disabled in
 
 ## Prerequisites
 
-For Host, set up Python **3.11+** and the repository venv using the
-[root quick start](../README.md#quick-start). Python and its dependencies are not
-bundled in the desktop artifacts. A Client that runs a device worker also needs
-Python; a UI-only Client connects to the remote Host.
+Building or running from source requires Python **3.11+** and the repository venv
+using the [root quick start](../README.md#quick-start). Packaged Host artifacts
+bundle a Python runtime and dependencies under `resources/python`, so an installed
+Host needs no system Python. A Client that runs a device worker also needs Python;
+a UI-only Client connects to the remote Host.
 
 Source development/builds need Node and npm. Install the chosen vendor CLI and
 authenticate it separately: Codex uses `codex login`, Cursor its CLI login, and

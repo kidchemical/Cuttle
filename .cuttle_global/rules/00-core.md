@@ -5,8 +5,8 @@ no matter which model or CLI you are, and no matter which registered project the
 
 These files under `.cuttle_global/rules/` are compiled into the fresh/full context by the
 **Context Compiler** (Cuttle Brain) and ride change-deltas on resume. They hold hard invariants and intent→doc pointers only —
-how-to lives in `.cuttle_global/docs/`. Rules for the Cuttle repo itself (not guests) live in
-`.cuttle/rules/` at the Cuttle project root and load only for Cuttle chats.
+how-to lives in `.cuttle_global/docs/`. Project-scoped rules live in
+`{project}/.cuttle/rules/` and load only when the chat targets that project.
 
 ## Hard rules (match intent → doc)
 
@@ -42,7 +42,8 @@ top of this context; `python -m api.*` verbs are owned by `02-agent-ops-cli.md`,
    **Never `git push` from the agent shell** (never force-push) — emit the `git.push`
    action form, or let the user push from the Git UI.
 7. **Scratch / temp dirs (every project):** throwaways go under `{project}/temp/` (or an
-   existing in-project `tmp`); never drive-root dumps or Cuttle-repo scratch. Keep
+   existing in-project `tmp`); never drive-root dumps or scratch inside the
+   install tree. Keep
    `temp/` gitignored. (Scaffold creates both on new projects.)
 8. **Writing or changing rules** (global, project, or personal) → read
    `rule-authoring.md` first: one owner per rule, narrow triggers, no duplication.

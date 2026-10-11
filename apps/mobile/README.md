@@ -39,7 +39,8 @@ npm run sync:android
 .\build-android-debug.bat
 ```
 
-POSIX (Android SDK and JDK 21 configured):
+POSIX (Android SDK and JDK 21 configured) — if your toolchain lives in the
+Cuttle home, `source apps/mobile/android/android-env.sh` from the repo root first:
 
 ```bash
 cd apps/mobile

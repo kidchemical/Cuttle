@@ -1,5 +1,8 @@
 # Settings modernization
 
+> **Status: mixed historical/current.** The opening "still unbuilt" list predates
+> later shipped work recorded below; check the code and later sections for current state.
+
 Assessment plus the first structural pass: the nine stacked groups are now
 seven category tabs, each group badged with the storage world it writes.
 Findings below are what drove that pass; the rest (Security, Devices & Mesh,

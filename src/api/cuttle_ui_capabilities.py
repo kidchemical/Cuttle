@@ -1,7 +1,7 @@
 """
 Invisible Cuttle chat UI capability injection for agent backends.
 
-Prefixed onto outbound agent prompts (Cursor / Hermes / Claude / Gemini / …)
+Prefixed onto outbound agent prompts (Cursor / Hermes / Claude / Antigravity / …)
 or appended to LLM system prompts. Never shown in the chat transcript —
 only in query logs. If an agent echoes the block, strip it before display/save.
 """
@@ -19,7 +19,7 @@ _CAP_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Keep short. Injected once per Cursor/Gemini resume session (not every turn).
+# Keep short. Injected once per agent resume session (not every turn).
 # Directory-style only — how-to lives in global `.cuttle_global/docs/` (+ `<home>/personal/docs/`).
 CUTTLE_UI_CAPABILITIES_TEXT = """\
 SYSTEM CONTEXT (not the user speaking). Injected once per agent session.
