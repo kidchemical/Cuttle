@@ -1432,3 +1432,34 @@ def test_watch_grid_persisted_snapshot_sanitization():
     assert grid['cells'][1]['state'] == 'pending'
     assert grid['groups'] == ['tower'] and grid['inventory'] == 'verified'
     assert spec['watch']['terminal']
+
+
+def test_self_update_route_defers_restart(tmp_path, monkeypatch):
+    """A titlebar click (defer_restart) must not auto-restart; programmatic keeps it."""
+    from api import web_chat_api as wca
+    from api.device_workers import platform as plat
+    from tests.auth.test_http_authz import _auth_client, LAN
+
+    captured = {}
+    monkeypatch.setattr(
+        plat, "submit_self_update",
+        lambda **kw: (captured.clear() or captured.update(kw) or {"success": True}),
+    )
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx["client"].set_cookie("session_token", ctx["token"])
+
+    res = ctx["client"].post(
+        "/api/workers/self-update",
+        json={"target": "laptop", "defer_restart": True},
+        environ_base=LAN,
+    )
+    assert res.status_code == 200, res.get_json()
+    assert captured["restart_electron"] is False
+    assert captured["restart_daemon"] is False
+
+    res = ctx["client"].post(
+        "/api/workers/self-update", json={"target": "laptop"}, environ_base=LAN
+    )
+    assert res.status_code == 200, res.get_json()
+    assert captured["restart_electron"] is True
+    assert captured["restart_daemon"] is True

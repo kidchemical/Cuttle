@@ -1208,10 +1208,15 @@
             subWrap.appendChild(agentConfigRow('Default subagent', cliSelect, 'Subagent CLI to use when this agent spawns children. Native leaves the CLI’s own subagent behavior intact.'));
             const subModel = document.createElement('select'); subModel.className = 'setting-input';
             const subEffort = document.createElement('select'); subEffort.className = 'setting-input';
+            const subModelRow = agentConfigRow('Subagent model', subModel);
+            const subEffortRow = agentConfigRow('Subagent effort', subEffort);
             let chosenSub = { agent: cliSelect.value, model: subagent.model || '', effort: subagent.effort || '' };
             const selectedCli = () => catalog.find(a => a.id === chosenSub.agent);
             const renderSubChoices = () => {
                 const target = selectedCli();
+                const native = chosenSub.agent === 'native';
+                subModelRow.hidden = native;
+                subEffortRow.hidden = native;
                 fillAgentSelect(subModel, target && target.supports_model_pin ? target.models || [] : [], chosenSub.model, 'CLI default');
                 const levels = target ? agentEffortChoices(target, chosenSub.model) : [];
                 fillAgentSelect(subEffort, levels, chosenSub.effort, 'CLI default');
@@ -1231,9 +1236,8 @@
             subModel.addEventListener('change', () => { chosenSub.model=subModel.value; const target=selectedCli(); if (target && !agentEffortChoices(target, chosenSub.model).includes(chosenSub.effort)) chosenSub.effort=''; renderSubChoices(); saveSubagent(); });
             subEffort.addEventListener('change', () => { chosenSub.effort=subEffort.value; saveSubagent(); });
             renderSubChoices();
-            subWrap.appendChild(agentConfigRow('Subagent model', subModel));
-            subWrap.appendChild(agentConfigRow('Subagent effort', subEffort));
-            wrap.appendChild(subWrap);
+            subWrap.appendChild(subModelRow);
+            subWrap.appendChild(subEffortRow);
 
             const renderEffort = () => {
                 if (!effortSel) return;
@@ -1299,6 +1303,9 @@
                 wrap.appendChild(effortRow);
                 renderEffort();
             }
+
+            // Show subagent configuration after this agent's own defaults.
+            wrap.appendChild(subWrap);
 
             if (steerable) {
                 const envOff = !!cfg.steer_env_disabled;

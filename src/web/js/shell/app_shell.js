@@ -455,6 +455,9 @@ let cuttleTitlebarCancelHide = null;
                     submitted_by: 'titlebar',
                     // Channel: follow the paired Host's working tree, or upstream.
                     update_source: meshUpdate.channel || configuredUpdateSource(),
+                    // A titlebar click is interactive: pull now, but ask before
+                    // restarting (programmatic host→worker updates still auto-restart).
+                    defer_restart: true,
                     // Host Electron refresh should not kill cuttle_daemon.
                     no_daemon: !isClient,
                 }),
@@ -539,23 +542,39 @@ let cuttleTitlebarCancelHide = null;
                     + '. Check Desktop\\cuttle-self-update-last.log on that machine.'
                 );
             }
-            if (window.showToast) {
-                window.showToast(
-                    `Updated to ${meshUpdate.localVersion || expectHost}.`,
-                    'success'
-                );
-            }
-            setTimeout(() => {
-                updateBtn.classList.remove('is-busy');
-                if (label) label.textContent = 'Update';
-                refreshUpdateBtn();
-            }, 1500);
+            // The checkout is current — ask before restarting (titlebar clicks
+            // defer the restart; see defer_restart above).
+            updateBtn.classList.remove('is-busy');
+            if (label) label.textContent = 'Update';
+            refreshUpdateBtn();
+            showRestartModal(meshUpdate.localVersion || expectHost);
         } catch (err) {
             updateBtn.classList.remove('is-busy');
             if (label) label.textContent = 'Update';
             if (window.showToast) window.showToast(err.message || String(err), 'error');
         }
     });
+
+    // "Update ready" modal: restart the app now, or keep working.
+    const restartModal = document.getElementById('cuttleRestartModal');
+    const showRestartModal = (version) => {
+        if (!restartModal) return;
+        const v = restartModal.querySelector('[data-restart-version]');
+        if (v) v.textContent = String(version || 'the latest');
+        restartModal.hidden = false;
+    };
+    const hideRestartModal = () => { if (restartModal) restartModal.hidden = true; };
+    if (restartModal) {
+        restartModal.querySelector('[data-restart-now]')?.addEventListener('click', () => {
+            hideRestartModal();
+            if (api.desktop && typeof api.desktop.relaunchApp === 'function') {
+                api.desktop.relaunchApp();
+            } else {
+                window.location.reload();
+            }
+        });
+        restartModal.querySelector('[data-restart-later]')?.addEventListener('click', hideRestartModal);
+    }
 
     // Fullscreen: titlebar overlays and auto-hides; a top-edge hotzone reveals it.
     // Iframes swallow mousemove, so a dedicated strip is required.

@@ -8,7 +8,7 @@
     <title>Cuttle</title>
     <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
     <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
-    <link rel="stylesheet" href="/css/app_shell.css?v=20261010workspaceUnpin">
+    <link rel="stylesheet" href="/css/app_shell.css?v=20261011updateSpinner">
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
     <link rel="stylesheet" href="/css/video_background.css?v=20260927blendTarget">
     <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
@@ -33,10 +33,11 @@
     </div>
     <div class="shell-window-controls" role="group" aria-label="Window controls">
         <button type="button" class="shell-win-btn shell-win-update" id="shellWinUpdate" hidden title="Update Cuttle desktop" aria-label="Update Cuttle desktop">
-            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+            <svg class="shell-win-update-icon" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
                 <path d="M6 1.5v7M3.5 6.2L6 8.7 8.5 6.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
                 <path d="M2 10.2h8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
             </svg>
+            <span class="shell-win-update-spinner" aria-hidden="true"></span>
             <span class="shell-win-update-chip" id="shellWinUpdateChip" hidden></span>
             <span class="shell-win-update-label">Update</span>
         </button>
@@ -374,6 +375,17 @@
     </section>
 </div>
 
+<div class="cuttle-modal" id="cuttleRestartModal" hidden>
+    <section class="cuttle-modal-card" role="dialog" aria-modal="true" aria-labelledby="cuttleRestartTitle">
+        <h2 id="cuttleRestartTitle">Update ready</h2>
+        <p class="cuttle-modal-text">Cuttle updated to <strong data-restart-version>the latest</strong>. Restart Cuttle now to apply it, or keep working and restart later.</p>
+        <div class="cuttle-modal-actions">
+            <button type="button" class="control-button btn-info" data-restart-now>Restart now</button>
+            <button type="button" class="control-button" data-restart-later>Later</button>
+        </div>
+    </section>
+</div>
+
 <script src="/js/shared/toast.js?v=20260921voiceMic"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
 <script src="/js/shared/net_debug.js?v=20260810c"></script>
@@ -394,7 +406,7 @@
 <script src="/js/achievements/achievements.js?v=20261003ach1"></script>
 <script src="/js/shell/whats_new.js?v=20261008whatsNew"></script>
 <script src="/js/shell/account_panel.js?v=20261008acct"></script>
-<script src="/js/shell/app_shell.js?v=20261010workspaceUnpin"></script>
+<script src="/js/shell/app_shell.js?v=20261011updateSpinner"></script>
 <script src="/js/gizmos/gizmos_model.js?v=20261007gizmos2"></script>
 <script src="/js/gizmos/gizmos_shell.js?v=20261007gizmos3"></script>
 </body>

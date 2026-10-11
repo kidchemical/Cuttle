@@ -2052,6 +2052,15 @@ ipcMain.handle('desktop-use-local', async () => {
 });
 ipcMain.handle('desktop-update-status', () => checkDesktopUpdate());
 ipcMain.handle('desktop-apply-update', () => applyDesktopUpdate());
+// Relaunch the app in place (used after a git update when the user picks
+// "Restart now" in the Update-ready modal). Electron-owned, same class as the
+// asar swap in applyDesktopUpdate.
+ipcMain.handle('desktop-relaunch-app', () => {
+    app.isQuitting = true;
+    app.relaunch();
+    app.exit(0);
+    return { ok: true };
+});
 
 // ── Gizmo pop-outs: always-on-top desktop windows (experimental `gizmos`) ──
 // The shell sends the full wanted set; main opens/closes to match. Only ids
