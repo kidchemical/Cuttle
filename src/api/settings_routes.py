@@ -86,6 +86,9 @@ SETTING_FAMILIES = (
      "backend": "api.agent_harness.steer (key 'agent_steer') + catalog (key 'agent_harness'); "
                 "model/effort defaults read here, written via POST /agent-defaults/<id>",
      "validator": "validate_agent_adapters_update", "read": "authenticated", "write": "owner"},
+    {"name": "timeouts", "routes": ["GET/POST /settings/timeouts"],
+     "backend": "settings-manager key 'timeouts' (resolved by get_timeouts)",
+     "validator": "validate_timeouts_update", "read": "authenticated", "write": "owner"},
     {"name": "app-settings", "routes": ["GET /app-settings"],
      "backend": "settings_manager.get_all_settings() (read-only aggregate)",
      "validator": "none (read-only)", "read": "owner", "write": "n/a"},
@@ -117,6 +120,34 @@ def validate_lan_access_update(data: dict) -> tuple[bool, str]:
     if 'lan_access_enabled' not in data:
         return False, 'lan_access_enabled required'
     return True, ''
+
+
+def validate_timeouts_update(data: dict) -> tuple[bool, str, dict]:
+    """Body: { agent_run_seconds?: int, subagent_wait_seconds?: int }.
+
+    Bounds are shared with ``managers.settings_manager`` (one source).
+    At least one field is required; unknown fields are ignored.
+    """
+    from managers.settings_manager import TIMEOUT_MAX_SECONDS, TIMEOUT_MIN_SECONDS
+
+    data = data or {}
+    patch: dict = {}
+    for key in ("agent_run_seconds", "subagent_wait_seconds"):
+        if key not in data:
+            continue
+        try:
+            value = int(data.get(key))
+        except (TypeError, ValueError):
+            return False, f"{key} must be an integer number of seconds", {}
+        if not (TIMEOUT_MIN_SECONDS <= value <= TIMEOUT_MAX_SECONDS):
+            return False, (
+                f"{key} must be between {TIMEOUT_MIN_SECONDS} and "
+                f"{TIMEOUT_MAX_SECONDS} seconds"
+            ), {}
+        patch[key] = value
+    if not patch:
+        return False, "provide agent_run_seconds and/or subagent_wait_seconds", {}
+    return True, "", patch
 
 
 def validate_completion_providers_update(data: dict) -> tuple[bool, str, dict]:
@@ -448,6 +479,32 @@ def update_git_auto_commit_setting():
         if not set_enabled(value):
             return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
         return jsonify({'success': True, 'git_auto_commit': is_enabled()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- timeouts (backend: managers.settings_manager) -------------------------
+
+@settings_bp.route('/settings/timeouts', methods=['GET'])
+@authenticated_required
+def get_timeouts_setting():
+    """Agent run + subagent supervision timeout policy (seconds)."""
+    from managers.settings_manager import get_settings_manager
+    return jsonify({'success': True, **get_settings_manager().get_timeouts()})
+
+
+@settings_bp.route('/settings/timeouts', methods=['POST'])
+@owner_required
+def update_timeouts_setting():
+    """Body: { agent_run_seconds?, subagent_wait_seconds? } (seconds)."""
+    try:
+        from managers.settings_manager import get_settings_manager
+        ok, error, patch = validate_timeouts_update(request.get_json() or {})
+        if not ok:
+            return jsonify({'success': False, 'error': error}), 400
+        manager = get_settings_manager()
+        manager.update_setting('timeouts', lambda current: {**(current or {}), **patch})
+        return jsonify({'success': True, **manager.get_timeouts()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

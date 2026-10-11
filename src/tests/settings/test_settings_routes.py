@@ -17,6 +17,7 @@ READS = [
     "/api/settings/ui-layout",
     "/api/settings/video-background",
     "/api/settings/git-auto-commit",
+    "/api/settings/timeouts",
     "/api/settings/github-app",
     "/api/settings/agent-adapters",
     "/api/app-settings",
@@ -31,6 +32,7 @@ WRITES = [
     ("POST", "/api/settings/ui-layout", {"rail_items": []}),
     ("POST", "/api/settings/video-background", {"enabled": False}),
     ("POST", "/api/settings/git-auto-commit", {"git_auto_commit": False}),
+    ("POST", "/api/settings/timeouts", {"agent_run_seconds": 3600}),
     ("POST", "/api/settings/agent-adapters", {"steer": {"claude": True}}),
     ("POST", "/api/settings/github-app", {"app_id": "1", "installation_id": "2"}),
     ("POST", "/api/settings/github-app/test", {}),
@@ -162,6 +164,35 @@ def test_agent_adapters_round_trip(tmp_path, monkeypatch):
     for bad in ({"steer": {"cursor": True}}, {"steer": {"claude": "yes"}},
                 {"allow_project_adapters": 1}, {}):
         res = ctx["client"].post("/api/settings/agent-adapters", json=bad, environ_base=LAN)
+        assert res.status_code == 400, bad
+
+
+def test_timeouts_round_trip(tmp_path, monkeypatch):
+    """Agent-run + subagent-wait timeouts persist, clamp, and reject bad input."""
+    isolated = _isolated_settings(monkeypatch, tmp_path)
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx["client"].set_cookie("session_token", ctx["token"])
+
+    body = ctx["client"].get("/api/settings/timeouts", environ_base=LAN).get_json()
+    assert body["agent_run_seconds"] == 3600
+    assert body["subagent_wait_seconds"] == 3600
+
+    res = ctx["client"].post(
+        "/api/settings/timeouts",
+        json={"agent_run_seconds": 7200, "subagent_wait_seconds": 5400},
+        environ_base=LAN,
+    )
+    assert res.status_code == 200, res.get_json()
+    body = res.get_json()
+    assert body["agent_run_seconds"] == 7200 and body["subagent_wait_seconds"] == 5400
+    assert isolated.get_timeouts() == {
+        "agent_run_seconds": 7200, "subagent_wait_seconds": 5400,
+    }
+
+    # Bounds + shape are enforced by the owned validator.
+    for bad in ({"agent_run_seconds": 5}, {"subagent_wait_seconds": 999999},
+                {"agent_run_seconds": "soon"}, {}):
+        res = ctx["client"].post("/api/settings/timeouts", json=bad, environ_base=LAN)
         assert res.status_code == 400, bad
 
 

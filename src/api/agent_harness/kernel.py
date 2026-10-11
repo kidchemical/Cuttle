@@ -598,6 +598,19 @@ def _compile_agent_prompt(
     )
 
 
+def _resolve_agent_run_timeout() -> float:
+    """Default turn budget: Settings → Agents (``timeouts.agent_run_seconds``).
+
+    One source for every harness run that does not pass an explicit timeout;
+    falls back to 3600s if settings are unreadable.
+    """
+    try:
+        from managers.settings_manager import get_settings_manager
+        return float(get_settings_manager().get_timeouts()["agent_run_seconds"])
+    except Exception:
+        return 3600.0
+
+
 def run_agent_web_command(
     agent_id: str,
     prompt: str,
@@ -606,7 +619,7 @@ def run_agent_web_command(
     status_queue=None,
     project_path: Optional[str] = None,
     model_override: Optional[str] = None,
-    timeout: float = 3600.0,
+    timeout: Optional[float] = None,
     execute_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
@@ -615,14 +628,18 @@ def run_agent_web_command(
     Returns the same shape as legacy ``_run_*_web_command`` helpers so callers
     can ``jsonify`` without special-casing.
 
-    ``timeout`` is the turn budget. Streaming adapters (e.g. OpenCode) treat it
-    as an **idle** budget — the deadline resets whenever the CLI emits output,
-    with an absolute runaway cap on top — so long productive turns are not
-    killed. Buffer-everything adapters keep the absolute wall-clock semantics.
+    ``timeout`` is the turn budget. ``None`` resolves to the user-configured
+    Settings → Agents value (``timeouts.agent_run_seconds``; default 3600s).
+    Streaming adapters (e.g. OpenCode) treat it as an **idle** budget — the
+    deadline resets whenever the CLI emits output, with an absolute runaway cap
+    on top — so long productive turns are not killed. Buffer-everything
+    adapters keep the absolute wall-clock semantics.
 
     ``execute_kwargs`` are forwarded to ``adapter.execute`` (e.g. Codex
     ``reasoning_effort`` from supervised profiles).
     """
+    if timeout is None:
+        timeout = _resolve_agent_run_timeout()
     pair = get_agent(agent_id, project_path=project_path)
     if not pair:
         return {
