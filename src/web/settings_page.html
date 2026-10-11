@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261007hdr2">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261009models">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261011deviceUpdate">
     <link rel="stylesheet" href="css/searchable_select.css?v=20261009combo1">
 <link rel="stylesheet" href="/css/storage_settings.css?v=20261007">
 </head>
@@ -73,7 +73,7 @@
                         <div class="setting-description">Which channel this device updates from. <strong>HOST</strong> = the paired Cuttle PC; <strong>OFFICIAL</strong> = GitHub.</div>
                     </div>
                     <div class="setting-control">
-                        <select class="form-select" data-update-source>
+                        <select class="setting-input" data-update-source>
                             <option value="host">HOST — this Cuttle PC</option>
                             <option value="official">OFFICIAL — GitHub</option>
                         </select>
@@ -85,7 +85,7 @@
                         <div class="setting-description">Applies the selected source to this device now — git pull + restart. The titlebar Update button does the same.</div>
                     </div>
                     <div class="setting-control setting-control--stack">
-                        <div class="provider-status" data-device-update-status role="status" aria-live="polite"></div>
+                        <div class="device-update-status" data-device-update-status role="status" aria-live="polite" hidden></div>
                         <button type="button" class="control-button" data-device-update>Update this device</button>
                     </div>
                 </div>
@@ -764,7 +764,7 @@
     <script src="/js/media/background_effect_blend.js"></script>
     <script src="/js/shared/toast.js"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
-    <script src="/js/settings/settings_releases.js?v=20261011deviceUpdate"></script>
+    <script src="/js/settings/settings_releases.js?v=20261011deviceUpdate2"></script>
     <script src="/js/settings/settings_storage.js?v=20261007"></script>
     <script src="/js/shared/searchable_select.js?v=20261009combo1"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261009a"></script>

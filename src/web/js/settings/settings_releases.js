@@ -17,6 +17,14 @@
         const sourceSelect = root.querySelector('[data-update-source]');
         const deviceUpdateBtn = root.querySelector('[data-device-update]');
         const deviceStatus = root.querySelector('[data-device-update-status]');
+        const setDeviceStatus = (text, kind) => {
+            if (!deviceStatus) return;
+            const msg = String(text || '').trim();
+            deviceStatus.textContent = msg;
+            deviceStatus.hidden = !msg;
+            deviceStatus.classList.toggle('is-error', kind === 'error');
+            deviceStatus.classList.toggle('is-ok', kind === 'ok');
+        };
         let identity = '';
 
         function autoChecksEnabled() {
@@ -151,12 +159,12 @@
         if (deviceUpdateBtn) {
             deviceUpdateBtn.addEventListener('click', async () => {
                 deviceUpdateBtn.disabled = true;
-                if (deviceStatus) deviceStatus.textContent = 'Resolving this device…';
+                setDeviceStatus('Resolving this device…', 'info');
                 try {
                     const target = await resolveViewerTarget();
                     if (!target) throw new Error('Could not identify this device on the mesh.');
                     const source = sourceSelect && sourceSelect.value === 'host' ? 'host' : 'official';
-                    if (deviceStatus) deviceStatus.textContent = 'Updating ' + target + ' (' + source.toUpperCase() + ')…';
+                    setDeviceStatus('Updating ' + target + ' (' + source.toUpperCase() + ')…', 'info');
                     const r = await fetch('/api/workers/self-update', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -191,13 +199,14 @@
                         ));
                     }
                     const jr = (final && final.result) || {};
-                    if (deviceStatus) {
-                        deviceStatus.textContent = (jr.advanced === false)
+                    setDeviceStatus(
+                        (jr.advanced === false)
                             ? (jr.note || 'Already at the latest — restarted.')
-                            : ('Updated to ' + (jr.head || 'the latest') + ' — restarting.');
-                    }
+                            : ('Updated to ' + (jr.head || 'the latest') + ' — restarting.'),
+                        'ok'
+                    );
                 } catch (error) {
-                    if (deviceStatus) deviceStatus.textContent = String(error.message || error);
+                    setDeviceStatus(String(error.message || error), 'error');
                 } finally {
                     deviceUpdateBtn.disabled = false;
                 }

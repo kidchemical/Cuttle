@@ -844,3 +844,24 @@ body.compact-shell-page button.cuttle-info {
         width: 100%;
     }
 }
+
+/* ── Cuttle updates: device update source + status (Settings → Cuttle updates) ── */
+#cuttleReleaseSettings select.setting-input[data-update-source] {
+    min-width: 220px;
+    max-width: 100%;
+}
+.device-update-status {
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-muted, #9aa4b2);
+    max-width: 62ch;
+}
+.device-update-status.is-ok {
+    color: var(--success, #3fb950);
+}
+.device-update-status.is-error {
+    color: var(--danger, #f85149);
+}
+.device-update-status[hidden] {
+    display: none !important;
+}
