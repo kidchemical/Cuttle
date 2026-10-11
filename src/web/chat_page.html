@@ -78,6 +78,17 @@
                 <button class="chat-history-panel-close" id="chatHistoryPanelClose" onclick="window.closeChatHistoryPanel()" title="Close chat history" aria-label="Close chat history panel">
                     <span>×</span>
                 </button>
+                <button type="button" class="chat-history-filter-button" id="chatHistoryFilterButton" aria-label="Chat history display filters" title="Display filters" aria-expanded="false" aria-controls="chatHistoryDisplayFilters">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16l-6.5 7.5V19l-3 1v-7.5z"/></svg>
+                </button>
+                <div class="chat-history-display-filters" id="chatHistoryDisplayFilters" hidden role="group" aria-label="Chat history display filters">
+                    <strong>Show in chat history</strong>
+                    <label><input type="checkbox" data-history-display-pref="project"> Project</label>
+                    <label class="history-display-suboption"><input type="checkbox" data-history-display-pref="worktree"> Worktree</label>
+                    <label class="history-display-suboption"><input type="checkbox" data-history-display-pref="branch"> Branch</label>
+                    <label><input type="checkbox" data-history-display-pref="agent"> Agent chip</label>
+                    <label class="history-display-suboption"><input type="checkbox" data-history-display-pref="allAgents"> All agent chips</label>
+                </div>
             </div>
 
             <div class="chat-history" id="chatHistory">

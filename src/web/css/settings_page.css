@@ -54,6 +54,18 @@
     display: block;
 }
 
+/* Plain controls should use the active theme instead of the browser's white
+   button surface. Keep semantic action colors on their explicit variants. */
+.settings-panel .control-button:not(.btn-start):not(.btn-stop):not(.btn-restart):not(.btn-info) {
+    background: var(--section-bg);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+.settings-panel .control-button:not(.btn-start):not(.btn-stop):not(.btn-restart):not(.btn-info):hover {
+    background: var(--panel-hover);
+    border-color: var(--accent-color);
+}
+
 /* Scope badge — settings live in two worlds (this browser vs the server), and
    nothing on the page used to say which. See .cuttle/docs/settings-modernization.md */
 .settings-scope {
@@ -426,6 +438,9 @@
     padding: 3px 6px;
     font-size: 0.74rem;
 }
+.agent-default-chip { display:inline-flex; align-items:center; border:1px solid #4b9b72; background:color-mix(in srgb, #4b9b72 20%, transparent); color:#78d49e; border-radius:999px; padding:2px 8px; font-size:11px; font-weight:700; }
+.agent-config-actions { display:flex; gap:8px; margin-top:10px; }
+.agent-subagent-config { display:grid; gap:6px; border-top:1px solid var(--border-color, rgba(255,255,255,.1)); padding-top:8px; margin-top:4px; }
 
 .toggle-switch.is-disabled {
     opacity: 0.5;
@@ -633,21 +648,7 @@ body.compact-shell-page .settings-scope {
 .agent-card-hint {
     overflow-wrap: anywhere;
 }
-.agent-default-picker {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-}
-.agent-default-picker select {
-    max-width: 100%;
-    min-width: 0;
-}
 @media (max-width: 640px) {
-    .agent-default-picker select {
-        width: 100%;
-    }
     .agent-card-head .agent-card-slash {
         display: none;
     }
@@ -820,6 +821,13 @@ body.compact-shell-page button.cuttle-info {
 .background-executor { padding: 12px; margin: 8px 0; border: 1px solid var(--border-color, #555); border-radius: 8px; }
 .background-executor .provider-picker { margin-bottom: 8px; }
 .background-executor input[type="number"] { width: 125px; }
+.background-helper-dropdown .cuttle-combo-list {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.background-helper-dropdown .cuttle-combo-list::-webkit-scrollbar {
+    display: none;
+}
 
 /* Shared searchable select (js/shared/searchable_select.js) in Settings. */
 .setting-control--column > .cuttle-combo,

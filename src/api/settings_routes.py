@@ -199,7 +199,7 @@ def validate_completion_providers_update(data: dict) -> tuple[bool, str, dict]:
 
 
 def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
-    """Body: ``{steer?: {agent: bool}, allow_project_adapters?: bool}``."""
+    """Validate per-adapter steering, subagent defaults and drop-in opt-in."""
     from api.agent_harness.steer import STEERABLE_AGENTS
 
     if not isinstance(data, dict):
@@ -219,6 +219,36 @@ def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
         if not isinstance(data['allow_project_adapters'], bool):
             return False, 'allow_project_adapters must be true or false', {}
         clean['allow_project_adapters'] = data['allow_project_adapters']
+    if 'subagents' in data:
+        from api.agent_harness.catalog import list_agents
+        raw = data['subagents']
+        if not isinstance(raw, dict) or not raw:
+            return False, 'subagents must map parent agent ids to preferences', {}
+        known = {str(a).lower() for a in list_agents()}
+        out = {}
+        for parent, pref in raw.items():
+            aid = str(parent or '').strip().lower()
+            if aid not in known or not isinstance(pref, dict):
+                return False, f'Invalid subagent preference for {parent}', {}
+            target = str(pref.get('agent') or 'native').strip().lower()
+            if target != 'native' and target not in known:
+                return False, f'Unknown subagent agent {target}', {}
+            model = str(pref.get('model') or '').strip()
+            effort = str(pref.get('effort') or '').strip().lower()
+            if target == 'native' and (model or effort):
+                return False, 'Native subagent preference cannot pin model or effort', {}
+            if target != 'native':
+                pair = __import__('api.agent_harness.catalog', fromlist=['get_agent']).get_agent(target)
+                if pair is None:
+                    return False, f'Unknown subagent agent {target}', {}
+                manifest = pair[0]
+                if model and (not manifest.supports_model_pin or model not in manifest.models):
+                    return False, f'Unsupported model for {target}', {}
+                valid_efforts = (manifest.model_efforts.get(model, []) if model and manifest.model_efforts else manifest.efforts)
+                if effort and (not manifest.supports_effort or effort not in valid_efforts):
+                    return False, f'Unsupported effort for {target}', {}
+            out[aid] = {'agent': target, 'model': model, 'effort': effort}
+        clean['subagents'] = out
     if not clean:
         return False, 'Nothing to update', {}
     return True, '', clean
@@ -550,6 +580,7 @@ def _agent_adapters_payload() -> dict:
         project_adapters_setting,
     )
     from api.agent_harness.steer import steer_env_disabled, steer_settings
+    from managers.settings_manager import get_settings_manager
 
     return {
         'success': True,
@@ -558,6 +589,7 @@ def _agent_adapters_payload() -> dict:
             for aid in list_agents()
         },
         'steer': steer_settings(),
+        'subagents': get_settings_manager().get_setting('agent_subagent_defaults') or {},
         'steer_env_disabled': steer_env_disabled(),
         'allow_project_adapters': project_adapters_setting(),
         'allow_project_adapters_env': project_adapters_env_allowed(),
@@ -584,6 +616,7 @@ def update_agent_adapters_setting():
             return jsonify({'success': False, 'error': message}), 400
         from api.agent_harness.catalog import set_project_adapters_allowed
         from api.agent_harness.steer import set_steer_enabled
+        from managers.settings_manager import get_settings_manager
 
         for agent, value in (clean.get('steer') or {}).items():
             if not set_steer_enabled(agent, value):
@@ -591,6 +624,11 @@ def update_agent_adapters_setting():
         if 'allow_project_adapters' in clean:
             if not set_project_adapters_allowed(clean['allow_project_adapters']):
                 return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+        if 'subagents' in clean:
+            current = get_settings_manager().get_setting('agent_subagent_defaults') or {}
+            if not isinstance(current, dict): current = {}
+            current.update(clean['subagents'])
+            get_settings_manager().set_setting('agent_subagent_defaults', current)
         return jsonify(_agent_adapters_payload())
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

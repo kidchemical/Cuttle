@@ -3970,7 +3970,7 @@
             ? '<span class="slash-chip-seg slash-chip-seg--branch" title="' +
               escapeHtmlInline(branch).replace(/"/g, '&quot;') +
               '">' +
-              (worktreeChip ? '\uD83C\uDF3F ' : '') +
+              (worktreeChip ? '<span class="history-worktree-mark" aria-hidden="true">\uD83C\uDF3F </span>' : '') +
               escapeHtmlInline(branch) +
               '</span>'
             : '';
@@ -5301,13 +5301,15 @@
         });
 
         chips = normalizeAgentSlashChips(chips, sessionId);
+        const agentChipIndexes = chips.map((c, i) => composerChipAgentId(c) ? i : -1).filter((i) => i >= 0);
+        const lastAgentChipIndex = agentChipIndexes.length ? agentChipIndexes[agentChipIndexes.length - 1] : -1;
         const chipsHtml = chips.length
             ? ('<span class="slash-chips-inline">'
-                + chips.map((c) => slashCommandChipHistoryHtml(
+                + chips.map((c, i) => '<span class="history-agent-chip' + (composerChipAgentId(c) ? ' is-agent-chip' : '') + (i === lastAgentChipIndex ? ' is-last-agent-chip' : '') + '">' + slashCommandChipHistoryHtml(
                     c.label,
                     c.meta || c.prefix || c.label,
                     c.category
-                )).join('')
+                ) + '</span>').join('')
                 + '</span>')
             : '';
         // A name that was nothing but slash tokens already shows as chips.
@@ -6654,6 +6656,51 @@
     }
     
     // Chat history panel management
+    function setupHistoryDisplayFilters() {
+        const button = document.getElementById('chatHistoryFilterButton');
+        const popover = document.getElementById('chatHistoryDisplayFilters');
+        if (!button || !popover) return;
+        const key = 'chatHistoryDisplayFilters';
+        const defaults = { project: true, worktree: true, branch: true, agent: true, allAgents: false };
+        let prefs = defaults;
+        try { prefs = Object.assign({}, defaults, JSON.parse(localStorage.getItem(key) || '{}')); } catch (_) {}
+        const apply = () => {
+            document.body.classList.toggle('history-hide-project', !prefs.project);
+            document.body.classList.toggle('history-hide-worktree', !prefs.worktree);
+            document.body.classList.toggle('history-hide-branch', !prefs.branch);
+            document.body.classList.toggle('history-hide-agents', !prefs.agent);
+            document.body.classList.toggle('history-last-agent-only', prefs.agent && !prefs.allAgents);
+            popover.querySelectorAll('[data-history-display-pref]').forEach((input) => {
+                input.checked = !!prefs[input.dataset.historyDisplayPref];
+            });
+        };
+        apply();
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            popover.hidden = !popover.hidden;
+            button.setAttribute('aria-expanded', popover.hidden ? 'false' : 'true');
+        });
+        popover.addEventListener('click', (event) => event.stopPropagation());
+        popover.addEventListener('change', (event) => {
+            const input = event.target.closest('[data-history-display-pref]');
+            if (!input) return;
+            prefs[input.dataset.historyDisplayPref] = input.checked;
+            try { localStorage.setItem(key, JSON.stringify(prefs)); } catch (_) {}
+            apply();
+        });
+        document.addEventListener('click', (event) => {
+            if (popover.hidden || popover.contains(event.target) || button.contains(event.target)) return;
+            popover.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape' || popover.hidden) return;
+            popover.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+            button.focus();
+        });
+    }
+
     function getChatHistoryPanel() {
         return document.getElementById('chatHistoryPanel');
     }
@@ -13630,6 +13677,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             historyScroll.addEventListener('scroll', function () { historyPanel.closeMenu(); }, { passive: true });
         }
         historyPanel.setupModals();
+        setupHistoryDisplayFilters();
         gitPush.setupConfirmModal();
 
         // Cross-device: refresh open session when tab becomes visible / focused

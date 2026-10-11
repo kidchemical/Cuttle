@@ -825,6 +825,46 @@ body.light-mode .chat-session-title-text {
     color: var(--text-primary);
 }
 
+.chat-history-filter-button {
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.chat-history-filter-button:hover,
+.chat-history-filter-button[aria-expanded="true"] { background: var(--bg-hover); color: var(--text-primary); }
+.chat-history-display-filters {
+    position: absolute;
+    z-index: 50;
+    top: 52px;
+    right: 12px;
+    width: 220px;
+    padding: 12px;
+    border: 1px solid var(--border-color, rgba(128,128,128,.3));
+    border-radius: 10px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    box-shadow: 0 8px 28px rgba(0,0,0,.24);
+    font-size: 13px;
+}
+.chat-history-display-filters[hidden] { display: none; }
+.chat-history-display-filters strong { display: block; margin: 0 0 8px; }
+.chat-history-display-filters label { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; }
+.chat-history-display-filters label.history-display-suboption { padding-left: 18px; color: var(--text-secondary); }
+.chat-history-display-filters input { accent-color: var(--accent-color, #4f8cff); }
+body.history-hide-project .chat-history .slash-command-chip--project { display: none !important; }
+body.history-hide-worktree .chat-history .history-worktree-mark { display: none !important; }
+body.history-hide-branch .chat-history .slash-command-chip--project .slash-chip-seg--branch { display: none !important; }
+body.history-hide-agents .chat-history .history-agent-chip.is-agent-chip { display: none !important; }
+body.history-last-agent-only .chat-history .history-agent-chip.is-agent-chip:not(.is-last-agent-chip) { display: none !important; }
+
 /* Search input + close button share one row */
 .chat-history-panel-top {
     display: flex;
@@ -1497,6 +1537,8 @@ body.light-mode .chat-session-title-text {
     min-width: 0;
     overflow: hidden;
 }
+
+.history-item-meta .history-agent-chip { display: contents; }
 
 .history-item-meta .slash-command-chip--history {
     padding: 0 3px;
