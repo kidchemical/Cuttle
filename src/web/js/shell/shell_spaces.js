@@ -28,7 +28,6 @@
         const broadcastToFrames = host.broadcastToFrames;
         const broadcastUsageLiveWake = host.broadcastUsageLiveWake;
         const updateChatUnreadBadge = host.updateUnreadBadge;
-        const syncCrossSpaceGripVisibility = host.syncCrossSpaceGripVisibility;
         const getAuthUserId = host.getAuthUserId;
         const isRestoring = host.isRestoring;
         const snapshotLayout = host.snapshotLayout;
@@ -36,8 +35,29 @@
         const defaultSpaceRoot = host.defaultSpaceRoot;
         const persistLastChatHandles = host.persistLastChatHandles;
         const clearLastChatColumn = host.clearLastChatColumn;
-        const setupTabDrag = host.setupTabDrag;
         const fetchImpl = (url, opts) => win.fetch(url, opts);
+
+        // Pane/layout capabilities for the cross-space pane-drag effects. The
+        // shell keeps the pane reorder itself; this owner only drives the
+        // space-side move/swap and its stored-layout tree edits.
+        const getSplitContainer = host.getSplitContainer;
+        const getSplitColumns = host.getSplitColumns;
+        const closeSplitColumn = host.closeSplitColumn;
+        const getColumnEl = host.getColumnEl;
+        const getState = host.getState;
+        const setState = host.setState;
+        const updateColumnUI = host.updateColumnUI;
+        const replaceFrame = host.replaceFrame;
+        const attachFrameLoadListener = host.attachFrameLoadListener;
+        const pageWithPaneSession = host.pageWithPaneSession;
+        const canonicalizeShellPage = host.canonicalizeShellPage;
+        const persistSplitLayout = host.persistSplitLayout;
+        const lastChatByColumn = host.lastChatByColumn;
+        const newLeafId = host.newLeafId;
+        const newGroupId = host.newGroupId;
+        const normalizeSplitOrientation = host.normalizeSplitOrientation;
+        const setFocusedColumnDirect = host.setFocusedColumnDirect;
+        const broadcastPaneFocus = host.broadcastPaneFocus;
 
         // ── Space groups (Chrome-style tab groups) ─────────────
         // A group is a named, colored bucket of spaces. Tabs keep working exactly as
@@ -151,6 +171,13 @@
                 + (group.name ? '<span class="shell-space-group-name">' + name + '</span>' : '')
                 + (collapsed ? '<span class="shell-space-group-count">' + members + '</span>' : '')
                 + '</button>';
+        }
+
+        /** Show the grip for cross-space drags even when this space has a single pane. */
+        function syncCrossSpaceGripVisibility() {
+            const splitContainer = getSplitContainer();
+            if (!splitContainer) return;
+            splitContainer.classList.toggle('has-cross-space', spacesState.spaces.length >= 2);
         }
 
         // ── Spaces (titlebar tabs — each holds its own split layout) ────
@@ -340,6 +367,309 @@
                 if (active) tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
             });
         }
+
+        // ── Cross-space pane drag (grip → space tab) ───────────────
+        // Quick release over a space tab moves the dragged viewport to the far
+        // right of that space (new horizontal split, placed at end). Holding
+        // over a tab for PANE_SPACE_HOVER_MS instead switches to that space so
+        // the still-held grip can be dropped on the exact pane to swap with.
+        // The pane reorder itself stays in app_shell; this owner keeps only the
+        // cross-space coupling and its stored-layout tree effects.
+        function spaceById(id) {
+            return CuttleSpaces.getSpaceById(spacesState, id);
+        }
+
+        function blankLayoutLeafNode() {
+            return { type: 'leaf', id: newLeafId(), page: '/chat_page.html', flex: '' };
+        }
+
+        /** Append a leaf copy as a far-right horizontal split; wraps when needed. */
+        function appendLayoutLeafToEnd(root, leaf) {
+            const node = {
+                type: 'leaf',
+                id: (leaf && leaf.id) || newLeafId(),
+                page: (leaf && leaf.page) || '/chat_page.html',
+                flex: '',
+            };
+            if (leaf && leaf.chat) node.chat = String(leaf.chat);
+            if (leaf && leaf.terminal) node.terminal = String(leaf.terminal);
+            if (!root || typeof root !== 'object') {
+                return {
+                    type: 'group', id: newGroupId(), orientation: 'horizontal', flex: '',
+                    children: [blankLayoutLeafNode(), node],
+                };
+            }
+            if (root.type === 'group' && normalizeSplitOrientation(root.orientation) === 'horizontal'
+                && Array.isArray(root.children)) {
+                root.children.push(node);
+                return root;
+            }
+            return {
+                type: 'group', id: newGroupId(), orientation: 'horizontal', flex: '',
+                children: [root, node],
+            };
+        }
+
+        /** Depth-first leaf lookup by stored leaf id. */
+        function findLayoutLeafNode(root, leafId) {
+            if (!root || typeof root !== 'object' || !leafId) return null;
+            if (root.type === 'leaf') return root.id === leafId ? root : null;
+            if (root.type === 'group' && Array.isArray(root.children)) {
+                for (const ch of root.children) {
+                    const hit = findLayoutLeafNode(ch, leafId);
+                    if (hit) return hit;
+                }
+            }
+            return null;
+        }
+
+        /** Remove a leaf by id, collapsing single-child groups. Returns { root, removed }. */
+        function removeLayoutLeafNode(root, leafId) {
+            if (!root || typeof root !== 'object' || !leafId) return { root, removed: null };
+            if (root.type === 'leaf') {
+                return root.id === leafId ? { root: null, removed: root } : { root, removed: null };
+            }
+            if (root.type !== 'group' || !Array.isArray(root.children)) return { root, removed: null };
+            let removed = null;
+            const kept = [];
+            for (const ch of root.children) {
+                if (removed) { kept.push(ch); continue; }
+                if (ch && ch.type === 'leaf' && ch.id === leafId) { removed = ch; continue; }
+                const res = removeLayoutLeafNode(ch, leafId);
+                if (res.removed) removed = res.removed;
+                if (res.root) kept.push(res.root);
+            }
+            if (!removed) return { root, removed: null };
+            if (kept.length === 0) return { root: null, removed };
+            if (kept.length === 1) return { root: kept[0], removed };
+            root.children = kept;
+            return { root, removed };
+        }
+
+        /** Point a live pane at stored leaf content (page + chat/terminal handles). */
+        function applyStoredLeafToLivePane(colIdx, leaf) {
+            if (!Number.isFinite(colIdx) || !leaf) return false;
+            const col = getColumnEl(colIdx);
+            if (!col) return false;
+            const entry = {};
+            if (leaf.chat) entry.chat = String(leaf.chat);
+            if (leaf.terminal) entry.terminal = String(leaf.terminal);
+            lastChatByColumn.delete(colIdx);
+            if (Object.keys(entry).length) lastChatByColumn.set(colIdx, entry);
+            const page = pageWithPaneSession(colIdx, canonicalizeShellPage(leaf.page || '/chat_page.html'));
+            setState(colIdx, page);
+            updateColumnUI(colIdx, page);
+            const frame = replaceFrame(colIdx, page);
+            if (frame) attachFrameLoadListener(colIdx, frame);
+            return true;
+        }
+
+        /** Quick drop: move the dragged viewport to the far right of another space. */
+        function moveDraggedPaneToSpace(load, colEl, targetSpaceId) {
+            if (!load || !targetSpaceId || targetSpaceId === spacesState.active) return false;
+            const target = spaceById(targetSpaceId);
+            if (!target) return false;
+            target.root = appendLayoutLeafToEnd(target.root, load);
+            persistSpacesState();
+            renderSpaceTabs();
+            const live = getSplitColumns();
+            if (live.length >= 2 && colEl && colEl.isConnected) {
+                closeSplitColumn(colEl);
+            } else if (colEl && colEl.isConnected) {
+                // Sole viewport moved away — leave a fresh chat behind, never an empty space.
+                const idx = parseInt(colEl.dataset.column, 10);
+                if (Number.isFinite(idx)) {
+                    lastChatByColumn.delete(idx);
+                    applyStoredLeafToLivePane(idx, blankLayoutLeafNode());
+                    persistLastChatHandles();
+                    persistSplitLayout();
+                }
+            }
+            if (typeof win.showToast === 'function') {
+                win.showToast('Moved pane to ' + (target.name || 'space'), 'success');
+            }
+            return true;
+        }
+
+        /** Chained drop while carrying: relocate the payload between stored spaces. */
+        function moveCarriedPaneToSpace(load, srcId, targetSpaceId) {
+            if (!load || !targetSpaceId || targetSpaceId === spacesState.active) return false;
+            const dst = spaceById(targetSpaceId);
+            if (!dst || targetSpaceId === srcId) return false;
+            const src = spaceById(srcId);
+            if (src && src.root) {
+                const res = removeLayoutLeafNode(src.root, load.id);
+                if (res.removed) src.root = res.root || blankLayoutLeafNode();
+            }
+            dst.root = appendLayoutLeafToEnd(dst.root, load);
+            persistSpacesState();
+            renderSpaceTabs();
+            if (typeof win.showToast === 'function') {
+                win.showToast('Moved pane to ' + (dst.name || 'space'), 'success');
+            }
+            return true;
+        }
+
+        /** Drop on a live pane while carrying: swap the payload with that pane's content. */
+        function exchangeCarriedPaneWithLive(load, srcId, targetCol) {
+            const src = spaceById(srcId);
+            if (!src || !load || !targetCol || !targetCol.isConnected) return false;
+            const idxT = parseInt(targetCol.dataset.column, 10);
+            if (!Number.isFinite(idxT)) return false;
+            const stateT = { ...getState(idxT) };
+            const oldPage = pageWithPaneSession(idxT, canonicalizeShellPage(stateT.page || '/chat_page.html'));
+            const oldHandles = { ...(lastChatByColumn.get(idxT) || {}) };
+            if (!applyStoredLeafToLivePane(idxT, load)) return false;
+            const slot = findLayoutLeafNode(src.root, load.id);
+            if (slot) {
+                slot.page = oldPage;
+                delete slot.chat;
+                delete slot.terminal;
+                if (oldHandles.chat) slot.chat = String(oldHandles.chat);
+                if (oldHandles.terminal) slot.terminal = String(oldHandles.terminal);
+            }
+            persistSpacesState();
+            persistLastChatHandles();
+            persistSplitLayout();
+            setFocusedColumnDirect(idxT);
+            broadcastPaneFocus();
+            if (typeof win.showToast === 'function') {
+                win.showToast('Swapped panes with ' + (src.name || 'space'), 'success');
+            }
+            return true;
+        }
+
+        const PANE_SPACE_HOVER_MS = 1000;
+
+        /** Space-tab element under a viewport point (titlebar hit-test during pane drags). */
+        function spaceTabAtPoint(x, y) {
+            const tabs = doc.querySelectorAll('.shell-space-tab');
+            for (const tab of tabs) {
+                const r = tab.getBoundingClientRect();
+                if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return tab;
+            }
+            return null;
+        }
+
+        /**
+         * Cross-space coupling for one pane-grip drag. The shell keeps the
+         * within-space pane reorder; this owns the tab hover→switch and the
+         * drop that moves or swaps a pane between spaces.
+         */
+        function createPaneDrop() {
+            let load = null;
+            let colEl = null;
+            let onAutoSwitch = null;
+            let carrying = false;
+            let sourceSpaceId = null;
+            let hoverTab = null;
+            let hoverTimer = 0;
+
+            function clearHover() {
+                if (hoverTimer) { win.clearTimeout(hoverTimer); hoverTimer = 0; }
+                if (hoverTab) { hoverTab.classList.remove('pane-space-hover'); hoverTab = null; }
+            }
+
+            /** A drag may start when another pane OR another space can receive it. */
+            function canStartDrag() {
+                return !(getSplitColumns().length < 2 && spacesState.spaces.length < 2);
+            }
+
+            function beginDrag(payload, columnEl, resetPaneDrop) {
+                load = payload;
+                colEl = columnEl;
+                onAutoSwitch = resetPaneDrop || null;
+                carrying = false;
+                sourceSpaceId = null;
+                clearHover();
+            }
+
+            function endDrag() {
+                load = null;
+                colEl = null;
+                onAutoSwitch = null;
+                carrying = false;
+                sourceSpaceId = null;
+                clearHover();
+            }
+
+            function autoSwitchToSpace(spaceId) {
+                if (!load || !spaceId || spaceId === spacesState.active) return;
+                if (!carrying) {
+                    carrying = true;
+                    sourceSpaceId = spacesState.active;
+                }
+                clearHover();
+                if (onAutoSwitch) { try { onAutoSwitch(); } catch (_) {} }
+                switchSpace(spaceId);
+                // Hovering home for 1s just comes back — the payload never left.
+                if (spacesState.active === sourceSpaceId) {
+                    carrying = false;
+                    sourceSpaceId = null;
+                }
+            }
+
+            function trackHover(e) {
+                if (!load || spacesState.spaces.length < 2) return;
+                const tab = spaceTabAtPoint(e.clientX, e.clientY);
+                if (tab === hoverTab) return;
+                clearHover();
+                hoverTab = tab || null;
+                if (hoverTab && hoverTab.dataset.spaceId !== spacesState.active) {
+                    hoverTab.classList.add('pane-space-hover');
+                    const id = hoverTab.dataset.spaceId;
+                    hoverTimer = win.setTimeout(() => {
+                        if (load && hoverTab && hoverTab.dataset.spaceId === id) autoSwitchToSpace(id);
+                    }, PANE_SPACE_HOVER_MS);
+                }
+            }
+
+            /**
+             * Consume a drop that targets a space (or a live pane while
+             * carrying). Returns true when handled; false lets the shell do the
+             * within-space reorder. Always resets the drag state.
+             */
+            function finishDrop(upEvent, dropTarget) {
+                const payload = load;
+                const wasCarrying = carrying;
+                const srcId = sourceSpaceId;
+                const col = colEl;
+                endDrag();
+                if (!payload) return false;
+                const tab = (upEvent && Number.isFinite(upEvent.clientX) && Number.isFinite(upEvent.clientY))
+                    ? spaceTabAtPoint(upEvent.clientX, upEvent.clientY)
+                    : null;
+                const tabId = tab ? (tab.dataset.spaceId || '') : '';
+                if (tabId && tabId !== spacesState.active) {
+                    if (!wasCarrying) {
+                        win.setTimeout(() => moveDraggedPaneToSpace(payload, col, tabId), 0);
+                        return true;
+                    }
+                    if (tabId === srcId) {
+                        win.setTimeout(() => switchSpace(srcId), 0);
+                        return true;
+                    }
+                    win.setTimeout(() => moveCarriedPaneToSpace(payload, srcId, tabId), 0);
+                    return true;
+                }
+                if (wasCarrying) {
+                    if (dropTarget && dropTarget.isConnected && dropTarget !== col) {
+                        const targetEl = dropTarget;
+                        win.setTimeout(() => exchangeCarriedPaneWithLive(payload, srcId, targetEl), 0);
+                    }
+                    return true;
+                }
+                return false;
+            }
+
+            return {
+                hoverMs: PANE_SPACE_HOVER_MS,
+                canStartDrag, beginDrag, endDrag, trackHover, clearHover, finishDrop,
+                isActive: () => !!load,
+            };
+        }
+
+        const paneDrop = createPaneDrop();
 
         // ── Spaces activity (one indicator per tab) ─────────────────────
         // Same states as chat history/title dots: input (blue), running (spinner),
@@ -1019,6 +1349,175 @@
             });
         }
 
+        /** Measure the tab strip for the canonical drop computation (DOM read only). */
+        function measureSpaceDropLanes(host, draggedId) {
+            const lanes = [];
+            const tabRects = {};
+            const sleeveRects = {};
+            host.querySelectorAll('.shell-space-tab, .shell-space-group-sleeve').forEach((el) => {
+                if (el.classList.contains('shell-space-tab')) {
+                    const id = el.dataset.spaceId;
+                    if (!id || id === draggedId) return;
+                    const r = el.getBoundingClientRect();
+                    lanes.push({ t: 'tab', id });
+                    tabRects[id] = { left: r.left, width: r.width };
+                } else if (el.dataset.groupId) {
+                    const r = el.getBoundingClientRect();
+                    lanes.push({ t: 'sleeve', gid: el.dataset.groupId });
+                    sleeveRects[el.dataset.groupId] = { left: r.left, width: r.width };
+                }
+            });
+            return { lanes, tabRects, sleeveRects };
+        }
+
+        /** One canonical drop target for preview AND commit (spaces_drop.js). */
+        function computeSpaceDropTarget(host, draggedId, x) {
+            const visibleIds = Array.from(host.querySelectorAll('.shell-space-tab')).map((t) => t.dataset.spaceId);
+            const m = measureSpaceDropLanes(host, draggedId);
+            return CuttleSpaces.computeDropTarget({
+                spaces: spacesState.spaces,
+                groups: spacesState.groups,
+                visibleIds,
+                draggedId,
+                lanes: m.lanes,
+                tabRects: m.tabRects,
+                sleeveRects: m.sleeveRects,
+                x,
+            });
+        }
+
+        /** Position the dragged tab element per the canonical preview directive. */
+        function placeDraggedSpaceTab(host, tab, target) {
+            const place = (target && !target.noop && target.place) || { end: true };
+            const tabElFor = (id) => {
+                try {
+                    return host.querySelector('.shell-space-tab[data-space-id="' + win.CSS.escape(id) + '"]');
+                } catch (_) { return null; }
+            };
+            const sleeveElFor = (gid) => {
+                try {
+                    return host.querySelector('.shell-space-group-sleeve[data-group-id="' + win.CSS.escape(gid) + '"]');
+                } catch (_) { return null; }
+            };
+            if (place.park) {
+                const sleeve = sleeveElFor(place.park);
+                if (sleeve && (tab.parentElement !== sleeve || tab.nextElementSibling !== null)) {
+                    sleeve.appendChild(tab);
+                }
+            } else if (place.beforeTab) {
+                const ref = tabElFor(place.beforeTab);
+                if (ref && tab.nextElementSibling !== ref) ref.parentElement.insertBefore(tab, ref);
+            } else if (place.beforeSleeve) {
+                const ref = sleeveElFor(place.beforeSleeve);
+                if (ref && tab.nextElementSibling !== ref) host.insertBefore(tab, ref);
+            } else if (host.lastElementChild !== tab) {
+                host.appendChild(tab);
+            }
+        }
+
+        /** Drag a tab sideways to reorder; it follows the pointer while siblings reflow around it. */
+        function setupSpaceTabDrag(host) {
+            const THRESHOLD = 4;
+            let drag = null;
+            let suppressClick = false;
+
+            const finish = (commit, dropX) => {
+                if (!drag) return;
+                const { tab, active, pointerId } = drag;
+                drag = null;
+                if (!active) return;
+                tab.classList.remove('is-dragging');
+                tab.style.transform = '';
+                host.classList.remove('is-reordering');
+                doc.body.classList.remove('is-reordering-spaces');
+                if (tab.hasPointerCapture(pointerId)) tab.releasePointerCapture(pointerId);
+                if (commit) {
+                    // Commit consumes the same canonical target the preview showed:
+                    // no re-derivation from DOM order, no separate neighbor pass.
+                    const target = computeSpaceDropTarget(host, tab.dataset.spaceId, dropX);
+                    if (!target.noop) {
+                        const res = CuttleSpaces.applyDropTarget(spacesState, target, tab.dataset.spaceId);
+                        if (res.orderChanged || res.groupChanged || res.pruned) persistSpacesState();
+                    }
+                }
+                renderSpaceTabs();
+                // The pointerup still produces a click on the tab; don't treat the drop as a switch.
+                suppressClick = true;
+                win.setTimeout(() => { suppressClick = false; }, 0);
+            };
+
+            host.addEventListener('pointerdown', (e) => {
+                if (e.button !== 0 || spacesState.spaces.length < 2) return;
+                const tab = e.target.closest('.shell-space-tab');
+                if (!tab || e.target.closest('.shell-space-close, .shell-space-rename')) return;
+                drag = { tab, pointerId: e.pointerId, startX: e.clientX, originLeft: tab.getBoundingClientRect().left, tx: 0, active: false };
+            });
+
+            // Move/up/cancel ride on window (capture): the strip is small and the page
+            // below is all iframes, which swallow events aimed at the strip. While a
+            // drag is active, content iframes also lose hit-testing (see
+            // body.is-reordering-spaces) so a release over page content still lands.
+            win.addEventListener('pointermove', (e) => {
+                if (!drag || e.pointerId !== drag.pointerId) return;
+                // A press whose release was missed (off-window pointerup) must never
+                // start a button-less reorder on the next hover — cancel it instead.
+                if (e.buttons === 0) { finish(false); return; }
+                const { tab } = drag;
+                if (!drag.active) {
+                    if (Math.abs(e.clientX - drag.startX) < THRESHOLD) return;
+                    drag.active = true;
+                    tab.setPointerCapture(e.pointerId);
+                    tab.classList.add('is-dragging');
+                    host.classList.add('is-reordering');
+                    doc.body.classList.add('is-reordering-spaces');
+                }
+                // Preview consumes the canonical target: the tab renders where the
+                // drop would commit it, and the sleeve highlight matches the
+                // membership the drop would assign (no separate hover rule).
+                const target = computeSpaceDropTarget(host, tab.dataset.spaceId, e.clientX);
+                placeDraggedSpaceTab(host, tab, target);
+                // Hovering a sleeve lights its boundary exactly when the drop joins.
+                host.querySelectorAll('.shell-space-group-sleeve.is-drop-target').forEach((el) => {
+                    el.classList.remove('is-drop-target');
+                });
+                if (target.groupId) {
+                    try {
+                        host.querySelector(
+                            '.shell-space-group-sleeve[data-group-id="' + win.CSS.escape(target.groupId) + '"]'
+                        )?.classList.add('is-drop-target');
+                    } catch (_) {}
+                }
+                const rect = tab.getBoundingClientRect();
+                const layoutLeft = rect.left - drag.tx;
+                const hostRect = host.getBoundingClientRect();
+                let left = drag.originLeft + (e.clientX - drag.startX);
+                left = Math.max(hostRect.left, Math.min(left, hostRect.right - rect.width));
+                drag.tx = left - layoutLeft;
+                tab.style.transform = 'translateX(' + drag.tx + 'px)';
+            });
+
+            win.addEventListener('pointerup', (e) => {
+                if (drag && e.pointerId === drag.pointerId) finish(true, e.clientX);
+            }, true);
+            win.addEventListener('pointercancel', (e) => {
+                if (drag && e.pointerId === drag.pointerId) finish(false);
+            }, true);
+            // Releasing off-window delivers no pointerup; snap back instead of
+            // floating the tab until the next hover cancels the gesture.
+            win.addEventListener('blur', () => { if (drag) finish(false); });
+            host.addEventListener('keydown', (e) => {
+                if (drag?.active && e.key === 'Escape') {
+                    e.preventDefault();
+                    finish(false);
+                }
+            }, true);
+            host.addEventListener('click', (e) => {
+                if (!suppressClick) return;
+                e.stopPropagation();
+                e.preventDefault();
+            }, true);
+        }
+
         /** Wire the tab strip: selection, rename, add/close, menus, drag hook,
          *  storage wake and the initial activity poll. Called once by app_shell. */
         function setup() {
@@ -1060,7 +1559,7 @@
             const addBtn = doc.getElementById('shellSpacesAdd');
             addBtn?.addEventListener('click', () => addSpace());
             addBtn?.addEventListener('dblclick', (e) => e.stopPropagation());
-            if (setupTabDrag) setupTabDrag(hostEl);
+            setupSpaceTabDrag(hostEl);
             setupSpaceTabMenus(hostEl);
             // Chat iframes write unread prefs + followups to the same localStorage —
             // refresh dots without waiting for the next heartbeat.
@@ -1100,6 +1599,7 @@
             schedulePoll: scheduleSpaceActivityPoll,
             refreshFromServer: refreshSpaceActivityFromServer,
             isCtxOpen: isSpaceCtxOpen,
+            paneDrop,
             setup,
         };
     }

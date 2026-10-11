@@ -79,11 +79,12 @@ def test_grouped_tabs_render_pill_and_accent():
 def test_reorder_drop_joins_or_leaves_group():
     # Phase 1: one canonical target (spaces_drop.js) feeds preview AND commit.
     # The old split (fixDraggedTabGroup + sleeve-rect neighbor pass) is gone.
+    # 5C: the tab drag/drop effects live in the Spaces owner (shell_spaces.js).
     mod = DROP_JS.read_text(encoding="utf-8")
     assert "function computeDropTarget(" in mod
     assert "function applyDropTarget(" in mod
     assert "spaceGroupPillAtX" not in mod
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert "function fixDraggedTabGroup(" not in src
     assert "computeSpaceDropTarget(host, tab.dataset.spaceId" in src  # preview + commit
     assert "CuttleSpaces.applyDropTarget(spacesState, target," in src
@@ -97,16 +98,18 @@ def test_tab_reorder_survives_collapsed_groups():
     mod = ORDER_JS.read_text(encoding="utf-8")
     assert "function computeReorderedIds(" in mod
     assert "function applyVisibleOrder(" in mod
+    owner = OWNER_JS.read_text(encoding="utf-8")
     src = SHELL_JS.read_text(encoding="utf-8")
-    assert "function reorderSpacesAroundHidden(" not in src
-    assert "reorderSpaces(ids)" not in src
-    # Off-window releases snap back instead of floating the tab.
-    assert "window.addEventListener('blur', () => { if (drag) finish(false); });" in src
+    assert "function reorderSpacesAroundHidden(" not in owner
+    assert "reorderSpaces(ids)" not in owner
+    # Off-window releases snap back instead of floating the tab (tab drag in the
+    # Spaces owner, pane drag in the shell).
+    assert "win.addEventListener('blur', () => { if (drag) finish(false); });" in owner
     assert "window.addEventListener('blur', onBlurCancel, true)" in src
 
 
 def test_tab_drag_nudges_groups_live():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     # Tabs and sleeves share the measured lane order for the canonical target.
     assert "'.shell-space-tab, .shell-space-group-sleeve'" in src
     assert "function measureSpaceDropLanes(" in src
@@ -130,18 +133,18 @@ def test_sleeve_end_preview_matches_drop():
     assert "inside the sleeve end" in mod
     assert "r.left + r.width + 6" in mod  # same +6 end slop as membership
     assert "place = { park: joinSleeve }" in mod
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert "placeDraggedSpaceTab(host, tab, target)" in src
     assert "sleeve.appendChild(tab)" in src
 
 
 def test_tab_drag_survives_iframes_and_off_strip_releases():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     # Gesture events ride on window: the strip is small and content iframes
     # swallow events aimed at it.
-    assert "window.addEventListener('pointermove', (e) => {" in src
-    assert "window.addEventListener('pointerup', (e) => {" in src
-    assert "window.addEventListener('pointercancel', (e) => {" in src
+    assert "win.addEventListener('pointermove', (e) => {" in src
+    assert "win.addEventListener('pointerup', (e) => {" in src
+    assert "win.addEventListener('pointercancel', (e) => {" in src
     # While active, content iframes lose hit-testing so the release lands.
     assert "is-reordering-spaces" in src
     css = SHELL_CSS.read_text(encoding="utf-8")
@@ -149,9 +152,10 @@ def test_tab_drag_survives_iframes_and_off_strip_releases():
 
 
 def test_buttonless_moves_cancel_drags():
+    owner = OWNER_JS.read_text(encoding="utf-8")
     src = SHELL_JS.read_text(encoding="utf-8")
     # A press whose release was missed must never start a button-less reorder.
-    assert "if (e.buttons === 0) { finish(false); return; }" in src
+    assert "if (e.buttons === 0) { finish(false); return; }" in owner
     assert "if (e.buttons === 0) { finish(null, true); return; }" in src
     # pointercancel is a true cancel, never a commit.
     assert "window.addEventListener('pointercancel', onCancel, true)" in src
