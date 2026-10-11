@@ -15,6 +15,8 @@
         const autoToggle = root.querySelector('[data-release-auto-toggle]');
         const autoCheckbox = root.querySelector('[data-release-auto-check]');
         const sourceSelect = root.querySelector('[data-update-source]');
+        const deviceUpdateBtn = root.querySelector('[data-device-update]');
+        const deviceStatus = root.querySelector('[data-device-update-status]');
         let identity = '';
 
         function autoChecksEnabled() {
@@ -124,6 +126,82 @@
                 }
             });
             loadUpdateSource();
+        }
+        // "Update this device": actually pull + restart, unlike the release
+        // check above (published GitHub releases). Targets the viewer's own
+        // worker (set by app_shell), so it works from a thin Client's Settings.
+        function viewerWorkerId() {
+            try { return String(sessionStorage.getItem('cuttle_viewer_worker_id') || '').trim().toLowerCase(); }
+            catch (_) { return ''; }
+        }
+        function viewerIsClient() {
+            try { return sessionStorage.getItem('cuttle_client_mode') === '1'; }
+            catch (_) { return false; }
+        }
+        async function resolveViewerTarget() {
+            let self = '';
+            try {
+                const r = await fetch('/api/workers', { cache: 'no-store' });
+                const data = r.ok ? await r.json() : {};
+                self = String((data && data.self_worker_id) || '').trim().toLowerCase();
+            } catch (_) { /* fall back to the viewer id below */ }
+            const vid = viewerWorkerId();
+            return (viewerIsClient() && vid) ? vid : (self || vid);
+        }
+        if (deviceUpdateBtn) {
+            deviceUpdateBtn.addEventListener('click', async () => {
+                deviceUpdateBtn.disabled = true;
+                if (deviceStatus) deviceStatus.textContent = 'Resolving this device…';
+                try {
+                    const target = await resolveViewerTarget();
+                    if (!target) throw new Error('Could not identify this device on the mesh.');
+                    const source = sourceSelect && sourceSelect.value === 'host' ? 'host' : 'official';
+                    if (deviceStatus) deviceStatus.textContent = 'Updating ' + target + ' (' + source.toUpperCase() + ')…';
+                    const r = await fetch('/api/workers/self-update', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            target: target,
+                            submitted_by: 'settings-ui',
+                            update_source: source,
+                            no_daemon: !viewerIsClient(),
+                        }),
+                    });
+                    const data = await r.json().catch(() => ({}));
+                    if (!r.ok || !data.success) throw new Error(data.error || ('HTTP ' + r.status));
+                    const jobId = String((data.job && (data.job.id || data.job.job_id)) || data.job_id || '').trim();
+                    let final = data.job || null;
+                    if (jobId) {
+                        const deadline = Date.now() + 180000;
+                        while (Date.now() < deadline) {
+                            await new Promise((res) => setTimeout(res, 1500));
+                            try {
+                                const sr = await fetch('/api/workers/jobs/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                                const sj = await sr.json().catch(() => ({}));
+                                final = (sj && (sj.job || sj)) || final;
+                                const st = String((final && final.status) || '').toLowerCase();
+                                if (st === 'succeeded' || st === 'failed' || st === 'cancelled') break;
+                            } catch (_) { /* keep waiting */ }
+                        }
+                    }
+                    const st = String((final && final.status) || '').toLowerCase();
+                    if (st === 'failed' || st === 'cancelled') {
+                        throw new Error(String(
+                            (final && (final.error || (final.result && final.result.error))) || 'Self-update failed'
+                        ));
+                    }
+                    const jr = (final && final.result) || {};
+                    if (deviceStatus) {
+                        deviceStatus.textContent = (jr.advanced === false)
+                            ? (jr.note || 'Already at the latest — restarted.')
+                            : ('Updated to ' + (jr.head || 'the latest') + ' — restarting.');
+                    }
+                } catch (error) {
+                    if (deviceStatus) deviceStatus.textContent = String(error.message || error);
+                } finally {
+                    deviceUpdateBtn.disabled = false;
+                }
+            });
         }
         if (autoEnabled) load(false);
         else showManualOnly();

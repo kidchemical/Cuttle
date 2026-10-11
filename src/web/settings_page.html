@@ -79,6 +79,16 @@
                         </select>
                     </div>
                 </div>
+                <div class="setting-item setting-item--stack">
+                    <div class="setting-label">
+                        <strong>Update this device</strong><button type="button" class="cuttle-info" data-tooltip="Pull the selected channel and restart Cuttle on THIS device. Unlike “Check for updates” (published GitHub releases), this actually updates the running install." aria-label="About Update this device">i</button>
+                        <div class="setting-description">Applies the selected source to this device now — git pull + restart. The titlebar Update button does the same.</div>
+                    </div>
+                    <div class="setting-control setting-control--stack">
+                        <div class="provider-status" data-device-update-status role="status" aria-live="polite"></div>
+                        <button type="button" class="control-button" data-device-update>Update this device</button>
+                    </div>
+                </div>
             </div>
 
             <div class="settings-group">
@@ -754,7 +764,7 @@
     <script src="/js/media/background_effect_blend.js"></script>
     <script src="/js/shared/toast.js"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
-    <script src="/js/settings/settings_releases.js?v=20261008releasePrefs"></script>
+    <script src="/js/settings/settings_releases.js?v=20261011deviceUpdate"></script>
     <script src="/js/settings/settings_storage.js?v=20261007"></script>
     <script src="/js/shared/searchable_select.js?v=20261009combo1"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261009a"></script>
