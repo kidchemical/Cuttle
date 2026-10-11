@@ -257,7 +257,7 @@
         // Frame creation and soft teardown belong to the pane lifetime. The
         // composition root supplies its existing transition and layout hooks.
         function createContentFrame(colIdx) {
-            const frame = doc.createElement('iframe');
+            const frame = document.createElement('iframe');
             frame.frameBorder = '0';
             frame.allowFullscreen = true;
             frame.allow = 'clipboard-read; clipboard-write';
@@ -365,6 +365,10 @@
 
         // Chromium shares ~6 HTTP/1.1 connections per origin across all chat iframes.
         let focusedColumnIdx = 0;
+        Object.defineProperty(window, 'focusedColumnIdx', {
+            configurable: true,
+            get: () => focusedColumnIdx,
+        });
         const paneSessionByColumn = new Map();
         let liveStatusHubArmed = false;
         let liveStatusHubInFlight = false;

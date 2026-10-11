@@ -927,7 +927,9 @@ paneController = CuttleShellPanes.create({
     localStorage, isSplitDiscardedEl, isCuttleMobileShell,
     withRememberedChat, rememberChatHandleFromPage, getState,
     setState, storagePageKey: STORAGE_PAGE,
-    updateColumnUI, persistSplitLayout, sessionStorage, desktopCfg, forgetChatHandle: () => rememberChatHandle(0, 'chat', null),
+    updateColumnUI, persistSplitLayout, sessionStorage,
+    desktopCfg: CuttleShellElectron.getDesktopConfig(),
+    forgetChatHandle: () => rememberChatHandle(0, 'chat', null),
 });
 
 function applyUiAnimationPrefs() { paneController.applyUiAnimationPrefs(); }

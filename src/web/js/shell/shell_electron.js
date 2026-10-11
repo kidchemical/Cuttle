@@ -14,6 +14,7 @@
     // the titlebar while open and re-arm the hide timer after they close.
     let rescheduleHide = null;
     let cancelHide = null;
+    let desktopCfg = { clientMode: false, host: '127.0.0.1' };
 
     function initElectronTitlebar() {
         const api = window.electron;
@@ -104,7 +105,7 @@
                 : 'This PC is running the Cuttle daemon — click to connect to another host';
             if (cfg && cfg.packageVersion) applyTitleVersion(cfg.packageVersion);
         };
-        let desktopCfg = { clientMode: false, host: '127.0.0.1' };
+        desktopCfg = { clientMode: false, host: '127.0.0.1' };
         applyHostChip(desktopCfg);
         // Two update channels share one titlebar button:
         //  - asar: packaged Client shell hash vs host /api/desktop/electron
@@ -933,6 +934,7 @@
     setupShellZoomHud();
 
     root.CuttleShellElectron = {
+        getDesktopConfig: function () { return desktopCfg; },
         initElectronTitlebar: initElectronTitlebar,
         wireElectronChatFind: wireElectronChatFind,
         injectElectronZoomHandler: injectElectronZoomHandler,
