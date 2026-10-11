@@ -601,134 +601,14 @@ currentPage = canonicalizeShellPage(currentPage);
 sessionStorage.setItem(STORAGE_PAGE, currentPage);
 rememberChatHandleFromPage(0, currentPage);
 
-/** Keep the address-bar ?chat= in sync with the active chat session.
- * Mobile system-back uses shellBackStack (not WebView history) so back never
- * falls through to minimize/setup. */
-let shellApplyingHistory = false;
-const shellBackStack = [];
-const SHELL_BACK_STACK_MAX = 40;
-
-function shellPageFromChatId(chatId) {
-    if (chatId) {
-        return '/chat_page.html?chat=' + encodeURIComponent(String(chatId));
-    }
-    // ?new=1 prevents withRememberedChat from resurrecting the last session.
-    return '/chat_page.html?new=1';
-}
-
-function shellPagesEqual(a, b) {
-    try {
-        const ua = new URL(a || '/chat_page.html', window.location.origin);
-        const ub = new URL(b || '/chat_page.html', window.location.origin);
-        const norm = (u) => {
-            u.searchParams.delete('_v');
-            u.searchParams.delete('_cb');
-            const chat = u.searchParams.get('chat') || u.searchParams.get('session') || '';
-            const isNew = u.searchParams.has('new');
-            return u.pathname + '|c=' + chat + '|n=' + (isNew ? '1' : '0');
-        };
-        return norm(ua) === norm(ub);
-    } catch (_) {
-        return String(a || '') === String(b || '');
-    }
-}
-
-function isShellNewChatPage(page) {
-    try {
-        const u = new URL(page || '/chat_page.html', window.location.origin);
-        if (u.pathname !== '/chat_page.html') return false;
-        if (u.searchParams.get('chat') || u.searchParams.get('session')) return false;
-        return true;
-    } catch (_) {
-        return false;
-    }
-}
-
-function currentShellPage() {
-    try {
-        const st = typeof getState === 'function' ? getState(0) : null;
-        if (st && st.page) return st.page;
-    } catch (_) {}
-    try {
-        const cid = new URL(window.location.href).searchParams.get('chat')
-            || new URL(window.location.href).searchParams.get('session');
-        if (cid) return shellPageFromChatId(cid);
-    } catch (_) {}
-    try {
-        const live = paneController?.sessionForColumn(0);
-        if (live) return shellPageFromChatId(live);
-    } catch (_) {}
-    return '/chat_page.html?new=1';
-}
-
-function pushShellBackEntry(fromPage) {
-    if (shellApplyingHistory || !fromPage) return;
-    if (isShellNewChatPage(fromPage) && shellBackStack.length === 0) return;
-    const top = shellBackStack.length ? shellBackStack[shellBackStack.length - 1] : null;
-    if (top && shellPagesEqual(top, fromPage)) return;
-    shellBackStack.push(fromPage);
-    while (shellBackStack.length > SHELL_BACK_STACK_MAX) shellBackStack.shift();
-}
-
-function recordShellHistory(page, chatId, mode) {
-    if (shellApplyingHistory || mode === 'none') return;
-    try {
-        const url = new URL(window.location.href);
-        if (chatId) {
-            url.searchParams.set('chat', String(chatId));
-            url.searchParams.delete('session');
-        } else {
-            url.searchParams.delete('chat');
-            url.searchParams.delete('session');
-        }
-        const next = url.pathname + url.search + url.hash;
-        const state = {
-            cuttleShell: 1,
-            page: page || shellPageFromChatId(chatId),
-            chatId: chatId ? String(chatId) : null,
-        };
-        const cur = window.location.pathname + window.location.search + window.location.hash;
-        // Address bar only — back navigation is owned by shellBackStack.
-        if (next !== cur || mode === 'replace' || mode === 'push') {
-            history.replaceState(state, '', next);
-        }
-    } catch (_) {}
-}
-
-function syncShellChatUrl(chatId, opts) {
-    const mode = (opts && opts.mode) || 'replace';
-    let page = opts && opts.page;
-    if (!page) {
-        try {
-            const st = typeof getState === 'function' ? getState(0) : null;
-            page = (st && st.page) || shellPageFromChatId(chatId);
-            if (chatId) {
-                const u = new URL(page, window.location.origin);
-                if (u.pathname === '/chat_page.html' || u.pathname === '/terminal_page.html') {
-                    u.searchParams.set('chat', String(chatId));
-                    u.searchParams.delete('session');
-                    u.searchParams.delete('new');
-                    page = u.pathname + u.search + u.hash;
-                }
-            }
-        } catch (_) {
-            page = shellPageFromChatId(chatId);
-        }
-    }
-    recordShellHistory(page, chatId || null, mode);
-}
-
-function applyShellHistoryState(page) {
-    if (!page) page = '/chat_page.html?new=1';
-    shellApplyingHistory = true;
-    try {
-        if (typeof navigate === 'function') {
-            navigate(0, page, { history: 'none' });
-        }
-    } finally {
-        shellApplyingHistory = false;
-    }
-}
+/** Compatibility calls into the pane-owned URL and history state machine. */
+function shellPageFromChatId(chatId) { return paneController.shellPageFromChatId(chatId); }
+function shellPagesEqual(a, b) { return paneController.shellPagesEqual(a, b); }
+function isShellNewChatPage(page) { return paneController.isShellNewChatPage(page); }
+function currentShellPage() { return paneController.currentShellPage(); }
+function pushShellBackEntry(page) { return paneController.pushShellBackEntry(page); }
+function syncShellChatUrl(chatId, opts) { return paneController.syncShellChatUrl(chatId, opts); }
+function applyShellHistoryState(page) { return paneController.applyShellHistoryState(page); }
 
 /**
  * Android system back → previous chat/page, then new chat, then stay put.
@@ -748,11 +628,7 @@ window.__cuttleHandleBack = function () {
         }
     } catch (_) {}
 
-    if (shellBackStack.length > 0) {
-        const prev = shellBackStack.pop();
-        applyShellHistoryState(prev);
-        return true;
-    }
+    if (paneController.popShellBack()) return true;
 
     const page = currentShellPage();
     if (!isShellNewChatPage(page)) {
@@ -841,7 +717,7 @@ window.addEventListener('message', function(e) {
                 // Null means the pane is on a fresh unsaved chat — forget the old
                 // handle so returning to Chat doesn't resurrect it.
                 rememberChatHandle(colIdx, 'chat', e.data.chatId || null);
-                if (colIdx === 0 && !shellApplyingHistory && !shellPagesEqual(cur, next)) {
+                if (colIdx === 0 && !paneController.isApplyingHistory() && !shellPagesEqual(cur, next)) {
                     pushShellBackEntry(cur);
                 }
                 setState(colIdx, next);
@@ -855,7 +731,7 @@ window.addEventListener('message', function(e) {
                     ? '/terminal_page.html?chat=' + encodeURIComponent(String(e.data.chatId))
                     : '/terminal_page.html';
                 rememberChatHandle(colIdx, 'terminal', e.data.chatId || null);
-                if (colIdx === 0 && !shellApplyingHistory && !shellPagesEqual(cur, next)) {
+                if (colIdx === 0 && !paneController.isApplyingHistory() && !shellPagesEqual(cur, next)) {
                     pushShellBackEntry(cur);
                 }
                 setState(colIdx, next);
@@ -1075,175 +951,6 @@ function dispatchFocusedChatFind(action) {
 }
 
 
-// ── Page transitions ──────────────────────────────────────────
-// Hold the incoming iframe at opacity 0 until ui_boot posts cuttle-page-ready
-// (theme + wallpaper settled, first paint done). That masks FOUC. Optional fade
-// is controlled by cuttleUiAnimations / cuttleUiTransitionMs. The previous
-// frame stays visible underneath until the new one reveals.
-const SPINNER_DELAY_MS = 90;
-const TRANSITION_FAILSAFE_MS = 2500;
-const DEFAULT_TRANSITION_MS = 220;
-const ANIM_KEY = 'cuttleUiAnimations';
-const ANIM_MS_KEY = 'cuttleUiTransitionMs';
-
-const pendingFrameReveals = new WeakMap();
-const frameRevealTokens = new Map();
-
-function uiAnimationsEnabled() {
-    try {
-        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
-    } catch (_) {}
-    try {
-        return localStorage.getItem(ANIM_KEY) !== '0';
-    } catch (_) {
-        return true;
-    }
-}
-
-function uiTransitionMs() {
-    try {
-        const n = parseInt(localStorage.getItem(ANIM_MS_KEY), 10);
-        if (isNaN(n)) return DEFAULT_TRANSITION_MS;
-        return Math.max(0, Math.min(1000, n));
-    } catch (_) {
-        return DEFAULT_TRANSITION_MS;
-    }
-}
-
-function applyUiAnimationPrefs() {
-    document.documentElement.style.setProperty('--cuttle-transition-ms', uiTransitionMs() + 'ms');
-    document.documentElement.classList.toggle('cuttle-anim', uiAnimationsEnabled());
-}
-
-function ensurePageLoader(mainEl) {
-    let loader = mainEl.querySelector('.shell-page-loader');
-    if (!loader) {
-        loader = document.createElement('div');
-        loader.className = 'shell-page-loader';
-        loader.setAttribute('aria-hidden', 'true');
-        loader.innerHTML =
-            '<div class="shell-page-loader-veil"></div>' +
-            '<div class="shell-page-spinner" aria-hidden="true"></div>';
-        mainEl.appendChild(loader);
-    }
-    return loader;
-}
-
-function setPageLoaderVisible(mainEl, visible, opts) {
-    const loader = ensurePageLoader(mainEl);
-    const spinning = !!(opts && opts.spinning);
-    loader.classList.toggle('visible', !!visible);
-    loader.classList.toggle('spinning', !!visible && spinning);
-    if (visible) {
-        loader.setAttribute('aria-busy', 'true');
-        loader.removeAttribute('aria-hidden');
-    } else {
-        loader.removeAttribute('aria-busy');
-        loader.setAttribute('aria-hidden', 'true');
-    }
-}
-
-function cancelPendingReveal(frameEl) {
-    const entry = pendingFrameReveals.get(frameEl);
-    if (!entry) return;
-    if (entry.timer) clearTimeout(entry.timer);
-    if (entry.spinnerTimer) clearTimeout(entry.spinnerTimer);
-    pendingFrameReveals.delete(frameEl);
-}
-
-function revealFrame(frameEl) {
-    const entry = pendingFrameReveals.get(frameEl);
-    if (!entry) return;
-    // Remumber may move data-column while a reveal is pending — resolve live index
-    // from the frame's column so we don't cancel and leave a forever spinner.
-    const colEl = frameEl.closest?.('.split-column');
-    const liveIdx = colEl && !isSplitDiscardedEl(colEl)
-        ? parseInt(colEl.dataset.column, 10)
-        : NaN;
-    const idx = Number.isFinite(liveIdx) ? liveIdx : entry.colIdx;
-    if (entry.token !== frameRevealTokens.get(idx)) {
-        cancelPendingReveal(frameEl);
-        return;
-    }
-    entry.colIdx = idx;
-    cancelPendingReveal(frameEl);
-
-    const { mainEl, oldFrames } = entry;
-    const anim = uiAnimationsEnabled();
-    const ms = anim ? uiTransitionMs() : 0;
-
-    frameEl.classList.remove('shell-frame-pending');
-    frameEl.style.transition = ms > 0 ? `opacity ${ms}ms ease` : 'none';
-
-    requestAnimationFrame(() => {
-        frameEl.style.opacity = '1';
-        frameEl.style.pointerEvents = '';
-    });
-
-    setPageLoaderVisible(mainEl, false);
-
-    (oldFrames || []).forEach((old) => {
-        if (!old || old === frameEl || !old.parentNode) return;
-        old.classList.add('shell-frame-outgoing');
-        old.style.pointerEvents = 'none';
-        const removeOld = () => {
-            try { old.remove(); } catch (_) {}
-        };
-        if (ms > 0) {
-            old.style.transition = `opacity ${ms}ms ease`;
-            requestAnimationFrame(() => { old.style.opacity = '0'; });
-            setTimeout(removeOld, ms + 40);
-        } else {
-            removeOld();
-        }
-    });
-}
-
-/** Reveal the frame whose document just told us it painted. */
-function finishFrameTransitionFor(sourceWindow) {
-    if (!sourceWindow) return;
-    document.querySelectorAll('.shell-main iframe').forEach((frame) => {
-        try {
-            if (frame.contentWindow === sourceWindow) revealFrame(frame);
-        } catch (_) {}
-    });
-}
-
-function armFrameReveal(colIdx, frameEl, mainEl, oldFrames) {
-    applyUiAnimationPrefs();
-    const token = (frameRevealTokens.get(colIdx) || 0) + 1;
-    frameRevealTokens.set(colIdx, token);
-
-    (oldFrames || []).forEach((f) => cancelPendingReveal(f));
-
-    // Always hide until ready — even with animations off — so theme/wallpaper FOUC never shows.
-    frameEl.classList.add('shell-frame-pending');
-    frameEl.style.opacity = '0';
-    frameEl.style.pointerEvents = 'none';
-    frameEl.style.transition = 'none';
-    frameEl.style.background = 'transparent';
-
-    // Soft veil immediately; spinner only if the page takes a beat.
-    setPageLoaderVisible(mainEl, true, { spinning: false });
-    const spinnerTimer = setTimeout(
-        () => setPageLoaderVisible(mainEl, true, { spinning: true }),
-        SPINNER_DELAY_MS
-    );
-    // Phones may retry dropped CSS for a few seconds before cuttle-page-ready;
-    // don't unveil an unstyled iframe mid-recovery.
-    const failsafeMs = isCuttleMobileShell() ? 7000 : TRANSITION_FAILSAFE_MS;
-    const timer = setTimeout(() => revealFrame(frameEl), failsafeMs);
-
-    pendingFrameReveals.set(frameEl, {
-        colIdx,
-        mainEl,
-        oldFrames: oldFrames || [],
-        token,
-        timer,
-        spinnerTimer
-    });
-}
-
 function broadcastToFrames(message, skipWindow) {
     document.querySelectorAll('.shell-main iframe').forEach((frame) => {
         try {
@@ -1258,12 +965,20 @@ paneController = CuttleShellPanes.create({
     AbortController, getSplitColumns, getLiveFrame, findColumnIndexForSource,
     columnState, chatSurfaceKind, broadcastToFrames, isChatPageFrame,
     getColumnEl, getSplitColumnCount: () => getSplitColumns().length,
-    pauseAllShellPaneStreams, pauseShellFrameStreams, armFrameReveal,
+    pauseAllShellPaneStreams, pauseShellFrameStreams,
     stampComposerDraftScope: (frame, idx) => stampComposerDraftScope(frame, idx),
     withCacheBust: (page) => withCacheBust(page),
     attachFrameLoadListener: (idx, frame) => attachFrameLoadListener(idx, frame),
-    cancelPendingReveal,
+    localStorage, isSplitDiscardedEl, isCuttleMobileShell,
+    withRememberedChat, rememberChatHandleFromPage, getState,
+    setState, storagePageKey: STORAGE_PAGE,
+    updateColumnUI, persistSplitLayout, sessionStorage, desktopCfg, forgetChatHandle: () => rememberChatHandle(0, 'chat', null),
 });
+
+function applyUiAnimationPrefs() { paneController.applyUiAnimationPrefs(); }
+function armFrameReveal(...args) { return paneController.armFrameReveal(...args); }
+function cancelPendingReveal(frame) { return paneController.cancelPendingReveal(frame); }
+function finishFrameTransitionFor(source) { return paneController.finishFrameTransitionFor(source); }
 
 applyUiAnimationPrefs();
 
@@ -1271,8 +986,7 @@ applyUiAnimationPrefs();
 // ── Attach load-sync listener to a frame element ─────────────
 function attachFrameLoadListener(colIdx, frameEl) {
     if (!frameEl || frameEl.dataset.shellLoadBound === '1') return;
-    frameEl.dataset.shellLoadBound = '1';
-    frameEl.addEventListener('load', function () {
+    paneController.attachFrameLoadListener(frameEl, function () {
         try {
             const href = frameEl.contentWindow?.location?.href;
             // Ignore about:blank — Chromium may fire load for it before the real page loads.
@@ -1486,7 +1200,7 @@ function closeSplitColumn(colIdxOrEl) {
     if (prevSib?.classList?.contains('split-resize-handle')) prevSib.remove();
     else if (nextSib?.classList?.contains('split-resize-handle')) nextSib.remove();
 
-    frameRevealTokens.delete(colIdx);
+    paneController.clearRevealColumn(colIdx);
     columnState.delete(colIdx);
     paneController?.clearPaneColumn(colIdx);
     lastChatByColumn.delete(colIdx);
@@ -2039,7 +1753,7 @@ function splitLeafColumn(targetCol, orientation, initialPage) {
 
     columnState.delete(targetIdx);
     paneController?.clearPaneColumn(targetIdx);
-    frameRevealTokens.delete(targetIdx);
+    paneController.clearRevealColumn(targetIdx);
     lastChatByColumn.delete(targetIdx);
 
     builtA.clone.style.flex = '1 1 0%';
@@ -2651,7 +2365,7 @@ function removeExtraSplitColumnsNow() {
         const col = extras[extras.length - 1];
         removed += 1;
         const idx = parseInt(col.dataset.column, 10);
-        frameRevealTokens.delete(idx);
+        paneController.clearRevealColumn(idx);
         columnState.delete(idx);
         paneController?.clearPaneColumn(idx);
         lastChatByColumn.delete(idx);
@@ -3488,64 +3202,7 @@ function navigateFromSource(source, page) {
     navigate(findColumnIndexForSource(source), page);
 }
 
-function navigate(colIdx, page, opts) {
-    page = withRememberedChat(colIdx, page);
-    // Jobs mesh UI — bust cache + pass viewer identity (Jobs iframe has no preload).
-    try {
-        const u = new URL(page, window.location.origin);
-        if (u.pathname === '/jobs_page.html') {
-            if (!u.searchParams.has('_v')) {
-                u.searchParams.set('_v', String(Date.now()));
-            }
-            try {
-                const wid = String(
-                    (desktopCfg && desktopCfg.workerId) ||
-                    sessionStorage.getItem('cuttle_viewer_worker_id') ||
-                    ''
-                ).trim().toLowerCase();
-                const clientMode = !!(desktopCfg && desktopCfg.clientMode) ||
-                    sessionStorage.getItem('cuttle_client_mode') === '1';
-                if (wid && !u.searchParams.has('me')) u.searchParams.set('me', wid);
-                if (clientMode && !u.searchParams.has('client')) u.searchParams.set('client', '1');
-            } catch (_) {}
-            page = u.pathname + u.search + u.hash;
-        }
-    } catch (_) {}
-    rememberChatHandleFromPage(colIdx, page);
-    const state = getState(colIdx);
-    if (state.page === page && !(opts && opts.force)) return;
-    console.log('[App Shell] Navigating to:', page);
-    if (colIdx === 0 && !shellApplyingHistory && !(opts && opts.history === 'none')) {
-        pushShellBackEntry(state.page);
-    }
-    setState(colIdx, page);
-    paneController?.clearPaneColumn(colIdx);
-
-    if (colIdx === 0) {
-        sessionStorage.setItem(STORAGE_PAGE, page);
-        // Top-level ?chat= for chat + terminal deep-links (refresh must keep the handle).
-        try {
-            const pageUrl = new URL(page, window.location.origin);
-            const isChatSurface = pageUrl.pathname === '/chat_page.html'
-                || pageUrl.pathname === '/terminal_page.html';
-            const cid = isChatSurface
-                ? (pageUrl.searchParams.get('chat') || pageUrl.searchParams.get('session'))
-                : null;
-            const histMode = (opts && opts.history)
-                || (shellApplyingHistory ? 'none' : 'replace');
-            syncShellChatUrl(cid, { mode: histMode, page: page });
-        } catch (_) {}
-    }
-    updateColumnUI(colIdx, page);
-    persistSplitLayout();
-
-    const newFrame = opts && opts.force
-        ? replaceFrameInPlace(colIdx, page)
-        : replaceFrame(colIdx, page);
-    if (newFrame) {
-        attachFrameLoadListener(colIdx, newFrame);
-    }
-}
+function navigate(colIdx, page, opts) { return paneController.navigate(colIdx, page, opts); }
 
 // ── Account button (rail footer) ────────────────────────────────
 const ACCOUNT_PLACEHOLDER_SVG =
@@ -5822,7 +5479,6 @@ function remumberSplitColumns() {
     const cols = getSplitColumns();
     const oldToNew = new Map();
     const nextState = new Map();
-    const nextTokens = new Map();
     const nextChatHandles = new Map();
     const claimedOldIdx = new Set();
 
@@ -5837,7 +5493,6 @@ function remumberSplitColumns() {
             claimedOldIdx.add(oldIdx);
             oldToNew.set(oldIdx, newIdx);
             if (columnState.has(oldIdx)) nextState.set(newIdx, columnState.get(oldIdx));
-            if (frameRevealTokens.has(oldIdx)) nextTokens.set(newIdx, frameRevealTokens.get(oldIdx));
             if (lastChatByColumn.has(oldIdx)) {
                 nextChatHandles.set(newIdx, { ...lastChatByColumn.get(oldIdx) });
             }
@@ -5849,16 +5504,7 @@ function remumberSplitColumns() {
     columnState.clear();
     nextState.forEach((v, k) => columnState.set(k, v));
     paneController.remapColumns(oldToNew);
-    frameRevealTokens.clear();
-    nextTokens.forEach((v, k) => frameRevealTokens.set(k, v));
-    // Keep in-flight frame reveals valid after index remap (avoids forever spinner).
-    try {
-        pendingFrameReveals.forEach((entry) => {
-            if (entry && oldToNew.has(entry.colIdx)) {
-                entry.colIdx = oldToNew.get(entry.colIdx);
-            }
-        });
-    } catch (_) {}
+    paneController.remapRevealColumns(oldToNew);
     lastChatByColumn.clear();
     nextChatHandles.forEach((v, k) => lastChatByColumn.set(k, v));
     persistLastChatHandles();
@@ -5944,7 +5590,7 @@ function reorderSplitColumn(fromCol, targetCol, _before) {
     swapMapKeys(columnState, idxA, idxB);
     swapMapKeys(lastChatByColumn, idxA, idxB);
     paneController.swapSessionColumns(idxA, idxB);
-    swapMapKeys(frameRevealTokens, idxA, idxB);
+    paneController.swapRevealColumns(idxA, idxB);
 
     // Slots keep their indices; contents trade. Re-apply explicit pages after the map swap.
     setState(idxA, pageB);

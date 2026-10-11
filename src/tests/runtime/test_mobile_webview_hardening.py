@@ -96,10 +96,10 @@ def test_shell_skips_cache_bust_on_mobile():
 
 def test_shell_mobile_frame_failsafe_waits_for_css_recovery():
     src = SHELL_JS.read_text(encoding="utf-8")
-    # isCuttleMobileShell now lives in the mobile owner (shell_mobile.js); the
-    # shell's frame spine still calls it and keeps the CSS-recovery failsafe.
-    assert "isCuttleMobileShell() ? 7000" in src
-    assert "TRANSITION_FAILSAFE_MS" in src
+    panes = (SHELL_JS.parent / "shell_panes.js").read_text(encoding="utf-8")
+    # Mobile detection lives in shell_mobile; pane lifecycle owns the CSS recovery failsafe.
+    assert "host.isCuttleMobileShell() ? 7000" in panes
+    assert "TRANSITION_FAILSAFE_MS" in panes
     assert "function isCuttleMobileShell(" in MOBILE_JS.read_text(encoding="utf-8")
 
 

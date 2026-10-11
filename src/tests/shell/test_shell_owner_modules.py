@@ -80,7 +80,8 @@ def test_shell_delegates_mobile_and_keeps_shared_wiring():
     assert "cuttleOpenMobileServerSettings();" in page
     assert "cuttleSyncMobileServerRows()" in page
     # Frame-retry spine still consumes the (owned) detector.
-    assert "isCuttleMobileShell() ? 7000" in page
+    panes = (SHELL_JS.parent / "shell_panes.js").read_text(encoding="utf-8")
+    assert "host.isCuttleMobileShell() ? 7000" in panes
     # One owner: the mobile/SSH bodies are gone from the composition root.
     assert "function isCuttleMobileShell(" not in page
     assert "function cuttleIsMobileClient(" not in page

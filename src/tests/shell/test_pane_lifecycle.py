@@ -7,11 +7,60 @@ SHELL = REPO / "src" / "web" / "js" / "shell"
 
 def test_navigation_preserves_page_url_and_history_contracts():
     source = (SHELL / "app_shell.js").read_text(encoding="utf-8")
-    assert "function navigate(colIdx, page, opts)" in source
-    assert "pushShellBackEntry(state.page)" in source
-    assert "syncShellChatUrl(cid, { mode: histMode, page: page })" in source
-    assert "function applyShellHistoryState(page)" in source
-    assert "navigate(0, page, { history: 'none' })" in source
+    owner = (SHELL / "shell_panes.js").read_text(encoding="utf-8")
+    assert "function navigate(colIdx, page, opts)" in owner
+    assert "pushShellBackEntry(state.page)" in owner
+    assert "syncShellChatUrl(cid, { mode: histMode, page })" in owner
+    assert "function syncShellChatUrl(chatId, opts)" in owner
+    assert "const shellBackStack = []" in owner
+    assert "return paneController.navigate(colIdx, page, opts)" in source
+    assert "paneController.applyShellHistoryState(page)" in source
+    assert "navigate(0, page || '/chat_page.html?new=1', { history: 'none' })" in owner
+
+
+def test_navigation_behavior_is_characterized_before_owner_move():
+    """Pin navigation decisions and their effects against the current shell code."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("node"):
+        return
+    source = (SHELL / "shell_panes.js").read_text(encoding="utf-8")
+    script = r'''
+const assert = require('node:assert/strict');
+const calls = [];
+const state = { page: '/chat_page.html?chat=7' };
+global.window = {};
+'''+source+r'''
+const api = window.CuttleShellPanes.create({
+ win: { location: { origin: 'https://cuttle.test', href: 'https://cuttle.test/' , pathname: '/' , search: '', hash: '' }, history: { replaceState: (...a) => calls.push(['url', ...a]) } }, doc: { addEventListener() {}, documentElement: { style: { setProperty() {} }, classList: { toggle() {} } }, querySelectorAll() { return []; } },
+ fetch() {}, setTimeout, clearTimeout, URL, URLSearchParams, AbortController,
+ getSplitColumns: () => [], getLiveFrame: () => null, findColumnIndexForSource: () => 0,
+ columnState: new Map(), chatSurfaceKind: () => null, broadcastToFrames() {}, getColumnEl: () => null,
+ getSplitColumnCount: () => 1, pauseAllShellPaneStreams() {}, pauseShellFrameStreams() {},
+ stampComposerDraftScope() {}, withCacheBust: (x) => x, attachFrameLoadListener() {},
+ localStorage: { getItem: () => null }, isSplitDiscardedEl: () => false, isCuttleMobileShell: () => false,
+ withRememberedChat: (_i, page) => page, rememberChatHandleFromPage() {}, getState: () => state,
+ pushShellBackEntry: (page) => calls.push(['back', page]), setState: (_i, page) => { state.page = page; calls.push(['state', page]); },
+ storagePageKey: 'shell_page', sessionStorage: { setItem: (...a) => calls.push(['session', ...a]), getItem: () => null },
+ updateColumnUI: (...a) => calls.push(['ui', ...a]), persistSplitLayout: () => calls.push(['persist']),
+ desktopCfg: null,
+});
+api.replaceFrame = (...a) => { calls.push(['replace', ...a]); return {}; };
+api.attachFrameLoadListener = () => calls.push(['listener']);
+api.navigate(0, '/settings_page.html');
+assert.equal(state.page, '/settings_page.html');
+assert.ok(calls.some((x) => x[0] === 'state' && x[1] === '/settings_page.html'));
+assert.ok(calls.some((x) => x[0] === 'url' && x[1].chatId === null));
+assert.ok(calls.some((x) => x[0] === 'persist'));
+assert.equal(api.popShellBack(), true);
+assert.equal(state.page, '/chat_page.html?chat=7', 'back restores the prior pane page');
+api.navigate(0, '/settings_page.html');
+const count = calls.length;
+api.navigate(0, '/settings_page.html');
+assert.equal(calls.length, count, 'same-page navigation is a no-op');
+'''
+    subprocess.run(["node", "-e", script], check=True)
 
 
 def test_frame_lifetime_contracts_are_characterized():

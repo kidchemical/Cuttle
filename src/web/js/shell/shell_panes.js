@@ -8,9 +8,251 @@
             URL, URLSearchParams, AbortController, getSplitColumns, getLiveFrame,
             findColumnIndexForSource, columnState, chatSurfaceKind, broadcastToFrames,
             getColumnEl, getSplitColumnCount, pauseAllShellPaneStreams,
-            pauseShellFrameStreams, armFrameReveal, stampComposerDraftScope,
-            withCacheBust, attachFrameLoadListener, cancelPendingReveal,
+            pauseShellFrameStreams, stampComposerDraftScope,
+            withCacheBust, attachFrameLoadListener,
+            isChatPageFrame,
+            withRememberedChat, rememberChatHandleFromPage, getState,
+            setState, storagePageKey, updateColumnUI, persistSplitLayout,
+            sessionStorage, desktopCfg,
         } = host;
+
+        const SPINNER_DELAY_MS = 90;
+        const TRANSITION_FAILSAFE_MS = 2500;
+        const DEFAULT_TRANSITION_MS = 220;
+        const ANIM_KEY = 'cuttleUiAnimations';
+        const ANIM_MS_KEY = 'cuttleUiTransitionMs';
+        const pendingFrameReveals = new Map();
+        const frameRevealTokens = new Map();
+        const frameLoadListeners = new Map();
+        const shellBackStack = [];
+        let applyingShellHistory = false;
+
+        function uiAnimationsEnabled() {
+            try { if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false; } catch (_) {}
+            try { return host.localStorage.getItem(ANIM_KEY) !== '0'; } catch (_) { return true; }
+        }
+        function uiTransitionMs() {
+            try {
+                const n = parseInt(host.localStorage.getItem(ANIM_MS_KEY), 10);
+                return Number.isNaN(n) ? DEFAULT_TRANSITION_MS : Math.max(0, Math.min(1000, n));
+            } catch (_) { return DEFAULT_TRANSITION_MS; }
+        }
+        function applyUiAnimationPrefs() {
+            document.documentElement.style.setProperty('--cuttle-transition-ms', uiTransitionMs() + 'ms');
+            document.documentElement.classList.toggle('cuttle-anim', uiAnimationsEnabled());
+        }
+        function ensurePageLoader(mainEl) {
+            let loader = mainEl.querySelector('.shell-page-loader');
+            if (!loader) {
+                loader = document.createElement('div');
+                loader.className = 'shell-page-loader';
+                loader.setAttribute('aria-hidden', 'true');
+                loader.innerHTML = '<div class="shell-page-loader-veil"></div><div class="shell-page-spinner" aria-hidden="true"></div>';
+                mainEl.appendChild(loader);
+            }
+            return loader;
+        }
+        function setPageLoaderVisible(mainEl, visible, opts) {
+            const loader = ensurePageLoader(mainEl);
+            const spinning = !!(opts && opts.spinning);
+            loader.classList.toggle('visible', !!visible);
+            loader.classList.toggle('spinning', !!visible && spinning);
+            if (visible) { loader.setAttribute('aria-busy', 'true'); loader.removeAttribute('aria-hidden'); }
+            else { loader.removeAttribute('aria-busy'); loader.setAttribute('aria-hidden', 'true'); }
+        }
+        function cancelOwnedReveal(frame) {
+            const entry = pendingFrameReveals.get(frame);
+            if (!entry) return;
+            if (entry.timer) clearTimeout(entry.timer);
+            if (entry.spinnerTimer) clearTimeout(entry.spinnerTimer);
+            pendingFrameReveals.delete(frame);
+        }
+        function revealFrame(frame) {
+            const entry = pendingFrameReveals.get(frame);
+            if (!entry) return;
+            const col = frame.closest?.('.split-column');
+            const liveIdx = col && !host.isSplitDiscardedEl(col) ? parseInt(col.dataset.column, 10) : NaN;
+            const idx = Number.isFinite(liveIdx) ? liveIdx : entry.colIdx;
+            if (entry.token !== frameRevealTokens.get(idx)) { cancelOwnedReveal(frame); return; }
+            entry.colIdx = idx;
+            cancelOwnedReveal(frame);
+            const { mainEl, oldFrames } = entry;
+            const ms = uiAnimationsEnabled() ? uiTransitionMs() : 0;
+            frame.classList.remove('shell-frame-pending');
+            frame.style.transition = ms > 0 ? `opacity ${ms}ms ease` : 'none';
+            window.requestAnimationFrame(() => { frame.style.opacity = '1'; frame.style.pointerEvents = ''; });
+            setPageLoaderVisible(mainEl, false);
+            (oldFrames || []).forEach((old) => {
+                if (!old || old === frame || !old.parentNode) return;
+                old.classList.add('shell-frame-outgoing'); old.style.pointerEvents = 'none';
+                const removeOld = () => { try { old.remove(); } catch (_) {} };
+                if (ms > 0) {
+                    old.style.transition = `opacity ${ms}ms ease`;
+                    window.requestAnimationFrame(() => { old.style.opacity = '0'; });
+                    setTimeout(removeOld, ms + 40);
+                } else removeOld();
+            });
+        }
+        function armOwnedReveal(colIdx, frame, mainEl, oldFrames) {
+            applyUiAnimationPrefs();
+            const token = (frameRevealTokens.get(colIdx) || 0) + 1;
+            frameRevealTokens.set(colIdx, token);
+            (oldFrames || []).forEach(cancelOwnedReveal);
+            frame.classList.add('shell-frame-pending');
+            frame.style.opacity = '0'; frame.style.pointerEvents = 'none';
+            frame.style.transition = 'none'; frame.style.background = 'transparent';
+            setPageLoaderVisible(mainEl, true, { spinning: false });
+            const spinnerTimer = setTimeout(() => setPageLoaderVisible(mainEl, true, { spinning: true }), SPINNER_DELAY_MS);
+            const failsafe = host.isCuttleMobileShell() ? 7000 : TRANSITION_FAILSAFE_MS;
+            const timer = setTimeout(() => revealFrame(frame), failsafe);
+            pendingFrameReveals.set(frame, { colIdx, mainEl, oldFrames: oldFrames || [], token, timer, spinnerTimer });
+        }
+        function finishFrameTransitionFor(sourceWindow) {
+            if (!sourceWindow) return;
+            document.querySelectorAll('.shell-main iframe').forEach((frame) => {
+                try { if (frame.contentWindow === sourceWindow) revealFrame(frame); } catch (_) {}
+            });
+        }
+        function clearRevealColumn(idx) { frameRevealTokens.delete(idx); }
+        function attachOwnedFrameLoadListener(frame, listener) {
+            if (!frame || frame.dataset.shellLoadBound === '1') return;
+            const controller = new AbortController();
+            frame.dataset.shellLoadBound = '1';
+            frameLoadListeners.set(frame, controller);
+            frame.addEventListener('load', listener, { signal: controller.signal });
+        }
+        function cleanupFrame(frame) {
+            const controller = frameLoadListeners.get(frame);
+            if (controller) controller.abort();
+            frameLoadListeners.delete(frame);
+            cancelOwnedReveal(frame);
+        }
+        function remapRevealColumns(map) {
+            const next = new Map();
+            frameRevealTokens.forEach((value, key) => { if (map.has(key)) next.set(map.get(key), value); });
+            frameRevealTokens.clear(); next.forEach((value, key) => frameRevealTokens.set(key, value));
+            pendingFrameReveals.forEach((entry) => {
+                if (entry && map.has(entry.colIdx)) entry.colIdx = map.get(entry.colIdx);
+            });
+        }
+        function swapRevealColumns(a, b) {
+            const av = frameRevealTokens.get(a), bv = frameRevealTokens.get(b);
+            const ah = frameRevealTokens.has(a), bh = frameRevealTokens.has(b);
+            frameRevealTokens.delete(a); frameRevealTokens.delete(b);
+            if (bh) frameRevealTokens.set(a, bv); if (ah) frameRevealTokens.set(b, av);
+        }
+        function navigate(colIdx, page, opts) {
+            page = withRememberedChat(colIdx, page);
+            try {
+                const u = new URL(page, window.location.origin);
+                if (u.pathname === '/jobs_page.html') {
+                    if (!u.searchParams.has('_v')) u.searchParams.set('_v', String(Date.now()));
+                    try {
+                        const wid = String((desktopCfg && desktopCfg.workerId) || sessionStorage.getItem('cuttle_viewer_worker_id') || '').trim().toLowerCase();
+                        const clientMode = !!(desktopCfg && desktopCfg.clientMode) || sessionStorage.getItem('cuttle_client_mode') === '1';
+                        if (wid && !u.searchParams.has('me')) u.searchParams.set('me', wid);
+                        if (clientMode && !u.searchParams.has('client')) u.searchParams.set('client', '1');
+                    } catch (_) {}
+                    page = u.pathname + u.search + u.hash;
+                }
+            } catch (_) {}
+            rememberChatHandleFromPage(colIdx, page);
+            const state = getState(colIdx);
+            if (state.page === page && !(opts && opts.force)) return;
+            console.log('[App Shell] Navigating to:', page);
+            if (colIdx === 0 && !applyingShellHistory && !(opts && opts.history === 'none')) pushShellBackEntry(state.page);
+            setState(colIdx, page);
+            clearPaneColumn(colIdx);
+            if (colIdx === 0) {
+                sessionStorage.setItem(storagePageKey, page);
+                try {
+                    const pageUrl = new URL(page, window.location.origin);
+                    const isChat = pageUrl.pathname === '/chat_page.html' || pageUrl.pathname === '/terminal_page.html';
+                    const cid = isChat ? (pageUrl.searchParams.get('chat') || pageUrl.searchParams.get('session')) : null;
+                    const histMode = (opts && opts.history) || (applyingShellHistory ? 'none' : 'replace');
+                    syncShellChatUrl(cid, { mode: histMode, page });
+                } catch (_) {}
+            }
+            updateColumnUI(colIdx, page);
+            persistSplitLayout();
+            const frame = opts && opts.force ? replaceFrameInPlace(colIdx, page) : replaceFrame(colIdx, page);
+            if (frame) attachFrameLoadListener(colIdx, frame);
+        }
+
+        function shellPageFromChatId(chatId) {
+            return chatId ? '/chat_page.html?chat=' + encodeURIComponent(String(chatId)) : '/chat_page.html?new=1';
+        }
+        function shellPagesEqual(a, b) {
+            try {
+                const ua = new URL(a || '/chat_page.html', window.location.origin), ub = new URL(b || '/chat_page.html', window.location.origin);
+                const norm = (u) => {
+                    u.searchParams.delete('_v'); u.searchParams.delete('_cb');
+                    return u.pathname + '|c=' + (u.searchParams.get('chat') || u.searchParams.get('session') || '') + '|n=' + (u.searchParams.has('new') ? '1' : '0');
+                };
+                return norm(ua) === norm(ub);
+            } catch (_) { return String(a || '') === String(b || ''); }
+        }
+        function isShellNewChatPage(page) {
+            try {
+                const u = new URL(page || '/chat_page.html', window.location.origin);
+                return u.pathname === '/chat_page.html' && !u.searchParams.get('chat') && !u.searchParams.get('session');
+            } catch (_) { return false; }
+        }
+        function pushShellBackEntry(page) {
+            if (applyingShellHistory || !page) return;
+            if (isShellNewChatPage(page) && shellBackStack.length === 0) return;
+            const top = shellBackStack.length ? shellBackStack[shellBackStack.length - 1] : null;
+            if (top && shellPagesEqual(top, page)) return;
+            shellBackStack.push(page);
+            while (shellBackStack.length > 40) shellBackStack.shift();
+        }
+        function syncShellChatUrl(chatId, opts) {
+            const mode = (opts && opts.mode) || 'replace';
+            let page = opts && opts.page;
+            if (!page) {
+                try {
+                    const state = getState(0);
+                    page = (state && state.page) || shellPageFromChatId(chatId);
+                    if (chatId) {
+                        const u = new URL(page, window.location.origin);
+                        if (u.pathname === '/chat_page.html' || u.pathname === '/terminal_page.html') {
+                            u.searchParams.set('chat', String(chatId)); u.searchParams.delete('session'); u.searchParams.delete('new');
+                            page = u.pathname + u.search + u.hash;
+                        }
+                    }
+                } catch (_) { page = shellPageFromChatId(chatId); }
+            }
+            if (applyingShellHistory || mode === 'none') return;
+            try {
+                const url = new URL(window.location.href);
+                if (chatId) { url.searchParams.set('chat', String(chatId)); url.searchParams.delete('session'); }
+                else { url.searchParams.delete('chat'); url.searchParams.delete('session'); }
+                const next = url.pathname + url.search + url.hash;
+                const state = { cuttleShell: 1, page: page || shellPageFromChatId(chatId), chatId: chatId ? String(chatId) : null };
+                const cur = window.location.pathname + window.location.search + window.location.hash;
+                if (next !== cur || mode === 'replace' || mode === 'push') window.history.replaceState(state, '', next);
+            } catch (_) {}
+        }
+        function currentShellPage() {
+            try { const state = getState(0); if (state && state.page) return state.page; } catch (_) {}
+            try {
+                const url = new URL(window.location.href), cid = url.searchParams.get('chat') || url.searchParams.get('session');
+                if (cid) return shellPageFromChatId(cid);
+            } catch (_) {}
+            try { const live = sessionForColumn(0); if (live) return shellPageFromChatId(live); } catch (_) {}
+            return '/chat_page.html?new=1';
+        }
+        function applyShellHistoryState(page) {
+            applyingShellHistory = true;
+            try { navigate(0, page || '/chat_page.html?new=1', { history: 'none' }); }
+            finally { applyingShellHistory = false; }
+        }
+        function popShellBack() {
+            if (shellBackStack.length) { applyShellHistoryState(shellBackStack.pop()); return true; }
+            const page = currentShellPage();
+            if (!isShellNewChatPage(page)) { host.forgetChatHandle(); applyShellHistoryState('/chat_page.html?new=1'); }
+            return false;
+        }
 
         // Frame creation and soft teardown belong to the pane lifetime. The
         // composition root supplies its existing transition and layout hooks.
@@ -42,7 +284,7 @@
             Array.from(mainEl.querySelectorAll('iframe')).forEach((f) => {
                 if (f !== frame) { try { f.remove(); } catch (_) {} }
             });
-            armFrameReveal(colIdx, frame, mainEl, []);
+            armOwnedReveal(colIdx, frame, mainEl, []);
             stampComposerDraftScope(frame, colIdx);
             const target = withCacheBust(page);
             setTimeout(() => { try { frame.src = target; } catch (_) {} }, 0);
@@ -58,11 +300,12 @@
             const oldFrames = Array.from(mainEl.querySelectorAll('iframe'))
                 .filter((f) => !f.classList.contains('shell-frame-outgoing'));
             oldFrames.forEach(pauseShellFrameStreams);
+            oldFrames.forEach(cleanupFrame);
             const newFrame = createContentFrame(colIdx);
             if (colIdx === 0) oldFrames.forEach((f) => {
                 f.removeAttribute('id'); f.removeAttribute('name');
             });
-            armFrameReveal(colIdx, newFrame, mainEl, oldFrames);
+            armOwnedReveal(colIdx, newFrame, mainEl, oldFrames);
             mainEl.appendChild(newFrame);
             stampComposerDraftScope(newFrame, colIdx);
             newFrame.src = withCacheBust(page);
@@ -72,7 +315,8 @@
         function parkShellIframes(container) {
             if (!container) return;
             Array.from(container.querySelectorAll('iframe')).forEach((frame) => {
-                try { cancelPendingReveal(frame); } catch (_) {}
+                cleanupFrame(frame);
+                try { cancelOwnedReveal(frame); } catch (_) {}
                 try { pauseShellFrameStreams(frame); } catch (_) {}
                 try {
                     if (frame.contentDocument !== null) {
@@ -104,7 +348,8 @@
             } catch (_) {}
             try {
                 container.querySelectorAll('iframe').forEach((frame) => {
-                    try { cancelPendingReveal(frame); } catch (_) {}
+                    cleanupFrame(frame);
+                    try { cancelOwnedReveal(frame); } catch (_) {}
                     try {
                         frame.style.display = 'none';
                         frame.style.pointerEvents = 'none';
@@ -317,6 +562,13 @@
         window.getOpenPaneSessions = getOpenPaneSessions;
         return { setFocusedColumn, focusedColumnIndex: () => focusedColumnIdx, broadcastUsageLiveWake,
             createContentFrame, replaceFrameInPlace, replaceFrame, parkShellIframes, discardSplitSubtree,
+            applyUiAnimationPrefs, armFrameReveal: armOwnedReveal, cancelPendingReveal: cancelOwnedReveal,
+            finishFrameTransitionFor, clearRevealColumn, remapRevealColumns, swapRevealColumns,
+            attachFrameLoadListener: attachOwnedFrameLoadListener,
+            navigate,
+            shellPageFromChatId, shellPagesEqual, isShellNewChatPage, currentShellPage,
+            pushShellBackEntry, syncShellChatUrl, applyShellHistoryState, popShellBack,
+            isApplyingHistory: () => applyingShellHistory,
             registerPaneChatSession, getOpenPaneSessions, registerPaneProject, refreshPendingChangesPath,
             schedulePendingChangesHub, pollPendingChangesHub, pollLiveStatusHub, clearPaneColumn,
             scheduleBroadcastOpenPanes, remapColumns, swapColumns, hasSessions, broadcastFocus: broadcastPaneFocus,
