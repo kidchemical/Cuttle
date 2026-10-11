@@ -337,6 +337,14 @@ def _generate_title(
     by_id = {"openai": _title_via_openai, "anthropic": _title_via_anthropic,
              "local": _title_via_local}
     providers = tuple(by_id[name] for name in resolve_order())
+    from api.background_helpers import has_selection
+    if has_selection("titles"):
+        def background(prompt, *, temperature):
+            from api.llm_complete import complete
+            return sanitize_chat_title(complete(user=prompt, max_tokens=200, temperature=temperature,
+                                               timeout=120, task="titles") or "") or None
+        providers = (background,)
+
 
     attempts = 3 if regenerating else 1
     last = None

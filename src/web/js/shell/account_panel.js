@@ -1,21 +1,160 @@
 /* Shell account panel: profile summary, Google link, sign-out, and the
- * change-username / change-password forms. The shell owns the signed-in user
- * and pane propagation; this module owns the panel DOM and its requests.
+ * change-username / change-password forms. This module owns the account
+ * lifetime: the signed-in user, the rail account button rendering, the
+ * /api/auth/me refresh, the account click (sign-in / sign-out) and the
+ * auth query-flag cleanup. The shell supplies transport/effects it does
+ * not own (mobile server rows, rail apps broadcast, spaces activity
+ * reset) as injected deps.
  */
 (function (root) {
     'use strict';
 
     function create(deps) {
-        const user = () => deps.getUser();
+        const win = deps.win || (typeof window !== 'undefined' ? window : globalThis);
+        const doc = deps.doc || win.document;
+        const fetchImpl = deps.fetch || ((...a) => win.fetch(...a));
+        const escapeHtml = deps.escapeHtml || ((s) => String(s));
+        const navigate = deps.navigate;
+        const syncServerRows = () => { try { if (deps.syncServerRows) deps.syncServerRows(); } catch (_) {} };
+        let currentUser = null;
+        const user = () => currentUser;
+
+        const ACCOUNT_PLACEHOLDER_SVG =
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+
+        function displayName(u) {
+            if (!u) return '';
+            return u.username ? '@' + u.username : (u.display_name || u.email || 'Signed in');
+        }
+
+        function initials(u) {
+            if (win.CuttleAuth && win.CuttleAuth.userAvatarInitials) {
+                return win.CuttleAuth.userAvatarInitials(u);
+            }
+            const label = u.display_name || u.username || u.email || '?';
+            const letters = label.trim().split(/[\s._-]+/).filter(Boolean).map(p => p[0]).join('');
+            return (letters || '?').toUpperCase().slice(0, 2);
+        }
+
+        function avatarInnerHtml(u) {
+            if (win.CuttleAuth && win.CuttleAuth.userAvatarInnerHtml) {
+                return win.CuttleAuth.userAvatarInnerHtml(u);
+            }
+            if (u.profile_image) {
+                return `<img src="${escapeHtml(u.profile_image)}" alt="">`;
+            }
+            return initials(u);
+        }
+
+        function renderButtons() {
+            doc.querySelectorAll('.rail-account').forEach(btn => {
+                const avatar = btn.querySelector('.rail-account-avatar');
+                btn.classList.toggle('signed-in', !!currentUser);
+                btn.classList.toggle('signed-out', !currentUser);
+                if (currentUser) {
+                    const name = displayName(currentUser);
+                    btn.dataset.tooltip = 'Account — ' + name;
+                    btn.setAttribute('aria-label', 'Account — signed in as ' + name + '. Click to log out');
+                    if (avatar) {
+                        avatar.innerHTML = avatarInnerHtml(currentUser);
+                    }
+                } else {
+                    btn.dataset.tooltip = 'Account — signed out';
+                    btn.setAttribute('aria-label', 'Account — signed out. Click to sign in');
+                    if (avatar) avatar.innerHTML = ACCOUNT_PLACEHOLDER_SVG;
+                }
+            });
+        }
+
+        function getUser() { return currentUser; }
+
+        function setUser(next) {
+            const previousId = currentUser && currentUser.id;
+            currentUser = next || null;
+            if (previousId !== (currentUser && currentUser.id)) {
+                try { if (deps.resetActivity) deps.resetActivity(); } catch (_) {}
+                try { if (deps.refreshActivityBroker) deps.refreshActivityBroker(); } catch (_) {}
+            }
+            renderButtons();
+            // The Account Apps-grid tile carries the profile photo — rebroadcast so
+            // an open Apps page swaps the placeholder for the picture on sign in/out.
+            try { if (deps.broadcastAppsList) deps.broadcastAppsList(); } catch (_) {}
+        }
+
+        async function refreshAuth() {
+            try {
+                const res = await fetchImpl('/api/auth/me', { credentials: 'include', cache: 'no-store' });
+                const data = await res.json().catch(() => null);
+                if (data && typeof data.authenticated === 'boolean') {
+                    setUser(data.authenticated ? data.user : null);
+                }
+                // Network/parse failure: keep prior user (don't flash signed-out).
+            } catch (_) {
+                /* keep prior */
+            }
+        }
+
+        /** Open the app-wide sign-in modal (lives on the shell, not the chat page). */
+        function openSignIn() {
+            if (typeof win.openAuthModal === 'function') {
+                win.openAuthModal('login');
+                return;
+            }
+            if (win.CuttleAuth && typeof win.CuttleAuth.openAuthModal === 'function') {
+                win.CuttleAuth.openAuthModal('login');
+                return;
+            }
+            // Fallback: ask the chat iframe to open its modal (standalone / older builds)
+            if (typeof navigate === 'function') navigate(0, '/chat_page.html?signin=1');
+        }
+
+        /** Rail account button: sign in when signed out, else open the panel. */
+        function handleClick() {
+            if (!currentUser) {
+                openSignIn();
+                return;
+            }
+            open();
+        }
+
+        function handleAuthQueryFlags() {
+            try {
+                const params = new win.URLSearchParams(win.location.search);
+                if (params.has('auth_linked') || params.has('auth_success')) {
+                    refreshAuth().then(() => {
+                        params.delete('auth_linked');
+                        params.delete('auth_success');
+                        params.delete('auth_error');
+                        const q = params.toString();
+                        const next = win.location.pathname + (q ? '?' + q : '') + win.location.hash;
+                        win.history.replaceState({}, doc.title, next);
+                    });
+                } else if (params.has('auth_error')) {
+                    const err = params.get('auth_error') || 'unknown';
+                    console.warn('OAuth error:', err);
+                    params.delete('auth_error');
+                    const q = params.toString();
+                    win.history.replaceState({}, doc.title, win.location.pathname + (q ? '?' + q : ''));
+                }
+            } catch (_) {}
+        }
 
         function getModal() {
             return document.getElementById('logoutConfirmModal');
         }
 
+        function modalController() {
+            const modal = getModal();
+            return root.CuttleModal ? root.CuttleModal.create(modal) : null;
+        }
+
         function close() {
             const modal = getModal();
             if (!modal) return;
-            modal.classList.remove('active');
+            const controller = modalController();
+            if (controller) controller.close();
+            else modal.classList.remove('active');
             // Drop credential fields from the DOM when the panel closes.
             clearProfileForms();
             const submit = document.getElementById('logoutConfirmSubmit');
@@ -29,10 +168,10 @@
             if (!user()) return;
             const modal = getModal();
             if (!modal) return;
-            deps.syncServerRows();
+            syncServerRows();
             clearProfileForms();
 
-            const name = deps.displayName(user());
+            const name = displayName(user());
             const title = document.getElementById('logoutConfirmTitle');
             if (title) title.textContent = name || 'Account';
 
@@ -62,7 +201,7 @@
 
             const avatar = document.getElementById('logoutConfirmAvatar');
             if (avatar) {
-                avatar.innerHTML = deps.avatarHtml(user());
+                avatar.innerHTML = avatarInnerHtml(user());
             }
 
             const roleChip = document.getElementById('logoutConfirmRole');
@@ -92,7 +231,9 @@
                 statusEl.textContent = linked ? 'Google linked — avatar syncs to this account.' : '';
             }
 
-            modal.classList.add('active');
+            const controller = modalController();
+            if (controller) controller.open();
+            else modal.classList.add('active');
             const cancel = document.getElementById('logoutConfirmCancel');
             if (cancel) cancel.focus();
         }
@@ -106,13 +247,13 @@
             try {
                 if (typeof handleLogout === 'function') {
                     await handleLogout({ skipRedirect: true });
-                    deps.setUser(null);
+                    setUser(null);
                     return;
                 }
                 try {
-                    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+                    await fetchImpl('/api/auth/logout', { method: 'POST', credentials: 'include' });
                 } catch (_) {}
-                deps.setUser(null);
+                setUser(null);
                 document.querySelectorAll('.split-column .shell-main iframe').forEach(fr => {
                     try {
                         fr.contentWindow?.postMessage({ type: 'cuttle-auth-changed', user: null }, '*');
@@ -123,7 +264,7 @@
             }
         }
 
-        function setup() {
+        function bindModal() {
             const modal = getModal();
             if (!modal || modal.dataset.bound === '1') return;
             modal.dataset.bound = '1';
@@ -154,6 +295,26 @@
                 if (e.key === 'Escape' && modal.classList.contains('active')) {
                     close();
                 }
+            });
+        }
+
+        /** Wire the account lifetime once: panel DOM, rail button, auth refresh
+         *  and the OAuth query-flag cleanup. Called once by app_shell. */
+        function setup() {
+            bindModal();
+            renderButtons();
+            refreshAuth();
+            handleAuthQueryFlags();
+            win.addEventListener('focus', refreshAuth);
+            win.addEventListener('cuttle-auth-changed', function (ev) {
+                setUser((ev.detail && ev.detail.user) || null);
+            });
+            doc.addEventListener('click', (e) => {
+                const t = e.target?.closest?.('#logoutConfirmSwitchServer, #authServerChange');
+                if (!t) return;
+                e.preventDefault();
+                close();
+                try { if (deps.openMobileServerSettings) deps.openMobileServerSettings(); } catch (_) {}
             });
         }
 

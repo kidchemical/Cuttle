@@ -14,7 +14,6 @@ import json
 import re
 import threading
 import time
-import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,7 +22,6 @@ from core.runtime_paths import runtime_cache_path
 _MODELS_DEV_URL = "https://models.dev/api.json"
 _CACHE_VERSION = 2
 _CACHE_TTL_SEC = 24 * 60 * 60
-_FETCH_TIMEOUT_SEC = 20
 
 # Fallback multipliers when models.dev omits cache rates (OpenAI/Anthropic norms).
 _DEFAULT_CACHE_READ_MULT = 0.1
@@ -174,18 +172,12 @@ def _parse_catalog(catalog: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def fetch_models_dev_catalog() -> Dict[str, Any]:
-    req = urllib.request.Request(
-        _MODELS_DEV_URL,
-        headers={"User-Agent": "Cuttle-ModelPricing/1.0", "Accept": "application/json"},
-        method="GET",
-    )
-    with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT_SEC) as resp:
-        raw = resp.read()
-    text = raw.decode("utf-8-sig", errors="replace")
-    data = json.loads(text) if text.strip() else {}
-    if not isinstance(data, dict):
-        raise ValueError("models.dev catalog was not a JSON object")
-    return data
+    from api.model_providers.models_dev import snapshot
+
+    data = snapshot(refresh=True)
+    if data.get('error'):
+        raise RuntimeError(data['error'])
+    return data.get('catalog') or {}
 
 
 def refresh_models_dev_pricing(*, force: bool = True) -> Dict[str, Any]:

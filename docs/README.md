@@ -1,6 +1,6 @@
 # Cuttle documentation (human)
 
-Product docs for people reading the repo. **Agent how-to lives in [`.cuttle_global/docs/`](../.cuttle_global/docs/)** — do not add a third docs tree.
+Product docs for people reading the repo. **Agent how-to lives in [`.cuttle_global/docs/`](../.cuttle_global/docs/)** (shared, every project) and project-specific docs in [`.cuttle/docs/`](../.cuttle/docs/). Do not add another tracked docs tree beyond `docs/`, `.cuttle_global/docs/`, and `.cuttle/docs/`. Runtime install-local overlays (`<home>/personal/`, `{project}/.cuttle/personal/`) are gitignored and are not tracked trees.
 
 Canonical briefs: [`AGENTS.md`](../AGENTS.md), [`ROADMAP.md`](ROADMAP.md), [`.cuttle_global/docs/`](../.cuttle_global/docs/).
 

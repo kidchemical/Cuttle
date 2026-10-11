@@ -26,7 +26,7 @@ TERMINAL_BATCH = (STATUS_DONE, STATUS_CANCELLED, STATUS_FAILED, STATUS_CLOSED)
 
 MAX_CHILDREN = 8
 MAX_DEPTH = 3
-DEFAULT_TIMEOUT_SEC = 900.0
+DEFAULT_TIMEOUT_SEC = 3600.0
 DEFAULT_POLL_SEC = 0.35
 
 # A child row left non-terminal because the process running its turn died.
@@ -164,6 +164,8 @@ class BatchRecord:
     watch_id: str = ""
     widget_id: str = ""
     attach_message_id: Optional[int] = None
+    created_at: str = ""
+    finished_at: str = ""
     children: List[ChildRecord] = field(default_factory=list)
 
     def public(self) -> Dict[str, Any]:

@@ -216,16 +216,26 @@ def normalize_action_form_spec(
     if mode == "form" and not fields and not submit_action:
         return None
 
-    # Whether picking an option should post a user message and resume the agent.
-    # Opt-in so side-effect forms (flask.restart, watch, etc) stay silent.
-    resume = bool(spec.get("resume") or spec.get("notify_agent") or spec.get("notifyAgent"))
     has_side_effect = bool(submit_action) or any(o.get("action") for o in options)
+    is_watch_card = bool(spec.get("watch"))
+    # Whether picking an option should post a user message and resume the agent.
+    # A pure Q&A card IS the agent asking a question, so the answer must resume
+    # by default — otherwise the pick is silently swallowed (toast + lock only)
+    # and the agent never sees it. Opt OUT with "resume": false /
+    # "notify_agent": false. Side-effect (flask.restart, …) and watch cards stay
+    # silent unless they explicitly opt in.
+    resume_raw = spec.get("resume", None)
+    notify_raw = spec.get("notify_agent", spec.get("notifyAgent", None))
+    if resume_raw is None and notify_raw is None:
+        resume = not has_side_effect and not is_watch_card
+    else:
+        resume = bool(resume_raw or notify_raw)
     # Q&A cards (no side effect) get a free-text "custom" answer by default so
     # the user is never locked into the listed options. Opt out per card with
     # "allow_custom": false. Side-effect / watch cards never get one.
     allow_custom_raw = spec.get("allow_custom", spec.get("allowCustom", None))
     if allow_custom_raw is None:
-        allow_custom = not has_side_effect and not spec.get("watch")
+        allow_custom = not has_side_effect and not is_watch_card
     else:
         allow_custom = bool(allow_custom_raw)
     default_submit = "Run" if has_side_effect else "Submit"

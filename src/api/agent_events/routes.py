@@ -44,6 +44,12 @@ def events():
         return jsonify(error=str(exc)),400
 
 
+@bp.get('/api/agent-events/active')
+@owner_required
+def active():
+    return jsonify(runs=store().active_runs())
+
+
 @bp.get('/api/agent-events/events/<int:ident>')
 @owner_required
 def event(ident):

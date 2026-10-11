@@ -76,8 +76,9 @@ def test_pending_miss_skips_painted_after_nav():
 
 def test_background_notify_requires_nonempty_body():
     src = _src()
-    # The !canPaintTurnHere branch must require readyBody, not success||trim.
-    idx = src.find("if (!canPaintTurnHere())")
+    # The not-here (can't paint here) branch must require readyBody, not
+    # success||trim. The branch choice is owned by chat_pending_result.
+    idx = src.find("if (finalizeDisp.kind === 'not-here') {")
     assert idx >= 0
     window = src[idx : idx + 1200]
     assert "readyBody" in window
@@ -86,8 +87,13 @@ def test_background_notify_requires_nonempty_body():
 
 
 def test_detached_watcher_only_notifies_on_pending_body():
-    body = _fn_body(_src(), "function watchDetachedSessionForCompletion")
-    assert "/api/chat-pending-result" in body
-    assert "notifyAssistantResponseReady(sid" in body
+    # 4C moved the detached-completion watch into chat_pending_result.js's
+    # recovery controller; the pending transport URL stays page-owned (injected
+    # via host.fetchPending).
+    mod = MOD_PR.read_text(encoding="utf-8")
+    body = _fn_body(mod, "function watchDetachedSessionForCompletion")
+    assert "host.fetchPending(sid)" in body
+    assert "host.notifyReady(sid" in body
     assert "data.pending && data.result" in body
     assert ".trim()" in body
+    assert "/api/chat-pending-result" in _src()

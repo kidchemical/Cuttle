@@ -43,6 +43,7 @@ from api.cursor_agent_commands import (
 WEB = Path(__file__).resolve().parents[2] / "web"
 CHAT_JS = WEB / "js" / "chat/chat_page.js"
 SLASH_JS = WEB / "js" / "chat/chat_slash.js"
+PALETTE_JS = WEB / "js" / "chat/chat_slash_palette.js"
 CHAT_CSS = WEB / "css" / "chat_page.css"
 
 # Harnesses that expose a nested ``/usage`` one-shot in Cuttle chat.
@@ -752,7 +753,9 @@ def test_palette_usage_gated_per_harness_not_global():
     assert "prefix: '/usage'" not in base
 
     # Palette merge includes both cursor nested cmds and harness usage cmds.
-    filt = js[js.find("function filterSlashPaletteItems(") : js.find("function filterSlashPaletteItems(") + 4500]
+    # Assembly moved to chat_slash_palette.js (CuttleChatSlashPalette).
+    palette = PALETTE_JS.read_text(encoding="utf-8")
+    filt = palette[palette.find("function filterItems(") : palette.find("function filterItems(") + 4500]
     assert "cursorAgentSlashCommandsForPalette()" in filt
     assert "harnessUsageSlashCommandsForPalette()" in filt
 

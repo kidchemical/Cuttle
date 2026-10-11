@@ -38,6 +38,12 @@ def _stub_openai(monkeypatch, captured):
             return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
 
     class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
         def __init__(self, api_key=None, **kwargs):
             captured["key"] = api_key
             instances.append(self)
@@ -59,6 +65,12 @@ def _stub_anthropic(monkeypatch, captured):
             )
 
     class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
         def __init__(self, api_key=None, **kwargs):
             captured["key"] = api_key
             instances.append(self)

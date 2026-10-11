@@ -9,14 +9,25 @@ import re
 import json
 import secrets
 import requests
+from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from flask import Blueprint, request, jsonify, redirect, make_response
 from api.auth_db import get_auth_db
 from api.auth_session import get_request_session_token, wants_session_token_in_body
 from api.limiter import limiter as _auth_limiter
+from api.http_authz import owner_required
 
 # Create Flask blueprint for auth routes
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
+pairing_bp = Blueprint('user_pairing', __name__)
+
+PAIRING_AVAILABLE = False
+try:
+    from api.pairing_manager import get_pairing_manager
+    from managers.settings_manager import get_settings_manager
+    PAIRING_AVAILABLE = True
+except ImportError as _pairing_import_error:
+    print(f"Warning: Pairing modules not available: {_pairing_import_error}")
 
 _USERNAME_RE = re.compile(r'^[a-zA-Z0-9_]{3,32}$')
 
@@ -97,6 +108,67 @@ def _oauth_public_base() -> str:
 
 def _oauth_redirect_uri(provider: str) -> str:
     return f"{_oauth_public_base()}/api/auth/callback/{provider}"
+
+
+@pairing_bp.post('/api/pairing/approve')
+@_auth_limiter.limit("5 per minute")
+@owner_required
+def pairing_approve():
+    """Approve a pairing code. Adds identity to allowlist."""
+    if not PAIRING_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
+    try:
+        data = request.get_json() or {}
+        code = data.get('code', '').strip()
+        if not code:
+            return jsonify({'success': False, 'error': 'No code provided'}), 400
+        pm = get_pairing_manager()
+        ok, result = pm.approve(code)
+        if ok:
+            return jsonify({'success': True, 'approved': result})
+        return jsonify({'success': False, 'error': result}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@pairing_bp.get('/api/pairing/pending')
+@_auth_limiter.limit("5 per minute")
+@owner_required
+def pairing_pending():
+    """List pending pairing requests (for admin UI)."""
+    if not PAIRING_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
+    try:
+        pm = get_pairing_manager()
+        return jsonify({'success': True, 'pending': pm.list_pending()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@pairing_bp.get('/api/pairing/status')
+@owner_required
+def pairing_status():
+    """Get pairing/allowlist status for current channel (query: channel, identity)."""
+    if not PAIRING_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
+    try:
+        channel = request.args.get('channel', 'webchat')
+        identity = request.args.get('identity', '')
+        settings = get_settings_manager()
+        channel_cfg = settings.get_channel_config(channel)
+        dm_policy = channel_cfg.get('dmPolicy', 'open')
+        allow_from = channel_cfg.get('allowFrom', ['*'])
+        pm = get_pairing_manager()
+        allowed = pm.is_allowed(channel, identity, dm_policy, allow_from)
+        return jsonify({
+            'success': True,
+            'channel': channel,
+            'identity': identity,
+            'allowed': allowed,
+            'dmPolicy': dm_policy,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # OAuth client env names per provider (read at request time so a key added
@@ -986,17 +1058,22 @@ def patch_chat_session(session_id):
             out['archived'] = archived
             touched = True
 
-        project_keys = ('project_id', 'project_name', 'project_path', 'projectId', 'projectName', 'projectPath')
+        project_keys = (
+            'project_id', 'project_name', 'project_path', 'checkout_uid',
+            'projectId', 'projectName', 'projectPath', 'checkoutUid',
+        )
         if any(k in data for k in project_keys):
             pid = data.get('project_id', data.get('projectId'))
             pname = data.get('project_name', data.get('projectName'))
             ppath = data.get('project_path', data.get('projectPath'))
+            cuid = data.get('checkout_uid', data.get('checkoutUid'))
             success = db.set_session_project(
                 session_id,
                 user['id'],
                 project_id=pid,
                 project_name=pname,
                 project_path=ppath,
+                checkout_uid=cuid,
             )
             if not success:
                 return jsonify({
@@ -1006,12 +1083,13 @@ def patch_chat_session(session_id):
             out['project_id'] = pid
             out['project_name'] = (pname or '').strip() or None
             out['project_path'] = (ppath or '').strip() or None
+            out['checkout_uid'] = (str(cuid).strip() or None) if cuid is not None else None
             touched = True
 
         if not touched:
             return jsonify({
                 'success': False,
-                'error': 'No supported fields to update (expected session_name, starred, archived, and/or project_id/project_name/project_path)'
+                'error': 'No supported fields to update (expected session_name, starred, archived, and/or project_id/project_name/project_path/checkout_uid)'
             }), 400
 
         return jsonify(out)
@@ -1200,6 +1278,8 @@ def get_session_messages(session_id):
         limit = request.args.get('limit', type=int)
         before_id = request.args.get('before_id', type=int)
         after_id = request.args.get('after_id', type=int)
+        want_usage_summary = request.args.get('usage_summary') == '1'
+        include_subagents_usage = request.args.get('include_subagents') == '1'
         if limit is not None:
             limit = max(1, min(int(limit), 200))
 
@@ -1226,7 +1306,7 @@ def get_session_messages(session_id):
                     msg['report_url'] = meta['report_url']
                 if meta.get('query_id') and not msg.get('query_id'):
                     msg['query_id'] = meta['query_id']
-                for key in ('project_id', 'project_name', 'project_path'):
+                for key in ('project_id', 'project_name', 'project_path', 'checkout_uid'):
                     if meta.get(key) not in (None, '') and not msg.get(key):
                         msg[key] = meta[key]
                 if meta.get('kind') and not msg.get('kind'):
@@ -1325,9 +1405,16 @@ def get_session_messages(session_id):
             pass
 
         followup_state = db.get_followup_state(session_id, user['id']) or {'followups': [], 'revision': 0}
+        usage_summary = None
+        if want_usage_summary:
+            usage_session_ids = [session_id]
+            if include_subagents_usage:
+                usage_session_ids.extend(db.descendant_session_ids(session_id, user['id']))
+            usage_summary = db.get_assistant_usage_metadata(usage_session_ids)
         return jsonify({
             'success': True,
             'messages': messages,
+            'usage_summary': usage_summary,
             'has_more': has_more,
             'older_visible_count': older_visible_count,
             # Title for the open-chat chrome — seed on first paint so refresh
@@ -1336,6 +1423,7 @@ def get_session_messages(session_id):
             'project_id': session.get('project_id'),
             'project_name': session.get('project_name'),
             'project_path': session.get('project_path'),
+            'checkout_uid': session.get('checkout_uid'),
             'followups': followup_state['followups'],
             'followup_revision': followup_state['revision'],
             'attention': db.get_attention(session_id, user['id']),
@@ -1360,6 +1448,144 @@ def get_session_messages(session_id):
             'success': False,
             'error': 'Failed to get messages'
         }), 500
+
+
+_EXPORT_AGENT_NAMES = {
+    'codex': 'Codex',
+    'cursor': 'Cursor',
+    'claude': 'Claude Code',
+    'muse': 'Muse Code',
+    'deepseek': 'DeepSeek',
+    'opencode': 'OpenCode',
+    'hermes': 'Hermes',
+}
+
+
+def _export_ts_local_hhmm(value, offset_min):
+    """UTC SQLite timestamp → device-local HH:MM (offset_min = minutes east of UTC)."""
+    if not value:
+        return ''
+    s = str(value).strip()
+    dt = None
+    if re.match(r'^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}', s):
+        try:
+            dt = datetime.strptime(s[:19].replace('T', ' '), '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            dt = None
+    elif re.match(r'^\d+(\.\d+)?$', s):
+        try:
+            n = float(s)
+            if n > 0:
+                if n < 1e12:
+                    n = n * 1000
+                dt = datetime.utcfromtimestamp(n / 1000)
+        except (OverflowError, OSError, ValueError):
+            dt = None
+    if dt is None:
+        return ''
+    try:
+        return (dt + timedelta(minutes=int(offset_min or 0)).strftime('%H:%M'))
+    except Exception:
+        return ''
+
+
+def _export_msg_author(message):
+    """Mirror the client author resolution: speaker → routing badge → slash chip → 'Cuttle'."""
+    if not isinstance(message, dict):
+        return 'Cuttle'
+    role = str(message.get('role') or '').strip()
+    meta = message.get('metadata')
+    if not isinstance(meta, dict):
+        meta = {}
+    speaker = str(meta.get('speaker') or message.get('speaker') or '').strip()
+    if speaker:
+        return speaker
+    if role != 'assistant':
+        return 'You'
+    badge = meta.get('routing_badge') or message.get('routing_badge') or {}
+    if isinstance(badge, dict) and badge.get('agent'):
+        agent = str(badge.get('agent'))
+        return _EXPORT_AGENT_NAMES.get(agent, agent)
+    sc = meta.get('slash_command') or message.get('slash_command')
+    if isinstance(sc, dict) and isinstance(sc.get('chips'), list) and sc['chips']:
+        first = sc['chips'][0] or {}
+        m = re.match(r'^/([a-z][\w-]*)', str(first.get('meta') or ''))
+        if m:
+            a = m.group(1)
+            return _EXPORT_AGENT_NAMES.get(a, a)
+        label = str(first.get('label') or '').strip()
+        if label:
+            return re.split(r'\s*[-—–]\s*', label, 1)[0].strip()
+    return 'Cuttle'
+
+
+def _export_strip_agent_chrome(content):
+    """Mirror `stripLegacyAgentChrome` so exported bodies match the on-screen bubbles."""
+    s = str(content or '')
+    s = re.sub(r'^\*\*Cursor Agent\*\*[^\n]*:\s*\n+', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\n*---\s*\n\*Cursor run ·[\s\S]*$', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'^✅\s*\*\*[^*\n]{1,48}:\*\*\s*\n+', '', s)
+    return s.rstrip()
+
+
+def _build_export_markdown(session, messages, offset_min):
+    title = str(session.get('session_name') or '' ).strip() or 'Chat transcript'
+    lines = [f'# {title}', '',]
+    sid = int(session.get('id') or 0)
+    display_id = 'CH-%06d' % sid
+    now_local = datetime.now() + timedelta(minutes=int(offset_min or 0))
+    lines.append(f'Chat: {display_id} · Exported {now_local.strftime("%Y-%m-%d %H:%M")}')
+    lines.extend(['', '---', '',])
+    for msg in messages or []:
+        if not isinstance(msg, dict) or str(msg.get('role') or '' ).strip() == 'system':
+            continue
+        body = str(msg.get('content') or '')
+        if str(msg.get('role') or '' ).strip() == 'assistant':
+            body = _export_strip_agent_chrome(body)
+        body = body.strip()
+        if not body:
+            continue
+        author = _export_msg_author(msg)
+        stamp = _export_ts_local_hhmm(msg.get('timestamp'), offset_min)
+        prefix = (stamp + ' — ' if stamp else '')
+        lines.append(f'**{prefix}{author}**')
+        lines.append('')
+        lines.extend(body.splitlines())
+        lines.append('')
+    text = '\n'.join(lines)
+    return re.sub(r'\n{3,}', '\n\n', text .strip() + '\n')
+
+
+@auth_bp.route('/sessions/<int:session_id>/export', methods=['GET'])
+def export_session_markdown(session_id):
+    """Download the chat transcript as a .md attachment rendered with the device's local wall clock."""
+    try:
+        session_token = get_request_session_token()
+        if not session_token:
+            return jsonify({'success': False, 'error': 'Not authenticated'}), 401
+        db = get_auth_db()
+        user = db.verify_auth_session(session_token)
+        if not user:
+            return jsonify({'success': False, 'error': 'Invalid session'}), 401
+        session = db.get_chat_session(session_id, user['id'])
+        if not session:
+            return jsonify({'success': False, 'error': 'Session not found or access denied'}), 404
+        try:
+            offset_min = int(request.args.get('tz') or 0)
+        except (TypeError, ValueError):
+            offset_min = 0
+        messages = db.get_messages(session_id)
+        md = _build_export_markdown(session, messages, offset_min);
+        now_local = datetime.now() + timedelta(minutes=offset_min)
+        display_id = 'ch-%06d' % session_id
+        filename = 'cuttle-chat-%s-%s.md' % (display_id, now_local.strftime('%Y%m%d'))
+        response = make_response(md)
+        response.headers['Content-Type'] = 'text/markdown; charset=utf-8'
+        response.headers['Content-Disposition'] = 'attachment; filename="%s"' % filename
+        return response
+    except Exception as e:
+        print(f"Export session error: {e}")
+        return jsonify({'success': False, 'error': 'Failed to export session'}), 500
 
 
 @auth_bp.route('/sessions/<int:session_id>/messages', methods=['POST'])

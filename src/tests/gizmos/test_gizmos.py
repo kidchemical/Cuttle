@@ -115,6 +115,48 @@ def test_cursor_note_tracks_bonus_usage():
     assert usage.normalize_cursor({"success": True, "plan_usage": pu}, NOW)["extras"] == {}
 
 
+def test_openrouter_readout_is_a_balance_not_percent_windows():
+    body = usage.normalize_openrouter(
+        {"success": True, "total_credits": 100.0, "total_usage": 25.75}, NOW)
+    assert body["windows"] == []
+    assert body["readout"]["value"] == "$74.25"
+    assert body["readout"]["value_label"] == "left"
+    assert body["readout"]["used_value"] == "$25.75"
+    assert body["readout"]["used_label"] == "used"
+    assert body["readout"]["pct"] == 74.25
+    assert body["blocked"] is False
+    assert body["extras"]["credits"] == "$74.25 left"
+    assert "lifetime credits used" in body["extras"]["note"]
+
+
+def test_openrouter_zero_balance_is_blocked_without_reset():
+    snap = usage.set_snapshot("openrouter", usage.normalize_openrouter(
+        {"success": True, "total_credits": 50.0, "total_usage": 50.0, "balance": 0.0}, NOW))
+    assert snap["blocked"] is True
+    assert snap["unblock_at"] is None
+    assert snap["windows"] == []
+    assert snap["readout"]["pct"] == 0.0
+
+
+def test_openrouter_failure_is_an_error_not_an_exception():
+    assert usage.normalize_openrouter({"success": False, "error": "no key"}, NOW) == {"error": "no key"}
+
+
+def test_openrouter_is_a_registered_usage_agent():
+    assert "openrouter" in {p["agent"] for p in usage.providers()}
+
+
+def test_usage_metric_config_validates_and_defaults():
+    norm = catalog.get("usage_meter").normalize_config
+    assert norm({"agent": "codex"}, None)["metric"] == "auto"
+    assert norm({"agent": "codex", "metric": "amount"}, None)["metric"] == "amount"
+    assert norm({"agent": "codex", "metric": "percent"}, None)["metric"] == "percent"
+    assert norm({"agent": "codex", "metric": "amount"}, {"metric": "percent"})["metric"] == "amount"
+    with pytest.raises(ValueError):
+        norm({"agent": "codex", "metric": "dollars"}, None)
+    assert set(catalog.get("usage_meter").options()["metrics"]) == {"auto", "amount", "percent"}
+
+
 def test_vendor_failure_is_an_error_not_an_exception():
     assert usage.normalize_codex({"success": False, "error": "login"}, NOW) == {"error": "login"}
     assert usage.normalize_claude(None, NOW)["error"]
@@ -168,7 +210,7 @@ def test_create_defaults_and_auto_title():
     g = service.create("usage_meter", config={"agent": "claude"})
     assert g["title"] == "Claude Code usage"
     assert g["config"] == {"agent": "claude", "window": "tightest", "show": "remaining",
-                           "notify_on_unblock": False}
+                           "metric": "auto", "notify_on_unblock": False}
     assert g["placement"] == {"dock": "titlebar", "order": 0.0}
     second = service.create("usage_meter", config={"agent": "codex"})
     assert second["placement"]["order"] == 1.0
@@ -182,7 +224,7 @@ def test_notify_on_unblock_arms_disarms_and_survives_other_updates():
     # Other config edits keep the armed flag; auto-title still follows.
     renamed = service.update(g["id"], config={"agent": "cursor"})
     assert renamed["config"] == {"agent": "cursor", "window": "tightest", "show": "remaining",
-                                 "notify_on_unblock": True}
+                                 "metric": "auto", "notify_on_unblock": True}
     assert renamed["title"] == "Cursor usage"
     off = service.update(g["id"], config={"notify_on_unblock": "off"})
     assert off["config"]["notify_on_unblock"] is False

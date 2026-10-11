@@ -15,7 +15,7 @@ wrapper returning `AgentResult`.
 
 Shared project context (rules, inventory, handoff) comes from **Cuttle Brain** —
 `src/api/cuttle_brain/` — not from copying each vendor’s skill registry. See
-[file:////path/to/Cuttle/src/api/cuttle_brain/CONTEXT_COMPILER.md](file:////path/to/Cuttle/src/api/cuttle_brain/CONTEXT_COMPILER.md).
+[`CONTEXT_COMPILER.md`](../cuttle_brain/CONTEXT_COMPILER.md).
 
 ## Where folders live (discovery)
 
@@ -329,6 +329,22 @@ set CUTTLE_AGENT_SMOKE_MODEL=deepseek-v4-flash
 | `CUTTLE_AGENT_SMOKE_MODEL_<ID>` | Per-agent override (`MUSE`, `DEEPSEEK`, …) |
 
 Model resolution: per-agent env → global env → `manifest.smoke_model` → `manifest.default_model`.
+
+### Model catalog and per-model capabilities
+
+Treat manifest `models`, `efforts`, and `model_efforts` as the connector's
+offline defaults. When a bundled connector can discover its installed CLI's
+catalog, register that loader in `api.agent_harness.agent_models`; return model
+rows with ids and any native per-model `efforts` or `supports_variant` /
+`variant_levels` facts. The shared catalog normalizes those facts and saves the
+last successful rows in the Cuttle home cache. Settings, subagent preference
+validation, the Agent Router, and slash effort commands consume the effective
+catalog, while the manifest supplies values when discovery is unavailable.
+
+Never write discovered/account-local model lists into the shipped
+`manifest.yaml`. Keep connector behavior and explicit compatibility overrides
+there; let the runtime catalog refresh model availability and native model
+capabilities for this installation.
 Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 
 ## Required steps (in order)
@@ -336,7 +352,8 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 1. **Write the folder** — `manifest.yaml` + `adapter.py`. Keep CLI-specific quirks in the adapter.
    Put first-party agents under the bundled root; put experiments / third-party packs under
    `<home>/personal/agents/` or `{project}/.cuttle/agents/`.
-   For a bundled agent, add a declarative installer when an official source exists.
+   For a bundled agent, add `executable_names` + `missing_cli_hint`/`install_hint`
+   guidance only (never installer or update logic — see **CLI installation (BYO-CLI)**).
 2. **Inspect the real CLI.** Install it, run `--version`, `--help`, and any `help` subcommand,
    then map its non-interactive prompt, structured output, resume, model, timeout, permission,
    and **auth** flags from actual output. Do not infer flags from another agent.
@@ -421,7 +438,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 | `muse` | `muse exec` (WSL) | `--prompt-file` for long prompts; `/muse model` in adapter |
 | `claude` | `claude -p` | per-chat `--resume`; `/claude model [refresh]` + `/claude effort` pins → `--model` / `--effort`; catalog from SDK `initialize` (no turn) |
 | `opencode` | `opencode run` | native CLI authentication |
-| `antigravity` | `agy` | auto-install |
+| `antigravity` | `agy` | user-managed install (BYO-CLI) |
 | `hermes` | `hermes chat -Q -q` | local or OpenRouter via config.yaml; `requires_cloud: false`; per-chat `--resume` + state.db status poll |
 | `deepseek` | `dsh --profile headless` | Flash by default (`smoke_model` = Flash); no native per-chat resume; needs `DEEPSEEK_API_KEY`. Tentacle for DeepSeek Harness — steal kernel ideas separately ([`MODULARITY.md`](../../../docs/guides/MODULARITY.md)); do not treat dsh as Cuttle’s core. |
 
@@ -511,3 +528,42 @@ failed turn. The watchdog does not identify a silent permission prompt with
 certainty; it bounds and explains the stall. Vendor behavior:
 [permissions](https://opencode.ai/docs/permissions/),
 [CLI configuration](https://opencode.ai/docs/cli/).
+
+## Optional restricted background text
+
+A connector can opt into Settings → Agents → Background helpers with a
+`background_text` manifest mapping and three synchronous methods:
+
+```yaml
+background_text:
+  auth_modes: [subscription, cli_default]
+  temperature: false
+  tools: false
+```
+
+- `helper_models(refresh=False)` returns the connector's existing CLI model
+  catalog (`models`, optional `default_efforts`, `source`, `error`). Refresh is
+  metadata-only and must never submit a content prompt.
+- `helper_capabilities(model="")` reads cached/native manifest facts without
+  launching a CLI. Return verified `reasoning_efforts` and parameter support.
+- `generate_helper(HelperRequest)` returns `HelperResult(text, model, usage)`.
+  Enforce the declared login choice, tools disabled, isolated instructions,
+  no chat resume/context compilation, cancellation, and a bounded deadline.
+
+`api.background_helpers` owns task selection and explicit fallback chains;
+`api.agent_harness.helper` owns the isolated runtime working directory,
+bounded JSON output, process cleanup and active execution registration.
+Do not invoke `execute()` or the chat dispatcher from a background helper.
+Adapters are trusted code, as with existing harness connectors; these restrictions
+are connector contracts, not a general operating-system sandbox for Python.
+Claude and Codex implement this initially. Other CLIs remain absent from the
+helper picker until they implement the restricted contract.
+
+For Codex, the app-server must return `thread.environments: []` before a turn
+can start. Older versions that cannot confirm it fail before inference. Native
+MCP entries, hooks, plugins, code execution and workspace tools are disabled.
+For Claude, tools/MCP/skills/hooks/project discovery are disabled and native
+subscription authentication is checked via `claude auth status`. `--bare`
+cannot serve this role because it also skips OAuth/keychain authentication.
+Prompts use stdin or a UTF-8 system prompt file; Windows shell shims require a
+native binary, avoiding multiline argv truncation.

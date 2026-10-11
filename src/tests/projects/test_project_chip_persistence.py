@@ -21,6 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
 CHAT_PROJECT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_project.js"
 CHAT_ACTIVITY_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_activity.js"
+CHAT_SESSION_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_session.js"
 SESSION_PREFS_JS = REPO_ROOT / "src" / "web" / "js" / "shared/session_prefs.js"
 CHAT_MUTATIONS_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_mutations.js"
 
@@ -76,7 +77,10 @@ def _run_project_chip_js(script: str) -> dict:
     stored_check = _extract(
         src,
         "    function sessionHasStoredProject(sessionId, sessionObj) {",
-        "    function isHistoryProjectSectionExpanded(",
+        # Slice 3A commit 3 moved isHistoryProjectSectionExpanded (and the rest
+        # of project grouping) into chat_history_panel.js; the page's next
+        # project/session function is isChatSessionStarred.
+        "    function isChatSessionStarred(sessionId) {",
     )
     set_chat = _extract(
         src,
@@ -122,7 +126,10 @@ let authSessions = [
     }},
 ];
 let projects = {json.dumps([CUTTLE, EP])};
-let currentSessionId = 204;
+// Session identity is owned by chat_session.js (the page reads session.current()).
+const CuttleChatSession = require({json.dumps(str(CHAT_SESSION_JS))});
+const session = CuttleChatSession.create();
+session.adopt(204);
 let currentProject = {json.dumps(CUTTLE)};
 let lastHydratedSessionProject = {{
     id: '204',
@@ -139,6 +146,9 @@ function renderProjectChips() {{}}
 function refreshTypingIndicatorHeaderBadges() {{}}
 function schedulePendingChangesRefresh() {{}}
 function reportProjectToShell() {{}}
+let currentCheckoutUid = '';
+let currentCheckoutPath = '';
+function effectiveGitPath() {{ return currentCheckoutPath || (currentProject && currentProject.path ? String(currentProject.path) : ''); }}
 function refreshChatWidgets() {{}}
 function loadProjectCommandsForPalette() {{}}
 function loadHarnessAgentsForPalette() {{}}

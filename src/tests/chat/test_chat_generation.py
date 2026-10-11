@@ -25,6 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 MOD_GEN = REPO_ROOT / "src" / "web" / "js" / "chat/chat_generation.js"
 CHAT_PAGE_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
+CHAT_SESSION_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_session.js"
 CHAT_PAGE_HTML = REPO_ROOT / "src" / "web" / "chat_page.html"
 
 node_only = pytest.mark.skipif(
@@ -176,6 +177,158 @@ const out = {};
   G.claimSync(st, 0);
   out.syncZeroStart = G.claimSync(st, 50000);
 }
+// ---------- PREPARE stage: send plan (prepareSend) ----------
+{
+  const calls = [];
+  let pendingSticky = null;
+  const plan = G.prepareSend({
+    message: 'MSG', controlLaneOpt: false,
+    isImmediateControl: (m) => { calls.push('imm:' + m); return false; },
+    stickyOf: (m) => { calls.push('sticky:' + m); return { prefix: '/cursor' }; },
+    slashMetaOf: (m) => { calls.push('slash:' + m); return { chips: [] }; },
+    pendingSlashOf: (r, s) => {
+      calls.push('pending');
+      pendingSticky = s && s.prefix;
+      return { chips: [{ label: 'X' }] };
+    },
+    sessionKey: 'CH-1',
+  });
+  out.planBasic = plan;
+  out.planCalls = calls;
+  out.planPendingSticky = pendingSticky;
+}
+{
+  const calls = [];
+  const p = G.prepareSend({
+    message: 'm', controlLaneOpt: true,
+    isImmediateControl: () => { calls.push('imm'); return false; },
+    stickyOf: () => null, slashMetaOf: () => null, pendingSlashOf: () => ({}),
+    sessionKey: 's',
+  });
+  out.planOpt = [p.controlLane, calls];
+}
+{
+  const p = G.prepareSend({
+    message: 'm', controlLaneOpt: false,
+    isImmediateControl: () => 1,
+    stickyOf: () => null, slashMetaOf: () => null, pendingSlashOf: () => ({}),
+    sessionKey: 's',
+  });
+  out.planImmediateCoerce = p.controlLane;
+}
+{
+  const calls = [];
+  const p = G.prepareSend({
+    message: 'm', controlLaneOpt: false, isImmediateControl: () => false,
+    stickyOf: () => null, slashMetaOf: () => null,
+    pendingSlashOf: () => { calls.push('pending'); return { chips: [{ label: 'SHOULD-NOT' }] }; },
+    sessionKey: 's',
+  });
+  out.planNoReplySlash = [p.pendingSlash, calls];
+}
+{
+  const seen = {};
+  const p = G.prepareSend({
+    message: 'm', controlLaneOpt: false, isImmediateControl: () => false,
+    stickyOf: () => ({ prefix: '/muse' }),
+    slashMetaOf: () => ({ chips: [{ label: '/muse' }] }),
+    pendingSlashOf: (r, s) => { seen.r = r; seen.s = s; return { chips: [{ label: 'Muse' }] }; },
+    sessionKey: 'keyA',
+  });
+  out.planResolved = {
+    sticky: p.stickyCmd, reply: p.replySlash, pending: p.pendingSlash,
+    badgeKey: p.badgeKey, pendingSticky: seen.s && seen.s.prefix,
+  };
+}
+{
+  const p = G.prepareSend({ message: 'm' });
+  out.planEmpty = [p.controlLane, p.stickyCmd, p.replySlash, p.pendingSlash, p.badgeKey];
+  const pn = G.prepareSend(null);
+  out.planNull = [pn.controlLane, pn.stickyCmd, pn.replySlash, pn.pendingSlash, pn.badgeKey];
+}
+{
+  const bk = (k) => G.prepareSend({ message: 'm', sessionKey: k }).badgeKey;
+  out.planBadge = [bk(null), bk(undefined), bk(''), bk(123), bk('CH-9')];
+}
+// ---------- SUBMIT stage: outbound request plan (planSubmit) ----------
+{
+  // Non-control: stream-first, no retry-as-control, marks chat_request_id.
+  const p = G.planSubmit({
+    message: 'hello', sessionId: 'sid-7', currentSessionId: 'sid-7',
+    controlLane: false, stickyAgent: { prefix: '/cursor' },
+    attachments: [{ filename: 'a.png' }],
+    newChatRequestId: () => 'ct_FIXED',
+    newControlRequestId: () => 'cr_SHOULD-NOT',
+    canonicalize: (x) => (x == null ? x : 'C:' + x),
+  });
+  out.submitStream = {
+    body: p.body, bound: p.boundSessionId,
+    firstStream: p.firstTransportStream, controlId: p.controlRequestId,
+  };
+}
+{
+  // Control lane: JSON-only, idempotency key, stream flag false.
+  const p = G.planSubmit({
+    message: '/restart status', sessionId: 'sid-9', currentSessionId: 'sid-9',
+    controlLane: true, stickyAgent: null, attachments: null,
+    newChatRequestId: () => 'ct_C',
+    newControlRequestId: () => 'cr_GEN',
+    canonicalize: (x) => x,
+  });
+  out.submitControl = {
+    body: p.body, bound: p.boundSessionId,
+    firstStream: p.firstTransportStream, controlId: p.controlRequestId,
+  };
+}
+{
+  // Explicit control id wins; generator not consulted.
+  const calls = [];
+  const p = G.planSubmit({
+    message: 'm', sessionId: 's', currentSessionId: 's',
+    controlLane: true, controlRequestIdOpt: 'cr_EXPLICIT',
+    newChatRequestId: () => 'ct_X',
+    newControlRequestId: () => { calls.push('gen'); return 'cr_GEN'; },
+    canonicalize: (x) => x,
+  });
+  out.submitExplicit = [p.controlRequestId, calls, p.body.control_request_id];
+}
+{
+  // No resolver passed for control id -> null (page always passes one).
+  const p = G.planSubmit({ message: 'm', controlLane: true });
+  out.submitNoGen = [p.controlRequestId, p.body.control_request_id, p.body.stream];
+}
+{
+  // Binding fallback: empty/null sessionId uses currentSessionId; missing
+  // canonicalize is identity; missing generators yield null fields.
+  const mk = (sid, cur) => G.planSubmit({
+    message: 'm', sessionId: sid, currentSessionId: cur,
+    newChatRequestId: () => 'ct', canonicalize: (x) => (x == null ? x : 'B:' + x),
+  }).boundSessionId;
+  out.submitBinding = [mk('', 'cur'), mk(null, 'cur'), mk('here', 'cur'), mk(null, null)];
+}
+{
+  // Non-control with nothing optional: no sticky_agent / attachments keys.
+  const p = G.planSubmit({ message: 'm', sessionId: 's', newChatRequestId: () => 'ct' });
+  out.submitMinimal = {
+    body: p.body,
+    hasSticky: Object.prototype.hasOwnProperty.call(p.body, 'sticky_agent'),
+    hasAttach: Object.prototype.hasOwnProperty.call(p.body, 'attachments'),
+    hasControl: Object.prototype.hasOwnProperty.call(p.body, 'control_request_id'),
+  };
+}
+// ---------- SUBMIT stage: transport-fallback classification ----------
+{
+  const f = (o) => G.classifySubmitFailure(o);
+  out.submitFailure = [
+    f({ controlLane: false, errorName: 'AbortError' }),
+    f({ controlLane: true, errorName: 'AbortError' }),
+    f({ controlLane: false, errorName: 'TypeError' }),
+    f({ controlLane: true, errorName: 'TypeError' }),
+    f({ controlLane: false }),
+    f({}),
+    f(null),
+  ];
+}
 process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error('HARNESS-ERROR', e); process.exit(2); });
 """
@@ -313,6 +466,129 @@ def test_session_open_flags():
 
 
 @node_only
+def test_prepare_send_decision_record():
+    res = _run()
+    # ORACLE: control-lane OR (opt || immediate), sticky/slash resolved,
+    # pending badge built from both, session key normalized.
+    assert res["planBasic"] == {
+        "controlLane": False,
+        "stickyCmd": {"prefix": "/cursor"},
+        "replySlash": {"chips": []},
+        "pendingSlash": {"chips": [{"label": "X"}]},
+        "badgeKey": "CH-1",
+    }
+    # Resolvers consulted once each in prepare order; pending receives sticky.
+    assert res["planCalls"] == ["imm:MSG", "sticky:MSG", "slash:MSG", "pending"]
+    assert res["planPendingSticky"] == "/cursor"
+
+
+@node_only
+def test_prepare_send_control_lane_sources():
+    res = _run()
+    # ORACLE: explicit opts.controlLane short-circuits the OR true; the
+    # immediate predicate is not consulted (matches the page's `||`).
+    assert res["planOpt"] == [True, []]
+    # ORACLE: a truthy non-boolean immediate result is coerced to a boolean.
+    assert res["planImmediateCoerce"] is True
+
+
+@node_only
+def test_prepare_send_pending_badge_gated_on_reply_slash():
+    res = _run()
+    # ORACLE: no replySlash -> pendingSlash null AND the builder is not called.
+    assert res["planNoReplySlash"] == [None, []]
+
+
+@node_only
+def test_prepare_send_resolved_and_safe_defaults():
+    res = _run()
+    r = res["planResolved"]
+    assert r["sticky"] == {"prefix": "/muse"}
+    assert r["reply"] == {"chips": [{"label": "/muse"}]}
+    assert r["pending"] == {"chips": [{"label": "Muse"}]}
+    assert r["badgeKey"] == "keyA"
+    assert r["pendingSticky"] == "/muse"
+    # ORACLE: missing resolvers default false/null; missing sessionKey -> ''.
+    assert res["planEmpty"] == [False, None, None, None, ""]
+    assert res["planNull"] == [False, None, None, None, ""]
+    # ORACLE: session key normalized (null/undefined/'' collapse to '').
+    assert res["planBadge"] == ["", "", "", "123", "CH-9"]
+
+
+@node_only
+def test_plan_submit_stream_body():
+    res = _run()
+    # ORACLE: non-control builds the base body, keeps chat_request_id +
+    # optional sticky_agent/attachments, tries SSE first, has no control id.
+    assert res["submitStream"]["body"] == {
+        "message": "hello",
+        "session_id": "sid-7",
+        "stream": True,
+        "chat_request_id": "ct_FIXED",
+        "sticky_agent": {"prefix": "/cursor"},
+        "attachments": [{"filename": "a.png"}],
+    }
+    assert res["submitStream"]["bound"] == "C:sid-7"
+    assert res["submitStream"]["firstStream"] is True
+    assert res["submitStream"]["controlId"] is None
+
+
+@node_only
+def test_plan_submit_control_lane_json_only():
+    res = _run()
+    # ORACLE: control lane is JSON-only (stream=false), carries the
+    # idempotency key, and does not stream-first.
+    assert res["submitControl"]["body"] == {
+        "message": "/restart status",
+        "session_id": "sid-9",
+        "stream": False,
+        "chat_request_id": "ct_C",
+        "control_request_id": "cr_GEN",
+    }
+    assert res["submitControl"]["firstStream"] is False
+    assert res["submitControl"]["controlId"] == "cr_GEN"
+
+
+@node_only
+def test_plan_submit_control_id_selection():
+    res = _run()
+    # ORACLE: an explicit opts.controlRequestId wins and the generator is not
+    # consulted; a missing generator yields null (never a crash).
+    assert res["submitExplicit"] == ["cr_EXPLICIT", [], "cr_EXPLICIT"]
+    assert res["submitNoGen"] == [None, None, False]
+
+
+@node_only
+def test_plan_submit_binding_and_minimal_body():
+    res = _run()
+    # ORACLE: empty/null sessionId falls back to currentSessionId; canonicalize
+    # applied once. A null/'' session stays null through the identity path.
+    assert res["submitBinding"] == ["B:cur", "B:cur", "B:here", None]
+    assert res["submitMinimal"]["body"] == {
+        "message": "m",
+        "session_id": "s",
+        "stream": True,
+        "chat_request_id": "ct",
+    }
+    # ORACLE: unset optionals are absent from the body (not set to null).
+    assert res["submitMinimal"]["hasSticky"] is False
+    assert res["submitMinimal"]["hasAttach"] is False
+    assert res["submitMinimal"]["hasControl"] is False
+
+
+@node_only
+def test_classify_submit_failure_policy():
+    res = _run()
+    # ORACLE: abort wins for both lanes; control never re-POSTs; everything
+    # else falls back to one JSON retry. Missing/empty input is retry-json.
+    assert res["submitFailure"] == [
+        "abort", "abort",
+        "retry-json", "control-recover",
+        "retry-json", "retry-json", "retry-json",
+    ]
+
+
+@node_only
 def test_chat_generation_module_parses():
     import os
     proc = subprocess.run(
@@ -327,6 +603,9 @@ def test_page_delegates_generation_to_owner():
     src = CHAT_PAGE_JS.read_text(encoding="utf-8")
     for call in [
         "CuttleChatGeneration.createGenerationState()",
+        "CuttleChatGeneration.prepareSend(",
+        "CuttleChatGeneration.planSubmit(",
+        "CuttleChatGeneration.classifySubmitFailure(",
         "CuttleChatGeneration.beginGeneration(",
         "CuttleChatGeneration.endGeneration(",
         "CuttleChatGeneration.detachGeneration(",
@@ -334,9 +613,30 @@ def test_page_delegates_generation_to_owner():
         "CuttleChatGeneration.isLoadingForSession(",
         "CuttleChatGeneration.decideSyncDelayMs(",
         "CuttleChatGeneration.classifyDetachedPoll(",
-        "CuttleChatGeneration.decideSessionOpen(",
     ]:
         assert call in src, f"missing delegation {call}"
+    # PREPARE-stage decisions moved into the owner: the page no longer
+    # computes the control-lane OR, the pending typing badge branch, or the
+    # badge-key expression inline.
+    for gone in [
+        "const controlLane = !!opts.controlLane || isImmediateControlLaneMessage(message);",
+        "const pendingSlash = replySlash",
+        "turnBadgeBySession.set(String(canonicalizeChatSessionId(session.current()) || ''), pendingSlash);",
+    ]:
+        assert gone not in src, f"page still owns prepare decision: {gone}"
+    # SUBMIT-stage decisions moved into the owner: request-body assembly
+    # (chat_request_id, control-lane id/stream shape), the origin binding
+    # expression, and the SSE-vs-JSON transport choice are no longer inline.
+    for gone in [
+        "requestBody.chat_request_id =",
+        "requestBody.control_request_id =",
+        "fetchChatPayload(controlLane ? false : true)",
+    ]:
+        assert gone not in src, f"page still owns submit decision: {gone}"
+    # 3B step 3: the session-open flag decision moved with loadChatSession into
+    # chat_session.js (CuttleChatSession.createLoader).
+    session_src = CHAT_SESSION_JS.read_text(encoding="utf-8")
+    assert "CuttleChatGeneration.decideSessionOpen(" in session_src
     # Thin adapters keep behavior; direct busy-lock writes must be gone —
     # all transitions go through the single owned state object.
     for gone in [

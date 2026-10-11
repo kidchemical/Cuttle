@@ -1,0 +1,21 @@
+schema_version: 1
+id: local
+label: Local (Ollama / llama.cpp)
+priority: 30
+needs_credential: false
+credential_env: []
+model_env: OLLAMA_MODEL
+default_model: ''
+operations: [text_generation]
+defaults:
+  temperature_range: [0, 2]
+  # /v1/models alone does not distinguish text from embeddings. Native
+  # capabilities confirm this when available; custom IDs stay usable.
+  transport: chat_completions
+  token_parameter: max_tokens
+  temperature: true
+  json_object: true
+model_rules:
+  - match: ['*embed*', 'bge-*']
+    capabilities:
+      operations: []

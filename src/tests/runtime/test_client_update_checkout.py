@@ -1,4 +1,5 @@
 """Run the shipped checkout updater against disposable local Git repositories."""
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -10,6 +11,14 @@ import pytest
 pytestmark = pytest.mark.skipif(sys.platform == 'win32' or shutil.which('bash') is None, reason='POSIX lifecycle launcher test')
 
 SCRIPT = Path(__file__).resolve().parents[3] / '.cuttle_global/scripts/client-self-update.sh'
+CHECKOUT_HELPER = Path(__file__).resolve().parents[3] / '.cuttle_global/scripts/client-update-checkout.py'
+
+
+def load_checkout_helper():
+    spec = importlib.util.spec_from_file_location('client_update_checkout_helper', CHECKOUT_HELPER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def git(repo, *args):
@@ -181,3 +190,57 @@ npm() { :; }
                             env=env, capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stdout + result.stderr
     assert (marker.read_text().splitlines() if marker.exists() else []) == expected
+
+
+def _bundle_main(remote, dest):
+    git(remote, 'bundle', 'create', str(dest), 'main')
+    return dest
+
+
+def test_host_source_fast_forwards_from_bundle(checkout, tmp_path):
+    """Scenario B: fast-forward from the Host's served bundle (no git remote)."""
+    module = load_checkout_helper()
+    client, remote = checkout
+    seed = tmp_path / 'seed'
+    git(seed, 'fetch', str(remote), 'main')
+    git(seed, 'merge', '--ff-only', 'FETCH_HEAD')
+    (seed / 'file.txt').write_text('host update\n', encoding='utf-8')
+    git(seed, 'commit', '-am', 'host')
+    git(remote, 'fetch', str(seed), 'main:main')
+    bundle = _bundle_main(remote, tmp_path / 'host.bundle')
+    module.update_checkout(client, source='host', bundle=str(bundle), branch='main')
+    assert git(client, 'rev-parse', 'HEAD') == git(remote, 'rev-parse', 'main')
+
+
+def test_host_source_refuses_wrong_branch(checkout, tmp_path):
+    module = load_checkout_helper()
+    client, remote = checkout
+    bundle = _bundle_main(remote, tmp_path / 'host.bundle')
+    git(client, 'checkout', '-b', 'other')
+    before = git(client, 'rev-parse', 'HEAD')
+    with pytest.raises(module.UpdateRefused, match='wrong branch'):
+        module.update_checkout(client, source='host', bundle=str(bundle), branch='main')
+    assert git(client, 'rev-parse', 'HEAD') == before
+
+
+def test_host_source_refuses_dirty_checkout(checkout, tmp_path):
+    module = load_checkout_helper()
+    client, remote = checkout
+    bundle = _bundle_main(remote, tmp_path / 'host.bundle')
+    (client / 'file.txt').write_text('my work\n', encoding='utf-8')
+    with pytest.raises(module.UpdateRefused, match='local changes'):
+        module.update_checkout(client, source='host', bundle=str(bundle), branch='main')
+
+
+def test_check_only_ignores_upstream_ancestry(checkout, tmp_path):
+    """The lifecycle pre-stop recheck must not re-run the official ancestor check.
+
+    After a HOST pull the Client's HEAD is legitimately ahead of origin/<branch>
+    (host commits not pushed); refusing there skipped the restart.
+    """
+    module = load_checkout_helper()
+    client, _remote = checkout
+    (client / 'file.txt').write_text('host rev\n', encoding='utf-8')
+    git(client, 'commit', '-am', 'host rev ahead of upstream')
+    # Would be 'diverged' under the official merge preconditions.
+    module.update_checkout(client, check_only=True)  # must not raise

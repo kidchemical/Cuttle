@@ -11,7 +11,9 @@ available through their scoped Gizmos API/CLI when this flag is off.
 
 The first type is **`usage_meter`**: plan budget left for one agent (Codex,
 Claude Code, Cursor) plus when the tightest window resets, or when a
-blocked account unblocks. It is the same data as `/usage`, normalized.
+blocked account unblocks. **OpenRouter** is a prepaid dollar balance rather
+than a plan window, so it shows a credit-balance **readout** (no reset). It is
+the same data as `/usage`, normalized, for the plan agents.
 
 ## Placement
 
@@ -45,9 +47,12 @@ store revision the shell polls every few seconds, so open windows update with
 no restart and no chat message. Check `list` before creating a meter; do not
 create a second meter for an agent that already has one unless asked.
 
-`usage_meter` config: `agent` (`codex` | `claude` | `cursor`), `window`
-(`tightest` or a window id from `usage <agent>`, e.g. `five_hour`, `weekly`),
-`show` (`remaining` | `used`), `notify_on_unblock` (bool, default off).
+`usage_meter` config: `agent` (`codex` | `claude` | `cursor` | `openrouter`),
+`window` (`tightest` or a window id from `usage <agent>`, e.g. `five_hour`, `weekly`),
+`show` (`remaining` | `used`), `metric` (`auto` | `amount` | `percent` — how the
+meter reads out; `amount` is only meaningful for a provider that reports
+dollars, otherwise it falls back to `percent`), `notify_on_unblock` (bool,
+default off).
 Changing the agent keeps a default title in step; a custom title sticks.
 
 ### Notify when unblocked
@@ -79,6 +84,12 @@ phone gesture bar) and scrolls when taller than the screen.
 - New usage agent: `api.gizmos.usage.register_provider(agent, label, fetch)`
   where `fetch()` returns `{windows, blocked, plan, extras, error}` (see the
   module docstring). It shows up in every agent picker automatically.
+  A provider whose headline is not a percent window (e.g. a dollar balance)
+  may also return `readout: {label, value, value_label, used_value?,
+  used_label?, pct?, tone?, note?}`: `value` is the shown headline (and
+  `used_value` is that headline when config `show: used`), and the bar/ring
+  appears only when `pct` is present. `windows` may be empty. See
+  `normalize_openrouter`.
 - New gizmo type: `register_type(GizmoType(...))` in `api/gizmos/catalog.py`
   plus a renderer branch in `src/web/js/gizmos/gizmos_model.js`.
 

@@ -44,6 +44,15 @@
         return (t && t.options && t.options.agents) || [];
     }
 
+    function usageMetrics() {
+        const t = state.types.find(x => x.id === 'usage_meter');
+        return (t && t.options && t.options.metrics) || ['auto', 'amount', 'percent'];
+    }
+
+    function metricLabel(m) {
+        return m === 'amount' ? 'Dollar amount' : (m === 'percent' ? 'Percent' : 'Auto');
+    }
+
     function renderCreate() {
         $('gizmosCreate').hidden = false;
         const typeSel = $('gizmoCreateType');
@@ -66,9 +75,13 @@
         const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest('[data-gizmo-item]');
         box.innerHTML = '<h2>Your gizmos</h2>' + state.gizmos.map(g => {
             const cfg = g.config || {};
+            const data = state.data.get(M.dataKey(g));
             const fields = g.type === 'usage_meter'
                 ? '<label><span>Agent</span><select data-field="agent">' + options(usageAgents(), cfg.agent, a => a.agent, a => a.label) + '</select></label>'
                   + '<label><span>Show</span><select data-field="show">' + options(['remaining', 'used'], cfg.show || 'remaining', s => s, s => (s === 'used' ? 'Used' : 'Remaining')) + '</select></label>'
+                  + ((data && data.readout)
+                      ? '<label><span>Readout</span><select data-field="metric">' + options(usageMetrics(), cfg.metric || 'auto', m => m, metricLabel) + '</select></label>'
+                      : '')
                   + '<label><span>Window</span><select data-field="window">' + options(windowChoices(g), cfg.window || 'tightest', w => w.id, w => w.label) + '</select></label>'
                 : '';
             return '<article class="gizmo-item" data-gizmo-item="' + esc(g.id) + '">'

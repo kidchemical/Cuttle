@@ -3,6 +3,11 @@
    Owner: the local generation busy-lock as ONE explicit state object
    { loading, localSessionId, seq } plus its transitions, the message-sync
    poll cadence decision, the detached-completion poll classification, the
+   send PREPARE decision (control-lane classification + sticky/slash meta +
+   pending typing badge, resolved together as one pure record), the send
+   SUBMIT decision (outbound request body + origin binding + the
+   SSE-vs-JSON / control-lane-JSON-only transport policy, plus the
+   transport-failure fallback classification), the
    session-open generation-flag decision, and the message-sync claim
    lifetime as one page-held state { inFlight, startedAt, seq } with a
    token claim/finish interface (D2b: preserves the page's claim
@@ -203,6 +208,136 @@
     }
 
     /**
+     * PREPARE stage: resolve a raw send into its pre-submit decision record.
+     * The control-lane classification gates the generation begin (a
+     * control-lane turn must not claim the busy lock), so it lives with the
+     * generation lifecycle; the sticky/slash meta and the pending typing
+     * badge are resolved in the same pass so the page owns no branch order.
+     * Pure: no DOM, no window, no fetch, no timers — every classifier is an
+     * injected capability that only resolves this message. Returns
+     * { controlLane, stickyCmd, replySlash, pendingSlash, badgeKey }; the
+     * page performs the effects (stop/generation begin, badge map, typing
+     * indicator, transport).
+     * input: {
+     *   message,
+     *   controlLaneOpt    — opts.controlLane (explicit caller request),
+     *   isImmediateControl — (message) -> bool (control-lane message),
+     *   stickyOf          — (message) -> sticky slash command | null,
+     *   slashMetaOf       — (message) -> slash meta | null,
+     *   pendingSlashOf    — (replySlash, stickyCmd) -> typing badge | null,
+     *   sessionKey        — current canonical session key (string | null),
+     * }.
+     */
+    function prepareSend(input) {
+        input = input || {};
+        const message = input.message;
+        const controlLane = !!input.controlLaneOpt
+            || !!(input.isImmediateControl && input.isImmediateControl(message));
+        const stickyCmd = input.stickyOf ? input.stickyOf(message) : null;
+        const replySlash = input.slashMetaOf ? input.slashMetaOf(message) : null;
+        // Pending badge is derived only when a slash meta exists (matches the
+        // page's `replySlash ? pendingSlashForTypingIndicator(...) : null`).
+        const pendingSlash = replySlash && input.pendingSlashOf
+            ? input.pendingSlashOf(replySlash, stickyCmd)
+            : null;
+        const sessionKey = input.sessionKey;
+        return {
+            controlLane: controlLane,
+            stickyCmd: stickyCmd,
+            replySlash: replySlash,
+            pendingSlash: pendingSlash,
+            badgeKey: sessionKey != null ? String(sessionKey) : '',
+        };
+    }
+
+    /**
+     * SUBMIT stage: assemble the outbound /api/chat request body, the origin
+     * session binding, and the transport policy for one turn. Pure: every
+     * value is gathered by the page and every id generator is injected, so
+     * there is no DOM/window/fetch/timer here. The page still applies the two
+     * page-owned identity mutators (agent identity + project) to the returned
+     * body and owns the fetch/SSE transport.
+     * input: {
+     *   message,
+     *   sessionId         — auth session id for the request (may be null/''),
+     *   currentSessionId  — session.current() (binding fallback),
+     *   controlLane       — control-lane command (JSON-only, no retry),
+     *   stickyAgent       — sticky_agent override | null,
+     *   attachments       — request attachment payload | null,
+     *   controlRequestIdOpt — opts.controlRequestId (explicit id | undefined),
+     *   newChatRequestId  — () -> stable per-send id (CH-000559),
+     *   newControlRequestId — () -> control-lane idempotency key,
+     *   canonicalize      — (id) -> canonical id,
+     * }.
+     * Returns { body, boundSessionId, firstTransportStream,
+     *   controlRequestId }. `firstTransportStream` is the SSE-vs-JSON choice
+     * (false for the control lane); `controlRequestId` is the control-lane
+     * claim (null off-lane).
+     */
+    function planSubmit(input) {
+        input = input || {};
+        const controlLane = !!input.controlLane;
+        const sessionId = input.sessionId;
+        const canonicalize = input.canonicalize || function (id) { return id; };
+        const chatRequestId = input.newChatRequestId
+            ? input.newChatRequestId()
+            : null;
+        // Exactly-once control-lane idempotency key (server dedupes).
+        // Prefer a stable id for this turn; never regenerate on transport retry.
+        const controlRequestId = controlLane
+            ? (input.controlRequestIdOpt
+                || (input.newControlRequestId && input.newControlRequestId())
+                || null)
+            : null;
+        const body = {
+            message: input.message,
+            session_id: sessionId,
+            stream: true,
+        };
+        body.chat_request_id = chatRequestId;
+        if (input.stickyAgent) body.sticky_agent = input.stickyAgent;
+        if (controlLane) {
+            body.control_request_id = controlRequestId;
+            // Control lane: JSON only — avoid SSE detach/retry double POST.
+            body.stream = false;
+        }
+        if (input.attachments) body.attachments = input.attachments;
+        // Pin this turn to the chat that sent it. Switching chats updates
+        // currentSessionId; recovery/paint must keep using the origin id or
+        // the reply lands in the newly opened transcript (phone bug).
+        const boundSessionId = canonicalize(
+            (sessionId != null && sessionId !== '') ? sessionId : input.currentSessionId
+        );
+        return {
+            body: body,
+            boundSessionId: boundSessionId,
+            firstTransportStream: !controlLane,
+            controlRequestId: controlRequestId,
+        };
+    }
+
+    /**
+     * SUBMIT transport-fallback decision after a failed POST. Decides which
+     * recovery path the page drives next; the page owns the transport call,
+     * guards and the recovery invocations themselves. Branch order preserves
+     * the page's original `if (AbortError) throw; if (controlLane) …; else …`:
+     *   'abort'          — an AbortError is not a transport failure; it
+     *                      propagates to the outer stop/nav classification,
+     *   'control-recover'— a control command is never re-POSTed (the server
+     *                      may already have applied it); recover from
+     *                      history / live status instead,
+     *   'retry-json'     — a stream turn falls back to one JSON POST before
+     *                      recovery.
+     * input: { controlLane, errorName }.
+     */
+    function classifySubmitFailure(input) {
+        input = input || {};
+        if (input.errorName === 'AbortError') return 'abort';
+        if (input.controlLane) return 'control-recover';
+        return 'retry-json';
+    }
+
+    /**
      * Session-open generation flags. An opened chat defaults to idle until
      * the one-shot live-status confirms generating (stale flags used to
      * flash the title/history spinner). Returns { clearHubCache,
@@ -224,6 +359,9 @@
         isSyncCurrent: isSyncCurrent,
         finishSync: finishSync,
         currentToken: currentToken,
+        prepareSend: prepareSend,
+        planSubmit: planSubmit,
+        classifySubmitFailure: classifySubmitFailure,
         beginGeneration: beginGeneration,
         endGeneration: endGeneration,
         detachGeneration: detachGeneration,

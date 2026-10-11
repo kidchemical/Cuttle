@@ -46,6 +46,40 @@ type: discord.post       # or shell
 # run: python .cuttle/scripts/do_thing.py
 ```
 
+## Native `/branch` (project git branch)
+
+A global native control command (registered in
+`src/web/js/chat/chat_slash.js`, intercepted in `api/web_chat_api.py` and
+handled by `api/branch_slash.py`; git behavior stays in `api/git_service.py`).
+It never becomes a model turn.
+
+- `/branch` — show the current branch of the chat's project.
+- `/branch list` — list branches with the current one marked.
+- `/branch <name>` — switch the working branch (owner-only; refuses a dirty
+  worktree, tracks a remote branch when needed).
+
+The composer project chip is segmented: star status | project name | branch
+(branch read from `GET /api/git/repos?path=…`).
+
+## Chip config modal
+
+Clicking a composer chip opens a centered config modal (reuses the shared
+`.auth-modal` account-modal skin) with one dropdown per chip part — no model
+turn:
+
+- **Project chip** → **Project** + **Branch** dropdowns. Changing the project
+  updates the branch list; changing the branch calls `POST /api/git/branch`
+  (`action: switch`).
+- **Agent chip** → **Agent** + **Model** + **Effort** dropdowns. Changing the
+  agent swaps the sticky chip and reloads model/effort; model/effort picks use
+  the same setters as the `/` palette.
+
+`GET /api/git/branches` and `POST /api/git/branch` accept optional
+`path`/`project_id` so the branch list/switch targets the chat's project, not
+the global active project. Close with Done, Escape, or a backdrop click.
+Wiring lives in `src/web/js/chat/chat_page.js` (`bindChipClickMenus`,
+`CHIP_AGENT_MENU_SPECS`); skin in `.chip-config-modal` (`chat_page.css`).
+
 ## Live usage reports
 
 With a Cursor, Codex, Muse, Hermes, or OpenCode agent badge selected, `/usage`

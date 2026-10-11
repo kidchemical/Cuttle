@@ -9,8 +9,11 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261007hdr2">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261007hdr2">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261011pageControls2">
+    <link rel="stylesheet" href="css/searchable_select.css?v=20261011attachedMenus">
 <link rel="stylesheet" href="/css/storage_settings.css?v=20261007">
+<link rel="stylesheet" href="/css/page_controls.css?v=20261011attachedMenus">
+<script defer src="/js/shared/page_controls.js?v=20261011menuPosition2"></script>
 </head>
 <body class="compact-shell-page" data-page="settings">
     <div class="page-content cuttle-page">
@@ -56,14 +59,42 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Check for updates automatically</strong><button type="button" class="cuttle-info" data-tooltip="Check for a newer published Cuttle release when this Updates section opens. This never installs or restarts anything." aria-label="About Check for updates automatically">i</button>
-                        <div class="setting-description">Checks published releases automatically and enables first-launch release notes. You can always check manually.</div>
+                        <strong>Check for updates automatically</strong><button type="button" class="cuttle-info" data-tooltip="Check for a newer published Cuttle release when this Updates section opens and enable first-launch release notes. This never installs or restarts anything; you can always check manually." aria-label="About Check for updates automatically">i</button>
                     </div>
                     <div class="setting-control">
                         <label class="toggle-switch active" data-release-auto-toggle>
                             <input type="checkbox" data-release-auto-check checked style="display: none;">
                             <span class="slider"></span>
                         </label>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Device update source</strong><button type="button" class="cuttle-info" data-tooltip="Choose which channel this device updates from. HOST follows the Cuttle mesh this device is paired to (its working tree, no git push needed). OFFICIAL follows the upstream GitHub repo / published release. Applies to this device's Update button." aria-label="About Device update source">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <select class="setting-input" data-update-source>
+                            <option value="host">HOST — this Cuttle mesh</option>
+                            <option value="official">OFFICIAL — GitHub</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="setting-item setting-item--stack">
+                    <div class="setting-label">
+                        <strong>Update this device</strong><button type="button" class="cuttle-info" data-tooltip="Pull the selected channel and restart Cuttle on THIS device. Unlike Check for updates (published GitHub releases), this actually updates the running install. The titlebar Update button does the same." aria-label="About Update this device">i</button>
+                    </div>
+                    <div class="setting-control setting-control--stack">
+                        <div class="device-update-status" data-device-update-status role="status" aria-live="polite" hidden></div>
+                        <button type="button" class="control-button" data-device-update>Update this device</button>
+                    </div>
+                </div>
+                <div class="setting-item setting-item--stack">
+                    <div class="setting-label">
+                        <strong>Phone app (Android / Capacitor)</strong><button type="button" class="cuttle-info" data-tooltip="The phone app updates itself from an APK this host serves at /api/mobile/android — it is not a mesh worker and does not use the device Update button. This shows the served APK and can rebuild it by re-running Gradle assembleDebug on this host." aria-label="About Phone app">i</button>
+                    </div>
+                    <div class="setting-control setting-control--stack">
+                        <div class="device-update-status" data-android-status role="status" aria-live="polite" hidden></div>
+                        <button type="button" class="control-button" data-android-rebuild>Rebuild phone app (APK)</button>
                     </div>
                 </div>
             </div>
@@ -76,6 +107,28 @@
                     </div>
                     <div class="setting-control">
                         <button class="control-button btn-start" onclick="showWelcomeOnNextStartup()">Show welcome on next startup</button>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Show total token and cost estimates for chat sessions</strong><button type="button" class="cuttle-info" data-tooltip="Show summed input, cached input, and output tokens plus estimated cost below the chat composer in each chat." aria-label="About session usage estimates">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch" id="sessionUsageEstimateToggle" onclick="toggleSessionUsageEstimate(event)">
+                            <input type="checkbox" id="sessionUsageEstimateEnabled" style="display:none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-item" id="sessionUsageSubagentsSetting" hidden>
+                    <div class="setting-label">
+                        <strong>Include subagents</strong><button type="button" class="cuttle-info" data-tooltip="Include token usage and estimated cost from attached subagent sessions in each chat's totals." aria-label="About including subagents in usage estimates">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch" id="sessionUsageSubagentsToggle" onclick="toggleSessionUsageSubagents(event)">
+                            <input type="checkbox" id="sessionUsageSubagentsEnabled" style="display:none;">
+                            <span class="slider"></span>
+                        </label>
                     </div>
                 </div>
             </div>
@@ -238,23 +291,27 @@
 
             <section class="settings-panel" id="panel-agents" role="tabpanel" aria-labelledby="tab-agents" tabindex="0" hidden>
             <div class="settings-group">
-                <h3 class="settings-title">Default agent <span class="settings-scope" data-scope="server">This server</span></h3>
-                <label class="agent-default-picker" for="defaultAgentSelect">
-                    <span>Start new chats with</span>
-                    <select id="defaultAgentSelect" class="setting-input" disabled aria-describedby="defaultAgentHelp defaultAgentStatus">
-                        <option>Loading agents…</option>
-                    </select>
-                </label>
-                <div class="setting-description" id="defaultAgentHelp">The same default as the star in chat. Choose Automatic to let your router pick.</div>
-                <div id="defaultAgentStatus" class="provider-status" role="status" aria-live="polite"></div>
-            </div>
-
-            <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🤖</span> All agents <span class="settings-scope" data-scope="server" title="Detection runs on the server that hosts the agent; a CLI installed on another machine is invisible here.">This server</span><button type="button" class="cuttle-info" data-tooltip="Pick one with /name in any chat. Cuttle never installs them — tap a row for setup and defaults." aria-label="About 🤖 All agents">i</button></h3>
+                <h3 class="settings-title"><span class="emoji">🤖</span> Agents <span class="settings-scope" data-scope="server" title="Detection runs on the server that hosts the agent; a CLI installed on another machine is invisible here.">This server</span><button type="button" class="cuttle-info" data-tooltip="Pick one with /name in any chat. Cuttle never installs them — tap a row for setup and defaults." aria-label="About 🤖 Agents">i</button></h3>
 
                 <div id="agentCliList" class="agent-cli-list"></div>
                 <button type="button" class="control-button agent-refresh" onclick="refreshAgentSetup(this)">Check again</button>
                 <span id="agentSetupStatus" role="status" aria-live="polite"></span>
+            </div>
+
+            <div class="settings-group" id="backgroundHelpersSettings">
+                <h3 class="settings-title">🧠 Background helpers <span class="settings-scope" data-scope="server">All devices</span><button type="button" class="cuttle-info" data-tooltip="Choose how Cuttle generates titles, commit suggestions, enhanced prompts, narration, and routing decisions. Each task follows the Default chain unless you give it its own. CLI helpers use your existing CLI login and allowance." aria-label="About Background helpers">i</button></h3>
+                <div class="setting-control setting-control--stack">
+                    <label>Configure <select id="backgroundTask" class="setting-input" aria-label="Background task"></select></label>
+                    <label id="backgroundOverrideRow" hidden><input id="backgroundOverride" type="checkbox"> Use a chain for this task</label>
+                    <div id="backgroundInheritance" class="setting-description"></div>
+                    <div id="backgroundChain"></div>
+                    <div class="provider-picker">
+                        <button id="backgroundAdd" type="button" class="control-button" disabled>Add fallback</button>
+                        <button id="backgroundReset" type="button" class="control-button" hidden>Reset to Default</button>
+                        <button type="button" class="control-button btn-start" onclick="saveCompletionProviders()">💾 Save background helpers</button>
+                    </div>
+                    <div id="backgroundStatus" class="setting-description" role="status"></div>
+                </div>
             </div>
 
             <details class="settings-group settings-advanced" id="agentAdvanced">
@@ -275,6 +332,32 @@
                 </div>
             </div>
 
+            <div class="settings-group" id="timeoutsSettings">
+                <h3 class="settings-title"><span class="emoji">⏱️</span> Timeouts <span class="settings-scope" data-scope="server" title="Stored in this server's settings; applies to every chat it runs.">This server</span><button type="button" class="cuttle-info" data-tooltip="How long an agent turn may run, and how long Cuttle waits for a subagent round before cancelling its unfinished work. Raise these for long coding tasks." aria-label="About Timeouts">i</button></h3>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Agent run limit</strong><button type="button" class="cuttle-info" data-tooltip="Maximum seconds for one agent turn before Cuttle stops the harness. Streaming CLIs treat this as an idle budget, so a productive turn keeps going." aria-label="About Agent run limit">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" id="agentRunTimeoutSeconds" class="setting-input" min="60" max="86400" step="60" inputmode="numeric" aria-label="Agent run limit in seconds">
+                        <span class="setting-description">seconds</span>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Subagent supervision limit</strong><button type="button" class="cuttle-info" data-tooltip="How long a --wait subagent round may run before Cuttle cancels the work that has not finished." aria-label="About Subagent supervision limit">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" id="subagentWaitTimeoutSeconds" class="setting-input" min="60" max="86400" step="60" inputmode="numeric" aria-label="Subagent supervision limit in seconds">
+                        <span class="setting-description">seconds</span>
+                    </div>
+                </div>
+                <div class="provider-picker">
+                    <button type="button" class="control-button btn-start" onclick="saveTimeoutsSettings()"><span class="emoji">💾</span> Save timeouts</button>
+                </div>
+                <div id="timeoutsStatus" class="setting-description" role="status" aria-live="polite"></div>
+            </div>
+
             <div class="settings-group">
                 <h3 class="settings-title"><span class="emoji">➕</span> Add your own agent <span class="settings-scope" data-scope="mixed" title="Instance and project roots are read straight from disk; a project root only runs after you opt in.">This instance + project</span><button type="button" class="cuttle-info" data-tooltip="Drop a folder named after the agent with a manifest.yaml and an adapter.py. It joins the catalog next reload — no Cuttle fork, no core change." aria-label="About ➕ Add your own agent This instance + project">i</button></h3>
 
@@ -287,10 +370,7 @@
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Run project adapters</strong>
-                        <div class="setting-description" id="projectAdaptersNote">
-                            Load <code>adapter.py</code> from a project's <code>.cuttle/agents/</code>. That is
-                            third-party code running on this server, so it stays off until you opt in.
-                        </div>
+                        <button type="button" class="cuttle-info" id="projectAdaptersNote" data-tooltip="Load adapter.py from a project's .cuttle/agents/. That is third-party code running on this server, so it stays off until you opt in." aria-label="About Run project adapters">i</button>
                     </div>
                     <div class="setting-control">
                         <label class="toggle-switch" id="projectAdaptersToggle" onclick="toggleProjectAdapters(event)">
@@ -325,13 +405,8 @@
             </section>
 
             <section class="settings-panel" id="panel-experimental" role="tabpanel" aria-labelledby="tab-experimental" tabindex="0" hidden>
-            <div class="settings-intro">Try new features. Their tools live in Apps or the relevant settings tab.</div>
-            <details class="settings-disclosure">
-                <summary>About experiments</summary>
-                <p>Features may change. Each switch shows its current state. Set <code>CUTTLE_EXPERIMENTAL=0</code> in Cuttle's <code>.env</code> (<code>~/.local/share/cuttle</code> or <code>%LOCALAPPDATA%\Cuttle</code>) to force all experiments off.</p>
-            </details>
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🧪</span> Features <span class="settings-scope" data-scope="server" title="Stored in settings.json — these apply to every device and client that talks to this Cuttle.">All devices</span></h3>
+                <h3 class="settings-title"><span class="emoji">🧪</span> Features <span class="settings-scope" data-scope="server" title="Stored in settings.json — these apply to every device and client that talks to this Cuttle.">All devices</span><button type="button" class="cuttle-info" data-tooltip="Experimental features may change. Each switch shows its current state. Set CUTTLE_EXPERIMENTAL=0 in Cuttle's .env (~/.local/share/cuttle or %LOCALAPPDATA%\\Cuttle) to force all experiments off." aria-label="About experiments">i</button></h3>
                 <div id="experimentalFlagList" class="experimental-flag-list">
                     <div class="provider-status">Loading experimental features…</div>
                 </div>
@@ -339,27 +414,6 @@
             </section>
 
             <section class="settings-panel" id="panel-providers" role="tabpanel" aria-labelledby="tab-providers" tabindex="0" hidden>
-            <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🧠</span> Background helpers <span class="settings-scope" data-scope="server" title="Stored in settings.json and read by api.llm_complete on every call.">This server</span><button type="button" class="cuttle-info" data-tooltip="Generate chat titles, commit suggestions, and enhanced prompts." aria-label="About 🧠 Background helpers">i</button></h3>
-
-                <div class="setting-item setting-item--stack">
-                    <div class="setting-label">
-                        <strong>Provider &amp; model</strong><button type="button" class="cuttle-info" data-tooltip="Automatic uses your configured providers. Pick one to use it exclusively." aria-label="About Provider &amp; model">i</button>
-                    </div>
-                    <div class="setting-control setting-control--stack">
-                        <div class="provider-picker">
-                            <select id="completionProviderSelect" class="setting-input" onchange="onCompletionProviderChanged()">
-                                <option value="">Auto — try each configured provider</option>
-                            </select>
-                            <input type="text" id="completionModelInput" class="setting-input" list="completionModelSuggestions" placeholder="Model id (blank = default)">
-                            <datalist id="completionModelSuggestions"></datalist>
-                            <button class="control-button btn-start" onclick="saveCompletionProviders()"><span class="emoji">💾</span> Save</button>
-                        </div>
-                        <div id="completionProviderStatus" class="provider-status"></div>
-                    </div>
-                </div>
-            </div>
-
             <div class="settings-group">
                 <h3 class="settings-title"><span class="emoji">🔑</span> API Keys <span class="settings-scope" data-scope="server" title="Used by this server's optional direct API features.">This server</span><button type="button" class="cuttle-info" data-tooltip="Optional credentials for Cuttle’s direct API features. CLI agents use their own login and configuration; these keys are never passed to them." aria-label="About 🔑 API Keys">i</button></h3>
 
@@ -415,6 +469,20 @@
                         <input type="password" id="googleKey" class="setting-input" placeholder="AIza...">
                         <button class="control-button btn-info" onclick="testApiKey('google')"><span class="emoji">🧪</span> Test</button>
                         <button class="control-button btn-start" onclick="saveApiKey('google')"><span class="emoji">💾</span> Save</button>
+                    </div>
+                </div>
+</details>
+
+                <details class="settings-disclosure" id="openrouterCredential">
+<summary>OpenRouter <span class="credential-summary" data-credential-summary="openrouter">Checking…</span></summary>
+<div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Management API Key</strong><button type="button" class="cuttle-info" data-tooltip="Account-level Management key used to read credit balance and usage for the OpenRouter meter. It is separate from the completion API key and cannot run requests. Create one at openrouter.ai/settings/management-keys." aria-label="About OpenRouter Management API Key">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="password" id="openrouterKey" class="setting-input" placeholder="sk-or-v1-...">
+                        <button class="control-button btn-info" onclick="testApiKey('openrouter')"><span class="emoji">🧪</span> Test</button>
+                        <button class="control-button btn-start" onclick="saveApiKey('openrouter')"><span class="emoji">💾</span> Save</button>
                     </div>
                 </div>
 </details>
@@ -477,10 +545,11 @@
                     <div class="setting-label">
                         <strong>Model</strong><button type="button" class="cuttle-info" data-tooltip="Speech model for the selected provider." aria-label="About TTS model">i</button>
                     </div>
-                    <div class="setting-control">
-                        <select id="chatTtsModel" class="setting-input" style="min-width: 220px;">
-                            <option value="">Loading…</option>
-                        </select>
+                    <div class="setting-control setting-control--column">
+                        <select id="chatTtsModel" class="setting-input"><option value="">Loading…</option></select>
+                        <input id="chatTtsCustomModel" class="setting-input" aria-label="Custom speech model ID" placeholder="Custom model ID" hidden>
+                        <button type="button" class="control-button btn-info" onclick="refreshChatTtsModels()">Refresh models</button>
+                        <div id="chatTtsModelStatus" class="setting-description" role="status"></div>
                     </div>
                 </div>
                 <div class="setting-item">
@@ -532,12 +601,15 @@
                     <div class="setting-label">
                         <strong>Narrator model</strong><button type="button" class="cuttle-info" data-tooltip="Any model id your key can reach. Suggestions come from the provider registry; blank means the provider default." aria-label="About Narrator model">i</button>
                     </div>
-                    <div class="setting-control">
-                        <input type="text" id="chatTtsNarratorModel" class="setting-input" list="chatTtsNarratorSuggestions" style="min-width: 200px;" placeholder="Model id (blank = default)">
-                        <datalist id="chatTtsNarratorSuggestions"></datalist>
+                    <div class="setting-control setting-control--column">
+                        <select id="chatTtsNarratorModel" class="setting-input" aria-label="Narrator model"><option value="">Provider default</option></select>
+                        <input id="chatTtsNarratorCustomModel" class="setting-input" aria-label="Custom narrator model ID" placeholder="Custom model ID" hidden>
+                        <button type="button" class="control-button btn-info" onclick="refreshNarratorModels()">Refresh models</button>
+                        <label>Reasoning effort <select id="chatTtsNarratorEffort" class="setting-input" aria-label="Narrator reasoning effort"><option value="">Automatic</option></select></label>
                     </div>
                 </div>
 </details>
+                <p id="chatTtsBackgroundNotice" class="setting-description" hidden>Reply narration uses the configured background execution chain. Its model, effort, and temperature are in <a href="/settings_page.html?tab=agents#backgroundHelpersSettings">Agents → Background helpers</a>. The narrator API choices below apply when no background chain is configured.</p>
                 <div class="setting-item">
                     <div class="setting-control" style="gap:8px;flex-wrap:wrap">
                         <button type="button" class="control-button btn-start" onclick="saveChatTtsSettings()"><span class="emoji">💾</span> Save chat voice</button>
@@ -700,8 +772,12 @@
     <script src="/js/media/background_effect_blend.js"></script>
     <script src="/js/shared/toast.js"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
-    <script src="/js/settings/settings_releases.js?v=20261008releasePrefs"></script>
+    <script src="/js/settings/settings_releases.js?v=20261011androidRow"></script>
     <script src="/js/settings/settings_storage.js?v=20261007"></script>
+    <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
+    <script src="/js/settings/settings_model_picker.js?v=20261011menuPosition2"></script>
+    <script src="/js/settings/settings_background_helpers.js?v=20261011menuPosition2"></script>
+    <script src="/js/settings/settings_voice_providers.js?v=20261009b"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
     <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
@@ -842,123 +918,18 @@
             (window.showToast || alert)('Agent name saved successfully!', 'success');
         }
 
-        // Cheap-completion providers come from the server registry so this page
-        // never reimplements resolution order (api.completion_providers owns it).
-        let _completionProviders = [];
-
-        function renderCompletionProviders(payload) {
-            _completionProviders = (payload && payload.providers) || [];
-            const sel = document.getElementById('completionProviderSelect');
-            const input = document.getElementById('completionModelInput');
-            const list = document.getElementById('completionModelSuggestions');
-            if (!sel) return;
-            const pinned = (payload && payload.pinned_provider) || '';
-            sel.innerHTML = '<option value="">Auto — try each configured provider</option>';
-            _completionProviders.forEach(p => {
-                const opt = document.createElement('option');
-                opt.value = p.id;
-                opt.textContent = p.label + (p.configured ? '' : ' (not configured)');
-                if (p.id === pinned) opt.selected = true;
-                sel.appendChild(opt);
+        // Catalog and picker behavior live in the settings slice.
+        let _completionPicker;
+        function completionPicker() {
+            if (!_completionPicker) _completionPicker = CuttleBackgroundHelpers.create({
+                document, fetch: window.fetch.bind(window),
+                notify: (message, kind) => (window.showToast || alert)(message, kind),
+                endpoint: '/api/settings/background-helpers'
             });
-            if (list) {
-                list.innerHTML = '';
-                const current = _completionProviders.find(p => p.id === sel.value);
-                const models = (current && current.suggested_models) || [];
-                models.forEach(name => {
-                    const opt = document.createElement('option');
-                    opt.value = name;
-                    list.appendChild(opt);
-                });
-            }
-            paintCompletionStatus(payload);
-            if (input && !input.dataset.touched) {
-                const row = _completionProviders.find(p => p.id === sel.value);
-                input.value = (row && row.effective_model) || '';
-            }
+            return _completionPicker;
         }
-
-        function paintCompletionStatus(payload) {
-            const box = document.getElementById('completionProviderStatus');
-            if (!box) return;
-            const providers = (payload && payload.providers) || _completionProviders;
-            const order = (payload && payload.order) || [];
-            if (!providers.length) {
-                box.textContent = 'No completion providers registered.';
-                return;
-            }
-            box.innerHTML = '';
-            providers.forEach(p => {
-                const chip = document.createElement('span');
-                const ok = !!p.configured;
-                chip.className = 'provider-chip' + (ok ? '' : ' is-unset') + (p.pinned ? ' is-pinned' : '');
-                const src = p.model_from && p.model_from !== 'default'
-                    ? ' · ' + p.model_from + ': ' + (p.effective_model || p.default_model || 'provider default')
-                    : '';
-                chip.textContent = p.label + (ok ? '' : ' — no ' + ((p.credential_env || [])[0] || 'credential')) + src;
-                if (ok && order.indexOf(p.id) === 0 && order.length > 1) chip.title = 'Tried first';
-                box.appendChild(chip);
-            });
-        }
-
-        function loadCompletionProviders() {
-            return fetch('/api/settings/completion-providers')
-                .then(r => (r.ok ? r.json() : null))
-                .then(data => { if (data && data.success) renderCompletionProviders(data); })
-                .catch(() => {});
-        }
-
-        function onCompletionProviderChanged() {
-            const sel = document.getElementById('completionProviderSelect');
-            const input = document.getElementById('completionModelInput');
-            const list = document.getElementById('completionModelSuggestions');
-            const row = _completionProviders.find(p => p.id === sel.value);
-            if (list) {
-                list.innerHTML = '';
-                ((row && row.suggested_models) || []).forEach(name => {
-                    const opt = document.createElement('option');
-                    opt.value = name;
-                    list.appendChild(opt);
-                });
-            }
-            if (input) {
-                // Switching provider must not carry the previous provider's
-                // model id across.
-                input.value = (row && row.effective_model) || '';
-                input.dataset.touched = '';
-            }
-        }
-
-        async function saveCompletionProviders() {
-            const sel = document.getElementById('completionProviderSelect');
-            const input = document.getElementById('completionModelInput');
-            const providerId = sel ? sel.value : '';
-            const model = input ? input.value.trim() : '';
-            if (input) delete input.dataset.touched;
-            const body = { provider: providerId, models: {} };
-            if (providerId && model) body.models[providerId] = model;
-            try {
-                const r = await fetch('/api/settings/completion-providers', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                });
-                const d = await r.json();
-                if (!r.ok || !d.success) {
-                    (window.showToast || alert)(d.message || d.error || 'Save failed', 'error');
-                    return;
-                }
-                renderCompletionProviders(d);
-                (window.showToast || alert)(
-                    providerId
-                        ? 'Cheap completions pinned to ' + providerId + (model ? ' / ' + model : '')
-                        : 'Cheap completions will try every configured provider.',
-                    'success'
-                );
-            } catch (e) {
-                (window.showToast || alert)('Error: ' + (e.message || e), 'error');
-            }
-        }
+        function loadCompletionProviders() { return completionPicker().load(); }
+        function saveCompletionProviders() { return completionPicker().save(); }
 
         // ── Agent CLI catalog (from GET /api/agents) ──────────────────────
         // Detection, install hints, and credential state all come from the
@@ -997,66 +968,9 @@
         // Server preferences own the default; this control only presents and
         // saves the existing star. Its confirmed value lives with this render.
         function renderDefaultAgentPicker(payload, star) {
-            const select = document.getElementById('defaultAgentSelect');
-            const status = document.getElementById('defaultAgentStatus');
-            if (!select || !status) return;
-            select.innerHTML = '';
-            select.onchange = null;
-            const option = (value, label, disabled) => {
-                const opt = document.createElement('option');
-                opt.value = value;
-                opt.textContent = label;
-                opt.disabled = !!disabled;
-                select.appendChild(opt);
-            };
-            if (!payload || !payload.success || !star || !star.success || !Array.isArray(star.prefixes)) {
-                option('', 'Could not load default', false);
-                select.disabled = true;
-                status.textContent = 'Reload Settings to try again.';
-                return;
-            }
-            let confirmed = star.prefixes[0] || '';
-            option('', 'Automatic (router)', false);
-            ((payload && payload.agents) || []).filter(agent => agent.sticky).forEach(agent => {
-                const prefix = agent.prefix || String(agent.slash).trim() + ' ';
-                option(prefix, (agent.label || agent.id) + (agent.ready ? '' : ' — Setup needed'), !agent.ready);
-            });
-            // A removed drop-in must not silently turn its saved star into
-            // Automatic. Keep it visible until the user changes the default.
-            if (confirmed && !Array.from(select.options).some(opt => opt.value === confirmed)) {
-                option(confirmed, confirmed.trim() + ' — Unavailable', true);
-            }
-            select.value = confirmed;
-            select.disabled = false;
-            status.textContent = '';
-            // Chat still migrates the browser star on an empty server default.
-            // Keep that compatibility copy in sync, especially on clear.
-            const syncBrowserStar = prefixes => {
-                try { localStorage.setItem('cuttleStarredSlashCommands', JSON.stringify(prefixes)); } catch (_) {}
-            };
-            syncBrowserStar(star.prefixes);
-            select.onchange = async () => {
-                const chosen = select.value;
-                select.disabled = true;
-                status.textContent = 'Saving…';
-                try {
-                    const r = await fetch('/api/settings/starred-slash', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prefixes: chosen ? [chosen] : [] }),
-                    });
-                    const data = await r.json();
-                    if (!r.ok || !data.success || !Array.isArray(data.prefixes)) throw new Error(data.error || 'Save failed');
-                    confirmed = data.prefixes[0] || '';
-                    syncBrowserStar(data.prefixes);
-                    status.textContent = confirmed ? 'Default saved for new chats.' : 'New chats will use the router.';
-                } catch (e) {
-                    status.textContent = 'Could not save: ' + (e.message || e);
-                } finally {
-                    select.value = confirmed;
-                    select.disabled = false;
-                }
-            };
+            const prefixes = star && star.success && Array.isArray(star.prefixes) ? star.prefixes : [];
+            window._settingsStarredPrefix = prefixes[0] || '';
+            try { localStorage.setItem('cuttleStarredSlashCommands', JSON.stringify(prefixes)); } catch (_) {}
         }
 
         function agentCopyButton(label, text) {
@@ -1119,6 +1033,14 @@
                 head.appendChild(name);
                 head.appendChild(slash);
                 head.appendChild(agentStatusChip(agent));
+                const prefix = agent.prefix || (String(agent.slash || '').trim() + ' ');
+                const isDefault = !!prefix && window._settingsStarredPrefix === prefix;
+                if (isDefault) {
+                    const badge = document.createElement('span');
+                    badge.className = 'agent-default-chip';
+                    badge.textContent = 'Default';
+                    head.appendChild(badge);
+                }
                 if (agent.source && agent.source !== 'bundled') {
                     const src = document.createElement('span');
                     src.className = 'provider-chip is-source';
@@ -1199,6 +1121,28 @@
                 if (actions.childNodes.length) detail.appendChild(actions);
                 const config = agent.available ? agentConfigSection(agent, adapterConfig) : null;
                 if (config) detail.appendChild(config);
+                if (agent.sticky && agent.ready) {
+                    const row = document.createElement('div');
+                    row.className = 'agent-config-actions';
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'control-button';
+                    button.textContent = isDefault ? 'Default agent' : 'Set as default';
+                    button.disabled = isDefault;
+                    button.addEventListener('click', async (event) => {
+                        event.stopPropagation();
+                        button.disabled = true;
+                        try {
+                            const r = await fetch('/api/settings/starred-slash', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({prefixes:[prefix]})});
+                            const d = await r.json();
+                            if (!r.ok || !d.success) throw new Error(d.error || 'Save failed');
+                            window._settingsStarredPrefix = d.prefixes[0] || '';
+                            loadAgentCatalog();
+                        } catch (e) { button.disabled = false; (window.showToast || alert)('Could not set default: ' + (e.message || e), 'error'); }
+                    });
+                    row.appendChild(button);
+                    detail.appendChild(row);
+                }
 
                 head.addEventListener('click', () => {
                     const open = detail.hidden;
@@ -1234,12 +1178,25 @@
             select.value = current || '';
         }
 
+        function enhanceModelSelect(select, label) {
+            if (!select || !window.CuttleSearchableSelect) return;
+            select.setAttribute('aria-label', label || 'Model');
+            window.CuttleSearchableSelect.enhance(select, {
+                className: 'cuttle-combo--model', label: label || 'Model', floating: true,
+            });
+        }
+
         function agentConfigRow(labelText, control, title) {
             const row = document.createElement('label');
             row.className = 'agent-config-row';
-            if (title) row.title = title;
             const label = document.createElement('span');
             label.textContent = labelText;
+            if (title) {
+                const info = document.createElement('button');
+                info.type = 'button'; info.className = 'cuttle-info'; info.textContent = 'i';
+                info.dataset.tooltip = title; info.setAttribute('aria-label', 'About ' + labelText);
+                label.appendChild(info);
+            }
             row.appendChild(label);
             row.appendChild(control);
             return row;
@@ -1248,9 +1205,11 @@
         function agentConfigSection(agent, cfg) {
             if (!cfg) return null;
             const saved = (cfg.defaults || {})[agent.id] || { model: '', effort: '' };
+            const subagent = (cfg.subagents || {})[agent.id] || { agent: 'native', model: '', effort: '' };
             const steerable = Object.prototype.hasOwnProperty.call(cfg.steer || {}, agent.id);
             const canModel = agent.supports_model_pin && (agent.models || []).length;
-            if (!canModel && !agent.supports_effort && !steerable) return null;
+            // Every agent can own a subagent preference, even if it exposes no
+            // model, effort or steering controls of its own.
 
             const wrap = document.createElement('div');
             wrap.className = 'agent-config';
@@ -1258,6 +1217,60 @@
             let modelSel = null;
             let effortSel = null;
             let effortRow = null;
+
+            const catalog = window._settingsAgentCatalog || [];
+            const subWrap = document.createElement('div');
+            subWrap.className = 'agent-subagent-config';
+            const cliSelect = document.createElement('select');
+            cliSelect.className = 'setting-input';
+            [['native', 'Native (CLI default)'], ...catalog.map(a => [a.id, a.label || a.id])].forEach(([id, label]) => {
+                const opt = document.createElement('option'); opt.value = id; opt.textContent = label; cliSelect.appendChild(opt);
+            });
+            cliSelect.value = subagent.agent || 'native';
+            subWrap.appendChild(agentConfigRow('Default subagent', cliSelect, 'Subagent CLI to use when this agent spawns children. Native leaves the CLI’s own subagent behavior intact.'));
+            const subModel = document.createElement('select'); subModel.className = 'setting-input';
+            const subEffort = document.createElement('select'); subEffort.className = 'setting-input';
+            const subModelRow = agentConfigRow('Subagent model', subModel);
+            enhanceModelSelect(subModel, 'Subagent model');
+            const subEffortRow = agentConfigRow('Subagent effort', subEffort);
+            let chosenSub = { agent: cliSelect.value, model: subagent.model || '', effort: subagent.effort || '' };
+            let persistedSub = {...chosenSub};
+            const selectedCli = () => catalog.find(a => a.id === chosenSub.agent);
+            const renderSubChoices = () => {
+                const target = selectedCli();
+                const native = chosenSub.agent === 'native';
+                subModelRow.hidden = native;
+                subEffortRow.hidden = native;
+                fillAgentSelect(subModel, target && target.supports_model_pin ? target.models || [] : [], chosenSub.model, 'CLI default');
+                const levels = target ? agentEffortChoices(target, chosenSub.model) : [];
+                fillAgentSelect(subEffort, levels, chosenSub.effort, 'CLI default');
+                subModel.disabled = !target || !(target.models || []).length;
+                subEffort.disabled = !target || !target.supports_effort || !levels.length;
+            };
+            const saveSubagent = async () => {
+                const pref = chosenSub.agent === 'native' ? {agent:'native', model:'', effort:''} : {...chosenSub};
+                cliSelect.disabled = subModel.disabled = subEffort.disabled = true;
+                try {
+                    const r = await fetch('/api/settings/agent-adapters', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({subagents:{[agent.id]:pref}})});
+                    const d = await r.json(); if (!r.ok || !d.success) throw new Error(d.error || 'Save failed');
+                    adapterConfig.subagents = d.subagents;
+                    chosenSub = {...pref};
+                    persistedSub = {...pref};
+                } catch (e) {
+                    chosenSub = {...persistedSub};
+                    cliSelect.value = chosenSub.agent;
+                    (window.showToast || alert)('Could not save subagent preference: ' + (e.message || e), 'error');
+                } finally {
+                    cliSelect.disabled = false;
+                    renderSubChoices();
+                }
+            };
+            cliSelect.addEventListener('change', () => { chosenSub = {agent:cliSelect.value, model:'', effort:''}; renderSubChoices(); saveSubagent(); });
+            subModel.addEventListener('change', () => { chosenSub.model=subModel.value; const target=selectedCli(); if (target && !agentEffortChoices(target, chosenSub.model).includes(chosenSub.effort)) chosenSub.effort=''; renderSubChoices(); saveSubagent(); });
+            subEffort.addEventListener('change', () => { chosenSub.effort=subEffort.value; saveSubagent(); });
+            renderSubChoices();
+            subWrap.appendChild(subModelRow);
+            subWrap.appendChild(subEffortRow);
 
             const renderEffort = () => {
                 if (!effortSel) return;
@@ -1306,10 +1319,12 @@
                     const effort = levels.includes(state.effort) ? state.effort : '';
                     save({ model, effort });
                 });
-                wrap.appendChild(agentConfigRow(
+                const modelRow = agentConfigRow(
                     'Default model', modelSel,
                     'Used by new turns unless a chat pins its own model (/' + agent.id + ' model …)'
-                ));
+                );
+                enhanceModelSelect(modelSel, (agent.label || agent.id) + ' default model');
+                wrap.appendChild(modelRow);
             }
 
             if (agent.supports_effort) {
@@ -1323,6 +1338,9 @@
                 wrap.appendChild(effortRow);
                 renderEffort();
             }
+
+            // Show subagent configuration after this agent's own defaults.
+            wrap.appendChild(subWrap);
 
             if (steerable) {
                 const envOff = !!cfg.steer_env_disabled;
@@ -1423,9 +1441,10 @@
 
         function loadAgentCatalog() {
             const getJson = url => fetch(url).then(r => (r.ok ? r.json() : null)).catch(() => null);
-            return Promise.all([getJson('/api/agents'), getJson('/api/settings/agent-adapters'), getJson('/api/settings/starred-slash')])
+            return Promise.all([getJson('/api/agents?live_models=1'), getJson('/api/settings/agent-adapters'), getJson('/api/settings/starred-slash')])
                 .then(([data, cfg, star]) => {
                     renderDefaultAgentPicker(data, star);
+                    window._settingsAgentCatalog = (data && data.agents) || [];
                     adapterConfig = cfg && cfg.success ? cfg : null;
                     renderProjectAdaptersToggle(adapterConfig);
                     if (!data || !data.success) return false;
@@ -1960,13 +1979,16 @@
             const id = escapeHtml(flag.id);
             const label = escapeHtml(flag.label);
             const riskClass = flag.risk === 'high' ? ' setting-item--risk' : '';
+            const help = [
+                flag.description,
+                flag.needs_restart ? 'Takes effect after a Flask restart.' : '',
+                flag.default ? 'On by default; turning this off hides it completely.' : '',
+            ].filter(Boolean).join(' ');
             return ''
                 + '<div class="setting-item' + riskClass + '" data-experimental-flag="' + id + '">'
                 + '  <div class="setting-label">'
                 + '    <strong>' + label + '</strong>'
-                + (flag.description ? '<button type="button" class="cuttle-info" data-tooltip="' + escapeHtml(flag.description) + '" aria-label="About ' + label + '">i</button>' : '')
-                + (flag.needs_restart ? '<div class="setting-description">🔁 Takes effect after a Flask restart.</div>' : '')
-                + (flag.default ? '<div class="setting-description">On by default — turning this off hides it completely.</div>' : '')
+                + (help ? '<button type="button" class="cuttle-info" data-tooltip="' + escapeHtml(help) + '" aria-label="About ' + label + '">i</button>' : '')
                 + '  </div>'
                 + '  <div class="setting-control">'
                 + '    <label class="toggle-switch' + (flag.enabled ? ' active' : '') + '" id="expFlagToggle-' + id + '" onclick="toggleExperimentalFlag(event, \'' + id + '\')">'
@@ -2097,6 +2119,49 @@
             }
         }
 
+        async function loadTimeoutsSettings() {
+            try {
+                const r = await fetch('/api/settings/timeouts');
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Failed to load');
+                const agentEl = document.getElementById('agentRunTimeoutSeconds');
+                const subEl = document.getElementById('subagentWaitTimeoutSeconds');
+                if (agentEl && d.agent_run_seconds != null) agentEl.value = String(d.agent_run_seconds);
+                if (subEl && d.subagent_wait_seconds != null) subEl.value = String(d.subagent_wait_seconds);
+            } catch (e) {
+                (window.showToast || alert)('Could not load timeout settings: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function saveTimeoutsSettings() {
+            const agentEl = document.getElementById('agentRunTimeoutSeconds');
+            const subEl = document.getElementById('subagentWaitTimeoutSeconds');
+            const statusEl = document.getElementById('timeoutsStatus');
+            const payload = {};
+            if (agentEl && agentEl.value !== '') payload.agent_run_seconds = parseInt(agentEl.value, 10);
+            if (subEl && subEl.value !== '') payload.subagent_wait_seconds = parseInt(subEl.value, 10);
+            if (!Object.keys(payload).length) {
+                if (statusEl) statusEl.textContent = 'Enter at least one timeout.';
+                return;
+            }
+            try {
+                const r = await fetch('/api/settings/timeouts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Save failed');
+                if (agentEl && d.agent_run_seconds != null) agentEl.value = String(d.agent_run_seconds);
+                if (subEl && d.subagent_wait_seconds != null) subEl.value = String(d.subagent_wait_seconds);
+                if (statusEl) statusEl.textContent = '';
+                (window.showToast || alert)('Timeouts saved', 'info');
+            } catch (e) {
+                if (statusEl) statusEl.textContent = e.message || String(e);
+                (window.showToast || alert)('Failed to save timeouts: ' + (e.message || e), 'error');
+            }
+        }
+
         async function toggleLanAccess(event) {
             // Label + nested checkbox would otherwise fire this twice per click.
             if (event) event.preventDefault();
@@ -2131,303 +2196,26 @@
         // Voice tab: provider registry snapshot + saved chat_tts. The
         // provider owns its voices/models/tunables, so every control below
         // re-renders from the selected provider (never a hardcoded list).
-        let _ttsProviders = [];
-        let _ttsNarrators = [];
-        let _ttsFetchedVoices = {};
-
-        function _ttsProvider(id) {
-            return (_ttsProviders || []).find((p) => p && p.id === id) || null;
+        let _voiceProvidersController;
+        function voiceProvidersController() {
+            return _voiceProvidersController ||= CuttleVoiceProviders.create({document, fetch: window.fetch.bind(window),
+                notify: (message, kind) => (window.showToast || alert)(message, kind),
+                onSaved: data => { window._chatTtsSaved = data; }});
         }
-
-        function _ttsSetOptions(sel, items, current) {
-            if (!sel) return;
-            sel.textContent = '';
-            (items || []).forEach((it) => {
-                const opt = document.createElement('option');
-                opt.value = it.id;
-                opt.textContent = it.label || it.id;
-                sel.appendChild(opt);
-            });
-            if (current != null && current !== '') {
-                if (!Array.from(sel.options).some((o) => o.value === String(current))) {
-                    const opt = document.createElement('option');
-                    opt.value = String(current);
-                    opt.textContent = String(current);
-                    sel.appendChild(opt);
-                }
-                sel.value = String(current);
-            }
-        }
-
-        function _ttsRefreshTunables() {
-            const pid = (document.getElementById('chatTtsProvider') || {}).value || 'openai';
-            const p = _ttsProvider(pid);
-            const speedRow = document.getElementById('chatTtsSpeedRow');
-            const speed = document.getElementById('chatTtsSpeed');
-            const speedVal = document.getElementById('chatTtsSpeedValue');
-            const stabRow = document.getElementById('chatTtsStabilityRow');
-            if (speedRow) speedRow.hidden = !(p && p.speed_range);
-            if (p && p.speed_range && speed) {
-                speed.min = p.speed_range[0];
-                speed.max = p.speed_range[1];
-                let v = parseFloat(speed.value);
-                if (!isFinite(v)) v = 1;
-                v = Math.max(p.speed_range[0], Math.min(p.speed_range[1], v));
-                speed.value = String(v);
-                if (speedVal) speedVal.textContent = v.toFixed(2) + '×';
-            }
-            if (stabRow) stabRow.hidden = !(p && p.supports_stability);
-            const fetchBtn = document.getElementById('chatTtsFetchVoicesBtn');
-            if (fetchBtn) fetchBtn.hidden = !(p && p.supports_fetch_voices && p.configured);
-        }
-
-        function _ttsRenderVoices(pid, savedVoice) {
-            const sel = document.getElementById('chatTtsVoice');
-            const p = _ttsProvider(pid);
-            const fetched = _ttsFetchedVoices[pid] || [];
-            const items = (fetched.length ? fetched : ((p && p.voices) || []))
-                .map((v) => ({ id: v.id, label: v.label || v.id }));
-            _ttsSetOptions(sel, items, savedVoice || (items[0] && items[0].id) || '');
-            const custom = document.getElementById('chatTtsCustomVoice');
-            if (custom) custom.value = '';
-        }
-
-        function _ttsRenderModels(pid, savedModel) {
-            const p = _ttsProvider(pid);
-            _ttsSetOptions(
-                document.getElementById('chatTtsModel'),
-                ((p && p.models) || []).map((m) => ({ id: m.id, label: m.label || m.id })),
-                savedModel || (p && p.default_model) || ''
-            );
-        }
-
-        function onChatTtsProviderChanged() {
-            const sel = document.getElementById('chatTtsProvider');
-            const pid = (sel && sel.value) || 'openai';
-            const saved = (window._chatTtsSaved || {});
-            const models = saved.models || {};
-            const voices = saved.voices || {};
-            _ttsRenderModels(pid, models[pid]);
-            _ttsRenderVoices(pid, voices[pid]);
-            _ttsRefreshTunables();
-            const p = _ttsProvider(pid);
-            const status = document.getElementById('chatTtsProviderStatus');
-            if (status) {
-                status.textContent = p
-                    ? (p.configured
-                        ? p.label + ' key saved.'
-                        : p.label + ' key missing — add it under Providers → API Keys to use this provider.')
-                    : '';
-            }
-        }
-
+        function loadChatTtsSettings() { return voiceProvidersController().load(); }
+        function applyChatTtsToUi(conf) { return voiceProvidersController().apply(conf); }
+        function readChatTtsFromUi() { return voiceProvidersController().read(); }
+        function saveChatTtsSettings() { return voiceProvidersController().save(); }
+        function onChatTtsProviderChanged() { return voiceProvidersController().changeProvider(); }
+        function onChatTtsNarratorChanged() { return voiceProvidersController().changeNarrator(); }
+        function fetchChatTtsVoices() { return voiceProvidersController().voices(true); }
+        function refreshChatTtsModels() { return voiceProvidersController().refreshSpeech(); }
+        function refreshNarratorModels() { return voiceProvidersController().refreshNarrator(); }
         function onChatTtsSpeedInput() {
-            const speed = document.getElementById('chatTtsSpeed');
-            const val = document.getElementById('chatTtsSpeedValue');
-            if (speed && val) {
-                const v = parseFloat(speed.value);
-                if (isFinite(v)) val.textContent = v.toFixed(2) + '×';
-            }
+            document.getElementById('chatTtsSpeedValue').textContent = Number(document.getElementById('chatTtsSpeed').value).toFixed(2) + '×';
         }
-
         function onChatTtsStabilityInput() {
-            const el = document.getElementById('chatTtsStability');
-            const val = document.getElementById('chatTtsStabilityValue');
-            if (el && val) {
-                const v = parseFloat(el.value);
-                if (isFinite(v)) val.textContent = v.toFixed(2);
-            }
-        }
-
-        function _ttsRenderNarrators(savedProvider, savedModel) {
-            const sel = document.getElementById('chatTtsNarratorProvider');
-            if (sel) {
-                sel.textContent = '';
-                _ttsNarrators.forEach((n) => {
-                    const opt = document.createElement('option');
-                    opt.value = n.id;
-                    opt.textContent = n.label + (n.configured ? '' : ' (no key)');
-                    sel.appendChild(opt);
-                });
-                if (savedProvider) sel.value = savedProvider;
-            }
-            onChatTtsNarratorChanged(savedModel);
-        }
-
-        function onChatTtsNarratorChanged(savedModel) {
-            const sel = document.getElementById('chatTtsNarratorProvider');
-            const pid = (sel && sel.value) || 'openai';
-            const n = (_ttsNarrators || []).find((x) => x && x.id === pid) || null;
-            const list = document.getElementById('chatTtsNarratorSuggestions');
-            if (list) {
-                list.textContent = '';
-                ((n && n.suggested_models) || []).forEach((m) => {
-                    const opt = document.createElement('option');
-                    opt.value = m;
-                    list.appendChild(opt);
-                });
-            }
-            const input = document.getElementById('chatTtsNarratorModel');
-            if (input && savedModel !== undefined) input.value = savedModel || '';
-            const status = document.getElementById('chatTtsNarratorStatus');
-            if (status) {
-                status.textContent = n
-                    ? (n.configured
-                        ? 'Key saved' + (n.effective_model ? ' · default ' + n.effective_model : '') + '.'
-                        : 'No key saved — add it under Providers → API Keys.')
-                    : '';
-            }
-        }
-
-        function applyChatTtsToUi(t) {
-            const conf = (t && typeof t === 'object') ? t : {};
-            window._chatTtsSaved = conf;
-            const enabled = document.getElementById('chatTtsEnabled');
-            const enabledToggle = document.getElementById('chatTtsEnabledToggle');
-            if (enabled) enabled.checked = conf.enabled !== false;
-            if (enabledToggle) enabledToggle.classList.toggle('active', conf.enabled !== false);
-            const summarize = document.getElementById('chatTtsSummarize');
-            const summarizeToggle = document.getElementById('chatTtsSummarizeToggle');
-            if (summarize) summarize.checked = conf.summarize !== false;
-            if (summarizeToggle) summarizeToggle.classList.toggle('active', conf.summarize !== false);
-            const provSel = document.getElementById('chatTtsProvider');
-            if (provSel && conf.provider) provSel.value = conf.provider;
-            onChatTtsProviderChanged();
-            const speed = document.getElementById('chatTtsSpeed');
-            if (speed && conf.speed != null) {
-                speed.value = String(conf.speed);
-                onChatTtsSpeedInput();
-            }
-            const stab = document.getElementById('chatTtsStability');
-            if (stab && conf.stability != null) {
-                stab.value = String(conf.stability);
-                onChatTtsStabilityInput();
-            }
-            // Custom voice box wins over the dropdown when the saved voice
-            // is not in the curated/fetched list.
-            const custom = document.getElementById('chatTtsCustomVoice');
-            const voiceSel = document.getElementById('chatTtsVoice');
-            const savedVoice = ((conf.voices || {})[((provSel && provSel.value) || 'openai')]) || '';
-            if (custom && voiceSel && savedVoice
-                && !Array.from(voiceSel.options).some((o) => o.value === savedVoice)) {
-                custom.value = savedVoice;
-            }
-            const smodels = conf.summarize_models || {};
-            _ttsRenderNarrators(conf.summarize_provider || 'openai',
-                smodels[(document.getElementById('chatTtsNarratorProvider') || {}).value || 'openai'] || '');
-        }
-
-        async function loadChatTtsSettings() {
-            try {
-                const [pr, sr] = await Promise.all([
-                    fetch('/api/tts/providers', { cache: 'no-store' }),
-                    fetch('/api/settings/chat-tts', { cache: 'no-store' }),
-                ]);
-                const pd = await pr.json();
-                if (!pd.success) throw new Error(pd.error || 'Failed to load providers');
-                _ttsProviders = pd.providers || [];
-                _ttsNarrators = pd.summarize_providers || [];
-                const psel = document.getElementById('chatTtsProvider');
-                if (psel) {
-                    psel.textContent = '';
-                    _ttsProviders.forEach((p) => {
-                        const opt = document.createElement('option');
-                        opt.value = p.id;
-                        opt.textContent = p.label + (p.configured ? '' : ' (no key)');
-                        psel.appendChild(opt);
-                    });
-                }
-                const d = await sr.json();
-                if (!d.success) throw new Error(d.error || 'Failed to load');
-                applyChatTtsToUi(d.chat_tts);
-            } catch (e) {
-                (window.showToast || alert)('Could not load chat voice settings: ' + (e.message || e), 'error');
-            }
-        }
-
-        function readChatTtsFromUi() {
-            const val = (id) => {
-                const el = document.getElementById(id);
-                return el ? el.value : undefined;
-            };
-            const checked = (id) => {
-                const el = document.getElementById(id);
-                return el ? !!el.checked : undefined;
-            };
-            const out = {};
-            const enabled = checked('chatTtsEnabled');
-            if (enabled !== undefined) out.enabled = enabled;
-            const summarize = checked('chatTtsSummarize');
-            if (summarize !== undefined) out.summarize = summarize;
-            const saved = window._chatTtsSaved || {};
-            const pid = val('chatTtsProvider') || saved.provider || 'openai';
-            out.provider = pid;
-            const models = Object.assign({}, saved.models || {});
-            const model = val('chatTtsModel');
-            if (model) models[pid] = model;
-            out.models = models;
-            const voices = Object.assign({}, saved.voices || {});
-            const custom = (val('chatTtsCustomVoice') || '').trim();
-            const voice = custom || val('chatTtsVoice');
-            if (voice) voices[pid] = voice;
-            out.voices = voices;
-            const speedEl = document.getElementById('chatTtsSpeed');
-            if (speedEl && !document.getElementById('chatTtsSpeedRow').hidden) {
-                const v = parseFloat(speedEl.value);
-                if (isFinite(v)) out.speed = v;
-            }
-            const stabEl = document.getElementById('chatTtsStability');
-            if (stabEl && !document.getElementById('chatTtsStabilityRow').hidden) {
-                const v = parseFloat(stabEl.value);
-                if (isFinite(v)) out.stability = v;
-            }
-            const sp = val('chatTtsNarratorProvider');
-            if (sp) out.summarize_provider = sp;
-            const smodels = Object.assign({}, saved.summarize_models || {});
-            const sm = (val('chatTtsNarratorModel') || '').trim();
-            if (sp && sm) smodels[sp] = sm;
-            else if (sp && smodels[sp] && !sm) delete smodels[sp];
-            out.summarize_models = smodels;
-            return out;
-        }
-
-        async function saveChatTtsSettings() {
-            try {
-                const r = await fetch('/api/settings/chat-tts', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(readChatTtsFromUi()),
-                });
-                const d = await r.json();
-                if (!d.success) throw new Error(d.error || 'Save failed');
-                applyChatTtsToUi(d.chat_tts);
-                (window.showToast || alert)('Chat voice saved', 'info');
-            } catch (e) {
-                (window.showToast || alert)('Failed to save chat voice: ' + (e.message || e), 'error');
-            }
-        }
-
-        async function fetchChatTtsVoices(event) {
-            const btn = event && event.currentTarget ? event.currentTarget : null;
-            try {
-                if (btn) btn.disabled = true;
-                const pid = (document.getElementById('chatTtsProvider') || {}).value || 'elevenlabs';
-                const r = await fetch('/api/tts/voices?provider=' + encodeURIComponent(pid));
-                const d = await r.json();
-                if (!r.ok || !d.success) throw new Error((d && d.error) || ('Fetch failed (' + r.status + ')'));
-                if (d.note) {
-                    (window.showToast || alert)(d.note, 'info');
-                    return;
-                }
-                _ttsFetchedVoices[pid] = d.voices || [];
-                const saved = (window._chatTtsSaved || {}).voices || {};
-                _ttsRenderVoices(pid, saved[pid]);
-                (window.showToast || alert)('Loaded ' + (d.voices || []).length + ' voices', 'info');
-            } catch (e) {
-                (window.showToast || alert)('Could not fetch voices: ' + (e.message || e), 'error');
-            } finally {
-                if (btn) btn.disabled = false;
-            }
+            document.getElementById('chatTtsStabilityValue').textContent = Number(document.getElementById('chatTtsStability').value).toFixed(2);
         }
 
         async function previewChatTtsVoice(event) {
@@ -2527,6 +2315,28 @@
                 // Preview so the user hears the sound when enabling
                 try { window.playCuttleCompletionChirp(); } catch (_) {}
             }
+        }
+
+        function toggleSessionUsageEstimate(event) {
+            if (event) event.preventDefault();
+            const checkbox = document.getElementById('sessionUsageEstimateEnabled');
+            const toggle = document.getElementById('sessionUsageEstimateToggle');
+            if (!checkbox) return;
+            checkbox.checked = !checkbox.checked;
+            if (toggle) toggle.classList.toggle('active', checkbox.checked);
+            localStorage.setItem('cuttleShowSessionUsageEstimate', checkbox.checked ? 'true' : 'false');
+            const subagentsSetting = document.getElementById('sessionUsageSubagentsSetting');
+            if (subagentsSetting) subagentsSetting.hidden = !checkbox.checked;
+        }
+
+        function toggleSessionUsageSubagents(event) {
+            if (event) event.preventDefault();
+            const checkbox = document.getElementById('sessionUsageSubagentsEnabled');
+            const toggle = document.getElementById('sessionUsageSubagentsToggle');
+            if (!checkbox) return;
+            checkbox.checked = !checkbox.checked;
+            if (toggle) toggle.classList.toggle('active', checkbox.checked);
+            localStorage.setItem('cuttleSessionUsageIncludeSubagents', checkbox.checked ? 'true' : 'false');
         }
 
         function showNotification(message, variant) {
@@ -2732,6 +2542,9 @@
                     if (result.api_keys.google) {
                         document.getElementById('googleKey').placeholder = `${hint(result.api_keys.google)} saved — Test checks it, paste to replace`;
                     }
+                    if (result.api_keys.openrouter) {
+                        document.getElementById('openrouterKey').placeholder = `${hint(result.api_keys.openrouter)} saved — Test checks it, paste to replace`;
+                    }
                 }
             } catch (error) {
                 document.querySelectorAll('[data-credential-summary]').forEach(summary => { summary.textContent = 'Could not load'; });
@@ -2881,9 +2694,21 @@
             const agentName = localStorage.getItem('agentName') || 'Cuttle';
             const notificationsEnabled = localStorage.getItem('notificationsEnabled') !== 'false';
             const responseChirpEnabled = localStorage.getItem('responseChirpEnabled') !== 'false';
+            const sessionUsageEstimateEnabled = localStorage.getItem('cuttleShowSessionUsageEstimate') === 'true';
+            const sessionUsageSubagentsEnabled = localStorage.getItem('cuttleSessionUsageIncludeSubagents') === 'true';
             
             document.getElementById('agentName').value = agentName;
             document.getElementById('notificationsEnabled').checked = notificationsEnabled;
+            const usageEstimateCb = document.getElementById('sessionUsageEstimateEnabled');
+            if (usageEstimateCb) usageEstimateCb.checked = sessionUsageEstimateEnabled;
+            const usageEstimateToggle = document.getElementById('sessionUsageEstimateToggle');
+            if (usageEstimateToggle) usageEstimateToggle.classList.toggle('active', sessionUsageEstimateEnabled);
+            const usageSubagentsSetting = document.getElementById('sessionUsageSubagentsSetting');
+            if (usageSubagentsSetting) usageSubagentsSetting.hidden = !sessionUsageEstimateEnabled;
+            const usageSubagentsCb = document.getElementById('sessionUsageSubagentsEnabled');
+            if (usageSubagentsCb) usageSubagentsCb.checked = sessionUsageSubagentsEnabled;
+            const usageSubagentsToggle = document.getElementById('sessionUsageSubagentsToggle');
+            if (usageSubagentsToggle) usageSubagentsToggle.classList.toggle('active', sessionUsageSubagentsEnabled);
             const chirpCb = document.getElementById('responseChirpEnabled');
             if (chirpCb) chirpCb.checked = responseChirpEnabled;
             loadVideoBackgroundEnabledToggle();
@@ -2937,10 +2762,11 @@
                 });
                 tabs.register('agents', function () {
                     loadAgentCatalog();
+                    loadCompletionProviders();
                     loadGitAutoCommitSetting();
+                    loadTimeoutsSettings();
                 });
                 tabs.register('providers', function () {
-                    loadCompletionProviders();
                     loadApiKeys();
                 });
                 tabs.register('voice', function () { loadChatTtsSettings(); });
@@ -2957,6 +2783,7 @@
                 loadAgentCatalog();
                 loadGitAutoCommitSetting();
                 loadCompletionProviders();
+                loadTimeoutsSettings();
                 loadChatTtsSettings();
                 loadApiKeys();
                 loadExperimentalFlags();

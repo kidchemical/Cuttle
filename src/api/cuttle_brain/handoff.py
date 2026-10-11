@@ -1,12 +1,19 @@
 """Hot-swap handoff: Cuttle-owned transcript deltas between agents.
 
 Each harness agent keeps its own native resume id for a chat. Cuttle tracks,
-per chat, the newest message each agent has seen (its *seen cursor*). Before a
-turn the target agent gets every message after its cursor that it did not
-produce itself — turns answered by other agents, plain LLM / router replies,
-or failed turns — within a char budget (older rows are counted as omitted with
-a ``chat_cli`` pointer, never dropped silently). Agents without native resume
-get the recent conversation every turn.
+per chat, the newest message each agent has seen (its *seen cursor*) and the
+workspace it last ran in. Before a turn the target agent gets every message
+after its cursor that it did not produce itself — turns answered by other
+agents, plain LLM / router replies, or failed turns — within a char budget
+(older rows are counted as omitted with a ``chat_cli`` pointer, never dropped
+silently). Agents without native resume get the recent conversation every turn.
+
+A CLI resume id is keyed by workspace, so switching the chat's project keeps
+the same agent but silently drops its native session. The seen cursor would
+then read as "caught up" and the agent would lose the whole conversation, so a
+project transition forces the recent transcript back in (``project_changed`` in
+``build_handoff``). This is the one case worse than an agent switch, where the
+incoming agent has no cursor and already gets the transcript.
 """
 
 from __future__ import annotations
@@ -49,20 +56,22 @@ def _write_all(data: Dict[str, Any]) -> None:
 
 
 def _entry(chat_session_id: Any) -> Dict[str, Any]:
-    """Normalized state for one chat: ``{"last_agent": str|None, "seen": {agent: id}}``.
+    """Normalized state for one chat.
+
+    ``{"last_agent": str|None, "seen": {agent: id}, "projects": {agent: path}}``.
 
     Legacy rows stored only the last agent id as a bare string; they read as
-    a state with no seen cursors (``legacy`` True).
+    a state with no seen cursors or project records (``legacy`` True).
     """
     key = _sid_key(chat_session_id)
     if not key:
-        return {"last_agent": None, "seen": {}, "legacy": False}
+        return {"last_agent": None, "seen": {}, "projects": {}, "legacy": False}
     with _lock:
         raw = _store().get(key)
     if isinstance(raw, str):
-        return {"last_agent": raw.strip() or None, "seen": {}, "legacy": True}
+        return {"last_agent": raw.strip() or None, "seen": {}, "projects": {}, "legacy": True}
     if not isinstance(raw, dict):
-        return {"last_agent": None, "seen": {}, "legacy": False}
+        return {"last_agent": None, "seen": {}, "projects": {}, "legacy": False}
     last = raw.get("last_agent")
     seen = raw.get("seen") if isinstance(raw.get("seen"), dict) else {}
     clean: Dict[str, int] = {}
@@ -71,9 +80,16 @@ def _entry(chat_session_id: Any) -> Dict[str, Any]:
             clean[str(aid)] = int(mid)
         except (TypeError, ValueError):
             continue
+    projects_raw = raw.get("projects") if isinstance(raw.get("projects"), dict) else {}
+    projects: Dict[str, str] = {}
+    for aid, path in projects_raw.items():
+        p = str(path or "").strip()
+        if p:
+            projects[str(aid)] = p
     return {
         "last_agent": (str(last).strip() or None) if last else None,
         "seen": clean,
+        "projects": projects,
         "legacy": False,
     }
 
@@ -85,6 +101,33 @@ def get_last_agent(chat_session_id: Any) -> Optional[str]:
 def get_seen_cursor(chat_session_id: Any, agent_id: str) -> Optional[int]:
     """Newest chat message id ``agent_id`` saw in this chat (None if never)."""
     return _entry(chat_session_id)["seen"].get((agent_id or "").strip())
+
+
+def get_last_project(chat_session_id: Any, agent_id: str) -> Optional[str]:
+    """Workspace ``agent_id`` last ran this chat in (None if never recorded)."""
+    return _entry(chat_session_id)["projects"].get((agent_id or "").strip())
+
+
+def _norm_project(path: Optional[str]) -> str:
+    text = (path or "").strip()
+    if not text:
+        return ""
+    try:
+        return str(Path(text).resolve()).lower()
+    except OSError:
+        return text.lower()
+
+
+def _same_project(left: Optional[str], right: Optional[str]) -> bool:
+    """Same workspace, including ``src``/``source`` aliases (owner: ``cwd``)."""
+    if not left or not right:
+        return False
+    try:
+        from api.agent_harness.cwd import same_project
+
+        return bool(same_project(left, right))
+    except Exception:
+        return _norm_project(left) == _norm_project(right)
 
 
 def _latest_message_id(chat_session_id: Any) -> int:
@@ -108,6 +151,7 @@ def record_last_agent(
     agent_id: str,
     *,
     through_message_id: Optional[int] = None,
+    project_path: Optional[str] = None,
 ) -> None:
     """Record a completed agent turn: last agent + that agent's seen cursor.
 
@@ -115,6 +159,10 @@ def record_last_agent(
     meta/settings commands). The cursor defaults to the newest stored chat
     message — the turn's own user row plus any steers persisted mid-run; the
     agent's reply lands after it and is skipped as its own on the next build.
+
+    ``project_path`` records the workspace the turn ran in, so a later turn in
+    a *different* project can detect that the CLI's per-cwd resume id does not
+    cover this conversation and resend the transcript (see ``build_handoff``).
     """
     key = _sid_key(chat_session_id)
     aid = (agent_id or "").strip()
@@ -125,10 +173,17 @@ def record_last_agent(
         if through_message_id is not None
         else _latest_message_id(chat_session_id)
     )
+    proj = _norm_project(project_path)
+
     def change(raw):
         seen = dict(raw["seen"]) if isinstance(raw, dict) and isinstance(raw.get("seen"), dict) else {}
         seen[aid] = cursor
-        return {"last_agent": aid, "seen": seen}
+        projects = {}
+        if isinstance(raw, dict) and isinstance(raw.get("projects"), dict):
+            projects = {str(k): str(v) for k, v in raw["projects"].items() if v}
+        if proj:
+            projects[aid] = proj
+        return {"last_agent": aid, "seen": seen, "projects": projects}
 
     with _lock:
         _store().update(key, change)
@@ -152,6 +207,12 @@ class AgentHandoff:
     text: str
     message_count: int = 0
     truncated_count: int = 0
+    # Why this transcript was injected: "switch" (agent changed), "reset"
+    # (same agent, project/workspace changed so the per-cwd resume is gone),
+    # or "history" (agent keeps no native session). Consumers use it to keep
+    # conversation out of briefing-size metrics.
+    mode: str = "switch"
+
 
 
 def _numeric_session_id(chat_session_id: Any) -> Optional[int]:
@@ -239,6 +300,27 @@ def _norm(text: str) -> str:
     return " ".join((text or "").split()).lower()
 
 
+def _older_visible_count(chat_session_id: Any, oldest_id: Any) -> int:
+    """Visible rows older than the oldest fetched row.
+
+    The window-limited paths fetch only the newest ``limit`` rows, so turns
+    before that window are never seen by ``_fit_budget`` and would otherwise
+    be dropped without the ``chat_cli`` pointer. Best-effort (0 on any error);
+    ``message_page_meta`` already counts non-system rows the same way the
+    rendered transcript does.
+    """
+    sid = _numeric_session_id(chat_session_id)
+    if sid is None or oldest_id is None:
+        return 0
+    try:
+        from api.auth_db import get_auth_db
+
+        meta = get_auth_db().message_page_meta(sid, int(oldest_id))
+        return int(meta.get("older_visible_count") or 0)
+    except Exception:
+        return 0
+
+
 def _drop_current_turn(
     messages: List[Dict[str, Any]], current_prompt: Optional[str]
 ) -> List[Dict[str, Any]]:
@@ -317,6 +399,17 @@ def format_handoff_delta(
                 "the recent conversation it is continuing."
             ),
         ]
+    elif mode == "reset":
+        lines = [
+            "## Conversation so far (Cuttle transcript)",
+            (
+                "This chat moved to a different project/workspace, and "
+                f"`{to_agent}`'s native CLI session is per-workspace, so the "
+                "earlier turns are not in its session. Here is the recent "
+                "conversation it is continuing — treat it as prior context, "
+                "not a fresh request."
+            ),
+        ]
     else:
         lines = ["## Agent handoff (Cuttle transcript)"]
         if from_agent and from_agent != to_agent:
@@ -368,11 +461,16 @@ def build_handoff(
     limit: int = _RECENT_WINDOW,
     current_prompt: Optional[str] = None,
     full_history: bool = False,
+    project_path: Optional[str] = None,
 ) -> Optional[AgentHandoff]:
     """Chat messages ``to_agent`` has not seen yet; None when it is caught up.
 
     * ``full_history`` (agents without native resume): the recent
       conversation every turn — the agent remembers nothing between turns.
+    * Same agent, **different project**: the CLI resume id is keyed by
+      workspace, so the agent's native session does not cover the new
+      project. Its seen cursor cannot be trusted as "caught up" — resend the
+      recent transcript (its own prior replies included) under a reset notice.
     * Agent with a seen cursor: every message after it, minus its own reply
       to that turn. Covers plain-LLM / router turns and settings commands,
       which never move any agent's cursor.
@@ -388,31 +486,54 @@ def build_handoff(
     previous = (
         from_agent if from_agent is not None else state.get("last_agent") or ""
     ).strip()
+    cursor = state["seen"].get(target)
+    prev_project = state["projects"].get(target)
+    project_changed = bool(
+        cursor is not None
+        and (from_agent is None or previous == target)
+        and prev_project
+        and project_path
+        and not _same_project(prev_project, project_path)
+    )
     mode = "switch"
+    # Window-limited paths fetch only the newest ``limit`` rows; turns before
+    # that window must still be reported as omitted (with the chat_cli pointer)
+    # rather than silently dropped. The cursor path fetches everything since the
+    # cursor, so its head is covered and needs no such count.
+    window_limited = False
     if full_history:
         mode = "history"
         messages = fetch_recent_transcript(chat_session_id, limit=limit)
+        window_limited = True
+    elif project_changed:
+        mode = "reset"
+        messages = fetch_recent_transcript(chat_session_id, limit=limit)
+        window_limited = True
+    elif cursor is not None and from_agent is None:
+        messages = _skip_own_reply(
+            fetch_recent_transcript(chat_session_id, after_id=cursor)
+        )
     else:
-        cursor = state["seen"].get(target)
-        if cursor is not None and from_agent is None:
-            messages = _skip_own_reply(
-                fetch_recent_transcript(chat_session_id, after_id=cursor)
-            )
-        else:
-            if from_agent is None and (not previous or previous == target) and state.get("legacy"):
-                return None
-            if from_agent is not None and (not previous or previous == target):
-                return None
-            messages = fetch_recent_transcript(chat_session_id, limit=limit)
+        if from_agent is None and (not previous or previous == target) and state.get("legacy"):
+            return None
+        if from_agent is not None and (not previous or previous == target):
+            return None
+        messages = fetch_recent_transcript(chat_session_id, limit=limit)
+        window_limited = True
     messages = _drop_current_turn(messages, current_prompt)
     if not messages:
         return None
+    head_dropped = (
+        _older_visible_count(chat_session_id, messages[0].get("id"))
+        if window_limited
+        else 0
+    )
     kept, omitted, truncated = _fit_budget(messages)
     text = format_handoff_delta(
         from_agent=previous,
         to_agent=target,
         messages=kept,
-        omitted=omitted,
+        omitted=omitted + head_dropped,
         truncated=truncated,
         chat_handle=_chat_handle(chat_session_id),
         mode=mode,
@@ -423,4 +544,5 @@ def build_handoff(
         text=text,
         message_count=len(kept),
         truncated_count=truncated,
+        mode=mode,
     )

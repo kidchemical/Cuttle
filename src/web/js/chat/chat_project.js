@@ -1,10 +1,11 @@
 /* ================================================================
    Cuttle Chat — project context domain (chat_project.js)
    Owner: project-context subsystem. Pure project resolution, mapping,
-   and outbound decisions: no document, no window, no localStorage, no
+   git-facing cwd selection, pending-changes snapshot, and outbound
+   decisions: no document, no window, no localStorage, no
    fetch here (all inputs are explicit arguments). Loaded before
    chat_page.js; the chat page owns the singletons (`projects`,
-   `currentProject`, `currentSessionId`), session/prefs/server IO, DOM,
+   `currentProject`, `currentSessionId`, `currentCheckout*`), session/prefs/server IO, DOM,
    persistence writes, and orchestration, and calls into
    `CuttleChatProject.*`.
 
@@ -101,8 +102,14 @@
             : (serverSession.projectId != null ? serverSession.projectId : null);
         const name = serverSession.project_name || serverSession.projectName || '';
         const path = serverSession.project_path || serverSession.projectPath || '';
-        if (id == null && !name && !path) return null;
-        return { projectId: id, projectName: name, projectPath: path };
+        const checkoutUid = serverSession.checkout_uid || serverSession.checkoutUid || '';
+        if (id == null && !name && !path && !checkoutUid) return null;
+        return {
+            projectId: id,
+            projectName: name,
+            projectPath: path,
+            checkoutUid: checkoutUid || '',
+        };
     }
 
     /**
@@ -321,15 +328,62 @@
     }
 
     /** Stamp the outbound project onto a chat request body. */
-    function applyOutboundProjectToRequest(requestBody, proj) {
+    function applyOutboundProjectToRequest(requestBody, proj, checkoutUid) {
         if (!requestBody || !proj) return;
         if (proj.id != null) requestBody.project_id = proj.id;
         if (proj.name) requestBody.project_name = proj.name;
         if (proj.path) requestBody.project_path = proj.path;
+        // Bound worktree checkout (experimental): the turn's cwd is the
+        // checkout; project fields above stay the project identity.
+        const uid = String(checkoutUid || (proj && proj.checkoutUid) || '').trim();
+        if (uid) requestBody.checkout_uid = uid;
+    }
+
+    /** Restore a checkout atomically; explicit server clears beat device prefs. */
+    function resolveCheckoutBinding(opts) {
+        const sources = [opts.serverSession, opts.prefs, opts.stored];
+        const source = sources.find((row) => row && (
+            Object.prototype.hasOwnProperty.call(row, 'checkout_uid')
+            || Object.prototype.hasOwnProperty.call(row, 'checkoutUid')));
+        const uid = source ? String((Object.prototype.hasOwnProperty.call(source, 'checkout_uid')
+            ? source.checkout_uid : source.checkoutUid) || '').trim() : '';
+        if (!uid) return { uid: '', path: '' };
+        const registered = opts.checkoutForUid ? opts.checkoutForUid(uid) : null;
+        if (registered && registered.path) return { uid, path: String(registered.path) };
+        // Legacy/offline storage is usable only for the SAME checkout ID.
+        const local = sources.find((row) => row
+            && String(row.checkout_uid || row.checkoutUid || '').trim() === uid
+            && (row.checkout_path || row.checkoutPath));
+        return { uid, path: local ? String(local.checkout_path || local.checkoutPath) : '' };
     }
 
     function currentProjectPathKey(proj) {
         return proj && proj.path ? String(proj.path) : '';
+    }
+
+    /**
+     * Git-facing cwd for a chat: the bound worktree checkout when present,
+     * else the project path. Pure over explicit inputs — the chat page owns
+     * `currentCheckoutPath` / `currentProject` and passes them in.
+     */
+    function effectiveGitPath(checkoutPath, currentProject) {
+        const checkout = String(checkoutPath || '');
+        if (checkout) return checkout;
+        return (currentProject && currentProject.path) ? String(currentProject.path) : '';
+    }
+
+    /**
+     * Snapshot handed to the pending-changes panel / git viewers: the bound
+     * project with its git-facing path and an optional worktree label
+     * (`true` when the checkout has no known branch). Returns null when no
+     * project is bound. Pure.
+     */
+    function pendingChangesProject(currentProject, gitPath, branch, checkoutUid) {
+        if (!currentProject) return null;
+        return Object.assign({}, currentProject, {
+            path: String(gitPath || ''),
+            worktree: checkoutUid ? (branch || true) : '',
+        });
     }
 
     const api = {
@@ -346,7 +400,10 @@
         resolveChatProject,
         rebindProjectToRegistry,
         applyOutboundProjectToRequest,
+        resolveCheckoutBinding,
         currentProjectPathKey,
+        effectiveGitPath,
+        pendingChangesProject,
     };
 
     const ns = (root.CuttleChatProject = root.CuttleChatProject || {});

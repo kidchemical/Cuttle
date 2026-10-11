@@ -14,6 +14,7 @@ from pathlib import Path
 WEB = Path(__file__).resolve().parents[2] / "web"
 TOAST_JS = WEB / "js" / "shared" / "toast.js"
 CHAT_JS = WEB / "js" / "chat" / "chat_page.js"
+GIT_PUSH_JS = WEB / "js" / "git" / "git_push_report.js"
 
 
 def test_toast_chrome_is_compact():
@@ -32,7 +33,8 @@ def test_progress_toasts_can_skip_history():
 
 
 def test_push_leaves_one_history_entry_and_one_toast():
-    src = CHAT_JS.read_text(encoding="utf-8")
+    # 3E pt2: push transport lives in git_push_report.js (CuttleGitPushReport).
+    src = GIT_PUSH_JS.read_text(encoding="utf-8")
     progress = src.split("toast('Pushing '", 1)[1].split("});", 1)[0]
     assert "toastId: 'git-push'" in progress
     assert "skipHistory: true" in progress
@@ -40,5 +42,5 @@ def test_push_leaves_one_history_entry_and_one_toast():
 
 
 def test_push_repo_prefix_only_when_multi_repo():
-    src = CHAT_JS.read_text(encoding="utf-8")
+    src = GIT_PUSH_JS.read_text(encoding="utf-8")
     assert "if (repoLabel && Array.isArray(repos) && repos.length > 1) okMsg = repoLabel + ': ' + okMsg;" in src

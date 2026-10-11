@@ -17,6 +17,8 @@ READS = [
     "/api/settings/ui-layout",
     "/api/settings/video-background",
     "/api/settings/git-auto-commit",
+    "/api/settings/timeouts",
+    "/api/settings/update-source",
     "/api/settings/github-app",
     "/api/settings/agent-adapters",
     "/api/app-settings",
@@ -31,6 +33,8 @@ WRITES = [
     ("POST", "/api/settings/ui-layout", {"rail_items": []}),
     ("POST", "/api/settings/video-background", {"enabled": False}),
     ("POST", "/api/settings/git-auto-commit", {"git_auto_commit": False}),
+    ("POST", "/api/settings/timeouts", {"agent_run_seconds": 3600}),
+    ("POST", "/api/settings/update-source", {"update_source": "host"}),
     ("POST", "/api/settings/agent-adapters", {"steer": {"claude": True}}),
     ("POST", "/api/settings/github-app", {"app_id": "1", "installation_id": "2"}),
     ("POST", "/api/settings/github-app/test", {}),
@@ -124,9 +128,82 @@ def test_settings_owner_write_round_trip(tmp_path, monkeypatch):
     assert res.status_code == 400
 
 
-def test_agent_adapters_round_trip(tmp_path, monkeypatch):
-    """Steer switches and the drop-in opt-in persist; env overrides are reported."""
+def test_subagent_preferences_accept_live_models_and_efforts(tmp_path, monkeypatch):
+    """Models offered by Settings must save even outside the bundled snapshot."""
+    from api.agent_harness import agent_models as am
+
     isolated = _isolated_settings(monkeypatch, tmp_path)
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx['client'].set_cookie('session_token', ctx['token'])
+    live_model = 'openrouter/~openai/gpt-luna-latest'
+    effort_model = 'openrouter/existing-model'
+    refreshes = []
+
+    def load_catalog(agent, fallback, refresh=False):
+        refreshes.append(bool(refresh))
+        if not refresh:
+            # Reproduce a Settings page whose catalog was loaded before the new
+            # OpenCode model and effort level appeared.
+            return am.normalize_catalog_rows('opencode', [
+                {'id': 'openrouter/older-model'},
+                {'id': effort_model, 'supports_variant': True, 'variant_levels': ['low']},
+            ]), 'cache'
+        return am.normalize_catalog_rows('opencode', [{
+            'id': live_model,
+            'supports_variant': True,
+            'variant_levels': ['low', 'high'],
+        }, {
+            'id': effort_model,
+            'supports_variant': True,
+            'variant_levels': ['low', 'high'],
+        }]), 'cli_refresh'
+
+    monkeypatch.setattr('api.agent_harness.agent_models.load_agent_catalog', load_catalog)
+    for model, effort in [('', ''), (live_model, ''), (live_model, 'high'), ('', 'high'),
+                          (effort_model, 'high')]:
+        pref = {'opencode': {'agent': 'opencode', 'model': model, 'effort': effort}}
+        res = ctx['client'].post('/api/settings/agent-adapters', json={'subagents': pref}, environ_base=LAN)
+        assert res.status_code == 200, res.get_json()
+        assert isolated.get_setting('agent_subagent_defaults') == pref
+    assert True in refreshes
+    for model, effort in [('unknown-model', ''), (live_model, 'max'), (live_model, 'invalid')]:
+        res = ctx['client'].post('/api/settings/agent-adapters', json={'subagents': {
+            'opencode': {'agent': 'opencode', 'model': model, 'effort': effort}}}, environ_base=LAN)
+        assert res.status_code == 400, res.get_json()
+    assert isolated.get_setting('agent_subagent_defaults')['opencode']['effort'] == 'high'
+
+
+def test_opencode_luna_subagent_save_uses_real_cached_catalog(tmp_path, monkeypatch):
+    """Exercise the real CLI cache loader, not a mocked list of accepted ids."""
+    from api.agent_harness.agents.opencode import model_catalog as mc
+    from api.agent_harness.agent_models import load_agent_catalog, catalog_model_ids
+    from api.agent_harness.catalog import get_agent
+
+    monkeypatch.setenv('CUTTLE_HOME', str(tmp_path / 'home'))
+    isolated = _isolated_settings(monkeypatch, tmp_path)
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx['client'].set_cookie('session_token', ctx['token'])
+    model = 'openrouter/~openai/gpt-luna-latest'
+    monkeypatch.setattr(mc, '_cache_path', lambda: tmp_path / 'opencode_models_cache.json')
+    mc._write_cache(mc._parse_models_stdout(model + '\n{\"variants\": {\"low\": {}, \"high\": {}}}'), refreshed=True)
+    monkeypatch.setattr(mc, '_run_opencode_models', lambda **kwargs: (_ for _ in ()).throw(
+        AssertionError('Fresh cached model must not require a CLI call')))
+    rows, source = load_agent_catalog('opencode', get_agent('opencode')[0].models)
+    assert source == 'cache'
+    assert model in catalog_model_ids(rows)
+    for effort in ['', 'high']:
+        pref = {'opencode': {'agent': 'opencode', 'model': model, 'effort': effort}}
+        res = ctx['client'].post('/api/settings/agent-adapters', json={'subagents': pref}, environ_base=LAN)
+        assert res.status_code == 200, res.get_json()
+        assert isolated.get_setting('agent_subagent_defaults') == pref
+        assert ctx['client'].get('/api/settings/agent-adapters', environ_base=LAN).get_json()['subagents'] == pref
+
+
+def test_agent_adapters_round_trip(tmp_path, monkeypatch):
+    """Adapter controls and per-parent subagent defaults round-trip."""
+    isolated = _isolated_settings(monkeypatch, tmp_path)
+    monkeypatch.setattr('api.agent_harness.agent_models.load_agent_catalog',
+                        lambda agent, fallback: ([{'id': mid} for mid in fallback], 'fixture'))
     monkeypatch.delenv("CUTTLE_AGENT_STEER", raising=False)
     monkeypatch.delenv("CUTTLE_ALLOW_PROJECT_ADAPTERS", raising=False)
     ctx = _auth_client(tmp_path, monkeypatch)
@@ -150,6 +227,22 @@ def test_agent_adapters_round_trip(tmp_path, monkeypatch):
     assert isolated.get_setting("agent_steer") == {"claude": False}
     assert isolated.get_setting("agent_harness") == {"allow_project_adapters": True}
 
+    subagent_pref = {
+        "cursor": {
+            "agent": "opencode",
+            "model": "openrouter/z-ai/glm-5.3-flash",
+            "effort": "high",
+        }
+    }
+    res = ctx["client"].post(
+        "/api/settings/agent-adapters",
+        json={"subagents": subagent_pref},
+        environ_base=LAN,
+    )
+    assert res.status_code == 200, res.get_json()
+    assert res.get_json()["subagents"] == subagent_pref
+    assert isolated.get_setting("agent_subagent_defaults") == subagent_pref
+
     from api.agent_harness.steer import steer_enabled
 
     assert steer_enabled("claude") is False
@@ -162,6 +255,35 @@ def test_agent_adapters_round_trip(tmp_path, monkeypatch):
     for bad in ({"steer": {"cursor": True}}, {"steer": {"claude": "yes"}},
                 {"allow_project_adapters": 1}, {}):
         res = ctx["client"].post("/api/settings/agent-adapters", json=bad, environ_base=LAN)
+        assert res.status_code == 400, bad
+
+
+def test_timeouts_round_trip(tmp_path, monkeypatch):
+    """Agent-run + subagent-wait timeouts persist, clamp, and reject bad input."""
+    isolated = _isolated_settings(monkeypatch, tmp_path)
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx["client"].set_cookie("session_token", ctx["token"])
+
+    body = ctx["client"].get("/api/settings/timeouts", environ_base=LAN).get_json()
+    assert body["agent_run_seconds"] == 3600
+    assert body["subagent_wait_seconds"] == 3600
+
+    res = ctx["client"].post(
+        "/api/settings/timeouts",
+        json={"agent_run_seconds": 7200, "subagent_wait_seconds": 5400},
+        environ_base=LAN,
+    )
+    assert res.status_code == 200, res.get_json()
+    body = res.get_json()
+    assert body["agent_run_seconds"] == 7200 and body["subagent_wait_seconds"] == 5400
+    assert isolated.get_timeouts() == {
+        "agent_run_seconds": 7200, "subagent_wait_seconds": 5400,
+    }
+
+    # Bounds + shape are enforced by the owned validator.
+    for bad in ({"agent_run_seconds": 5}, {"subagent_wait_seconds": 999999},
+                {"agent_run_seconds": "soon"}, {}):
+        res = ctx["client"].post("/api/settings/timeouts", json=bad, environ_base=LAN)
         assert res.status_code == 400, bad
 
 
@@ -234,3 +356,25 @@ def test_retired_bot_settings_route_is_gone():
     rules = {str(r.rule) for r in wca.app.url_map.iter_rules()}
     assert "/api/settings" not in rules
     assert all(f["name"] != "bot" for f in SETTING_FAMILIES)
+
+
+def test_update_source_round_trip(tmp_path, monkeypatch):
+    """Device update channel persists (official<->host) and rejects bad values."""
+    isolated = _isolated_settings(monkeypatch, tmp_path)
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx["client"].set_cookie("session_token", ctx["token"])
+
+    body = ctx["client"].get("/api/settings/update-source", environ_base=LAN).get_json()
+    assert body["success"] is True and body["update_source"] == "official"
+
+    res = ctx["client"].post(
+        "/api/settings/update-source", json={"update_source": "host"}, environ_base=LAN
+    )
+    assert res.status_code == 200, res.get_json()
+    assert res.get_json()["update_source"] == "host"
+    assert (isolated.get_setting("device_workers") or {}).get("update_source") == "host"
+
+    res = ctx["client"].post(
+        "/api/settings/update-source", json={"update_source": "bogus"}, environ_base=LAN
+    )
+    assert res.status_code == 400

@@ -22,6 +22,9 @@ cp.spawnSync = (executable, args) => {
   return { status: 0, stdout: JSON.stringify(ports), stderr: '' };
 };
 process.env.CUTTLE_HOSTED_BY_DAEMON = '1';
+// Subprocess execution is denied below, so the production main must skip any
+// side-effecting spawn (e.g. desktop-shortcut installers) under smoke.
+process.env.CUTTLE_ELECTRON_SMOKE = '1';
 const errors = [];
 app.on('web-contents-created', (_, contents) => {
   contents.on('render-process-gone', (_, detail) => errors.push(detail.reason));

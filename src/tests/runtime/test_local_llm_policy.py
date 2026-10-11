@@ -40,7 +40,7 @@ def test_fallback_deduplicates_models_and_accepts_tools(monkeypatch):
         seen.append(kwargs['model'])
         return response() if kwargs['model'] == 'first' else response(calls=['tool'])
     client = NS(chat=NS(completions=NS(create=create)))
-    got = llm.chat_completion_with_fallback(client, {'temperature': 0}, 'first')
+    got = llm.chat_completion_with_fallback(client.chat.completions.create, {'temperature': 0}, 'first')
     assert got.choices[0].message.tool_calls
     assert seen == ['first', 'second']
 
@@ -55,7 +55,7 @@ def test_stop_during_call_never_retries(monkeypatch):
         raise RuntimeError('transport failed')
     client = NS(chat=NS(completions=NS(create=create)))
     with pytest.raises(llm.LocalRequestCancelled):
-        llm.chat_completion_with_fallback(client, {}, 'first', cancelled=lambda: bool(stopped))
+        llm.chat_completion_with_fallback(client.chat.completions.create, {}, 'first', cancelled=lambda: bool(stopped))
     assert seen == ['first']
 
 

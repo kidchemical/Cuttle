@@ -906,7 +906,10 @@
                     const name = (data.project && data.project.name)
                         || (currentProject() && currentProject().name)
                         || '';
-                    branchEl.textContent = [name, br].filter(Boolean).join(' · ');
+                    const worktree = currentProject() && currentProject().worktree;
+                    branchEl.textContent = worktree
+                        ? ('\uD83C\uDF3F ' + (br || 'worktree'))
+                        : [name, br].filter(Boolean).join(' · ');
                     branchEl.title = String(repoRoot || '') + (br ? ' (' + br + ')' : '');
                 }
                 if (list) {
@@ -961,7 +964,13 @@
                             + '+' + moreN + ' more (not listed)</span></li>'
                         );
                     }
+                    // Poll refreshes must not reset the user's scroll (see
+                    // js/shared/scroll_preserve.js for the shared equivalent).
+                    const listTop = list.scrollTop;
+                    const listLeft = list.scrollLeft;
                     list.innerHTML = html;
+                    list.scrollTop = listTop;
+                    list.scrollLeft = listLeft;
                 }
                 panelEl.classList.toggle('is-expanded', expanded);
                 const body = qs('body');

@@ -16,7 +16,9 @@ node_only = pytest.mark.skipif(
 )
 
 REPO = Path(__file__).resolve().parents[3]
-SHELL_SRC = REPO / "src/web/js/shell/app_shell.js"
+# 5E: the rail/apps-list owner is shell_rail.js; app_shell keeps the call site
+# and the global getAppsList delegate.
+SHELL_SRC = REPO / "src/web/js/shell/shell_rail.js"
 APPS_SRC = REPO / "src/web/js/shell/apps_page.js"
 
 
@@ -31,10 +33,12 @@ def _shell_prelude():
     order = _extract(source, "const CANONICAL_RAIL_ITEM_ORDER =", "];") + "];"
     locked_start = source.index("const RAIL_LOCKED_IDS =")
     locked = source[locked_start: source.index("\n", locked_start)]
+    hideable_start = source.index("const HIDEABLE_FOOTER_IDS =")
+    hideable = source[hideable_start: source.index("\n", hideable_start)]
     footer_ids = _extract(source, "const RAIL_FOOTER_APP_IDS =", "];") + "];"
     get_apps = _extract(source, "function getAppsList()", "function broadcastAppsList")
     # getAppsList reads the shell's agent-feed flag; default it off for the harness.
-    return "\n".join(["let agentFeedEnabled = false;", order, locked, footer_ids, get_apps])
+    return "\n".join(["let agentFeedEnabled = false;", order, locked, hideable, footer_ids, get_apps])
 
 
 SHELL_STUB = """
@@ -86,6 +90,10 @@ const byId = Object.fromEntries(apps.map(a => [a.id, a]));
 for (const id of ['nav-settings', 'nav-account', 'nav-notifications', 'nav-workspace']) {
     assert.ok(byId[id], id + ' missing from Apps list');
     assert.equal(byId[id].pinned, true);
+}
+// Workspace is the one footer utility the user may unpin.
+assert.equal(byId['nav-workspace'].pinnable, true);
+for (const id of ['nav-settings', 'nav-account', 'nav-notifications']) {
     assert.equal(byId[id].pinnable, false);
 }
 assert.equal(byId['nav-settings'].page, '/settings_page.html');
@@ -101,7 +109,7 @@ assert.equal(byId['nav-git'].pinned, false);
 const labels = apps.map(a => a.label);
 assert.deepEqual(labels, [...labels].sort((a, b) => a.localeCompare(b)));
 """
-    subprocess.run(["node", "-e", script], check=True)
+    subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
 
 
 APPS_STUB = """
@@ -191,7 +199,7 @@ _col = colWith('<svg></svg>');
 apps = getAppsList();
 assert.ok(apps[0].icon.includes('<svg'), 'signed-out placeholder still forwarded');
 """
-    subprocess.run(["node", "-e", script], check=True)
+    subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
 
 
 @node_only
@@ -230,7 +238,7 @@ const fireMenu = (id) => {
 assert.deepEqual(fireMenu('nav-git'), ['Open', 'Add to blade bar']);
 assert.deepEqual(fireMenu('nav-notifications'), ['Open']);
 """
-    subprocess.run(["node", "-e", script], check=True)
+    subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
 
 
 APPS_AVATAR_STUB = """
@@ -305,4 +313,24 @@ winHandlers['message']({ source: parentWindow, data: { type: 'cuttle-apps', apps
 assert.ok(iconOf('nav-account').classList.contains('has-initials'), 'initials tile flagged');
 assert.ok(!iconOf('nav-account').classList.contains('has-photo'));
 """
-    subprocess.run(["node", "-e", script], check=True)
+    subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
+
+
+def test_workspace_is_unpinnable_footer_utility():
+    """Workspace is the one hideable footer utility; the shell persists it."""
+    shell = SHELL_SRC.read_text(encoding="utf-8")
+    assert "const HIDEABLE_FOOTER_IDS = new Set(['nav-workspace']);" in shell
+    for fn, nxt in (
+        ("function hideRailItem(id)", "function showRailItem(id)"),
+        ("function showRailItem(id)", "function openRailAddPicker"),
+    ):
+        body = shell[shell.index(fn):shell.index(nxt)]
+        assert "HIDEABLE_FOOTER_IDS.has(id)" in body
+    assert "rail_footer_hidden" in shell
+    # Hold-to-edit: footer hideable utilities get a remove badge like rail apps.
+    chrome = shell[shell.index("function ensureRailEditChrome"):shell.index("function hideRailItem")]
+    assert ".rail-footer .rail-item[data-id]" in chrome
+    assert "rail-item-removable" in chrome
+    css = (REPO / "src/web/css/app_shell.css").read_text(encoding="utf-8")
+    assert ".rail-footer .rail-item[hidden]" in css
+    assert ".rail-footer .rail-item-removable .rail-item-remove" in css

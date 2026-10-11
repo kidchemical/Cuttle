@@ -66,10 +66,16 @@ SETTING_FAMILIES = (
      "backend": "api.video_metadata (YouTube oEmbed proxy, in-process cache)",
      "validator": "resolve_video_metadata (no writes; read-only lookup)",
      "read": "authenticated", "write": "n/a"},
+    {"name": "background-helpers", "routes": ["GET/POST /settings/background-helpers", "GET /settings/background-helpers/<kind>/<target>/models"],
+     "backend": "api.background_helpers + agent_harness / model_providers",
+     "validator": "api.background_helpers.validate", "read": "authenticated (models: owner)", "write": "owner"},
     {"name": "completion-providers", "routes": ["GET/POST /settings/completion-providers"],
-     "backend": "api.completion_providers (provider registry + settings keys)",
+     "backend": "api.completion_providers (preferences over api.model_providers)",
      "validator": "set_preferred_provider / set_provider_model",
      "read": "authenticated", "write": "owner"},
+    {"name": "completion-provider-models", "routes": ["GET /settings/completion-providers/<provider_id>/models", "GET /settings/model-providers/<provider_id>/models"],
+     "backend": "api.model_providers.service (account model catalogs)",
+     "validator": "get_provider", "read": "owner", "write": "n/a"},
     {"name": "github-app", "routes": ["GET/POST/DELETE /settings/github-app", "POST /settings/github-app/test"],
      "backend": "api.github_app + settings-manager key 'github_app' (+ server-local key file)",
      "validator": "validate_github_app_update", "read": "authenticated", "write": "owner"},
@@ -80,6 +86,9 @@ SETTING_FAMILIES = (
      "backend": "api.agent_harness.steer (key 'agent_steer') + catalog (key 'agent_harness'); "
                 "model/effort defaults read here, written via POST /agent-defaults/<id>",
      "validator": "validate_agent_adapters_update", "read": "authenticated", "write": "owner"},
+    {"name": "timeouts", "routes": ["GET/POST /settings/timeouts"],
+     "backend": "settings-manager key 'timeouts' (resolved by get_timeouts)",
+     "validator": "validate_timeouts_update", "read": "authenticated", "write": "owner"},
     {"name": "app-settings", "routes": ["GET /app-settings"],
      "backend": "settings_manager.get_all_settings() (read-only aggregate)",
      "validator": "none (read-only)", "read": "owner", "write": "n/a"},
@@ -98,7 +107,7 @@ def validate_channel_update(data: dict) -> tuple[bool, str]:
 def validate_ui_layout_update(data: dict) -> dict:
     """Merge rail keys; drop retired side-panel keys. Returns the patch."""
     patch: dict = {}
-    for key in ('rail_items', 'rail_footer', 'rail_hidden'):
+    for key in ('rail_items', 'rail_footer', 'rail_hidden', 'rail_footer_hidden'):
         if key in data and data[key] is not None:
             patch[key] = [str(x) for x in data[key]]
     if isinstance(data.get('layout_version'), int):
@@ -113,6 +122,34 @@ def validate_lan_access_update(data: dict) -> tuple[bool, str]:
     return True, ''
 
 
+def validate_timeouts_update(data: dict) -> tuple[bool, str, dict]:
+    """Body: { agent_run_seconds?: int, subagent_wait_seconds?: int }.
+
+    Bounds are shared with ``managers.settings_manager`` (one source).
+    At least one field is required; unknown fields are ignored.
+    """
+    from managers.settings_manager import TIMEOUT_MAX_SECONDS, TIMEOUT_MIN_SECONDS
+
+    data = data or {}
+    patch: dict = {}
+    for key in ("agent_run_seconds", "subagent_wait_seconds"):
+        if key not in data:
+            continue
+        try:
+            value = int(data.get(key))
+        except (TypeError, ValueError):
+            return False, f"{key} must be an integer number of seconds", {}
+        if not (TIMEOUT_MIN_SECONDS <= value <= TIMEOUT_MAX_SECONDS):
+            return False, (
+                f"{key} must be between {TIMEOUT_MIN_SECONDS} and "
+                f"{TIMEOUT_MAX_SECONDS} seconds"
+            ), {}
+        patch[key] = value
+    if not patch:
+        return False, "provide agent_run_seconds and/or subagent_wait_seconds", {}
+    return True, "", patch
+
+
 def validate_completion_providers_update(data: dict) -> tuple[bool, str, dict]:
     """Normalize a cheap-completion provider/model write.
 
@@ -123,6 +160,8 @@ def validate_completion_providers_update(data: dict) -> tuple[bool, str, dict]:
     """
     from api.completion_providers import get_provider
 
+    if not isinstance(data, dict):
+        return False, 'Body must be a JSON object', {}
     patch: dict = {}
     if 'provider' in data:
         wanted = str(data.get('provider') or '').strip().lower()
@@ -134,24 +173,33 @@ def validate_completion_providers_update(data: dict) -> tuple[bool, str, dict]:
             patch['provider'] = wanted
 
     models = data.get('models')
+    if 'models' in data and not isinstance(models, dict):
+        return False, 'models must be an object', {}
     if isinstance(models, dict):
         clean: dict = {}
         for key, value in models.items():
             provider_id = str(key or '').strip().lower()
-            model_id = str(value or '').strip()
+            if not isinstance(value, str):
+                return False, 'Model ids must be strings', {}
+            model_id = value.strip()
             if get_provider(provider_id) is None:
                 return False, f'Unknown completion provider: {provider_id}', {}
-            if model_id:
-                clean[provider_id] = model_id
+            clean[provider_id] = model_id
         patch['models'] = clean
 
+    if 'efforts' in data:
+        from api.completion_providers import validate_efforts
+        try:
+            patch['efforts'] = validate_efforts(data['efforts'])
+        except ValueError as exc:
+            return False, str(exc), {}
     if not patch:
-        return False, 'provider or models required', {}
+        return False, 'provider, models or efforts required', {}
     return True, '', patch
 
 
 def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
-    """Body: ``{steer?: {agent: bool}, allow_project_adapters?: bool}``."""
+    """Validate per-adapter steering, subagent defaults and drop-in opt-in."""
     from api.agent_harness.steer import STEERABLE_AGENTS
 
     if not isinstance(data, dict):
@@ -171,6 +219,74 @@ def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
         if not isinstance(data['allow_project_adapters'], bool):
             return False, 'allow_project_adapters must be true or false', {}
         clean['allow_project_adapters'] = data['allow_project_adapters']
+    if 'subagents' in data:
+        from api.agent_harness.catalog import get_agent, list_agents
+        from api.agent_harness.agent_models import (
+            load_agent_catalog, catalog_model_ids, catalog_model_efforts,
+            effective_effort_options,
+        )
+        raw = data['subagents']
+        if not isinstance(raw, dict) or not raw:
+            return False, 'subagents must map parent agent ids to preferences', {}
+        known = {str(a).lower() for a in list_agents()}
+        out = {}
+        catalogs = {}
+        for parent, pref in raw.items():
+            aid = str(parent or '').strip().lower()
+            if aid not in known or not isinstance(pref, dict):
+                return False, f'Invalid subagent preference for {parent}', {}
+            target = str(pref.get('agent') or 'native').strip().lower()
+            if target != 'native' and target not in known:
+                return False, f'Unknown subagent agent {target}', {}
+            model = str(pref.get('model') or '').strip()
+            effort = str(pref.get('effort') or '').strip().lower()
+            if target == 'native' and (model or effort):
+                return False, 'Native subagent preference cannot pin model or effort', {}
+            if target != 'native':
+                pair = get_agent(target)
+                if pair is None:
+                    return False, f'Unknown subagent agent {target}', {}
+                manifest = pair[0]
+                # Settings offers the live CLI catalog, so saves must validate
+                # against that same owner rather than the manifest snapshot.
+                if target not in catalogs and (model or effort):
+                    rows, _source = load_agent_catalog(target, manifest.models)
+                    catalogs[target] = (rows, catalog_model_ids(rows), catalog_model_efforts(rows))
+                rows, model_ids, live_efforts = catalogs.get(target, ([], manifest.models, {}))
+                refreshed = False
+                # A dropdown can hold an id from the live catalog that became
+                # available after the last catalog refresh. Refresh once before
+                # rejecting it so saves follow the list Settings actually uses.
+                if model and manifest.supports_model_pin and model not in model_ids:
+                    rows, _source = load_agent_catalog(target, manifest.models, refresh=True)
+                    catalogs[target] = (rows, catalog_model_ids(rows), catalog_model_efforts(rows))
+                    model_ids, live_efforts = catalogs[target][1], catalogs[target][2]
+                    refreshed = True
+                if model and (not manifest.supports_model_pin or model not in model_ids):
+                    return False, f'Unsupported model for {target}', {}
+                if effort:
+                    live_supported, valid_efforts = effective_effort_options(
+                        live_efforts,
+                        model,
+                        manifest.supports_effort,
+                        manifest.efforts,
+                        manifest.model_efforts,
+                    )
+                    if (not live_supported or effort not in valid_efforts) and not refreshed:
+                        rows, _source = load_agent_catalog(target, manifest.models, refresh=True)
+                        catalogs[target] = (rows, catalog_model_ids(rows), catalog_model_efforts(rows))
+                        live_efforts = catalogs[target][2]
+                        live_supported, valid_efforts = effective_effort_options(
+                            live_efforts,
+                            model,
+                            manifest.supports_effort,
+                            manifest.efforts,
+                            manifest.model_efforts,
+                        )
+                    if not live_supported or effort not in valid_efforts:
+                        return False, f'Unsupported effort for {target}', {}
+            out[aid] = {'agent': target, 'model': model, 'effort': effort}
+        clean['subagents'] = out
     if not clean:
         return False, 'Nothing to update', {}
     return True, '', clean
@@ -435,6 +551,63 @@ def update_git_auto_commit_setting():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# --- timeouts (backend: managers.settings_manager) -------------------------
+
+@settings_bp.route('/settings/timeouts', methods=['GET'])
+@authenticated_required
+def get_timeouts_setting():
+    """Agent run + subagent supervision timeout policy (seconds)."""
+    from managers.settings_manager import get_settings_manager
+    return jsonify({'success': True, **get_settings_manager().get_timeouts()})
+
+
+@settings_bp.route('/settings/timeouts', methods=['POST'])
+@owner_required
+def update_timeouts_setting():
+    """Body: { agent_run_seconds?, subagent_wait_seconds? } (seconds)."""
+    try:
+        from managers.settings_manager import get_settings_manager
+        ok, error, patch = validate_timeouts_update(request.get_json() or {})
+        if not ok:
+            return jsonify({'success': False, 'error': error}), 400
+        manager = get_settings_manager()
+        manager.update_setting('timeouts', lambda current: {**(current or {}), **patch})
+        return jsonify({'success': True, **manager.get_timeouts()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- device update source (backend: managers.settings_manager) --------------
+
+@settings_bp.route('/settings/update-source', methods=['GET'])
+@authenticated_required
+def get_update_source_setting():
+    """This install's update channel: 'official' (git remote / release) or 'host'."""
+    from managers.settings_manager import get_settings_manager
+    block = get_settings_manager().get_setting('device_workers') or {}
+    src = str((block or {}).get('update_source') or 'official').strip().lower()
+    return jsonify({'success': True, 'update_source': 'host' if src == 'host' else 'official'})
+
+
+@settings_bp.route('/settings/update-source', methods=['POST'])
+@owner_required
+def update_update_source_setting():
+    """Body: { update_source: 'official'|'host' }."""
+    try:
+        from managers.settings_manager import get_settings_manager
+        data = request.get_json() or {}
+        src = str(data.get('update_source') or '').strip().lower()
+        if src not in ('official', 'host'):
+            return jsonify({'success': False, 'error': 'update_source must be official or host'}), 400
+        manager = get_settings_manager()
+        manager.update_setting(
+            'device_workers', lambda current: {**(current or {}), 'update_source': src}
+        )
+        return jsonify({'success': True, 'update_source': src})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # --- agent adapters (backends: agent_harness.steer / catalog / agent_defaults)
 
 def _agent_adapters_payload() -> dict:
@@ -445,6 +618,7 @@ def _agent_adapters_payload() -> dict:
         project_adapters_setting,
     )
     from api.agent_harness.steer import steer_env_disabled, steer_settings
+    from managers.settings_manager import get_settings_manager
 
     return {
         'success': True,
@@ -453,6 +627,7 @@ def _agent_adapters_payload() -> dict:
             for aid in list_agents()
         },
         'steer': steer_settings(),
+        'subagents': get_settings_manager().get_setting('agent_subagent_defaults') or {},
         'steer_env_disabled': steer_env_disabled(),
         'allow_project_adapters': project_adapters_setting(),
         'allow_project_adapters_env': project_adapters_env_allowed(),
@@ -479,6 +654,7 @@ def update_agent_adapters_setting():
             return jsonify({'success': False, 'error': message}), 400
         from api.agent_harness.catalog import set_project_adapters_allowed
         from api.agent_harness.steer import set_steer_enabled
+        from managers.settings_manager import get_settings_manager
 
         for agent, value in (clean.get('steer') or {}).items():
             if not set_steer_enabled(agent, value):
@@ -486,9 +662,47 @@ def update_agent_adapters_setting():
         if 'allow_project_adapters' in clean:
             if not set_project_adapters_allowed(clean['allow_project_adapters']):
                 return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+        if 'subagents' in clean:
+            current = get_settings_manager().get_setting('agent_subagent_defaults') or {}
+            if not isinstance(current, dict): current = {}
+            current.update(clean['subagents'])
+            get_settings_manager().set_setting('agent_subagent_defaults', current)
         return jsonify(_agent_adapters_payload())
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- background text execution (API / restricted installed CLI) -----------
+@settings_bp.route('/settings/background-helpers', methods=['GET'])
+@authenticated_required
+def get_background_helpers():
+    from api.background_helpers import describe
+    return jsonify(success=True, **describe())
+
+
+@settings_bp.route('/settings/background-helpers', methods=['POST'])
+@owner_required
+def set_background_helpers():
+    from api.background_helpers import save, describe
+    try:
+        if not save(request.get_json()):
+            return jsonify(success=False, error="Unable to save background helpers"), 500
+        return jsonify(success=True, **describe())
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+
+
+@settings_bp.route('/settings/background-helpers/<kind>/<target>/models', methods=['GET'])
+@owner_required
+def background_helper_models(kind, target):
+    from api.background_helpers import discover
+    from api.model_providers.cache import public_error
+    try:
+        return jsonify(success=True, **discover(kind, target, request.args.get('refresh') == '1'))
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except Exception as exc:
+        return jsonify(success=False, error=public_error(exc, "Background model discovery")), 502
 
 
 # --- completion providers (backend: api.completion_providers) --------------
@@ -507,6 +721,42 @@ def get_completion_providers_setting():
         return jsonify({'success': True, **describe()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/settings/completion-providers/<provider_id>/models', methods=['GET'])
+@owner_required
+def get_completion_provider_models(provider_id):
+    """Explicit discovery; the general settings read never calls remote APIs."""
+    from api.completion_providers import get_provider
+    from api.model_providers.service import discover_models
+    from api.model_providers.cache import public_error
+
+    if get_provider(provider_id) is None:
+        return jsonify({'success': False, 'error': 'Unknown model provider'}), 404
+    try:
+        return jsonify({'success': True, **discover_models(
+            provider_id, refresh=request.args.get('refresh') == '1')})
+    except Exception as exc:
+        return jsonify({'success': False, 'error': public_error(exc, 'Model discovery')}), 502
+
+
+@settings_bp.route('/settings/model-providers/<provider_id>/models', methods=['GET'])
+@owner_required
+def get_model_provider_models(provider_id):
+    from api.model_providers.catalog import get_provider
+    from api.model_providers.service import discover_models
+    from api.model_providers.cache import public_error
+    manifest = get_provider(provider_id)
+    if manifest is None:
+        return jsonify({'success': False, 'error': 'Unknown model provider'}), 404
+    operation = request.args.get('operation') or 'text_generation'
+    if operation not in manifest.operations:
+        return jsonify({'success': False, 'error': 'Unsupported provider operation'}), 400
+    try:
+        return jsonify({'success': True, **discover_models(provider_id, operation=operation,
+                       refresh=request.args.get('refresh') == '1')})
+    except Exception as exc:
+        return jsonify({'success': False, 'error': public_error(exc, 'Model discovery')}), 502
 
 
 @settings_bp.route('/settings/completion-providers', methods=['POST'])
@@ -529,10 +779,19 @@ def update_completion_providers_setting():
         if not ok:
             return jsonify({'success': False, 'message': error}), 400
 
+        if 'efforts' in patch:
+            from api.completion_providers import set_efforts
+            try:
+                if not set_efforts(patch['efforts']):
+                    return jsonify({'success': False, 'error': 'Failed to save efforts'}), 500
+            except ValueError as exc:
+                return jsonify({'success': False, 'error': str(exc)}), 400
         if 'provider' in patch:
-            set_preferred_provider(patch['provider'])
+            if not set_preferred_provider(patch['provider']):
+                return jsonify({'success': False, 'error': 'Failed to save provider'}), 500
         for provider_id, model_id in (patch.get('models') or {}).items():
-            set_provider_model(provider_id, model_id)
+            if not set_provider_model(provider_id, model_id):
+                return jsonify({'success': False, 'error': 'Failed to save model'}), 500
         return jsonify({'success': True, **describe()})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -697,3 +956,347 @@ def storage_operation(ident,operation):
         return jsonify(success=True,result=operate(ident,operation,(request.get_json(silent=True) or {}).get('confirm')))
     except ValueError as exc:
         return jsonify(error=str(exc)),400
+"""Settings provider credential routes."""
+from flask import Blueprint, jsonify, request
+from api.http_authz import owner_required
+from core.runtime_paths import env_file as _env_file
+import os
+
+provider_keys_bp = Blueprint("provider_keys", __name__)
+@provider_keys_bp.route('/api/test-api-key', methods=['POST'])
+@owner_required
+def test_api_key():
+    """Test an API key for validity"""
+    try:
+        data = request.get_json()
+        api_type = data.get('api_type')
+        api_key = (data.get('api_key') or '').strip()
+        # OpenRouter's management key is owned by api.openrouter_management
+        # (env then <home>/.env). Empty input tests the saved key and reports
+        # the live credit balance.
+        if api_type == 'openrouter':
+            from api import openrouter_management
+            result = openrouter_management.probe(api_key or None)
+            return jsonify({
+                'success': bool(result.get('success')),
+                'message': result.get('message') or 'OpenRouter test failed',
+            })
+
+        # Empty input tests the saved key (env, then <home>/.env).
+        saved_names = {
+            'openai': ('OPENAI_API_KEY', 'API_KEY'),
+            'anthropic': ('ANTHROPIC_API_KEY',),
+            'discord': ('DISCORD_BOT_TOKEN', 'DISCORD_TOKEN'),
+            'elevenlabs': ('ELEVENLABS_API_KEY',),
+            'google': ('GEMINI_API_KEY', 'GOOGLE_API_KEY'),
+        }
+        if not api_key and api_type in saved_names:
+            api_key = _read_env_credential(saved_names[api_type])
+            if not api_key:
+                return jsonify({
+                    'success': False,
+                    'message': 'No key saved. Paste a key to test it.'
+                }), 400
+
+        print(f"[API_TEST] Testing {api_type} key")
+
+        if not api_type or not api_key:
+            return jsonify({
+                'success': False,
+                'message': 'API type and key are required'
+            }), 400
+
+        if api_type == 'openai':
+            return test_openai_key(api_key)
+        elif api_type == 'anthropic':
+            return test_anthropic_key(api_key)
+        elif api_type == 'discord':
+            return test_discord_key(api_key)
+        elif api_type in ('elevenlabs', 'google'):
+            from api.tts_providers import check_key
+            ok, message = check_key(api_type, api_key)
+            return jsonify({'success': ok, 'message': message})
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'Unknown API type: {api_type}'
+            }), 400
+
+    except Exception as e:
+        print(f"[API_TEST] Error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+def test_openai_key(api_key):
+    """Authenticated metadata read through the provider adapter; no generation."""
+    from api.model_providers.service import check_key
+    ok, message = check_key("openai", api_key)
+    return jsonify({'success': ok, 'message': message})
+
+
+def test_anthropic_key(api_key):
+    from api.model_providers.service import check_key
+    ok, message = check_key("anthropic", api_key)
+    return jsonify({'success': ok, 'message': message})
+
+
+def test_discord_key(token):
+    """Test Discord bot token"""
+    try:
+        print("[DISCORD_TEST] Starting test")
+        import requests
+
+        # Validate token format first
+        if not token or len(token) < 50:
+            print("[DISCORD_TEST] Invalid format")
+            return jsonify({
+                'success': False,
+                'message': 'Invalid token format. Discord bot tokens should be longer'
+            })
+
+        # Test the token by making a request to Discord's API
+        headers = {
+            'Authorization': f'Bot {token}',
+            'Content-Type': 'application/json'
+        }
+
+        print(f"[DISCORD_TEST] Making API call to Discord...")
+        # Try to get bot information
+        response = requests.get(
+            'https://discord.com/api/v10/users/@me',
+            headers=headers,
+            timeout=10
+        )
+
+        print(f"[DISCORD_TEST] Response status: {response.status_code}")
+
+        if response.status_code == 200:
+            bot_data = response.json()
+            print(f"[DISCORD_TEST] Success! Bot: {bot_data.get('username', 'Unknown')}")
+            return jsonify({
+                'success': True,
+                'message': f'Valid Discord bot token (Bot: {bot_data.get("username", "Unknown")})'
+            })
+        elif response.status_code == 401:
+            print(f"[DISCORD_TEST] Auth failed")
+            return jsonify({
+                'success': False,
+                'message': 'Invalid Discord bot token'
+            })
+        else:
+            print(f"[DISCORD_TEST] HTTP error: {response.status_code}")
+            return jsonify({
+                'success': False,
+                'message': f'Discord API error: HTTP {response.status_code}'
+            })
+
+    except requests.exceptions.Timeout as e:
+        print(f"[DISCORD_TEST] Timeout: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Request timed out. Please check your connection'
+        })
+    except requests.exceptions.RequestException as e:
+        print(f"[DISCORD_TEST] Request error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Network error: {str(e)}'
+        })
+    except Exception as e:
+        print(f"[DISCORD_TEST] General error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Discord API error: {str(e)}'
+        })
+
+
+@provider_keys_bp.route('/api/save-api-key', methods=['POST'])
+@owner_required
+def save_api_key():
+    """Save an API key securely.
+
+    Only the named credential is modified; every other line of ``<home>/.env``
+    (comments, blanks, ``export`` prefixes, unrelated keys) is preserved.
+    ``DISCORD_BOT_TOKEN`` is the canonical settings key — saving a Discord
+    token also clears a legacy ``DISCORD_TOKEN`` line so a stale shadowed
+    value cannot win at runtime. Saved values are applied to
+    ``os.environ`` immediately so new requests pick them up without a
+    Flask restart.
+    """
+    try:
+        data = request.get_json() or {}
+        api_type = (data.get('api_type') or '').strip().lower()
+        api_key = (data.get('api_key') or '').strip()
+
+        _key_names = {
+            'openai': 'OPENAI_API_KEY',
+            'anthropic': 'ANTHROPIC_API_KEY',
+            'discord': 'DISCORD_BOT_TOKEN',
+            'elevenlabs': 'ELEVENLABS_API_KEY',
+            'google': 'GEMINI_API_KEY',
+            'openrouter': 'OPENROUTER_MANAGEMENT_KEY',
+        }
+        if api_type not in _key_names:
+            return jsonify({
+                'success': False,
+                'message': f'Unknown API type: {data.get("api_type")}'
+            }), 400
+        if not api_key:
+            return jsonify({
+                'success': False,
+                'message': 'API type and key are required'
+            }), 400
+        if '•' in api_key or '…' in api_key:
+            # Display hints are not credentials — refuse to store one.
+            return jsonify({
+                'success': False,
+                'message': 'That looks like a masked hint, not a credential. Type or paste the full key.'
+            }), 400
+
+        env_name = _key_names[api_type]
+        env_file = _env_file()
+
+        lines: list = []
+        if env_file.exists():
+            with open(env_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+
+        found = False
+        out_lines: list = []
+        for line in lines:
+            stripped = line.strip()
+            # Preserve comments, blanks, and non-assignment lines verbatim.
+            if not stripped or stripped.startswith('#') or '=' not in line:
+                out_lines.append(line if line.endswith('\n') else line + '\n')
+                continue
+            lhs, _, _rhs = line.partition('=')
+            lhs_name = lhs.strip()
+            # Drop `export ` prefix when comparing, preserve it on write.
+            bare = lhs_name[7:].strip() if lhs_name.startswith('export ') else lhs_name
+            if bare == env_name:
+                prefix = lhs[:len(lhs) - len(lhs_name)] + (
+                    lhs_name[:len(lhs_name) - len(bare)] if bare != lhs_name else ''
+                )
+                out_lines.append(f'{prefix}{env_name}={api_key}\n')
+                found = True
+            elif api_type == 'discord' and bare == 'DISCORD_TOKEN':
+                # Converge on the canonical settings key; a legacy line
+                # would otherwise shadow the saved value at runtime.
+                continue
+            else:
+                out_lines.append(line if line.endswith('\n') else line + '\n')
+        if not found:
+            out_lines.append(f'{env_name}={api_key}\n')
+
+        env_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(env_file, 'w', encoding='utf-8') as f:
+            f.writelines(out_lines)
+
+        # Apply immediately for new requests (no Flask restart needed).
+        os.environ[env_name] = api_key
+        if api_type == 'discord':
+            os.environ.pop('DISCORD_TOKEN', None)
+
+        return jsonify({
+            'success': True,
+            'message': f'{api_type} API key saved successfully',
+            'configured': {api_type: True},
+            'hint': {api_type: _mask_credential_for_display(api_key)},
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+def _mask_credential_for_display(value: str) -> str:
+    """Presence hint for a stored secret — never the secret itself."""
+    v = (value or '').strip()
+    if not v:
+        return ''
+    if len(v) < 12:
+        return '••••••••'
+    return f'{v[:4]}••••••••{v[-4:]}'
+
+
+def _read_env_credential(names) -> str:
+    """First non-empty value for one of ``names`` (env, then ``<home>/.env``)."""
+    if isinstance(names, str):
+        names = (names,)
+    for name in names:
+        v = (os.environ.get(name) or '').strip()
+        if v:
+            return v
+    try:
+        env_file = _env_file()
+        if env_file.exists():
+            with open(env_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith('#') or '=' not in line:
+                        continue
+                    lhs, _, rhs = line.partition('=')
+                    bare = lhs.strip()
+                    if bare.startswith('export '):
+                        bare = bare[7:].strip()
+                    if bare in names:
+                        v = rhs.strip().strip('"').strip("'")
+                        if v:
+                            return v
+    except OSError:
+        pass
+    return ''
+
+
+@provider_keys_bp.route('/api/load-api-keys')
+@owner_required
+def load_api_keys():
+    """Credential-presence indicators for the Settings UI.
+
+    Never returns full secrets — only masked hints plus ``configured``
+    flags. The browser cannot reconstruct a key from this response; to
+    change a credential, POST the new value to ``/api/save-api-key``.
+    """
+    try:
+        openai_val = _read_env_credential('OPENAI_API_KEY')
+        anthropic_val = _read_env_credential('ANTHROPIC_API_KEY')
+        # Runtime precedence accepts the legacy name; the settings UI
+        # converges saves onto DISCORD_BOT_TOKEN (see save_api_key).
+        discord_val = _read_env_credential(('DISCORD_BOT_TOKEN', 'DISCORD_TOKEN'))
+        elevenlabs_val = _read_env_credential('ELEVENLABS_API_KEY')
+        google_val = _read_env_credential(('GEMINI_API_KEY', 'GOOGLE_API_KEY'))
+        # Owned by api.openrouter_management (env then <home>/.env).
+        from api import openrouter_management
+        openrouter_val = openrouter_management.management_key()
+
+        hints = {
+            'openai': _mask_credential_for_display(openai_val),
+            'anthropic': _mask_credential_for_display(anthropic_val),
+            'discord': _mask_credential_for_display(discord_val),
+            'elevenlabs': _mask_credential_for_display(elevenlabs_val),
+            'google': _mask_credential_for_display(google_val),
+            'openrouter': _mask_credential_for_display(openrouter_val),
+        }
+        return jsonify({
+            'success': True,
+            'api_keys': hints,
+            'configured': {
+                'openai': bool(openai_val),
+                'anthropic': bool(anthropic_val),
+                'discord': bool(discord_val),
+                'elevenlabs': bool(elevenlabs_val),
+                'google': bool(google_val),
+                'openrouter': bool(openrouter_val),
+            },
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500

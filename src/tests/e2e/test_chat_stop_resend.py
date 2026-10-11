@@ -230,7 +230,7 @@ def test_stop_resend_refresh_no_stale_duplicate(browser, static_server,
         assert frame.get_by_text("⏹ Generation cancelled.").count() == 0
         stopped = frame.locator('#chatMessages [data-stopped="true"]')
         assert stopped.count() == 1
-        assert stopped.locator('.slash-command-chip--header').count() > 0
+        assert stopped.locator('.slash-command-chip--project').count() > 0
         assert stopped.locator('.slash-command-chip--header:not(.slash-command-chip--error)').count() == 0
         assert stopped.locator('.message-query-log-link').get_attribute('aria-disabled') is None
         assert stopped.get_attribute('data-message-index') is None

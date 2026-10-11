@@ -30,7 +30,8 @@ let last = {classList: {contains: role => role === 'assistant'},
   querySelector: () => ({dataset: {ts: '200000'}})};
 const ctx = {
   CuttleChatActivity: activity,
-  generation: {loading: false}, currentSessionId: '842',
+  generation: {loading: false},
+  session: (() => { const s = require(process.argv[3]).create(); s.adopt('842'); return s; })(),
   stopState: {}, runningSessionIds: new Set(),
   document: {getElementById: id => id === 'typing-indicator-remote' && remote ? {} : null},
   sessionIdsEqual: (a, b) => a === b,
@@ -44,7 +45,7 @@ const ctx = {
   setHistorySessionRunning: (sid, value) => {running = value},
   addRemoteWaitingIndicator: () => {remote = true},
   removeRemoteWaitingIndicator: () => {remote = false},
-  updateRemoteWaitingStatus: () => {}, syncSubagentOrbs: () => {},
+  updateRemoteWaitingStatus: () => {}, subagentLaunchers: {syncLive: () => {}},
   syncComposerStopWithWatch: () => {},
   scheduleFollowupDrain: () => {},
 };
@@ -85,6 +86,6 @@ assert.strictEqual(remote, true);
 """
     result = subprocess.run(
         ["node", "-e", script, str(WEB / "chat/chat_page.js"),
-         str(WEB / "chat/chat_activity.js")], capture_output=True, text=True, encoding="utf-8", timeout=10,
+         str(WEB / "chat/chat_activity.js"), str(WEB / "chat/chat_session.js")], capture_output=True, text=True, encoding="utf-8", timeout=10,
     )
     assert result.returncode == 0, result.stderr

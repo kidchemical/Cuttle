@@ -55,7 +55,32 @@ def test_ui_layout_pinning_an_app_clears_it_from_hidden(client):
     assert "nav-editor" in layout["rail_items"]
 
 
+def test_ui_layout_persists_footer_hidden(client):
+    """Workspace (a hideable footer utility) persists its unpinned state."""
+    import uuid
+
+    user = "lf_" + uuid.uuid4().hex[:10]
+    reg = client.post("/api/auth/register", json={"username": user, "password": "password1"})
+    assert reg.status_code == 200, reg.get_json()
+    res = client.post("/api/settings/ui-layout", json={
+        "rail_footer_hidden": ["nav-workspace"],
+        "layout_version": 9,
+    })
+    assert res.status_code == 200
+    layout = client.get("/api/settings/ui-layout").get_json()["ui_layout"]
+    assert layout["rail_footer_hidden"] == ["nav-workspace"]
+
+
 def test_apps_page_is_served(client):
     res = client.get("/apps_page.html")
     assert res.status_code == 200
     assert b'id="appsGrid"' in res.data
+
+
+def test_jobs_and_mesh_pages_are_served(client):
+    jobs = client.get("/jobs_page.html")
+    assert jobs.status_code == 200
+    assert b'id="recentJobsList"' in jobs.data
+    mesh = client.get("/mesh_page.html")
+    assert mesh.status_code == 200
+    assert b'id="devicesList"' in mesh.data and b'id="meshJobsList"' in mesh.data

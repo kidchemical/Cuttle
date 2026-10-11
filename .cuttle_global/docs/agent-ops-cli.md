@@ -20,6 +20,8 @@ agent toolkit.
 | Agent activity / database policies | `python -m api.agent_events` / `python -m api.storage` | `agent-events.md` |
 | Chat handles / transcripts | `python -m api.chat_cli` | `chat-history.md` |
 | Chat visual effects | `python -m api.chat_vfx` | `chat-vfx.md` |
+| Model API provider catalogs | `python -m api.model_providers` (list, models, inspect) | Cuttle `.cuttle/docs/model-providers.md` |
+| Background helper execution catalogs | `python -m api.background_helpers` (list, models, inspect; no inference) | Cuttle `.cuttle/docs/model-providers.md` |
 | Experimental flags | `python -m api.experimental` (list, get, set, reset) | Cuttle `.cuttle/docs/experimental-features.md` |
 | Tasks gizmos | `python -m api.gizmos tasks` | `gizmos.md` |
 | Cuttle QA / promo accounts | `python -m api.fixture_accounts` | Cuttle project `.cuttle/docs/fixture-accounts.md` |
@@ -29,6 +31,7 @@ agent toolkit.
 | Context Compiler | `python -m api.cuttle_brain` | Brain / ADDING_AN_AGENT |
 | Sub-agent child chats | `python -m api.subagents` | `subagents.md` |
 | Job watch bars | `python -m api.job_watch` | `action-forms.md` |
+| Unified Jobs ledger | `python -m api.jobs` (list, inflight, view, cancel, rerun, stats) | Jobs |
 | Dashboards / Model Benchmarks | `python -m api.dashboards` | `dashboards.md` |
 | Jev judgments | `python -m api.jev` | `jev.md` |
 | Shadow dev instance (implemented, Linux verified) | `PYTHONPATH=src .venv/bin/python -m api.dev_instance prepare --candidate .` then `PYTHONPATH=src .venv/bin/python -m api.dev_instance up --candidate . --port 0` (foreground; Ctrl+C stops only its owned child and deletes its snapshot; `prune` clears stale ones) | Cuttle project `docs/architecture/development-instance-safety.md` |

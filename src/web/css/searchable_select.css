@@ -1,0 +1,184 @@
+/* ================================================================
+   Cuttle — shared searchable select skin (searchable_select.js).
+   The native <select> is kept in the DOM (value/change source) but
+   visually hidden; the visible control is the trigger + search panel.
+   Pages may add their own layout rules for `.cuttle-combo.<class>`.
+   ================================================================ */
+
+.cuttle-combo {
+    position: relative;
+}
+
+.cuttle-combo[hidden] {
+    display: none;
+}
+
+.cuttle-combo > select {
+    display: none !important;
+}
+
+.cuttle-combo-trigger {
+    width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 11px 12px;
+    border-radius: 10px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #e2e8f0;
+    font-size: 14px;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.cuttle-combo-trigger:focus-visible {
+    outline: none;
+    border-color: rgba(139, 92, 246, 0.6);
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+}
+
+.cuttle-combo-trigger:disabled,
+.cuttle-combo.is-disabled .cuttle-combo-trigger {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.cuttle-combo-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cuttle-combo-caret {
+    flex: none;
+    width: 12px;
+    height: 12px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a0aec0' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>");
+    background-repeat: no-repeat;
+    background-position: center;
+    transition: transform 0.15s ease;
+}
+
+.cuttle-combo.is-open .cuttle-combo-caret {
+    transform: rotate(180deg);
+}
+
+.cuttle-combo-panel {
+    margin-top: 6px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(20, 20, 35, 0.98);
+    overflow: hidden;
+}
+
+/* Floating is a shared presentation, including chat's chip modals. Keep
+   geometry here; app-page controls override only the theme and sizing. */
+.cuttle-combo-popup {
+    position: fixed;
+    inset: auto;
+    z-index: 10000;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    max-width: calc(100vw - 16px);
+    box-shadow: 0 8px 24px #0003;
+}
+
+.cuttle-combo-popup .cuttle-combo-list {
+    max-height: var(--combo-list-height, 220px);
+}
+
+.cuttle-combo.is-open[data-combo-placement] > .cuttle-combo-trigger,
+.cuttle-combo-popup[data-combo-placement] {
+    border-color: var(--accent-color, #8b5cf6);
+}
+
+.cuttle-combo.is-open[data-combo-placement='below'] > .cuttle-combo-trigger {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+.cuttle-combo-popup[data-combo-placement='below'] {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
+.cuttle-combo.is-open[data-combo-placement='above'] > .cuttle-combo-trigger {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
+.cuttle-combo-popup[data-combo-placement='above'] {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.cuttle-combo-panel[hidden] {
+    display: none !important;
+}
+
+.cuttle-combo:not(.is-open) > .cuttle-combo-panel {
+    display: none !important;
+}
+
+.cuttle-combo.is-open > .cuttle-combo-panel {
+    display: block;
+}
+
+.cuttle-combo-search {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+    color: #e2e8f0;
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.cuttle-combo-search:focus {
+    outline: none;
+}
+
+.cuttle-combo-list {
+    list-style: none;
+    margin: 0;
+    padding: 4px;
+    max-height: 220px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.cuttle-combo-option {
+    padding: 9px 10px;
+    border-radius: 8px;
+    font-size: 14px;
+    color: #e2e8f0;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cuttle-combo-option:hover,
+.cuttle-combo-option.is-active {
+    background: rgba(139, 92, 246, 0.22);
+}
+
+.cuttle-combo-option.is-selected {
+    color: #c4b5fd;
+    font-weight: 600;
+}
+
+.cuttle-combo-option.is-disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.cuttle-combo-empty {
+    padding: 9px 10px;
+    font-size: 13px;
+    color: #a0aec0;
+}

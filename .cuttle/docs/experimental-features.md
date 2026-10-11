@@ -141,6 +141,17 @@ Turning the flag off hides every gizmo and closes pop-outs; rows are kept.
 This applies to the experimental shell gizmos; established composer Tasks
 remain available independently of this flag.
 
+## Test Lab App
+
+The Test Lab tile stays visible in Apps while disabled; enable the `test_lab`
+flag in Experimental settings to use it. Select a registered
+project to inspect its recognized test suites and recent run history. Test Lab
+does not execute tests during discovery; choose **Run suite** or **Run all
+tests** to start them. Runs are bounded to 20 minutes, use the project's local
+Python environment when present, and keep their recent output in the Cuttle
+home database. Discovery supports pytest files, npm `test` scripts, Go modules,
+and Rust Cargo packages. Only the owner can inspect projects or start runs.
+
 ## Voice narrator
 
 Flag `voice_narrator`. Enhances voice mode in place (no App or settings tab).

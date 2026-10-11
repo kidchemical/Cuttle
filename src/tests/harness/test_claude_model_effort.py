@@ -19,7 +19,9 @@ _INIT_MODELS = [
     {"value": "opus", "resolvedModel": "claude-opus-5-5", "displayName": "Opus 5.5",
      "description": "For complex work", "supportsEffort": True,
      "supportedEffortLevels": ["max", "low", "high", "medium", "xhigh"]},
-    {"value": "haiku", "resolvedModel": "claude-haiku-4-5", "displayName": "Haiku 4.5"},
+    {"value": "haiku", "resolvedModel": "claude-haiku-5-5", "displayName": "Haiku 5.5",
+     "supportsEffort": True, "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"]},
+    {"value": "claude-haiku-4-5-20251001", "displayName": "Haiku 4.5"},
     {"value": "claude-sonnet-4-6", "displayName": "Sonnet 4.6", "supportsEffort": True,
      "supportedEffortLevels": ["low", "medium", "high", "max"]},
 ]
@@ -62,9 +64,12 @@ def cli_models(monkeypatch):
 def test_catalog_reads_initialize_without_a_user_turn(cli_models):
     result = cat.list_claude_catalog_models()
     assert result["source"] == "cli"
-    assert [m["id"] for m in result["models"]] == ["opus", "haiku", "claude-sonnet-4-6"]
+    assert [m["id"] for m in result["models"]] == [
+        "opus", "haiku", "claude-haiku-4-5-20251001", "claude-sonnet-4-6",
+    ]
     assert result["models"][0]["efforts"] == ["low", "medium", "high", "xhigh", "max"]
-    assert result["models"][1]["efforts"] == []
+    assert result["models"][1]["efforts"] == ["low", "medium", "high", "xhigh", "max"]
+    assert result["models"][2]["efforts"] == []
     assert result["default_efforts"] == ["low", "medium", "high", "xhigh", "max"]
     argv, kwargs = cli_models[0]
     assert "--input-format" in argv and "stream-json" in argv
@@ -89,7 +94,8 @@ def test_catalog_falls_back_to_manifest_without_leaking_stderr(monkeypatch):
 
 
 def test_efforts_match_alias_and_resolved_model(cli_models):
-    assert cat.claude_efforts_for_model("haiku") == []
+    assert cat.claude_efforts_for_model("haiku") == ["low", "medium", "high", "xhigh", "max"]
+    assert cat.claude_efforts_for_model("claude-haiku-4-5-20251001") == []
     assert cat.claude_efforts_for_model("claude-sonnet-4-6") == ["low", "medium", "high", "max"]
     assert cat.claude_efforts_for_model("claude-opus-5-5") == ["low", "medium", "high", "xhigh", "max"]
     assert cat.claude_efforts_for_model(None) == ["low", "medium", "high", "xhigh", "max"]
@@ -99,7 +105,7 @@ def test_efforts_match_alias_and_resolved_model(cli_models):
 def test_model_refresh_list_pin_and_reset(cli_models):
     a = claude_adapter.build_adapter()
     out = a.handle_meta("/model refresh", cwd=".", chat_session_id="7")
-    assert out.success and "3 models" in out.output
+    assert out.success and "4 models" in out.output
     out = a.handle_meta("model", cwd=".", chat_session_id="7")
     assert "`claude-sonnet-4-6`" in out.output and "`xhigh`" in out.output
     out = a.handle_meta("model opus", cwd=".", chat_session_id="7")
@@ -140,7 +146,7 @@ def test_execute_passes_effort_flag_and_refuses_unsupported(cli_models, monkeypa
     assert res.meta["agent_effort"] == "max"
 
     seen.clear()
-    store.save_claude_model("9", "haiku")
+    store.save_claude_model("9", "claude-haiku-4-5-20251001")
     res = asyncio.run(a.execute("hi", cwd=".", resume=None, model=None, chat_session_id="9"))
     assert "was not started" in res.output and not seen
 

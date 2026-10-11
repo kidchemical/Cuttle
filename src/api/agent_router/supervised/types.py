@@ -570,6 +570,7 @@ class SupervisedTask:
     created_at: str = ""
     updated_at: str = ""
     project_path: str = ""
+    checkout_uid: str = ""
     coordinator: Optional[Dict[str, Any]] = None
     worker: Optional[Dict[str, Any]] = None
     paid_approval_granted: bool = False
@@ -608,6 +609,7 @@ class SupervisedTask:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "project_path": self.project_path,
+            "checkout_uid": self.checkout_uid,
             "coordinator": self.coordinator,
             "worker": self.worker,
             "paid_approval_granted": self.paid_approval_granted,
@@ -660,6 +662,7 @@ class SupervisedTask:
             created_at=str(raw.get("created_at") or ""),
             updated_at=str(raw.get("updated_at") or ""),
             project_path=str(raw.get("project_path") or ""),
+            checkout_uid=str(raw.get("checkout_uid") or ""),
             coordinator=dict(raw["coordinator"])
             if isinstance(raw.get("coordinator"), dict)
             else None,

@@ -3,7 +3,8 @@
 Any Cuttle chat can spawn **real child chats**. Each child is a normal
 `chat_sessions` row (`origin=subagent`, `parent_session_id` set) that you can
 open from history. This is **not** `/coordinate` (synthetic worker ids) and
-**not** a Cursor CLI background subagent (those die when the parent turn ends).
+**not** a subagent facility built into your own CLI (those run inside your turn
+and die with it, so they never become openable child chats).
 
 Library: `api.subagents`. CLI: `python -m api.subagents`.
 
@@ -21,6 +22,10 @@ PYTHONPATH=src .venv/bin/python -m api.subagents spawn --parent CH-000535 --wait
 `--child` is repeatable JSON. Keys: `title`, `message` (required), `agent`
 (harness id: `cursor`, `codex`, `muse`, …), `model`, `effort`, `route` (bool),
 `profile` (catalog id or inline `{name,avatar,agent}`), `avatar`.
+
+`model` must be an id the named harness's own CLI accepts — pass it exactly as
+that harness spells it (some qualify with a provider prefix, some are bare); do
+not translate an id from another harness.
 
 `--children-json '[...]'` also works.
 

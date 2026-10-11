@@ -24,6 +24,7 @@
     const PERF_DEFAULT_AXES = { x: 'mean_duration_seconds', y: 'score', z: 'mean_cost_usd' };
     const USAGE_ID = 'cuttle-usage';
     const CONTEXT_ID = 'cuttle-context';
+    const JOBS_ID = 'cuttle-jobs';
     const USAGE_COLORS = ['#636efa', '#ef553b', '#00cc96', '#ab63fa', '#ffa15a', '#19d3f3', '#ff6692', '#b6e880', '#ff97ff', '#fecb52'];
     const USAGE_FORMATS = {
         usd: { tick: '$,.2f', hover: '$,.2f' },
@@ -32,6 +33,16 @@
         hours: { tick: ',.1f', hover: ',.2f', suffix: ' h' },
     };
     let usageHidden = new Set();
+    const JOB_STATUS_COLORS = {
+        ok: '#4ade80', succeeded: '#4ade80',
+        failed: '#f87171',
+        cancelled: '#94a3b8',
+        running: '#60a5fa', active: '#60a5fa',
+    };
+    const JOB_STATUS_LABELS = {
+        ok: 'Succeeded', succeeded: 'Succeeded', failed: 'Failed',
+        cancelled: 'Cancelled', running: 'Running', active: 'Active',
+    };
     const PREF_KEY = 'cuttle_dash_widget_v1';
     const HAMBURGER_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>';
 
@@ -2852,9 +2863,19 @@
             [pct(s.full || 0, s.turns || 0), 'Sent a full briefing'],
             [contextTokens(s.full_median_chars), 'Median full briefing'],
             [fmtCount(s.handoffs), 'Turns with a handoff'],
+            [fmtCount(s.handoffs_reset), 'Project-switch resets'],
             [fmtCount(s.compactions), 'Compactions seen'],
             [s.median_fill_pct == null ? '—' : s.median_fill_pct + '%', 'Median window fill'],
         ].map(([v, l]) => `<div class="dash-stat-card"><div class="dash-stat-value">${escapeHtml(v)}</div><div class="dash-stat-label">${escapeHtml(l)}</div></div>`).join('');
+        const hmodeLabel = {
+            reset: 'project switch (reset)', switch: 'agent switch',
+            history: 'no native session', unrecorded: 'mode not recorded',
+        };
+        const hmodeBits = (payload.handoff_modes || [])
+            .map((m) => `${fmtCount(m.count)} ${hmodeLabel[m.id] || m.id}`).join(' · ');
+        const handoffHint = s.handoffs
+            ? `<p class="dash-chart-hint">A transcript was injected on ${fmtCount(s.handoffs)} turns${hmodeBits ? `: ${hmodeBits}` : ''}. Those chars are excluded from the briefing-size chart.</p>`
+            : '';
         const card = (id, title, note) => `
             <div class="dash-usage-card">
                 <div class="dash-usage-card-head"><h3>${escapeHtml(title)}</h3>${note ? `<span>${escapeHtml(note)}</span>` : ''}</div>
@@ -2873,8 +2894,9 @@
             <div class="dash-usage-range" id="dashCtxRange">${pills}</div>
             <div class="dash-stats dash-stats--usage">${tiles}</div>
             ${s.backfilled ? `<p class="dash-chart-hint">${s.backfilled} older turns were imported from query logs: briefing mode and size only (no layer breakdown or window fill).</p>` : ''}
+            ${handoffHint}
             ${s.turns ? `<div class="dash-usage-grid" data-view="time">
-                ${card('size', 'Full briefing size', 'median per day')}
+                ${card('size', 'Full briefing size', 'median per day · conversation excluded')}
                 ${card('layers', 'Full briefing by layer', layerNote)}
                 ${card('modes', 'What each turn sent', 'turns per day')}
                 ${card('fill', 'Context window fill by chat', fillNote)}
@@ -3027,6 +3049,221 @@
     }
     function escapeAttr(s) { return escapeHtml(s); }
 
+    function renderCuttleJobs() {
+        const s = payload || {};
+        const runs = s.runs || {};
+        const mesh = s.mesh || {};
+        const dur = s.duration || {};
+        const windowHours = Number(s.window_hours || 24);
+        const pct = (n) => (n == null ? '—' : Math.round(n * 100) + '%');
+        const stat = (label, value, sub) => `<div class="dash-stat-card">
+            <div class="dash-stat-value">${escapeHtml(value == null ? '—' : String(value))}</div>
+            <div class="dash-stat-label">${escapeHtml(label)}${sub ? ' · ' + escapeHtml(sub) : ''}</div></div>`;
+        const cards = [
+            stat('Runs', runs.total, `last ${windowHours}h`),
+            stat('Running', runs.running || 0),
+            stat('Succeeded', runs.succeeded || 0),
+            stat('Failed', runs.failed || 0),
+            stat('Success', pct(runs.success_rate), `${runs.succeeded || 0} ok / ${runs.failed || 0} failed`),
+            stat('Cancelled', runs.cancelled || 0),
+            stat('Cost', runs.cost != null ? fmtMoney(runs.cost) : '—'),
+            stat('Duration avg', dur.avg_s != null ? fmtDur(dur.avg_s) : '—', dur.p95_s != null ? `p95 ${fmtDur(dur.p95_s)}` : null),
+            stat('Longest', dur.longest_s != null ? fmtDur(dur.longest_s) : '—', dur.p50_s != null ? `p50 ${fmtDur(dur.p50_s)}` : null),
+        ].join('');
+        const meshCards = [
+            stat('Mesh total', mesh.total || 0),
+            stat('Mesh active', mesh.active || 0),
+            stat('Mesh done', mesh.succeeded || 0, `${mesh.failed || 0} failed`),
+            stat('Mesh cancelled', mesh.cancelled || 0),
+        ].join('');
+        const windows = [[24, '24 hours'], [24 * 7, '7 days'], [24 * 30, '30 days']];
+        const windowPills = windows.map(([h, label]) =>
+            `<button type="button" class="dash-chip ${windowHours === h ? 'is-on' : ''}" data-jobs-hours="${h}">${escapeHtml(label)}</button>`
+        ).join('');
+        const agentRows = (s.by_agent || []).map((a) => `<tr>
+            <td>${escapeHtml(a.agent)}</td>
+            <td>${escapeHtml(String(a.count))}</td>
+            <td>${a.avg_duration_s != null ? fmtDur(a.avg_duration_s) : '—'}</td>
+            <td>${a.total_cost ? fmtMoney(a.total_cost) : '—'}</td>
+            <td>${a.tokens ? Number(a.tokens).toLocaleString() : '—'}</td>
+        </tr>`).join('');
+        const typeRows = (s.by_type || []).map((t) => `<tr>
+            <td>${escapeHtml(t.type)}</td><td>${escapeHtml(String(t.count))}</td>
+        </tr>`).join('');
+        const timeline = s.timeline || {};
+        const bucketHours = Number(timeline.bucket_hours || 1);
+        const hasRuns = (runs.total || 0) > 0 && (timeline.buckets || []).length;
+        const hasMesh = (s.by_type || []).length > 0;
+        const hasAgents = (s.by_agent || []).length > 0;
+        const chartCard = (id, title, note, wide) => `
+            <div class="dash-usage-card${wide ? ' dash-usage-card--wide' : ''}">
+                <div class="dash-usage-card-head"><h3>${escapeHtml(title)}</h3>${note ? `<span>${escapeHtml(note)}</span>` : ''}</div>
+                <div class="dash-usage-chart" data-jobs-chart="${id}"></div>
+            </div>`;
+        let charts = '';
+        if (hasRuns || hasAgents || hasMesh) {
+            charts = `<div class="dash-usage-grid" data-view="time">
+                ${hasRuns ? chartCard('runs', 'Runs over time', `per ${bucketHours}h · last ${windowHours}h`, true) : ''}
+                ${hasAgents ? chartCard('agents', 'Runs by agent', 'total runs', false) : ''}
+                ${hasMesh ? chartCard('mesh', 'Mesh jobs by type', 'total jobs', false) : ''}
+            </div>`;
+        } else {
+            charts = '<p class="dash-empty">No executions in this window.</p>';
+        }
+        root.innerHTML = `
+            <div class="dash-page-bar">
+                ${DASH_BACK_BUTTON}
+                <div class="compact-page-title">
+                    <h1>Jobs &amp; Executions</h1>
+                    <p>Every execution Cuttle handles — agent turns and mesh jobs — over the last ${escapeHtml(String(windowHours))} hours.</p>
+                </div>
+                <div class="dash-menu-wrap">
+                    ${hamburgerBtn('dashPageMenuBtn', 'Page menu')}
+                    <div class="dash-menu" id="dashPageMenu" hidden>
+                        <button type="button" class="dash-menu-item" data-page-action="refresh">Refresh data</button>
+                    </div>
+                </div>
+            </div>
+            <div class="dash-usage-range" id="dashJobsRange">
+                ${windowPills}
+            </div>
+            <div class="dash-meta">
+                <span>Window: <strong>last ${escapeHtml(String(windowHours))}h</strong></span>
+                <span>Agent runs: <strong>${escapeHtml(String(runs.total || 0))}</strong></span>
+                <span>Mesh jobs: <strong>${escapeHtml(String(mesh.total || 0))}</strong></span>
+            </div>
+            <h3 class="dash-section-title">Agent runs</h3>
+            <div class="dash-stats">${cards}</div>
+            <h3 class="dash-section-title">Mesh</h3>
+            <div class="dash-stats">${meshCards}</div>
+            ${charts}
+            <div style="margin:4px 0 14px;">
+                <h3 class="dash-section-title">By agent</h3>
+                <div class="jobs-table-scroll"><table class="hist-table"><thead><tr>
+                    <th>Agent</th><th>Runs</th><th>Avg duration</th><th>Cost</th><th>Tokens</th>
+                </tr></thead><tbody>${agentRows || '<tr><td colspan="5">No runs in this window.</td></tr>'}</tbody></table></div>
+            </div>
+            <div>
+                <h3 class="dash-section-title">Mesh jobs by type</h3>
+                <div class="jobs-table-scroll"><table class="hist-table"><thead><tr>
+                    <th>Type</th><th>Count</th>
+                </tr></thead><tbody>${typeRows || '<tr><td colspan="2">No mesh jobs in this window.</td></tr>'}</tbody></table></div>
+            </div>`;
+        document.getElementById('dashBack').addEventListener('click', () => navigateTo(''));
+        bindMenuToggle('dashPageMenuBtn', 'dashPageMenu');
+        document.getElementById('dashPageMenu').addEventListener('click', (e) => {
+            if (!e.target.closest('[data-page-action="refresh"]')) return;
+            closeMenus();
+            loadDashboard(false);
+        });
+        document.getElementById('dashJobsRange').addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-jobs-hours]');
+            if (btn) switchDataset({ hours: btn.getAttribute('data-jobs-hours') });
+        });
+        drawJobsCharts();
+    }
+
+    function jobsBucketLabels(bucketHours) {
+        const timeline = (payload && payload.timeline) || {};
+        return (timeline.buckets || []).map((b) => {
+            const d = new Date(Number(b.t) * 1000);
+            return bucketHours < 24
+                ? d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric' })
+                : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        });
+    }
+
+    function drawJobsCharts() {
+        const cells = Array.from(root.querySelectorAll('[data-jobs-chart]'));
+        if (!cells.length) return;
+        cells.forEach((el) => {
+            if (!el.__dashDrawn) el.innerHTML = '<p class="dash-loading">Loading chart…</p>';
+        });
+        if (!window.Plotly) {
+            if (window.CuttleOptionalCdn && typeof window.CuttleOptionalCdn.loadPlotlyExtras === 'function') {
+                window.CuttleOptionalCdn.loadPlotlyExtras();
+            }
+            return;
+        }
+        cells.forEach((el) => drawJobsChartCell(el));
+    }
+
+    function drawJobsChartCell(el) {
+        if (!window.Plotly || !el.isConnected) return;
+        const colors = themeColors();
+        const kind = el.getAttribute('data-jobs-chart');
+        const axis = (extra) => Object.assign({
+            gridcolor: colors.grid, zerolinecolor: colors.grid, color: colors.muted, rangemode: 'tozero', automargin: true,
+        }, extra || {});
+        let traces = [];
+        let layout = {};
+        if (kind === 'runs') {
+            const timeline = payload.timeline || {};
+            const buckets = timeline.buckets || [];
+            const bucketHours = Number(timeline.bucket_hours || 1);
+            const labels = jobsBucketLabels(bucketHours);
+            const series = ['ok', 'failed', 'cancelled', 'running'];
+            traces = series.filter((key) => buckets.some((b) => b[key])).map((key) => ({
+                type: 'bar', name: JOB_STATUS_LABELS[key] || key, x: labels,
+                y: buckets.map((b) => (b[key] ? b[key] : null)),
+                marker: { color: JOB_STATUS_COLORS[key] || '#94a3b8' },
+                hovertemplate: `${JOB_STATUS_LABELS[key] || key}: %{y}<extra></extra>`,
+            }));
+            layout = {
+                barmode: 'stack',
+                xaxis: { type: 'category', color: colors.muted, automargin: true, showgrid: false, tickangle: labels.length > 14 ? -45 : 0 },
+                yaxis: axis({ tickformat: ',d' }),
+                hovermode: 'x unified',
+                showlegend: true,
+                legend: { orientation: 'h', y: -0.25, font: { color: colors.text, size: 10 } },
+            };
+        } else if (kind === 'agents') {
+            const rows = (payload.by_agent || []).slice().sort((a, b) => (a.count || 0) - (b.count || 0));
+            traces = [{
+                type: 'bar', orientation: 'h',
+                x: rows.map((r) => r.count || 0), y: rows.map((r) => r.agent),
+                marker: { color: '#60a5fa' },
+                customdata: rows.map((r) => (r.avg_duration_s != null ? fmtDur(r.avg_duration_s) : '—')),
+                hovertemplate: '%{y}: %{x} runs · avg %{customdata}<extra></extra>',
+            }];
+            layout = {
+                xaxis: axis({ tickformat: ',d' }),
+                yaxis: { type: 'category', color: colors.muted, automargin: true },
+                hovermode: 'closest', showlegend: false,
+            };
+        } else if (kind === 'mesh') {
+            const rows = (payload.by_type || []).slice().sort((a, b) => (a.count || 0) - (b.count || 0));
+            traces = [{
+                type: 'bar', orientation: 'h',
+                x: rows.map((r) => r.count || 0), y: rows.map((r) => r.type),
+                marker: { color: '#ab63fa' },
+                hovertemplate: '%{y}: %{x} jobs<extra></extra>',
+            }];
+            layout = {
+                xaxis: axis({ tickformat: ',d' }),
+                yaxis: { type: 'category', color: colors.muted, automargin: true },
+                hovermode: 'closest', showlegend: false,
+            };
+        } else {
+            return;
+        }
+        Object.assign(layout, {
+            autosize: true,
+            height: el.clientHeight || 260,
+            margin: { l: 8, r: 12, t: 8, b: 8 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: colors.text, size: 11 },
+            bargap: 0.18,
+            hoverlabel: { bgcolor: 'rgba(15,23,42,0.92)', bordercolor: colors.grid, font: { color: '#e2e8f0' } },
+        });
+        if (layout.showlegend === undefined) layout.showlegend = false;
+        if (!el.data) el.innerHTML = '';
+        el.__dashDrawn = true;
+        window.Plotly.react(el, traces, layout, { responsive: true, displaylogo: false, displayModeBar: false })
+            .catch((err) => { el.innerHTML = '<p class="dash-error">' + escapeHtml((err && err.message) || String(err)) + '</p>'; });
+    }
+
     async function loadHub() {
         catalog = (await fetchJson('/api/dashboards')).dashboards || [];
         renderHub();
@@ -3054,6 +3291,7 @@
             if (urlParams.get('range')) params.set('range', urlParams.get('range'));
             params.set('tz', String(new Date().getTimezoneOffset()));
         }
+        if (id === JOBS_ID && urlParams.get('hours')) params.set('hours', urlParams.get('hours'));
         const q = params.toString() ? '?' + params.toString() : '';
         payload = await fetchJson('/api/dashboards/' + encodeURIComponent(id) + q);
         dashMark('fetch-done');
@@ -3061,6 +3299,7 @@
         else if (id === 'cuttle-performance') renderCuttlePerformance();
         else if (id === USAGE_ID) renderCuttleUsage();
         else if (id === CONTEXT_ID) renderCuttleContext();
+        else if (id === JOBS_ID) renderCuttleJobs();
         else renderSoon();
     }
 
@@ -3095,6 +3334,13 @@
             if (window.Plotly) drawUsageCharts();
             else root.querySelectorAll('.dash-usage-chart').forEach((el) => {
                 el.innerHTML = '<p class="dash-error">Chart library could not load (offline?). The breakdown table below still works.</p>';
+            });
+            return;
+        }
+        if (payload && payload.id === JOBS_ID) {
+            if (window.Plotly) drawJobsCharts();
+            else root.querySelectorAll('[data-jobs-chart]').forEach((el) => {
+                el.innerHTML = '<p class="dash-error">Chart library could not load (offline?). The tables below still work.</p>';
             });
             return;
         }

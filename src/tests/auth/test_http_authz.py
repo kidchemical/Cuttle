@@ -772,12 +772,28 @@ def test_telegram_slack_triggers_are_removed():
         "/api/pipeline-start",
         "/api/pipeline-reload",
         "/api/pipeline-settings/default",
-        "/api/jobs",
         "/api/running-pipelines",
         "/api/pipeline-chats",
     ):
         res = client.post(path, json={"message": "hi"}, environ_base=LAN)
         assert res.status_code == 404, path
+
+
+def test_jobs_surface_is_not_a_legacy_pipeline_route():
+    """GET /api/jobs is the unified Jobs surface, not the retired forge/graph route.
+
+    The legacy ``cuttle_jobs`` Gitea integration owned /api/jobs; the Jobs
+    surface deliberately revives the path for a new subsystem (agent runs +
+    mesh), but the old pipeline semantics must not have been silently revived
+    (owner-only JSON, never an unauthenticated pipeline list/trigger).
+    """
+    from api import web_chat_api as wca
+
+    client = wca.app.test_client()
+    assert client.get("/api/jobs", environ_base=LAN).status_code == 401
+    assert client.post(
+        "/api/jobs?limit=1", json={"message": "hi"}, environ_base=LAN
+    ).status_code in (401, 405)
 
 
 def test_loopback_restart_status_allowed_without_cookie():
@@ -882,6 +898,20 @@ def test_agent_router_options_requires_owner(tmp_path, monkeypatch):
     assert "jev" in ids
     assert "jev-latest" in data["api_models"]
     assert data["agent_models"]["jev"] == ["jev-latest"]
+
+    # `?live=1` (the Router page's call) unions each agent's live catalog.
+    from api.agent_harness import agent_models as am
+
+    monkeypatch.setattr(
+        am,
+        "list_agent_models_bulk",
+        lambda ids, fallbacks=None, refresh=False: {
+            "opencode": {"models": [{"id": "openrouter/deepseek/v9"}], "source": "cli"},
+        },
+    )
+    live = ctx["client"].get("/api/agent-router/options?live=1", environ_base=LAN)
+    assert live.status_code == 200, live.get_json()
+    assert live.get_json()["agent_models"]["opencode"] == ["openrouter/deepseek/v9"]
 
 
 def test_worker_bearer_cannot_read_router_options(tmp_path, monkeypatch):

@@ -174,7 +174,7 @@ def label_batch(
         )
     try:
         c = client or get_client(timeout_s=20.0)
-        result = c.system_one({"turns": turns}, questions)
+        result = c.system_one({"turns": turns}, questions, task="jev:label")
     except (JevError, Exception) as exc:
         return {"labels": [_fallback(r, "jev_error") for r in rows], "cost": 0.0, "error": str(exc)[:200]}
     labels = []

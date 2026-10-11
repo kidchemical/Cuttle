@@ -7,15 +7,10 @@ the two "cheap completion model" dropdowns in Settings were dead controls:
 they POSTed ``preferred_llm_model`` / ``preferred_tools_ollama_model`` and
 nothing consulted either one.
 
-This module is the single answer. It is deliberately small and declarative:
-
-* a provider is a row (id, label, credential env names, model env override,
-  default model, curated suggestions) — adding one is a data edit, not a fork,
-* preference is stored as one settings key (``completion_provider`` /
-  ``completion_models``) rather than the legacy split "cloud vs tools" pair,
-* the resolution order is fixed and documented: explicit argument → per-call
-  env override → Settings → provider default. Every hop is overridable, so an
-  operator who prefers ``.env`` keeps working with no Settings write at all.
+Provider declarations come from ``api.model_providers`` manifests. This module
+owns background-helper preferences (``completion_provider`` and
+``completion_models``), fallback order, and model resolution:
+explicit argument → environment → Settings → provider default.
 
 Precedence note: this registry resolves *which provider/model*. Credential
 availability still comes from the environment, and providers with no
@@ -27,111 +22,25 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+from api.model_providers.catalog import manifests
+from api.model_providers.types import ProviderManifest as CompletionProvider
+
 SETTINGS_KEY = 'completion_provider'
 MODELS_KEY = 'completion_models'
-# Providers are tried in this order when the user has not pinned one.
-DEFAULT_ORDER: Tuple[str, ...] = ('openai', 'anthropic', 'local')
-
-
-class CompletionProvider:
-    """One cheap-completion backend. Data only — no transport here."""
-
-    __slots__ = (
-        'id', 'label', 'credential_env', 'model_env', 'default_model',
-        'suggested_models', 'needs_credential',
-    )
-
-    def __init__(
-        self,
-        id: str,
-        label: str,
-        *,
-        credential_env: Tuple[str, ...] = (),
-        model_env: str = '',
-        default_model: str = '',
-        suggested_models: Tuple[str, ...] = (),
-        needs_credential: bool = True,
-    ) -> None:
-        self.id = id
-        self.label = label
-        self.credential_env = credential_env
-        self.model_env = model_env
-        self.default_model = default_model
-        self.suggested_models = suggested_models
-        self.needs_credential = needs_credential
-
-    def credential_present(self) -> bool:
-        return any((os.getenv(name) or '').strip() for name in self.credential_env)
-
-    def configured(self) -> bool:
-        """Can this provider actually serve a completion right now?
-
-        A missing credential is the common OOBE case and must read as
-        "not configured", not as an error at call time.
-        """
-        if not self.needs_credential:
-            return True
-        return self.credential_present()
-
-    def to_public_dict(self) -> Dict[str, Any]:
-        return {
-            'id': self.id,
-            'label': self.label,
-            'credential_env': list(self.credential_env),
-            'default_model': self.default_model,
-            'suggested_models': list(self.suggested_models),
-            'needs_credential': self.needs_credential,
-            'credential_present': self.credential_present(),
-            'configured': self.configured(),
-        }
-
-
-_REGISTRY: Tuple[CompletionProvider, ...] = (
-    CompletionProvider(
-        'openai',
-        'OpenAI',
-        credential_env=('OPENAI_API_KEY', 'API_KEY'),
-        model_env='CUTTLE_LLM_OPENAI_MODEL',
-        default_model='gpt-4o-mini',
-        suggested_models=(
-            'gpt-4o-mini',
-            'gpt-4o',
-            'gpt-4.1-mini',
-            'gpt-4.1',
-        ),
-    ),
-    CompletionProvider(
-        'anthropic',
-        'Anthropic',
-        credential_env=('ANTHROPIC_API_KEY',),
-        model_env='CUTTLE_LLM_ANTHROPIC_MODEL',
-        default_model='claude-haiku-4-5-20251001',
-        suggested_models=(
-            'claude-haiku-5-5',
-            'claude-haiku-4-5-20251001',
-            'claude-sonnet-4-20250514',
-        ),
-    ),
-    CompletionProvider(
-        'local',
-        'Local (Ollama / llama.cpp)',
-        credential_env=(),
-        model_env='OLLAMA_MODEL',
-        default_model='',
-        needs_credential=False,
-    ),
-)
-
-_BY_ID: Dict[str, CompletionProvider] = {p.id: p for p in _REGISTRY}
+EFFORTS_KEY = 'completion_efforts'
+_REGISTRY = tuple(p for p in manifests() if 'text_generation' in p.operations)
+_BY_ID = {p.id: p for p in _REGISTRY}
+DEFAULT_ORDER: Tuple[str, ...] = tuple(p.id for p in _REGISTRY)
 
 
 def get_provider(provider_id: Optional[str]) -> Optional[CompletionProvider]:
+    """Only providers implementing background text belong in this facade."""
     return _BY_ID.get(str(provider_id or '').strip().lower())
 
 
 def list_providers() -> List[Dict[str, Any]]:
     """Public shape for the Settings UI."""
-    return [p.to_public_dict() for p in _REGISTRY]
+    return [_public_provider(p) for p in _REGISTRY]
 
 
 def _settings() -> Optional[Any]:
@@ -265,11 +174,12 @@ def describe() -> Dict[str, Any]:
     models = _model_map()
     providers = []
     for provider in _REGISTRY:
-        row = provider.to_public_dict()
+        row = _public_provider(provider)
         row['effective_model'] = resolve_model(provider.id)
+        row['saved_model'] = models.get(provider.id, '')
         row['model_from'] = (
-            'settings' if provider.id in models
-            else 'env' if provider.model_env and (os.getenv(provider.model_env) or '').strip()
+            'env' if provider.model_env and (os.getenv(provider.model_env) or '').strip()
+            else 'settings' if provider.id in models
             else 'default'
         )
         row['pinned'] = provider.id == pinned
@@ -280,4 +190,49 @@ def describe() -> Dict[str, Any]:
         'pinned_provider': pinned or '',
         'order': resolve_order(),
         'providers': providers,
+        'efforts': effort_map(),
     }
+
+
+def effort_map():
+    settings = _settings()
+    try:
+        raw = settings.get_setting(EFFORTS_KEY) if settings else {}
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {pid: {mid: e for mid, e in rows.items() if isinstance(mid, str) and isinstance(e, str)}
+            for pid, rows in raw.items() if pid in _BY_ID and isinstance(rows, dict)}
+
+
+def resolve_effort(provider_id, model, explicit=None):
+    return explicit if explicit is not None else effort_map().get(provider_id, {}).get(model) or None
+
+
+def validate_efforts(raw):
+    from api.model_providers.service import validate_effort
+    if not isinstance(raw, dict):
+        raise ValueError("Efforts must be a provider/model map")
+    for pid, rows in raw.items():
+        if pid not in _BY_ID or not isinstance(rows, dict):
+            raise ValueError("Invalid effort provider")
+        for mid, effort in rows.items():
+            if not isinstance(mid, str) or not mid.strip() or not isinstance(effort, str):
+                raise ValueError("Invalid effort choice")
+            validate_effort(pid, mid, effort)
+    return raw
+
+
+def set_efforts(raw):
+    raw = validate_efforts(raw)
+    settings = _settings()
+    return bool(settings and settings.set_setting(EFFORTS_KEY, raw))
+
+
+def _public_provider(provider):
+    from api.model_providers.capabilities import resolve
+    row = provider.to_public_dict()
+    row['suggested_models'] = [mid for mid in row['suggested_models'] if
+                              'text_generation' in resolve(provider, mid).get('operations', [])]
+    return row

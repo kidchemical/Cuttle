@@ -28,6 +28,9 @@
     color: inherit; font: inherit; cursor: pointer; text-align: center;
     -webkit-touch-callout: none; user-select: none; -webkit-user-select: none;
     -webkit-tap-highlight-color: transparent;
+    /* landing_page.css ships a global `* { overflow-x: hidden }`; restore visible
+       so the pin/badge that hang off the icon corner are not clipped. */
+    overflow: visible;
 }
 .apps-tile:hover, .apps-tile:focus-visible { background: var(--section-bg); outline: none; }
 .apps-tile.holding .apps-icon { transform: scale(0.92); }
@@ -41,6 +44,9 @@
     border: 1px solid hsl(var(--app-hue) 60% 55% / 0.35);
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
     transition: transform 0.12s ease;
+    /* Must stay visible: the pin/badge sit at top:-4px / right|left:-4px and
+       would otherwise be clipped by the icon's rounded 18px corners. */
+    overflow: visible;
 }
 .apps-icon svg { width: 26px; height: 26px; }
 
@@ -75,6 +81,18 @@ body.light-mode .apps-icon {
     box-shadow: 0 0 0 2px var(--bg-primary, #0d1117);
 }
 .apps-pin svg { width: 10px; height: 10px; }
+
+/* Unread-chat count on the Chat tile (mirrors the rail message badge). */
+.apps-badge {
+    position: absolute; top: -4px; left: -4px; z-index: 1;
+    min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; line-height: 1; color: #fff;
+    background: var(--dot-ok, #2ea043);
+    box-shadow: 0 0 0 2px var(--bg-primary, #0d1117);
+}
+/* `display:flex` above outranks the UA `[hidden]` rule, so hide explicitly. */
+.apps-badge[hidden] { display: none; }
 
 .apps-empty { margin: 24px 0; text-align: center; font-size: 0.85rem; color: var(--text-secondary); }
 

@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from tests.browser_guard import launch_chromium
+from tests.e2e.control_helpers import choose
 
 REPO = Path(__file__).resolve().parents[3]
 WEB = REPO / "src" / "web"
@@ -65,6 +66,33 @@ out.escaped = html.every(h => !h.includes('<usage>'));
 out.variants = html.map(h => /gizmo--(\w+)/.exec(h)[1]);
 out.cardRows = (html[4].match(/gizmo-row /g) || []).length;
 out.detail = M.renderDetailHtml(g, data, now).includes('Plan: plus');
+const orG = {id: 'or', type: 'usage_meter', title: 'OpenRouter', config: {agent: 'openrouter', window: 'tightest', show: 'remaining'},
+  placement: {dock: 'float', order: 0}};
+const orData = {label: 'OpenRouter', plan: 'Credits', blocked: false, updated_at: 1_800_000_000,
+  windows: [], readout: {label: 'Credit balance', value: '$74.25', value_label: 'left', used_value: '$25.75', used_label: 'used', pct: 74.25}};
+const orModel = M.meterModel(orG, orData, now);
+out.readout = {pct: orModel.pct, value: orModel.value, valueLabel: orModel.valueLabel, hasBar: orModel.hasBar,
+  tone: orModel.tone, state: orModel.state, caption: orModel.caption, metric: orModel.metric};
+const orUsed = M.meterModel({...orG, config: {...orG.config, show: 'used'}}, orData, now);
+out.readoutUsed = {pct: orUsed.pct, value: orUsed.value, valueLabel: orUsed.valueLabel};
+const orPct = M.meterModel({...orG, config: {...orG.config, metric: 'percent'}}, orData, now);
+out.readoutPercent = {hasBar: orPct.hasBar, pct: orPct.pct, value: orPct.value, valueLabel: orPct.valueLabel,
+  caption: orPct.caption, metric: orPct.metric};
+const orPctUsed = M.meterModel({...orG, config: {...orG.config, metric: 'percent', show: 'used'}}, orData, now);
+out.readoutPercentUsed = {pct: orPctUsed.pct, value: orPctUsed.value};
+out.railPercent = M.renderGizmoHtml({...orG, config: {...orG.config, metric: 'percent'}}, orData, 'rail', now).includes('gizmo-ring');
+const codexAmount = M.meterModel({...g, config: {...g.config, metric: 'amount'}}, data, now);
+out.amountFallback = {metric: codexAmount.metric, hasBar: codexAmount.hasBar, value: codexAmount.value};
+const noPct = {...orData, readout: {label: 'Credit balance', value: '$74.25', value_label: 'left'}};
+const noPctModel = M.meterModel(orG, noPct, now);
+out.readoutNoPct = {hasBar: noPctModel.hasBar, pct: noPctModel.pct, value: noPctModel.value,
+  tone: noPctModel.tone, state: noPctModel.state};
+out.readoutNoBar = ['titlebar', 'rail', 'float', 'card'].map(v => M.renderGizmoHtml(orG, noPct, v, now))
+  .every(h => !h.includes('gizmo-bar'));
+out.railText = M.renderGizmoHtml(orG, noPct, 'rail', now).includes('gizmo-ring-value--text');
+out.readoutDetail = M.renderDetailHtml(orG, noPct, now).includes('$74.25');
+out.orBlocked = M.meterModel(orG, {...orData, blocked: true, unblock_at: null,
+  readout: {...orData.readout, value: '$0.00', pct: 0}}, now).state;
 console.log(JSON.stringify(out));
 """
 
@@ -113,9 +141,42 @@ def test_markup(harness):
     assert harness["detail"] is True
 
 
+def test_readout_headline_drives_meter(harness):
+    # auto => a dollar readout provider reads out amount, not a ratio.
+    assert harness["readout"] == {"pct": 74.25, "value": "$74.25", "valueLabel": "left",
+                                  "hasBar": False, "tone": "ok", "state": "ok",
+                                  "caption": "Credit balance", "metric": "amount"}
+    assert harness["readoutUsed"] == {"pct": 25.75, "value": "$25.75", "valueLabel": "used"}
+    # explicit percent restores the bar/ring and a % headline.
+    assert harness["readoutPercent"] == {"hasBar": True, "pct": 74.25, "value": "74%",
+                                         "valueLabel": "left", "caption": "Credit balance",
+                                         "metric": "percent"}
+    assert harness["readoutPercentUsed"] == {"pct": 25.75, "value": "26%"}
+    assert harness["railPercent"] is True
+    # amount is meaningless without dollars; a window provider stays percent.
+    assert harness["amountFallback"] == {"metric": "percent", "hasBar": True, "value": "18%"}
+    assert harness["readoutNoPct"] == {"hasBar": False, "pct": 0, "value": "$74.25",
+                                       "tone": "ok", "state": "ok"}
+    assert harness["readoutNoBar"] is True
+    assert harness["railText"] is True
+    assert harness["readoutDetail"] is True
+    assert harness["orBlocked"] == "blocked"
+
+
 # ---------------------------------------------------------------------------
 # static wiring
 # ---------------------------------------------------------------------------
+def test_meter_dropdowns_bind_native_color_scheme():
+    """Native <option> lists follow color-scheme; the dark popover/page would
+    otherwise render light text on a light list (unreadable)."""
+    popover = (WEB / "css" / "gizmos.css").read_text(encoding="utf-8")
+    page = (WEB / "css" / "gizmos_page.css").read_text(encoding="utf-8")
+    assert ".shell-gizmo-popover-field select { color-scheme: dark; }" in popover
+    assert "body.light-mode .shell-gizmo-popover-field select { color-scheme: light; }" in popover
+    assert ".gizmos-page select { color-scheme: dark; }" in page
+    assert "body.light-mode .gizmos-page select { color-scheme: light; }" in page
+
+
 def test_shell_loads_gizmos_after_app_shell():
     html = (WEB / "app_shell.html").read_text(encoding="utf-8")
     shell = html.index("/js/shell/app_shell.js")
@@ -127,24 +188,29 @@ def test_shell_loads_gizmos_after_app_shell():
 
 
 def test_gizmos_app_starts_stashed_and_migrates_once():
-    source = (WEB / "js" / "shell" / "app_shell.js").read_text(encoding="utf-8")
+    source = (WEB / "js" / "shell" / "shell_rail.js").read_text(encoding="utf-8")
     assert "'nav-gizmos'" in source.split("const CANONICAL_RAIL_ITEM_ORDER")[1].split("];")[0]
-    assert "const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-projects', 'nav-agent-feed'];" in source
-    assert "const RAIL_LAYOUT_VERSION = 8;" in source
+    assert "const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];" in source
+    assert "const RAIL_LAYOUT_VERSION = 10;" in source
     start = source.index("function migrateUILayout(saved)")
-    end = source.index("\n}\n", start) + len("\n}\n")
+    end = source.index("\n        }\n", start) + len("\n        }\n")
     script = """const assert = require('assert');
-const DEFAULT_LAYOUT={}; const DEFAULT_RAIL_HIDDEN=['nav-achievements','nav-gizmos','nav-projects','nav-agent-feed'];
-const RAIL_LAYOUT_VERSION=8;
-const CANONICAL_RAIL_ITEM_ORDER=['nav-chat','nav-achievements','nav-gizmos','nav-projects','nav-agent-feed','nav-apps'];
+const DEFAULT_LAYOUT={}; const DEFAULT_RAIL_HIDDEN=['nav-achievements','nav-gizmos','nav-test-lab','nav-projects','nav-agent-feed','nav-mesh'];
+const RAIL_LAYOUT_VERSION=10;
+const HIDEABLE_FOOTER_IDS=new Set(['nav-workspace']);
+const CANONICAL_RAIL_ITEM_ORDER=['nav-chat','nav-achievements','nav-gizmos','nav-test-lab','nav-projects','nav-agent-feed','nav-mesh','nav-apps'];
 """ + source[start:end] + """
 let r = migrateUILayout({layout_version:6, rail_items:['nav-chat','nav-achievements','nav-apps'], rail_hidden:['nav-projects']});
-assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-agent-feed','nav-gizmos','nav-projects']);
+assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-agent-feed','nav-gizmos','nav-projects','nav-test-lab']);
 assert(r.layout.rail_items.includes('nav-achievements'));
 r = migrateUILayout({layout_version:7, rail_items:['nav-chat','nav-gizmos'], rail_hidden:[]});
 assert.equal(r.changed, true); assert(r.layout.rail_items.includes('nav-gizmos'));
-assert.deepEqual(r.layout.rail_hidden, ['nav-agent-feed']);
+assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-agent-feed','nav-test-lab']);
 r = migrateUILayout({layout_version:8, rail_items:['nav-chat','nav-gizmos'], rail_hidden:[]});
+assert.equal(r.changed, true); assert(r.layout.rail_hidden.includes('nav-mesh'));
+r = migrateUILayout({layout_version:9, rail_items:['nav-chat','nav-gizmos'], rail_hidden:[]});
+assert.equal(r.changed, true); assert(r.layout.rail_hidden.includes('nav-test-lab'));
+r = migrateUILayout({layout_version:10, rail_items:['nav-chat','nav-gizmos'], rail_hidden:[]});
 assert.equal(r.changed, false); assert(r.layout.rail_items.includes('nav-gizmos'));
 """
     if not shutil.which("node"):
@@ -490,8 +556,8 @@ def test_gizmos_app_creates_without_an_agent(tmp_path):
         state["enabled"] = True
         page.locator("#refreshGizmos").click()
         page.locator("#gizmosCreate").wait_for(state="visible")
-        page.locator("#gizmoCreateAgent").select_option("claude")
-        page.locator("#gizmoCreateDock").select_option("float")
+        choose(page, page.locator("#gizmoCreateAgent"), "claude")
+        choose(page, page.locator("#gizmoCreateDock"), "float")
         page.locator("#gizmosCreateForm button[type=submit]").click()
         page.locator('[data-gizmo-item="usage-meter-1"]').wait_for()
         assert state["created"] == [{"type": "usage_meter", "placement": {"dock": "float"},

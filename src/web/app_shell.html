@@ -8,7 +8,7 @@
     <title>Cuttle</title>
     <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
     <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
-    <link rel="stylesheet" href="/css/app_shell.css?v=20261008whatsNew">
+    <link rel="stylesheet" href="/css/app_shell.css?v=20261011sharedModal1">
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
     <link rel="stylesheet" href="/css/video_background.css?v=20260927blendTarget">
     <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
@@ -33,10 +33,12 @@
     </div>
     <div class="shell-window-controls" role="group" aria-label="Window controls">
         <button type="button" class="shell-win-btn shell-win-update" id="shellWinUpdate" hidden title="Update Cuttle desktop" aria-label="Update Cuttle desktop">
-            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+            <svg class="shell-win-update-icon" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
                 <path d="M6 1.5v7M3.5 6.2L6 8.7 8.5 6.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
                 <path d="M2 10.2h8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
             </svg>
+            <span class="shell-win-update-spinner" aria-hidden="true"></span>
+            <span class="shell-win-update-chip" id="shellWinUpdateChip" hidden></span>
             <span class="shell-win-update-label">Update</span>
         </button>
         <button type="button" class="shell-win-btn" id="shellWinReload" title="Reload" aria-label="Reload">
@@ -113,6 +115,7 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                 </svg>
+                <span class="rail-badge rail-badge-chat" id="navChatBadge" style="display:none">0</span>
             </button>
 
             <button class="rail-item" data-page="/router_editor.html" data-tooltip="Router" id="nav-editor" data-id="nav-editor" draggable="true">
@@ -134,6 +137,13 @@
                     <path d="M6 20h12"/><path d="M6 16h12"/><rect x="5" y="8" width="14" height="12" rx="2" ry="2"/><path d="M9 8V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
                 </svg>
                 <span class="rail-badge rail-badge-jobs" id="navJobsBadge" style="display:none">0</span>
+            </button>
+
+            <button class="rail-item" data-page="/mesh_page.html" data-tooltip="Mesh" id="nav-mesh" data-id="nav-mesh" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="5" cy="12" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="19" cy="18" r="2.2"/>
+                    <path d="M7 11l9.5-4.2M7 13l9.5 4.2M19 8.2v7.6"/>
+                </svg>
             </button>
 
             <button class="rail-item" data-page="/dashboards_page.html" data-tooltip="Dashboards" id="nav-dashboards" data-id="nav-dashboards" draggable="true">
@@ -158,6 +168,13 @@
             <button class="rail-item" data-page="/gizmos_page.html" data-tooltip="Gizmos" id="nav-gizmos" data-id="nav-gizmos" draggable="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M4 15a8 8 0 0 1 16 0"/><path d="M12 15l4-5"/><circle cx="12" cy="15" r="1.4"/><path d="M4 19h16"/>
+                </svg>
+            </button>
+
+            <button class="rail-item" data-page="/test_lab_page.html" data-tooltip="Test Lab" id="nav-test-lab" data-id="nav-test-lab" draggable="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M9 3h6M10 3v6.2L5 18a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-8.8V3"/>
+                    <path d="M8 16h8M10 13h4"/>
                 </svg>
             </button>
 
@@ -365,12 +382,26 @@
     </section>
 </div>
 
+<div class="auth-modal-overlay" id="cuttleRestartModal" hidden role="dialog" aria-modal="true" aria-labelledby="cuttleRestartTitle" aria-describedby="cuttleRestartDescription">
+    <section class="auth-modal update-restart-modal">
+        <div class="auth-modal-header">
+            <h2 class="auth-modal-title" id="cuttleRestartTitle">Update ready</h2>
+            <p class="auth-modal-subtitle" id="cuttleRestartDescription">Cuttle updated to <strong data-restart-version>the latest</strong>. Restart now to apply it, or keep working and restart later.</p>
+        </div>
+        <div class="logout-confirm-actions">
+            <button type="button" class="logout-confirm-btn logout-confirm-submit" data-restart-now>Restart now</button>
+            <button type="button" class="logout-confirm-btn logout-confirm-cancel" data-restart-later>Later</button>
+        </div>
+    </section>
+</div>
+
 <script src="/js/shared/toast.js?v=20260921voiceMic"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
 <script src="/js/shared/net_debug.js?v=20260810c"></script>
 <script src="/js/media/youtube_id.js"></script>
 <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
 <script src="/js/shared/auth.js?v=20261008sync"></script>
+<script src="/js/shared/modal.js?v=20261011modal1"></script>
 <script src="/js/shell/desktop_update_policy.js?v=20260819role"></script>
 <script src="/js/chat/chat_find.js?v=20260819find"></script>
 <script src="/js/spaces/spaces_state.js?v=20260930spaces1"></script>
@@ -384,8 +415,13 @@
 <script src="/js/achievements/celebrate.js?v=20261003vfx1"></script>
 <script src="/js/achievements/achievements.js?v=20261003ach1"></script>
 <script src="/js/shell/whats_new.js?v=20261008whatsNew"></script>
-<script src="/js/shell/account_panel.js?v=20261008acct"></script>
-<script src="/js/shell/app_shell.js?v=20261008acct"></script>
+<script src="/js/shell/account_panel.js?v=20261011sharedModal1"></script>
+<script src="/js/shell/shell_electron.js?v=20261011sharedModal1"></script>
+<script src="/js/shell/shell_mobile.js?v=20261011shell5f"></script>
+<script src="/js/shell/shell_panes.js?v=20261011pane5b"></script>
+<script src="/js/shell/shell_spaces.js?v=20261011spaces5c"></script>
+<script src="/js/shell/shell_rail.js?v=20261011rail5e"></script>
+<script src="/js/shell/app_shell.js?v=20261011rail5e"></script>
 <script src="/js/gizmos/gizmos_model.js?v=20261007gizmos2"></script>
 <script src="/js/gizmos/gizmos_shell.js?v=20261007gizmos3"></script>
 </body>

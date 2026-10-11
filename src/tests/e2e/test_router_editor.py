@@ -76,7 +76,8 @@ def test_compact_overview_expand_effort_and_save(surface):
     assert page.locator('.re-lane-detail:visible').count()==1
     detail=page.locator('#lane-detail-2')
     assert detail.locator('.effort').first.input_value()=='high'
-    detail.locator('.effort').first.select_option('max')
+    from .control_helpers import choose
+    choose(page, detail.locator('select.effort').first, 'max')
     assert 'max' in page.locator('.re-lane-row').nth(2).inner_text()
     detail.locator('.re-uc-name').fill('Writing & docs')
     assert page.get_by_role('button',name='Writing & docs',exact=True).count()==1
@@ -87,6 +88,25 @@ def test_compact_overview_expand_effort_and_save(surface):
     page.locator('#dirty-chip').wait_for(state='hidden')
     save=next(c for c in api.calls if c[0]=='PUT')
     assert save[2]['use_cases'][2]['routing']['targets'][0]['effort']=='max'
+    assert not errors
+
+
+def test_lane_model_dropdown_is_searchable(surface):
+    page,api,errors=surface
+    page.get_by_role('button',name='Writing',exact=True).click()
+    detail=page.locator('#lane-detail-2')
+    combo=detail.locator('.cuttle-combo--model').first
+    combo.locator('.cuttle-combo-trigger').click()
+    search=page.locator('.cuttle-combo-popup .cuttle-combo-search')
+    search.wait_for(state='visible')
+    search.fill('op')
+    page.wait_for_timeout(50)
+    texts=page.locator('.cuttle-combo-popup .cuttle-combo-option').all_inner_texts()
+    assert any('opus' in t for t in texts), texts
+    assert all('sonnet' not in t for t in texts), texts
+    page.locator('.cuttle-combo-popup .cuttle-combo-option').first.click()
+    page.wait_for_timeout(50)
+    assert detail.locator('.model').first.input_value()=='opus'
     assert not errors
 
 

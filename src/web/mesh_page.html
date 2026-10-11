@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mesh - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
+    <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/compact_page.css?v=20261007hdr2">
+    <style>
+        .mesh-header { margin-bottom: 12px; }
+        .mesh-header h1 { font-size: 1.05rem; margin-bottom: 4px; }
+        .mesh-header p { color: var(--text-secondary); font-size: 0.8rem; line-height: 1.35; margin: 0; }
+        .jobs-section-title { font-size: 0.95rem; font-weight: 600; margin: 0 0 10px 0; color: var(--text-primary); }
+        .jobs-filter { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
+        .jobs-filter button, .hist-filter button {
+            padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-color);
+            background: var(--section-bg); color: var(--text-primary); cursor: pointer;
+            font-size: 12px;
+        }
+        .jobs-filter button:hover, .hist-filter button:hover { background: var(--panel-hover); }
+        .hist-source { font-size: 11px; color: var(--text-tertiary); margin-left: auto; }
+        .job-type-badge, .status-pill {
+            font-size: 10px; padding: 2px 6px; border-radius: 4px; text-transform: uppercase;
+            flex-shrink: 0; font-weight: 600; letter-spacing: 0.02em;
+        }
+        .status-pill.queued, .status-pill.pending { background: rgba(250, 204, 21, 0.18); color: #facc15; }
+        .status-pill.claimed, .status-pill.running, .status-pill.processing { background: rgba(56, 189, 248, 0.18); color: #38bdf8; }
+        .status-pill.completed, .status-pill.succeeded { background: rgba(74, 222, 128, 0.18); color: #4ade80; }
+        .status-pill.cancelled, .status-pill.expired { background: rgba(148, 163, 184, 0.25); color: #94a3b8; }
+        .status-pill.failed { background: rgba(248, 113, 113, 0.18); color: #f87171; }
+        .jobs-empty, .jobs-loading {
+            font-size: 12px; color: var(--text-secondary); padding: 18px 14px;
+            border-radius: 8px; background: var(--section-bg); border: 1px dashed var(--border-color);
+            text-align: center;
+        }
+        .hist-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; }
+        .hist-table th {
+            text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+            color: var(--text-tertiary); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--border-color);
+            white-space: nowrap;
+        }
+        .hist-table td {
+            padding: 9px 8px; border-bottom: 1px solid var(--border-color);
+            vertical-align: top; color: var(--text-primary);
+        }
+        .jobs-table-scroll {
+            display: block;
+            width: fit-content;
+            max-width: 100%;
+            overflow-x: auto;
+            overflow-y: visible;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-x: contain;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--section-bg);
+        }
+        .jobs-table-scroll--capped {
+            max-height: min(42vh, 420px);
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            width: fit-content;
+            max-width: 100%;
+        }
+        .jobs-table-block {
+            display: inline-flex; flex-direction: column; align-items: stretch;
+            width: max-content; max-width: 100%; vertical-align: top;
+        }
+        .jobs-table-pager {
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            flex-wrap: wrap; margin-top: 8px; font-size: 11px; color: var(--text-secondary);
+        }
+        .jobs-table-pager-meta { color: var(--text-tertiary); }
+        .jobs-table-pager-actions { display: flex; align-items: center; gap: 6px; }
+        .jobs-pager-btn {
+            padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-color);
+            background: var(--section-bg); color: var(--text-primary); cursor: pointer;
+            font-size: 12px; font-family: inherit; line-height: 1.2;
+        }
+        .jobs-pager-btn:hover:not(:disabled) { background: var(--panel-hover); }
+        .jobs-pager-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .jobs-pager-page { min-width: 4.5em; text-align: center; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+        #devicesList, #meshJobsList { min-width: 0; max-width: 100%; }
+        .jobs-table-scroll .hist-table {
+            margin: 0; border-collapse: separate; border-spacing: 0; width: max-content; min-width: 0;
+        }
+        .jobs-table-scroll .hist-table th,
+        .jobs-table-scroll .hist-table td { border-bottom: 1px solid var(--border-color); white-space: nowrap; }
+        .jobs-table-scroll .hist-table td.jobs-cell-wrap {
+            white-space: normal; min-width: 140px; max-width: 280px; word-break: break-word;
+        }
+        .jobs-table-scroll .hist-table tr:last-child td { border-bottom: none; }
+        .jobs-table-scroll .hist-table thead th {
+            position: sticky; top: 0; background: var(--section-bg); z-index: 1;
+        }
+        .jobs-table-scroll .hist-table th.device-actions-cell,
+        .jobs-table-scroll .hist-table td.device-actions-cell {
+            position: sticky; right: 0; z-index: 2; width: 44px; min-width: 44px; max-width: 44px;
+            text-align: right; padding-left: 6px; padding-right: 8px; background: var(--section-bg);
+            box-shadow: -8px 0 10px -8px rgba(0, 0, 0, 0.45);
+        }
+        .jobs-table-scroll .hist-table thead th.device-actions-cell { z-index: 3; }
+        .jobs-table-scroll .hist-table tr.device-row-you td.device-actions-cell {
+            background: color-mix(in srgb, rgba(63, 185, 80, 0.06) 100%, var(--section-bg));
+        }
+        .jobs-table-scroll .hist-table tr:hover td.device-actions-cell { background: var(--panel-hover, rgba(255,255,255,0.04)); }
+        .jobs-table-scroll .hist-table tr.device-row-you:hover td.device-actions-cell {
+            background: color-mix(in srgb, rgba(63, 185, 80, 0.1) 100%, var(--section-bg));
+        }
+        .device-role {
+            display: inline-block; font-size: 10px; font-weight: 650; letter-spacing: 0.03em;
+            text-transform: uppercase; padding: 2px 6px; border-radius: 4px;
+            background: rgba(148, 163, 184, 0.2); color: var(--text-secondary, #94a3b8); margin-right: 4px;
+        }
+        .device-role-host { background: rgba(56, 189, 248, 0.2); color: #38bdf8; }
+        .device-role-you { background: rgba(63, 185, 80, 0.22); color: #3fb950; }
+        .device-role-stale { background: rgba(210, 153, 34, 0.22); color: #d29922; }
+        .device-row-you td { background: rgba(63, 185, 80, 0.06); }
+        .device-slot-cell { width: 2.25rem; text-align: center; font-variant-numeric: tabular-nums; opacity: 0.75; font-weight: 600; }
+        .device-actions-cell { width: 44px; text-align: right; white-space: nowrap; }
+        .device-menu-btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 28px; height: 26px; padding: 0;
+            border: 1px solid rgba(148, 163, 184, 0.22); border-radius: 6px;
+            background: transparent; color: var(--text-secondary, #94a3b8); cursor: pointer; font: inherit; line-height: 1;
+        }
+        .device-menu-btn:hover, .device-menu-btn[aria-expanded="true"] {
+            background: rgba(148, 163, 184, 0.14); border-color: rgba(148, 163, 184, 0.4); color: var(--text-primary, #e2e8f0);
+        }
+        .device-menu-btn .device-hamburger { display: flex; flex-direction: column; gap: 2.5px; width: 12px; }
+        .device-menu-btn .device-hamburger span { display: block; height: 1.5px; border-radius: 1px; background: currentColor; }
+        .device-row-menu {
+            position: fixed; min-width: 160px; padding: 4px;
+            border: 1px solid var(--border-color, #334155); border-radius: 8px;
+            background: var(--bg-secondary, #1e293b); box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+            display: flex; flex-direction: column; gap: 1px; z-index: 80;
+        }
+        .device-row-menu[hidden] { display: none !important; }
+        .device-row-menu button {
+            display: block; width: 100%; text-align: left; padding: 8px 10px; border: none; border-radius: 6px;
+            background: transparent; color: var(--text-primary, #e2e8f0); font: inherit; font-size: 12px; cursor: pointer;
+        }
+        .device-row-menu button:hover:not(:disabled) { background: rgba(148, 163, 184, 0.14); }
+        .device-row-menu button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .device-row-menu button.danger { color: #f87171; }
+        .device-row-menu button.danger:hover:not(:disabled) { background: rgba(248, 113, 113, 0.12); }
+        @media (max-width: 768px) {
+            .hist-source { margin-left: 0; width: 100%; }
+            .jobs-table-scroll { margin-left: -2px; margin-right: -2px; max-width: calc(100% + 4px); }
+        }
+    </style>
+<script defer src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
+<link rel="stylesheet" href="/css/searchable_select.css?v=20261011attachedMenus">
+<link rel="stylesheet" href="/css/page_controls.css?v=20261011attachedMenus">
+<script defer src="/js/shared/page_controls.js?v=20261011pageControls2"></script>
+</head>
+<body class="compact-shell-page" data-page="mesh">
+    <script>
+        (function () {
+            if (window.CuttleUiBoot) return;
+            var t = localStorage.getItem('theme') || 'dark';
+            document.body.classList.remove('dark-mode', 'midnight-mode', 'light-mode');
+            document.body.classList.add(t === 'light' ? 'light-mode' : (t === 'midnight' ? 'midnight-mode' : 'dark-mode'));
+        })();
+    </script>
+    <div class="mesh-page cuttle-page">
+        <div class="compact-page-title mesh-header">
+            <h1>Mesh</h1>
+            <p>Device workers on your network and the mesh jobs they run.</p>
+        </div>
+
+        <div class="jobs-filter hist-filter" style="margin-bottom:12px;">
+            <button type="button" class="hist-btn" id="btnPingWorker">Ping local worker</button>
+            <span class="hist-source" id="devicesStatus"></span>
+        </div>
+        <h2 class="jobs-section-title">Workers</h2>
+        <div id="devicesList"></div>
+        <h2 class="jobs-section-title" style="margin-top:1.25rem;">Pending pairing</h2>
+        <div id="pairingList"></div>
+        <h2 class="jobs-section-title" style="margin-top:1.25rem;">Mesh jobs</h2>
+        <div id="meshJobsList"></div>
+    </div>
+    <script src="/js/shared/shared_navigation.js"></script>
+    <script src="/js/media/background_effect_blend.js"></script>
+    <script src="/js/media/video_background.js"></script>
+    <script src="/js/shared/toast.js"></script>
+    <script src="/js/shared/cron_countdown.js"></script>
+    <script src="/js/mesh/mesh_page.js?v=20261010meshScroll"></script>
+</body>
+</html>

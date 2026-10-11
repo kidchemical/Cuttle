@@ -89,10 +89,14 @@ def _patch_spawn(monkeypatch, oc, proc):
     async def _no_kill(p):
         return None
 
+    async def _resume_directory(exe, cwd, resume, chat_session_id):
+        return cwd, resume
+
     monkeypatch.setattr(oc, "opencode_executable", lambda: "opencode.exe")
     monkeypatch.setattr(oc.asyncio, "create_subprocess_exec", _spawn)
     monkeypatch.setattr(oc, "attach_to_chat_run", lambda *a, **k: None)
     monkeypatch.setattr(oc, "kill_process_tree", _no_kill)
+    monkeypatch.setattr(oc, "_resume_directory", _resume_directory)
 
 
 class _Writer:

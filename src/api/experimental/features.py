@@ -80,6 +80,12 @@ register_flag(FlagSpec(
     default=False, category="ui", risk="low", since="0.0.0", needs_restart=False, context_bundle=True,
 ))
 
+register_flag(FlagSpec(
+    id="test_lab", label="Test Lab",
+    description="Inspect recognized test suites in registered projects, run a selected suite on demand, and review recent results in Apps → Test Lab.",
+    default=False, category="ui", risk="medium", since="0.0.0", needs_restart=False,
+))
+
 # Achievements: default OFF. Experimental features are opt-in by design; a
 # user who does not know the system exists should never have it running.
 register_flag(
@@ -103,4 +109,20 @@ register_flag(FlagSpec(
     id="agent_feed", label="Agent Feed",
     description="Observe agent tool calls, edits and CLI-exposed thinking across chats. Uses the shared event store.",
     default=False, category="agents", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="jobs_surface", label="Jobs surface",
+    description="Unified Jobs page: every execution Cuttle handles — local agent turns, background helpers and mesh jobs — as one ledger with running-now, recent history, cancel/rerun control and telemetry.",
+    # Owner-requested restoration/upgrade of the existing Jobs page (a register
+    # on an already-shipped surface over data Cuttle already tracks), not a new
+    # opt-in capability, so it ships on by default. Reversible via Settings →
+    # Experimental or the CUTTLE_EXPERIMENTAL kill switch.
+    default=True, category="ui", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="worktrees", label="Worktrees",
+    description="Run a chat in its own git worktree and branch instead of the shared checkout, so parallel chats cannot fight over one working tree. Default worktrees live under the Cuttle home; creating and removing one is a deliberate action.",
+    default=False, category="agents", risk="medium", since="0.0.0", needs_restart=False,
 ))

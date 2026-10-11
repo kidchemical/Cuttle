@@ -195,7 +195,7 @@ def local_request_slot(*, cancelled=lambda: False, on_wait=lambda: None, timeout
             _request_lock.release()
 
 
-def chat_completion_with_fallback(client, base_kwargs, preferred_model, *, cancelled=lambda: False):
+def chat_completion_with_fallback(create_completion, base_kwargs, preferred_model, *, cancelled=lambda: False):
     """Own local model selection/retries, including empty-response fallback.
 
     Cancellation never falls through to another model. The caller holds the
@@ -209,7 +209,7 @@ def chat_completion_with_fallback(client, base_kwargs, preferred_model, *, cance
     for model in candidates[:max_attempts]:
         check_local_cancelled(cancelled)
         try:
-            response = client.chat.completions.create(**{**base_kwargs, 'model': model})
+            response = create_completion(**{**base_kwargs, 'model': model})
             check_local_cancelled(cancelled)
             message = response.choices[0].message
             if not getattr(message, 'tool_calls', None) and not str(getattr(message, 'content', None) or '').strip():

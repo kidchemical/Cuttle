@@ -330,6 +330,7 @@ def _cmd_profiles(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--json", action="store_true", help="JSON on stdout")
     common.add_argument("--db", default=None, help="Auth DB path (tests)")
@@ -365,7 +366,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Required: supervise this round to completion in this process",
     )
-    sp.add_argument("--timeout", type=float, default=900.0)
+    sp.add_argument("--timeout", type=float, default=None, help="Supervision deadline in seconds (default: Settings → Agents)")
     sp.add_argument("--route", action="store_true", help="Ask the Cuttle router to pick each child's harness")
     sp.add_argument("--watch", action="store_true", help="Write a job_watch status JSON with per-child bars")
     sp.add_argument("--tasks", action="store_true", help="Create a Tasks gizmo on the parent chat")
@@ -382,7 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Poll a batch round (observation only; never starts or cancels work)",
     )
     wt.add_argument("batch")
-    wt.add_argument("--timeout", type=float, default=900.0)
+    wt.add_argument("--timeout", type=float, default=None, help="Supervision deadline in seconds (default: Settings → Agents)")
     wt.set_defaults(func=_cmd_wait)
 
     msg = sub.add_parser("message", parents=[common], help="Send a follow-up into a child chat")
@@ -393,7 +394,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Required: supervise this round to completion in this process",
     )
-    msg.add_argument("--timeout", type=float, default=900.0)
+    msg.add_argument("--timeout", type=float, default=None, help="Supervision deadline in seconds (default: Settings → Agents)")
     msg.set_defaults(func=_cmd_message)
 
     can = sub.add_parser("cancel", parents=[common], help="Cancel a batch or a child/parent session")
@@ -438,7 +439,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     _ensure_src_on_path()
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if getattr(args, "timeout", None) is None:
+        args.timeout = _resolve_wait_timeout()
     return int(args.func(args) or 0)
+
+
+def _resolve_wait_timeout() -> float:
+    """Default ``--wait`` supervision deadline (seconds).
+
+    Settings → Agents (``timeouts.subagent_wait_seconds``); falls back to
+    ``DEFAULT_TIMEOUT_SEC`` when settings are unreadable.
+    """
+    try:
+        from managers.settings_manager import get_settings_manager
+        return float(get_settings_manager().get_timeouts()["subagent_wait_seconds"])
+    except Exception:
+        from api.subagents.types import DEFAULT_TIMEOUT_SEC
+        return DEFAULT_TIMEOUT_SEC
 
 
 if __name__ == "__main__":

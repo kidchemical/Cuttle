@@ -45,6 +45,11 @@ class _BrainGuard:
 
 def _provider_for(config: RouterConfig):
     mode = (config.provider.mode or RouterMode.OFF.value).lower()
+    if mode != RouterMode.OFF.value:
+        from api.background_helpers import has_selection
+        if has_selection("router"):
+            from api.agent_router.providers.background import BackgroundRouterProvider
+            return BackgroundRouterProvider()
     if mode == RouterMode.API.value:
         from api.jev.config import is_jev_model_id
 

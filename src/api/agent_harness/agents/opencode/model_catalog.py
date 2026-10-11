@@ -444,3 +444,19 @@ def catalog_supports_variant(model: Optional[str]) -> Optional[bool]:
     if "supports_variant" not in row:
         return None
     return bool(row.get("supports_variant"))
+
+
+def catalog_variant_levels(model: Optional[str]) -> Optional[List[str]]:
+    """Native variant keys for a model, ``[]`` if explicitly unsupported."""
+    mid = str(model or "").strip().lower()
+    if not mid:
+        return None
+    result = list_opencode_catalog_models()
+    for row in result.get("models") or []:
+        if str(row.get("id") or "").strip().lower() != mid:
+            continue
+        if row.get("supports_variant") is False:
+            return []
+        if isinstance(row.get("variant_levels"), list):
+            return [str(value).strip().lower() for value in row["variant_levels"] if str(value).strip()]
+    return None

@@ -341,7 +341,8 @@ def test_js_has_no_default_worker_participant_card():
     assert "updateServerMessageInPlace" in js
     assert "followupQueue" in html
     assert "Pending-prompt queue only" in html or "never used for supervised" in html
-    assert "supervised-activity-row" in js  # only removed / hidden, not mounted by default
+    # 4F: the row removal now lives in the owner, not the page.
+    assert "supervised-activity-row" in HELPER.read_text(encoding="utf-8")  # only removed / hidden, not mounted by default
     assert "canonical_bubble" in HELPER.read_text(encoding="utf-8") or "showWorkerCardByDefault" in HELPER.read_text(encoding="utf-8")
 
 

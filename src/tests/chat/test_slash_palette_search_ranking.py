@@ -12,24 +12,31 @@ pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node not a
 
 
 def run_js(body):
-    page = (ROOT / "src/web/js/chat/chat_page.js").read_text(encoding="utf-8")
-    names = ["filterSlashPaletteItems", "buildCodexEffortPaletteItems",
-             "buildCodexModelPaletteItems", "buildOpenCodeModelPaletteItems",
-             "buildRestartPaletteItems"]
+    controls = (ROOT / "src/web/js/chat/chat_agent_controls.js").read_text(encoding="utf-8")
+    # filterSlashPaletteItems is owned by chat_slash_palette.js
+    # (CuttleChatSlashPalette); the model/effort builders it dispatches live on
+    # CuttleChatAgentControls.
     blocks = []
-    for name in names:
-        start = page.index(f"    function {name}(")
-        end = page.index("\n    function ", start + 10)
-        blocks.append(page[start:end])
+    for name in ("buildCodexEffortPaletteItems", "buildCodexModelPaletteItems",
+                 "buildOpenCodeModelPaletteItems"):
+        marker = "        function "
+        s = controls.index(f"{marker}{name}(")
+        e = controls.index(f"\n{marker}", s + 10)
+        blocks.append(controls[s:e])
     setup = """
 const CuttleChatSlash = require('./src/web/js/chat/chat_slash.js');
+const Palette = require('./src/web/js/chat/chat_slash_palette.js');
 const S = CuttleChatSlash;
+const slashApi = S;
 const slashPaletteItemMatches = S.slashPaletteItemMatches;
+const itemMatches = S.slashPaletteItemMatches;
 const slashPaletteTypeBucket = S.slashPaletteTypeBucket;
-const slashPaletteTypeFilter = 'all';
-const slashPaletteSupplement = {codexModels: [], codexCommonEfforts: ['low','medium','high','xhigh'],
+const state = {codexModels: [], codexCommonEfforts: ['low','medium','high','xhigh'],
     opencodeModels: []};
+const slashPaletteSupplement = state;
+const d = {hasActiveCodex: () => true, hasActiveOpenCode: () => true};
 const agentSupportsEffort = () => true;
+const supportsEffort = () => true;
 const hasActiveCodexAgentChip = () => true;
 const hasActiveOpenCodeAgentChip = () => true;
 const loadCodexEffortForPalette = () => {};
@@ -44,17 +51,53 @@ const cursorAgentSlashCommandsForPalette = () => cursorCommands;
 const harnessUsageSlashCommandsForPalette = () => [];
 const buildProjectPaletteItems = () => [];
 const buildProjectCommandPaletteItems = () => projectCommands;
-const buildCursorModelPaletteItems = () => [];
-const buildMuseModelPaletteItems = () => [];
-const buildMuseEffortPaletteItems = () => [];
-const buildHermesModelPaletteItems = () => [];
-const buildHermesEffortPaletteItems = () => [];
-const buildOpenCodeEffortPaletteItems = () => [];
-const buildClaudeModelPaletteItems = () => [];
-const buildClaudeEffortPaletteItems = () => [];
 const readStarredSlashPrefixes = () => stars;
 const readStarredProject = () => null;
 const normalizeStarredProjectPath = () => '';
+const agentControls = {
+  buildCodexModelPaletteItems: (...a) => buildCodexModelPaletteItems(...a),
+  buildOpenCodeModelPaletteItems: (...a) => buildOpenCodeModelPaletteItems(...a),
+  buildCodexEffortPaletteItems: (...a) => buildCodexEffortPaletteItems(...a),
+  buildCursorModelPaletteItems: () => [],
+  buildMuseModelPaletteItems: () => [],
+  buildMuseEffortPaletteItems: () => [],
+  buildHermesModelPaletteItems: () => [],
+  buildHermesEffortPaletteItems: () => [],
+  buildOpenCodeEffortPaletteItems: () => [],
+  buildClaudeModelPaletteItems: () => [],
+  buildClaudeEffortPaletteItems: () => [],
+};
+const palette = Palette.create({
+  win: {},
+  escapeHtmlInline: (s) => String(s ?? ''),
+  clamp: (n, min, max) => Math.min(max, Math.max(min, Number(n) || 0)),
+  availableSlashCommands,
+  cursorAgentSlashCommandsForPalette,
+  harnessUsageSlashCommandsForPalette,
+  buildProjectPaletteItems,
+  buildProjectCommandPaletteItems,
+  agentControls,
+  readStarredSlashPrefixes,
+  readStarredProject,
+  normalizeStarredProjectPath,
+  isSlashCommandStarred: () => false,
+  isAgentDefaultStarred: () => false,
+  isProjectStarred: () => false,
+  toggleStarredProject: () => {},
+  toggleStarredAgentDefault: () => {},
+  toggleStarredSlashCommand: () => {},
+  getModelStarSpec: () => null,
+  loadAgentCapabilities: () => {},
+  loadCursorStarredDefault: () => {},
+  loadAllStarredDefaults: () => {},
+  loadSlashPaletteSupplement: () => {},
+  isPaletteLoading: () => false,
+  hasActiveCursorAgentChip: () => false,
+  loadCursorAgentModelsForPalette: () => {},
+  applySlashSelection: () => {},
+  saveDraft: () => {},
+});
+const filterSlashPaletteItems = (...a) => palette.filterItems(...a);
 """
     result = subprocess.run(["node", "-e", setup + "\n".join(blocks) + body],
                             cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=30)
@@ -135,3 +178,22 @@ const builder = agent === 'codex' ? buildCodexModelPaletteItems : buildOpenCodeM
 process.stdout.write(JSON.stringify(builder('needle').map(i => i.modelId)));
 """ % json.dumps(agent))
     assert "needle" in result
+
+
+@pytest.mark.parametrize("agent", ["codex", "opencode"])
+def test_full_option_returns_whole_catalog_for_searchable_dropdown(agent):
+    """The chip-config combobox asks for the full catalog (`{full:true}`);
+    the slash palette still clips to 40."""
+    result = run_js("""
+const agent = %s;
+slashPaletteSupplement[agent + 'Models'] = Array.from({length:45}, (_, i) => ({
+  id:'m' + i, label:'Model ' + i
+}));
+const builder = agent === 'codex' ? buildCodexModelPaletteItems : buildOpenCodeModelPaletteItems;
+const real = items => items.filter(i => i.modelId).length;
+process.stdout.write(JSON.stringify({
+  full: real(builder('model', {full:true})),
+  clipped: real(builder('model')),
+}));
+""" % json.dumps(agent))
+    assert result == {"full": 45, "clipped": 40}

@@ -283,6 +283,24 @@ locked atomic persistence. `<home>/config/settings.json` owns server preferences
 `schema_version: 1` marks the storage schema, independently of the release SemVer.
 No `/api/settings` routes live on the Flask root.
 
+**Direct model APIs:** `api.model_providers` owns validated provider manifests,
+account-scoped discovery, shared raw models.dev metadata, capability provenance,
+and operation-specific adapters under `<provider>/`. It executes typed
+text/vision, speech, transcription, and structured Jev decisions; future
+image/video generation contracts extend this owner. `api.background_helpers` owns global/task executor preferences, explicit fallback
+chains, deadlines and CLI concurrency. It selects API adapters or restricted
+agent helper contracts, never the chat dispatcher. `api.completion_providers`
+preserves legacy API preferences/resolution; `api.llm_complete` owns cleaned
+text and delegates configured background tasks to the shared execution owner. Discovery runs through owner-only settings routes; completion
+calls never refresh remote catalogs. `api.model_pricing` derives pricing/context
+indexes from the shared metadata feed. The model picker controller is
+`web/js/settings/settings_background_helpers.js`; Voice orchestration is
+`settings_voice_providers.js`, sharing `settings_model_picker.js`. Background and
+narrator effort preferences are stored per provider/model. `tts_providers` is a
+settings compatibility/cost facade, with no vendor transport. Contract:
+`src/api/model_providers/ADDING_A_PROVIDER.md`; agent CLI:
+`.cuttle/docs/model-providers.md`.
+
 **Local model preference:** retired with the old `RuntimeConfig`
 (`bot_config.json` / `runtime_config.json`). `core.local_llm.resolve_local_model`
 reads `OLLAMA_MODEL`, then Settings `completion_models.local` (owned by
@@ -325,26 +343,40 @@ arguments or injected host interfaces):
 
 | Owner | Owns | Page keeps (effects) |
 |---|---|---|
-| `chat_turn_guard.js` (`CuttleTurnGuard`) | turn/staleness generation tokens (pure) | bump/capture call sites |
+| `chat_turn_guard.js` (`CuttleTurnGuard`) | turn/staleness generation tokens plus the paint gate (`canPaintHere`) and the SSE session-adopt gate (`shouldAdoptStreamSession`) (pure) | bump/capture call sites, session/paint snapshots |
 | `chat_stop_state.js` (`CuttleStopState`) | stop/cancel flags + abort classification (pure) | notices, transport abort, dispatch |
-| `chat_followup_queue.js` (`CuttleFollowupQueue`) | per-session queue state, revision/edit generation, take/reconcile and conflict rebase (pure) | drain timer, revisioned transport, durable outbox, edit UI |
+| `chat_followup_queue.js` (`CuttleFollowupQueue`) | per-session queue state, revision/edit generation, take/reconcile and conflict rebase (pure); `createController(host)` owns the follow-up execution + steering lifecycle (queue-state registry, edit state machine, enqueue/pause/resume/take/drain/steer transitions) — every effect injected by the page | drain timer handle, revisioned transport (PUT/take/steer fetch), durable outbox prefs, queue render + edit UI, session identity/turn gates |
 | `chat_mutations.js` (`CuttleChatMutations`) | captured session/resource/navigation lifetimes and serialized mutation chains | model/effort/project requests and guarded paint |
 | `chat_attention.js` (`CuttleChatAttention`) | revisioned server attention snapshots, optimistic reads/manual unread, durable retry intent (injected prefs/transport) | history/title/Spaces paint and read acknowledgments |
 | `shared/session_prefs.js` (`CuttleSessionPrefs`) | atomic per-session/per-field device preferences, read-only legacy fallback and tombstones (injected storage) | storage events, drafts and optimistic mutation records |
 | `shared/activity_broker.js` (`CuttleActivityBroker`) | coalesced full-session reads, SSE wake/reconnect and snapshot publication (injected transport/timers) | one shell instance, frame fan-out and existing heartbeat recovery |
 | `chat_subagent_fleet.js` (`CuttleChatSubagentFleet`) | experimental fleet-card markup for child chats (pure; outcome/summary from `api.subagents.fleet`); `ChildStatusSink` persists coalesced, turn-guarded live status in the child SQLite row | mounting, click → open chat, live polling and history hydration |
-| `chat_pending_result.js` (`CuttleChatPendingResult`) | SSE event classification, pending-result waiter, history-recovery match, exactly-once sync classification, stale-heal, send-failure recovery (pure decisions; async flows take transport/paint/clock as `deps`) | fetch/paint/clock, session-adopt guards, timers, busy lock |
-| `chat_stream.js` (`CuttleChatStream`) | SSE byte transport: `readEvents(body, {holdMs, readTimeoutMs, signal?, onEvents})` owns the native reader, one retained read promise across timeout observations, read timers, TextDecoder + LF-double-newline framing + JSON decode, reader cancel on hold detach/abort, and lock release on terminal/eof/error | fetch request, HTTP status/content-type/JSON fallback, event classification, session adoption, DOM paint, sawProgress, final-result mapping, turn/Stop/busy ownership, pending recovery, debug messages |
+| `chat_subagent_launchers.js` (`CuttleChatSubagentLaunchers`) | launcher rows on bubbles (child chats under a reply, the parent on a child's user bubble): list normalization, launcher markup (fleet cards via the pure `CuttleChatSubagentFleet`), the shared fleet agent chip, in-place mounting that keeps unchanged cards and focus across polls, and the live list painted onto in-progress typing bubbles; `create({win, escapeHtmlInline, parseChatHandleToken, avatarHtml, chipCategoryClass})` | chat-handle parsing, avatars, slash chip styling, click → open chat |
+| `chat_pending_result.js` (`CuttleChatPendingResult`) | SSE event classification, the SSE per-event effect plan (paint gating + final-event selection, `planStreamEvent`) and final-result shaping (`shapeStreamFinalResult`), turn finalize disposition (which branch a finished turn takes: not-here / cancelled / system-notice / busy-queue / wait-sync / assistant / error), pending-result waiter, history-recovery match, exactly-once sync classification, stale-heal, send-failure recovery (pure decisions; async flows take transport/paint/clock as `deps`); 4C recovery controller (`createRecoveryController(host)`, one per chat root) owning the detached-completion watch + cancel registry, the parked-result / history-recovery adapters, and post-restart recovery guard state — every effect (transport/paint/clock/chirp) injected by the page | fetch/paint/clock, session-adopt guards, timers, busy lock |
+| `chat_stream.js` (`CuttleChatStream`) | SSE byte transport: `readEvents(body, {holdMs, readTimeoutMs, signal?, onEvents})` owns the native reader, one retained read promise across timeout observations, read timers, TextDecoder + LF-double-newline framing + JSON decode, reader cancel on hold detach/abort, and lock release on terminal/eof/error | fetch request, HTTP status/content-type/JSON fallback, DOM paint, sawProgress accumulation, turn/Stop/busy ownership, pending recovery, debug messages (event classification + per-event effect plan → `chat_pending_result`, session-adopt gate → `chat_turn_guard`) |
+| `chat_stream_transport.js` (`CuttleChatStreamTransport`) | stream/status transport decisions: the status-poll pre-fetch gate + post-fetch tick plan (`planStatusPollStart`/`planStatusPollLive`) with `{lastStatus, stagnantTicks}` bookkeeping and cadences, the connecting-watchdog decisions (`watchdogWantsLive`, `planWatchdogAfterLive`, `planWatchdogProbe`, stall messages), pool-stall target resolution (`poolStallHttpTarget`, never guesses an unrelated port), and the typing-status update decision (`planTypingStatusUpdate`) — pure (no DOM/fetch/timers) | status-poll/watchdog timers, live-status fetch, DOM paint/scroll, navigation, recovery effects, voice hook; chat_stream stays the only SSE decoder |
 | `pending_changes_panel.js` (`CuttlePendingChangesPanel`) | standalone periodic scans and explicit panel refresh/actions; embedded panes use existing shell per-project polling hub | `app_shell.js` owns periodic shared scans; page project reconciliation reports path through `reportProjectToShell`; no duplicate embedded interval |
-| `chat_generation.js` (`CuttleChatGeneration`) | busy-lock `{loading, localSessionId, seq}` + token-scoped release, sync cadence, detached-poll classes, session-open flags; one sync-claim state `{inFlight, startedAt, seq}` through `createSyncState`, `claimSync`, `isSyncCurrent`, `finishSync` | timers, transport, voice, running-flag paint |
-| `chat_voice.js` (`CuttleChatVoice`) + `chat_voice_segments.js` (pure phrase bubbles) + `chat_voice_stars.js` (overlay canvas) + `chat_voice_narrator.js` (narration pacing + `/api/voice-narrator` transport) + `chat_voice_recorder.js` (pure pause detector + phrase upload to `/api/voice-stt`; audio from the Android app's `NativeMic` bridge when present, else browser MediaRecorder on secure origins) | voice-mode state, overlay DOM, Web Speech recognition (pauses restart listening; only a mic tap or hold-release sends), removable phrase bubbles kept across screen lock, talking while the agent works (sends steer the live turn, else queue; a reply that lands mid-speech waits), mic permission, spoken-reply sequencing incl. replies pending after the overlay closes; experimental `voice_narrator` acknowledgment + progress/heartbeat lines (server owner `api.voice_narrator`; narration never speaks over the user or the final reply); experimental `voice_server_stt` chime-free recording engine (server owner `api.voice_stt`) | `create(host)` capabilities: compose/send/steer/queue, last assistant bubble, TTS fetch + playback (shared with bubble speaker buttons); generation start/end + status hooks |
+| `chat_generation.js` (`CuttleChatGeneration`) | busy-lock `{loading, localSessionId, seq}` + token-scoped release, sync cadence, detached-poll classes, session-open flags, the send PREPARE decision (`prepareSend`: control-lane classification + sticky/slash meta + pending typing badge as one pure record), the send SUBMIT decision (`planSubmit`: outbound request body + origin binding + SSE-vs-JSON / control-lane-JSON-only transport policy; `classifySubmitFailure`: abort / control-recover / retry-JSON fallback); one sync-claim state `{inFlight, startedAt, seq}` through `createSyncState`, `claimSync`, `isSyncCurrent`, `finishSync` | timers, transport, voice, running-flag paint |
+| `chat_voice.js` (`CuttleChatVoice`) + `chat_voice_segments.js` (pure phrase bubbles) + `chat_voice_stars.js` (overlay canvas) + `chat_voice_narrator.js` (narration pacing + `/api/voice-narrator` transport) + `chat_voice_recorder.js` (pure pause detector + phrase upload to `/api/voice-stt`; audio from the Android app's `NativeMic` bridge when present, else browser MediaRecorder on secure origins) | voice-mode state, overlay DOM, Web Speech recognition (pauses restart listening; only a mic tap or hold-release sends), removable phrase bubbles kept across screen lock, talking while the agent works (sends steer the live turn, else queue; a reply that lands mid-speech waits), mic permission, spoken-reply sequencing incl. replies pending after the overlay closes; experimental `voice_narrator` acknowledgment + progress/heartbeat lines (server owner `api.voice_narrator`; narration never speaks over the user or the final reply); experimental `voice_server_stt` chime-free recording engine (server owner `api.voice_stt`) | `create(host)` capabilities: compose/send/steer/queue, last assistant bubble, TTS speech/playback from `CuttleChatTts` (shared with bubble speaker buttons); generation start/end + status hooks; voice `submit` is a thin caller of the shared `processMessage` turn interface (chat_generation busy-lock) — same lifecycle as text chat, no second execution path |
 | `chat_messages.js` (`CuttleChatMessages`) | records/windowing, display dispatch as pure functions | transcript DOM paint, sync/poll, session restore, streaming orchestration, leaf renderers |
 | `chat_action_forms.js` (`CuttleChatActionForms`) | pure card model/watch interpretation (`isExplicitActionFormCancelOption`, `actionFormHasSideEffect`, `isWatchFormAction`, `cardWatchBind`, `normalizeWatchBars` formatting transforms, restart-link helpers) plus card HTML/render planning (`renderActionFormCardHtml`, `renderWatchBarsHtml`, job-agnostic `renderWatchGridHtml` — no render target, no DOM) | card DOM/button/watch wiring moved to `chat_action_cards` (`CuttleChatActionCards`, plan C2 done), never into this pure module |
 | `chat_markdown.js` | markdown/block composition (pure) | page render orchestration |
+| `chat_media.js` (`CuttleChatMedia`) | media thumb HTML + poster fallback, the shared lightbox (gallery, fit/actual/zoom/pan/pinch, sidecar captions via `/api/shared-media/meta`, download) and the image Copy/Save menu, with all their state; pure helpers (`mediaKindFromUrl`, `isSafeMediaSrc`, `mediaDownloadUrl`, …) on the namespace, `create({win, escapeHtmlInline, clamp, hostTeardownSignal})` → per-frame controller. The lightbox mounts on the host (shell) document; host listeners ride `hostTeardownSignal` | one `create` + `bind()` in init, `window.CuttleMediaThumbFallback` export, `formatMessage` calls `buildMediaThumbHtml` |
+| `chat_tts.js` (`CuttleChatTts`) | chat TTS prefs (`/api/settings/chat-tts`), the bubble speaker button (`/api/chat/tts`, per-bubble cache, play/stop), the spoken Transcript layout, and the one shared audio channel for bubble speakers, voice replies and narration clips (plus its playback level); `create({win, fetch, toast, speakTextFor, normalizeUsage})` | `loadPrefs()` at boot, `window.chatPageSpeakMessage` export, message text extraction; voice mode receives `speechForMessage`/`playSpeech`/`playAudio`/`stop`/`playbackLevel` as host capabilities |
+| `chat_transcript_nav.js` (`CuttleChatTranscriptNav`) | where the reader is in the transcript: follow-latest scrolling (sticky pin measured on user scroll, programmatic-scroll holds, deep-link autoscroll suppression), the numbered message-nav rail with per-session pins (`chat_message_pins_v1`), jump-to-bottom and its unseen/error glow, jump-to-message, `?msg=N` deep links that page older history in, and message refs (`CH-…-N` ⇄ index, share URLs); `create({win, storage, …})` with getters for session/history/attention state | session identity, the history window (`loadOlderChatMessages`), attention state, message copy/speak text; `window.chatPageJumpTo*` and `window._e2eChat` map onto the controller |
 | `chat_slash.js` (`CuttleChatSlash.SLASH_COMMANDS`) | client slash registry incl. control commands | palette UI, dispatch |
 | `chat_activate.js` (`CuttleChatActivate`) | four container-scoped activation helpers with injected `deps`: `activateVegaEmbeds`, `attachCodeCopyButtons`, `highlightCodeBlocks`, `wireTerminalInputs` — **not** an action-card mount controller | page `activateEnhancements` orchestration (non-card helpers), re-arm timers; card effects moved to `chat_action_cards` |
 | `chat_action_cards.js` (`CuttleChatActionCards`) | card-effects controller: `mountCards(root, host)` validates an explicit chat root plus required host capabilities (throws otherwise) and composes one instance per root; card mount/submission/dismissal, lock/progress DOM effects, watch/restart loops, choice storage, adoption and linked-restart recovery; one explicit lifetime record per mount (signal-bound listeners, abortable fetches, cancellable waits, token-guarded continuations), one root-scoped observer plus dispose/destroy lifecycle (moves within root preserved, removal equals explicit disposal, re-mount installs a fresh lifetime); restart scans scoped to the owning root, discord followup coalesced through one controller-owned in-flight write per logical followup with the storage ack recorded only after confirmed server persistence (coalescing holds within the controller lifetime only; cross-reload delivery stays ambiguous — no durable pre-request claim, server-side idempotency separately owned) | send lanes, history panel, composer, message transport, session/project/auth context (all arrive as explicit host capabilities incl. deferred storage triple; never page scope) |
+| `supervised_control.js` (`CuttleSupervised`) | supervised activity-card presentation model (pure phase/jump labels, activity state, disclosure/live-indicator/copy-strip markup, control-lane classification) plus `createController(host)`, one per chat root: canonical-bubble upsert + content decision, disclosure/typed-control wiring, control-lane dispatch, jump notification + ack store, off-screen task indicator and canonical-bubble observer — all state (jump ack, observer, last task, in-flight control/dispatch keys) owned here | thin delegating call sites, DOM/transport/session effects injected via host (`win`, `formatMessage`, `stripLegacyAgentChrome`, `activateEnhancements`, `currentSession`/`sessionIdsEqual`/`toAuthDbSessionId`, `fetch`, `toast`, `copyTextToClipboard`, `addUserMessage`, `autoScroll`, `processMessage`) |
 | `chat_usage_live.js` (`CuttleUsageLive`) | `render(text, format)` is pure; `createBroker(host)` owns coalesced fetch + refresh timers via `host`, but `start(format)` reads `root.document`/`window` directly (`MutationObserver`, scroll/visibility/resize listeners, `innerHTML` paint) and caches the broker on `host.__cuttleUsageLiveBroker` — the page does not own its scheduler | `usage_live_bp` API (`api.usage_live`) |
+| `chat_session.js` (`CuttleChatSession`) | the **only writer** of session identity (`open`/`adopt`/`create`; readers use `current()`/`navSeq()`), plus `createLifecycle`/`createLoader`/`createSessionBoot` (loadChatSession, createNewChat, bootRestoreSession, adoptChatSessionId, saveChatSession) — pure state machine + injected `host` | session-identity call sites, transport/paint, `_loadSessionSeq` navigation semantics via the owner |
+| `chat_history_panel.js` (`CuttleChatHistoryPanel`) over pure `chat_history_view.js` / `chat_history_archive.js` | persisted collapse/expand prefs, reveal counts, DOM toggles, grouped repaint, row/menu/rename/delete modals; pure grouping/nesting/search-rank algorithms and markup live in the view/archive modules | history DOM host, project grouping call sites, search/filter state |
+| `chat_agent_controls.js` (`CuttleChatAgentControls`) over pure `chat_agent_model.js` | model/effort palette loaders + builders, persistence/seed/gate decisions, label/repaint/badge enrichment, send-identity, capability and starred-default families for all six providers (Cursor, Muse, Hermes, OpenCode, Codex, Claude); pure decisions in `chat_agent_model` | palette integration call sites, composer chip rendering; `/api/<id>/{models,model,effort}` contract unchanged |
+| `chat_slash_palette.js` (`CuttleChatSlashPalette`) over pure `chat_slash.js` | slash-menu DOM, keyboard, filtering effects and lifecycle (applySlashSelectionInner, renderSlashMenu/Chips, dismiss state) | composer dispatch, sticky/slash chip send path |
+| `chat_context_gauge.js` (`CuttleChatContextGauge`) | context-gauge token counting, thresholds and bar paint | gauge mount call site, `_agentContextStatus` reads |
+| `chat_project.js` (`CuttleChatProject`) + `chat_worktrees.js` (`CuttleChatWorktrees`) + `chat_chip_config.js` (`CuttleChipConfig`) | chat project binding (cwd, pending changes, git push menu via `CuttleGitPushReport`), worktree badge, project/branch chip config | page project reconciliation + shell report; git push transport |
+| `chat_composer.js` / `chat_attachments.js` / `chat_prompt_history.js` | composer drafts + shared-agent selection, pending attachments, prompt history/enhance | composer DOM, send path, upload transport |
+| `chat_stream_transport.js` (`CuttleChatStreamTransport`) | pure status-poll pre/post gate, connecting-watchdog decisions, pool-stall target resolution, typing-status update (no DOM/fetch/timers); `chat_stream` stays the only SSE decoder | status-poll/watchdog timers, live-status fetch, DOM paint |
 
 `chat_usage.js` (`CuttleChatUsage`) owns pure per-turn usage normalization,
 cache convention interpretation and footer markup. The page delegates rendering;
@@ -393,20 +425,38 @@ permission workflow; Experimental owns only the rollout flag. No background
 push service is added. Runbook: `.cuttle/docs/completion-notifications.md`.
 
 **Spaces:** `src/web/js/spaces/` (`CuttleSpaces.*`: state, groups, order,
-activity, drop); the shell owns the singleton, DOM, frames, and
-persistence effects.
+activity, drop); the shell UI controller is `shell/shell_spaces.js`
+(`CuttleShellSpaces`) — tab strip, drag/drop, group menus; the shell owns the
+singleton, DOM, frames, and persistence effects.
+
+**Shell frontend ownership (Phase 5):** `app_shell.js` composes these owners
+(loaded before it):
+
+| Owner | Owns | Shell keeps |
+|---|---|---|
+| `shell/shell_panes.js` (`CuttleShellPanes`) | pane lifecycle: frame creation, navigation/back-stack, history, teardown, cross-pane hubs (5B) | pane maps (`columnState`, `paneSessionByColumn`), layout persistence |
+| `shell/shell_spaces.js` (`CuttleShellSpaces`) over `spaces/*` | Spaces tab-strip UI, drag/drop, group menus (5C) | singleton, frame fan-out, persistence |
+| `shell/shell_rail.js` (`CuttleShellRail`) | rail customization, apps list, edit mode, jobs/mesh chip split (5E) | `getAppsList` global delegate, pane-mount re-apply |
+| `shell/shell_electron.js` (`CuttleShellElectron`) | Electron titlebar chrome, zoom HUD + per-frame zoom binder (5F) | zoom postMessage forwarding, space-menu hide scheduling |
+| `shell/shell_mobile.js` | mobile-client detection, LAN APK update rail/modal, SSH approval modal (5F) | shared click handler, account-panel sync, frame-retry spine |
 
 **Pane tree (not yet separated):** `snapshotLayoutTree` serializes the
 layout from the live DOM while reading shell maps (`columnState`,
 `lastChatByColumn`, `pageWithPaneSession`); `flattenLayoutLeaves` is
 nearby in `app_shell.js`. There is no standalone pure pane-tree module —
-E1 kept this boundary after task-local review and real layout fences; E2 was skipped without a demonstrated extraction benefit.
+E1 kept this boundary after task-local review and real layout fences; E2 was skipped without a demonstrated extraction benefit. Pane *lifecycle*
+(5B) is owned by `shell/shell_panes.js`; the layout tree (5A) stays with the
+shell as recorded above.
 
 Streaming lifecycle fixes belong in the lifecycle/state owners plus
 page adapters/tests — not in unrelated page regions. Deferred, still
-page-side by design: message-sync/history timer mechanics, session-adopt
-nav guards, running-flag store/paint. Byte framing/reader cleanup belongs
-to `chat_stream`; sync claim/replacement/release belongs to `chat_generation`.
+page-side by design: message-sync/history timer mechanics, the
+session-adopt call site (decision owned by
+`chat_turn_guard.shouldAdoptStreamSession`), running-flag store/paint.
+Byte framing/reader cleanup belongs to `chat_stream`; sync
+claim/replacement/release belongs to `chat_generation`; status-poll /
+watchdog / pool-stall / typing-status decisions belong to
+`chat_stream_transport`.
 
 ---
 
@@ -418,6 +468,10 @@ Identifiers below are current guidance, not an untouched snapshot —
 card render/effects, config path, and stream fixes have since moved to
 their owners, while pane layout and page-side sync/transport effects
 remain where they were. Nothing here is a proposed interface.
+
+The monolith refactor that follows records its own measured starting point
+in [`monolith-baseline.md`](monolith-baseline.md). Its per-slice destinations
+and gates are in [`monolith-refactor-plan.md`](monolith-refactor-plan.md).
 
 | Task | Regions / symbols | Mutable state + interfaces touched | Tests |
 |---|---|---|---|

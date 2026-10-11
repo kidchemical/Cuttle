@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 CHAT_JS = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "chat/chat_page.js"
+SESSION_JS = CHAT_JS.parent / "chat_session.js"
 MOD_PR = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "chat/chat_pending_result.js"
 
 
@@ -37,12 +38,20 @@ def test_is_session_generating_scopes_local_loading():
 
 def test_create_new_chat_reables_welcome_composer():
     src = CHAT_JS.read_text(encoding="utf-8")
-    create = src.split("async function createNewChat()", 1)[1].split("\n    function ", 1)[0]
+    # 3B step 4 moved createNewChat into chat_session.js; the page keeps a thin
+    # call site, so assert the moved body on the owner.
+    create = SESSION_JS.read_text(encoding="utf-8").split(
+        "async function createNewChat()", 1
+    )[1].split("\n    function ", 1)[0]
     assert "detachLocalGenerationForNavigation()" in create
     assert "focusWelcomeComposer()" in create
     assert "function setWelcomeComposerEnabled(enabled)" in src
-    load = src.split("async function loadChatSession(sessionId, opts = {})", 1)[1]
-    load = load.split("\n    async function ", 1)[0]
+    # 3B step 3 moved loadChatSession into chat_session.js; the page keeps a thin
+    # call site, so assert the moved body on the owner.
+    load = SESSION_JS.read_text(encoding="utf-8").split(
+        "async function loadChatSession(sessionId, opts = {})", 1
+    )[1]
+    load = load.split("\n        async function ", 1)[0]
     assert "applyServerFollowups(data.followups, data.followup_revision)" in load
     assert "detachLocalGenerationForNavigation()" in load
 
@@ -62,8 +71,11 @@ def test_live_waiting_uses_this_turn_not_previous_assistant():
 
 def test_pending_wait_does_not_require_typing_indicator_gone():
     src = CHAT_JS.read_text(encoding="utf-8")
-    assert "CuttleChatPendingResult.waitForPendingResult(" in src
+    # 4C moved the recovery controller into chat_pending_result.js; the page
+    # delegates by constructing the controller with its recovery host.
+    assert "CuttleChatPendingResult.createRecoveryController(" in src
     mod = MOD_PR.read_text(encoding="utf-8")
+    assert "waitForPendingResult(" in mod
     assert "pending-skip-ui-has-reply" in mod
     assert (
         "if (inFlightUserMessage && turnAlreadyShowsAssistantReply()\n"

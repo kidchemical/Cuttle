@@ -10,6 +10,7 @@ from core.agent_cli_env import agent_cli_env
 def test_real_child_isolated_while_parent_keeps_credentials(monkeypatch):
     keys = ('ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'META_API_KEY',
             'DEEPSEEK_API_KEY', 'CURSOR_API_KEY', 'OPENROUTER_API_KEY',
+            'OPENROUTER_MANAGEMENT_KEY',
             'GEMINI_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN',
             'AZURE_OPENAI_API_KEY', 'AWS_SECRET_ACCESS_KEY')
     for key in keys:
@@ -35,6 +36,22 @@ def test_preserves_native_configuration_and_runtime():
     env = agent_cli_env(source)
     assert env == {k: v for k, v in source.items() if k != 'anthropic_api_key'}
     assert source['anthropic_api_key'] == 'host-key'
+
+
+def test_stale_working_directory_hints_are_dropped():
+    """A stale parent PWD/OLDPWD must never leak to a guest CLI.
+
+    Regression for the worktree split-brain: the daemon inherited a PWD that
+    did not match its cwd, and the guest CLI trusted it over getcwd(), editing
+    the primary checkout instead of the bound worktree.
+    """
+    source = {'PWD': '/home/stale/checkout', 'OLDPWD': '/home/older',
+              'PATH': '/bin', 'HOME': '/native/home'}
+    env = agent_cli_env(source)
+    assert 'PWD' not in env and 'OLDPWD' not in env
+    # The mapping passed in is never mutated.
+    assert source['PWD'] == '/home/stale/checkout'
+    assert env['PATH'] == '/bin' and env['HOME'] == '/native/home'
 
 
 def test_bundled_catalog_does_not_request_host_api_credentials():

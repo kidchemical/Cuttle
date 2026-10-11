@@ -21,6 +21,7 @@ from api.chat_widgets import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
+SESSION_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_session.js"
 WIDGETS_JS = REPO_ROOT / "src" / "web" / "js" / "gizmos/tasks_gizmo.js"
 
 node_only = pytest.mark.skipif(
@@ -459,7 +460,9 @@ def test_create_new_chat_refreshes_widget_strip():
     not call refreshChatWidgets(), so the strip kept rendering the prior chat's
     tasks until something else happened to refresh.
     """
-    src = CHAT_JS.read_text(encoding="utf-8")
+    # 3B step 4 moved createNewChat into chat_session.js; the page keeps a thin
+    # call site, so assert the moved body on the owner.
+    src = SESSION_JS.read_text(encoding="utf-8")
     body = _extract_function(src, "createNewChat")
     assert "refreshChatWidgets()" in body, (
         "createNewChat must refresh/clear the widgets strip so a prior chat's "
@@ -829,13 +832,17 @@ def test_assistant_reply_path_refreshes_widget_strip():
     """Server rewrites tags to pin chips before the client paints — so
     formatMessage never upserts. processMessage must refresh the strip after
     painting an assistant reply (Electron otherwise needs a hard refresh).
+    The branch choice is owned by chat_pending_result.classifyTurnFinalize;
+    the page applies the 'assistant' effect.
     """
     src = CHAT_JS.read_text(encoding="utf-8")
-    # Narrow to the success+response paint block inside processMessage.
-    idx = src.find("} else if (data.success && data.response) {")
+    # The finalize disposition comes from the owner (no inline branch order).
+    assert "CuttleChatPendingResult.classifyTurnFinalize({" in src
+    # Narrow to the assistant paint block the page applies.
+    idx = src.find("} else if (finalizeDisp.kind === 'assistant') {")
     assert idx >= 0
     # Look ahead for the notify + end of that branch's local-generation cleanup.
-    chunk = src[idx : idx + 12000]
+    chunk = src[idx : idx + 16000]
     assert "refreshChatWidgets()" in chunk, (
         "after painting a successful assistant reply, processMessage must call "
         "refreshChatWidgets() — tags are already rewritten server-side so the "

@@ -1,6 +1,9 @@
 # Cuttle Router Research Notes
 
-**Status:** Living design document  
+**Status:** Historical research / rationale — not current routing policy. Current
+behavior: [`docs/guides/AGENT_ROUTER.md`](guides/AGENT_ROUTER.md); work items:
+[`.cuttle/docs/agent-router-todo.md`](../.cuttle/docs/agent-router-todo.md).
+Escalation/fallback and cost assumptions below are dated and partly superseded.  
 **Started:** 2026-08-16  
 **Purpose:** Preserve the reasoning, economic assumptions, research findings, experiments, and design direction behind Cuttle's agent-routing system.
 

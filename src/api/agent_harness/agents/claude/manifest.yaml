@@ -7,16 +7,26 @@ auth_command: claude auth login
 sticky: true
 # Empty — unpinned turns omit --model so the Claude CLI default wins.
 default_model: ""
-# Snapshot from `claude 2.1.289` → SDK `initialize` (`/claude model refresh`).
+# Snapshot from `claude 2.1.295` → SDK `initialize` (`/claude model refresh`).
 # The palette reads the installed CLI live; these rows are the offline fallback.
+# `haiku` is the CLI alias and resolves to `claude-haiku-5-5` since Claude Code
+# 2.1.293 (Haiku 4.5 stays pinnable by its full id).
 models:
   - opus
   - sonnet
   - fable
   - haiku
+  - claude-haiku-5-5
+  - claude-haiku-4-5-20251001
+  - claude-sonnet-5
+  - claude-opus-5
+  - claude-fable-5
   - claude-opus-5-5
   - claude-sonnet-5-5
   - claude-fable-5-1
+  - claude-opus-4-8
+  - claude-opus-4-7
+  - claude-opus-4-6
   - claude-sonnet-4-6
 supports_model_pin: true
 supports_effort: true
@@ -26,10 +36,18 @@ model_efforts:
   opus: [low, medium, high, xhigh, max]
   sonnet: [low, medium, high, xhigh, max]
   fable: [low, medium, high, xhigh, max]
-  haiku: []
+  haiku: [low, medium, high, xhigh, max]
+  claude-haiku-5-5: [low, medium, high, xhigh, max]
+  claude-haiku-4-5-20251001: []
+  claude-sonnet-5: [low, medium, high, xhigh, max]
+  claude-opus-5: [low, medium, high, xhigh, max]
+  claude-fable-5: [low, medium, high, xhigh, max]
   claude-opus-5-5: [low, medium, high, xhigh, max]
   claude-sonnet-5-5: [low, medium, high, xhigh, max]
   claude-fable-5-1: [low, medium, high, xhigh, max]
+  claude-opus-4-8: [low, medium, high, xhigh, max]
+  claude-opus-4-7: [low, medium, high, xhigh, max]
+  claude-opus-4-6: [low, medium, high, max]
   claude-sonnet-4-6: [low, medium, high, max]
 pricing_source: models_dev
 pricing_providers: [anthropic]
@@ -52,3 +70,8 @@ notes: >-
   Resume via `--resume` + claude_cli_session_store. Compact via `/compact`.
   Per-chat `/claude model …` / `/claude effort …` pins map to `--model` /
   `--effort`; refresh via `/claude model refresh`.
+
+background_text:
+  auth_modes: [subscription, cli_default]
+  temperature: false
+  tools: false

@@ -36,7 +36,7 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     if not questions:
         questions["yes"] = noul(args.question or "Is this true?")
     client = get_client()
-    result = client.system_one(args.state or "", questions)
+    result = client.system_one(args.state or "", questions, task="jev:cli")
     return _print({"success": True, **result.to_dict()})
 
 

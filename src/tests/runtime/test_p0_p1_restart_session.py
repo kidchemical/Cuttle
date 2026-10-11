@@ -258,10 +258,13 @@ def test_different_chat_request_ids_mint_separate_sessions():
 
 
 def test_chat_page_stamps_request_id_and_session_before_stream_retry():
-    src = (
-        Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
-    ).read_text(encoding="utf-8")
-    assert "requestBody.chat_request_id" in src
+    js_dir = Path(__file__).resolve().parents[2] / "web" / "js" / "chat"
+    src = (js_dir / "chat_page.js").read_text(encoding="utf-8")
+    gen = (js_dir / "chat_generation.js").read_text(encoding="utf-8")
+    # 4A pt3: the outbound body (and its stable per-send chat_request_id) is
+    # built by chat_generation.planSubmit; the page keeps that same body
+    # object across the stream→JSON retry.
+    assert "body.chat_request_id = chatRequestId" in gen
     assert "requestBody.session_id = sid" in src
     # Retry must reuse the same body object (session_id + request id survive).
     assert "JSON.stringify({ ...requestBody, stream: useStream })" in src

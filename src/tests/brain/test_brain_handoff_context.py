@@ -107,6 +107,102 @@ def test_handoff_none_when_target_caught_up():
     assert ho.build_handoff(sid, to_agent="cursor", current_prompt="two") is None
 
 
+def test_handoff_same_agent_project_switch_resends_transcript():
+    """CH-000914: same agent, new project → resume id (per-cwd) is gone, so
+    the transcript must come back instead of reading as caught up."""
+    from api.cuttle_brain import handoff as ho
+
+    db, sid = _chat()
+    db.add_message(sid, "user", "/cursor step one")
+    db.add_message(sid, "assistant", "did step one")
+    ho.record_last_agent(sid, "cursor", project_path="/work/alpha")
+    db.add_message(sid, "user", "/cursor step two")
+
+    # Same workspace: native resume covers it, nothing to resend.
+    assert (
+        ho.build_handoff(
+            sid, to_agent="cursor", current_prompt="step two", project_path="/work/alpha"
+        )
+        is None
+    )
+
+    h = ho.build_handoff(
+        sid, to_agent="cursor", current_prompt="step two", project_path="/work/beta"
+    )
+    assert h is not None
+    assert "Conversation so far" in h.text
+    assert "did step one" in h.text
+    assert "step two" not in h.text
+
+
+def test_handoff_project_src_alias_is_not_a_switch(tmp_path):
+    from api.cuttle_brain import handoff as ho
+
+    db, sid = _chat()
+    root = tmp_path / "proj"
+    (root / "src").mkdir(parents=True)
+    db.add_message(sid, "user", "/cursor hi")
+    db.add_message(sid, "assistant", "hello")
+    ho.record_last_agent(sid, "cursor", project_path=str(root / "src"))
+    db.add_message(sid, "user", "/cursor again")
+
+    # git root vs src/ is the same project — no reset transcript.
+    assert (
+        ho.build_handoff(
+            sid, to_agent="cursor", current_prompt="again", project_path=str(root)
+        )
+        is None
+    )
+
+
+def test_kernel_same_agent_project_switch_injects_transcript(tmp_path, monkeypatch):
+    db, sid = _chat()
+    proj_a = tmp_path / "alpha"
+    proj_b = tmp_path / "beta"
+    proj_a.mkdir()
+    proj_b.mkdir()
+
+    db.add_message(sid, "user", "/cursor build the thing")
+    _run(monkeypatch, "cursor", _Adapter(proj_a), "build the thing", sid)
+    db.add_message(sid, "assistant", "built the thing")
+
+    db.add_message(sid, "user", "/cursor now adjust it")
+    switched = _Adapter(proj_b)
+    _run(monkeypatch, "cursor", switched, "now adjust it", sid)
+    assert "Conversation so far" in switched.prompts[0]
+    assert "built the thing" in switched.prompts[0]
+
+    # Same project next turn: resume covers the chat, no transcript.
+    db.add_message(sid, "assistant", "adjusted it")
+    db.add_message(sid, "user", "/cursor polish it")
+    same = _Adapter(proj_b)
+    _run(monkeypatch, "cursor", same, "polish it", sid)
+    assert "Conversation so far" not in same.prompts[0]
+
+
+def test_project_switch_reports_window_truncated_history():
+    """A long chat switches project: only the newest window is re-sent, but the
+    turns before it must be declared omitted with the chat_cli pointer instead
+    of vanishing silently."""
+    from api.cuttle_brain import handoff as ho
+
+    db, sid = _chat()
+    for i in range(60):
+        db.add_message(sid, "user", f"/cursor step {i}")
+        db.add_message(sid, "assistant", f"did step {i}")
+    ho.record_last_agent(sid, "cursor", project_path="/work/alpha")
+    db.add_message(sid, "user", "/cursor move to beta")
+
+    h = ho.build_handoff(
+        sid, to_agent="cursor", current_prompt="move to beta", project_path="/work/beta"
+    )
+    assert h is not None
+    assert "did step 59" in h.text  # newest window present
+    assert "did step 0" not in h.text  # head beyond the window
+    assert "earlier messages not shown" in h.text
+    assert "chat_cli session CH-" in h.text
+
+
 def test_handoff_covers_plain_llm_turns_on_first_agent_turn():
     from api.cuttle_brain import handoff as ho
 
@@ -377,6 +473,48 @@ def test_context_dashboard_payload():
     sess = p["sessions"][0]
     assert sess["handle"] == "CH-000005" and [pt["compacted"] for pt in sess["points"]] == [False, True]
     assert any(r["name"] == "00-safety.md" for r in p["rules"])
+
+
+def test_context_dashboard_excludes_handoff_from_briefing_size():
+    """A full envelope that also carries an injected transcript still reports
+    the *briefing* size, and the transcript is itemized by handoff mode."""
+    import time
+
+    from api.cuttle_brain.metrics import record_turn
+    from api.dashboards.context import cuttle_context
+
+    now = time.time()
+    record_turn(ts=now, chat_session_id="7", agent_id="cursor", mode="full",
+                envelope_chars=12000, handoff_chars=4000, handoff_messages=8,
+                handoff_mode="reset", query_id="ctx-reset")
+    p = cuttle_context(range_id="7d")
+    assert p["stats"]["handoffs"] == 1
+    assert p["stats"]["handoffs_reset"] == 1
+    assert p["stats"]["full_median_chars"] == 8000
+    assert {"id": "reset", "count": 1} in p["handoff_modes"]
+
+
+def test_context_metrics_migrates_handoff_mode_column(tmp_path, monkeypatch):
+    """An existing metrics DB without handoff_mode gains it in place."""
+    import sqlite3
+
+    from api.cuttle_brain import metrics
+
+    db = tmp_path / "old.db"
+    old_schema = metrics._SCHEMA.replace("    handoff_mode TEXT,\n", "")
+    assert "handoff_mode" not in old_schema
+    conn = sqlite3.connect(db)
+    conn.executescript(old_schema)
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("CUTTLE_CONTEXT_METRICS_DB", str(db))
+
+    metrics.record_turn(
+        ts=1.0, chat_session_id="1", agent_id="cursor", mode="full",
+        handoff_mode="reset", handoff_messages=2, query_id="mig1",
+    )
+    rows = metrics.fetch_turns(since_ts=0, db_path=db)
+    assert rows and rows[0]["handoff_mode"] == "reset"
 
 
 def test_context_dashboard_counts_turns_across_utc_midnight(monkeypatch):

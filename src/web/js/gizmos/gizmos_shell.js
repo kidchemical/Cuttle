@@ -494,6 +494,15 @@
             return (t && t.options && Array.isArray(t.options.agents)) ? t.options.agents : [];
         }
 
+        function metricOptions() {
+            const t = state.types.find(x => x.id === 'usage_meter');
+            return (t && t.options && Array.isArray(t.options.metrics)) ? t.options.metrics : ['auto', 'amount', 'percent'];
+        }
+
+        function metricLabel(m) {
+            return m === 'amount' ? 'Dollar amount' : (m === 'percent' ? 'Percent' : 'Auto');
+        }
+
         function refreshPopover() {
             const g = state.gizmos.find(x => x.id === state.popoverId);
             const anchor = g && findWrap(g.id);
@@ -504,6 +513,7 @@
             const e = env();
             const docks = M.DOCKS.filter(dk => (dk !== 'titlebar' || e.titlebar) && (dk !== 'popout' || e.popout));
             const esc = M.escape;
+            const data = state.data.get(M.dataKey(g));
             const agentField = g.type === 'usage_meter'
                 ? '<label class="shell-gizmo-popover-field"><span>Agent</span><select data-gizmo-field="agent">'
                     + agentOptions().map(a => '<option value="' + esc(a.agent) + '"' + (a.agent === g.config.agent ? ' selected' : '')
@@ -511,6 +521,11 @@
                     + '<label class="shell-gizmo-popover-field"><span>Show</span><select data-gizmo-field="show">'
                     + ['remaining', 'used'].map(s => '<option value="' + s + '"' + ((g.config.show || 'remaining') === s ? ' selected' : '')
                         + '>' + (s === 'used' ? 'Used' : 'Remaining') + '</option>').join('') + '</select></label>'
+                    + ((data && data.readout)
+                        ? '<label class="shell-gizmo-popover-field"><span>Readout</span><select data-gizmo-field="metric">'
+                            + metricOptions().map(m => '<option value="' + esc(m) + '"' + ((g.config.metric || 'auto') === m ? ' selected' : '')
+                                + '>' + esc(metricLabel(m)) + '</option>').join('') + '</select></label>'
+                        : '')
                 : '';
             const armed = !!(g.config && g.config.notify_on_unblock);
             const notifyBtn = g.type === 'usage_meter'

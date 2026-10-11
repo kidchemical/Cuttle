@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 try:
@@ -502,3 +503,139 @@ def branch_operation(cwd: str, action: str, branch: str) -> Dict[str, str]:
         raise GitError(f'Git branch operation failed: {proc.stderr}',
                        returncode=proc.returncode, stderr=proc.stderr)
     return {'message': message, 'output': proc.stdout or ''}
+
+
+# --- Worktrees (git worktree) ------------------------------------------------
+#
+# Pure git operations over an explicit ``cwd``. Policy (where a worktree lives,
+# its identity, who owns it) belongs to ``api.worktrees``; this module only runs
+# the git commands. Refuses branch-checkout collisions and never force-removes a
+# dirty worktree unless the caller explicitly asks.
+
+def _branch_ref(branch: str) -> str:
+    name = (branch or "").strip()
+    if name.startswith("refs/heads/"):
+        return name
+    return f"refs/heads/{name}"
+
+
+def worktree_list(cwd: str) -> List[Dict[str, Any]]:
+    """Parse ``git worktree list --porcelain`` into structured entries."""
+    out = _check(_run(['worktree', 'list', '--porcelain'], cwd),
+                 'Cannot list worktrees').stdout
+    entries: List[Dict[str, Any]] = []
+    current: Optional[Dict[str, Any]] = None
+    for line in (out or "").splitlines():
+        if line.startswith('worktree '):
+            if current is not None:
+                entries.append(current)
+            current = {
+                'path': line[len('worktree '):].strip(),
+                'head': None, 'branch': None,
+                'detached': False, 'locked': False, 'prunable': False, 'bare': False,
+            }
+        elif current is None:
+            continue
+        elif line.startswith('HEAD '):
+            current['head'] = line[len('HEAD '):].strip()
+        elif line.startswith('branch '):
+            ref = line[len('branch '):].strip()
+            current['branch'] = ref[len('refs/heads/'):] if ref.startswith('refs/heads/') else ref
+        elif line == 'detached':
+            current['detached'] = True
+        elif line == 'bare':
+            current['bare'] = True
+        elif line.startswith('locked'):
+            current['locked'] = True
+        elif line.startswith('prunable'):
+            current['prunable'] = True
+    if current is not None:
+        entries.append(current)
+    return entries
+
+
+def branch_checked_out_in_worktree(cwd: str, branch: str) -> Optional[str]:
+    """Path where ``branch`` is checked out, or ``None``. Never returns the
+    caller's own uncommitted intent — reads git's live worktree list."""
+    target = (branch or "").strip()
+    if target.startswith("refs/heads/"):
+        target = target[len("refs/heads/"):]
+    for entry in worktree_list(cwd):
+        if entry.get('branch') == target:
+            return entry.get('path')
+    return None
+
+
+def worktree_add(cwd: str, *, path: str, new_branch: str, base_ref: str = "HEAD") -> Dict[str, str]:
+    """Create a worktree at ``path`` on a fresh ``new_branch`` from ``base_ref``.
+
+    Refuses when ``new_branch`` is already checked out in any worktree (git
+    forbids one branch in two worktrees) or when ``path`` is a non-empty
+    directory. The primary checkout is never detached or switched.
+    """
+    from core.git_refs import validate_branch_name
+
+    branch = validate_branch_name(new_branch)
+    start = (base_ref or "HEAD").strip() or "HEAD"
+    existing = branch_checked_out_in_worktree(cwd, branch)
+    if existing:
+        raise GitError(
+            f"Branch '{branch}' is already checked out at {existing}. "
+            "Choose another branch or switch that checkout off it first."
+        )
+    target = Path(path)
+    if target.exists():
+        if any(target.iterdir()):
+            raise GitError(f"Worktree path is not empty: {target}")
+        target.rmdir()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    proc = _run(['worktree', 'add', '-b', branch, str(target), start], cwd)
+    if proc.returncode != 0:
+        raise GitError(f"git worktree add failed: {proc.stderr}",
+                       returncode=proc.returncode, stderr=proc.stderr)
+    return {'path': str(target), 'branch': branch, 'base_ref': start}
+
+
+def worktree_remove(cwd: str, path: str, *, force: bool = False) -> Dict[str, Any]:
+    """Remove the worktree at ``path``. Refuses a dirty tree unless ``force``.
+
+    A path that no longer exists is not an error: its stale administrative
+    entry is pruned instead (the caller should reconcile the registry).
+    """
+    target = Path(path)
+    if not target.exists():
+        _run(['worktree', 'prune'], cwd)
+        return {'path': str(target), 'removed': False, 'pruned': True}
+    status = _run(['status', '--porcelain', '--untracked-files=all'], str(target))
+    if status.returncode != 0:
+        raise GitError(f'Cannot read worktree: {status.stderr}',
+                       returncode=status.returncode, stderr=status.stderr)
+    if status.stdout.strip() and not force:
+        raise GitError('Worktree has uncommitted changes; remove it explicitly with force.')
+    args = ['worktree', 'remove'] + (['--force'] if force else []) + [str(target)]
+    proc = _run(args, cwd)
+    if proc.returncode != 0:
+        raise GitError(f"git worktree remove failed: {proc.stderr}",
+                       returncode=proc.returncode, stderr=proc.stderr)
+    return {'path': str(target), 'removed': True, 'forced': bool(force)}
+
+
+def worktree_prune(cwd: str, *, expire: Optional[str] = None) -> Dict[str, bool]:
+    """Prune stale worktree administrative entries. ``expire`` e.g. ``'now'``."""
+    args = ['worktree', 'prune']
+    if expire:
+        args += ['--expire', str(expire)]
+    _check(_run(args, cwd), 'Cannot prune worktrees')
+    return {'pruned': True}
+
+
+def branch_delete(cwd: str, branch: str, *, force: bool = True) -> Dict[str, Any]:
+    """Delete a local branch (``force`` uses ``-D``). Refuses if checked out."""
+    from core.git_refs import validate_branch_name
+
+    name = validate_branch_name(branch)
+    proc = _run(['branch', '-D' if force else '-d', name], cwd)
+    if proc.returncode != 0:
+        raise GitError(f"git branch delete failed: {proc.stderr}",
+                       returncode=proc.returncode, stderr=proc.stderr)
+    return {'branch': name, 'deleted': True}

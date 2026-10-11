@@ -31,6 +31,7 @@ class AgentManifest:
     # Cheap id for live smoke. If empty, smoke uses default_model. Never silently
     # pick a premium/frontier id when a cheaper sibling exists.
     smoke_model: str = ""
+    background_text: Dict[str, Any] = field(default_factory=dict)
     # CLI capabilities the palette + starred-defaults API gate on. Cursor bakes
     # effort into the model id, so it declares supports_effort=false and the
     # palette never renders effort rows for it.
@@ -116,6 +117,7 @@ class AgentManifest:
             "stickySession": bool(self.sticky),
             "default_model": self.default_model,
             "smoke_model": self.smoke_model or self.default_model,
+            "background_text": dict(self.background_text),
             "supports_model_pin": bool(self.supports_model_pin),
             "supports_effort": bool(self.supports_effort),
             "models": list(self.models or []),

@@ -18,6 +18,8 @@ node_only = pytest.mark.skipif(
 )
 
 CHAT_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
+SESSION_JS = CHAT_JS.parent / "chat_session.js"
+NAV_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_transcript_nav.js"
 ACTIVITY_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_activity.js"
 CHAT_CSS = Path(__file__).resolve().parents[2] / "web" / "css" / "chat_page.css"
 CHAT_HTML = Path(__file__).resolve().parents[2] / "web" / "chat_page.html"
@@ -139,8 +141,14 @@ def test_chat_handle_link_css_and_wiring_present():
     assert "linkifyChatHandlesInText" in js
     assert "chatPageNavigateToChatHandle" in js
     assert "chatHandleLinks" in html or "chat_page.js?v=" in html
-    # Bulk session paint must not race CH-…-N jumps with bottom autoScroll.
+    # Bulk session paint must not race CH-…-N jumps with bottom autoScroll:
+    # the page queues the jump; the transcript-nav owner suppresses autoscroll
+    # while it settles (behavior: e2e/test_chat_transcript_nav.py).
+    nav = NAV_JS.read_text(encoding="utf-8")
     assert "skipScroll: true" in js
-    assert "_suppressAutoScrollUntil" in js
-    assert "consumePendingMessageJump" in js
-    assert "queueMessageJump" in js
+    assert "transcriptNav.queueMessageJump(" in js
+    # 3B step 3: loadChatSession (and its settle-after-load) moved to the owner.
+    session_js = SESSION_JS.read_text(encoding="utf-8")
+    assert "transcriptNav.settleAfterLoad()" in session_js
+    assert "_suppressAutoScrollUntil" in nav
+    assert "function consumePendingMessageJump(" in nav

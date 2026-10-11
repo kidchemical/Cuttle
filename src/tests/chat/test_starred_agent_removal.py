@@ -105,7 +105,7 @@ def test_request_payloads_that_keep_the_star(payload):
 
 
 # --------------------------------------------------------------------------
-# Composer: chat_page.js sticky-agent helpers, run under Node
+# Composer: the sticky/shared-selection owner modules, run under Node
 # --------------------------------------------------------------------------
 
 node_only = pytest.mark.skipif(
@@ -120,37 +120,25 @@ def _extract(src: str, start_marker: str, end_marker: str) -> str:
 
 
 def _run_sticky_js(script: str, *, starred, chips, session_id=None, prefs=None):
-    """Run the real sticky-agent helpers from chat_page.js with the UI stubbed."""
-    src = CHAT_JS.read_text(encoding="utf-8")
-    # Registry lives in chat_slash.js (Phase 3 Slice 2); the require below
-    # also serves the delegating wrappers in the helpers range.
+    """Run the slash + composer owner modules with the UI stubbed.
+
+    Phase 2 slice 2C moved the sticky override / restore / shared-selection
+    decisions into `chat_slash.js` and `chat_composer.js`. The page's thin
+    gather-and-delegate adapters live here so the real owners are exercised.
+    """
     slash_src = SLASH_JS.read_text(encoding="utf-8")
     slash_mod = str(SLASH_JS)
+    composer_mod = str(CHAT_JS.parent / "chat_composer.js")
     commands = _extract(slash_src, "const SLASH_COMMANDS = [", "\n];") + "\n];"
-    helpers = _extract(
-        src,
-        "    function getStickySlashCommandFromMessage(message) {",
-        "    function persistProjectForCurrentSession(opts)",
-    )
-
-    draft_restore = _extract(
-        src, "    function restoreComposerDraftControls(sid) {",
-        "    function saveComposerDraft(sid, composerKey) {",
-    )
     harness = f"""
-const CuttleChatComposer = require({json.dumps(str(CHAT_JS.parent / 'chat_composer.js'))});
-const CuttleChatAgentModel = require({json.dumps(str(CHAT_JS.parent / 'chat_agent_model.js'))});
-const slashPaletteSupplement = {{}};
-const newComposerPrefsId = 'draft:new';
-function beginSupplementFetch(field) {{ slashPaletteSupplement[field] = 1; }}
-const CuttleChatSlash = require({json.dumps(str(slash_mod))});
+const CuttleChatSlash = require({json.dumps(slash_mod)});
+const CuttleChatComposer = require({json.dumps(composer_mod)});
 {commands}
+const STARRED = {json.dumps(starred)};
+const CHIPS = {json.dumps(chips)};
 const prefsMap = {json.dumps(prefs or {})};
 let currentSessionId = {json.dumps(session_id)};
-const slashCtx = {{
-    chat: {{ chips: {json.dumps(chips)} }},
-    welcome: {{ chips: {json.dumps(chips)} }},
-}};
+let stickyAgentClearedPending = false;
 function getSessionPrefs(id) {{
     if (id == null || id === '') return null;
     return prefsMap[String(id)] || null;
@@ -159,12 +147,29 @@ function updateSessionPrefs(id, patch) {{
     if (id == null || id === '') return;
     prefsMap[String(id)] = Object.assign({{}}, prefsMap[String(id)] || {{}}, patch || {{}});
 }}
-function readStarredSlashPrefixes() {{ return {json.dumps(starred)}; }}
-function renderSlashChips() {{}}
-function refreshTypingIndicatorHeaderBadges() {{}}
-const document = {{ getElementById: () => null }};
-{draft_restore}
-{helpers}
+function isStickyAgentCleared() {{
+    if (stickyAgentClearedPending) return true;
+    const prefs = currentSessionId ? getSessionPrefs(currentSessionId) : null;
+    return !!(prefs && prefs.stickyCleared);
+}}
+function markStickyAgentCleared(cleared) {{
+    stickyAgentClearedPending = !!cleared;
+    if (currentSessionId) updateSessionPrefs(currentSessionId, {{ stickyCleared: !!cleared }});
+}}
+// chat_page.js adapters: gather composer state, delegate to the owners.
+function stickyAgentOverrideForRequest(message) {{
+    return CuttleChatSlash.stickyAgentOverrideForRequest({{
+        message,
+        hasChip: CuttleChatSlash.hasStickyAgentChip(CHIPS, CHIPS),
+        cleared: isStickyAgentCleared(),
+        starredPrefixes: STARRED,
+    }});
+}}
+function restoreSessionStickySlash(sessionId, messages) {{
+    return CuttleChatComposer.stickyChipsToRestore(getSessionPrefs(sessionId), messages, {{
+        infer: CuttleChatSlash.inferStickyChipsFromUserMessages,
+    }});
+}}
 {script}
 """
     proc = subprocess.run(
@@ -251,8 +256,8 @@ const messages = [
     { role: 'user', content: '/cursor test' },
     { role: 'assistant', content: 'hi' },
 ];
-restoreSessionStickySlash('CH-000141', messages);
-process.stdout.write(JSON.stringify({ chips: slashCtx.chat.chips }));
+const r = restoreSessionStickySlash('CH-000141', messages);
+process.stdout.write(JSON.stringify({ chips: r.chips }));
 """
     res = _run_sticky_js(
         script,
@@ -272,8 +277,8 @@ const messages = [
     { role: 'user', content: '/cursor test' },
     { role: 'assistant', content: 'hi' },
 ];
-restoreSessionStickySlash('CH-000200', messages);
-process.stdout.write(JSON.stringify({ chips: slashCtx.chat.chips }));
+const r = restoreSessionStickySlash('CH-000200', messages);
+process.stdout.write(JSON.stringify({ chips: r.chips }));
 """
     res = _run_sticky_js(
         script, starred=["/cursor "], chips=[], session_id="CH-000200", prefs={}

@@ -70,6 +70,27 @@ current = 'B';
 const newPaints = G.canPaintHere(t2, 'B', { gen: g2.gen, currentSessionId: current, isViewing: viewing });
 const oldStillStale = G.isStale(t1, g2);
 out.lifecycle = [freshPaints, zombiePaint, zombieAdopt, waiterExits, newPaints, oldStillStale];
+// session-adopt gate: the SSE `session` arm truth table (fresh/stale x
+// current null/match/mismatch x bound). ORACLE from the pre-move page
+// expression `!isStale(...) && (current==null || equal || boundViewed)`.
+const adopt = (cap, g, bound, sid, cur) => G.shouldAdoptStreamSession(
+  cap, g, bound, sid,
+  { currentSessionId: cur,
+    sessionIdsEqual: (a, b) => String(a) === String(b),
+    isViewing: (id) => cur != null && String(cur) === String(id) });
+const gA = G.createGeneration();
+const tOld = G.capture(gA);   // 0
+G.bump(gA);                   // 1
+const tNew = G.capture(gA);   // 1
+out.adopt = {
+  freshNoCurrent: adopt(tNew, gA, null, 'A', null),
+  freshMatch: adopt(tNew, gA, 'A', 'A', 'A'),
+  freshMismatch: adopt(tNew, gA, 'B', 'B', 'A'),
+  freshDriftViewed: adopt(tNew, gA, 'A', 'B', 'A'),
+  staleNoCurrent: adopt(tOld, gA, null, 'A', null),
+  staleMatch: adopt(tOld, gA, 'A', 'A', 'A'),
+  nullTokenNoCurrent: adopt(null, gA, null, 'A', null),
+};
 process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error('HARNESS-ERROR', e); process.exit(2); });
 """
@@ -112,6 +133,21 @@ def test_paint_gate_truth_table():
 @node_only
 def test_new_chat_during_turn_lifecycle():
     assert _run()["lifecycle"] == [True, False, False, True, True, True]
+
+
+@node_only
+def test_stream_session_adopt_gate():
+    a = _run()["adopt"]
+    # ORACLE: no open session adopts; a match adopts; a mismatch with the
+    # bound session no longer viewed does not; id drift to the viewed bound
+    # session adopts; a stale token never adopts (New Chat welcome zombie).
+    assert a["freshNoCurrent"] is True
+    assert a["freshMatch"] is True
+    assert a["freshMismatch"] is False
+    assert a["freshDriftViewed"] is True
+    assert a["staleNoCurrent"] is False
+    assert a["staleMatch"] is False
+    assert a["nullTokenNoCurrent"] is True
 
 
 @node_only

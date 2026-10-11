@@ -10,8 +10,9 @@ it changed. Three surfaces read it:
 A fourth piece, **Databases** in Settings → 💾 Data, makes retention, quotas,
 sizes and resets for every Cuttle store visible and editable.
 
-Status: **initial implementation in the working tree** (2026-10-07), pending
-hosting Flask restart and opt-in live Feed use. Runbook:
+Status: **mixed historical/current.** The 2026-10-07 "initial implementation"
+phase text below is superseded by the later delivery notes (2026-10-08 onward,
+near the end of this file); read those for current behavior. Runbook:
 [agent-events.md](../../.cuttle_global/docs/agent-events.md).
 
 The initial implementation includes the shared store, full payload capture,

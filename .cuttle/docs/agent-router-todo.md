@@ -1,6 +1,9 @@
 # TODO — Agent Router (adaptive quality routing)
 
 Living backlog for making Cuttle’s agent router **complete, measurable, adaptive, and OOB-useful**.  
+> **Status: backlog, not an implementation reference.** Completed work remains listed
+> in place alongside proposal text; check [`docs/guides/AGENT_ROUTER.md`](../../docs/guides/AGENT_ROUTER.md)
+> and the code for current behavior.  
 Canonical product roadmap remains [`docs/ROADMAP.md`](../../docs/ROADMAP.md). Product / socket thesis: [`docs/guides/MODULARITY.md`](../../docs/guides/MODULARITY.md). Day-to-day guide: [`docs/guides/AGENT_ROUTER.md`](../../docs/guides/AGENT_ROUTER.md).
 
 **Doc strategy (decision):** keep **one** living file (`.cuttle/docs/agent-router-todo.md`) until the extractable package boundary is real. Do **not** spin up `ROADMAP_AGENT_ROUTER.md` + `DESIGNDOC_AGENT_ROUTER.md` yet — that triples maintenance for the same content. When (if) we cut a standalone repo, *then* promote:

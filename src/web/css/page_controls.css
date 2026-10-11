@@ -1,0 +1,245 @@
+/* Shared app-page controls. Loaded after each page's layout stylesheet;
+   chat does not load this skin. Layout and domain-specific visuals stay owned
+   by each page; action controls share sizing, focus and theme surfaces. */
+body.compact-shell-page {
+    --control-height: 34px;
+    --control-radius: 6px;
+    --control-hover: color-mix(in srgb, var(--bg-secondary) 88%, var(--text-primary) 12%);
+    --control-selected: color-mix(in srgb, var(--bg-secondary) 84%, var(--accent-color) 16%);
+    --control-surface: var(--bg-secondary);
+    color-scheme: dark;
+    color: var(--text-primary);
+}
+body.compact-shell-page.light-mode { color-scheme: light; }
+
+body.compact-shell-page :is(.control-button, .btn, .re-btn, .git-graph-btn, .hist-btn,
+    .compact-page-actions button, .compact-page-actions a, .projects-app .actions button,
+    .projects-app .actions .button, dialog .actions button,
+    .test-lab-suite button, .test-lab-run button, .test-lab-output-section button,
+    .gizmos-form button, .gizmo-item-actions button, .jobs-filter button, .hist-filter button, .jobs-pager-btn, .feed-controls button, .feed-footer button) {
+    box-sizing: border-box;
+    min-height: var(--control-height);
+    height: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--control-radius);
+    background: var(--control-surface);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+    cursor: pointer;
+    box-shadow: none;
+    text-decoration: none;
+    transition: background .15s, border-color .15s;
+}
+body.compact-shell-page :is(.control-button, .btn, .re-btn, .git-graph-btn, .hist-btn,
+    .compact-page-actions button, .compact-page-actions a, .projects-app .actions button,
+    .projects-app .actions .button, dialog .actions button,
+    .test-lab-suite button, .test-lab-run button, .test-lab-output-section button,
+    .gizmos-form button, .gizmo-item-actions button, .jobs-filter button, .hist-filter button, .jobs-pager-btn, .feed-controls button, .feed-footer button):hover:not(:disabled) {
+    background: var(--control-hover);
+    border-color: var(--accent-color);
+    box-shadow: none;
+    transform: none;
+}
+body.compact-shell-page :is(.control-button.btn-start, .control-button.btn-restart,
+    .btn.primary, .re-btn.primary, .compact-page-actions .primary,
+    .test-lab-primary, .gizmos-primary, .projects-app .actions .primary, dialog .actions .primary) {
+    background: var(--accent-color);
+    border-color: var(--accent-color);
+    color: var(--text-inverse, #fff);
+}
+body.compact-shell-page :is(.control-button.btn-stop, .btn.danger, .gizmos-danger,
+    .projects-app .actions .danger, dialog .actions .danger) {
+    background: var(--error-bg);
+    border-color: var(--error-border);
+    color: var(--text-primary);
+}
+body.compact-shell-page :is(.control-button.btn-start, .control-button.btn-restart,
+    .btn.primary, .re-btn.primary, .compact-page-actions .primary,
+    .test-lab-primary, .gizmos-primary, .projects-app .actions .primary, dialog .actions .primary):hover:not(:disabled) {
+    background: var(--accent-hover, var(--accent-color));
+    color: var(--text-inverse, #fff);
+}
+body.compact-shell-page :is(button, input, textarea):disabled { opacity: .5; cursor: not-allowed; }
+body.compact-shell-page :is(button, input, textarea, a):focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+body.compact-shell-page :is(input:where(:not(.cuttle-combo-search):not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden']):not([type='file'])),
+    textarea, select, .cuttle-combo--page .cuttle-combo-trigger) {
+    box-sizing: border-box;
+    height: var(--control-height);
+    min-height: var(--control-height);
+    min-width: 0;
+    max-width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--control-radius);
+    background: var(--control-surface);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.4;
+}
+body.compact-shell-page textarea { height: auto; min-height: 72px; resize: vertical; }
+body.compact-shell-page :is(input[type='checkbox'], input[type='radio'], input[type='range']) { accent-color: var(--accent-color); }
+body.compact-shell-page .cuttle-combo--page {
+    min-width: 0;
+    max-width: 100%;
+    overflow: visible;
+}
+body.compact-shell-page .cuttle-combo--page .cuttle-combo-trigger {
+    font-weight: 400;
+    box-shadow: none;
+    text-align: left;
+}
+body.compact-shell-page .cuttle-combo--page .cuttle-combo-caret {
+    background-image: none;
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(45deg);
+    margin: -3px 3px 0;
+    color: var(--text-secondary);
+}
+body.compact-shell-page .cuttle-combo--page.is-open .cuttle-combo-caret { transform: rotate(225deg); margin-top: 3px; }
+/* Portaled to the body/open dialog and promoted to the top layer: never
+   consumes row space or gets cut off by scrollable cards/dialogs. */
+body.compact-shell-page .cuttle-combo-popup {
+    border: 1px solid var(--border-color);
+    border-radius: var(--control-radius);
+    background: var(--control-surface);
+    color: var(--text-primary);
+    overflow: hidden;
+    /* Menus need an opaque surface even when the theme's cards are translucent. */
+    background: rgb(from var(--control-surface) r g b / 1);
+}
+body.compact-shell-page .cuttle-combo-popup[data-combo-placement] { border-color: var(--accent-color); }
+body.compact-shell-page .cuttle-combo-popup[data-combo-placement='below'] { border-top-left-radius: 0; border-top-right-radius: 0; }
+body.compact-shell-page .cuttle-combo-popup[data-combo-placement='above'] { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+body.compact-shell-page .cuttle-combo-popup .cuttle-combo-search {
+    width: 100%;
+    height: 38px;
+    min-height: 38px;
+    border: 0;
+    border-bottom: 1px solid var(--border-color);
+    border-radius: 0;
+    background: inherit;
+    margin: 0;
+    display: block;
+    color: var(--text-primary);
+    font-size: 13px;
+}
+body.compact-shell-page .cuttle-combo-popup .cuttle-combo-search[hidden] { display: none; }
+body.compact-shell-page .cuttle-combo-popup .cuttle-combo-list {
+    max-height: var(--combo-list-height, 220px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-color) transparent;
+}
+body.compact-shell-page .cuttle-combo-popup .cuttle-combo-option {
+    box-sizing: border-box;
+    padding: 7px 10px;
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.4;
+}
+body.compact-shell-page .cuttle-combo-popup .cuttle-combo-option.is-selected {
+    background: var(--control-selected);
+    color: var(--text-primary);
+    font-weight: 600;
+    box-shadow: inset 2px 0 var(--accent-color);
+}
+body.compact-shell-page .cuttle-combo-popup .cuttle-combo-option:is(:hover, .is-active) { background: var(--control-hover); }
+body.compact-shell-page .cuttle-combo-popup .cuttle-combo-empty { color: var(--text-secondary); }
+body.compact-shell-page :is(.apps-menu, .dash-menu, .device-row-menu) {
+    background: var(--control-surface);
+    background: rgb(from var(--control-surface) r g b / 1);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--control-radius);
+    box-shadow: 0 8px 24px #0003;
+}
+body.compact-shell-page :is(.apps-menu, .dash-menu, .device-row-menu) button {
+    min-height: var(--control-height);
+    padding: 7px 10px;
+    background: transparent;
+    color: var(--text-primary);
+    border: 0;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 13px;
+}
+body.compact-shell-page :is(.apps-menu, .dash-menu, .device-row-menu) button:hover:not(:disabled) { background: var(--control-hover); }
+body.compact-shell-page .dash-menu button.is-on { background: var(--control-selected); }
+
+body.compact-shell-page .compact-page-actions { flex-shrink: 1; min-width: 0; max-width: 100%; }
+body.compact-shell-page .cuttle-page > * { min-width: 0; }
+body.compact-shell-page .settings-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+body.compact-shell-page .agent-config-row > .cuttle-combo { flex: 0 1 60%; }
+body.compact-shell-page .provider-picker > .cuttle-combo { flex: 1 1 200px; }
+body.compact-shell-page .provider-picker label { min-width: 0; max-width: 100%; }
+body.compact-shell-page .page-select-narrow { width: 170px; }
+body.compact-shell-page .page-select-wide { width: 260px; }
+body.compact-shell-page .page-select-effort { width: 128px; }
+body.compact-shell-page .dash-axis-field > .cuttle-combo { flex: 1; }
+body.compact-shell-page .test-lab-controls > .cuttle-combo { flex: 1 1 190px; max-width: 300px; }
+body.compact-shell-page .git-graph-field > .cuttle-combo { flex: 1; width: 180px; max-width: 280px; }
+body.compact-shell-page .git-graph-branches { background: var(--bg-tertiary); }
+body.compact-shell-page .git-graph-branch { background: var(--control-surface); border-color: var(--border-color); }
+body.compact-shell-page .git-graph-branch:hover { background: var(--control-hover); }
+body.compact-shell-page .git-graph-branch.is-active { background: var(--control-selected); border-color: var(--accent-color); }
+body.compact-shell-page .test-lab-overview { grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); }
+body.compact-shell-page :is(.settings-tabs, .tabs) { max-width: 100%; overflow-x: auto; }
+body.compact-shell-page :is(.dash-grid, .test-lab-suites) { grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+body.compact-shell-page .gizmo-item { grid-template-columns: minmax(0, 300px) minmax(0, 1fr); }
+body.compact-shell-page .test-lab-output-section pre { background: var(--bg-tertiary); }
+body.compact-shell-page :is(.test-lab-suite, .test-lab-stat, .test-lab-run, .test-lab-output-section) { background: var(--section-bg); }
+body.compact-shell-page .setting-item > .setting-control { flex-shrink: 1; }
+body.compact-shell-page :is(.status-pill.queued, .status-pill.pending, .test-lab-badge.is-queued) {
+    background: var(--warning-bg);
+    color: color-mix(in srgb, var(--warning-border) 75%, var(--text-primary));
+}
+body.compact-shell-page :is(.status-pill.succeeded, .status-pill.completed, .test-lab-badge.is-passed) {
+    background: var(--success-bg);
+    color: color-mix(in srgb, var(--success-border) 75%, var(--text-primary));
+}
+body.compact-shell-page :is(.status-pill.failed, .status-pill.error, .test-lab-badge.is-failed, .test-lab-badge.is-timed_out) {
+    background: var(--error-bg);
+    color: color-mix(in srgb, var(--error-border) 75%, var(--text-primary));
+}
+body.compact-shell-page :is(.status-pill.running, .status-pill.claimed, .status-pill.processing, .test-lab-badge.is-running) {
+    background: var(--control-selected);
+    color: var(--text-primary);
+}
+
+@media (max-width: 640px) {
+    body.compact-shell-page :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden']):not([type='file']), textarea) { font-size: 16px; }
+    body.compact-shell-page .compact-page-actions { width: 100%; margin-left: 0; }
+    body.compact-shell-page .gizmo-item { grid-template-columns: minmax(0, 1fr); }
+    body.compact-shell-page .settings-panel .setting-control { width: 100%; }
+    body.compact-shell-page :is(.page-select-narrow, .page-select-wide) { width: 100%; }
+    body.compact-shell-page .provider-picker > .cuttle-combo { flex-basis: 100%; }
+    body.compact-shell-page .test-lab-controls > .cuttle-combo { max-width: none; }
+    body.compact-shell-page .git-graph-field > .cuttle-combo { width: auto; max-width: none; }
+    body.compact-shell-page :is(.projects-header, .branch-checkout, .detail-header) { flex-wrap: wrap; }
+    body.compact-shell-page .apps-search { min-width: 0; max-width: 100%; }
+}
+@media (pointer: coarse) {
+    body.compact-shell-page { --control-height: 40px; }
+    body.compact-shell-page .cuttle-combo-popup .cuttle-combo-option { padding-block: 10px; }
+    body.compact-shell-page :is(input:not([type='checkbox']):not([type='radio']):not([type='range']), textarea) { font-size: 16px; }
+}

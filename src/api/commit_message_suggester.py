@@ -467,6 +467,14 @@ def suggest_commit_message(
     from api.completion_providers import resolve_order
     by_id = {"openai": _via_openai, "anthropic": _via_anthropic, "local": _via_local}
     providers = tuple(by_id[name] for name in resolve_order())
+    from api.background_helpers import has_selection
+    if has_selection("commits"):
+        def background(prompt, *, file_count, temperature):
+            from api.llm_complete import complete
+            return _usable_subject(complete(user=prompt, system=_SYSTEM, max_tokens=120,
+                temperature=temperature, timeout=90, task="commits") or "", file_count=file_count) or None
+        providers = (background,)
+
 
     base_temp = 0.95 if regenerating else 0.3
     attempts = 3 if regenerating else 1

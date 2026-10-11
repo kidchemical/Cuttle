@@ -85,6 +85,10 @@ out.addBad = A.addAttachmentsToPending([{ filename: 'a.png' }], [null, 'x']);
 out.remMid = A.removeAttachmentAt([{ filename: 'a' }, { filename: 'b' }, { filename: 'c' }], 1);
 out.remBad = A.removeAttachmentAt([{ filename: 'a' }], 5);
 out.remNeg = A.removeAttachmentAt([{ filename: 'a' }], -1);
+// take-and-clear (send consumes staged rows; no aliasing)
+out.take = A.takePendingAttachments([{ filename: 'a' }, { filename: 'b' }]);
+out.takeNull = A.takePendingAttachments(null);
+out.takeEmpty = A.takePendingAttachments([]);
 // request payload + display-kind decisions
 out.req = A.requestAttachmentPayload([
   { filename: 'a.png', path: '/p', mime: 'image/png', size: 9, url: '/u' }, null]);
@@ -191,6 +195,11 @@ def test_pending_list_and_payload_mapping():
     assert [i["filename"] for i in res["remMid"]] == ["a", "c"]
     assert [i["filename"] for i in res["remBad"]] == ["a"]
     assert [i["filename"] for i in res["remNeg"]] == ["a"]
+    # take copies then clears; source list is not aliased into `taken`
+    assert res["take"]["remaining"] == []
+    assert [i["filename"] for i in res["take"]["taken"]] == ["a", "b"]
+    assert res["takeNull"] == {"taken": [], "remaining": []}
+    assert res["takeEmpty"] == {"taken": [], "remaining": []}
     # request payload drops size, keeps the server-resolved fields
     assert res["req"] == [{"filename": "a.png", "path": "/p",
                            "mime": "image/png", "url": "/u"}]

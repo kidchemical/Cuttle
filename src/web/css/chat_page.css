@@ -492,6 +492,7 @@ body {
 
 .chat-session-title-text {
     display: block;
+    flex: 1 1 auto;
     min-width: 0;
     max-width: 100%;
     overflow: hidden;
@@ -505,6 +506,15 @@ body {
     text-shadow:
         0 0 6px rgba(0, 0, 0, 0.55),
         0 1px 2px rgba(0, 0, 0, 0.65);
+}
+
+/* The shared history spinner is positioned over the history row's left slot.
+   In the chat title all status indicators share a flex row, so restore it to
+   normal flow to keep it beside unread / queued indicators. */
+.chat-session-title .history-running-icon {
+    position: relative;
+    inset: auto;
+    margin: 0;
 }
 
 html.light-mode .chat-session-title,
@@ -824,6 +834,46 @@ body.light-mode .chat-session-title-text {
     background: var(--bg-hover);
     color: var(--text-primary);
 }
+
+.chat-history-filter-button {
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.chat-history-filter-button:hover,
+.chat-history-filter-button[aria-expanded="true"] { background: var(--bg-hover); color: var(--text-primary); }
+.chat-history-display-filters {
+    position: absolute;
+    z-index: 50;
+    top: 52px;
+    right: 12px;
+    width: 220px;
+    padding: 12px;
+    border: 1px solid var(--border-color, rgba(128,128,128,.3));
+    border-radius: 10px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    box-shadow: 0 8px 28px rgba(0,0,0,.24);
+    font-size: 13px;
+}
+.chat-history-display-filters[hidden] { display: none; }
+.chat-history-display-filters strong { display: block; margin: 0 0 8px; }
+.chat-history-display-filters label { display: flex; align-items: center; gap: 8px; padding: 5px 0; cursor: pointer; }
+.chat-history-display-filters label.history-display-suboption { padding-left: 18px; color: var(--text-secondary); }
+.chat-history-display-filters input { accent-color: var(--accent-color, #4f8cff); }
+body.history-hide-project .chat-history .slash-command-chip--project { display: none !important; }
+body.history-hide-worktree .chat-history .history-worktree-mark { display: none !important; }
+body.history-hide-branch .chat-history .slash-command-chip--project .slash-chip-seg--branch { display: none !important; }
+body.history-hide-agents .chat-history .history-agent-chip.is-agent-chip { display: none !important; }
+body.history-last-agent-only .chat-history .history-agent-chip.is-agent-chip:not(.is-last-agent-chip) { display: none !important; }
 
 /* Search input + close button share one row */
 .chat-history-panel-top {
@@ -1498,6 +1548,8 @@ body.light-mode .chat-session-title-text {
     overflow: hidden;
 }
 
+.history-item-meta .history-agent-chip { display: contents; }
+
 .history-item-meta .slash-command-chip--history {
     padding: 0 3px;
     font-size: 9px;
@@ -1526,6 +1578,10 @@ body.light-mode .chat-session-title-text {
 }
 
 .history-running-icon {
+    position: absolute;
+    left: 4px;
+    top: 50%;
+    margin-top: -5px;
     flex-shrink: 0;
     width: 10px;
     height: 10px;
@@ -4243,6 +4299,19 @@ pre.has-code-copy:hover .code-copy-btn,
     flex-shrink: 0;
 }
 
+.chat-session-usage {
+    max-width: 820px;
+    margin: 7px auto 0;
+}
+
+.chat-session-usage[hidden] { display: none; }
+.chat-session-usage-totals { width: 100%; min-width: 0; }
+.chat-session-usage-totals .message-usage {
+    width: 100%;
+    justify-content: center;
+    margin-left: 0;
+}
+
 .input-wrapper {
     max-width: 820px;
     margin: 0 auto;
@@ -4642,6 +4711,165 @@ pre.has-code-copy:hover .code-copy-btn,
 
 .slash-command-chip--project .slash-chip-label {
     font-weight: 600;
+}
+
+/* Segmented project chip: ★ | 📁 name | branch */
+.slash-command-chip--project.slash-command-chip--segmented {
+    padding: 0;
+    gap: 0;
+    overflow: hidden;
+    max-width: min(100%, 18rem);
+}
+
+.slash-command-chip--project .slash-chip-seg--project {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: color-mix(in srgb, currentColor 16%, transparent);
+    font-weight: 600;
+}
+
+.slash-command-chip--project .slash-chip-seg--branch {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: color-mix(in srgb, currentColor 5%, transparent);
+    font-weight: 600;
+    opacity: 0.92;
+}
+
+.light-mode .slash-command-chip--project .slash-chip-seg--project {
+    background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.light-mode .slash-command-chip--project .slash-chip-seg--branch {
+    background: color-mix(in srgb, currentColor 4%, transparent);
+}
+
+/* Chip click menus — project picker / agent-model-effort picker */
+.slash-command-chip--project,
+.slash-command-chip[data-chip-index] {
+    cursor: pointer;
+}
+
+.chip-config-modal {
+    max-width: 420px;
+    padding: 32px 28px 28px;
+}
+
+.chip-config-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.chip-config-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.chip-config-field-label {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #a0aec0;
+}
+
+.chip-config-select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 11px 34px 11px 12px;
+    border-radius: 10px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #e2e8f0;
+    font-size: 14px;
+    font-family: inherit;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a0aec0' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+}
+
+.chip-config-select:focus {
+    outline: none;
+    border-color: rgba(139, 92, 246, 0.6);
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+}
+
+.chip-config-select:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.chip-config-select option {
+    background: #1e1e2e;
+    color: #e2e8f0;
+}
+
+.chip-config-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 11px 12px;
+    border-radius: 10px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: #e2e8f0;
+    font-size: 14px;
+    font-family: inherit;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.chip-config-input::placeholder {
+    color: rgba(160, 174, 192, 0.65);
+}
+
+.chip-config-input:focus {
+    outline: none;
+    border-color: rgba(139, 92, 246, 0.6);
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+}
+
+.chip-config-create {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 11px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(139, 92, 246, 0.6);
+    background: rgba(139, 92, 246, 0.18);
+    color: #e2e8f0;
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.chip-config-create:hover {
+    background: rgba(139, 92, 246, 0.3);
+}
+
+.chip-config-create:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+/* Searchable combobox (js/shared/searchable_select.js) fills the field. */
+.chip-config-field .cuttle-combo {
+    width: 100%;
+}
+
+.chip-config-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
 }
 
 .slash-chips-inline {

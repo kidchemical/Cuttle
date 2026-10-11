@@ -52,4 +52,4 @@ def test_archived_list_refresh_resyncs_title_badge():
     refresh = src.split("async function refreshArchivedSessions()", 1)[1].split(
         "\n    function renderArchivedSection()", 1
     )[0]
-    assert "updateChatSessionTitle(currentSessionId)" in refresh
+    assert "updateChatSessionTitle(session.current())" in refresh

@@ -167,7 +167,7 @@ def test_ensure_update_apk_kicks_rebuild_when_stale(monkeypatch, tmp_path):
 
 
 def test_shell_does_not_reopen_apk_modal_for_later_hash():
-    src = (REPO / "src" / "web" / "js" / "shell/app_shell.js").read_text(encoding="utf-8")
+    src = (REPO / "src" / "web" / "js" / "shell" / "shell_mobile.js").read_text(encoding="utf-8")
     assert "cuttle-apk-update-later-hash" in src
     assert "apkInstalling" in src
     assert "status === 'installing'" in src
@@ -323,3 +323,30 @@ def test_automatic_rebuild_installs_locked_dependencies_before_sync(monkeypatch,
         assert calls[2][0] == ["fixture-gradle"]
         assert published == ["a" * 20]
         assert apk._rebuild_state["exitCode"] == 0
+
+
+def test_android_rebuild_route_owner_only_and_kicks(tmp_path, monkeypatch):
+    from api import web_chat_api as wca
+    from tests.auth.test_http_authz import _auth_client, LAN
+
+    calls = []
+    monkeypatch.setattr(
+        apk, "kick_apk_rebuild",
+        lambda *a, **k: (calls.append(k) or {"started": True, "reason": "started"}),
+    )
+
+    anon = wca.app.test_client()
+    assert anon.post("/api/mobile/android/rebuild", json={}, environ_base=LAN).status_code == 401
+
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx["client"].set_cookie("session_token", ctx["token"])
+    res = ctx["client"].post("/api/mobile/android/rebuild", json={}, environ_base=LAN)
+    assert res.status_code == 200, res.get_json()
+    assert res.get_json()["success"] is True
+    assert calls
+
+
+def test_settings_exposes_phone_app_apk_row():
+    html = (REPO / "src" / "web" / "settings_page.html").read_text(encoding="utf-8")
+    assert "data-android-rebuild" in html
+    assert "data-android-status" in html

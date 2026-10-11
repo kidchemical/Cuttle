@@ -9,6 +9,8 @@ from api.auth_db import AuthDatabase
 
 WEB = Path(__file__).resolve().parents[2] / "web"
 CHAT_JS = WEB / "js" / "chat/chat_page.js"
+PANEL_JS = WEB / "js" / "chat/chat_history_panel.js"
+VIEW_JS = WEB / "js" / "chat/chat_history_view.js"
 
 
 def _seed(tmp_path: Path):
@@ -125,34 +127,87 @@ def test_search_endpoint_scopes_to_owner(tmp_path: Path, monkeypatch):
 
 
 def test_history_js_hard_gates_full_list_paint_while_searching():
-    """Regression: auth-changed / poll used to call loadChatHistory and wipe search."""
-    js = CHAT_JS.read_text(encoding="utf-8")
-    assert "function historySearchQueryActive(" in js
-    assert "historySearchLiveQuery" in js
-    assert "function softRefreshHistorySearchIndicators(" in js
-    assert "function reloadHistoryListKeepingSearch(" in js
-    load_fn = js[js.find("function loadChatHistory(") : js.find("function loadChatHistory(") + 500]
+    """Regression: auth-changed / poll used to call loadChatHistory and wipe search.
+
+    Slice 3A commit 1 moved the search/filter state machine and the full-list
+    hard gate into chat_history_panel.js (CuttleChatHistoryPanel); the page now
+    delegates through thin forwarders and routes refresh call sites to the panel.
+    """
+    panel = PANEL_JS.read_text(encoding="utf-8")
+    assert "function historySearchQueryActive(" in panel
+    assert "historySearchLiveQuery" in panel
+    assert "function softRefreshHistorySearchIndicators(" in panel
+    assert "function reloadHistoryListKeepingSearch(" in panel
+    load_fn = panel[panel.find("function loadChatHistory(") : panel.find("function loadChatHistory(") + 500]
     assert "historySearchQueryActive()" in load_fn
     assert "softRefreshHistorySearchIndicators()" in load_fn
+
+    # Page is a composition root: it instantiates the owner and forwards the
+    # window inline-handler names.
+    page = CHAT_JS.read_text(encoding="utf-8")
+    assert "CuttleChatHistoryPanel.create(" in page
+    assert "window.searchChats = (opts) => historyPanel.search(opts);" in page
+
     # Init listener (not waitForAuthReady) must keep search on auth settle.
     marker = "off the welcome splash"
-    auth_idx = js.find(marker)
+    auth_idx = page.find(marker)
     assert auth_idx > 0
-    auth_block = js[auth_idx : auth_idx + 1200]
-    assert "reloadHistoryListKeepingSearch()" in auth_block
+    auth_block = page[auth_idx : auth_idx + 1200]
+    assert "historyPanel.reloadKeepingSearch();" in auth_block
     assert "loadChatHistory();" not in auth_block
     # The settle path may reload projects first; that reload must keep search too.
     if "loadProjects();" in auth_block:
-        lp_start = js.find("async function loadProjects(")
-        lp_end = js.find("\n    }\n", lp_start)
-        load_projects = js[lp_start:lp_end]
-        assert "reloadHistoryListKeepingSearch()" in load_projects
+        lp_start = page.find("async function loadProjects(")
+        lp_end = page.find("\n    }\n", lp_start)
+        load_projects = page[lp_start:lp_end]
+        assert "historyPanel.reloadKeepingSearch();" in load_projects
         assert "loadChatHistory();" not in load_projects
-    # Title matches sort above content matches in the sidebar.
-    assert "entrySearchMatchRank" in js
-    assert "title matches before content" in js.lower() or "Matching titles" in js
-    assert "data-search-tier" in js
-    assert "In messages" in js
+
+    # Title matches sort above content matches in the sidebar (pure helper owner
+    # plus the panel's tiered result paint).
+    view = VIEW_JS.read_text(encoding="utf-8")
+    assert "function entrySearchMatchRank(" in view
+    assert "entrySearchMatchRank" in view
+    assert "title matches before content" in page.lower() or "Matching titles" in panel
+    assert "data-search-tier" in panel
+    assert "In messages" in panel
+
+
+def test_history_grouping_moved_to_view_and_panel():
+    """Slice 3A commit 3: project grouping + subagent nesting split owners.
+
+    Pure algorithms/templates live in chat_history_view.js; persisted
+    collapse/expand prefs, reveal counts, DOM toggles and the grouped repaint
+    live in chat_history_panel.js. The page forwards the window inline names.
+    """
+    view = VIEW_JS.read_text(encoding="utf-8")
+    for fn in (
+        "function nestHistoryEntries(",
+        "function renderHistoryGroupBody(",
+        "function groupSessionsByProject(",
+        "function entryIsStarred(",
+        "function historySubagentToggleTitle(",
+        "function visibleHistoryRoots(",
+    ):
+        assert fn in view, fn
+
+    panel = PANEL_JS.read_text(encoding="utf-8")
+    for fn in (
+        "function isHistoryProjectSectionExpanded(",
+        "function toggleHistoryProjectCollapse(",
+        "function toggleHistorySubagentGroup(",
+        "function paintHistoryEntries(",
+        "function readHistoryProjectCollapsePrefs(",
+        "function readHistorySubagentExpandPrefs(",
+        "isProjectSectionExpanded: isHistoryProjectSectionExpanded",
+    ):
+        assert fn in panel, fn
+
+    page = CHAT_JS.read_text(encoding="utf-8")
+    # The page no longer owns the algorithms; it composes and forwards.
+    assert "function groupSessionsByProject(" not in page
+    assert "window.revealMoreHistoryGroup = (event) => historyPanel.revealMore(event);" in page
+    assert "window.toggleHistorySubagentGroup = (sessionId, event) => historyPanel.toggleSubagentGroup(sessionId, event);" in page
 
 
 def test_chat_page_asset_versions_bump_for_capacitor_cache():

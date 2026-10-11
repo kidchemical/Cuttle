@@ -286,6 +286,7 @@ def _record_context_metrics(
                 else (brain_meta.get("layer_chars") or {}).get("handoff")
             ),
             handoff_messages=brain_meta.get("handoff_messages"),
+            handoff_mode=brain_meta.get("handoff_mode"),
             layer_chars=brain_meta.get("layer_chars"),
             context_tokens=fill,
             context_limit=limit,
@@ -329,6 +330,7 @@ def _compile_agent_prompt(
             to_agent=manifest.id,
             current_prompt=prompt,
             full_history=not manifest.resume,
+            project_path=cwd,
         )
     except Exception as exc:
         # A failed handoff means the agent misses unseen conversation, not
@@ -487,6 +489,7 @@ def _compile_agent_prompt(
             "handoff_from": meta.get("handoff_from"),
             "handoff_to": meta.get("handoff_to"),
             "handoff_messages": handoff.message_count if handoff else 0,
+            "handoff_mode": getattr(handoff, "mode", None) if handoff else None,
             "layer_chars": dict(meta.get("layer_chars") or {}),
         }
         ranked_meta = meta.get("ranked_context")
@@ -595,6 +598,19 @@ def _compile_agent_prompt(
     )
 
 
+def _resolve_agent_run_timeout() -> float:
+    """Default turn budget: Settings → Agents (``timeouts.agent_run_seconds``).
+
+    One source for every harness run that does not pass an explicit timeout;
+    falls back to 3600s if settings are unreadable.
+    """
+    try:
+        from managers.settings_manager import get_settings_manager
+        return float(get_settings_manager().get_timeouts()["agent_run_seconds"])
+    except Exception:
+        return 3600.0
+
+
 def run_agent_web_command(
     agent_id: str,
     prompt: str,
@@ -603,7 +619,7 @@ def run_agent_web_command(
     status_queue=None,
     project_path: Optional[str] = None,
     model_override: Optional[str] = None,
-    timeout: float = 3600.0,
+    timeout: Optional[float] = None,
     execute_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
@@ -612,14 +628,18 @@ def run_agent_web_command(
     Returns the same shape as legacy ``_run_*_web_command`` helpers so callers
     can ``jsonify`` without special-casing.
 
-    ``timeout`` is the turn budget. Streaming adapters (e.g. OpenCode) treat it
-    as an **idle** budget — the deadline resets whenever the CLI emits output,
-    with an absolute runaway cap on top — so long productive turns are not
-    killed. Buffer-everything adapters keep the absolute wall-clock semantics.
+    ``timeout`` is the turn budget. ``None`` resolves to the user-configured
+    Settings → Agents value (``timeouts.agent_run_seconds``; default 3600s).
+    Streaming adapters (e.g. OpenCode) treat it as an **idle** budget — the
+    deadline resets whenever the CLI emits output, with an absolute runaway cap
+    on top — so long productive turns are not killed. Buffer-everything
+    adapters keep the absolute wall-clock semantics.
 
     ``execute_kwargs`` are forwarded to ``adapter.execute`` (e.g. Codex
     ``reasoning_effort`` from supervised profiles).
     """
+    if timeout is None:
+        timeout = _resolve_agent_run_timeout()
     pair = get_agent(agent_id, project_path=project_path)
     if not pair:
         return {
@@ -973,7 +993,7 @@ def run_agent_web_command(
                 try:
                     from api.cuttle_brain.handoff import record_last_agent
 
-                    record_last_agent(sid, manifest.id)
+                    record_last_agent(sid, manifest.id, project_path=cwd)
                 except Exception:
                     pass
             else:

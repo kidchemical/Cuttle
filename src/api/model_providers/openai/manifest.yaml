@@ -1,0 +1,155 @@
+schema_version: 1
+id: openai
+label: OpenAI
+priority: 10
+credential_env:
+- OPENAI_API_KEY
+- API_KEY
+model_env: CUTTLE_LLM_OPENAI_MODEL
+models_dev_provider: openai
+default_model: gpt-4o-mini
+operations:
+- text_generation
+- speech_generation
+- audio_transcription
+defaults:
+  temperature_range: [0, 2]
+  transport: chat_completions
+  token_parameter: max_completion_tokens
+  temperature: true
+  json_object: true
+  reasoning: false
+model_rules:
+- match:
+  - gpt-*
+  - chatgpt-*
+  - o1*
+  - o3*
+  - o4*
+  capabilities:
+    operations:
+    - text_generation
+- match:
+  - gpt-3.5*
+  - gpt-4*
+  - chatgpt-4*
+  capabilities:
+    token_parameter: max_tokens
+- match:
+  - gpt-5*
+  - gpt-6*
+  - o1*
+  - o3*
+  - o4*
+  capabilities:
+    reasoning: true
+    temperature: false
+- match:
+  - gpt-5.1
+  - gpt-5.1-20*
+  - gpt-5.2
+  - gpt-5.2-20*
+  capabilities:
+    temperature: true
+    temperature_efforts: [none]
+    reasoning_efforts: [none, low, medium, high]
+- match:
+  - '*codex*'
+  - '*-pro'
+  - '*-pro-*'
+  capabilities:
+    transport: responses
+    token_parameter: max_output_tokens
+- match:
+  - '*audio*'
+  - '*realtime*'
+  - '*transcribe*'
+  - '*-tts*'
+  - '*image*'
+  - '*search-preview*'
+  - '*-instruct*'
+  - '*deep-research*'
+  - text-embedding-*
+  - whisper*
+  - dall-e*
+  - tts*
+  - '*moderation*'
+  - babbage*
+  - davinci*
+  - o1-preview*
+  - o1-mini*
+  capabilities:
+    operations: []
+- match:
+  - gpt-4o-mini-tts*
+  - tts-*
+  capabilities:
+    operations:
+    - speech_generation
+- match:
+  - '*transcribe*'
+  - whisper-*
+  capabilities:
+    operations:
+    - audio_transcription
+models:
+- id: gpt-4o-mini
+- id: gpt-4o
+- id: gpt-4.1-mini
+- id: gpt-4.1
+- id: gpt-4o-mini-tts
+  label: gpt-4o-mini-tts (recommended)
+  capabilities:
+    operations:
+    - speech_generation
+- id: tts-1
+  label: tts-1 (fast / cheap)
+  capabilities:
+    operations:
+    - speech_generation
+- id: tts-1-hd
+  label: tts-1-hd (higher quality)
+  capabilities:
+    operations:
+    - speech_generation
+speech:
+  default_model: gpt-4o-mini-tts
+  voices:
+  - id: coral
+    label: coral
+  - id: alloy
+    label: alloy
+  - id: ash
+    label: ash
+  - id: ballad
+    label: ballad
+  - id: echo
+    label: echo
+  - id: fable
+    label: fable
+  - id: nova
+    label: nova
+  - id: onyx
+    label: onyx
+  - id: sage
+    label: sage
+  - id: shimmer
+    label: shimmer
+  - id: verse
+    label: verse
+  - id: marin
+    label: marin
+  - id: cedar
+    label: cedar
+  models:
+  - id: gpt-4o-mini-tts
+    label: gpt-4o-mini-tts (recommended)
+  - id: tts-1
+    label: tts-1 (fast / cheap)
+  - id: tts-1-hd
+    label: tts-1-hd (higher quality)
+  speed_range:
+  - 0.25
+  - 4.0
+  supports_stability: false
+  fetch_voices: false

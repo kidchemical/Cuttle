@@ -14,6 +14,27 @@
         const button = root.querySelector('[data-release-check]');
         const autoToggle = root.querySelector('[data-release-auto-toggle]');
         const autoCheckbox = root.querySelector('[data-release-auto-check]');
+        const sourceSelect = root.querySelector('[data-update-source]');
+        const deviceUpdateBtn = root.querySelector('[data-device-update]');
+        const deviceStatus = root.querySelector('[data-device-update-status]');
+        const androidStatus = root.querySelector('[data-android-status]');
+        const androidBtn = root.querySelector('[data-android-rebuild]');
+        const setAndroidStatus = (text, kind) => {
+            if (!androidStatus) return;
+            const msg = String(text || '').trim();
+            androidStatus.textContent = msg;
+            androidStatus.hidden = !msg;
+            androidStatus.classList.toggle('is-error', kind === 'error');
+            androidStatus.classList.toggle('is-ok', kind === 'ok');
+        };
+        const setDeviceStatus = (text, kind) => {
+            if (!deviceStatus) return;
+            const msg = String(text || '').trim();
+            deviceStatus.textContent = msg;
+            deviceStatus.hidden = !msg;
+            deviceStatus.classList.toggle('is-error', kind === 'error');
+            deviceStatus.classList.toggle('is-ok', kind === 'ok');
+        };
         let identity = '';
 
         function autoChecksEnabled() {
@@ -94,6 +115,168 @@
                 checked.textContent = 'Could not copy. Select the version text to copy it.';
             }
         });
+        async function loadUpdateSource() {
+            if (!sourceSelect) return;
+            try {
+                const response = await fetch('/api/settings/update-source', { cache: 'no-store' });
+                if (!response.ok) return;
+                const data = await response.json();
+                sourceSelect.value = String(data.update_source || 'official') === 'host' ? 'host' : 'official';
+            } catch (_) { /* keep default selection */ }
+        }
+        if (sourceSelect) {
+            sourceSelect.addEventListener('change', async () => {
+                const choice = sourceSelect.value === 'host' ? 'host' : 'official';
+                try {
+                    const response = await fetch('/api/settings/update-source', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ update_source: choice }),
+                    });
+                    const data = await response.json().catch(() => ({}));
+                    if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save');
+                    if (window.showToast) {
+                        window.showToast('Update source set to ' + choice.toUpperCase(), 'success');
+                    }
+                } catch (error) {
+                    if (window.showToast) window.showToast(String(error.message || error), 'error');
+                    loadUpdateSource();
+                }
+            });
+            loadUpdateSource();
+        }
+        // "Update this device": actually pull + restart, unlike the release
+        // check above (published GitHub releases). Targets the viewer's own
+        // worker (set by app_shell), so it works from a thin Client's Settings.
+        function viewerWorkerId() {
+            try { return String(sessionStorage.getItem('cuttle_viewer_worker_id') || '').trim().toLowerCase(); }
+            catch (_) { return ''; }
+        }
+        function viewerIsClient() {
+            try { return sessionStorage.getItem('cuttle_client_mode') === '1'; }
+            catch (_) { return false; }
+        }
+        async function resolveViewerTarget() {
+            let self = '';
+            try {
+                const r = await fetch('/api/workers', { cache: 'no-store' });
+                const data = r.ok ? await r.json() : {};
+                self = String((data && data.self_worker_id) || '').trim().toLowerCase();
+            } catch (_) { /* fall back to the viewer id below */ }
+            const vid = viewerWorkerId();
+            return (viewerIsClient() && vid) ? vid : (self || vid);
+        }
+        if (deviceUpdateBtn) {
+            deviceUpdateBtn.addEventListener('click', async () => {
+                deviceUpdateBtn.disabled = true;
+                setDeviceStatus('Resolving this device…', 'info');
+                try {
+                    const target = await resolveViewerTarget();
+                    if (!target) throw new Error('Could not identify this device on the mesh.');
+                    const source = sourceSelect && sourceSelect.value === 'host' ? 'host' : 'official';
+                    setDeviceStatus('Updating ' + target + ' (' + source.toUpperCase() + ')…', 'info');
+                    const r = await fetch('/api/workers/self-update', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            target: target,
+                            submitted_by: 'settings-ui',
+                            update_source: source,
+                            no_daemon: !viewerIsClient(),
+                        }),
+                    });
+                    const data = await r.json().catch(() => ({}));
+                    if (!r.ok || !data.success) throw new Error(data.error || ('HTTP ' + r.status));
+                    const jobId = String((data.job && (data.job.id || data.job.job_id)) || data.job_id || '').trim();
+                    let final = data.job || null;
+                    if (jobId) {
+                        const deadline = Date.now() + 180000;
+                        while (Date.now() < deadline) {
+                            await new Promise((res) => setTimeout(res, 1500));
+                            try {
+                                const sr = await fetch('/api/workers/jobs/' + encodeURIComponent(jobId), { cache: 'no-store' });
+                                const sj = await sr.json().catch(() => ({}));
+                                final = (sj && (sj.job || sj)) || final;
+                                const st = String((final && final.status) || '').toLowerCase();
+                                if (st === 'succeeded' || st === 'failed' || st === 'cancelled') break;
+                            } catch (_) { /* keep waiting */ }
+                        }
+                    }
+                    const st = String((final && final.status) || '').toLowerCase();
+                    if (st === 'failed' || st === 'cancelled') {
+                        throw new Error(String(
+                            (final && (final.error || (final.result && final.result.error))) || 'Self-update failed'
+                        ));
+                    }
+                    const jr = (final && final.result) || {};
+                    setDeviceStatus(
+                        (jr.advanced === false)
+                            ? (jr.note || 'Already at the latest — restarted.')
+                            : ('Updated to ' + (jr.head || 'the latest')
+                                + '. If Cuttle does not restart on its own, quit and reopen it to finish applying.'),
+                        'ok'
+                    );
+                } catch (error) {
+                    setDeviceStatus(String(error.message || error), 'error');
+                } finally {
+                    deviceUpdateBtn.disabled = false;
+                }
+            });
+        }
+        // Phone app (Android/Capacitor): the phone updates itself from the APK
+        // this host serves; this row reflects that + can rebuild it.
+        async function loadAndroid() {
+            if (!androidStatus && !androidBtn) return;
+            try {
+                const r = await fetch('/api/mobile/android', { cache: 'no-store' });
+                const d = await r.json().catch(() => ({}));
+                if (!d || d.ok === false) { setAndroidStatus('Phone app status unavailable.', 'error'); return; }
+                const ver = d.packageVersion || '?';
+                const code = d.versionCode != null ? ' (' + d.versionCode + ')' : '';
+                if (d.artifact) {
+                    setAndroidStatus('APK v' + ver + code + ' ready · ' + String(d.hash || '').slice(0, 12), 'ok');
+                } else if (d.building) {
+                    setAndroidStatus('Rebuilding APK… (Gradle build in progress)', 'info');
+                } else if (d.rebuildError) {
+                    setAndroidStatus('APK not built: ' + d.rebuildError, 'error');
+                } else {
+                    setAndroidStatus('No APK published — phones will not see an update.', '');
+                }
+            } catch (_) {
+                setAndroidStatus('Phone app status unavailable.', 'error');
+            }
+        }
+        if (androidBtn) {
+            androidBtn.addEventListener('click', async () => {
+                androidBtn.disabled = true;
+                setAndroidStatus('Requesting APK rebuild…', 'info');
+                try {
+                    const r = await fetch('/api/mobile/android/rebuild', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({}),
+                    });
+                    const d = await r.json().catch(() => ({}));
+                    if (!r.ok || !d.success) throw new Error(d.error || d.reason || ('HTTP ' + r.status));
+                    setAndroidStatus('APK rebuild started (Gradle) — this can take a few minutes.', 'info');
+                    const deadline = Date.now() + 10 * 60 * 1000;
+                    while (Date.now() < deadline) {
+                        await new Promise((res) => setTimeout(res, 5000));
+                        const sd = await fetch('/api/mobile/android', { cache: 'no-store' })
+                            .then((sr) => sr.json()).catch(() => ({}));
+                        if (sd.artifact) { setAndroidStatus('APK ready — phones will offer the update.', 'ok'); return; }
+                        if (sd.rebuildError) { setAndroidStatus('APK rebuild failed: ' + sd.rebuildError, 'error'); return; }
+                        if (!sd.building) { setAndroidStatus('Rebuild finished.', ''); return; }
+                    }
+                    setAndroidStatus('Still rebuilding — check back shortly.', 'info');
+                } catch (error) {
+                    setAndroidStatus(String(error.message || error), 'error');
+                } finally {
+                    androidBtn.disabled = false;
+                }
+            });
+        }
+        loadAndroid();
         if (autoEnabled) load(false);
         else showManualOnly();
     }

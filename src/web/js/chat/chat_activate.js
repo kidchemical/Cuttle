@@ -8,7 +8,7 @@
    execution wiring) and passes window/document-bound
    implementations. Render planning (placeholder HTML, including the
    `data-vega-spec` attribute consumed here) stays in
-   `CuttleChatMessages`.
+   `CuttleChatMarkdown`.
 
    Mirrors the page contract: already-handled elements are skipped
    (`__vega_done`, `.has-code-copy`), embeds without a Vega library
@@ -87,7 +87,7 @@
             btn.addEventListener('click', async (ev) => {
                 ev.preventDefault();
                 ev.stopPropagation();
-                const ok = await d.copyText(CuttleChatMessages.cleanCodeCopyText(codeEl.textContent));
+                const ok = await d.copyText(CuttleChatMarkdown.cleanCodeCopyText(codeEl.textContent));
                 btn.classList.toggle('is-copied', ok);
                 btn.title = ok ? 'Copied!' : 'Copy failed';
                 if (ok) {

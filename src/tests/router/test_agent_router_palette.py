@@ -13,6 +13,7 @@ from pathlib import Path
 WEB = Path(__file__).resolve().parents[2] / "web"
 CHAT_JS = WEB / "js" / "chat/chat_page.js"
 SLASH_JS = WEB / "js" / "chat/chat_slash.js"
+PALETTE_JS = WEB / "js" / "chat/chat_slash_palette.js"
 CHAT_HTML = WEB / "chat_page.html"
 
 ROUTER_PALETTE_PREFIXES = ("/router ", "/route ", "/retry ")
@@ -40,9 +41,11 @@ def test_no_parameterized_router_palette_builder():
     js = CHAT_JS.read_text(encoding="utf-8")
     assert "function buildRouterPaletteItems(" not in js
     assert "loadRouterOptionsForPalette" not in js
-    filt_start = js.find("function filterSlashPaletteItems(")
+    # Palette assembly now lives in chat_slash_palette.js (CuttleChatSlashPalette).
+    palette = PALETTE_JS.read_text(encoding="utf-8")
+    filt_start = palette.find("function filterItems(")
     assert filt_start > 0
-    filt = js[filt_start : filt_start + 3000]
+    filt = palette[filt_start : filt_start + 3000]
     assert "buildRouterPaletteItems" not in filt
     assert "routerCmds" not in filt
 
@@ -59,8 +62,9 @@ def test_sticky_agent_commands_remain():
 def test_cursor_model_palette_still_wired():
     js = CHAT_JS.read_text(encoding="utf-8")
     assert "function buildCursorModelPaletteItems(" in js
-    filt_start = js.find("function filterSlashPaletteItems(")
-    filt = js[filt_start : filt_start + 3000]
+    palette = PALETTE_JS.read_text(encoding="utf-8")
+    filt_start = palette.find("function filterItems(")
+    filt = palette[filt_start : filt_start + 3000]
     assert "buildCursorModelPaletteItems(f)" in filt
 
 

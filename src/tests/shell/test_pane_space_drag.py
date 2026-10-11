@@ -1,20 +1,26 @@
-"""Drag a blade grip onto a space tab: quick drop moves, 1s hover switches."""
+"""Drag a blade grip onto a space tab: quick drop moves, 1s hover switches.
+
+The cross-space coupling moved into the Spaces owner (shell_spaces.js) in 5C;
+the pane grip and its tooltip stay in the shell. Behavior is characterized
+under node in test_pane_space_drop_behavior.py.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 SHELL_JS = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "shell/app_shell.js"
+OWNER_JS = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "shell/shell_spaces.js"
 SHELL_CSS = Path(__file__).resolve().parents[3] / "src" / "web" / "css" / "app_shell.css"
 
 
 def test_hover_threshold_is_one_second():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert "const PANE_SPACE_HOVER_MS = 1000" in src
 
 
 def test_quick_drop_appends_far_right_horizontal():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert "function appendLayoutLeafToEnd(" in src
     body = src.split("function appendLayoutLeafToEnd(", 1)[1].split(
         "/** Depth-first leaf lookup", 1
@@ -27,7 +33,7 @@ def test_quick_drop_appends_far_right_horizontal():
 
 
 def test_long_hover_switches_space_for_swap():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert "PANE_SPACE_HOVER_MS" in src
     assert "switchSpace(spaceId)" in src
     assert "function exchangeCarriedPaneWithLive(" in src
@@ -36,7 +42,7 @@ def test_long_hover_switches_space_for_swap():
 
 
 def test_single_pane_can_start_cross_space_drag():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert "getSplitColumns().length < 2 && spacesState.spaces.length < 2" in src
     assert "has-cross-space" in src
 

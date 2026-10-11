@@ -148,6 +148,10 @@ class AuthDatabase:
             'ALTER TABLE chat_sessions ADD COLUMN project_id INTEGER',
             'ALTER TABLE chat_sessions ADD COLUMN project_name TEXT',
             'ALTER TABLE chat_sessions ADD COLUMN project_path TEXT',
+            # Bound worktree checkout (experimental). NULL = the project's
+            # primary checkout. Identity lives in the checkouts registry
+            # (api.worktrees); project_path stays the project identity path.
+            'ALTER TABLE chat_sessions ADD COLUMN checkout_uid TEXT',
         ):
             try:
                 cursor.execute(col_sql)
@@ -950,6 +954,7 @@ class AuthDatabase:
         project_id: Optional[int] = None,
         project_name: Optional[str] = None,
         project_path: Optional[str] = None,
+        checkout_uid: Optional[str] = None,
         display_name: Optional[str] = None,
         avatar: Optional[str] = None,
         agent_profile_id: Optional[str] = None,
@@ -963,10 +968,10 @@ class AuthDatabase:
             '''
             INSERT INTO chat_sessions (
                 user_id, session_name, name_auto, origin, parent_session_id,
-                project_id, project_name, project_path,
+                project_id, project_name, project_path, checkout_uid,
                 display_name, avatar, agent_profile_id
             )
-            VALUES (?, ?, 0, 'subagent', ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, 0, 'subagent', ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             (
                 int(user_id),
@@ -975,6 +980,7 @@ class AuthDatabase:
                 int(project_id) if project_id is not None else None,
                 (project_name or "").strip() or None,
                 (project_path or "").strip() or None,
+                (checkout_uid or "").strip() or None,
                 shown,
                 (avatar or "").strip()[:200] or None,
                 (agent_profile_id or "").strip()[:40] or None,
@@ -1460,8 +1466,71 @@ class AuthDatabase:
         conn.close()
         return affected > 0
 
+    def descendant_session_ids(self, session_id: int, user_id: int) -> List[int]:
+        """All nested sub-agent session ids under *session_id* (any depth).
+
+        Child chats are real ``chat_sessions`` rows linked by
+        ``parent_session_id``; a child may itself own children, so walk the
+        whole subtree breadth-first instead of one hop.
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        seen = {int(session_id)}
+        frontier = [int(session_id)]
+        found: List[int] = []
+        while frontier:
+            placeholders = ",".join("?" for _ in frontier)
+            cursor.execute(
+                f'''
+                SELECT id FROM chat_sessions
+                WHERE parent_session_id IN ({placeholders}) AND user_id = ?
+                ''',
+                (*frontier, user_id),
+            )
+            frontier = []
+            for row in cursor.fetchall():
+                cid = int(row["id"])
+                if cid in seen:
+                    continue
+                seen.add(cid)
+                found.append(cid)
+                frontier.append(cid)
+        conn.close()
+        return found
+
+    def get_assistant_usage_metadata(self, session_ids: List[int]) -> List[Dict]:
+        """Return persisted usage metadata for assistant messages in these chats."""
+        ids = list(dict.fromkeys(int(value) for value in (session_ids or []) if value is not None))
+        if not ids:
+            return []
+        conn = self._get_connection()
+        try:
+            placeholders = ",".join("?" for _ in ids)
+            rows = conn.execute(
+                f"SELECT metadata FROM chat_messages WHERE role = 'assistant' "
+                f"AND chat_session_id IN ({placeholders}) AND metadata IS NOT NULL",
+                ids,
+            ).fetchall()
+            result = []
+            for row in rows:
+                try:
+                    metadata = json.loads(row['metadata'] or '{}')
+                except (TypeError, ValueError):
+                    continue
+                usage = metadata.get('usage') if isinstance(metadata, dict) else None
+                if isinstance(usage, dict):
+                    result.append({'usage': usage, 'metadata': metadata})
+            return result
+        finally:
+            conn.close()
+
     def set_session_archived(self, session_id: int, user_id: int, archived: bool) -> bool:
-        """Archive / unarchive a chat session owned by the user."""
+        """Archive / unarchive a chat session and all its nested sub-agent chats.
+
+        Archiving a parent that hides its children is the whole point: sub-agent
+        chats are separate history rows, so leaving them live would strand the
+        batch in the sidebar. Cascade to every descendant owned by the user.
+        """
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -1473,6 +1542,17 @@ class AuthDatabase:
             (1 if archived else 0, session_id, user_id),
         )
         affected = cursor.rowcount
+        child_ids = self.descendant_session_ids(session_id, user_id)
+        if child_ids:
+            placeholders = ",".join("?" for _ in child_ids)
+            cursor.execute(
+                f'''
+                UPDATE chat_sessions
+                SET is_archived = ?
+                WHERE id IN ({placeholders}) AND user_id = ? AND is_active = 1
+                ''',
+                (1 if archived else 0, *child_ids, user_id),
+            )
         conn.commit()
         conn.close()
         return affected > 0
@@ -1567,12 +1647,14 @@ class AuthDatabase:
         project_id: Optional[int] = None,
         project_name: Optional[str] = None,
         project_path: Optional[str] = None,
+        checkout_uid: Optional[str] = None,
     ) -> bool:
         """Persist the chat's working project (cwd) on the auth session row."""
         conn = self._get_connection()
         cursor = conn.cursor()
         name = (project_name or '').strip() or None
         path = (project_path or '').strip() or None
+        checkout = (checkout_uid or '').strip() or None
         pid = project_id
         if pid is not None:
             try:
@@ -1582,10 +1664,10 @@ class AuthDatabase:
         cursor.execute(
             '''
             UPDATE chat_sessions
-            SET project_id = ?, project_name = ?, project_path = ?
+            SET project_id = ?, project_name = ?, project_path = ?, checkout_uid = ?
             WHERE id = ? AND user_id = ? AND is_active = 1
             ''',
-            (pid, name, path, session_id, user_id),
+            (pid, name, path, checkout, session_id, user_id),
         )
         affected = cursor.rowcount
         conn.commit()
@@ -1598,7 +1680,7 @@ class AuthDatabase:
         cursor = conn.cursor()
         cursor.execute(
             '''
-            SELECT project_id, project_name, project_path
+            SELECT project_id, project_name, project_path, checkout_uid
             FROM chat_sessions
             WHERE id = ? AND is_active = 1
             ''',
@@ -1612,6 +1694,7 @@ class AuthDatabase:
             'project_id': row['project_id'],
             'project_name': row['project_name'],
             'project_path': row['project_path'],
+            'checkout_uid': row['checkout_uid'],
         }
     
     def update_session_activity(self, session_id: int):

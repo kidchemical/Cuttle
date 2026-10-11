@@ -694,6 +694,8 @@ def handle_cursor_agent_slash(
         model_id = parts[0].strip()
         remainder = parts[1].strip() if len(parts) > 1 else ""
         if model_id.lower() in ("refresh", "reload", "sync") and not remainder:
+            from api.model_catalog_delta import record_and_diff, render_delta
+
             refreshed = refresh_cursor_agent_models()
             count = int(refreshed.get("count") or 0)
             err = refreshed.get("error")
@@ -703,11 +705,13 @@ def handle_cursor_agent_slash(
                     "message": f"**Cursor Agent:** Model refresh failed — {err}.",
                 }
             note = f" ({err})" if err else ""
+            delta = record_and_diff("cursor", refreshed.get("models") or [])
             return {
                 "action": "reply",
                 "message": (
                     f"**Cursor Agent:** Refreshed model list from `agent models` — "
                     f"{count} models available in the `/` palette.{note}\n\n"
+                    f"{render_delta(delta)}\n\n"
                     "Filter in chat (with a Cursor badge): type `/model` or a "
                     "name fragment (e.g. `sonnet`, `1m`), then pick a row. "
                     "Or set directly: `/model <id>`."

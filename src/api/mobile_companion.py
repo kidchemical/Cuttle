@@ -22,6 +22,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from flask import Blueprint, Response, jsonify, request, stream_with_context
+
+mobile_companion_bp = Blueprint("mobile_companion", __name__)
+
 _THINK_CLOSE = re.compile(
     r"</(?:think|thinking|redacted_thinking)\s*>",
     re.IGNORECASE,
@@ -91,14 +95,22 @@ def _now() -> float:
     return time.time()
 
 
+# Bundled development default — the same default the mobile app ships
+# (android NotifyPrefs.DEFAULT_TOKEN), so a phone with the stock app connects
+# on a trusted LAN with zero configuration. Configure an explicit
+# CUTTLE_MOBILE_TOKEN to lock mobile access down to that secret only.
+DEFAULT_DEV_TOKEN = "dev-local-token"
+
+
 def get_mobile_token() -> str:
     """
     Shared secret token required by the phone to connect and reply.
-    Set CUTTLE_MOBILE_TOKEN in environment (or <home>/.env loaded by daemon).
-    An unset or blank secret disables companion token authentication.
+    Set CUTTLE_MOBILE_TOKEN in environment (or <home>/.env loaded by daemon)
+    to a private secret. When it is unset or blank, the bundled development
+    default (``dev-local-token``) is used so the app's own default works.
     """
     token = (os.environ.get("CUTTLE_MOBILE_TOKEN") or "").strip()
-    return token
+    return token or DEFAULT_DEV_TOKEN
 
 
 def verify_mobile_token(token: Optional[str]) -> bool:
@@ -180,6 +192,88 @@ def emit_mobile_event(event_type: str, payload: Optional[Dict[str, Any]] = None,
                 pass
 
 
+@mobile_companion_bp.route('/api/mobile/events', methods=['GET'])
+def mobile_events_stream():
+    """SSE stream for the Capacitor mobile app (and Android companion)."""
+    try:
+        device_id = (request.args.get('device_id') or '').strip()
+        token = (request.args.get('token') or '').strip()
+        if not device_id:
+            return jsonify({'success': False, 'error': 'device_id required'}), 400
+        if not verify_mobile_token(token):
+            return jsonify({'success': False, 'error': 'unauthorized'}), 401
+
+        q = register_device_queue(device_id)
+        print(f"[MOBILE] SSE connected device_id={device_id}", flush=True)
+
+        def generate():
+            yield f"data: {json.dumps({'type': 'status', 'message': 'connected', 'device_id': device_id})}\n\n"
+            last_keepalive = time.time()
+            try:
+                while True:
+                    try:
+                        ev = q.get(timeout=1.0)
+                    except Exception:
+                        if time.time() - last_keepalive > 10:
+                            yield ": keepalive\n\n"
+                            last_keepalive = time.time()
+                        continue
+                    yield f"data: {ev.to_sse_data()}\n\n"
+            finally:
+                try:
+                    unregister_device_queue(device_id)
+                except Exception:
+                    pass
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype='text/event-stream',
+            headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no', 'Connection': 'keep-alive'},
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@mobile_companion_bp.route('/api/mobile/poll', methods=['GET'])
+def mobile_events_poll():
+    """Short JSON long-poll for the Capacitor app."""
+    try:
+        device_id = (request.args.get('device_id') or '').strip()
+        token = (request.args.get('token') or '').strip()
+        if not device_id:
+            return jsonify({'success': False, 'error': 'device_id required'}), 400
+        if not verify_mobile_token(token):
+            return jsonify({'success': False, 'error': 'unauthorized'}), 401
+        try:
+            timeout_s = int(request.args.get('timeout') or 20)
+        except (TypeError, ValueError):
+            timeout_s = 20
+        timeout_s = max(0, min(25, timeout_s))
+        wait = 0.05 if timeout_s <= 0 else float(timeout_s)
+        events = drain_events(device_id, timeout_s=wait)
+        return jsonify({'success': True, 'events': events})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@mobile_companion_bp.route('/api/mobile/reply', methods=['POST'])
+def mobile_submit_reply():
+    """Reply endpoint for Android notification actions."""
+    try:
+        data = request.get_json() or {}
+        token = (data.get('token') or '').strip()
+        if not verify_mobile_token(token):
+            return jsonify({'success': False, 'error': 'unauthorized'}), 401
+        interaction_id = (data.get('interaction_id') or '').strip()
+        answer = (data.get('answer') or '').strip()
+        if not interaction_id or not answer:
+            return jsonify({'success': False, 'error': 'interaction_id and answer required'}), 400
+        ok = submit_interaction_answer(interaction_id, answer)
+        return jsonify({'success': ok})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # interaction_id -> record
 _interactions: Dict[str, Dict[str, Any]] = {}
 _interactions_lock = threading.Lock()
@@ -250,4 +344,3 @@ def wait_for_interaction_answer(interaction_id: str, timeout_s: int = 300) -> Op
             if now >= deadline or now >= rec.get("expires_at", deadline):
                 return None
             _interactions_cv.wait(timeout=min(1.0, max(0.05, deadline - now)))
-

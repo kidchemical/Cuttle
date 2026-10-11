@@ -128,6 +128,8 @@ def test_list_catalog_uses_cli_and_caches(catalog_cache, monkeypatch):
 
     assert mc.catalog_supports_variant("openrouter/z-ai/glm-5.3-flash") is True
     assert mc.catalog_supports_variant("openrouter/example/no-variants") is False
+    assert mc.catalog_variant_levels("openrouter/z-ai/glm-5.3-flash") == ["low", "max"]
+    assert mc.catalog_variant_levels("openrouter/example/no-variants") == []
 
 
 def test_list_catalog_falls_back_to_favorites(catalog_cache, monkeypatch):

@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import os
-import urllib.error
-import urllib.request
 from typing import Any, Callable, Dict, Optional
 
 from api.jev.types import QuestionMap, State, SystemOneResult, parse_answer
@@ -54,6 +51,7 @@ class JevClient:
         questions: QuestionMap,
         *,
         model: Optional[str] = None,
+        task: str = "jev",
     ) -> SystemOneResult:
         if not questions:
             raise JevError("questions required", retryable=False)
@@ -62,56 +60,20 @@ class JevClient:
                 "No Jev key: set OPENROUTER_API_KEY (OpenRouter hosts Jev) or TYPESAFE_API_KEY",
                 retryable=False,
             )
-        payload = {
-            "state": state,
-            "model": (model or self.model).strip() or self.model,
-            "questions": questions,
-        }
-        url = f"{self.base_url}/v1/systemone"
-        body = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=body,
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-        )
+        from api.model_providers.service import decide
+        from api.model_providers.types import DecisionRequest, ProviderError
+        model_id = (model or self.model).strip() or self.model
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
-                raw_text = resp.read().decode("utf-8", errors="replace")
-                status = int(getattr(resp, "status", 200) or 200)
-        except urllib.error.HTTPError as e:
-            err_body = ""
-            try:
-                err_body = e.read().decode("utf-8", errors="replace")[:400]
-            except Exception:
-                pass
-            retryable = e.code in (408, 409, 429) or e.code >= 500
-            raise JevError(
-                f"Jev HTTP {e.code}: {err_body or e.reason}",
-                retryable=retryable,
-                status=int(e.code),
-            ) from e
-        except urllib.error.URLError as e:
-            raise JevError(f"Jev transport: {e.reason}", retryable=True) from e
-        except TimeoutError as e:
-            raise JevError("Jev timed out", retryable=True) from e
-        try:
-            data = json.loads(raw_text) if raw_text else {}
-        except json.JSONDecodeError as e:
-            raise JevError("Jev response was not JSON", retryable=True) from e
-        if not isinstance(data, dict):
-            raise JevError("Jev response was not an object", retryable=True)
-        if status >= 400:
-            raise JevError(f"Jev HTTP {status}", retryable=status >= 500, status=status)
+            data = decide("typesafe", DecisionRequest(state, questions, model_id,
+                          self.api_key, self.base_url, self.timeout_s),
+                          usage_task=task or "jev")
+        except ProviderError as exc:
+            raise JevError(str(exc), retryable=exc.retryable, status=exc.status) from exc
         answers_raw = data.get("answers") if isinstance(data.get("answers"), dict) else {}
         answers = {str(k): parse_answer(v) for k, v in answers_raw.items()}
         usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
         return SystemOneResult(
-            model=str(data.get("model") or payload["model"]),
+            model=str(data.get("model") or model_id),
             answers=answers,
             usage=dict(usage),
             raw=data,
@@ -138,6 +100,7 @@ class FakeJevClient(JevClient):
         questions: QuestionMap,
         *,
         model: Optional[str] = None,
+        task: str = "jev",
     ) -> SystemOneResult:
         payload = self.canned
         if self.handler is not None:

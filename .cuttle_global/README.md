@@ -8,11 +8,15 @@ See [GLOBAL.ini](../.cuttle/GLOBAL.ini) for the selection keys.
 ```text
 .cuttle_global/
   rules/    docs/    actions/    scripts/    skills/    agents/
-  personal/   # install-local global overlay (gitignored)
 ```
 
+The install-local global overlay is **not** in this tree; it lives in the Cuttle
+home at `<home>/personal/` (see below).
+
 Each project owns its own `.cuttle/` commands, rules, actions, docs and scripts;
-it does not inherit another project's commands or actions. See the
+it does not inherit another project's commands or actions. (Exception: a nested
+checkout may surface an ancestor project's actions for compatibility — see
+`src/api/project_actions.py`.) See the
 [project reference layout](../.cuttle/README.md) and
 [commands and actions guide](docs/commands-and-actions.md).
 
@@ -35,8 +39,10 @@ Script recipes resolve literal paths: a personal script does not redirect a
 tracked recipe unless its action/command explicitly names that script.
 
 `[global]` also supports `skills=off` and `commands=off`, including global personal
-units. Optional integration guidance defaults off; enable it for a project in
-`.cuttle/GLOBAL.ini` or its personal twin:
+units. Global commands and skills are supported, but this tree ships no
+`.cuttle_global/commands/` directory today; enabled feature bundles are the only
+current source of global commands. Optional integration guidance defaults off;
+enable it for a project in `.cuttle/GLOBAL.ini` or its personal twin:
 
 ```ini
 [integrations]

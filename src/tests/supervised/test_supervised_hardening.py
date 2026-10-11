@@ -350,6 +350,7 @@ def test_control_lane_idempotent_skips_second_persist(supervised_env, monkeypatc
 
 def test_raw_artifact_viewer_enforces_ownership(supervised_env, monkeypatch):
     from api import web_chat_api as wca
+    from api.agent_router.supervised import routes as supervised_routes
     from api.agent_router.supervised.orchestrator import create_supervised_task
     from api.agent_router.supervised.store import persist_raw_worker_output
 
@@ -364,7 +365,7 @@ def test_raw_artifact_viewer_enforces_ownership(supervised_env, monkeypatch):
         def get_chat_session(self, sid, uid):
             return {"id": sid} if sid == 55 and uid == 7 else None
 
-    monkeypatch.setattr(wca, "get_auth_db", lambda: FakeDB())
+    monkeypatch.setattr(supervised_routes, "get_auth_db", lambda: FakeDB())
     client = wca.app.test_client()
     url = f"/api/supervised/tasks/{task.task_id}/runs/wr_abc/raw"
     assert client.get(url).status_code == 401
@@ -388,8 +389,13 @@ def test_js_activity_card_not_pending_queue(supervised_env):
     assert "activityCardStateFromTask" not in helper
     assert "followupQueue" in html
     assert "Pending-prompt queue only" in html or "never used for supervised" in html
-    # Control lane forces non-stream
-    assert "controlLane ? false : true" in js or "controlLane ? false" in js
+    # Control lane forces non-stream. 4A pt3: that transport choice is owned
+    # by chat_generation.planSubmit (JSON-only for the control lane); the page
+    # just feeds the resolved choice to the transport.
+    gen = (REPO_ROOT / "src/web/js/chat/chat_generation.js").read_text(encoding="utf-8")
+    assert "firstTransportStream: !controlLane" in gen
+    assert "body.stream = false" in gen
+    assert "fetchChatPayload(submitPlan.firstTransportStream)" in js
 
 
 def test_node_supervised_control_helpers(supervised_env):

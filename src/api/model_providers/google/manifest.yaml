@@ -1,0 +1,119 @@
+schema_version: 1
+id: google
+label: Google
+priority: 50
+models_dev_provider: google
+credential_env:
+- GEMINI_API_KEY
+- GOOGLE_API_KEY
+operations:
+- speech_generation
+defaults: {}
+models:
+- id: gemini-2.5-flash-preview-tts
+  label: Flash TTS (fast, cheap)
+  capabilities:
+    operations:
+    - speech_generation
+- id: gemini-2.5-pro-preview-tts
+  label: Pro TTS (higher quality)
+  capabilities:
+    operations:
+    - speech_generation
+- id: gemini-3.8-flash-tts
+  capabilities:
+    operations:
+    - speech_generation
+    speech_transport: interactions
+- id: gemini-3.8-flash-lite-tts
+  capabilities:
+    operations:
+    - speech_generation
+    speech_transport: interactions
+speech:
+  default_model: gemini-2.5-flash-preview-tts
+  voices:
+  - id: Kore
+    label: Kore
+  - id: Charon
+    label: Charon
+  - id: Fenrir
+    label: Fenrir
+  - id: Aoede
+    label: Aoede
+  - id: Puck
+    label: Puck
+  - id: Zephyr
+    label: Zephyr
+  - id: Leda
+    label: Leda
+  - id: Orus
+    label: Orus
+  - id: Callirrhoe
+    label: Callirrhoe
+  - id: Autonoe
+    label: Autonoe
+  - id: Enceladus
+    label: Enceladus
+  - id: Iapetus
+    label: Iapetus
+  - id: Umbriel
+    label: Umbriel
+  - id: Algieba
+    label: Algieba
+  - id: Despina
+    label: Despina
+  - id: Erinome
+    label: Erinome
+  - id: Algenib
+    label: Algenib
+  - id: Rasalgethi
+    label: Rasalgethi
+  - id: Laomedeia
+    label: Laomedeia
+  - id: Achernar
+    label: Achernar
+  - id: Alnilam
+    label: Alnilam
+  - id: Schedar
+    label: Schedar
+  - id: Gacrux
+    label: Gacrux
+  - id: Pulcherrima
+    label: Pulcherrima
+  - id: Achird
+    label: Achird
+  - id: Zubenelgenubi
+    label: Zubenelgenubi
+  - id: Vindemiatrix
+    label: Vindemiatrix
+  - id: Sadachbia
+    label: Sadachbia
+  - id: Sadaltager
+    label: Sadaltager
+  - id: Sulafat
+    label: Sulafat
+  models:
+  - id: gemini-2.5-flash-preview-tts
+    label: Flash TTS (fast, cheap)
+  - id: gemini-2.5-pro-preview-tts
+    label: Pro TTS (higher quality)
+  - id: gemini-3.8-flash-tts
+    label: Gemini 3.8 Flash TTS
+  - id: gemini-3.8-flash-lite-tts
+    label: Gemini 3.8 Flash-Lite TTS
+  speed_range: null
+  supports_stability: false
+  fetch_voices: true
+model_rules:
+- match:
+  - '*-tts*'
+  capabilities:
+    operations:
+    - speech_generation
+- match:
+  - gemini-3.8-*-tts*
+  capabilities:
+    operations:
+    - speech_generation
+    speech_transport: interactions

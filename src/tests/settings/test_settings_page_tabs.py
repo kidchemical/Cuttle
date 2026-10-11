@@ -145,7 +145,7 @@ def test_sections_are_balanced():
 
 FETCH_LOADERS = {
     "loadApiKeys": "providers",
-    "loadCompletionProviders": "providers",
+    "loadCompletionProviders": "agents",
     "loadLanAccessSettings": "devices",
     "loadDesktopElectronSettings": "devices",
     "loadChatTtsSettings": "voice",
@@ -204,7 +204,8 @@ def test_voice_tab_is_provider_driven():
     panel = html[html.index('id="panel-voice"'):html.index('id="panel-devices"')]
     assert 'id="chatTtsProvider"' in panel
     assert 'id="chatTtsNarratorProvider"' in panel
-    assert 'id="chatTtsNarratorSuggestions"' in panel
+    assert 'id="chatTtsNarratorCustomModel"' in panel
+    assert 'id="chatTtsNarratorEffort"' in panel
     assert 'id="chatTtsSpeedRow"' in panel
     assert 'id="chatTtsFetchVoicesBtn"' in panel
     voice_sel = panel[panel.index('id="chatTtsVoice"'):panel.index("</select>", panel.index('id="chatTtsVoice"'))]

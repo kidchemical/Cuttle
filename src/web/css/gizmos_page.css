@@ -12,6 +12,12 @@
     text-decoration: none;
 }
 .gizmos-page select, .gizmos-page input { width: 100%; min-width: 0; box-sizing: border-box; }
+/* Native <option> lists follow color-scheme, not the select's background;
+   keep them readable against the page's base theme. */
+.gizmos-page select { color-scheme: dark; }
+.gizmos-page option { background: var(--panel-bg, #16213e); color: var(--text-primary, #e6edf3); }
+body.light-mode .gizmos-page select { color-scheme: light; }
+body.light-mode .gizmos-page option { background: var(--panel-bg, #fafafc); color: #1f2430; }
 .gizmos-page button { cursor: pointer; }
 .gizmos-page button:disabled { opacity: 0.5; cursor: default; }
 .gizmos-page .gizmos-primary { border-color: var(--accent-color, #667eea); background: color-mix(in srgb, var(--accent-color, #667eea) 22%, transparent); font-weight: 600; }

@@ -1,5 +1,5 @@
 /* Projects owns its surfaces; shell theme and wallpaper preferences still apply. */
-:root {
+body[data-page="projects"] {
     --project-text: var(--text-primary, #e2e8f0);
     --project-muted: var(--text-secondary, #a0aec0);
     --project-accent: var(--accent-color, #8b5cf6);

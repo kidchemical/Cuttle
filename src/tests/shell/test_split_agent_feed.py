@@ -18,6 +18,9 @@ node_only = pytest.mark.skipif(
 
 REPO = Path(__file__).resolve().parents[3]
 SHELL_SRC = REPO / "src/web/js/shell/app_shell.js"
+# 5E: Agent Feed rail availability moved to the rail owner (shell_rail.js);
+# mountNewLeafFrame (still in the shell) re-applies it through the controller.
+RAIL_SRC = REPO / "src/web/js/shell/shell_rail.js"
 
 
 def _extract_mount():
@@ -28,7 +31,7 @@ def _extract_mount():
 
 
 def _extract_availability():
-    source = SHELL_SRC.read_text(encoding="utf-8")
+    source = RAIL_SRC.read_text(encoding="utf-8")
     start = source.index("function applyAgentFeedAvailability()")
     end = source.index("async function refreshAgentFeedAvailability", start)
     return source[start:end]
@@ -36,7 +39,7 @@ def _extract_availability():
 
 MOUNT_STUB = """
 let availabilityCalls = 0;
-function applyAgentFeedAvailability() { availabilityCalls++; }
+const rail = { applyAgentFeedAvailability() { availabilityCalls++; } };
 function canonicalizeShellPage(p) { return p; }
 function setState() {}
 function updateColumnUI() {}
@@ -59,7 +62,7 @@ def test_new_pane_mount_reapplies_agent_feed_visibility():
 mountNewLeafFrame(3, frame, mainEl, '/chat_page.html');
 assert.equal(availabilityCalls, 1, 'mount applies live agent-feed visibility to the new pane');
 """
-    subprocess.run(["node", "-e", script], check=True)
+    subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
 
 
 @node_only
@@ -76,6 +79,7 @@ function makeFeedBtn() {
 const buttons = [makeFeedBtn(), makeFeedBtn()];
 const document = { querySelectorAll: (sel) => (
     sel === '[data-id="nav-agent-feed"]' ? buttons : []) };
+const doc = document;
 """
     script += _extract_availability() + "\n"
     script += """
@@ -92,7 +96,7 @@ for (const btn of buttons) {
         'disabled flag keeps the icon hidden');
 }
 """
-    subprocess.run(["node", "-e", script], check=True)
+    subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
 
 
 def test_mount_source_references_availability():

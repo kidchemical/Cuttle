@@ -17,6 +17,13 @@ def hub() -> Dict[str, Any]:
     return {"success": True, "dashboards": catalog.list_dashboards()}
 
 
+def cuttle_jobs(*, hours: int = 24) -> Dict[str, Any]:
+    """Jobs/executions telemetry (owner: api.jobs.service)."""
+    from api.jobs.service import job_stats
+
+    return {"success": True, "id": "cuttle-jobs", **job_stats(hours=hours)}
+
+
 def model_benchmarks(
     *,
     cache_dir: Optional[Path] = None,

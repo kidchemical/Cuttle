@@ -13,7 +13,7 @@ src/.env
 !.env.example
 !src/.env.example
 
-# Personal / home-lab dogfood (keep locally; omit from public trees)
+# Personal / home-lab dogfood (DEPRECATED — quarantine or remove; install-local data belongs in <home>)
 _personal/
 .vapi_cuttle_assistant_id
 

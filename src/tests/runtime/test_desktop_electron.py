@@ -169,3 +169,47 @@ def test_linux_wayland_sessions_launch_under_xwayland(monkeypatch, tmp_path):
     for name in ("launch-cuttle-host.sh", "launch-cuttle-client.sh"):
         script = (helper.parent / name).read_text(encoding="utf-8")
         assert "electron-display.sh" in script and '"${DISPLAY_ARGS[@]}"' in script
+
+
+def _run_policy_node(script: str) -> subprocess.CompletedProcess:
+    proc = subprocess.run(
+        ["node", "-e", script],
+        capture_output=True, text=True, encoding="utf-8", timeout=20, cwd=str(REPO),
+    )
+    if proc.returncode != 0 and (
+        proc.returncode == 127
+        or "not recognized" in (proc.stderr or "").lower()
+        or "cannot find the path" in (proc.stderr or "").lower()
+    ):
+        electron = REPO / "electron" / "node_modules" / "electron" / "dist" / "electron.exe"
+        env = os.environ.copy()
+        env["ELECTRON_RUN_AS_NODE"] = "1"
+        proc = subprocess.run(
+            [str(electron), "-e", script],
+            capture_output=True, text=True, encoding="utf-8", timeout=20,
+            cwd=str(REPO), env=env,
+        )
+    return proc
+
+
+def test_update_channels_single_vs_both():
+    """configured channel drives one button; both show only when diverged."""
+    policy_js = json.dumps(str(POLICY))
+    script = f"""
+const p = require({policy_js});
+let r = p.updateChannels({{configuredSource:'host', host:{{available:true}}, official:{{available:false}}}});
+if (!r.show || r.mode!=='single' || r.buttons.length!==1 || r.buttons[0].chip!=='HOST') process.exit(2);
+r = p.updateChannels({{configuredSource:'official', host:{{available:true}}, official:{{available:false}}}});
+if (r.buttons[0].source!=='host') process.exit(3);
+r = p.updateChannels({{configuredSource:'host', host:{{available:true}}, official:{{available:true}}}});
+if (r.mode!=='single' || r.buttons[0].source!=='host') process.exit(4);
+r = p.updateChannels({{configuredSource:'host', host:{{available:true}}, official:{{available:true, diverged:true}}}});
+if (r.mode!=='both' || r.buttons.length!==2) process.exit(5);
+if (r.buttons[0].chip!=='OFFICIAL' || r.buttons[1].chip!=='HOST') process.exit(6);
+r = p.updateChannels({{}});
+if (r.show) process.exit(7);
+console.log('ok');
+"""
+    proc = _run_policy_node(script)
+    assert proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
+    assert "ok" in (proc.stdout or "")

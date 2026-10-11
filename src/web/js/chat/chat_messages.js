@@ -292,25 +292,6 @@
     }
 
     /**
-     * Vega chart placeholder wrap (planning half; the DOM embed half
-     * stays in the page's `activateVegaEmbeds`, which consumes the
-     * `data-vega-spec` attribute produced here).
-     */
-    function buildVegaWrapHtml(rawSpec, deps) {
-        const d = deps || {};
-        const raw = String(rawSpec ?? '').trim();
-        if (!raw) {
-            return '<div class="vega-wrap vega-wrap--error">Empty Vega chart</div>';
-        }
-        // No ui-card chrome — charts sit flush in the bubble (transparent bg).
-        return (
-            '<div class="vega-wrap" data-vega-spec="' +
-            d.escapeHtmlInline(raw) +
-            '"><div class="vega-pending" aria-hidden="true">Loading chart…</div></div>'
-        );
-    }
-
-    /**
      * Head structured-block extraction (think + tool_output). Runs at
      * the pipeline position before supervised-activity extraction, so
      * later stages never see raw think/tool markup.
@@ -650,7 +631,7 @@
         const vegaBlocks = [];
         const pushVega = (rawContent) => {
             const placeholder = '{{CUTTLE_VEGA_' + vegaBlocks.length + '}}';
-            vegaBlocks.push(buildVegaWrapHtml(rawContent, d));
+            vegaBlocks.push(CuttleChatMarkdown.buildVegaWrapHtml(rawContent, d));
             return placeholder;
         };
         out = out.replace(/<vega>([\s\S]*?)<\/vega>/gi, function(_, content) {
@@ -766,17 +747,6 @@
             }
         }
         return out;
-    }
-
-    // Invisible characters that survive a rendered-text copy and show up as
-    // garbage in terminals: zero-width/BOM/soft hyphen dropped, exotic spaces
-    // flattened to ASCII space.
-    function cleanCodeCopyText(raw) {
-        return String(raw ?? '')
-            .replace(/\r\n?/g, '\n')
-            .replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, '')
-            .replace(/[\u00A0\u2007\u202F]/g, ' ')
-            .replace(/\n+$/, '');
     }
 
     /** Structured layout inside model reasoning blocks (step labels vs plain lines). */
@@ -969,6 +939,114 @@
         return route + (failed ? renderStatusChipHtml('error', message, message, esc) : '');
     }
 
+    function fmtPricingRate(v) {
+        if (v === null || v === undefined || v === '') return '—';
+        const n = Number(v);
+        if (!Number.isFinite(n)) return '—';
+        if (n === 0) return 'Free';
+        if (n >= 1 || Math.abs(n * 100 - Math.round(n * 100)) < 1e-9) return '$' + n.toFixed(2);
+        return '$' + n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+    }
+
+    function fmtPricingContext(v) {
+        const n = Number(v);
+        if (!Number.isFinite(n) || n <= 0) return '';
+        if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+        if (n >= 1e3) return Math.round(n / 1e3) + 'K';
+        return String(n);
+    }
+
+    /** ``<cuttle_pricing>`` JSON → table; the active model's row is highlighted. */
+    function renderCuttlePricingHtml(rawBody, deps) {
+        const d = deps || {};
+        let payload = null;
+        try {
+            payload = JSON.parse(String(rawBody || '').trim());
+        } catch (_) {
+            payload = null;
+        }
+        const rows = payload && Array.isArray(payload.rows) ? payload.rows : [];
+        if (!rows.length) return '';
+        const has = (key) => rows.some((r) => r && r[key] !== undefined && r[key] !== null && r[key] !== '');
+        const showTask = has('task');
+        const showBench = has('bench_cost');
+        const showScore = showBench && has('bench_score');
+        const bench = (payload && payload.bench) || {};
+        const benchLabel = String(bench.label || 'Benchmark');
+        const showCache = has('cache_read');
+        const showCtx = has('context');
+        const showNotes = has('note') || has('variants');
+        const inline = (s) => CuttleChatMarkdown.formatInlineMarkdown(d.escapeHtmlInline(String(s || '')));
+        let html = '<div class="message-table-wrap cuttle-pricing-wrap">'
+            + '<table class="message-table cuttle-pricing"><thead><tr>'
+            + '<th>Model</th>'
+            + '<th style="text-align:right">Input</th>'
+            + '<th style="text-align:right">Output</th>'
+            + (showBench
+                ? '<th style="text-align:right" title="'
+                    + d.escapeHtmlInline('Measured mean cost per task on ' + benchLabel
+                        + (bench.credit ? ' (data: ' + bench.credit + ')' : ''))
+                    + '">$ / task<br><span class="cuttle-pricing-sub">'
+                    + d.escapeHtmlInline(benchLabel) + '</span></th>'
+                : '')
+            + (showScore ? '<th style="text-align:right">Solved</th>' : '')
+            + (showTask
+                ? '<th style="text-align:right" title="'
+                    + d.escapeHtmlInline('Estimated cost of one typical agentic coding task: '
+                        + String((payload && payload.task_basis) || ''))
+                    + '">≈ / task</th>'
+                : '')
+            + (showCache ? '<th style="text-align:right">Cache read</th>' : '')
+            + (showCtx ? '<th style="text-align:right">Context</th>' : '')
+            + (showNotes ? '<th>Notes</th>' : '')
+            + '</tr></thead><tbody>';
+        rows.forEach((r) => {
+            if (!r || typeof r !== 'object') return;
+            const active = !!r.active;
+            const label = String(r.label || r.model || '').trim();
+            const model = String(r.model || '').trim();
+            const modelCell = '<span class="cuttle-pricing-label">' + d.escapeHtmlInline(label) + '</span>'
+                + (active ? ' <span class="cuttle-pricing-badge">Active</span>' : '')
+                + (model && model !== label
+                    ? '<br><code class="cuttle-pricing-id">' + d.escapeHtmlInline(model) + '</code>'
+                    : '');
+            const notes = [r.variants, r.note].filter((s) => s).map(inline).join('<br>');
+            html += '<tr class="cuttle-pricing-row' + (active ? ' is-active' : '') + '">'
+                + '<td>' + modelCell + '</td>'
+                + '<td class="cuttle-pricing-num">' + d.escapeHtmlInline(fmtPricingRate(r.input)) + '</td>'
+                + '<td class="cuttle-pricing-num">' + d.escapeHtmlInline(fmtPricingRate(r.output)) + '</td>'
+                + (showBench
+                    ? '<td class="cuttle-pricing-num cuttle-pricing-task">'
+                        + d.escapeHtmlInline(fmtPricingRate(r.bench_cost))
+                        + (r.bench_cost !== undefined && r.bench_effort
+                            ? '<br><span class="cuttle-pricing-sub">' + d.escapeHtmlInline(r.bench_effort) + '</span>'
+                            : '')
+                        + '</td>'
+                    : '')
+                + (showScore
+                    ? '<td class="cuttle-pricing-num">'
+                        + (r.bench_score !== undefined && r.bench_score !== null
+                            ? d.escapeHtmlInline(Number(r.bench_score).toFixed(1) + '%')
+                            : '—')
+                        + '</td>'
+                    : '')
+                + (showTask
+                    ? '<td class="cuttle-pricing-num cuttle-pricing-task">'
+                        + d.escapeHtmlInline(fmtPricingRate(r.task)) + '</td>'
+                    : '')
+                + (showCache
+                    ? '<td class="cuttle-pricing-num">' + d.escapeHtmlInline(fmtPricingRate(r.cache_read)) + '</td>'
+                    : '')
+                + (showCtx
+                    ? '<td class="cuttle-pricing-num">' + d.escapeHtmlInline(fmtPricingContext(r.context)) + '</td>'
+                    : '')
+                + (showNotes ? '<td class="cuttle-pricing-note">' + notes + '</td>' : '')
+                + '</tr>';
+        });
+        html += '</tbody></table></div>';
+        return html;
+    }
+
     const api = {
         renderRoutingBadgeHtml,
         routingAgentSlash,
@@ -985,8 +1063,7 @@
         formatUserMessageForDisplay,
         formatThinkingLineInline,
         formatThinkingInner,
-        buildVegaWrapHtml,
-        cleanCodeCopyText,
+        renderCuttlePricingHtml,
         extractHeadStructuredBlocks,
         extractTailStructuredBlocks,
         extractCodeLinkBlocks,

@@ -90,8 +90,9 @@
     }
 
     // Section markup as pure strings over explicit inputs. The row items
-    // stay with the page (it owns `createAuthHistoryItemHTML`); the header
-    // template lives here so the Archived section reads as one owner piece.
+    // stay with the page (it composes `CuttleChatHistoryView` renderers);
+    // the header template lives here so the Archived section reads as one
+    // owner piece.
     // `toggleHandler` / `keyHandler` arrive as attribute strings from the
     // page (it owns the window-facing toggle names).
     function archivedSectionClassName(collapsed) {

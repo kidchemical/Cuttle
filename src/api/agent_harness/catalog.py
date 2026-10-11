@@ -188,6 +188,7 @@ def _manifest_from_dict(
         sticky=bool(data.get("sticky", True)),
         default_model=str(data.get("default_model") or "").strip(),
         smoke_model=str(data.get("smoke_model") or "").strip(),
+        background_text=dict(data.get("background_text") or {}),
         supports_model_pin=bool(data.get("supports_model_pin", True)),
         supports_effort=bool(data.get("supports_effort", True)),
         models=models,

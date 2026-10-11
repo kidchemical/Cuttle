@@ -1,4 +1,14 @@
-/* Shared redacted push-blocker report for Git UI, chat menu and action cards. */
+/* Shared redacted push-blocker report + git push menu/action family for the
+   Git UI, chat menu and action cards.
+
+   CuttleGitPushReport owns:
+     - render/show/fromAction: the redacted push-blocker report popup.
+     - create(host): one per chat frame. Owns the git push menu HTML/mode,
+       the repo cache (known/fetch), the multi-repo submenu, the push
+       confirm modal, and the push request itself. The page supplies project
+       identity, the pending-changes repo snapshot, DOM/toast/close effects
+       and the inline escape as an explicit host object.
+   ================================================================ */
 (function (root) {
     'use strict';
     const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g,
@@ -65,7 +75,427 @@
         }
         return '';
     }
-    const api = {render, show, fromAction};
+
+    /** Default inline escaper (the chat page injects its escapeHtmlInline). */
+    const escapeInline = value => String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+    /**
+     * Git push menu + action controller. One instance per chat frame.
+     *
+     * host: { getProjectPath(), getPendingRepos(), getCurrentProject(),
+     *         closeMenus(), toast(...args), closeToast(id),
+     *         escapeHtmlInline, document?, fetch? }
+     */
+    function create(host) {
+        host = host || {};
+        const doc = host.document || root.document;
+        const escapeHtmlInline = host.escapeHtmlInline || escapeInline;
+        const doFetch = host.fetch || (typeof root.fetch === 'function' ? root.fetch.bind(root) : null);
+
+        let pushInFlight = false;
+        let reposCache = { path: '', repos: [], at: 0 };
+
+        function getProjectPath() {
+            return host.getProjectPath ? String(host.getProjectPath() || '') : '';
+        }
+
+        /** Sync known repos for the current project (cache or pending-changes panel). */
+        function knownRepos() {
+            const path = getProjectPath();
+            if (!path) return null;
+            const now = Date.now();
+            if (
+                reposCache.path === path
+                && (now - reposCache.at) < 15000
+                && Array.isArray(reposCache.repos)
+            ) {
+                return reposCache.repos;
+            }
+            const fromPanel = host.getPendingRepos ? (host.getPendingRepos() || []) : [];
+            if (fromPanel.length) {
+                reposCache = { path, repos: fromPanel, at: now };
+                return fromPanel;
+            }
+            return null;
+        }
+
+        async function fetchRepos(force) {
+            const path = getProjectPath();
+            if (!path) return [];
+            if (!force) {
+                const known = knownRepos();
+                if (known) return known;
+            }
+            try {
+                const qs = new URLSearchParams();
+                qs.set('path', path);
+                const resp = await doFetch('/api/git/repos?' + qs.toString(), {
+                    credentials: 'include',
+                    cache: 'no-store',
+                });
+                const data = await resp.json().catch(() => null);
+                const repos = (data && data.success && Array.isArray(data.repos))
+                    ? data.repos
+                    : [];
+                reposCache = { path, repos, at: Date.now() };
+                return repos;
+            } catch (_) {
+                return reposCache.path === path ? (reposCache.repos || []) : [];
+            }
+        }
+
+        /** Caret / submenu only when the project has more than one git repo. */
+        function isMultiRepo(repos) {
+            return Array.isArray(repos) && repos.length > 1;
+        }
+
+        function applyMenuMode(wrap, multi) {
+            if (!wrap) return;
+            const trigger = wrap.querySelector('[data-git-push-trigger]');
+            if (!trigger) return;
+            let caret = trigger.querySelector('.chat-chrome-menu-caret');
+            if (multi) {
+                wrap.setAttribute('data-git-push-multi', '1');
+                trigger.setAttribute('aria-haspopup', 'true');
+                if (!caret) {
+                    caret = doc.createElement('span');
+                    caret.className = 'chat-chrome-menu-caret';
+                    caret.setAttribute('aria-hidden', 'true');
+                    caret.textContent = '▸';
+                    trigger.appendChild(caret);
+                }
+            } else {
+                wrap.removeAttribute('data-git-push-multi');
+                trigger.removeAttribute('aria-haspopup');
+                trigger.setAttribute('aria-expanded', 'false');
+                if (caret) caret.remove();
+                const submenu = wrap.querySelector('[data-git-push-submenu]');
+                if (submenu) {
+                    submenu.innerHTML = '';
+                    submenu.hidden = true;
+                }
+            }
+        }
+
+        function menuHtml(icons) {
+            const known = knownRepos();
+            const multi = isMultiRepo(known);
+            return (
+                '<div class="chat-chrome-menu-item-wrap is-git-push" data-git-push-wrap="1"'
+                + (multi ? ' data-git-push-multi="1"' : '')
+                + '>'
+                + '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
+                + ' title="Git push" aria-label="Git push"'
+                + (multi ? ' aria-haspopup="true" aria-expanded="false"' : '')
+                + ' data-git-push-trigger="1"'
+                + (pushInFlight ? ' aria-disabled="true"' : '')
+                + '>'
+                + icons.gitPush
+                + '<span class="chat-chrome-menu-item-label">Git push</span>'
+                + (multi
+                    ? '<span class="chat-chrome-menu-caret" aria-hidden="true">▸</span>'
+                    : '')
+                + '</button>'
+                + '<div class="chat-chrome-menu-submenu" data-git-push-submenu="1" hidden role="menu"></div>'
+                + '</div>'
+            );
+        }
+
+        /** After menu HTML lands, refresh repo count and show/hide the caret. */
+        function refreshMenuMode(rootEl) {
+            const wraps = rootEl
+                ? rootEl.querySelectorAll('[data-git-push-wrap]')
+                : doc.querySelectorAll('[data-git-push-wrap]');
+            if (!wraps.length) return;
+            const known = knownRepos();
+            if (known) {
+                const multi = isMultiRepo(known);
+                wraps.forEach((wrap) => applyMenuMode(wrap, multi));
+                return;
+            }
+            fetchRepos(false).then((repos) => {
+                const multi = isMultiRepo(repos);
+                wraps.forEach((wrap) => {
+                    if (!wrap.isConnected) return;
+                    applyMenuMode(wrap, multi);
+                });
+            }).catch(() => {});
+        }
+
+        function repoSubmenuHtml(repos) {
+            return repos.map((r) => {
+                const repoRoot = String(r.repo_root || '');
+                const label = escapeHtmlInline(String(r.label || repoRoot));
+                const branch = r.branch ? (' · ' + escapeHtmlInline(String(r.branch))) : '';
+                const enc = encodeURIComponent(repoRoot);
+                return (
+                    '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
+                    + ' data-git-push-repo="' + enc + '"'
+                    + ' title="' + label + '">'
+                    + '<span class="chat-chrome-menu-item-label">' + label + branch + '</span>'
+                    + '</button>'
+                );
+            }).join('');
+        }
+
+        async function openSubmenu(triggerBtn) {
+            const wrap = triggerBtn && triggerBtn.closest
+                ? triggerBtn.closest('[data-git-push-wrap]')
+                : null;
+            if (!wrap) return;
+            const submenu = wrap.querySelector('[data-git-push-submenu]');
+            if (!submenu) {
+                push();
+                return;
+            }
+
+            const pushFromRepos = (repos) => {
+                applyMenuMode(wrap, isMultiRepo(repos));
+                if (!repos.length) {
+                    push();
+                    return true;
+                }
+                if (repos.length === 1) {
+                    push(null, repos[0].repo_root);
+                    return true;
+                }
+                return false;
+            };
+
+            // Single-repo (or none): push immediately — no caret / submenu flash.
+            const known = knownRepos();
+            if (known && !isMultiRepo(known)) {
+                pushFromRepos(known);
+                return;
+            }
+
+            const opening = submenu.hidden;
+            doc.querySelectorAll('[data-git-push-submenu]').forEach((el) => {
+                if (el !== submenu) el.hidden = true;
+            });
+            doc.querySelectorAll('[data-git-push-trigger]').forEach((el) => {
+                el.setAttribute('aria-expanded', 'false');
+            });
+            if (!opening) {
+                submenu.hidden = true;
+                triggerBtn.setAttribute('aria-expanded', 'false');
+                return;
+            }
+
+            if (known && isMultiRepo(known)) {
+                applyMenuMode(wrap, true);
+                triggerBtn.setAttribute('aria-expanded', 'true');
+                submenu.innerHTML = repoSubmenuHtml(known);
+                submenu.hidden = false;
+                return;
+            }
+
+            submenu.innerHTML = '<div class="chat-chrome-menu-item is-muted">Loading repos…</div>';
+            submenu.hidden = false;
+            triggerBtn.setAttribute('aria-expanded', 'true');
+            const repos = await fetchRepos(true);
+            if (!submenu.isConnected) return;
+            if (pushFromRepos(repos)) {
+                submenu.innerHTML = '';
+                submenu.hidden = true;
+                triggerBtn.setAttribute('aria-expanded', 'false');
+                return;
+            }
+            applyMenuMode(wrap, true);
+            submenu.innerHTML = repoSubmenuHtml(repos);
+        }
+
+        let confirmResolve = null;
+
+        function confirmModalEl() {
+            return doc.getElementById('gitPushConfirmModal');
+        }
+
+        function closeConfirmModal(accepted) {
+            const modal = confirmModalEl();
+            if (modal) modal.hidden = true;
+            const fn = confirmResolve;
+            confirmResolve = null;
+            if (typeof fn === 'function') fn(!!accepted);
+        }
+
+        function confirmModal(message) {
+            return new Promise(function (resolve) {
+                const modal = confirmModalEl();
+                if (!modal) {
+                    resolve(false);
+                    return;
+                }
+                if (typeof confirmResolve === 'function') {
+                    confirmResolve(false);
+                }
+                confirmResolve = resolve;
+                const subtitle = doc.getElementById('gitPushConfirmSubtitle');
+                if (subtitle) subtitle.textContent = String(message || 'Are you sure you want to push?');
+                modal.hidden = false;
+                const cancel = doc.getElementById('gitPushConfirmCancel');
+                if (cancel) cancel.focus();
+            });
+        }
+
+        function setupConfirmModal() {
+            const modal = confirmModalEl();
+            if (!modal || modal.dataset.bound === '1') return;
+            modal.dataset.bound = '1';
+            const cancelBtn = doc.getElementById('gitPushConfirmCancel');
+            const acceptBtn = doc.getElementById('gitPushConfirmAccept');
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    closeConfirmModal(false);
+                });
+            }
+            if (acceptBtn) {
+                acceptBtn.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    closeConfirmModal(true);
+                });
+            }
+            modal.addEventListener('click', function (e) {
+                e.stopPropagation();
+                if (e.target === modal) closeConfirmModal(false);
+            });
+            doc.addEventListener('keydown', function (e) {
+                if (e.key !== 'Escape') return;
+                if (!modal || modal.hidden) return;
+                e.preventDefault();
+                closeConfirmModal(false);
+            });
+        }
+
+        async function push(event, repoRoot) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            if (host.closeMenus) host.closeMenus();
+            const toast = host.toast || function () {};
+            if (pushInFlight) {
+                toast('Git push already in progress…', 'info');
+                return;
+            }
+            const proj = host.getCurrentProject ? host.getCurrentProject() : null;
+            const path = proj && proj.path ? String(proj.path) : '';
+            const projectId = proj && proj.id != null ? proj.id : null;
+            if (!path && projectId == null) {
+                toast('No project selected', 'error');
+                return;
+            }
+
+            const repos = await fetchRepos(true);
+            const wantRoot = repoRoot ? String(repoRoot).replace(/\\/g, '/').toLowerCase() : '';
+            let info = null;
+            if (wantRoot && Array.isArray(repos)) {
+                info = repos.find(function (r) {
+                    const root = String((r && r.repo_root) || '').replace(/\\/g, '/').toLowerCase();
+                    return root === wantRoot;
+                }) || null;
+            }
+            if (!info && Array.isArray(repos) && repos.length === 1) info = repos[0];
+            const projectName = (proj && proj.name) ? String(proj.name) : 'this project';
+            const repoName = (info && (info.repo || info.label))
+                ? String(info.repo || info.label)
+                : 'the remote';
+            const remoteName = (info && info.remote) ? String(info.remote) : 'origin';
+            const branchName = (info && info.branch) ? String(info.branch) : 'HEAD';
+            const confirmMsg = 'Are you sure you want to push '
+                + projectName
+                + ' to '
+                + repoName
+                + ' '
+                + remoteName
+                + ' '
+                + branchName
+                + '?';
+            const accepted = await confirmModal(confirmMsg);
+            if (!accepted) return;
+
+            pushInFlight = true;
+            const name = projectName;
+            const repoLabel = repoRoot
+                ? String(repoRoot).replace(/\\/g, '/').split('/').filter(Boolean).pop()
+                : '';
+            const closePushProgress = function () {
+                try {
+                    if (host.closeToast) host.closeToast('git-push');
+                } catch (_) {}
+            };
+            toast('Pushing ' + (repoLabel || name) + '…', 'info', {
+                toastId: 'git-push',
+                sticky: true,
+                progress: true,
+                skipHistory: true
+            });
+            try {
+                const body = {};
+                if (path) body.path = path;
+                if (projectId != null) body.project_id = projectId;
+                if (repoRoot) body.repo_root = String(repoRoot);
+                const resp = await doFetch('/api/git/push', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok || !data.success) {
+                    if (data.push_report) show(data.push_report, {projectPath: path || data.repo_root, repoRoot: data.repo_root});
+                    let err = String(
+                        (data && (data.error || data.message))
+                        || ('Git push failed (' + resp.status + ')')
+                    ).trim();
+                    err = err.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || err;
+                    if (err.length > 220) err = err.slice(0, 217) + '…';
+                    closePushProgress();
+                    toast(err, 'error');
+                    return;
+                }
+                const branch = data.branch ? String(data.branch) : '';
+                const remote = data.remote ? String(data.remote) : '';
+                const output = String(data.output || '');
+                let okMsg = data.message || 'Push successful';
+                if (/everything up-to-date/i.test(output)) {
+                    okMsg = branch ? (branch + ' already up to date') : 'Already up to date';
+                } else if (branch && remote) {
+                    okMsg = 'Pushed ' + branch + ' → ' + remote;
+                } else if (branch) {
+                    okMsg = 'Pushed ' + branch;
+                }
+                // Single-repo projects don't need the repo prefix; the outcome
+                // reuses the progress toast id so it swaps in place (one toast,
+                // one history entry per push).
+                if (repoLabel && Array.isArray(repos) && repos.length > 1) okMsg = repoLabel + ': ' + okMsg;
+                closePushProgress();
+                toast(okMsg, 'success', { toastId: 'git-push' });
+            } catch (err) {
+                closePushProgress();
+                toast((err && err.message) || 'Git push failed', 'error');
+            } finally {
+                pushInFlight = false;
+            }
+        }
+
+        return {
+            menuHtml,
+            applyMenuMode,
+            refreshMenuMode,
+            openSubmenu,
+            isMultiRepo,
+            knownRepos,
+            fetchRepos,
+            push,
+            setupConfirmModal,
+        };
+    }
+
+    const api = {render, show, fromAction, create};
     root.CuttleGitPushReport = api;
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -100,7 +100,7 @@ public class EventStreamService extends Service {
                 JSONObject res = CuttleApi.poll(this, foreground ? 3 : 20);
                 int http = res.optInt("_http", 0);
                 if (http == 401) {
-                    promoteForeground("Wrong mobile token — set it in Server settings");
+                    promoteForeground("Mobile token mismatch — use the same token on the server and in Cuttle settings");
                     sleepQuiet(Math.min(15000, backoffMs));
                     backoffMs = Math.min(15000, backoffMs * 2);
                     continue;

@@ -174,7 +174,7 @@ def decide_regress(
     }
     try:
         c = client or get_client(timeout_s=10.0)
-        result = c.system_one(state, questions)
+        result = c.system_one(state, questions, task="jev:regress")
     except (JevError, Exception) as e:
         skip["reason"] = str(e)[:200]
         return skip

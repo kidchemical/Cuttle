@@ -97,6 +97,14 @@ const SLASH_COMMANDS = [
         controlCommand: true,
         keywords: 'restart flask daemon reload graceful when-idle force status',
     },
+    {
+        prefix: '/branch ',
+        label: 'Switch branch',
+        hint: 'Cuttle control: show, list, or switch the project git branch',
+        category: 'command',
+        controlCommand: true,
+        keywords: 'branch git checkout switch list status working',
+    },
     { prefix: '/help', label: 'Help', hint: 'Show command help', category: 'command' },
 ];
 

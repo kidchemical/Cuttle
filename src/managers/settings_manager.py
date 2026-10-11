@@ -8,6 +8,16 @@ import copy
 from pathlib import Path
 from typing import Optional, Dict, Any
 
+
+# Timeout policy bounds + defaults, shared by the manager resolver and the
+# settings route validator (one source of truth).
+TIMEOUT_MIN_SECONDS = 60
+TIMEOUT_MAX_SECONDS = 86400
+TIMEOUT_DEFAULTS = {
+    "agent_run_seconds": 3600,
+    "subagent_wait_seconds": 3600,
+}
+
 class SettingsManager:
     """Manages persistent application settings"""
     
@@ -102,6 +112,26 @@ class SettingsManager:
                     "ordered": [{"agent": "codex", "model": ""}]
                 },
             },
+            # Per-chat git worktrees (experimental). ``root`` empty means the
+            # built-in ``<home>/worktrees``; a configured root must be an
+            # absolute path on this host. ``previous_roots`` keeps old locations
+            # managed after the setting changes. Owner: api.worktrees.
+            "worktrees": {
+                "root": "",
+                "previous_roots": [],
+                "setup_hook_requires_auth": True,
+                "cleanup": "off",
+                "keep_when": "uncommitted-changes",
+                "branch_prefix": "cuttle",
+            },
+            # Agent/subagent run timeouts (seconds; surfaced in Settings →
+            # Agents). ``agent_run_seconds`` is the default per-turn harness
+            # cap (api.agent_harness.kernel). ``subagent_wait_seconds`` is the
+            # default ``--wait`` supervision deadline for ``api.subagents``.
+            "timeouts": {
+                "agent_run_seconds": 3600,
+                "subagent_wait_seconds": 3600,
+            },
             # Experimental feature flags: {flag_id: bool}. Owned by
             # api.experimental (registry + resolver live there); this key is
             # just the storage. Absent ids fall back to the registry default.
@@ -151,6 +181,23 @@ class SettingsManager:
         """
         self.reload()
         return copy.deepcopy(self.settings)
+
+    def get_timeouts(self) -> Dict[str, int]:
+        """Resolved timeout policy (seconds), clamped to the shared bounds.
+
+        One source for consumers: the harness run cap
+        (``api.agent_harness.kernel``) and the subagent ``--wait`` deadline
+        (``api.subagents``). Missing/invalid values fall back to the defaults.
+        """
+        raw = self.get_setting("timeouts") or {}
+        resolved: Dict[str, int] = {}
+        for key, fallback in TIMEOUT_DEFAULTS.items():
+            try:
+                value = int(raw.get(key))
+            except (TypeError, ValueError):
+                value = fallback
+            resolved[key] = max(TIMEOUT_MIN_SECONDS, min(TIMEOUT_MAX_SECONDS, value))
+        return resolved
 
     def get_channel_config(self, channel: str) -> Dict[str, Any]:
         """Get live Web Chat security configuration."""

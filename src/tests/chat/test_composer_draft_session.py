@@ -11,6 +11,7 @@ empty — that is the leak.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -22,6 +23,8 @@ node_only = pytest.mark.skipif(
 )
 
 CHAT_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
+SESSION_JS = CHAT_JS.parent / "chat_session.js"
+COMPOSER_JS = CHAT_JS.parent / "chat_composer.js"
 
 
 def _extract_range(src: str, start: str, end: str) -> str:
@@ -211,7 +214,13 @@ def test_switch_to_chat_without_draft_clears_composer(tmp_path):
     src = CHAT_JS.read_text(encoding="utf-8")
     helpers = _helpers_src(src)
     harness = (
-        _HARNESS.replace("__HELPERS__", helpers).replace("__CASES__", _DRIVER_CASES)
+        _HARNESS
+        .replace(
+            "const CuttleChatComposer = {draftChips: chips => chips.slice()};",
+            "const CuttleChatComposer = require(" + json.dumps(str(COMPOSER_JS)) + ");",
+        )
+        .replace("__HELPERS__", helpers)
+        .replace("__CASES__", _DRIVER_CASES)
     )
     driver = tmp_path / "composer-draft-session.js"
     driver.write_text(harness, encoding="utf-8")
@@ -231,8 +240,11 @@ def test_load_and_new_chat_force_restore_destination_draft():
     the textarea.
     """
     src = CHAT_JS.read_text(encoding="utf-8")
-    load_chunk = _fn_chunk(src, "async function loadChatSession", 25000)
-    create_chunk = _fn_chunk(src, "async function createNewChat", 4000)
+    # 3B step 3 moved loadChatSession, and step 4 moved createNewChat, into
+    # chat_session.js; assert the moved bodies on the owner, the splash path
+    # stays in the page.
+    load_chunk = _fn_chunk(SESSION_JS.read_text(encoding="utf-8"), "async function loadChatSession", 25000)
+    create_chunk = _fn_chunk(SESSION_JS.read_text(encoding="utf-8"), "async function createNewChat", 4000)
     splash_chunk = _fn_chunk(src, "function showWelcomeSplash", 1200)
 
     assert "restoreComposerDraft(" in load_chunk
@@ -264,3 +276,70 @@ def test_load_and_new_chat_force_restore_destination_draft():
     assert "force" in restore_body
     # Empty destination must clear the active field when forced.
     assert "el.value = text" in restore_body or 'el.value = text' in restore_body
+
+
+_OWNER_HARNESS = r"""
+const assert = require('assert');
+const A = require(process.env.MOD_JS);
+const out = {};
+
+// Draft key: named chat, shell-scoped 'new', empty/null fall back to scope.
+out.key101 = A.composerDraftKey('101', 'new');
+out.keyNew = A.composerDraftKey('new', 'new');
+out.keyScoped = A.composerDraftKey(null, 'new:pane1');
+out.keyEmptyId = A.composerDraftKey('', 'new');
+out.keyNumeric = A.composerDraftKey(202, 'new');
+
+// Save plan: whitespace removed, clip to cap, exact-cap kept.
+out.saveBlank = A.composerDraftSavePlan('   ', 50000);
+out.saveClip = A.composerDraftSavePlan('abcdef', 4);
+out.saveKeep = A.composerDraftSavePlan('  hi  ', 50000);
+out.saveExact = A.composerDraftSavePlan('abcd', 4);
+
+// Legacy claim predicate.
+out.claim = A.composerDraftLegacyClaim({ stored: null, keySid: 'new', newDraftId: 'new:pane1' });
+out.claimScoped = A.composerDraftLegacyClaim({ stored: null, keySid: 'new', newDraftId: 'new' });
+out.claimHasStored = A.composerDraftLegacyClaim({ stored: 'x', keySid: 'new', newDraftId: 'new:pane1' });
+out.claimSid = A.composerDraftLegacyClaim({ stored: null, keySid: '101', newDraftId: 'new:pane1' });
+
+// Restore decision: soft skip / soft no-op / force apply / soft apply.
+out.softNoClobber = A.composerDraftRestoreDecision({ force: false, currentValue: 'typed', text: '' });
+out.softSame = A.composerDraftRestoreDecision({ force: false, currentValue: 'x', text: 'x' });
+out.forceEmpty = A.composerDraftRestoreDecision({ force: true, currentValue: 'typed', text: '' });
+out.softApply = A.composerDraftRestoreDecision({ force: false, currentValue: '', text: 'saved' });
+
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@node_only
+def test_composer_draft_owner_decisions(tmp_path):
+    """The draft key/save/restore/claim decisions live in the owner module."""
+    import os as _os
+
+    driver = tmp_path / "composer-draft-owner.js"
+    driver.write_text(_OWNER_HARNESS, encoding="utf-8")
+    proc = subprocess.run(
+        ["node", str(driver)],
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
+        env={**_os.environ, "MOD_JS": str(COMPOSER_JS)},
+    )
+    assert proc.returncode == 0, proc.stderr + "\n" + proc.stdout
+    res = json.loads(proc.stdout)
+    assert res["key101"] == "cuttle.composerDraft.101"
+    assert res["keyNew"] == "cuttle.composerDraft.new"
+    assert res["keyScoped"] == "cuttle.composerDraft.new:pane1"
+    assert res["keyEmptyId"] == "cuttle.composerDraft.new"
+    assert res["keyNumeric"] == "cuttle.composerDraft.202"
+    assert res["saveBlank"] == {"remove": True}
+    assert res["saveClip"] == {"remove": False, "text": "abcd"}
+    assert res["saveKeep"] == {"remove": False, "text": "  hi  "}
+    assert res["saveExact"] == {"remove": False, "text": "abcd"}
+    assert res["claim"] is True
+    assert res["claimScoped"] is False
+    assert res["claimHasStored"] is False
+    assert res["claimSid"] is False
+    assert res["softNoClobber"] == {"apply": False, "unchanged": False}
+    assert res["softSame"] == {"apply": False, "unchanged": True}
+    assert res["forceEmpty"] == {"apply": True, "unchanged": False, "clearOther": True}
+    assert res["softApply"] == {"apply": True, "unchanged": False, "clearOther": True}

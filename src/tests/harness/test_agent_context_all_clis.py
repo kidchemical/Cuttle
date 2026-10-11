@@ -24,7 +24,9 @@ from scripts.utilities.cursor_cli_tool import (
 
 _REPO = Path(__file__).resolve().parents[3]
 _AGENTS_ROOT = _REPO / "src" / "api" / "agent_harness" / "agents"
-_CHAT_PAGE_JS = _REPO / "src" / "web" / "js" / "chat/chat_page.js"
+# Context gauge owner (moved out of chat_page.js in the monolith refactor;
+# the composer gauge agents list lives here now).
+_CONTEXT_GAUGE_JS = _REPO / "src" / "web" / "js" / "chat/chat_context_gauge.js"
 
 
 def _harness_agent_ids() -> List[str]:
@@ -38,7 +40,7 @@ def _harness_agent_ids() -> List[str]:
 
 
 def _parse_ui_context_gauge_agents() -> Set[str]:
-    text = _CHAT_PAGE_JS.read_text(encoding="utf-8", errors="replace")
+    text = _CONTEXT_GAUGE_JS.read_text(encoding="utf-8", errors="replace")
     m = re.search(
         r"CONTEXT_GAUGE_AGENTS\s*=\s*new\s+Set\(\[([^\]]*)\]\)",
         text,

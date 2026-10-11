@@ -396,6 +396,9 @@ def test_codex_model_slash_refresh(monkeypatch):
 def test_codex_model_palette_wired_into_chat_page():
     js = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
     text = js.read_text(encoding="utf-8")
+    # Slice 2A moved the model/effort palette builders into the
+    # CuttleChatAgentControls owner; assert across page + owner.
+    text += "\n" + (js.parent / "chat_agent_controls.js").read_text(encoding="utf-8") + "\n" + (js.parent / "chat_slash_palette.js").read_text(encoding="utf-8")
     assert "function buildCodexModelPaletteItems" in text
     assert ".concat(codexModels)" in text
     assert "cmd.category === 'codex-model'" in text
@@ -434,8 +437,10 @@ def test_codex_models_endpoints(tmp_path: Path, monkeypatch):
         )
         assert denied.status_code == 401  # pins require a signed-in caller
 
+        from api.agent_harness.agents.codex import routes as codex_routes
+
         monkeypatch.setattr(
-            w, "_require_session_actor",
+            codex_routes, "_require_session_actor",
             lambda session_id: ({"id": 1}, session_id, None),
         )
         listed = client.get("/api/codex/models?session=api-sess").get_json()

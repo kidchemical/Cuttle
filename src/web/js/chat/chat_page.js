@@ -347,8 +347,8 @@
     }
 
     function toggleCurrentChatStar(event) {
-        if (currentSessionId == null || currentSessionId === '') return;
-        return toggleStarChatSession(currentSessionId, event);
+        if (session.current() == null || session.current() === '') return;
+        return toggleStarChatSession(session.current(), event);
     }
 
     async function toggleCurrentChatStarFromMenu(event) {
@@ -368,7 +368,7 @@
         }
         if (sessionId == null || sessionId === '') return;
         markChatSessionUnread(sessionId, {manual: true});
-        if (currentSessionId != null && sessionIdsEqual(currentSessionId, sessionId)) {
+        if (session.current() != null && sessionIdsEqual(session.current(), sessionId)) {
             _manualUnreadHoldId = String(sessionId);
             // Title green dot until click/type; prefs flag survives leave → reopen.
             chatNeedsAck = true;
@@ -384,257 +384,57 @@
     }
 
     function markCurrentSessionUnreadFromMenu(event) {
-        if (currentSessionId == null || currentSessionId === '') return;
-        return markSessionUnreadManual(currentSessionId, event);
+        if (session.current() == null || session.current() === '') return;
+        return markSessionUnreadManual(session.current(), event);
     }
-
-    let _gitPushInFlight = false;
-    let _gitReposCache = { path: '', repos: [], at: 0 };
 
     function currentProjectPathKey() {
-        return CuttleChatProject.currentProjectPathKey(currentProject);
+        // Git/branch scope: the bound worktree checkout, else the project path.
+        return effectiveGitPath();
     }
 
-    /** Sync known repos for the current project (cache or pending-changes panel). */
-    function knownProjectGitRepos() {
-        const path = currentProjectPathKey();
-        if (!path) return null;
-        const now = Date.now();
-        if (
-            _gitReposCache.path === path
-            && (now - _gitReposCache.at) < 15000
-            && Array.isArray(_gitReposCache.repos)
-        ) {
-            return _gitReposCache.repos;
-        }
-        if (pendingChangesCtl && typeof pendingChangesCtl.getRepos === 'function') {
-            const fromPanel = pendingChangesCtl.getRepos() || [];
-            if (fromPanel.length) {
-                _gitReposCache = { path, repos: fromPanel, at: now };
-                return fromPanel;
+    // Git push menu + action owner: the menu HTML/mode, repo cache, multi-repo
+    // submenu, confirm modal and push transport live in git/git_push_report.js
+    // (CuttleGitPushReport). The page supplies project identity, the
+    // pending-changes repo snapshot and DOM/toast/close effects as explicit
+    // host capabilities; the inline-handler wiring below stays page-side.
+    const gitPush = CuttleGitPushReport.create({
+        getProjectPath: function () { return currentProjectPathKey(); },
+        getPendingRepos: function () {
+            if (pendingChangesCtl && typeof pendingChangesCtl.getRepos === 'function') {
+                return pendingChangesCtl.getRepos() || [];
             }
+            return [];
+        },
+        getCurrentProject: function () { return currentProject; },
+        closeMenus: function () { closeAllSessionMenus(); },
+        escapeHtmlInline: escapeHtmlInline,
+        toast: function () {
+            const t = window.showToast;
+            if (typeof t === 'function') return t.apply(window, arguments);
+        },
+        closeToast: function (id) {
+            if (typeof window.closeCuttleToast === 'function') window.closeCuttleToast(id);
+        },
+    });
+
+    // Branch shown on the segmented project chip (star | name | branch).
+    // Cache + fetch live in chat_chip_config.js (branchFor / refreshBranch).
+    function currentProjectBranch() {
+        if (currentCheckoutUid) {
+            const liveBranch = currentCheckoutPath && CuttleChipConfig.branchFor(currentCheckoutPath);
+            if (liveBranch) return liveBranch;
+            const branch = window.CuttleChatWorktrees
+                && window.CuttleChatWorktrees.branchForUid(currentCheckoutUid);
+            if (branch) return branch;
+            if (!currentCheckoutPath) return '';
         }
-        return null;
+        return CuttleChipConfig.branchFor(currentProjectPathKey());
     }
 
-    async function fetchProjectGitRepos(force) {
-        const path = currentProjectPathKey();
-        if (!path) return [];
-        if (!force) {
-            const known = knownProjectGitRepos();
-            if (known) return known;
-        }
-        try {
-            const qs = new URLSearchParams();
-            qs.set('path', path);
-            const resp = await fetch('/api/git/repos?' + qs.toString(), {
-                credentials: 'include',
-                cache: 'no-store',
-            });
-            const data = await resp.json().catch(() => null);
-            const repos = (data && data.success && Array.isArray(data.repos))
-                ? data.repos
-                : [];
-            _gitReposCache = { path, repos, at: Date.now() };
-            return repos;
-        } catch (_) {
-            return _gitReposCache.path === path ? (_gitReposCache.repos || []) : [];
-        }
-    }
-
-    async function pushCurrentChatProject(event, repoRoot) {
-        if (event) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
-        closeAllSessionMenus();
-        const toast = window.showToast || function () {};
-        if (_gitPushInFlight) {
-            toast('Git push already in progress…', 'info');
-            return;
-        }
-        const path = currentProject && currentProject.path
-            ? String(currentProject.path)
-            : '';
-        const projectId = currentProject && currentProject.id != null
-            ? currentProject.id
-            : null;
-        if (!path && projectId == null) {
-            toast('No project selected', 'error');
-            return;
-        }
-
-        const repos = await fetchProjectGitRepos(true);
-        const wantRoot = repoRoot ? String(repoRoot).replace(/\\/g, '/').toLowerCase() : '';
-        let info = null;
-        if (wantRoot && Array.isArray(repos)) {
-            info = repos.find(function (r) {
-                const root = String((r && r.repo_root) || '').replace(/\\/g, '/').toLowerCase();
-                return root === wantRoot;
-            }) || null;
-        }
-        if (!info && Array.isArray(repos) && repos.length === 1) info = repos[0];
-        const projectName = (currentProject && currentProject.name)
-            ? String(currentProject.name)
-            : 'this project';
-        const repoName = (info && (info.repo || info.label))
-            ? String(info.repo || info.label)
-            : 'the remote';
-        const remoteName = (info && info.remote) ? String(info.remote) : 'origin';
-        const branchName = (info && info.branch) ? String(info.branch) : 'HEAD';
-        const confirmMsg = 'Are you sure you want to push '
-            + projectName
-            + ' to '
-            + repoName
-            + ' '
-            + remoteName
-            + ' '
-            + branchName
-            + '?';
-        const accepted = await confirmGitPushModal(confirmMsg);
-        if (!accepted) return;
-
-        _gitPushInFlight = true;
-        const name = projectName;
-        const repoLabel = repoRoot
-            ? String(repoRoot).replace(/\\/g, '/').split('/').filter(Boolean).pop()
-            : '';
-        const closePushProgress = function () {
-            try {
-                if (typeof window.closeCuttleToast === 'function') window.closeCuttleToast('git-push');
-            } catch (_) {}
-        };
-        toast('Pushing ' + (repoLabel || name) + '…', 'info', {
-            toastId: 'git-push',
-            sticky: true,
-            progress: true,
-            skipHistory: true
-        });
-        try {
-            const body = {};
-            if (path) body.path = path;
-            if (projectId != null) body.project_id = projectId;
-            if (repoRoot) body.repo_root = String(repoRoot);
-            const resp = await fetch('/api/git/push', {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            const data = await resp.json().catch(() => ({}));
-            if (!resp.ok || !data.success) {
-                if (data.push_report && window.CuttleGitPushReport) window.CuttleGitPushReport.show(data.push_report, {projectPath: path || data.repo_root, repoRoot: data.repo_root});
-                let err = String(
-                    (data && (data.error || data.message))
-                    || ('Git push failed (' + resp.status + ')')
-                ).trim();
-                err = err.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || err;
-                if (err.length > 220) err = err.slice(0, 217) + '…';
-                closePushProgress();
-                toast(err, 'error');
-                return;
-            }
-            const branch = data.branch ? String(data.branch) : '';
-            const remote = data.remote ? String(data.remote) : '';
-            const output = String(data.output || '');
-            let okMsg = data.message || 'Push successful';
-            if (/everything up-to-date/i.test(output)) {
-                okMsg = branch ? (branch + ' already up to date') : 'Already up to date';
-            } else if (branch && remote) {
-                okMsg = 'Pushed ' + branch + ' → ' + remote;
-            } else if (branch) {
-                okMsg = 'Pushed ' + branch;
-            }
-            // Single-repo projects don't need the repo prefix; the outcome
-            // reuses the progress toast id so it swaps in place (one toast,
-            // one history entry per push).
-            if (repoLabel && Array.isArray(repos) && repos.length > 1) okMsg = repoLabel + ': ' + okMsg;
-            closePushProgress();
-            toast(okMsg, 'success', { toastId: 'git-push' });
-        } catch (err) {
-            closePushProgress();
-            toast((err && err.message) || 'Git push failed', 'error');
-        } finally {
-            _gitPushInFlight = false;
-        }
-    }
-
-    /** Caret / submenu only when the project has more than one git repo. */
-    function gitPushIsMultiRepo(repos) {
-        return Array.isArray(repos) && repos.length > 1;
-    }
-
-    function applyGitPushMenuMode(wrap, multi) {
-        if (!wrap) return;
-        const trigger = wrap.querySelector('[data-git-push-trigger]');
-        if (!trigger) return;
-        let caret = trigger.querySelector('.chat-chrome-menu-caret');
-        if (multi) {
-            wrap.setAttribute('data-git-push-multi', '1');
-            trigger.setAttribute('aria-haspopup', 'true');
-            if (!caret) {
-                caret = document.createElement('span');
-                caret.className = 'chat-chrome-menu-caret';
-                caret.setAttribute('aria-hidden', 'true');
-                caret.textContent = '▸';
-                trigger.appendChild(caret);
-            }
-        } else {
-            wrap.removeAttribute('data-git-push-multi');
-            trigger.removeAttribute('aria-haspopup');
-            trigger.setAttribute('aria-expanded', 'false');
-            if (caret) caret.remove();
-            const submenu = wrap.querySelector('[data-git-push-submenu]');
-            if (submenu) {
-                submenu.innerHTML = '';
-                submenu.hidden = true;
-            }
-        }
-    }
-
-    function gitPushMenuHtml(icons) {
-        const known = knownProjectGitRepos();
-        const multi = gitPushIsMultiRepo(known);
-        return (
-            '<div class="chat-chrome-menu-item-wrap is-git-push" data-git-push-wrap="1"'
-            + (multi ? ' data-git-push-multi="1"' : '')
-            + '>'
-            + '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-            + ' title="Git push" aria-label="Git push"'
-            + (multi ? ' aria-haspopup="true" aria-expanded="false"' : '')
-            + ' data-git-push-trigger="1"'
-            + (_gitPushInFlight ? ' aria-disabled="true"' : '')
-            + '>'
-            + icons.gitPush
-            + '<span class="chat-chrome-menu-item-label">Git push</span>'
-            + (multi
-                ? '<span class="chat-chrome-menu-caret" aria-hidden="true">▸</span>'
-                : '')
-            + '</button>'
-            + '<div class="chat-chrome-menu-submenu" data-git-push-submenu="1" hidden role="menu"></div>'
-            + '</div>'
-        );
-    }
-
-    /** After menu HTML lands, refresh repo count and show/hide the caret. */
-    function refreshGitPushMenuMode(rootEl) {
-        const wraps = rootEl
-            ? rootEl.querySelectorAll('[data-git-push-wrap]')
-            : document.querySelectorAll('[data-git-push-wrap]');
-        if (!wraps.length) return;
-        const known = knownProjectGitRepos();
-        if (known) {
-            const multi = gitPushIsMultiRepo(known);
-            wraps.forEach((wrap) => applyGitPushMenuMode(wrap, multi));
-            return;
-        }
-        fetchProjectGitRepos(false).then((repos) => {
-            const multi = gitPushIsMultiRepo(repos);
-            wraps.forEach((wrap) => {
-                if (!wrap.isConnected) return;
-                applyGitPushMenuMode(wrap, multi);
-            });
-        }).catch(() => {});
+    /** Refresh the project chip branch (cached ~15s). Re-renders when it changes. */
+    function refreshProjectBranch(force) {
+        return CuttleChipConfig.refreshBranch(currentProjectPathKey(), renderProjectChips, force);
     }
 
     function copyTextToClipboard(text) {
@@ -678,14 +478,18 @@
     }
 
     async function copyChatIdBadge() {
-        return copyChatSessionId(currentSessionId, null);
+        return copyChatSessionId(session.current(), null);
     }
 
     // State Management
-    let currentSessionId = null;
+    // Session identity and its navigation sequence are owned by
+    // chat_session.js (CuttleChatSession) — the only writer. Reads go through
+    // session.current(); every identity change goes through
+    // session.open/adopt/create. See chat_session.js.
+    const session = CuttleChatSession.create();
     if (window.CuttleChatVfx) {
         const vfxController = window.CuttleChatVfx.create({
-            getSessionId: () => currentSessionId,
+            getSessionId: () => session.current(),
             fetch: window.fetch.bind(window), now: Date.now,
             setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window),
             confetti: window.CuttleChatVfx.confetti,
@@ -694,13 +498,6 @@
         window.addEventListener('pagehide', event => { if (!event.persisted) vfxController.dispose(); });
     }
 
-    /** Distance from the bottom that still counts as following the conversation. */
-    const AUTOSCROLL_STICK_PX = 120;
-    /** Sticky follow: measured on user scroll, not after we insert a tall bubble. */
-    let chatPinnedToBottom = true;
-    let _ignoreChatScrollPinUntil = 0;
-    /** Blocks autoScroll-to-bottom while a CH-…-N deep-link jump settles. */
-    let _suppressAutoScrollUntil = 0;
     /**
      * In-session attention (title unread + jump glow). Separate from history
      * hasUnread: stays until the user scrolls to the new content and/or clicks
@@ -713,10 +510,6 @@
     /** Once true for this open session, new bottom-pinned replies won't re-nag the title. */
     let chatViewportActivated = true;
     let _suppressChatAttention = 0;
-    /** Right-side message nav (numbered circles) — same sticky-follow behavior, don't steal hover/scroll. */
-    let messageNavPinnedToBottom = true;
-    let _ignoreNavScrollPinUntil = 0;
-    const NAV_AUTOSCROLL_STICK_PX = 24;
     // Busy-generation lock { loading, localSessionId, seq }, owned by
     // chat_generation.js. Exactly one instance; all transitions go through
     // CuttleChatGeneration (token-scoped release) — never direct writes.
@@ -734,8 +527,10 @@
     let deferOpenChatGeneratingFromSessions = false;
     let agentName = 'Cuttle';
     let currentAgentIdentity = { displayName: '', avatar: '', profileId: '', parentSessionId: null, origin: '' };
-    let _subagentOrbList = [];
     let currentProject = null;
+    // Bound worktree checkout for this chat (experimental). '' = Local/primary.
+    let currentCheckoutUid = '';
+    let currentCheckoutPath = '';
     /** Project fields from the last /messages load — used when the sessions list is empty or stale. */
     let lastHydratedSessionProject = null;
     let projects = [];
@@ -744,7 +539,7 @@
 
     const chatWidgetsCtrl = (window.CuttleTaskGizmos && typeof window.CuttleTaskGizmos.create === 'function')
         ? window.CuttleTaskGizmos.create({
-            getSessionId: function () { return currentSessionId; },
+            getSessionId: function () { return session.current(); },
             getProjectPath: function () {
                 return (currentProject && currentProject.path) ? String(currentProject.path) : '';
             },
@@ -784,7 +579,13 @@
     // Message-sync claim lifetime, owned by CuttleChatGeneration (D2b):
     // one page-held state; claim, current-token test, and token-scoped
     // finish all go through the owner. Navigation fencing still uses the
-    // existing _loadSessionSeq captured per sync below.
+    // existing navigation sequence captured per sync below.
+    // 3C (message sync) KEPT page-side after the post-3B review: session
+    // identity is owned by chat_session.js and every sync decision already
+    // has an owner (cadence + claim/replacement in chat_generation.js,
+    // replay classification in chat_pending_result.js, windowing/page-meta
+    // in chat_messages.js). Only the timer handle + DOM reconciliation
+    // effects remain, which the page owns; see monolith-refactor-plan.md §3C.
     const messageSync = CuttleChatGeneration.createSyncState();
     // Stop/cancel lifecycle flags { userStopped, abortSuppressed,
     // waitingSuppressed }, owned by chat_stop_state.js. One instance;
@@ -816,34 +617,72 @@
     let inFlightUserMessage = null;
 
     // Follow-up queue while a reply is generating. On idle, the whole queue is
-    // combined into one agent turn (not drained one-by-one).
-    // Follow-up queue contents + persistence/take flags, owned by
-    // chat_followup_queue.js (composes chat_activity.js item decisions).
-    // followupDrainTimer stays here: raw timer handle for the scheduler.
-    let followupQueue = CuttleFollowupQueue.createQueueState();
-    const followupQueues = CuttleFollowupQueue.createRegistry((key) => getSessionPrefs(key)?.[followupWriteField]);
-    function adoptFollowupQueue(sessionId, opts = {}) {
-        followupQueue = followupQueues.adopt(String(canonicalizeChatSessionId(sessionId) || 'new'), followupQueue, !!opts.transfer);
-        editingFollowupId = null;
-        if (opts.transfer && followupQueue.items.length && isAuthMode()) {
-            persistFollowupPut(toAuthDbSessionId(sessionId), followupQueue);
+    // combined into one agent turn (not drained one-by-one). Queue state, the
+    // edit state machine and the enqueue/pause/resume/take/drain/steer
+    // transitions are owned by chat_followup_queue.js (createController); the
+    // page supplies transport, persistence, DOM render and timers via the host.
+    // Built lazily so page constants declared later are initialized.
+    let _followupController = null;
+    function followupController() {
+        if (!_followupController) {
+            _followupController = CuttleFollowupQueue.createController({
+                activity: CuttleChatActivity,
+                clock: { now: () => Date.now(), rand: () => Math.random() },
+                sessionIdsEqual: sessionIdsEqual,
+                canonicalizeSessionId: (id) => canonicalizeChatSessionId(id),
+                toAuthDbSessionId: (id) => toAuthDbSessionId(id),
+                currentSession: () => session.current(),
+                isAuthMode: isAuthMode,
+                isSessionGenerating: isSessionGenerating,
+                healStaleGenerating: healStaleGeneratingState,
+                followupAuthSid: followupAuthSid,
+                getPrefs: (sid) => getSessionPrefs(sid),
+                setPrefs: (sid, patch) => updateSessionPrefs(sid, patch),
+                writeField: () => followupWriteField,
+                claimField: () => followupClaimField,
+                restoreQueue: (key) => getSessionPrefs(key)?.[followupWriteField],
+                serializeMutation: (key, fn) => sessionMutations.enqueue(key, fn),
+                putFollowups: (sid, body) => followupPutRequest(sid, body),
+                takeFollowups: (sid, body) => followupTakeRequest(sid, body),
+                steer: (sid, text) => followupSteerRequest(sid, text),
+                render: renderFollowupQueue,
+                patchLiveSession: patchLiveSessionFollowupQueue,
+                broadcastActivity: () => scheduleChatActivityBroadcast(),
+                showChatArea: showFollowupChatArea,
+                addUserMessage: (text, opts) => addMessageToUI(text, 'user', opts),
+                autoScroll: () => transcriptNav.autoScrollChatToBottom(true),
+                saveUserMessage: (text, opts) => saveChatSession(text, 'user', opts),
+                recordPromptHistory: recordPromptHistory,
+                processMessage: processMessage,
+                toast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+                steerLabel: (agent) => ({ codex: 'Codex', muse: 'Muse Code' })[agent],
+                setTimeout: (fn, ms) => setTimeout(fn, ms),
+                clearTimeout: (id) => clearTimeout(id),
+                formatWithAttachments: formatMessageWithAttachments,
+                stickyPrefixFor: (raw) => {
+                    const sticky = getStickySlashCommandFromMessage(raw);
+                    return sticky ? sticky.prefix : '';
+                },
+            });
         }
+        return _followupController;
     }
-
-    let followupDrainTimer = null;
+    function adoptFollowupQueue(sessionId, opts = {}) {
+        followupController().adopt(sessionId, opts);
+    }
     /** Uploaded file refs awaiting the next send: {filename, path, mime, size?} */
     let pendingAttachments = [];
     function _pendingKey(sid) { return `cuttle.pendingAttachments.${sid || 'anon'}`; }
     function _savePendingAttachments() {
         try {
-            if (!currentSessionId) return;
-            localStorage.setItem(_pendingKey(currentSessionId), JSON.stringify(pendingAttachments));
+            if (!session.current()) return;
+            localStorage.setItem(_pendingKey(session.current()), JSON.stringify(pendingAttachments));
         } catch {}
     }
     function _restorePendingAttachments() {
         try {
-            if (!currentSessionId) return;
-            const raw = localStorage.getItem(_pendingKey(currentSessionId));
+            if (!session.current()) return;
+            const raw = localStorage.getItem(_pendingKey(session.current()));
             if (raw) pendingAttachments = JSON.parse(raw) || [];
         } catch {}
         renderAttachmentChips();
@@ -869,9 +708,9 @@
 
     const COMPOSER_DRAFT_MAX = 50000;
     let composerDraftControlsReady = false;
+    // Owned by chat_composer.js — shell-scoped `new` draft id in, key out.
     function _draftKey(sid) {
-        const key = sid != null && sid !== '' && sid !== 'new' ? sid : newComposerDraftId;
-        return `cuttle.composerDraft.${key}`;
+        return CuttleChatComposer.composerDraftKey(sid, newComposerDraftId);
     }
     function _activeComposerTextarea() {
         const welcome = document.getElementById('welcomeScreen');
@@ -897,14 +736,17 @@
 
     function restoreComposerDraftControls(sid) {
         const prefs = getSessionPrefs(sid === 'new' ? newComposerPrefsId : sid);
-        const draft = prefs && prefs.composerDraft;
-        if (!draft) return;
-        const chips = CuttleChatComposer.draftChips(draft.chips);
-        Object.assign(slashPaletteSupplement, CuttleChatAgentModel.draftSupplementPatch(draft.pins));
-        const cursorModel = chips.find((c) => c.category === 'cursor-model');
-        if (cursorModel) {
-            slashPaletteSupplement.preferredModel = cursorModel.modelId
-                || cursorModel.prefix.replace(/^\/model\s+/i, '').trim();
+        // Owned by chat_composer.js — prefs snapshot in, chips/pins out.
+        const plan = CuttleChatComposer.composerDraftRestorePlan(
+            prefs && prefs.composerDraft,
+            { draftChips: CuttleChatComposer.draftChips }
+        );
+        if (!plan) return;
+        const chips = plan.chips;
+        Object.assign(slashPaletteSupplement, CuttleChatAgentModel.draftSupplementPatch(plan.pins));
+        if (plan.cursorModel) {
+            slashPaletteSupplement.preferredModel = plan.cursorModel.modelId
+                || plan.cursorModel.prefix.replace(/^\/model\s+/i, '').trim();
             beginSupplementFetch('cursorModelsGen');
         }
         slashCtx.welcome.chips = chips.slice();
@@ -912,28 +754,28 @@
     }
 
     function saveComposerDraft(sid, composerKey) {
-        const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
+        const keySid = sid != null && sid !== '' ? sid : (session.current() || 'new');
         saveComposerDraftControls(keySid, composerKey);
         try {
-            const text = _readComposerDraftText();
-            if (!text.trim()) {
-                localStorage.removeItem(_draftKey(keySid));
+            // Owned by chat_composer.js — whitespace/empty + clip decision.
+            const plan = CuttleChatComposer.composerDraftSavePlan(
+                _readComposerDraftText(), COMPOSER_DRAFT_MAX);
+            const key = _draftKey(keySid);
+            if (plan.remove) {
+                localStorage.removeItem(key);
                 return;
             }
-            const clipped = text.length > COMPOSER_DRAFT_MAX
-                ? text.slice(0, COMPOSER_DRAFT_MAX)
-                : text;
-            localStorage.setItem(_draftKey(keySid), clipped);
+            localStorage.setItem(key, plan.text);
         } catch (_) {}
     }
     function clearComposerDraft(sid) {
-        const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
+        const keySid = sid != null && sid !== '' ? sid : (session.current() || 'new');
         try { localStorage.removeItem(_draftKey(keySid)); } catch (_) {}
         updateSessionPrefs(keySid === 'new' ? newComposerPrefsId : keySid, { composerDraft: null });
     }
     function restoreComposerDraft(sid, opts = {}) {
         const force = !!(opts && opts.force);
-        const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
+        const keySid = sid != null && sid !== '' ? sid : (session.current() || 'new');
         restoreComposerDraftControls(keySid);
         composerDraftControlsReady = true;
         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
@@ -943,7 +785,10 @@
             const key = _draftKey(keySid);
             let stored = localStorage.getItem(key);
             // Claim the legacy shared welcome draft once on its first restore.
-            if (stored == null && keySid === 'new' && newComposerDraftId !== 'new') {
+            // Owned by chat_composer.js — claim predicate.
+            if (CuttleChatComposer.composerDraftLegacyClaim({
+                stored, keySid, newDraftId: newComposerDraftId,
+            })) {
                 stored = localStorage.getItem('cuttle.composerDraft.new');
                 if (stored != null) {
                     localStorage.setItem(key, stored);
@@ -961,17 +806,24 @@
         // Soft restore (boot race): don't clobber text the user already typed
         // this tick when the stored draft is empty. Session switch / New Chat
         // pass force:true so an empty destination clears leftover text.
-        if (!force && String(el.value || '').trim() && !text) return;
-        if (!force && String(el.value || '') === text) {
-            if (welcomeOn) autoResizeWelcomeTextarea();
-            else autoResizeTextarea();
+        // Owned by chat_composer.js — restore decision.
+        const decision = CuttleChatComposer.composerDraftRestoreDecision({
+            force, currentValue: el.value, text,
+        });
+        if (!decision.apply) {
+            if (decision.unchanged) {
+                if (welcomeOn) autoResizeWelcomeTextarea();
+                else autoResizeTextarea();
+            }
             return;
         }
         el.value = text;
         // Clear the inactive composer so prior-session text cannot leak when
         // the splash and bottom dock swap.
-        const other = welcomeOn ? chatEl : welcomeEl;
-        if (other && other !== el) other.value = '';
+        if (decision.clearOther) {
+            const other = welcomeOn ? chatEl : welcomeEl;
+            if (other && other !== el) other.value = '';
+        }
         try {
             if (welcomeOn) autoResizeWelcomeTextarea();
             else autoResizeTextarea();
@@ -1003,8 +855,8 @@
     function isSessionGenerating() {
         if (isLoadingThisSession()) return true;
         if (document.getElementById('typing-indicator-remote')) return true;
-        if (currentSessionId == null) return false;
-        return [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId));
+        if (session.current() == null) return false;
+        return [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current()));
     }
 
     /** Welcome splash composer — processMessage disables it for first-turn-only. */
@@ -1076,7 +928,7 @@
             // processMessage's pending waiter exits on suppress/nav-gen; poll in
             // the background so a real finish still chirps (without the old
             // false "painted" shortcut that fired on switch).
-            watchDetachedSessionForCompletion(keepRunningId);
+            recoveryController().watchDetachedSessionForCompletion(keepRunningId);
         }
         if (messageSyncTimer) scheduleNextMessageSync();
         inFlightUserMessage = null;
@@ -1281,7 +1133,7 @@
                 contentEl.innerHTML = formatMessage(display);
                 try { activateEnhancements(el); } catch (_) {}
             }
-            autoScrollChatToBottom();
+            transcriptNav.autoScrollChatToBottom();
         }
         const statusHeader = el.querySelector('.message-header-row');
         if (statusHeader) {
@@ -1319,11 +1171,11 @@
                 if (chipMeta && Array.isArray(chipMeta.chips) && chipMeta.chips[0]) {
                     agentHint = chipMeta.chips[0].prefix || chipMeta.chips[0].meta || '';
                 }
-                noteUsageForContextGauge(usage, agentHint || stickyContextGaugeAgentId());
+                contextGauge.noteUsage(usage, agentHint || contextGauge.stickyAgentId());
             } catch (_) {}
         }
         if (meta.subagents) {
-            try { mountSubagentLaunchers(el, meta.subagents); } catch (_) {}
+            try { subagentLaunchers.mount(el, meta.subagents); } catch (_) {}
         }
         return el;
     }
@@ -1348,9 +1200,9 @@
             hasTrackedTurn: !!inFlightUserMessage,
             replyOnScreen: turnAlreadyShowsAssistantReply(),
             hasRemoteWait: !!document.getElementById('typing-indicator-remote'),
-            sessionRunning: currentSessionId != null
-                && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId)),
-            queueLength: followupQueue.items.length,
+            sessionRunning: session.current() != null
+                && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current())),
+            queueLength: followupController().getState().items.length,
         });
         if (decision.kind === 'finish') {
             finishLocalStreamFromServerSync();
@@ -1358,7 +1210,7 @@
         }
         if (decision.kind === 'clear-remote') {
             removeRemoteWaitingIndicator();
-            if (currentSessionId) setHistorySessionRunning(currentSessionId, false);
+            if (session.current()) setHistorySessionRunning(session.current(), false);
             const stopButton = document.getElementById('stopButton');
             if (stopButton) {
                 stopButton.disabled = true;
@@ -1451,16 +1303,17 @@
     }
 
     function clearPendingAttachments() {
-        const sid = currentSessionId;
+        const sid = session.current();
         pendingAttachments = [];
         if (sid) _clearPersistedPending(sid);
         renderAttachmentChips();
     }
 
     function takePendingAttachments() {
-        const copy = pendingAttachments.slice();
+        // Owned by chat_attachments.js — copy-then-clear decision.
+        const plan = CuttleChatAttachments.takePendingAttachments(pendingAttachments);
         clearPendingAttachments();
-        return copy;
+        return plan.taken;
     }
 
     // Owned by chat_attachments.js — thin adapter.
@@ -1493,7 +1346,7 @@
     function inferAttachmentsFromContent(content) {
         return CuttleChatAttachments.inferAttachmentsFromContent({
             content,
-            sessionId: currentSessionId,
+            sessionId: session.current(),
         });
     }
 
@@ -1511,7 +1364,7 @@
                     '" data-kind="image" data-title="' +
                     name +
                     '" data-download="' +
-                    escapeHtmlInline(mediaDownloadUrl(url)).replace(/"/g, '&quot;') +
+                    escapeHtmlInline(CuttleChatMedia.mediaDownloadUrl(url)).replace(/"/g, '&quot;') +
                     '" title="' +
                     name +
                     '">' +
@@ -1559,7 +1412,7 @@
         const files = Array.from(fileList || []).filter(Boolean);
         if (!files.length) return;
         const form = new FormData();
-        form.append('session_id', authSessionIdForRequest() || currentSessionId || 'anon');
+        form.append('session_id', authSessionIdForRequest() || session.current() || 'anon');
         for (const f of files) form.append('files', f, f.name);
         const resp = await fetch('/api/upload', {
             method: 'POST',
@@ -1611,7 +1464,7 @@
     }
 
     /** Wand button state per composer: lets a second click undo the rewrite. */
-    const enhanceState = { chat: null, welcome: null };
+    const enhanceState = CuttleChatComposer.createEnhanceState();
     let enhanceInFlight = false;
 
     function recentMessagesForEnhance(limit = 4) {
@@ -1632,13 +1485,17 @@
     }
 
     async function enhanceComposerPrompt(key, btn, textarea) {
-        if (enhanceInFlight) return;
         const toast = window.showToast || function () {};
-        const state = enhanceState[key];
-        const current = textarea.value || '';
+        // Owned by chat_composer.js — click decision (busy / revert / empty / request).
+        const click = CuttleChatComposer.enhanceClickPlan({
+            state: enhanceState[key],
+            currentValue: textarea.value,
+            inFlight: enhanceInFlight,
+        });
+        if (click.action === 'busy') return;
 
-        if (state && current === state.enhanced) {
-            textarea.value = state.original;
+        if (click.action === 'revert') {
+            textarea.value = click.text;
             enhanceState[key] = null;
             btn.classList.remove('is-enhanced');
             btn.title = 'Enhance prompt (rewrite with AI)';
@@ -1649,13 +1506,14 @@
             return;
         }
 
-        const prompt = current.trim();
-        if (!prompt) {
+        if (click.action === 'empty') {
             toast('Type a prompt first', 'info');
             textarea.focus();
             return;
         }
 
+        const current = textarea.value || '';
+        const prompt = click.prompt;
         enhanceInFlight = true;
         btn.classList.add('is-busy');
         btn.disabled = true;
@@ -1664,11 +1522,11 @@
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+                body: JSON.stringify(CuttleChatComposer.enhanceRequestPayload({
                     prompt,
-                    project: (currentProject && currentProject.name) || '',
+                    projectName: (currentProject && currentProject.name) || '',
                     context: recentMessagesForEnhance(),
-                }),
+                })),
             });
             let data = null;
             try {
@@ -1676,16 +1534,22 @@
             } catch (_) {
                 data = null;
             }
-            if (!resp.ok || !data || !data.success) {
-                const err = (data && data.error) || `Enhance failed (HTTP ${resp.status})`;
-                toast(err, 'error');
+            // Owned by chat_composer.js — response decision (error / no-change / apply).
+            const plan = CuttleChatComposer.enhanceResponsePlan({
+                ok: resp.ok,
+                status: resp.status,
+                data,
+                originalPrompt: prompt,
+            });
+            if (plan.action === 'error') {
+                toast(plan.error, 'error');
                 return;
             }
-            const enhanced = String(data.prompt || '').trim();
-            if (!enhanced || data.unchanged || enhanced === prompt) {
+            if (plan.action === 'no-change') {
                 toast('Prompt already looks clear', 'info');
                 return;
             }
+            const enhanced = plan.enhanced;
             enhanceState[key] = { original: current, enhanced };
             textarea.value = enhanced;
             btn.classList.add('is-enhanced');
@@ -1693,7 +1557,7 @@
             if (key === 'chat') autoResizeTextarea(); else autoResizeWelcomeTextarea();
             textarea.focus();
             textarea.setSelectionRange(enhanced.length, enhanced.length);
-            toast(`Prompt enhanced${data.source ? ' (' + data.source + ')' : ''} — click the wand to undo`, 'success');
+            toast(`Prompt enhanced${plan.source ? ' (' + plan.source + ')' : ''} — click the wand to undo`, 'success');
         } catch (e) {
             toast(`Enhance failed: ${e && e.message ? e.message : e}`, 'error');
         } finally {
@@ -1718,8 +1582,8 @@
             });
             // Editing after a rewrite means the undo target is stale.
             textarea.addEventListener('input', () => {
-                const state = enhanceState[key];
-                if (state && textarea.value !== state.enhanced) {
+                // Owned by chat_composer.js — undo staleness decision.
+                if (CuttleChatComposer.enhanceInputInvalidated(enhanceState[key], textarea.value)) {
                     enhanceState[key] = null;
                     btn.classList.remove('is-enhanced');
                     btn.title = 'Enhance prompt (rewrite with AI)';
@@ -1752,6 +1616,8 @@
 
     const sessionPrefsStore = CuttleSessionPrefs.create(localStorage);
     const sessionMutations = CuttleChatMutations.create();
+    // Server attention persistence + history/title DOM projection. The page
+    // injects its capabilities; the controller never reads page globals.
     const serverAttention = CuttleChatAttention.create({
         prefs: sessionPrefsStore,
         id: () => Date.now() + ':' + Math.random().toString(36).slice(2),
@@ -1764,6 +1630,30 @@
             return response.json();
         },
         changed: () => { syncHistoryUnreadIndicators(); scheduleChatActivityBroadcast(); },
+        // ---- history/title projection capabilities ----
+        doc: document,
+        escapeHtmlInline,
+        sessionIdsEqual,
+        openPaneSnapshot: () => localOpenPanes,
+        sessionObjFor: (sid) => {
+            if (isAuthMode()) return findAuthServerSession(sid);
+            try {
+                const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
+                return sessions[sid] || null;
+            } catch (_) {
+                return null;
+            }
+        },
+        attentionKindFor: (sid, sessionObj) => sessionHistoryAttentionKind(sid, sessionObj),
+        sessionShowsHistorySpinner: (sid) => sessionShowsHistorySpinner(sid),
+        syncSubagentAttention: () => historyPanel.syncHistorySubagentAttention(),
+        scheduleBroadcast: () => scheduleChatActivityBroadcast(),
+        currentSessionId: () => session.current(),
+        attentionPrefsFor,
+        attentionActive: () => chatAttentionActive(),
+        attentionIsError: () => chatAttentionIsError,
+        hasActiveFollowup: (sid) => sessionHasActiveFollowup(sid, null),
+        hasPausedFollowup: (sid) => sessionHasPausedFollowup(sid, null),
     });
 
     function attentionPrefsFor(sessionId, sessionObj) {
@@ -1885,7 +1775,7 @@
         }
         if (isAuthMode() && /^\d+$/.test(String(toAuthDbSessionId(sessionId)))) {
             // A hidden page or a response for a previous chat hasn't been viewed.
-            if (!sessionIdsEqual(currentSessionId, sessionId) || pageIsBackgrounded()) return;
+            if (!sessionIdsEqual(session.current(), sessionId) || pageIsBackgrounded()) return;
             const through = lastSeenServerMessageId;
             serverAttention.mark(toAuthDbSessionId(sessionId), {through_id: through});
         }
@@ -1901,7 +1791,7 @@
     function releaseManualUnreadHoldIfLeaving(nextSessionId) {
         _manualUnreadHoldId = CuttleChatActivity.releaseManualHold({
             holdId: _manualUnreadHoldId,
-            currentSessionId,
+            currentSessionId: session.current(),
             nextSessionId,
         });
     }
@@ -1979,7 +1869,7 @@
         if (_suppressChatAttention > 0) return;
         applyChatAttention(CuttleChatActivity.attentionAfterFinalized(snapshotChatAttention(), {
             isError: !!(opts && opts.isError),
-            scrolledAway: !chatPinnedToBottom || isChatScrolledUp(140),
+            scrolledAway: !transcriptNav.isFollowingLatest() || transcriptNav.isChatScrolledUp(140),
         }));
         syncChatAttentionIndicators();
     }
@@ -1987,7 +1877,7 @@
     // Owned by chat_activity.js — DOM/state gather, domain decides.
     function clearChatUnseenBelow() {
         if (!chatUnseenBelow) {
-            updateJumpToBottomVisibility();
+            transcriptNav.updateJumpToBottomVisibility();
             return;
         }
         applyChatAttention(CuttleChatActivity.attentionAfterClearUnseen(snapshotChatAttention()));
@@ -2006,49 +1896,10 @@
         syncChatAttentionIndicators();
     }
 
+    // Slice 3A commit 4: title-level unread dot projection now lives in the
+    // CuttleChatAttention controller (chat_attention.js); the page delegates.
     function updateSessionTitleUnreadDot() {
-        const unreadIcon = document.getElementById('chatSessionUnreadIcon');
-        const queuedIcon = document.getElementById('chatSessionQueuedIcon');
-        const pausedIcon = document.getElementById('chatSessionPausedIcon');
-        const wrap = document.getElementById('chatSessionTitle');
-        if (!unreadIcon && !queuedIcon && !pausedIcon) return;
-        const titleVisible = !!(wrap && !wrap.hidden);
-        const showInput = !!(titleVisible && currentSessionId != null && (attentionPrefsFor(currentSessionId) || {}).awaitingInput);
-        const inputIcon = document.getElementById('chatSessionInputIcon');
-        if (inputIcon) inputIcon.hidden = !showInput;
-        const showUnread = !!(titleVisible && !showInput && chatAttentionActive());
-        const showUnreadError = !!(showUnread && chatAttentionIsError);
-        // Queue dots only when unread is not already showing (green/red wins).
-        // Amber = active (unpaused) queue; yellow = paused (see CH-000439-14 legend).
-        const showQueued = !!(
-            titleVisible
-            && !showInput
-            && !showUnread
-            && currentSessionId != null
-            && sessionHasActiveFollowup(currentSessionId, null)
-        );
-        const showPaused = !!(
-            titleVisible
-            && !showInput
-            && !showUnread
-            && !showQueued
-            && currentSessionId != null
-            && sessionHasPausedFollowup(currentSessionId, null)
-        );
-        if (unreadIcon) {
-            unreadIcon.hidden = !showUnread;
-            unreadIcon.classList.toggle('is-error', showUnreadError);
-            unreadIcon.title = showUnreadError ? 'Unread error' : 'Unread';
-            unreadIcon.setAttribute('aria-label', showUnreadError ? 'Unread error' : 'Unread');
-        }
-        if (queuedIcon) queuedIcon.hidden = !showQueued;
-        if (pausedIcon) pausedIcon.hidden = !showPaused;
-        if (wrap) {
-            wrap.classList.toggle('has-unread', showUnread);
-            wrap.classList.toggle('has-unread-error', showUnreadError);
-            wrap.classList.toggle('has-queued', showQueued);
-            wrap.classList.toggle('has-paused-queue', showPaused);
-        }
+        return serverAttention.updateSessionTitleUnreadDot();
     }
 
     function updateSessionTitleRunningIcon() {
@@ -2058,15 +1909,15 @@
         const running = !!(
             wrap
             && !wrap.hidden
-            && currentSessionId != null
-            && sessionShowsHistorySpinner(currentSessionId)
+            && session.current() != null
+            && sessionShowsHistorySpinner(session.current())
         );
         icon.hidden = !running;
         if (wrap) wrap.classList.toggle('is-running', running);
     }
 
     function syncChatAttentionIndicators() {
-        updateJumpToBottomVisibility();
+        transcriptNav.updateJumpToBottomVisibility();
         updateSessionTitleUnreadDot();
         try { scheduleChatActivityBroadcast(); } catch (_) {}
     }
@@ -2095,7 +1946,7 @@
     function sessionHasUnread(sessionId, sessionObj) {
         return CuttleChatActivity.sessionHasUnread({
             sessionId,
-            currentSessionId,
+            currentSessionId: session.current(),
             backgrounded: pageIsBackgrounded(),
             prefs: attentionPrefsFor(sessionId, sessionObj),
             sessionObj,
@@ -2107,11 +1958,11 @@
         return CuttleChatActivity.parseFollowupQueue(raw);
     }
 
-    /** Resolve followup_queue for a session (open chat uses live followupQueue.items). */
+    /** Resolve followup_queue for a session (open chat uses the live controller state). */
     function followupQueueForSession(sessionId, sessionObj) {
         if (sessionId == null || sessionId === '') return [];
-        if (currentSessionId != null && sessionIdsEqual(currentSessionId, sessionId)) {
-            return followupQueue.items.slice();
+        if (session.current() != null && sessionIdsEqual(session.current(), sessionId)) {
+            return followupController().getState().items.slice();
         }
         let obj = sessionObj;
         if (!obj && isAuthMode()) {
@@ -2153,7 +2004,7 @@
     function sessionHasUnreadError(sessionId, sessionObj) {
         return CuttleChatActivity.sessionHasUnreadError({
             sessionId,
-            currentSessionId,
+            currentSessionId: session.current(),
             backgrounded: pageIsBackgrounded(),
             prefs: attentionPrefsFor(sessionId, sessionObj),
             sessionObj,
@@ -2169,7 +2020,7 @@
     function sessionHistoryAttentionKind(sessionId, sessionObj) {
         return CuttleChatActivity.sessionHistoryAttentionKind({
             sessionId,
-            currentSessionId,
+            currentSessionId: session.current(),
             backgrounded: pageIsBackgrounded(),
             prefs: attentionPrefsFor(sessionId, sessionObj),
             sessionObj,
@@ -2274,47 +2125,6 @@
         return { key, id, name: name || 'Project', path };
     }
 
-    /** Initial chats shown per project; each "Show N more" adds another page. */
-    const HISTORY_GROUP_PREVIEW_LIMIT = 5;
-    const HISTORY_GROUP_PAGE_SIZE = 5;
-    /** projectKey → how many chats currently revealed (at least PREVIEW). */
-    const historyGroupVisibleCount = new Map();
-    const HISTORY_PROJECT_COLLAPSE_KEY = 'cuttle.historyProjectCollapse';
-
-    function readHistoryProjectCollapsePrefs() {
-        try {
-            const raw = localStorage.getItem(HISTORY_PROJECT_COLLAPSE_KEY);
-            const parsed = raw ? JSON.parse(raw) : {};
-            return parsed && typeof parsed === 'object' ? parsed : {};
-        } catch (_) {
-            return {};
-        }
-    }
-
-    function writeHistoryProjectCollapsePrefs(map) {
-        try {
-            localStorage.setItem(HISTORY_PROJECT_COLLAPSE_KEY, JSON.stringify(map || {}));
-        } catch (_) {}
-    }
-
-    const HISTORY_SUBAGENT_EXPAND_KEY = 'cuttle.historySubagentExpand';
-
-    function readHistorySubagentExpandPrefs() {
-        try {
-            const raw = localStorage.getItem(HISTORY_SUBAGENT_EXPAND_KEY);
-            const parsed = raw ? JSON.parse(raw) : {};
-            return parsed && typeof parsed === 'object' ? parsed : {};
-        } catch (_) {
-            return {};
-        }
-    }
-
-    function writeHistorySubagentExpandPrefs(map) {
-        try {
-            localStorage.setItem(HISTORY_SUBAGENT_EXPAND_KEY, JSON.stringify(map || {}));
-        } catch (_) {}
-    }
-
     function sessionHasStoredProject(sessionId, sessionObj) {
         if (projectFieldsFromServerSession(sessionObj || findAuthServerSession(sessionId))) {
             return true;
@@ -2329,386 +2139,6 @@
         ) {
             return true;
         }
-        return false;
-    }
-
-    function historyGroupEntrySessionObj(entry) {
-        if (!entry) return null;
-        return entry.session || entry.serverSession || null;
-    }
-
-    function historyGroupHasUnread(group) {
-        return !!(group && group.entries && group.entries.some((entry) => (
-            sessionHasUnread(entry.sessionId, historyGroupEntrySessionObj(entry))
-        )));
-    }
-
-    function historyGroupHasUnreadError(group) {
-        return !!(group && group.entries && group.entries.some((entry) => (
-            sessionHasUnreadError(entry.sessionId, historyGroupEntrySessionObj(entry))
-        )));
-    }
-
-    function historyGroupHasPausedFollowup(group) {
-        return !!(group && group.entries && group.entries.some((entry) => (
-            sessionHasPausedFollowup(entry.sessionId, historyGroupEntrySessionObj(entry))
-        )));
-    }
-
-    function historyGroupHasActiveFollowup(group) {
-        return !!(group && group.entries && group.entries.some((entry) => (
-            sessionHasActiveFollowup(entry.sessionId, historyGroupEntrySessionObj(entry))
-        )));
-    }
-
-    function historyGroupContainsCurrent(group) {
-        if (currentSessionId == null || !group || !group.entries) return false;
-        return group.entries.some((entry) => sessionIdsEqual(entry.sessionId, currentSessionId));
-    }
-
-    /** Default expand latest project (+ open/unread/queue); honor localStorage overrides. */
-    function isHistoryProjectSectionExpanded(group, groupIdx) {
-        if (!group || !group.project) return true;
-        const key = String(group.project.key);
-        const prefs = readHistoryProjectCollapsePrefs();
-        const pref = prefs[key];
-        if (pref === 'expanded') return true;
-        if (pref === 'collapsed') return false;
-        if (historyGroupContainsCurrent(group)) return true;
-        if (historyGroupHasUnread(group)) return true;
-        if (historyGroupHasActiveFollowup(group)) return true;
-        if (historyGroupHasPausedFollowup(group)) return true;
-        return groupIdx === 0;
-    }
-
-    function getHistoryGroupVisibleLimit(groupKey, total) {
-        const t = Math.max(0, Number(total) || 0);
-        const stored = historyGroupVisibleCount.get(String(groupKey));
-        if (stored == null || !isFinite(stored)) {
-            return Math.min(HISTORY_GROUP_PREVIEW_LIMIT, t);
-        }
-        return Math.min(Math.max(HISTORY_GROUP_PREVIEW_LIMIT, Math.floor(stored)), t);
-    }
-
-    function historyGroupToggleHTML(groupKey, total, visible) {
-        const safeKey = escapeHtml(String(groupKey));
-        if (total <= HISTORY_GROUP_PREVIEW_LIMIT) return '';
-        if (visible >= total) {
-            return `<button type="button" class="history-show-all-btn" data-group-key="${safeKey}" data-total="${total}" onclick="window.collapseHistoryGroupReveal(event)">Show less</button>`;
-        }
-        const step = Math.min(HISTORY_GROUP_PAGE_SIZE, total - visible);
-        const label = step === 1 ? 'Show 1 more' : `Show ${step} more`;
-        return `<button type="button" class="history-show-all-btn" data-group-key="${safeKey}" data-total="${total}" onclick="window.revealMoreHistoryGroup(event)">${escapeHtml(label)}</button>`;
-    }
-
-    function renderHistoryGroupBody(group, renderEntry) {
-        const key = group.project.key;
-        const nested = nestHistoryEntries(group.entries);
-        const total = nested.roots.length;
-        const visibleLimit = getHistoryGroupVisibleLimit(key, total);
-        const visible = visibleHistoryRoots(nested, visibleLimit, { currentSessionId: currentSessionId });
-        const searchActive = historySearchQueryActive();
-        const prefs = readHistorySubagentExpandPrefs();
-
-        function renderTree(entry) {
-            const pid = String(entry && entry.sessionId != null ? entry.sessionId : '');
-            const kids = nested.childrenByParent.get(pid) || [];
-            const expanded = kids.length
-                ? isHistorySubagentGroupExpanded(pid, nested, {
-                    searchActive: searchActive,
-                    currentSessionId: currentSessionId,
-                    prefs: prefs,
-                })
-                : false;
-            const force = !!(kids.length && currentSessionId != null
-                && historySessionAncestorIds(currentSessionId, nested).some((id) => sessionIdsEqual(id, pid)));
-            const itemHtml = renderEntry(entry, {
-                subagentChildCount: kids.length,
-                subagentExpanded: expanded,
-                subagentForceExpanded: force,
-            });
-            if (!kids.length) return itemHtml;
-            let html = '<div class="history-subagent-group'
-                + (expanded ? '' : ' is-collapsed')
-                + '" data-parent-session-id="' + escapeHtml(pid) + '"'
-                + (force ? ' data-force-expanded="1"' : '')
-                + '>';
-            html += itemHtml;
-            html += '<div class="history-subagent-children" id="history-subagents-'
-                + escapeHtml(pid) + '-kids" role="group">';
-            kids.forEach((child) => {
-                html += renderTree(child);
-            });
-            html += '</div></div>';
-            return html;
-        }
-
-        let html = '';
-        visible.forEach((entry) => {
-            html += renderTree(entry);
-        });
-        html += historyGroupToggleHTML(key, total, visibleLimit);
-        return html;
-    }
-
-    // Last applied history search (not only the input DOM). Android/Capacitor
-    // WebViews can race keyboard/IME with refreshes; the live query keeps the
-    // hard gate from falling through to a full project-list paint.
-    let historySearchLiveQuery = '';
-    // Last displayed search wave, reused only for explicit group reveal/collapse.
-    let repaintHistorySearch = null;
-
-    function repaintHistoryGroups() {
-        if (historySearchQueryActive() && repaintHistorySearch) repaintHistorySearch();
-        else reloadHistoryListKeepingSearch();
-    }
-
-    function historySearchQueryActive() {
-        if (historyFiltersActive()) return true;
-        if (String(historySearchLiveQuery || '').trim()) return true;
-        const searchInput = document.getElementById('searchInput');
-        if (searchInput && String(searchInput.value || '').trim()) return true;
-        return false;
-    }
-
-    function softRefreshHistorySearchIndicators() {
-        // Session cache may have been refreshed; do not repaint (would abort
-        // in-flight content search and flash the unfiltered list).
-        if (isAuthMode()) {
-            try {
-                const listed = ((window.CuttleAuth.getSessions && window.CuttleAuth.getSessions()) || []);
-                applyGeneratingFlagsFromSessions(listed);
-            } catch (_) {}
-        }
-        syncHistoryRunningIndicators();
-        syncHistoryUnreadIndicators();
-    }
-
-    function reloadHistoryListKeepingSearch() {
-        // Panel open/poll/title refresh / auth-changed must not wipe an active
-        // search. Re-running searchChats() aborts content fetch and flashes empty.
-        if (historySearchQueryActive()) {
-            softRefreshHistorySearchIndicators();
-            return;
-        }
-        loadChatHistory();
-    }
-
-    function entrySearchMatchRank(entry) {
-        // Lower sorts first: title matches above content-only matches.
-        const s = (entry && (entry.serverSession || entry.session)) || {};
-        const m = String((entry && entry.searchMatch) || s.match || '').toLowerCase();
-        if (m === 'title') return 0;
-        if (m === 'content') return 1;
-        return 2;
-    }
-
-    function revealMoreHistoryGroup(event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const btn = event && event.currentTarget;
-        const key = btn && btn.getAttribute('data-group-key');
-        if (!key) return;
-        const total = Math.max(0, Number(btn.getAttribute('data-total')) || 0);
-        const cur = getHistoryGroupVisibleLimit(key, total || Number.MAX_SAFE_INTEGER);
-        const next = Math.min(
-            total || (cur + HISTORY_GROUP_PAGE_SIZE),
-            cur + HISTORY_GROUP_PAGE_SIZE
-        );
-        historyGroupVisibleCount.set(String(key), next);
-        repaintHistoryGroups();
-    }
-
-    function collapseHistoryGroupReveal(event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const btn = event && event.currentTarget;
-        const key = btn && btn.getAttribute('data-group-key');
-        if (!key) return;
-        historyGroupVisibleCount.set(String(key), HISTORY_GROUP_PREVIEW_LIMIT);
-        repaintHistoryGroups();
-    }
-
-    function toggleHistoryProjectCollapse(event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const header = event && event.currentTarget;
-        if (!header) return;
-        // Action buttons stopPropagation themselves; belt-and-suspenders.
-        if (event && event.target && event.target.closest
-            && event.target.closest('.history-section-actions')) {
-            return;
-        }
-        const section = header.closest && header.closest('.history-section');
-        const key = (section && section.getAttribute('data-project-key'))
-            || header.getAttribute('data-project-key');
-        if (!key) return;
-        const prefs = readHistoryProjectCollapsePrefs();
-        const currentlyExpanded = !(section && section.classList.contains('is-collapsed'));
-        prefs[String(key)] = currentlyExpanded ? 'collapsed' : 'expanded';
-        writeHistoryProjectCollapsePrefs(prefs);
-        repaintHistoryGroups();
-    }
-
-    function historySubagentGroupOwnedBy(sessionId) {
-        if (sessionId == null || sessionId === '') return null;
-        const key = String(sessionId);
-        let group = document.querySelector(`.history-subagent-group[data-parent-session-id="${CSS.escape(key)}"]`);
-        if (group) return group;
-        const bare = toAuthDbSessionId(sessionId);
-        if (bare && String(bare) !== key) {
-            group = document.querySelector(`.history-subagent-group[data-parent-session-id="${CSS.escape(String(bare))}"]`);
-        }
-        return group;
-    }
-
-    function historySubagentGroupContainsCurrent(group) {
-        if (!group || currentSessionId == null) return false;
-        const kids = group.querySelectorAll('.history-subagent-children .chat-history-item');
-        for (let i = 0; i < kids.length; i++) {
-            if (sessionIdsEqual(kids[i].dataset.sessionId, currentSessionId)) return true;
-        }
-        return false;
-    }
-
-    function syncHistorySubagentAttention() {
-        document.querySelectorAll('.history-subagent-group').forEach((group) => {
-            const items = group.querySelectorAll('.history-subagent-children .chat-history-item');
-            let input = false;
-            let error = false;
-            let unread = false;
-            let queued = false;
-            let paused = false;
-            let running = false;
-            items.forEach((item) => {
-                if (item.classList.contains('has-input')) input = true;
-                if (item.classList.contains('has-unread-error')) error = true;
-                if (item.classList.contains('has-unread')) unread = true;
-                if (item.classList.contains('has-queued')) queued = true;
-                if (item.classList.contains('has-paused-queue')) paused = true;
-                if (item.classList.contains('is-running')) running = true;
-            });
-            const badge = group.querySelector(':scope > .chat-history-item .history-subagent-count-badge');
-            if (!badge) return;
-            badge.classList.toggle('has-input', input);
-            badge.classList.toggle('has-unread-error', error);
-            badge.classList.toggle('has-unread', !error && unread);
-            badge.classList.toggle('has-queued', !error && !unread && queued);
-            badge.classList.toggle('has-paused-queue', !error && !unread && !queued && paused);
-            badge.classList.toggle('is-running', running);
-        });
-    }
-
-    function applyHistorySubagentExpandState() {
-        const searchActive = historySearchQueryActive();
-        const prefs = readHistorySubagentExpandPrefs();
-        document.querySelectorAll('.history-subagent-group').forEach((group) => {
-            const pid = group.getAttribute('data-parent-session-id') || '';
-            const force = historySubagentGroupContainsCurrent(group);
-            const expanded = force || searchActive || prefs[pid] === 'expanded';
-            group.classList.toggle('is-collapsed', !expanded);
-            if (force) group.setAttribute('data-force-expanded', '1');
-            else group.removeAttribute('data-force-expanded');
-            const countEl = group.querySelector(':scope > .chat-history-item [data-child-count]');
-            const count = countEl ? (Number(countEl.getAttribute('data-child-count')) || 0) : 0;
-            const title = historySubagentToggleTitle(count, expanded, force);
-            group.querySelectorAll(':scope > .chat-history-item .history-subagent-toggle, :scope > .chat-history-item .history-subagent-count-badge').forEach((el) => {
-                el.title = title;
-                el.setAttribute('aria-label', title);
-                if (el.classList.contains('history-subagent-toggle')) {
-                    el.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-                }
-            });
-        });
-        syncHistorySubagentAttention();
-    }
-
-    function setHistorySubagentGroupExpanded(parentId, expanded) {
-        if (parentId == null || parentId === '') return;
-        const prefs = readHistorySubagentExpandPrefs();
-        prefs[String(parentId)] = expanded ? 'expanded' : 'collapsed';
-        writeHistorySubagentExpandPrefs(prefs);
-        applyHistorySubagentExpandState();
-    }
-
-    function toggleHistorySubagentGroup(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        closeHistoryItemMenu();
-        const group = historySubagentGroupOwnedBy(sessionId);
-        if (!group || group.getAttribute('data-force-expanded') === '1') return;
-        const expand = group.classList.contains('is-collapsed');
-        setHistorySubagentGroupExpanded(group.getAttribute('data-parent-session-id') || sessionId, expand);
-    }
-
-    function groupSessionsByProject(entries) {
-        const groups = new Map();
-        (entries || []).forEach((entry) => {
-            const origin = String(
-                (entry.serverSession && entry.serverSession.origin)
-                || (entry.session && entry.session.origin)
-                || ''
-            ).trim().toLowerCase();
-            const proj = (origin === 'discord_dm' || origin === 'discord_guild')
-                ? { key: '__discord__', id: null, name: 'Discord', path: '' }
-                // Prefer the entry's own row (server rows carry project
-                // fields): passing only entry.session (null for server
-                // entries) forced a full-list scan per chat — O(n²) paints.
-                : resolveSessionProjectInfo(entry.sessionId, historyGroupEntrySessionObj(entry));
-            if (!groups.has(proj.key)) {
-                groups.set(proj.key, { project: proj, entries: [], latest: 0 });
-            }
-            const g = groups.get(proj.key);
-            g.entries.push(entry);
-            const u = Number(entry.updated) || 0;
-            if (u > g.latest) g.latest = u;
-        });
-        const list = Array.from(groups.values());
-        // Most recently active project first; "No project" stays last.
-        list.sort((a, b) => {
-            if (a.project.key === '__none__') return 1;
-            if (b.project.key === '__none__') return -1;
-            const d = (b.latest || 0) - (a.latest || 0);
-            if (d !== 0) return d;
-            return String(a.project.name).localeCompare(String(b.project.name), undefined, {
-                sensitivity: 'base',
-            });
-        });
-        list.forEach((g) => {
-            g.entries.sort((a, b) => {
-                // Starred favorites float to the top of each project category.
-                const aStarred = entryIsStarred(a);
-                const bStarred = entryIsStarred(b);
-                if (aStarred && !bStarred) return -1;
-                if (bStarred && !aStarred) return 1;
-                // Search: title matches before content matches, even if content is newer.
-                const aMatch = entrySearchMatchRank(a);
-                const bMatch = entrySearchMatchRank(b);
-                if (aMatch !== bMatch) return aMatch - bMatch;
-                // Opening a chat must not move it: order by last message only.
-                const d = (b.updated || 0) - (a.updated || 0);
-                if (d !== 0) return d;
-                // Stable tie-break so equal timestamps don't reshuffle on refresh.
-                return String(b.sessionId).localeCompare(String(a.sessionId), undefined, {
-                    numeric: true,
-                });
-            });
-        });
-        return list;
-    }
-
-    function entryIsStarred(entry) {
-        if (!entry) return false;
-        if (entry.serverSession) return !!Number(entry.serverSession.starred);
-        if (entry.session) return !!entry.session.starred;
         return false;
     }
 
@@ -2762,8 +2192,8 @@
     /** True when the open transcript is this session (not a backgrounded turn). */
     function isViewingSession(sessionId) {
         return sessionId != null
-            && currentSessionId != null
-            && sessionIdsEqual(currentSessionId, sessionId);
+            && session.current() != null
+            && sessionIdsEqual(session.current(), sessionId);
     }
 
     /**
@@ -2782,110 +2212,6 @@
     const _chirpedReadyAtBySession = Object.create(null);
     const completionNotificationPendingId = 'pending:' + Date.now() + ':' + Math.random().toString(36).slice(2);
     const CHIRP_SESSION_COOLDOWN_MS = 8000;
-    /** Background pending polls after leaving a chat mid-turn (sessionId → cancel fn). */
-    const _detachedCompletionWatchers = Object.create(null);
-
-    function cancelDetachedSessionCompletionWatch(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        const sid = String(canonicalizeChatSessionId(sessionId));
-        const bare = toAuthDbSessionId(sessionId);
-        const keys = [sid, String(sessionId)];
-        if (bare) {
-            keys.push(String(bare), `db_session_${bare}`);
-        }
-        keys.forEach((k) => {
-            const cancel = _detachedCompletionWatchers[k];
-            if (typeof cancel === 'function') {
-                try { cancel(); } catch (_) {}
-            }
-            delete _detachedCompletionWatchers[k];
-        });
-    }
-
-    /**
-     * After detachLocalGenerationForNavigation, the in-flight processMessage
-     * waiter stops (stopState.abortSuppressed / nav-gen). Keep a quiet poll so a
-     * finished reply still marks unread + chirps — only when pending has a
-     * real body and the server is no longer generating.
-     */
-    function watchDetachedSessionForCompletion(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        const sid = String(canonicalizeChatSessionId(sessionId));
-        if (inAppShell && window.parent.cuttleActivityBroker) {
-            window.parent.cuttleActivityBroker.refresh();
-            return;
-        }
-        cancelDetachedSessionCompletionWatch(sid);
-        let cancelled = false;
-        _detachedCompletionWatchers[sid] = () => { cancelled = true; };
-        const startedAt = Date.now();
-        const maxMs = 90 * 60 * 1000;
-        const pollMs = 4000;
-
-        (async () => {
-            try {
-                while (!cancelled && (Date.now() - startedAt) < maxMs) {
-                    // No "returned home" check before the first await: navigation
-                    // detaches while currentSessionId still names the chat being
-                    // left. Re-opening the chat cancels this watch outright.
-                    let data = null;
-                    try {
-                        const resp = await fetchWithTimeout(
-                            `/api/chat-pending-result?session_id=${encodeURIComponent(sid)}`,
-                            { credentials: 'include', cache: 'no-store' },
-                            8000
-                        );
-                        data = await resp.json();
-                    } catch (_) {
-                        data = null;
-                    }
-                    if (cancelled) break;
-                    if (currentSessionId != null && sessionIdsEqual(currentSessionId, sid)) break;
-
-                    // Owned by chat_generation.js — one poll-step decision;
-                    // the page owns transport, sleeps, chirp, and flag paint.
-                    let body = '';
-                    if (data && data.success && data.pending && data.result) {
-                        body = String(data.result.response || data.result.output || '').trim();
-                    }
-                    const step = {
-                        cancelled: false,
-                        returnedHome: false,
-                        body: body,
-                        generating: !!(data && data.generating),
-                        liveActive: false,
-                    };
-                    if (!step.body && !step.generating) {
-                        const live = await fetchChatLiveStatus(sid).catch(() => null);
-                        if (cancelled) break;
-                        step.liveActive = liveStatusLooksActive(live);
-                    }
-                    const action = CuttleChatGeneration.classifyDetachedPoll(step);
-                    if (action === 'notify-done') {
-                        try { consumeParkedChatResult(sid); } catch (_) {}
-                        setHistorySessionRunning(sid, false);
-                        notifyAssistantResponseReady(sid, {
-                            isError: data.result.success === false,
-                        });
-                        break;
-                    }
-                    if (action === 'keep-waiting') {
-                        setHistorySessionRunning(sid, true);
-                        await new Promise((r) => setTimeout(r, pollMs));
-                        continue;
-                    }
-                    if (action === 'stop') break;
-                    // Idle, no parked body — spin down; opening the chat loads history.
-                    setHistorySessionRunning(sid, false);
-                    break;
-                }
-            } finally {
-                if (_detachedCompletionWatchers[sid]) {
-                    delete _detachedCompletionWatchers[sid];
-                }
-            }
-        })();
-    }
 
     // Owned by chat_activity.js — DOM/state gather, domain decides.
     function notifyAssistantResponseReady(sessionId, opts = {}) {
@@ -2901,7 +2227,7 @@
         const now = Date.now();
         const plan = CuttleChatActivity.responseReadyPlan({
             sessionId: sid,
-            currentSessionId,
+            currentSessionId: session.current(),
             backgrounded: pageIsBackgrounded(),
             lastChirpAt: _chirpedReadyAtBySession[sid] || 0,
             nowMs: now,
@@ -2959,34 +2285,18 @@
         }
         syncHistoryUnreadIndicators();
         // Soft refresh titles/grouping without wiping search or filter chips.
-        reloadHistoryListKeepingSearch();
+        historyPanel.reloadKeepingSearch();
     }
 
-    function historyUnreadIconHTML(isError) {
-        const err = !!isError;
-        return `<span class="history-unread-icon${err ? ' is-error' : ''}" title="${err ? 'Unread error' : 'Unread'}" aria-label="${err ? 'Unread error' : 'Unread'}"></span>`;
-    }
-
-    function historyQueuedIconHTML() {
-        return `<span class="history-queued-icon" title="Queued prompt" aria-label="Queued prompt"></span>`;
-    }
-
-    function historyPausedIconHTML() {
-        return `<span class="history-paused-icon" title="Paused queue" aria-label="Paused queued prompt"></span>`;
-    }
-
-    function historyAttentionIconHTML(kind) {
-        if (kind === 'input') return '<span class="history-input-icon" title="Awaiting your input" aria-label="Awaiting your input"></span>';
-        if (kind === 'error') return historyUnreadIconHTML(true);
-        if (kind === 'unread') return historyUnreadIconHTML(false);
-        if (kind === 'queued') return historyQueuedIconHTML();
-        if (kind === 'paused') return historyPausedIconHTML();
-        return '';
-    }
+    // Slice 3A commit 4: the history attention icon markup, row/section/title
+    // projection and the open-pane badge now live in the CuttleChatAttention
+    // controller (chat_attention.js). The page keeps the pane-snapshot helpers
+    // (the `cuttle-open-panes` postMessage protocol stays here) and thin
+    // delegating wrappers so page call sites and injected deps are unchanged.
 
     function applyLocalOpenPanes(panes) {
         localOpenPanes = Array.isArray(panes) ? panes.filter((p) => p && p.sessionId) : [];
-        syncHistoryOpenPaneIndicators();
+        serverAttention.syncHistoryOpenPaneIndicators();
     }
 
     function snapshotLocalOpenPanes() {
@@ -2998,8 +2308,8 @@
             } catch (_) {}
             return localOpenPanes;
         }
-        if (currentSessionId != null && currentSessionId !== '') {
-            return [{ sessionId: String(currentSessionId), pane: 1, kind: 'chat', focused: true }];
+        if (session.current() != null && session.current() !== '') {
+            return [{ sessionId: String(session.current()), pane: 1, kind: 'chat', focused: true }];
         }
         return [];
     }
@@ -3018,217 +2328,8 @@
         return localOpenPanes.filter((p) => sessionIdsEqual(p.sessionId, sessionId));
     }
 
-    /** Unique split-pane numbers currently showing a chat/terminal in this window. */
-    function historyOpenPaneCount() {
-        return [...new Set(
-            (localOpenPanes || []).map((p) => Number(p.pane) || 0).filter((n) => n > 0)
-        )].length;
-    }
-
-    function historyOpenPaneBadgeHTML(sessionId) {
-        // A "1" badge is noise when there is only one pane.
-        if (historyOpenPaneCount() < 2) return '';
-        const hits = openPaneEntriesForSession(sessionId);
-        if (!hits.length) return '';
-        const panes = [...new Set(hits.map((p) => Number(p.pane) || 0).filter((n) => n > 0))].sort((a, b) => a - b);
-        if (!panes.length) return '';
-        const text = panes.join('+');
-        const title = panes.length === 1
-            ? ('Open in pane ' + panes[0] + ' (this window)')
-            : ('Open in panes ' + panes.join(', ') + ' (this window)');
-        return `<span class="history-open-pane-badge" title="${escapeHtmlInline(title)}" aria-label="${escapeHtmlInline(title)}">${escapeHtmlInline(text)}</span>`;
-    }
-
-    function syncHistoryOpenPaneIndicators() {
-        document.querySelectorAll('.chat-history-item').forEach((item) => {
-            const sid = item.dataset.sessionId;
-            const hits = openPaneEntriesForSession(sid);
-            item.classList.toggle('is-open-pane', hits.length > 0);
-            const actions = item.querySelector('.chat-actions');
-            let badge = item.querySelector('.history-open-pane-badge');
-            const html = historyOpenPaneBadgeHTML(sid);
-            if (!html) {
-                if (badge) badge.remove();
-                return;
-            }
-            if (!badge) {
-                const wrap = document.createElement('div');
-                wrap.innerHTML = html;
-                badge = wrap.firstElementChild;
-                if (actions) actions.insertBefore(badge, actions.firstChild);
-                else item.appendChild(badge);
-            } else {
-                const wrap = document.createElement('div');
-                wrap.innerHTML = html;
-                const next = wrap.firstElementChild;
-                if (next) {
-                    badge.title = next.title;
-                    badge.setAttribute('aria-label', next.getAttribute('aria-label') || '');
-                    badge.textContent = next.textContent;
-                }
-            }
-        });
-    }
-
     function syncHistoryUnreadIndicators() {
-        document.querySelectorAll('.chat-history-item').forEach((item) => {
-            const sid = item.dataset.sessionId;
-            if (sid == null) return;
-            let sessionObj = null;
-            if (isAuthMode()) {
-                sessionObj = findAuthServerSession(sid);
-            } else {
-                try {
-                    const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                    sessionObj = sessions[sid] || null;
-                } catch (_) {}
-            }
-            const kind = sessionHistoryAttentionKind(sid, sessionObj);
-            item.classList.toggle('has-unread', kind === 'unread' || kind === 'error');
-            item.classList.toggle('has-unread-error', kind === 'error');
-            item.classList.toggle('has-queued', kind === 'queued');
-            item.classList.toggle('has-paused-queue', kind === 'paused');
-            let inputIcon = item.querySelector('.history-input-icon');
-            if (kind !== 'input' && inputIcon) { inputIcon.remove(); inputIcon = null; }
-            item.classList.toggle('has-input', kind === 'input');
-            let unreadIcon = item.querySelector('.history-unread-icon');
-            let queuedIcon = item.querySelector('.history-queued-icon');
-            let pausedIcon = item.querySelector('.history-paused-icon');
-            const clearAll = () => {
-                if (unreadIcon) { unreadIcon.remove(); unreadIcon = null; }
-                if (queuedIcon) { queuedIcon.remove(); queuedIcon = null; }
-                if (pausedIcon) { pausedIcon.remove(); pausedIcon = null; }
-            };
-            if (kind === 'input') {
-                clearAll();
-                if (!inputIcon) item.insertAdjacentHTML('afterbegin', historyAttentionIconHTML('input'));
-            } else if (kind === 'error' || kind === 'unread') {
-                if (queuedIcon) queuedIcon.remove();
-                if (pausedIcon) pausedIcon.remove();
-                if (!unreadIcon) {
-                    unreadIcon = document.createElement('span');
-                    unreadIcon.className = 'history-unread-icon';
-                    item.insertBefore(unreadIcon, item.firstChild);
-                }
-                unreadIcon.classList.toggle('is-error', kind === 'error');
-                unreadIcon.title = kind === 'error' ? 'Unread error' : 'Unread';
-                unreadIcon.setAttribute('aria-label', kind === 'error' ? 'Unread error' : 'Unread');
-            } else if (kind === 'queued') {
-                if (unreadIcon) unreadIcon.remove();
-                if (pausedIcon) pausedIcon.remove();
-                if (!queuedIcon) {
-                    queuedIcon = document.createElement('span');
-                    queuedIcon.className = 'history-queued-icon';
-                    queuedIcon.title = 'Queued prompt';
-                    queuedIcon.setAttribute('aria-label', 'Queued prompt');
-                    item.insertBefore(queuedIcon, item.firstChild);
-                }
-            } else if (kind === 'paused') {
-                if (unreadIcon) unreadIcon.remove();
-                if (queuedIcon) queuedIcon.remove();
-                if (!pausedIcon) {
-                    pausedIcon = document.createElement('span');
-                    pausedIcon.className = 'history-paused-icon';
-                    pausedIcon.title = 'Paused queue';
-                    pausedIcon.setAttribute('aria-label', 'Paused queued prompt');
-                    item.insertBefore(pausedIcon, item.firstChild);
-                }
-            } else {
-                clearAll();
-            }
-        });
-        syncHistoryProjectAttentionIndicators();
-        syncHistorySubagentAttention();
-        updateSessionTitleUnreadDot();
-        try { scheduleChatActivityBroadcast(); } catch (_) {}
-    }
-
-    function syncHistoryProjectAttentionIndicators() {
-        document.querySelectorAll('.history-section[data-project-key]').forEach((section) => {
-            const items = section.querySelectorAll('.chat-history-item');
-            let hasInput = false;
-            let hasError = false;
-            let hasUnread = false;
-            let hasQueued = false;
-            let hasPaused = false;
-            items.forEach((item) => {
-                if (item.classList.contains('has-input')) hasInput = true;
-                if (item.classList.contains('has-unread-error')) hasError = true;
-                if (item.classList.contains('has-unread')) hasUnread = true;
-                if (item.classList.contains('has-queued')) hasQueued = true;
-                if (item.classList.contains('has-paused-queue')) hasPaused = true;
-            });
-            if (!items.length) {
-                hasError = section.getAttribute('data-has-error') === '1';
-                hasUnread = section.getAttribute('data-has-unread') === '1';
-                hasQueued = section.getAttribute('data-has-queued') === '1';
-                hasPaused = section.getAttribute('data-has-paused') === '1';
-            }
-            const showInput = hasInput;
-            const showError = !showInput && hasError;
-            const showUnread = !showInput && !showError && hasUnread;
-            const showQueued = !showInput && !showError && !showUnread && hasQueued;
-            const showPaused = !showInput && !showError && !showUnread && !showQueued && hasPaused;
-            section.classList.toggle('has-input', showInput);
-            section.classList.toggle('has-unread-error', showError);
-            section.classList.toggle('has-unread', showError || showUnread);
-            section.classList.toggle('has-queued', showQueued);
-            section.classList.toggle('has-paused-queue', showPaused);
-            const count = section.querySelector('.history-section-count');
-            if (count) {
-                count.classList.toggle('has-input', showInput);
-                count.classList.toggle('has-unread-error', showError);
-                count.classList.toggle('has-unread', showError || showUnread);
-                count.classList.toggle('has-queued', showQueued);
-                count.classList.toggle('has-paused-queue', showPaused);
-            }
-            let unreadDot = section.querySelector('.history-section-unread-dot');
-            let queuedDot = section.querySelector('.history-section-queued-dot');
-            let pausedDot = section.querySelector('.history-section-paused-dot');
-            const titleEl = section.querySelector('.history-section-title');
-            const removeDots = () => {
-                if (unreadDot) { unreadDot.remove(); unreadDot = null; }
-                if (queuedDot) { queuedDot.remove(); queuedDot = null; }
-                if (pausedDot) { pausedDot.remove(); pausedDot = null; }
-            };
-            if (showInput || showError || showUnread) {
-                if (queuedDot) queuedDot.remove();
-                if (pausedDot) pausedDot.remove();
-                if (!unreadDot && titleEl) {
-                    unreadDot = document.createElement('span');
-                    unreadDot.className = 'history-section-unread-dot';
-                    titleEl.insertBefore(unreadDot, titleEl.firstChild);
-                }
-                if (unreadDot) {
-                    unreadDot.classList.toggle('is-input', showInput);
-                    unreadDot.classList.toggle('is-error', showError);
-                    unreadDot.title = showInput ? 'Awaiting your input' : showError ? 'Unread error' : 'Unread';
-                    unreadDot.setAttribute('aria-label', showInput ? 'Awaiting your input' : showError ? 'Unread error' : 'Unread');
-                }
-            } else if (showQueued) {
-                if (unreadDot) unreadDot.remove();
-                if (pausedDot) pausedDot.remove();
-                if (!queuedDot && titleEl) {
-                    queuedDot = document.createElement('span');
-                    queuedDot.className = 'history-section-queued-dot';
-                    queuedDot.title = 'Queued prompt';
-                    queuedDot.setAttribute('aria-label', 'Queued prompt');
-                    titleEl.insertBefore(queuedDot, titleEl.firstChild);
-                }
-            } else if (showPaused) {
-                if (unreadDot) unreadDot.remove();
-                if (queuedDot) queuedDot.remove();
-                if (!pausedDot && titleEl) {
-                    pausedDot = document.createElement('span');
-                    pausedDot.className = 'history-section-paused-dot';
-                    pausedDot.title = 'Paused queue';
-                    pausedDot.setAttribute('aria-label', 'Paused queued prompt');
-                    titleEl.insertBefore(pausedDot, titleEl.firstChild);
-                }
-            } else {
-                removeDots();
-            }
-        });
+        return serverAttention.syncHistoryUnreadIndicators();
     }
 
 
@@ -3327,14 +2428,14 @@
     }
 
     function persistPromptHistoryForCurrentSession() {
-        if (!currentSessionId) return;
+        if (!session.current()) return;
         const map = readPromptHistoryMap();
-        map[currentSessionId] = promptHistoryState.list.slice();
+        map[session.current()] = promptHistoryState.list.slice();
         writePromptHistoryMap(map);
     }
 
     function recordPromptHistory(composedMessage) {
-        if (!currentSessionId) return;
+        if (!session.current()) return;
         if (CuttlePromptHistory.appendRecord(promptHistoryState, composedMessage)) {
             persistPromptHistoryForCurrentSession();
         }
@@ -3640,16 +2741,16 @@
         const parsed = parseChatHandleToken(raw);
         if (!parsed) return false;
         if (parsed.messageIndex) {
-            queueMessageJump(parsed.messageIndex);
+            transcriptNav.queueMessageJump(parsed.messageIndex);
             try {
                 const url = new URL(window.location.href);
                 url.searchParams.set('msg', String(parsed.messageIndex));
                 history.replaceState(null, '', url.pathname + url.search + url.hash);
             } catch (_) {}
         }
-        if (sessionIdsEqual(currentSessionId, parsed.sessionId)) {
+        if (sessionIdsEqual(session.current(), parsed.sessionId)) {
             if (parsed.messageIndex) {
-                consumePendingMessageJump();
+                transcriptNav.consumePendingMessageJump();
             }
             return true;
         }
@@ -3720,9 +2821,7 @@
         }
         window.CuttleGitCommitViewer.initChat({
             getProjectPath: function () {
-                return (typeof currentProject !== 'undefined' && currentProject && currentProject.path)
-                    ? String(currentProject.path)
-                    : '';
+                return effectiveGitPath();
             },
         });
     }
@@ -3750,1501 +2849,25 @@
         }, true);
     }
 
-    function normalizeSubagentList(raw) {
-        if (!raw) return [];
-        let list = raw;
-        if (typeof list === 'string') {
-            try { list = JSON.parse(list); } catch (_) { return []; }
-        }
-        if (!Array.isArray(list)) return [];
-        const out = [];
-        list.forEach((item) => {
-            if (!item || typeof item !== 'object') return;
-            const handleRaw = String(item.handle || '').trim();
-            const sid = item.session_id != null ? String(item.session_id) : '';
-            const token = handleRaw || (sid ? ('CH-' + String(sid).padStart(6, '0')) : '');
-            const parsed = parseChatHandleToken(token);
-            if (!parsed) return;
-            out.push({
-                handle: parsed.display,
-                sessionId: parsed.sessionId,
-                label: String(item.label || item.title || item.display_name || parsed.display).trim() || parsed.display,
-                agent: String(item.agent || '').trim(),
-                model: String(item.model || '').trim(),
-                status: String(item.status || '').trim(),
-                generating: !!item.generating,
-                avatar: String(item.avatar || '').trim(),
-                // Fleet-card fields (server-owned outcome; see chat_subagent_fleet.js).
-                fleet: !!item.fleet,
-                outcome: String(item.outcome || '').trim(),
-                summary: String(item.summary || ''),
-                detail: String(item.detail || ''),
-                effort: String(item.effort || '').trim(),
-                displayName: String(item.display_name || '').trim(),
-                startedAt: String(item.started_at || ''),
-                finishedAt: String(item.finished_at || ''),
-                liveStatusAt: String(item.live_status_at || ''),
-            });
-        });
-        return out;
-    }
-
-    function parentRefsFromOpts(opts) {
-        if (!opts) return [];
-        const handleRaw = String(opts.parent_handle || '').trim();
-        const sid = opts.parent_session_id != null && opts.parent_session_id !== ''
-            ? String(opts.parent_session_id)
-            : '';
-        if (!handleRaw && !sid) return [];
-        return [{
-            handle: handleRaw,
-            session_id: sid,
-            label: String(opts.parent_label || 'Parent chat').trim() || 'Parent chat',
-            agent: '',
-            generating: false,
-            avatar: String(opts.avatar || 'cuttle').trim(),
-        }];
-    }
-
-    /**
-     * Minimal shared agent chip for fleet cards: agent label only, with
-     * `{agent} | {model} | {effort}` in the tip. Same `slash-command-chip`
-     * chrome as the header/composer badges (label from the
-     * `CuttleChatSlash.SLASH_COMMANDS` registry, palette class from the
-     * harness id) — never the old bespoke fleet pill.
-     */
-    function fleetAgentChipHtml(s) {
-        const agentId = String((s && s.agent) || '').trim().toLowerCase();
-        if (!agentId) return '';
-        const reg = globalThis.CuttleChatSlash && globalThis.CuttleChatSlash.SLASH_COMMANDS;
-        const hit = Array.isArray(reg)
-            ? reg.find((c) => String((c && c.prefix) || '').trim().toLowerCase() === '/' + agentId)
-            : null;
-        const rawAgent = String(s.agent || '').trim();
-        const label = (hit && hit.label) ? String(hit.label) : rawAgent;
-        const bits = [label, s.model, s.effort].map((x) => String(x || '').trim()).filter(Boolean);
-        const tip = bits.join(' | ');
-        return '<span class="slash-command-chip slash-command-chip--header'
-            + slashCommandChipCategoryClass(agentId)
-            + ' slash-command-chip--no-shorten" role="img" aria-label="'
-            + escapeHtmlInline('Agent: ' + tip) + '" title="'
-            + escapeHtmlInline(tip) + '" data-full-label="'
-            + escapeHtmlInline(label) + '" data-tip="'
-            + escapeHtmlInline(tip) + '">'
-            + '<span class="slash-chip-label">' + escapeHtmlInline(label) + '</span></span>';
-    }
-
-    function renderSubagentLaunchersHtml(subagents, opts) {
-        const list = normalizeSubagentList(subagents);
-        if (!list.length) return '';
-        const isParent = !!(opts && opts.kind === 'parent');
-        const fleet = globalThis.CuttleChatSubagentFleet;
-        if (!isParent && fleet && fleet.hasFleet(list)) {
-            return fleet.renderFleetHtml(list, { esc: escapeHtmlInline, avatarHtml: profileAvatarInnerHtml, chipHtml: fleetAgentChipHtml });
-        }
-        const buttons = list.map((s) => {
-            const handle = escapeHtmlInline(s.handle);
-            const label = escapeHtmlInline(s.label);
-            const title = escapeHtmlInline((isParent ? 'Open parent ' : 'Open ') + s.handle + (s.label ? ' — ' + s.label : ''));
-            const agent = (!isParent && s.agent) ? escapeHtmlInline(s.agent) : '';
-            const busy = s.generating ? ' is-generating' : '';
-            const kindClass = isParent ? ' is-parent' : '';
-            return (
-                '<button type="button" class="subagent-launcher' + kindClass + busy + '" data-chat-handle="' + handle + '" title="' + title + '">' +
-                '<span class="subagent-launcher-orb" aria-hidden="true"></span>' +
-                '<span class="subagent-launcher-label">' + label + '</span>' +
-                (agent ? '<span class="subagent-launcher-agent">' + agent + '</span>' : '') +
-                '</button>'
-            );
-        }).join('');
-        const aria = isParent ? 'Parent chats' : 'Sub-agent chats';
-        const wrapClass = isParent ? 'subagent-launchers is-parent' : 'subagent-launchers';
-        return '<div class="' + wrapClass + '" role="group" aria-label="' + aria + '">' + buttons + '</div>';
-    }
-
-    function historyEntryParentId(entry) {
-        if (!entry) return '';
-        const s = entry.serverSession || entry.session || {};
-        const pid = s.parent_session_id;
-        if (pid == null || pid === '') return '';
-        return String(pid);
-    }
-
-    function historyLookupNestedEntry(nested, sessionId) {
-        if (!nested || !nested.byId || sessionId == null || sessionId === '') return null;
-        const key = String(sessionId);
-        if (nested.byId.has(key)) return nested.byId.get(key);
-        const bare = typeof toAuthDbSessionId === 'function' ? toAuthDbSessionId(sessionId) : null;
-        if (bare != null && nested.byId.has(String(bare))) return nested.byId.get(String(bare));
-        for (const [id, entry] of nested.byId.entries()) {
-            if (typeof sessionIdsEqual === 'function' && sessionIdsEqual(id, sessionId)) return entry;
-            if (String(id) === key) return entry;
-        }
-        return null;
-    }
-
-    function nestHistoryEntries(entries) {
-        const list = Array.isArray(entries) ? entries.slice() : [];
-        const byId = new Map();
-        list.forEach((e) => {
-            const id = String(e && e.sessionId != null ? e.sessionId : '');
-            if (id) byId.set(id, e);
-        });
-        const childrenByParent = new Map();
-        const roots = [];
-        list.forEach((e) => {
-            const pid = historyEntryParentId(e);
-            if (pid && byId.has(pid)) {
-                if (!childrenByParent.has(pid)) childrenByParent.set(pid, []);
-                childrenByParent.get(pid).push(e);
-            } else {
-                roots.push(e);
-            }
-        });
-        return { roots: roots, childrenByParent: childrenByParent, byId: byId };
-    }
-
-    function historySessionAncestorIds(sessionId, nested) {
-        const ids = [];
-        let cur = sessionId;
-        const seen = new Set();
-        while (cur != null && cur !== '') {
-            const key = String(cur);
-            if (seen.has(key)) break;
-            seen.add(key);
-            const entry = historyLookupNestedEntry(nested, cur);
-            const pid = historyEntryParentId(entry);
-            if (!pid) break;
-            if (!historyLookupNestedEntry(nested, pid)) break;
-            ids.push(pid);
-            cur = pid;
-        }
-        return ids;
-    }
-
-    function isHistorySubagentGroupExpanded(parentId, nested, opts) {
-        opts = opts || {};
-        const pid = String(parentId || '');
-        if (!pid) return false;
-        if (opts.searchActive) return true;
-        const current = opts.currentSessionId;
-        if (current != null && current !== '') {
-            const ancestors = historySessionAncestorIds(current, nested);
-            for (let i = 0; i < ancestors.length; i++) {
-                if (ancestors[i] === pid) return true;
-                if (typeof sessionIdsEqual === 'function' && sessionIdsEqual(ancestors[i], pid)) return true;
-            }
-        }
-        const prefs = opts.prefs || {};
-        return prefs[pid] === 'expanded';
-    }
-
-    function visibleHistoryRoots(nested, visibleLimit, opts) {
-        const roots = (nested && Array.isArray(nested.roots)) ? nested.roots : [];
-        const limit = Math.max(0, Number(visibleLimit) || 0);
-        const visible = roots.slice(0, limit);
-        const current = opts && opts.currentSessionId;
-        if (current == null || current === '') return visible;
-        const ancestors = historySessionAncestorIds(current, nested);
-        const rootId = ancestors.length ? ancestors[ancestors.length - 1] : String(current);
-        const already = visible.some((e) => {
-            const id = e && e.sessionId;
-            if (id == null) return false;
-            if (String(id) === String(rootId)) return true;
-            return typeof sessionIdsEqual === 'function' && sessionIdsEqual(id, rootId);
-        });
-        if (already) return visible;
-        const missing = roots.find((e) => {
-            const id = e && e.sessionId;
-            if (id == null) return false;
-            if (String(id) === String(rootId)) return true;
-            return typeof sessionIdsEqual === 'function' && sessionIdsEqual(id, rootId);
-        });
-        return missing ? visible.concat([missing]) : visible;
-    }
-
-    function historySubagentNoun(count) {
-        const n = Math.max(0, Number(count) || 0);
-        return n === 1 ? 'sub-agent' : 'sub-agents';
-    }
-
-    function historySubagentToggleTitle(count, expanded, force) {
-        const n = Math.max(0, Number(count) || 0);
-        const noun = historySubagentNoun(n);
-        const amount = n ? (n + ' ' + noun) : noun;
-        if (force) return amount + ' (open because this chat is a sub-agent)';
-        return (expanded ? 'Hide ' : 'Show ') + amount;
-    }
-
-    function mountSubagentLaunchers(messageEl, subagents, opts) {
-        if (!messageEl) return;
-        const wrap = messageEl.querySelector('.message-content-wrapper');
-        if (!wrap) return;
-        const html = renderSubagentLaunchersHtml(subagents, opts);
-        const existing = wrap.querySelector('.subagent-launchers');
-        if (!html) {
-            if (existing) existing.remove();
-            return;
-        }
-        // Tooltips promote title attributes after mounting. Comparing outerHTML
-        // to our source then replaces unchanged cards on every history poll.
-        if (existing && existing.__cuttleLaunchersHtml === html) return;
-        const template = document.createElement('template');
-        template.innerHTML = html;
-        const next = template.content.firstElementChild;
-        if (existing) {
-            // Keep the group and its buttons mounted. Re-focusing replacement
-            // buttons can scroll an iPad iframe back to a fleet above the reader.
-            existing.className = next.className;
-            existing.setAttribute('aria-label', next.getAttribute('aria-label'));
-            const cards = new Map(Array.from(existing.children).map((el) => [el.getAttribute('data-chat-handle'), el]));
-            const kept = new Set();
-            let cursor = existing.firstElementChild;
-            Array.from(next.children).forEach((wanted) => {
-                const handle = wanted.getAttribute('data-chat-handle');
-                const card = handle && cards.get(handle);
-                const node = card || wanted;
-                const source = wanted.outerHTML;
-                if (card && card.__cuttleLauncherHtml !== source) {
-                    Array.from(card.attributes).forEach((attr) => {
-                        if (!wanted.hasAttribute(attr.name)) card.removeAttribute(attr.name);
-                    });
-                    Array.from(wanted.attributes).forEach((attr) => {
-                        if (card.getAttribute(attr.name) !== attr.value) card.setAttribute(attr.name, attr.value);
-                    });
-                    if (card.__cuttleLauncherBodyHtml !== wanted.innerHTML) card.innerHTML = wanted.innerHTML;
-                }
-                node.__cuttleLauncherHtml = source;
-                node.__cuttleLauncherBodyHtml = wanted.innerHTML;
-                kept.add(node);
-                if (node !== cursor) existing.insertBefore(node, cursor);
-                cursor = node.nextElementSibling;
-            });
-            Array.from(existing.children).forEach((el) => {
-                if (!kept.has(el)) el.remove();
-            });
-            existing.__cuttleLaunchersHtml = html;
-            return;
-        }
-        next.__cuttleLaunchersHtml = html;
-        Array.from(next.children).forEach((el) => {
-            el.__cuttleLauncherHtml = el.outerHTML;
-            el.__cuttleLauncherBodyHtml = el.innerHTML;
-        });
-        const footer = wrap.querySelector('.message-footer');
-        if (footer) wrap.insertBefore(next, footer);
-        else wrap.appendChild(next);
-    }
-
-    function mountMessageLaunchers(messageEl, role, opts) {
-        if (!messageEl) return;
-        if (role === 'assistant') {
-            mountSubagentLaunchers(messageEl, opts && opts.subagents);
-            return;
-        }
-        if (role === 'user') {
-            mountSubagentLaunchers(messageEl, parentRefsFromOpts(opts), { kind: 'parent' });
-        }
-    }
-
-    // --- Chat media thumbs + lightbox (images / video, per-bubble gallery) ---
-
-    function mediaKindFromUrl(url) {
-        const path = String(url || '').split('?')[0].split('#')[0].toLowerCase();
-        if (/\.(mp4|webm|mov|m4v|ogg|ogv)$/i.test(path)) return 'video';
-        return 'image';
-    }
-
-    /** Conventional mid-frame poster for staged videos: foo.mp4 → foo.poster.jpg */
-    function mediaPosterUrl(src) {
-        const u = String(src || '').trim().split('?')[0].split('#')[0];
-        if (!u.startsWith('/output/shared/')) return '';
-        if (!/\.(mp4|webm|mov|m4v|ogg|ogv)$/i.test(u)) return '';
-        return u.replace(/\.[^.\/]+$/i, '.poster.jpg');
-    }
-
-    function isSafeMediaSrc(url) {
-        const u = String(url || '').trim();
-        if (!u) return false;
-        if (/^(javascript|data|vbscript):/i.test(u)) return false;
-        if (/^https?:\/\//i.test(u)) return true;
-        if (u.startsWith('/output/')) return true;
-        // Same-origin site paths (avatars, static), not protocol-relative
-        if (u.charAt(0) === '/' && u.charAt(1) !== '/') return true;
-        return false;
-    }
-
-    function mediaDownloadUrl(src) {
-        const u = String(src || '').trim();
-        if (!u) return '';
-        if (u.startsWith('/output/')) {
-            return u + (u.includes('?') ? '&' : '?') + 'download=1';
-        }
-        return u;
-    }
-
-    function mediaDownloadFilename(src, title) {
-        const t = String(title || '').trim();
-        if (t && /\.[a-z0-9]{2,5}$/i.test(t)) return t;
-        try {
-            const path = String(src || '').split('?')[0];
-            const base = path.split('/').filter(Boolean).pop() || 'download';
-            return decodeURIComponent(base);
-        } catch (_) {
-            return 'download';
-        }
-    }
-
-    /** Parse ``url`` / ``url "description"`` / ``url 'description'`` from markdown image dest. */
-    function parseMdImageDest(raw) {
-        let dest = String(raw || '').trim();
-        let description = '';
-        const titleMatch = dest.match(/\s+("([^"]*)"|'([^']*)')\s*$/);
-        if (titleMatch) {
-            description = titleMatch[2] != null ? titleMatch[2] : (titleMatch[3] || '');
-            dest = dest.slice(0, titleMatch.index).trim();
-        }
-        return { href: dest, description: description };
-    }
-
-    /** True when alt/title looks like prose context, not a bare filename. */
-    function mediaAltLooksLikeDescription(text) {
-        const s = String(text || '').trim();
-        if (!s) return false;
-        if (/^[\w.\-]+\.[a-z0-9]{2,5}$/i.test(s)) return false;
-        if (/-[a-f0-9]{8,12}\.[^.]+$/i.test(s)) return false;
-        if (s.length >= 28) return true;
-        return /\s/.test(s);
-    }
-
-    function buildMediaThumbHtml(src, opts) {
-        const o = opts || {};
-        const rawSrc = String(src || '').trim();
-        if (!isSafeMediaSrc(rawSrc)) {
-            return escapeHtmlInline(o.alt || o.title || rawSrc || '');
-        }
-        const kind = o.kind || mediaKindFromUrl(rawSrc);
-        const title = escapeHtmlInline(o.title || o.alt || '');
-        const description = String(o.description || '').trim();
-        const safeDesc = description ? escapeHtmlInline(description) : '';
-        const safeSrc = escapeHtmlInline(rawSrc).replace(/"/g, '&quot;');
-        const dl = escapeHtmlInline(mediaDownloadUrl(rawSrc)).replace(/"/g, '&quot;');
-        const poster = (o.poster && isSafeMediaSrc(o.poster))
-            ? String(o.poster).trim()
-            : (kind === 'video' ? mediaPosterUrl(rawSrc) : '');
-        const safePoster = poster ? escapeHtmlInline(poster).replace(/"/g, '&quot;') : '';
-        const cls = 'cuttle-media-thumb' + (kind === 'video' ? ' cuttle-media-thumb--video' : '');
-        let inner;
-        if (kind === 'video') {
-            // Prefer mid-frame poster JPEG; fall back to muted video frame if missing.
-            if (safePoster) {
-                inner =
-                    '<img class="cuttle-media-poster" src="' +
-                    safePoster +
-                    '" alt="' +
-                    title +
-                    '" loading="lazy" onerror="window.CuttleMediaThumbFallback&&window.CuttleMediaThumbFallback(this)">' +
-                    '<span class="cuttle-media-play" aria-hidden="true">▶</span>';
-            } else {
-                inner =
-                    '<video src="' +
-                    safeSrc +
-                    '" muted preload="metadata" playsinline></video>' +
-                    '<span class="cuttle-media-play" aria-hidden="true">▶</span>';
-            }
-        } else {
-            inner =
-                '<img src="' +
-                safeSrc +
-                '" alt="' +
-                title +
-                '" loading="lazy" onerror="this.closest(\'.cuttle-media-thumb\')?.classList.add(\'cuttle-media-thumb--broken\')">';
-        }
-        const tip = safeDesc || title || 'Open media';
-        let html =
-            '<button type="button" class="' +
-            cls +
-            '" data-src="' +
-            safeSrc +
-            '" data-kind="' +
-            escapeHtmlInline(kind) +
-            '" data-title="' +
-            title +
-            '"' +
-            (safeDesc ? ' data-description="' + safeDesc.replace(/"/g, '&quot;') + '"' : '') +
-            (safePoster ? ' data-poster="' + safePoster + '"' : '') +
-            ' data-download="' +
-            dl +
-            '" title="' +
-            tip +
-            '">' +
-            inner +
-            '</button>';
-        if (safeDesc) {
-            html =
-                '<figure class="cuttle-media-figure">' +
-                html +
-                '<figcaption class="cuttle-media-caption">' +
-                safeDesc +
-                '</figcaption>' +
-                '</figure>';
-        }
-        return html;
-    }
-
-    // Poster missing / broken → swap to <video preload=metadata> stills.
-    window.CuttleMediaThumbFallback = function (imgEl) {
-        try {
-            const thumb = imgEl && imgEl.closest && imgEl.closest('.cuttle-media-thumb');
-            if (!thumb) return;
-            const src = thumb.getAttribute('data-src') || '';
-            if (!src) {
-                thumb.classList.add('cuttle-media-thumb--broken');
-                return;
-            }
-            const video = document.createElement('video');
-            video.src = src;
-            video.muted = true;
-            video.preload = 'metadata';
-            video.setAttribute('playsinline', '');
-            imgEl.replaceWith(video);
-        } catch (_) {
-            try {
-                imgEl.closest('.cuttle-media-thumb')?.classList.add('cuttle-media-thumb--broken');
-            } catch (__) {}
-        }
-    };
-
-    let _cuttleLightbox = null;
-    let _lightboxItems = [];
-    let _lightboxIndex = 0;
-    // Zoom: mode 'fit' (contain) or 'actual' (1:1 px); userZoom multiplies the base.
-    let _lightboxMode = 'fit';
-    let _lightboxUserZoom = 1;
-    let _lightboxFitScale = 1;
-    let _lightboxNatW = 0;
-    let _lightboxNatH = 0;
-    let _lightboxPanX = 0;
-    let _lightboxPanY = 0;
-    let _lightboxDrag = null;
-    /** Active pointers for pan + pinch (pointerId → {x,y}). */
-    let _lightboxPointers = new Map();
-    let _lightboxPinch = null;
-    const _LIGHTBOX_ZOOM_MIN = 0.25; // 25% of natural pixels
-    const _LIGHTBOX_ZOOM_MAX = 8;
-    const _LIGHTBOX_ZOOM_STEP = 1.25;
-    let _lightboxHostKeyBound = false;
-    let _lightboxHostResizeBound = false;
-
-    /** Prefer the app-shell parent so the overlay covers every split pane. */
-    function lightboxHostWindow() {
-        try {
-            if (window.parent && window.parent !== window && window.parent.document && window.parent.document.body) {
-                // Same-origin probe (throws if cross-origin).
-                void window.parent.document.documentElement;
-                return window.parent;
-            }
-        } catch (_) {}
-        return window;
-    }
-
-    function lightboxHostDocument() {
-        try {
-            return lightboxHostWindow().document;
-        } catch (_) {
-            return document;
-        }
-    }
-
-    function lightboxSetOpenClass(on) {
-        const docs = [document];
-        try {
-            const hostDoc = lightboxHostDocument();
-            if (hostDoc && hostDoc !== document) docs.push(hostDoc);
-        } catch (_) {}
-        docs.forEach(function (doc) {
-            try {
-                if (on) doc.documentElement.classList.add('cuttle-lightbox-open');
-                else doc.documentElement.classList.remove('cuttle-lightbox-open');
-            } catch (_) {}
-        });
-    }
-
-    function ensureCuttleLightbox() {
-        const hostDoc = lightboxHostDocument();
-        const hostBody = hostDoc.body || document.body;
-
-        // Another chat pane may have left a shell lightbox — drop it so this
-        // pane owns the handlers (avoid stale closures from a sibling iframe).
-        if (!_cuttleLightbox || !hostBody.contains(_cuttleLightbox)) {
-            try {
-                const existing = hostDoc.getElementById('cuttle-shell-lightbox');
-                if (existing && existing !== _cuttleLightbox) {
-                    existing.remove();
-                }
-            } catch (_) {}
-            _cuttleLightbox = null;
-        }
-
-        if (_cuttleLightbox && hostBody.contains(_cuttleLightbox)) {
-            // Rebuild if an older shell is missing caption slots or zoom chrome.
-            if (
-                _cuttleLightbox.querySelector('.cuttle-lightbox-path')
-                && _cuttleLightbox.querySelector('.cuttle-lightbox-desc')
-                && _cuttleLightbox.querySelector('.cuttle-lightbox-zoom')
-            ) {
-                return _cuttleLightbox;
-            }
-            try {
-                _cuttleLightbox.remove();
-            } catch (_) {}
-            _cuttleLightbox = null;
-        }
-
-        const el = hostDoc.createElement('div');
-        el.id = 'cuttle-shell-lightbox';
-        el.className = 'cuttle-lightbox';
-        el.hidden = true;
-        el.tabIndex = -1;
-        el.setAttribute('role', 'dialog');
-        el.setAttribute('aria-modal', 'true');
-        el.setAttribute('aria-label', 'Media viewer');
-        el.innerHTML =
-            '<div class="cuttle-lightbox-backdrop" data-lb-action="close"></div>' +
-            '<button type="button" class="cuttle-lightbox-close" data-lb-action="close" aria-label="Close">×</button>' +
-            '<button type="button" class="cuttle-lightbox-nav cuttle-lightbox-prev" data-lb-action="prev" aria-label="Previous">‹</button>' +
-            '<button type="button" class="cuttle-lightbox-nav cuttle-lightbox-next" data-lb-action="next" aria-label="Next">›</button>' +
-            '<div class="cuttle-lightbox-stage"></div>' +
-            '<div class="cuttle-lightbox-bar">' +
-            '<div class="cuttle-lightbox-caption">' +
-            '<span class="cuttle-lightbox-title"></span>' +
-            '<span class="cuttle-lightbox-desc" hidden></span>' +
-            '<span class="cuttle-lightbox-path" hidden></span>' +
-            '</div>' +
-            '<div class="cuttle-lightbox-zoom" role="group" aria-label="Zoom">' +
-            '<button type="button" class="cuttle-lightbox-zoom-btn" data-lb-action="zoom-out" aria-label="Zoom out" title="Zoom out (−)">−</button>' +
-            '<button type="button" class="cuttle-lightbox-zoom-toggle" data-lb-action="zoom-toggle" aria-label="Toggle fit and actual size" title="Toggle fit / actual size">Fit</button>' +
-            '<button type="button" class="cuttle-lightbox-zoom-btn" data-lb-action="zoom-in" aria-label="Zoom in" title="Zoom in (+)">+</button>' +
-            '</div>' +
-            '<span class="cuttle-lightbox-counter"></span>' +
-            '<a class="cuttle-lightbox-download" href="#" download>Download</a>' +
-            '</div>';
-        hostBody.appendChild(el);
-        el.addEventListener('click', function (e) {
-            const btn = e.target && e.target.closest && e.target.closest('[data-lb-action]');
-            if (!btn) return;
-            const action = btn.getAttribute('data-lb-action');
-            if (action === 'close') closeCuttleLightbox();
-            else if (action === 'prev') showLightboxIndex(_lightboxIndex - 1);
-            else if (action === 'next') showLightboxIndex(_lightboxIndex + 1);
-            else if (action === 'zoom-in') lightboxZoomBy(_LIGHTBOX_ZOOM_STEP);
-            else if (action === 'zoom-out') lightboxZoomBy(1 / _LIGHTBOX_ZOOM_STEP);
-            else if (action === 'zoom-toggle') toggleLightboxSizeMode();
-        });
-        const stage = el.querySelector('.cuttle-lightbox-stage');
-        if (stage) {
-            stage.addEventListener('pointerdown', onLightboxPointerDown);
-            stage.addEventListener('pointermove', onLightboxPointerMove);
-            stage.addEventListener('pointerup', onLightboxPointerUp);
-            stage.addEventListener('pointercancel', onLightboxPointerUp);
-            stage.addEventListener('wheel', onLightboxWheel, { passive: false });
-            stage.addEventListener('dblclick', onLightboxDblClick);
-            // Legacy iOS gesture stream (no-ops on Android / Capacitor Chromium).
-            stage.addEventListener('gesturestart', onLightboxGesture, { passive: false });
-            stage.addEventListener('gesturechange', onLightboxGesture, { passive: false });
-            stage.addEventListener('gestureend', onLightboxGesture, { passive: false });
-            // Right-click Copy / Save on the full-size image (host doc when shelled).
-            stage.addEventListener('contextmenu', onMediaContextMenu);
-        }
-        _cuttleLightbox = el;
-        return el;
-    }
-
-    function lightboxMediaEl() {
-        const root = _cuttleLightbox;
-        if (!root) return null;
-        return root.querySelector('.cuttle-lightbox-stage img, .cuttle-lightbox-stage video');
-    }
-
-    function lightboxZoomBase() {
-        return _lightboxMode === 'actual' ? 1 : (_lightboxFitScale || 1);
-    }
-
-    function lightboxEffectiveScale() {
-        return lightboxZoomBase() * (_lightboxUserZoom || 1);
-    }
-
-    /** Smallest allowed scale vs natural size: 25%, or Fit when Fit is already smaller. */
-    function lightboxMinEffectiveScale() {
-        const fit = _lightboxFitScale > 0 ? _lightboxFitScale : 1;
-        return Math.min(_LIGHTBOX_ZOOM_MIN, fit);
-    }
-
-    function resetLightboxZoomState() {
-        _lightboxMode = 'fit';
-        _lightboxUserZoom = 1;
-        _lightboxFitScale = 1;
-        _lightboxNatW = 0;
-        _lightboxNatH = 0;
-        _lightboxPanX = 0;
-        _lightboxPanY = 0;
-        _lightboxDrag = null;
-        _lightboxPinch = null;
-        if (_lightboxPointers && _lightboxPointers.clear) _lightboxPointers.clear();
-    }
-
-    function lightboxPinchDistance(pts) {
-        const arr = [];
-        pts.forEach(function (p) { arr.push(p); });
-        if (arr.length < 2) return 0;
-        const dx = arr[0].x - arr[1].x;
-        const dy = arr[0].y - arr[1].y;
-        return Math.hypot(dx, dy) || 0;
-    }
-
-    function lightboxPinchMidpoint(pts) {
-        const arr = [];
-        pts.forEach(function (p) { arr.push(p); });
-        if (arr.length < 2) return { x: 0, y: 0 };
-        return {
-            x: (arr[0].x + arr[1].x) / 2,
-            y: (arr[0].y + arr[1].y) / 2,
-        };
-    }
-
-    function lightboxSetEffectiveScale(nextEff) {
-        const base = Math.max(lightboxZoomBase(), 0.0001);
-        const clamped = clamp(
-            nextEff,
-            lightboxMinEffectiveScale(),
-            _LIGHTBOX_ZOOM_MAX
-        );
-        _lightboxUserZoom = clamped / base;
-    }
-
-    function measureLightboxFitScale() {
-        const root = _cuttleLightbox;
-        const media = lightboxMediaEl();
-        if (!root || !media) return;
-        const natW = media.naturalWidth || media.videoWidth || 0;
-        const natH = media.naturalHeight || media.videoHeight || 0;
-        if (!natW || !natH) return;
-        _lightboxNatW = natW;
-        _lightboxNatH = natH;
-        const stage = root.querySelector('.cuttle-lightbox-stage');
-        const sw = (stage && stage.clientWidth) || Math.max(1, lightboxHostWindow().innerWidth - 112);
-        const sh = (stage && stage.clientHeight) || Math.max(1, lightboxHostWindow().innerHeight - 160);
-        _lightboxFitScale = Math.min(sw / natW, sh / natH, 1);
-        if (!Number.isFinite(_lightboxFitScale) || _lightboxFitScale <= 0) {
-            _lightboxFitScale = 1;
-        }
-    }
-
-    function clampLightboxPan() {
-        const media = lightboxMediaEl();
-        if (!media || !_lightboxNatW || !_lightboxNatH) {
-            _lightboxPanX = 0;
-            _lightboxPanY = 0;
-            return;
-        }
-        const root = _cuttleLightbox;
-        const stage = root && root.querySelector('.cuttle-lightbox-stage');
-        const sw = (stage && stage.clientWidth) || lightboxHostWindow().innerWidth;
-        const sh = (stage && stage.clientHeight) || lightboxHostWindow().innerHeight;
-        const scale = lightboxEffectiveScale();
-        const dispW = _lightboxNatW * scale;
-        const dispH = _lightboxNatH * scale;
-        const maxX = Math.max(0, (dispW - sw) / 2);
-        const maxY = Math.max(0, (dispH - sh) / 2);
-        _lightboxPanX = clamp(_lightboxPanX, -maxX, maxX);
-        _lightboxPanY = clamp(_lightboxPanY, -maxY, maxY);
-    }
-
-    function updateLightboxZoomUi() {
-        const root = _cuttleLightbox;
-        if (!root) return;
-        const toggle = root.querySelector('.cuttle-lightbox-zoom-toggle');
-        const pct = Math.round(lightboxEffectiveScale() * 100);
-        if (toggle) {
-            if (_lightboxMode === 'actual' && Math.abs(_lightboxUserZoom - 1) < 0.02) {
-                toggle.textContent = 'Actual';
-                toggle.title = 'Switch to fit (default size)';
-                toggle.setAttribute('aria-pressed', 'true');
-            } else if (_lightboxMode === 'fit' && Math.abs(_lightboxUserZoom - 1) < 0.02) {
-                toggle.textContent = 'Fit';
-                toggle.title = 'Switch to actual size (1:1)';
-                toggle.setAttribute('aria-pressed', 'false');
-            } else {
-                toggle.textContent = pct + '%';
-                toggle.title = _lightboxMode === 'actual'
-                    ? 'Reset to actual size'
-                    : 'Reset to fit (default size)';
-                toggle.setAttribute('aria-pressed', _lightboxMode === 'actual' ? 'true' : 'false');
-            }
-        }
-        const stage = root.querySelector('.cuttle-lightbox-stage');
-        if (stage) {
-            const scale = lightboxEffectiveScale();
-            const canPan = !!(_lightboxNatW && _lightboxNatH
-                && ((_lightboxNatW * scale > (stage.clientWidth || 0) + 1)
-                    || (_lightboxNatH * scale > (stage.clientHeight || 0) + 1)));
-            stage.classList.toggle('is-pannable', canPan);
-        }
-    }
-
-    function applyLightboxZoom() {
-        const media = lightboxMediaEl();
-        if (!media) return;
-        if (!_lightboxNatW || !_lightboxNatH) {
-            measureLightboxFitScale();
-        }
-        if (!_lightboxNatW || !_lightboxNatH) return;
-        clampLightboxPan();
-        const scale = lightboxEffectiveScale();
-        media.style.width = _lightboxNatW + 'px';
-        media.style.height = _lightboxNatH + 'px';
-        media.style.maxWidth = 'none';
-        media.style.maxHeight = 'none';
-        media.style.transform =
-            'translate(' + _lightboxPanX + 'px,' + _lightboxPanY + 'px) scale(' + scale + ')';
-        media.style.transformOrigin = 'center center';
-        updateLightboxZoomUi();
-    }
-
-    function lightboxZoomBy(factor) {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        lightboxSetEffectiveScale(lightboxEffectiveScale() * factor);
-        applyLightboxZoom();
-    }
-
-    function setLightboxSizeMode(mode) {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        measureLightboxFitScale();
-        _lightboxMode = mode === 'actual' ? 'actual' : 'fit';
-        _lightboxUserZoom = 1;
-        _lightboxPanX = 0;
-        _lightboxPanY = 0;
-        applyLightboxZoom();
-    }
-
-    function toggleLightboxSizeMode() {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        // If already zoomed away from the mode's 1x, first reset to that mode's default.
-        if (Math.abs(_lightboxUserZoom - 1) > 0.02) {
-            _lightboxUserZoom = 1;
-            _lightboxPanX = 0;
-            _lightboxPanY = 0;
-            applyLightboxZoom();
-            return;
-        }
-        setLightboxSizeMode(_lightboxMode === 'actual' ? 'fit' : 'actual');
-    }
-
-    function onLightboxMediaReady(media) {
-        if (!media) return;
-        const apply = function () {
-            measureLightboxFitScale();
-            _lightboxUserZoom = 1;
-            _lightboxPanX = 0;
-            _lightboxPanY = 0;
-            applyLightboxZoom();
-        };
-        if (media.tagName === 'VIDEO') {
-            if (media.videoWidth) apply();
-            else media.addEventListener('loadedmetadata', apply, { once: true });
-        } else if (media.complete && media.naturalWidth) {
-            apply();
-        } else {
-            media.addEventListener('load', apply, { once: true });
-        }
-    }
-
-    function onLightboxPointerDown(e) {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        if (e.button != null && e.button !== 0) return;
-        const stage = e.currentTarget;
-        if (!stage) return;
-        // Don't steal gestures from native video controls.
-        const media = lightboxMediaEl();
-        if (!media || media.tagName === 'VIDEO') return;
-
-        _lightboxPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        try {
-            stage.setPointerCapture(e.pointerId);
-        } catch (_) {}
-
-        if (_lightboxPointers.size >= 2) {
-            // Two fingers → pinch (works from Fit, not only when already pannable).
-            _lightboxDrag = null;
-            const dist = lightboxPinchDistance(_lightboxPointers) || 1;
-            const mid = lightboxPinchMidpoint(_lightboxPointers);
-            _lightboxPinch = {
-                startDist: dist,
-                startEff: lightboxEffectiveScale(),
-                startPanX: _lightboxPanX,
-                startPanY: _lightboxPanY,
-                startMidX: mid.x,
-                startMidY: mid.y,
-            };
-            stage.classList.add('is-dragging');
-            e.preventDefault();
-            return;
-        }
-
-        // Single finger pan when the image overflows the stage.
-        if (stage.classList.contains('is-pannable')) {
-            _lightboxPinch = null;
-            _lightboxDrag = {
-                pointerId: e.pointerId,
-                startX: e.clientX,
-                startY: e.clientY,
-                originX: _lightboxPanX,
-                originY: _lightboxPanY,
-                moved: false,
-            };
-            stage.classList.add('is-dragging');
-            e.preventDefault();
-        }
-    }
-
-    function onLightboxPointerMove(e) {
-        if (!_lightboxPointers.has(e.pointerId)) return;
-        _lightboxPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-        if (_lightboxPinch && _lightboxPointers.size >= 2) {
-            const dist = lightboxPinchDistance(_lightboxPointers);
-            const mid = lightboxPinchMidpoint(_lightboxPointers);
-            const ratio = dist / (_lightboxPinch.startDist || 1);
-            lightboxSetEffectiveScale(_lightboxPinch.startEff * ratio);
-            _lightboxPanX = _lightboxPinch.startPanX + (mid.x - _lightboxPinch.startMidX);
-            _lightboxPanY = _lightboxPinch.startPanY + (mid.y - _lightboxPinch.startMidY);
-            applyLightboxZoom();
-            e.preventDefault();
-            return;
-        }
-
-        if (!_lightboxDrag || e.pointerId !== _lightboxDrag.pointerId) return;
-        if (_lightboxPointers.size !== 1) return;
-        const dx = e.clientX - _lightboxDrag.startX;
-        const dy = e.clientY - _lightboxDrag.startY;
-        if (Math.abs(dx) + Math.abs(dy) > 3) _lightboxDrag.moved = true;
-        _lightboxPanX = _lightboxDrag.originX + dx;
-        _lightboxPanY = _lightboxDrag.originY + dy;
-        applyLightboxZoom();
-        e.preventDefault();
-    }
-
-    function onLightboxPointerUp(e) {
-        if (!_lightboxPointers.has(e.pointerId) && !_lightboxDrag && !_lightboxPinch) return;
-        const stage = e.currentTarget;
-        _lightboxPointers.delete(e.pointerId);
-        try {
-            if (stage) stage.releasePointerCapture(e.pointerId);
-        } catch (_) {}
-
-        if (_lightboxPointers.size >= 2) {
-            // Still pinching with remaining fingers — reseat pinch baseline.
-            const dist = lightboxPinchDistance(_lightboxPointers) || 1;
-            const mid = lightboxPinchMidpoint(_lightboxPointers);
-            _lightboxPinch = {
-                startDist: dist,
-                startEff: lightboxEffectiveScale(),
-                startPanX: _lightboxPanX,
-                startPanY: _lightboxPanY,
-                startMidX: mid.x,
-                startMidY: mid.y,
-            };
-            _lightboxDrag = null;
-            return;
-        }
-
-        _lightboxPinch = null;
-
-        if (_lightboxPointers.size === 1) {
-            // One finger left — continue as pan if oversized.
-            const entry = _lightboxPointers.entries().next().value;
-            if (entry && stage && stage.classList.contains('is-pannable')) {
-                _lightboxDrag = {
-                    pointerId: entry[0],
-                    startX: entry[1].x,
-                    startY: entry[1].y,
-                    originX: _lightboxPanX,
-                    originY: _lightboxPanY,
-                    moved: false,
-                };
-                return;
-            }
-        }
-
-        _lightboxDrag = null;
-        if (stage) stage.classList.remove('is-dragging');
-    }
-
-    function onLightboxWheel(e) {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        e.preventDefault();
-        const delta = e.deltaY;
-        if (delta < 0) lightboxZoomBy(_LIGHTBOX_ZOOM_STEP);
-        else if (delta > 0) lightboxZoomBy(1 / _LIGHTBOX_ZOOM_STEP);
-    }
-
-    function onLightboxDblClick(e) {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        if (e.target && e.target.closest && e.target.closest('video')) return;
-        e.preventDefault();
-        toggleLightboxSizeMode();
-    }
-
-    function onLightboxGesture(e) {
-        // iOS Safari legacy gesture events — keep the page from stealing pinch.
-        if (!_cuttleLightbox || _cuttleLightbox.hidden) return;
-        e.preventDefault();
-    }
-
-    function mediaBasenameFromSrc(src) {
-        try {
-            const path = String(src || '').split('?')[0].split('#')[0];
-            return decodeURIComponent(path.split('/').filter(Boolean).pop() || '') || '';
-        } catch (_) {
-            return '';
-        }
-    }
-
-    /** Strip staging suffix: ``Jambit_intro-44c426b348.mp4`` → ``Jambit_intro.mp4``. */
-    function originalNameFromStaged(srcOrName) {
-        const base = mediaBasenameFromSrc(srcOrName) || String(srcOrName || '');
-        return base.replace(/-[a-f0-9]{8,12}(\.[^.]+)$/i, '$1');
-    }
-
-    function applyLightboxCaption(item, meta) {
-        const root = ensureCuttleLightbox();
-        const titleEl = root.querySelector('.cuttle-lightbox-title');
-        const descEl = root.querySelector('.cuttle-lightbox-desc');
-        const pathEl = root.querySelector('.cuttle-lightbox-path');
-        if (!titleEl || !pathEl) return;
-        const m = meta && typeof meta === 'object' ? meta : null;
-        const origName = String((m && m.original_name) || '').trim();
-        const origPath = String((m && m.original_path) || item.originalPath || '').trim();
-        const guessedName = originalNameFromStaged(item.src);
-        const alt = String(item.title || '').trim();
-        const explicitDesc = String(item.description || '').trim();
-        // Prefer real original filename from sidecar; never prefer the uuid staged name.
-        const displayName =
-            origName
-            || (alt && !mediaAltLooksLikeDescription(alt) && !/-[a-f0-9]{8,12}\.[^.]+$/i.test(alt) ? alt : '')
-            || guessedName
-            || 'Media';
-        titleEl.textContent = displayName;
-        let desc = explicitDesc;
-        if (!desc && mediaAltLooksLikeDescription(alt) && alt !== displayName) {
-            desc = alt;
-        }
-        if (descEl) {
-            if (desc) {
-                descEl.textContent = desc;
-                descEl.hidden = false;
-                descEl.title = desc;
-            } else {
-                descEl.textContent = '';
-                descEl.hidden = true;
-                descEl.removeAttribute('title');
-            }
-        }
-        // Path line is ONLY the source disk path — never /output/shared/…
-        if (origPath && !origPath.startsWith('/output/')) {
-            pathEl.textContent = origPath;
-            pathEl.hidden = false;
-            pathEl.title = origPath;
-        } else {
-            pathEl.textContent = '';
-            pathEl.hidden = true;
-        }
-        const dl = root.querySelector('.cuttle-lightbox-download');
-        if (dl) {
-            dl.setAttribute('download', origName || displayName || mediaDownloadFilename(item.src, item.title));
-        }
-    }
-
-    const _lightboxMetaCache = Object.create(null);
-
-    async function fetchSharedMediaMeta(src) {
-        const u = String(src || '').trim().split('?')[0];
-        if (!u.startsWith('/output/shared/')) return null;
-        if (Object.prototype.hasOwnProperty.call(_lightboxMetaCache, u)) {
-            return _lightboxMetaCache[u];
-        }
-        try {
-            const resp = await fetch(
-                '/api/shared-media/meta?url=' + encodeURIComponent(u),
-                { credentials: 'include' }
-            );
-            const data = await resp.json().catch(function () { return null; });
-            if (data && data.success && data.meta) {
-                _lightboxMetaCache[u] = data.meta;
-                return data.meta;
-            }
-        } catch (_) {}
-        _lightboxMetaCache[u] = null;
-        return null;
-    }
-
-    function collectBubbleMediaItems(fromEl) {
-        const bubble = fromEl && fromEl.closest && fromEl.closest('.message');
-        const root = bubble || fromEl;
-        if (!root) return [];
-        const nodes = root.querySelectorAll('.cuttle-media-thumb[data-src]');
-        const items = [];
-        nodes.forEach(function (node) {
-            const src = node.getAttribute('data-src') || '';
-            if (!src || !isSafeMediaSrc(src)) return;
-            items.push({
-                src: src,
-                kind: node.getAttribute('data-kind') || mediaKindFromUrl(src),
-                title: node.getAttribute('data-title') || '',
-                description: node.getAttribute('data-description') || '',
-                download: node.getAttribute('data-download') || mediaDownloadUrl(src),
-                originalPath: node.getAttribute('data-original-path') || '',
-            });
-        });
-        return items;
-    }
-
-    function showLightboxIndex(idx) {
-        if (!_lightboxItems.length) return;
-        const n = _lightboxItems.length;
-        _lightboxIndex = ((idx % n) + n) % n;
-        const item = _lightboxItems[_lightboxIndex];
-        const root = ensureCuttleLightbox();
-        const stage = root.querySelector('.cuttle-lightbox-stage');
-        const counterEl = root.querySelector('.cuttle-lightbox-counter');
-        const dl = root.querySelector('.cuttle-lightbox-download');
-        const prevBtn = root.querySelector('.cuttle-lightbox-prev');
-        const nextBtn = root.querySelector('.cuttle-lightbox-next');
-        const shownIndex = _lightboxIndex;
-        hideMediaCtxMenu();
-        resetLightboxZoomState();
-        stage.innerHTML = '';
-        stage.classList.remove('is-pannable', 'is-dragging', 'is-video');
-        const ownerDoc = root.ownerDocument || lightboxHostDocument();
-        let media = null;
-        if (item.kind === 'video') {
-            stage.classList.add('is-video');
-            const video = ownerDoc.createElement('video');
-            video.src = item.src;
-            video.controls = true;
-            video.autoplay = true;
-            video.playsInline = true;
-            video.setAttribute('controlsList', 'nodownload');
-            stage.appendChild(video);
-            media = video;
-        } else {
-            const img = ownerDoc.createElement('img');
-            img.src = item.src;
-            img.alt = item.title || '';
-            img.draggable = false;
-            stage.appendChild(img);
-            media = img;
-        }
-        applyLightboxCaption(item, null);
-        counterEl.textContent = n > 1 ? (_lightboxIndex + 1) + ' / ' + n : '';
-        const href = item.download || mediaDownloadUrl(item.src);
-        dl.href = href;
-        dl.setAttribute('download', mediaDownloadFilename(item.src, item.title));
-        dl.style.display = href ? '' : 'none';
-        const multi = n > 1;
-        prevBtn.hidden = !multi;
-        nextBtn.hidden = !multi;
-        root.hidden = false;
-        lightboxSetOpenClass(true);
-        updateLightboxZoomUi();
-        onLightboxMediaReady(media);
-        try {
-            root.focus({ preventScroll: true });
-        } catch (_) {
-            try { root.focus(); } catch (__) {}
-        }
-
-        // Fill original filename + source path from staging sidecar (async).
-        if (String(item.src || '').startsWith('/output/shared/')) {
-            fetchSharedMediaMeta(item.src).then(function (meta) {
-                if (_lightboxIndex !== shownIndex) return;
-                if (meta) applyLightboxCaption(item, meta);
-            });
-        }
-    }
-
-    function openCuttleLightbox(items, startIndex) {
-        _lightboxItems = Array.isArray(items) ? items.filter(Boolean) : [];
-        if (!_lightboxItems.length) return;
-        showLightboxIndex(startIndex || 0);
-    }
-
-    function closeCuttleLightbox() {
-        hideMediaCtxMenu();
-        const root = _cuttleLightbox;
-        if (!root) return;
-        const video = root.querySelector('video');
-        if (video) {
-            try {
-                video.pause();
-            } catch (_) {}
-        }
-        const stage = root.querySelector('.cuttle-lightbox-stage');
-        if (stage) {
-            stage.innerHTML = '';
-            stage.classList.remove('is-pannable', 'is-dragging', 'is-video');
-        }
-        root.hidden = true;
-        lightboxSetOpenClass(false);
-        _lightboxItems = [];
-        _lightboxIndex = 0;
-        resetLightboxZoomState();
-    }
-
-    function onLightboxKeydown(e) {
-        if (_mediaCtxMenu) {
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                hideMediaCtxMenu();
-            }
-            return;
-        }
-        if (!_cuttleLightbox || _cuttleLightbox.hidden || !_cuttleLightbox.isConnected) return;
-        if (e.key === 'Escape') {
-            e.preventDefault();
-            closeCuttleLightbox();
-        } else if (e.key === 'ArrowLeft') {
-            e.preventDefault();
-            showLightboxIndex(_lightboxIndex - 1);
-        } else if (e.key === 'ArrowRight') {
-            e.preventDefault();
-            showLightboxIndex(_lightboxIndex + 1);
-        } else if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
-            e.preventDefault();
-            lightboxZoomBy(_LIGHTBOX_ZOOM_STEP);
-        } else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
-            e.preventDefault();
-            lightboxZoomBy(1 / _LIGHTBOX_ZOOM_STEP);
-        } else if (e.key === '0' || e.code === 'Numpad0') {
-            e.preventDefault();
-            setLightboxSizeMode('fit');
-        } else if (e.key === '1' || e.code === 'Numpad1') {
-            e.preventDefault();
-            setLightboxSizeMode('actual');
-        }
-    }
-
-    function onLightboxHostResize() {
-        if (!_cuttleLightbox || _cuttleLightbox.hidden || !_cuttleLightbox.isConnected) return;
-        measureLightboxFitScale();
-        applyLightboxZoom();
-    }
-
-    // --- Image right-click menu (Copy / Save) for thumbs + lightbox ---
-
-    let _mediaCtxMenu = null;
-    let _mediaCtxMenuDoc = null;
-    let _mediaCtxDismissBound = false;
-
-    function mediaCtxToast(msg, kind) {
-        try {
-            if (typeof window.showToast === 'function') {
-                window.showToast(msg, kind || 'info');
-                return;
-            }
-        } catch (_) {}
-        try {
-            const hostWin = lightboxHostWindow();
-            if (hostWin && hostWin !== window && typeof hostWin.showToast === 'function') {
-                hostWin.showToast(msg, kind || 'info');
-            }
-        } catch (__) {}
-    }
-
-    function hideMediaCtxMenu() {
-        if (_mediaCtxMenu && _mediaCtxMenu.parentNode) {
-            try {
-                _mediaCtxMenu.parentNode.removeChild(_mediaCtxMenu);
-            } catch (_) {}
-        }
-        _mediaCtxMenu = null;
-        _mediaCtxMenuDoc = null;
-    }
-
-    function onMediaCtxDismiss(e) {
-        if (!_mediaCtxMenu) return;
-        if (e && e.type === 'keydown' && e.key !== 'Escape') return;
-        if (e && e.type === 'pointerdown') {
-            if (_mediaCtxMenu.contains && _mediaCtxMenu.contains(e.target)) return;
-        }
-        hideMediaCtxMenu();
-    }
-
-    function bindMediaCtxDismiss(doc) {
-        if (_mediaCtxDismissBound) return;
-        _mediaCtxDismissBound = true;
-        const opts = { capture: true };
-        document.addEventListener('pointerdown', onMediaCtxDismiss, opts);
-        document.addEventListener('scroll', onMediaCtxDismiss, true);
-        document.addEventListener('keydown', onMediaCtxDismiss, opts);
-        try {
-            const hostDoc = lightboxHostDocument();
-            if (hostDoc && hostDoc !== document) {
-                const hostOpts = { capture: true, signal: parentListenersAbort.signal };
-                hostDoc.addEventListener('pointerdown', onMediaCtxDismiss, hostOpts);
-                hostDoc.addEventListener('scroll', onMediaCtxDismiss, hostOpts);
-                hostDoc.addEventListener('keydown', onMediaCtxDismiss, hostOpts);
-            }
-        } catch (_) {}
-        void doc;
-    }
-
-    function blobToPngBlob(blob, win) {
-        return new Promise(function (resolve, reject) {
-            if (!blob) {
-                reject(new Error('No image data'));
-                return;
-            }
-            if (blob.type === 'image/png') {
-                resolve(blob);
-                return;
-            }
-            const w = win || window;
-            const doc = w.document || document;
-            const url = (w.URL || URL).createObjectURL(blob);
-            const img = new (w.Image || Image)();
-            img.onload = function () {
-                try {
-                    const canvas = doc.createElement('canvas');
-                    canvas.width = img.naturalWidth || img.width;
-                    canvas.height = img.naturalHeight || img.height;
-                    if (!canvas.width || !canvas.height) {
-                        (w.URL || URL).revokeObjectURL(url);
-                        reject(new Error('Empty image'));
-                        return;
-                    }
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0);
-                    canvas.toBlob(function (png) {
-                        (w.URL || URL).revokeObjectURL(url);
-                        if (png) resolve(png);
-                        else reject(new Error('PNG encode failed'));
-                    }, 'image/png');
-                } catch (err) {
-                    (w.URL || URL).revokeObjectURL(url);
-                    reject(err);
-                }
-            };
-            img.onerror = function () {
-                (w.URL || URL).revokeObjectURL(url);
-                reject(new Error('Image load failed'));
-            };
-            img.src = url;
-        });
-    }
-
-    async function copyImageToClipboard(src, win) {
-        const u = String(src || '').trim();
-        if (!u || !isSafeMediaSrc(u)) throw new Error('Invalid image');
-        const w = win || window;
-        const nav = w.navigator || navigator;
-        if (!nav.clipboard || typeof nav.clipboard.write !== 'function') {
-            throw new Error('Clipboard image copy is not supported here');
-        }
-        const ClipItem = w.ClipboardItem || (typeof ClipboardItem === 'function' ? ClipboardItem : null);
-        if (typeof ClipItem !== 'function') throw new Error('ClipboardItem not available');
-
-        // Pass a Promise into ClipboardItem so write() stays in the user-gesture
-        // turn while fetch + PNG encode finish asynchronously.
-        const pngPromise = (async function () {
-            const resp = await w.fetch(u, { credentials: 'include', cache: 'force-cache' });
-            if (!resp.ok) throw new Error('Could not fetch image (' + resp.status + ')');
-            const raw = await resp.blob();
-            if (!raw || !String(raw.type || '').startsWith('image/')) {
-                throw new Error('Not an image');
-            }
-            return blobToPngBlob(raw, w);
-        })();
-
-        await nav.clipboard.write([new ClipItem({ 'image/png': pngPromise })]);
-    }
-
-    function saveMediaFile(src, title, downloadHref, ownerDoc) {
-        const href = String(downloadHref || mediaDownloadUrl(src) || src || '').trim();
-        if (!href) throw new Error('Nothing to save');
-        const filename = mediaDownloadFilename(src, title);
-        const doc = (ownerDoc && ownerDoc.body) ? ownerDoc : document;
-        const a = doc.createElement('a');
-        a.href = href;
-        a.download = filename;
-        a.rel = 'noopener';
-        a.style.display = 'none';
-        (doc.body || document.body).appendChild(a);
-        a.click();
-        try {
-            a.remove();
-        } catch (_) {}
-    }
-
-    function mediaCtxTargetFromEvent(e) {
-        const t = e && e.target;
-        if (!t || !t.closest) return null;
-
-        const thumb = t.closest('.cuttle-media-thumb[data-src]');
-        if (thumb) {
-            const src = thumb.getAttribute('data-src') || '';
-            if (!src || !isSafeMediaSrc(src)) return null;
-            const kind = thumb.getAttribute('data-kind') || mediaKindFromUrl(src);
-            if (kind !== 'image') return null;
-            return {
-                src: src,
-                title: thumb.getAttribute('data-title') || '',
-                download: thumb.getAttribute('data-download') || mediaDownloadUrl(src),
-                kind: 'image',
-            };
-        }
-
-        const lbImg = t.closest('.cuttle-lightbox-stage img');
-        if (lbImg && _lightboxItems && _lightboxItems.length) {
-            const item = _lightboxItems[_lightboxIndex];
-            if (!item || item.kind === 'video') return null;
-            const src = item.src || lbImg.getAttribute('src') || '';
-            if (!src || !isSafeMediaSrc(src)) return null;
-            return {
-                src: src,
-                title: item.title || lbImg.getAttribute('alt') || '',
-                download: item.download || mediaDownloadUrl(src),
-                kind: 'image',
-            };
-        }
-        return null;
-    }
-
-    function showMediaCtxMenu(clientX, clientY, media, ownerDoc) {
-        hideMediaCtxMenu();
-        const doc = ownerDoc || document;
-        const menu = doc.createElement('div');
-        menu.className = 'cuttle-media-ctx-menu';
-        menu.setAttribute('role', 'menu');
-        menu.innerHTML =
-            '<button type="button" class="cuttle-media-ctx-item" data-media-ctx="copy" role="menuitem">Copy</button>' +
-            '<button type="button" class="cuttle-media-ctx-item" data-media-ctx="save" role="menuitem">Save</button>';
-        (doc.body || document.body).appendChild(menu);
-        _mediaCtxMenu = menu;
-        _mediaCtxMenuDoc = doc;
-        bindMediaCtxDismiss(doc);
-
-        // Position, then clamp inside the viewport.
-        menu.style.left = '0px';
-        menu.style.top = '0px';
-        const rect = menu.getBoundingClientRect();
-        const pad = 8;
-        const vw = doc.defaultView ? doc.defaultView.innerWidth : window.innerWidth;
-        const vh = doc.defaultView ? doc.defaultView.innerHeight : window.innerHeight;
-        let x = Number(clientX) || 0;
-        let y = Number(clientY) || 0;
-        if (x + rect.width + pad > vw) x = Math.max(pad, vw - rect.width - pad);
-        if (y + rect.height + pad > vh) y = Math.max(pad, vh - rect.height - pad);
-        if (x < pad) x = pad;
-        if (y < pad) y = pad;
-        menu.style.left = x + 'px';
-        menu.style.top = y + 'px';
-
-        menu.addEventListener('click', function (ev) {
-            const btn = ev.target && ev.target.closest && ev.target.closest('[data-media-ctx]');
-            if (!btn) return;
-            ev.preventDefault();
-            ev.stopPropagation();
-            const action = btn.getAttribute('data-media-ctx');
-            const win = (doc.defaultView) || window;
-            hideMediaCtxMenu();
-            if (action === 'copy') {
-                copyImageToClipboard(media.src, win)
-                    .then(function () {
-                        mediaCtxToast('Image copied', 'success');
-                    })
-                    .catch(function (err) {
-                        mediaCtxToast(
-                            (err && err.message) || 'Could not copy image',
-                            'error'
-                        );
-                    });
-            } else if (action === 'save') {
-                try {
-                    saveMediaFile(media.src, media.title, media.download, doc);
-                } catch (err) {
-                    mediaCtxToast(
-                        (err && err.message) || 'Could not save image',
-                        'error'
-                    );
-                }
-            }
-        });
-    }
-
-    function onMediaContextMenu(e) {
-        const media = mediaCtxTargetFromEvent(e);
-        if (!media) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const ownerDoc = (e.target && e.target.ownerDocument) || document;
-        showMediaCtxMenu(e.clientX, e.clientY, media, ownerDoc);
-    }
-
-    function bindCuttleMediaLightbox() {
-        document.addEventListener(
-            'click',
-            function (e) {
-                const thumb =
-                    e.target && e.target.closest && e.target.closest('.cuttle-media-thumb[data-src]');
-                if (!thumb) return;
-                if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-                e.preventDefault();
-                e.stopPropagation();
-                const items = collectBubbleMediaItems(thumb);
-                const src = thumb.getAttribute('data-src') || '';
-                let idx = items.findIndex(function (it) {
-                    return it.src === src;
-                });
-                if (idx < 0) {
-                    items.unshift({
-                        src: src,
-                        kind: thumb.getAttribute('data-kind') || mediaKindFromUrl(src),
-                        title: thumb.getAttribute('data-title') || '',
-                        description: thumb.getAttribute('data-description') || '',
-                        download: thumb.getAttribute('data-download') || mediaDownloadUrl(src),
-                    });
-                    idx = 0;
-                }
-                openCuttleLightbox(items, idx);
-            },
-            true
-        );
-        // Right-click Copy / Save on markdown + attachment image thumbs.
-        document.addEventListener('contextmenu', onMediaContextMenu, true);
-        // Chat iframe (focused composer) + host shell (lightbox has focus when open).
-        document.addEventListener('keydown', onLightboxKeydown);
-        if (!_lightboxHostKeyBound) {
-            try {
-                const hostDoc = lightboxHostDocument();
-                if (hostDoc && hostDoc !== document) {
-                    hostDoc.addEventListener('keydown', onLightboxKeydown, { signal: parentListenersAbort.signal });
-                    _lightboxHostKeyBound = true;
-                }
-            } catch (_) {}
-        }
-        if (!_lightboxHostResizeBound) {
-            try {
-                lightboxHostWindow().addEventListener('resize', onLightboxHostResize, {
-                    signal: parentListenersAbort.signal,
-                });
-                _lightboxHostResizeBound = true;
-            } catch (_) {
-                window.addEventListener('resize', onLightboxHostResize);
-                _lightboxHostResizeBound = true;
-            }
-        }
-    }
+    // Sub-agent launcher rows + live in-progress badges: chat_subagent_launchers.js.
+    const subagentLaunchers = CuttleChatSubagentLaunchers.create({
+        win: window,
+        escapeHtmlInline,
+        parseChatHandleToken,
+        avatarHtml: profileAvatarInnerHtml,
+        chipCategoryClass: slashCommandChipCategoryClass,
+    });
+
+    // Media thumbs, lightbox and image Copy / Save menu: owned by chat_media.js.
+    // Host-document listeners ride the frame teardown signal.
+    const chatMedia = CuttleChatMedia.create({
+        win: window,
+        escapeHtmlInline,
+        clamp,
+        hostTeardownSignal: parentListenersAbort.signal,
+    });
+    // Inline `onerror` hook on video poster thumbs (see buildMediaThumbHtml).
+    window.CuttleMediaThumbFallback = chatMedia.thumbFallback;
 
     function clamp(n, min, max) {
         const x = Number(n);
@@ -5438,7 +3061,7 @@
                 const local = readStarredSlashPrefixes();
                 if (server.length) {
                     writeStarredSlashPrefixes(server, { localOnly: true });
-                    if (!currentSessionId && !getSessionPrefs(newComposerPrefsId)) applyStarredSlashChips();
+                    if (!session.current() && !getSessionPrefs(newComposerPrefsId)) applyStarredSlashChips();
                     else {
                         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                         renderSlashChips('chat', document.getElementById('chatInput'));
@@ -5466,7 +3089,7 @@
         const next = wasStarred ? [] : [prefix];
         writeStarredSlashPrefixes(next);
         // On the welcome / new-chat composer, mirror the default immediately.
-        if (!currentSessionId) {
+        if (!session.current()) {
             applyStarredSlashChips();
         } else {
             // Keep session sticky chips; refresh so ★ on the badge updates.
@@ -5548,7 +3171,7 @@
                 const local = readStarredProject();
                 if (server && (server.path || server.id != null || server.name)) {
                     writeStarredProject(server, { localOnly: true });
-                    if (!currentSessionId) {
+                    if (!session.current()) {
                         reconcileChatProject();
                     } else {
                         renderProjectChips();
@@ -5587,7 +3210,7 @@
         const wasStarred = isProjectStarred(record);
         // Exclusive: star replaces any previous star; unstar clears.
         writeStarredProject(wasStarred ? null : record);
-        if (!currentSessionId) {
+        if (!session.current()) {
             // New / welcome chat: apply the new default immediately.
             if (!wasStarred) {
                 const live = findProjectById(record.id)
@@ -5607,97 +3230,66 @@
         return !wasStarred;
     }
 
-    const slashPaletteSupplement = {
-        cursorModels: [],
-        preferredModel: 'auto',
-        lastReportedModel: null,
-        projectCommands: [],
-        projectCommandsPath: '',
-        loading: false,
-        loaded: false,
-        cursorModelsLoading: false,
-        cursorModelsLoaded: false,
-        cursorModelsKey: '',
-        cursorModelsCount: 0,
-        museModels: [],
-        museModel: '',
-        museModelsLoading: false,
-        museModelsKey: '',
-        museModelsCount: 0,
-        museModelsSource: '',
-        museModelDirty: false,
-        museEffortDirty: false,
-        museEffort: '',
-        museEffortLoading: false,
-        museEffortKey: '',
-        hermesModels: [],
-        hermesModel: '',
-        hermesModelsLoading: false,
-        hermesModelsKey: '',
-        hermesModelDirty: false,
-        hermesEffortDirty: false,
-        hermesEffort: '',
-        hermesEffortLoading: false,
-        hermesEffortKey: '',
-        opencodeModels: [],
-        opencodeModel: '',
-        opencodeModelsLoading: false,
-        opencodeModelsKey: '',
-        opencodeModelsSource: '',
-        opencodeModelsCount: 0,
-        opencodeModelDirty: false,
-        opencodeEffortDirty: false,
-        opencodeEffort: '',
-        opencodeEffortLoading: false,
-        opencodeEffortKey: '',
-        codexModels: [],
-        codexModel: '',
-        codexModelsLoading: false,
-        codexModelsKey: '',
-        codexModelsSource: '',
-        codexModelsCount: 0,
-        codexCommonEfforts: [],
-        codexModelDirty: false,
-        codexEffortDirty: false,
-        codexEffort: '',
-        codexEffortLoading: false,
-        codexEffortKey: '',
-        claudeModels: [],
-        claudeModel: '',
-        claudeModelsLoading: false,
-        claudeModelsKey: '',
-        claudeModelsSource: '',
-        claudeModelsCount: 0,
-        claudeCommonEfforts: [],
-        claudeModelDirty: false,
-        claudeEffortDirty: false,
-        claudeEffort: '',
-        claudeEffortLoading: false,
-        claudeEffortKey: '',
-        projectCommandsLoading: false,
-        harnessAgents: [],
-        harnessAgentsPath: '',
-        harnessAgentsLoading: false,
-        harnessAgentsLoaded: false,
-        starredAgentModels: {},
-        starredAgentEfforts: {},
-        agentCapabilities: null,
-        agentCapabilitiesLoading: false,
-        cursorStarredLoaded: false,
-        starredDefaultsLoading: false,
-        starredDefaultsLoaded: false,
-        sessionIdentity: null,
-        cursorModelsGen: 0,
-        museModelsGen: 0,
-        hermesModelsGen: 0,
-        opencodeModelsGen: 0,
-        codexModelsGen: 0,
-        claudeModelsGen: 0,
-    };
+    const slashPaletteSupplement = Object.assign(
+        CuttleChatAgentControls.createProviderState(),
+        {
+            projectCommands: [],
+            projectCommandsPath: '',
+            loading: false,
+            loaded: false,
+            projectCommandsLoading: false,
+            harnessAgents: [],
+            harnessAgentsPath: '',
+            harnessAgentsLoading: false,
+            harnessAgentsLoaded: false,
+        }
+    );
+
+    /**
+     * Model/effort control owner. Owns the provider state above and the
+     * six provider model/effort loaders + palette-item builders; the page
+     * keeps thin wrappers plus project-command/harness-agent supplement
+     * state, persistence setters, seeding/reset and badge helpers.
+     */
+    const agentControls = CuttleChatAgentControls.create({
+        state: slashPaletteSupplement,
+        getSessionId: () => session.current(),
+        getProjectPath: () => (currentProject && currentProject.path ? String(currentProject.path) : ''),
+        hasActiveCursor: () => hasActiveCursorAgentChip(),
+        hasActiveMuse: () => hasActiveMuseAgentChip(),
+        hasActiveHermes: () => hasActiveHermesAgentChip(),
+        hasActiveOpenCode: () => hasActiveOpenCodeAgentChip(),
+        hasActiveCodex: () => hasActiveCodexAgentChip(),
+        hasActiveHarness: (id) => hasActiveHarnessAgentChip(id),
+        hasCursorModelChip: () => slashCtx.chat.chips.concat(slashCtx.welcome.chips).some((c) => c.category === 'cursor-model'),
+        beginFetch: (field) => beginSupplementFetch(field),
+        isCurrentFetch: (field, gen) => isCurrentSupplementFetch(field, gen),
+        captureMutation: (sid, label) => sessionMutations.capture(sid, label, session.navSeq()),
+        isMutationCurrent: (tok) => sessionMutations.current(tok, session.current(), session.navSeq()),
+        sessionMutationFetch: (url, opts) => sessionMutationFetch(url, opts),
+        renderSlashChips: () => {
+            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+            renderSlashChips('chat', document.getElementById('chatInput'));
+        },
+        syncActiveSlashMenu: () => {
+            const welcomeInput = document.getElementById('welcomeChatInput');
+            const chatInput = document.getElementById('chatInput');
+            if (welcomeInput && document.activeElement === welcomeInput) syncSlashMenuFromInput(welcomeInput);
+            if (chatInput && document.activeElement === chatInput) syncSlashMenuFromInput(chatInput);
+        },
+        syncSlashInput: (textarea) => syncSlashMenuFromInput(textarea),
+        // DOM rendering stays in the page; the controller only decides which
+        // user-bubble badge labels to repaint.
+        paintAgentUserBadges: (matchLabelRe, nextLabel) => repaintAgentUserBadges(matchLabelRe, nextLabel),
+        persistStickySlashForCurrentSession: () => persistStickySlashForCurrentSession(),
+        refreshHistoryAgentChips: () => refreshHistoryAgentChips(),
+        fetch: (url, opts) => fetch(url, opts),
+        toast: (msg, type) => (window.showToast ? window.showToast(msg, type) : undefined),
+    });
 
     function cursorAgentSessionOptionsKey() {
         const path = currentProject && currentProject.path ? String(currentProject.path) : '';
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
+        const sid = session.current() != null ? String(session.current()) : '';
         return path + '\x1f' + sid;
     }
 
@@ -5727,96 +3319,36 @@
     };
 
     function loadAgentCapabilities() {
-        if (slashPaletteSupplement.agentCapabilities || slashPaletteSupplement.agentCapabilitiesLoading) return;
-        slashPaletteSupplement.agentCapabilitiesLoading = true;
-        fetch('/api/agents', { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                const map = {};
-                if (j && j.success && Array.isArray(j.agents)) {
-                    j.agents.forEach((a) => {
-                        if (!a || !a.id) return;
-                        map[String(a.id).toLowerCase()] = {
-                            supports_model_pin: a.supports_model_pin !== false,
-                            supports_effort: a.supports_effort !== false,
-                        };
-                    });
-                }
-                slashPaletteSupplement.agentCapabilities = map;
-            })
-            .catch(() => { slashPaletteSupplement.agentCapabilities = {}; })
-            .finally(() => { slashPaletteSupplement.agentCapabilitiesLoading = false; });
+        return agentControls.loadAgentCapabilities();
     }
 
     function agentSupportsModelPin(agentId) {
-        const caps = slashPaletteSupplement.agentCapabilities;
-        if (!caps) return true;
-        const c = caps[String(agentId || '').toLowerCase()];
-        if (!c) return true;
-        return c.supports_model_pin !== false;
+        return agentControls.agentSupportsModelPin(agentId);
     }
 
     function agentSupportsEffort(agentId) {
-        const caps = slashPaletteSupplement.agentCapabilities;
-        if (!caps) return true;
-        const c = caps[String(agentId || '').toLowerCase()];
-        if (!c) return true;
-        return c.supports_effort !== false;
+        return agentControls.agentSupportsEffort(agentId);
     }
 
     function starredAgentModel(agentId) {
-        return CuttleChatAgentModel.starredAgentModel(
-            slashPaletteSupplement.starredAgentModels, agentId);
+        return agentControls.starredAgentModel(agentId);
     }
 
     function starredAgentEffort(agentId) {
-        return CuttleChatAgentModel.starredAgentEffort(
-            slashPaletteSupplement.starredAgentEfforts, agentId);
+        return agentControls.starredAgentEffort(agentId);
     }
 
     /** True when this model/effort row is the agent's global starred default. */
-    
     function isAgentDefaultStarred(spec, cmd) {
-        if (!spec) return false;
-        const star = spec.kind === 'effort' ? starredAgentEffort(spec.agent) : starredAgentModel(spec.agent);
-        return CuttleChatAgentModel.isAgentDefaultStarred(spec, cmd, star);
+        return agentControls.isAgentDefaultStarred(spec, cmd);
     }
 
-    /** Starred muse/hermes/opencode/codex/claude defaults (cursor has its own loader above). */
     function loadAllStarredDefaults() {
-        if (slashPaletteSupplement.starredDefaultsLoaded || slashPaletteSupplement.starredDefaultsLoading) return;
-        slashPaletteSupplement.starredDefaultsLoading = true;
-        const agents = ['muse', 'hermes', 'opencode', 'codex', 'claude'];
-        Promise.all(agents.map((a) =>
-            fetch('/api/agent-defaults/' + a, { cache: 'no-store' })
-                .then((r) => r.json())
-                .catch(() => null)
-        ))
-            .then((rows) => {
-                (rows || []).forEach((j, i) => {
-                    if (!j || !j.success) return;
-                    const aid = agents[i];
-                    slashPaletteSupplement.starredAgentModels[aid] = String(j.starredModel || '');
-                    slashPaletteSupplement.starredAgentEfforts[aid] = String(j.starredEffort || '');
-                    slashPaletteSupplement.starredDefaultsLoaded = true;
-                });
-            })
-            .catch(() => {})
-            .finally(() => { slashPaletteSupplement.starredDefaultsLoading = false; });
+        return agentControls.loadAllStarredDefaults();
     }
 
-/** Cursor has no models endpoint — its star lives behind /api/agent-defaults. */
     function loadCursorStarredDefault() {
-        if (slashPaletteSupplement.cursorStarredLoaded) return;
-        slashPaletteSupplement.cursorStarredLoaded = true;
-        fetch('/api/agent-defaults/cursor', { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (j && j.success) {
-                    slashPaletteSupplement.starredAgentModels.cursor = String(j.starredModel || '');
-                }
-            })
-            .catch(() => {});
+        return agentControls.loadCursorStarredDefault();
     }
 
     /**
@@ -5824,112 +3356,17 @@
      * Clicking the filled star clears it back to the CLI default.
      */
     function toggleStarredAgentDefault(agentId, kind, value, textarea, key) {
-        const aid = String(agentId || '').toLowerCase();
-        const val = String(value || '').trim();
-        if (!aid || !val) return;
-        const isEffort = kind === 'effort';
-        const current = isEffort ? starredAgentEffort(aid) : starredAgentModel(aid);
-        const next = (current && current.toLowerCase() === val.toLowerCase()) ? '' : val;
-        const body = {};
-        body[isEffort ? 'starred_effort' : 'starred_model'] = next;
-        fetch('/api/agent-defaults/' + encodeURIComponent(aid), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!j || !j.success) throw new Error((j && j.error) || 'star failed');
-                if (isEffort) slashPaletteSupplement.starredAgentEfforts[aid] = next;
-                else slashPaletteSupplement.starredAgentModels[aid] = next;
-                refreshAgentPreferenceAfterStar(aid);
-                (window.showToast || function () {})(
-                    next
-                        ? 'Starred ' + aid + ' ' + kind + ': ' + next
-                        : 'Cleared starred ' + aid + ' ' + kind + ' (CLI default wins)',
-                    'success'
-                );
-                syncSlashMenuFromInput(textarea);
-            })
-            .catch((e) => {
-                (window.showToast || function () {})(
-                    'Could not star ' + aid + ' ' + kind + ': ' + String((e && e.message) || e),
-                    'error'
-                );
-            });
+        return agentControls.toggleStarredAgentDefault(agentId, kind, value, textarea, key);
     }
 
     /** Re-resolve the effective preference after a star change. */
     function refreshAgentPreferenceAfterStar(aid) {
-        if (aid === 'muse') {
-            slashPaletteSupplement.museModelsKey = '';
-            slashPaletteSupplement.museModelsTried = null;
-            slashPaletteSupplement.museEffortKey = '';
-            loadMuseModelsForPalette(true);
-            loadMuseEffortForPalette();
-        } else if (aid === 'hermes') {
-            slashPaletteSupplement.hermesModelsKey = '';
-            slashPaletteSupplement.hermesModelsTried = null;
-            slashPaletteSupplement.hermesEffortKey = '';
-            loadHermesModelsForPalette(true);
-            loadHermesEffortForPalette();
-        } else if (aid === 'opencode') {
-            slashPaletteSupplement.opencodeModelsKey = '';
-            slashPaletteSupplement.opencodeModelsTried = null;
-            slashPaletteSupplement.opencodeEffortKey = '';
-            loadOpenCodeModelsForPalette(true);
-            loadOpenCodeEffortForPalette();
-        } else if (aid === 'codex') {
-            slashPaletteSupplement.codexModelsKey = '';
-            slashPaletteSupplement.codexModelsTried = null;
-            slashPaletteSupplement.codexEffortKey = '';
-            loadCodexModelsForPalette(true);
-            loadCodexEffortForPalette();
-        } else if (aid === 'claude') {
-            slashPaletteSupplement.claudeModelsKey = '';
-            slashPaletteSupplement.claudeModelsTried = null;
-            slashPaletteSupplement.claudeEffortKey = '';
-            loadClaudeModelsForPalette(true);
-            loadClaudeEffortForPalette();
-        } else if (aid === 'cursor') {
-            slashPaletteSupplement.cursorModelsLoaded = false;
-            loadCursorAgentModelsForPalette(true);
-        }
-        }
+        return agentControls.refreshAgentPreferenceAfterStar(aid);
+    }
 
     /** When the user sends ``/model refresh``, reload the active agent's catalog. */
     function maybeRefreshModelsCatalogFromOutbound(message) {
-        const t = String(message || '');
-        if (!/\/model\s+refresh\b/i.test(t)) return;
-        const low = t.toLowerCase();
-        if (/\b\/muse\b/.test(low) || hasActiveMuseAgentChip()) {
-            slashPaletteSupplement.museModelsKey = '';
-            slashPaletteSupplement.museModels = [];
-            loadMuseModelsForPalette(true, { refresh: true });
-            return;
-        }
-        if (/\b\/codex\b/.test(low) || hasActiveCodexAgentChip()) {
-            slashPaletteSupplement.codexModelsKey = '';
-            slashPaletteSupplement.codexModels = [];
-            loadCodexModelsForPalette(true, { refresh: true });
-            return;
-        }
-        if (/\b\/claude\b/.test(low) || hasActiveHarnessAgentChip('claude')) {
-            slashPaletteSupplement.claudeModelsKey = '';
-            slashPaletteSupplement.claudeModels = [];
-            loadClaudeModelsForPalette(true, { refresh: true });
-            return;
-        }
-        if (/\b\/opencode\b/.test(low) || hasActiveOpenCodeAgentChip()) {
-            slashPaletteSupplement.opencodeModelsKey = '';
-            slashPaletteSupplement.opencodeModels = [];
-            loadOpenCodeModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.cursorModelsKey = '';
-        slashPaletteSupplement.cursorModelsLoaded = false;
-        slashPaletteSupplement.cursorModels = [];
-        loadCursorAgentModelsForPalette(true, { refresh: true });
+        return agentControls.maybeRefreshModelsCatalogFromOutbound(message);
     }
 
     function maybeRefreshCursorModelsCatalogFromOutbound(message) {
@@ -5937,296 +3374,27 @@
     }
 
     function loadCursorAgentModelsForPalette(force, opts) {
-        // A forced load (session open) hydrates the session's preferred model from
-        // the server even with no chip yet — /model is no longer kept in the
-        // transcript, so history can't supply it and the chip would show "Auto".
-        const forceRefresh = !!(opts && opts.refresh);
-        if (!force && !forceRefresh && !hasActiveCursorAgentChip()) return;
-        const key = cursorAgentSessionOptionsKey();
-        if (
-            !force &&
-            !forceRefresh &&
-            (slashPaletteSupplement.cursorModelsLoading ||
-                (slashPaletteSupplement.cursorModelsLoaded &&
-                    slashPaletteSupplement.cursorModelsKey === key))
-        ) {
-            return;
-        }
-        const _cursorModelsGen = beginSupplementFetch('cursorModelsGen');
-        slashPaletteSupplement.cursorModelsLoading = true;
-        const qs = new URLSearchParams();
-        if (currentProject && currentProject.path) qs.set('path', String(currentProject.path));
-        if (currentSessionId != null && currentSessionId !== '') {
-            qs.set('session', String(currentSessionId));
-        }
-        if (forceRefresh) qs.set('refresh', '1');
-        const url = qs.toString()
-            ? '/api/cursor-agent/models?' + qs.toString()
-            : '/api/cursor-agent/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'cursor:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.cursorModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                slashPaletteSupplement.preferredModel =
-                    (!slashCtx.chat.chips.concat(slashCtx.welcome.chips).some((c) => c.category === 'cursor-model') && isCurrentSupplementFetch('cursorModelsGen', _cursorModelsGen) && j && j.success ? j.preferredModel : null) || slashPaletteSupplement.preferredModel || 'auto';
-                slashPaletteSupplement.lastReportedModel =
-                    (j && j.lastReportedModel) || null;
-                slashPaletteSupplement.cursorModelsKey = key;
-                slashPaletteSupplement.cursorModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.cursorModels.length)) || 0;
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.cursorModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
-                    window.showToast(
-                        err && !n
-                            ? ('Cursor models refresh failed: ' + err)
-                            : ('Cursor models refreshed (' + n + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.cursorModels = [];
-                if (forceRefresh && window.showToast) {
-                    window.showToast('Cursor models refresh failed', 'error');
-                }
-            })
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.cursorModelsLoaded = true;
-                slashPaletteSupplement.cursorModelsLoading = false;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadCursorAgentModelsForPalette(force, opts);
     }
 
     /** anyChat: load even without a /muse chip (user typed "muse" in the palette). */
     function loadMuseModelsForPalette(anyChat, opts) {
-        if (!anyChat && !hasActiveMuseAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const forceRefresh = !!(opts && opts.refresh);
-        if (
-            !forceRefresh
-            && (
-                slashPaletteSupplement.museModelsLoading
-                || (slashPaletteSupplement.museModels.length
-                    && slashPaletteSupplement.museModelsKey === key)
-                || slashPaletteSupplement.museModelsTried === key
-            )
-        ) {
-            return;
-        }
-        const _museModelsGen = beginSupplementFetch('museModelsGen');
-        slashPaletteSupplement.museModelsLoading = true;
-        const params = new URLSearchParams();
-        if (key) params.set('session', key);
-        if (forceRefresh) params.set('refresh', '1');
-        const qs = params.toString();
-        const url = qs ? '/api/muse/models?' + qs : '/api/muse/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.museModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                slashPaletteSupplement.museModel =
-                    (!slashPaletteSupplement.museModelDirty && isCurrentSupplementFetch('museModelsGen', _museModelsGen) && j && j.success ? (j.preferredModel || j.defaultModel) : null) || slashPaletteSupplement.museModel || '';
-                slashPaletteSupplement.museModelsKey = key;
-                slashPaletteSupplement.museModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.museModels.length)) || 0;
-                slashPaletteSupplement.museModelsSource = (j && j.source) || '';
-                // Badges may have rendered with defaults while this was in
-                // flight — repaint composer and history with the real pin.
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintMuseUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.museModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
-                    const src = slashPaletteSupplement.museModelsSource || '';
-                    window.showToast(
-                        err && !n
-                            ? ('Muse models refresh failed: ' + err)
-                            : ('Muse models refreshed (' + n
-                                + (src ? ', ' + src : '') + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (forceRefresh && window.showToast) {
-                    window.showToast('Muse models refresh failed', 'error');
-                }
-            })
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.museModelsLoading = false;
-                slashPaletteSupplement.museModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadMuseModelsForPalette(anyChat, opts);
     }
 
     /** Persist the chat's Muse model pick (palette click — no message sent). */
     function persistMuseModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.museModelsLoading = false;
-        if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
-            slashPaletteSupplement.museModelsKey = '';
-            slashPaletteSupplement.museModels = [];
-            loadMuseModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.museModel = id;
-        beginSupplementFetch('museModelsGen');
-        slashPaletteSupplement.museModels = (slashPaletteSupplement.museModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            // New chat with no id yet — mark dirty so the pick (not the
-            // default) is persisted once the session exists.
-            slashPaletteSupplement.museModelDirty = true;
-            slashPaletteSupplement.museModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.museModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:model', _loadSessionSeq);
-        sessionMutationFetch('/api/muse/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.museModel = id;
-                    slashPaletteSupplement.museModelDirty = false;
-                    slashPaletteSupplement.museModelsKey = sid;
-                    repaintMuseUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistMuseModelSelection(modelId);
     }
 
     /** anyChat: load even without a /hermes chip (user typed "hermes" in the palette). */
     function loadHermesModelsForPalette(anyChat) {
-        if (!anyChat && !hasActiveHermesAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.hermesModelsLoading
-            || (slashPaletteSupplement.hermesModels.length
-                && slashPaletteSupplement.hermesModelsKey === key)
-            || slashPaletteSupplement.hermesModelsTried === key
-        ) {
-            return;
-        }
-        const modelsGeneration = beginSupplementFetch('hermesModelsGen');
-        slashPaletteSupplement.hermesModelsLoading = true;
-        const url = key
-            ? '/api/hermes/models?session=' + encodeURIComponent(key)
-            : '/api/hermes/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.hermesModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.hermesModelDirty && isCurrentSupplementFetch('hermesModelsGen', modelsGeneration)) {
-                    slashPaletteSupplement.hermesModel = (j && j.preferredModel) || '';
-                }
-                slashPaletteSupplement.hermesModelsKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintHermesUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.hermesModelsLoading = false;
-                slashPaletteSupplement.hermesModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadHermesModelsForPalette(anyChat);
     }
 
     /** Persist the chat's Hermes model pick (palette click — no message sent). */
     function persistHermesModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.hermesModelsLoading = false;
-        beginSupplementFetch('hermesModelsGen');
-        slashPaletteSupplement.hermesModel = id;
-        slashPaletteSupplement.hermesModels = (slashPaletteSupplement.hermesModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.hermesModelDirty = true;
-            slashPaletteSupplement.hermesModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.hermesModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:model', _loadSessionSeq);
-        sessionMutationFetch('/api/hermes/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.hermesModel = id;
-                    slashPaletteSupplement.hermesModelDirty = false;
-                    slashPaletteSupplement.hermesModelsKey = sid;
-                    repaintHermesUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistHermesModelSelection(modelId);
     }
 
     function loadSlashPaletteSupplement() {
@@ -6291,45 +3459,9 @@
             });
     }
 
-    function slashPaletteCategoryLabel(cat) {
-        return CuttleChatSlash.slashPaletteCategoryLabel(cat);
-    }
-
-    /** Normalize palette categories into filter-badge buckets. */
-    function slashPaletteTypeBucket(cat) {
-        return CuttleChatSlash.slashPaletteTypeBucket(cat);
-    }
-
-    const SLASH_PALETTE_TYPE_ORDER = [
-        'command',
-        'project-cmd',
-        'project',
-        'skill',
-        'cursor',
-        'muse',
-        'hermes',
-        'opencode',
-        'codex',
-        'claude',
-    ];
-    const SLASH_PALETTE_TYPE_FILTER_KEY = 'cuttleSlashPaletteTypeFilter';
-    let slashPaletteTypeFilter = 'all';
-    try {
-        const saved = sessionStorage.getItem(SLASH_PALETTE_TYPE_FILTER_KEY);
-        if (saved) slashPaletteTypeFilter = saved;
-    } catch (_) {}
-
-    function setSlashPaletteTypeFilter(next) {
-        const v = next || 'all';
-        slashPaletteTypeFilter = v;
-        try {
-            sessionStorage.setItem(SLASH_PALETTE_TYPE_FILTER_KEY, v);
-        } catch (_) {}
-    }
-
-    function slashPaletteTypeBadgeLabel(bucket) {
-        return CuttleChatSlash.slashPaletteTypeBadgeLabel(bucket);
-    }
+    // Palette category/bucket/type-filter state and the menu lifecycle live in
+    // chat_slash_palette.js (CuttleChatSlashPalette); the page keeps the
+    // project-command builders below for chip/history consumers.
 
     function buildProjectPaletteItems() {
         return CuttleChatSlash.buildProjectPaletteItems(projects);
@@ -6341,87 +3473,7 @@
     }
 
     function buildCursorModelPaletteItems(filterLower) {
-        if (!hasActiveCursorAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        // Avoid flooding the empty `/` menu — only surface models when the user
-        // is filtering (e.g. `/mod`, `/sonnet`, `/1m`, `/model sonnet 4.6`).
-        if (!f) return [];
-        // `/model` or `/model ` → list all; `/model sonnet 1m` → filter by remainder.
-        let modelFilter = f;
-        if (modelFilter === 'model') {
-            modelFilter = '';
-        } else if (modelFilter.startsWith('model ')) {
-            modelFilter = modelFilter.slice(6).trim();
-        }
-        const showAllForModel = !modelFilter;
-        loadCursorAgentModelsForPalette(false);
-        // Session preferred model (Cuttle chat), not Cursor CLI's global "(current)".
-        const preferred = String(slashPaletteSupplement.preferredModel || 'auto')
-            .trim()
-            .toLowerCase() || 'auto';
-        // Stage as a normal nested command chip (same as /usage) — do not
-        // instantly refresh on palette pick (CH-000482).
-        const refreshItem = {
-            category: 'cursor-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh Cursor models',
-            hint: 'Re-run agent models and reload the slash palette catalog',
-            meta: 'refresh',
-            keywords: 'cursor model refresh reload sync catalog agent models',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        const models = slashPaletteSupplement.cursorModels || [];
-        if (slashPaletteSupplement.cursorModelsLoading && !models.length) {
-            items.push({
-                category: 'cursor-model',
-                prefix: '/model',
-                label: 'Loading Cursor models…',
-                hint: 'Fetching agent models catalog',
-                meta: '',
-                keywords: 'cursor model loading',
-                modelId: '',
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => {
-                const id = String(m.id || '').trim();
-                if (!id) return null;
-                const label = String(m.label || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                // Extra searchable bits: compact id/label + context tokens (1m, 200k).
-                const contextBits = (label.match(/\b\d+\s*[km]\b/gi) || []).join(' ');
-                return {
-                    category: 'cursor-model',
-                    prefix: '/model ' + id,
-                    label: label + (current ? ' (current)' : ''),
-                    hint: 'Set Cursor Agent model to ' + id,
-                    meta: id,
-                    keywords:
-                        'cursor model ' +
-                        id +
-                        ' ' +
-                        label +
-                        ' ' +
-                        id.replace(/[-_]+/g, ' ') +
-                        ' ' +
-                        contextBits,
-                    modelId: id,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => {
-                if (showAllForModel) return true;
-                return slashPaletteItemMatches(item, modelFilter);
-            });
-        return items.concat(mapped);
+        return agentControls.buildCursorModelPaletteItems(filterLower);
     }
 
     /**
@@ -6430,75 +3482,8 @@
      * the next message, so it works while `/muse` is sticky.
      */
     function buildMuseModelPaletteItems(filterLower) {
-        // Gated on the Muse badge like Cursor's `/model` is on its chip: badge
-        // commands only appear when that harness is applied to this chat.
-        if (!hasActiveMuseAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadMuseModelsForPalette(true);
-        const models = slashPaletteSupplement.museModels || [];
-        let modelFilter = f
-            .replace(/^muse\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'muse') modelFilter = '';
-        const preferred = String(slashPaletteSupplement.museModel || '').toLowerCase();
-        // Stage as a nested cmd chip (same as Cursor /model refresh) — do not
-        // instantly refresh on palette pick (CH-000482). Prefix is `/model refresh`
-        // so compose with sticky `/muse ` yields `/muse /model refresh` (adapter
-        // peels the agent token and matches `model refresh`).
-        const refreshItem = {
-            category: 'muse-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh Muse models',
-            hint: 'Re-fetch Muse Spark ids from Meta Model API and reload the slash palette',
-            meta: 'refresh',
-            keywords: 'muse model refresh reload sync catalog meta api spark',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        if (slashPaletteSupplement.museModelsLoading && !models.length) {
-            items.push({
-                category: 'muse-model',
-                prefix: '/muse model',
-                label: 'Loading Muse models…',
-                hint: 'Fetching Muse Spark catalog',
-                meta: '',
-                keywords: 'muse model loading',
-                modelId: '',
-                museModel: true,
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                return {
-                    category: 'muse-model',
-                    prefix: '/muse model ' + id,
-                    label: label + (current ? ' (current)' : ''),
-                    hint: (m && m.description) || ('Set Muse Code model to ' + id),
-                    meta: id,
-                    keywords: 'muse model spark ' + id + ' ' + label + ' ' + id.replace(/[-_]+/g, ' '),
-                    modelId: id,
-                    museModel: true,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        return items.concat(mapped);
+        return agentControls.buildMuseModelPaletteItems(filterLower);
     }
-
-    const MUSE_EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
     /**
      * Seed the Muse supplement from a session payload (messages response)
@@ -6506,7 +3491,7 @@
      * values as fresh and only top up the models list.
      */
     function sessionMutationFetch(url, options) {
-        const sid = JSON.parse(options.body || '{}').session || currentSessionId;
+        const sid = JSON.parse(options.body || '{}').session || session.current();
         return sessionMutations.enqueue(String(sid) + ':' + url, () => fetch(url, options));
     }
 
@@ -6521,6 +3506,16 @@
     }
 
     /**
+     * Palette pick of a Cursor model id: record the preference and invalidate
+     * any in-flight models fetch. The palette controller owns the selection
+     * logic; this keeps the preferred-model state page-owned.
+     */
+    function onCursorModelPick(mid) {
+        slashPaletteSupplement.preferredModel = mid;
+        beginSupplementFetch('cursorModelsGen');
+    }
+
+    /**
      * Neutralize cached agent preferences when the session identity changes.
      * prev/next are '' for the unsent composer: '' → id keeps dirty user
      * picks (same unsent chat gaining an id); anything else fully resets so a
@@ -6528,92 +3523,7 @@
      * caches and in-flight fetches via the generation counters.
      */
     function resetAgentSupplementForIdentity(prev, next) {
-        const S = slashPaletteSupplement;
-        S.cursorModelsKey = '';
-        S.cursorModelsLoaded = false;
-        S.museModels = [];
-        S.museModelsKey = '';
-        S.museModelsLoading = false;
-        S.museModelsTried = null;
-        S.hermesModels = [];
-        S.hermesModelsKey = '';
-        S.hermesModelsLoading = false;
-        S.hermesModelsTried = null;
-        S.opencodeModels = [];
-        S.opencodeModelsKey = '';
-        S.opencodeModelsLoading = false;
-        S.opencodeModelsTried = null;
-        S.codexModels = [];
-        S.codexModelsKey = '';
-        S.codexModelsLoading = false;
-        S.codexModelsTried = null;
-        S.claudeModels = [];
-        S.claudeModelsKey = '';
-        S.claudeModelsLoading = false;
-        S.claudeModelsTried = null;
-        S.museEffortKey = '';
-        S.hermesEffortKey = '';
-        S.opencodeEffortKey = '';
-        S.codexEffortKey = '';
-        S.claudeEffortKey = '';
-        S.cursorModelsGen = (S.cursorModelsGen || 0) + 1;
-        S.museModelsGen = (S.museModelsGen || 0) + 1;
-        S.hermesModelsGen = (S.hermesModelsGen || 0) + 1;
-        S.opencodeModelsGen = (S.opencodeModelsGen || 0) + 1;
-        S.codexModelsGen = (S.codexModelsGen || 0) + 1;
-        S.claudeModelsGen = (S.claudeModelsGen || 0) + 1;
-        if (prev && next) {
-            S.preferredModel = 'auto';
-            S.lastReportedModel = null;
-            S.museModel = '';
-            S.museEffort = '';
-            S.museModelDirty = false;
-            S.museEffortDirty = false;
-            S.museEffortLoading = false;
-            S.hermesModel = '';
-            S.hermesEffort = '';
-            S.hermesModelDirty = false;
-            S.hermesEffortDirty = false;
-            S.hermesEffortLoading = false;
-            S.opencodeModel = '';
-            S.opencodeEffort = '';
-            S.opencodeModelDirty = false;
-            S.opencodeEffortDirty = false;
-            S.opencodeEffortLoading = false;
-            S.codexModel = '';
-            S.codexEffort = '';
-            S.codexModelDirty = false;
-            S.codexEffortDirty = false;
-            S.codexEffortLoading = false;
-            S.claudeModel = '';
-            S.claudeEffort = '';
-            S.claudeModelDirty = false;
-            S.claudeEffortDirty = false;
-            S.claudeEffortLoading = false;
-        } else if (!next) {
-            S.preferredModel = 'auto';
-            S.lastReportedModel = null;
-            S.museModel = '';
-            S.museEffort = '';
-            S.museModelDirty = false;
-            S.museEffortDirty = false;
-            S.hermesModel = '';
-            S.hermesEffort = '';
-            S.hermesModelDirty = false;
-            S.hermesEffortDirty = false;
-            S.opencodeModel = '';
-            S.opencodeEffort = '';
-            S.opencodeModelDirty = false;
-            S.opencodeEffortDirty = false;
-            S.codexModel = '';
-            S.codexEffort = '';
-            S.codexModelDirty = false;
-            S.codexEffortDirty = false;
-            S.claudeModel = '';
-            S.claudeEffort = '';
-            S.claudeModelDirty = false;
-            S.claudeEffortDirty = false;
-        }
+        return agentControls.resetAgentSupplementForIdentity(prev, next);
     }
 
     /** True when chip is a palette-added model/effort companion of another agent. */
@@ -6634,92 +3544,17 @@
     }
 
     function seedMuseSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'muse', 'model');
-        if (serverModel && !slashPaletteSupplement.museModelDirty) {
-            slashPaletteSupplement.museModel = serverModel;
-            if (key) slashPaletteSupplement.museModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'muse', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.museEffortDirty) {
-            slashPaletteSupplement.museEffort = serverEffort;
-            if (key) slashPaletteSupplement.museEffortKey = key;
-        } else if (!slashPaletteSupplement.museEffortDirty && key && data && ((data.agent_pins && data.agent_pins.muse) || ('muse_effort' in data))) {
-            // Explicitly unpinned — don't inherit another chat's effort.
-            slashPaletteSupplement.museEffort = '';
-            slashPaletteSupplement.museEffortKey = key;
-        }
+        return agentControls.seedMuseSupplementFromSessionData(data, sessionId);
     }
 
     /** Hydrate this chat's pinned Muse reasoning effort (badge-gated like models). */
     function loadMuseEffortForPalette() {
-        if (slashPaletteSupplement.museEffortDirty) return;
-        if (!hasActiveMuseAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.museEffortLoading
-            || (slashPaletteSupplement.museEffortKey === key && key)
-        ) {
-            return;
-        }
-        const effortGeneration = beginSupplementFetch('museEffortGen');
-        slashPaletteSupplement.museEffortLoading = true;
-        const url = key
-            ? '/api/muse/effort?session=' + encodeURIComponent(key)
-            : '/api/muse/effort';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:effort:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (slashPaletteSupplement.museEffortDirty || !isCurrentSupplementFetch('museEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.museEffort =
-                    (j && j.preferredEffort) || '';
-                slashPaletteSupplement.museEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintMuseUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.museEffortLoading = false;
-            });
+        return agentControls.loadMuseEffortForPalette();
     }
 
     /** Persist the chat's Muse reasoning-effort pick (palette click — no message sent). */
     function persistMuseEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.museEffortLoading = false;
-        beginSupplementFetch('museEffortGen');
-        slashPaletteSupplement.museEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.museEffortDirty = true;
-            slashPaletteSupplement.museEffortKey = '';
-            return;
-        }
-        slashPaletteSupplement.museEffortKey = sid;
-        slashPaletteSupplement.museEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'muse:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/muse/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, effort: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.museEffortKey = sid;
-                    slashPaletteSupplement.museEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistMuseEffortSelection(effort);
     }
 
     /**
@@ -6727,32 +3562,7 @@
      * appear while the Muse chip is applied to this chat.
      */
     function buildMuseEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('muse')) return [];
-        if (!hasActiveMuseAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        // Listed alongside `/muse model …` whenever the Muse badge is on (e.g.
-        // bare `/muse`); plain `/mod` still means model — effort entries carry
-        // no "model" token in label, hint, keywords, or prefix.
-        loadMuseEffortForPalette();
-        let effortFilter = f
-            .replace(/^muse\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
-        const preferred = String(slashPaletteSupplement.museEffort || '').toLowerCase();
-        return MUSE_EFFORT_LEVELS
-            .map((id) => ({
-                category: 'muse-effort',
-                prefix: '/muse effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set Muse Code reasoning effort to ' + id,
-                meta: id,
-                keywords: 'muse effort reasoning ' + id,
-                modelId: id,
-                museEffort: true,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
+        return agentControls.buildMuseEffortPaletteItems(filterLower);
     }
 
     /**
@@ -6760,740 +3570,77 @@
      * setting change (POST + chip relabel), not a composed chip.
      */
     function buildHermesModelPaletteItems(filterLower) {
-        if (!hasActiveHermesAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadHermesModelsForPalette(true);
-        const models = slashPaletteSupplement.hermesModels || [];
-        if (!models.length) return [];
-        let modelFilter = f
-            .replace(/^hermes\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'hermes') modelFilter = '';
-        const preferred = String(slashPaletteSupplement.hermesModel || '').toLowerCase();
-        return models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                return {
-                    category: 'hermes-model',
-                    prefix: '/hermes model ' + id,
-                    label: label + (current ? ' (current)' : ''),
-                    hint: (m && m.description) || ('Set Hermes model to ' + id),
-                    meta: id,
-                    keywords: 'hermes model glm qwen ' + id + ' ' + label + ' ' + id.replace(/[-_]+/g, ' '),
-                    modelId: id,
-                    hermesModel: true,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
+        return agentControls.buildHermesModelPaletteItems(filterLower);
     }
-
-    const HERMES_EFFORT_LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
     /** Seed Hermes supplement from a session payload (messages response). */
     function seedHermesSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'hermes', 'model');
-        if (serverModel && !slashPaletteSupplement.hermesModelDirty) {
-            slashPaletteSupplement.hermesModel = serverModel;
-            if (key) slashPaletteSupplement.hermesModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'hermes', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.hermesEffortDirty) {
-            slashPaletteSupplement.hermesEffort = serverEffort;
-            if (key) slashPaletteSupplement.hermesEffortKey = key;
-        } else if (!slashPaletteSupplement.hermesEffortDirty && key && data && ((data.agent_pins && data.agent_pins.hermes) || ('hermes_effort' in data))) {
-            slashPaletteSupplement.hermesEffort = '';
-            slashPaletteSupplement.hermesEffortKey = key;
-        }
+        return agentControls.seedHermesSupplementFromSessionData(data, sessionId);
     }
 
     function loadHermesEffortForPalette() {
-        if (slashPaletteSupplement.hermesEffortDirty) return;
-        if (!hasActiveHermesAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.hermesEffortLoading
-            || (slashPaletteSupplement.hermesEffortKey === key && key)
-        ) {
-            return;
-        }
-        const effortGeneration = beginSupplementFetch('hermesEffortGen');
-        slashPaletteSupplement.hermesEffortLoading = true;
-        const url = key
-            ? '/api/hermes/effort?session=' + encodeURIComponent(key)
-            : '/api/hermes/effort';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:effort:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                // Don't clobber a palette pick that hasn't finished POSTing yet.
-                if (slashPaletteSupplement.hermesEffortDirty || !isCurrentSupplementFetch('hermesEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.hermesEffort =
-                    (j && j.preferredEffort) || '';
-                slashPaletteSupplement.hermesEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintHermesUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.hermesEffortLoading = false;
-            });
+        return agentControls.loadHermesEffortForPalette();
     }
 
     function persistHermesEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.hermesEffortLoading = false;
-        beginSupplementFetch('hermesEffortGen');
-        slashPaletteSupplement.hermesEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.hermesEffortDirty = true;
-            slashPaletteSupplement.hermesEffortKey = '';
-            return;
-        }
-        // Optimistic key so a concurrent GET cannot wipe the pick before POST lands.
-        slashPaletteSupplement.hermesEffortKey = sid;
-        slashPaletteSupplement.hermesEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'hermes:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/hermes/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, effort: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.hermesEffortKey = sid;
-                    slashPaletteSupplement.hermesEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistHermesEffortSelection(effort);
     }
 
     /**
      * `/hermes effort <level>` entries. Badge-gated like `/hermes model`.
      */
     function buildHermesEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('hermes')) return [];
-        if (!hasActiveHermesAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadHermesEffortForPalette();
-        let effortFilter = f
-            .replace(/^hermes\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
-        const preferred = String(slashPaletteSupplement.hermesEffort || '').toLowerCase();
-        return HERMES_EFFORT_LEVELS
-            .map((id) => ({
-                category: 'hermes-effort',
-                prefix: '/hermes effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set Hermes reasoning effort to ' + id,
-                meta: id,
-                keywords: 'hermes effort reasoning ' + id,
-                modelId: id,
-                hermesEffort: true,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
+        return agentControls.buildHermesEffortPaletteItems(filterLower);
     }
 
     /** anyChat: load even without an /opencode chip (user typed "opencode" in the palette). */
     function loadOpenCodeModelsForPalette(anyChat, opts) {
-        if (!anyChat && !hasActiveOpenCodeAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const forceRefresh = !!(opts && opts.refresh);
-        if (
-            !forceRefresh
-            && (
-                slashPaletteSupplement.opencodeModelsLoading
-                || (slashPaletteSupplement.opencodeModels.length
-                    && slashPaletteSupplement.opencodeModelsKey === key)
-                || slashPaletteSupplement.opencodeModelsTried === key
-            )
-        ) {
-            return;
-        }
-        const modelsGeneration = beginSupplementFetch('opencodeModelsGen');
-        slashPaletteSupplement.opencodeModelsLoading = true;
-        const params = new URLSearchParams();
-        if (key) params.set('session', key);
-        if (forceRefresh) params.set('refresh', '1');
-        const qs = params.toString();
-        const url = qs ? '/api/opencode/models?' + qs : '/api/opencode/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.opencodeModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.opencodeModelDirty && isCurrentSupplementFetch('opencodeModelsGen', modelsGeneration)) {
-                    slashPaletteSupplement.opencodeModel = (j && j.preferredModel) || '';
-                }
-                slashPaletteSupplement.opencodeModelsKey = key;
-                slashPaletteSupplement.opencodeModelsSource =
-                    (j && j.source) || '';
-                slashPaletteSupplement.opencodeModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.opencodeModels.length)) || 0;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintOpenCodeUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.opencodeModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
-                    window.showToast(
-                        err && !n
-                            ? ('OpenCode models refresh failed: ' + err)
-                            : ('OpenCode models refreshed (' + n + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.opencodeModelsLoading = false;
-                slashPaletteSupplement.opencodeModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadOpenCodeModelsForPalette(anyChat, opts);
     }
 
     function persistOpenCodeModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.opencodeModelsLoading = false;
-        beginSupplementFetch('opencodeModelsGen');
-        if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
-            slashPaletteSupplement.opencodeModelsKey = '';
-            slashPaletteSupplement.opencodeModels = [];
-            loadOpenCodeModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.opencodeModel = id;
-        slashPaletteSupplement.opencodeModels = (slashPaletteSupplement.opencodeModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.opencodeModelDirty = true;
-            slashPaletteSupplement.opencodeModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.opencodeModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:model', _loadSessionSeq);
-        sessionMutationFetch('/api/opencode/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.opencodeModel = id;
-                    slashPaletteSupplement.opencodeModelDirty = false;
-                    slashPaletteSupplement.opencodeModelsKey = sid;
-                    repaintOpenCodeUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistOpenCodeModelSelection(modelId);
     }
 
-    function buildOpenCodeModelPaletteItems(filterLower) {
-        if (!hasActiveOpenCodeAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadOpenCodeModelsForPalette(true);
-        const models = slashPaletteSupplement.opencodeModels || [];
-        let modelFilter = f
-            .replace(/^opencode\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'opencode') modelFilter = '';
-        const preferred = String(slashPaletteSupplement.opencodeModel || '').toLowerCase();
-        // Stage as nested cmd chip — composes as `/opencode /model refresh`
-        // under the sticky agent (same as Codex / Muse / Cursor).
-        const refreshItem = {
-            category: 'opencode-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh models',
-            hint: 'Fetch latest OpenCode models (models.dev). Staged as /model refresh — send to run.',
-            meta: 'cmd',
-            keywords: 'opencode model refresh reload sync catalog models.dev openrouter',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        if (slashPaletteSupplement.opencodeModelsLoading && !models.length) {
-            items.push({
-                category: 'opencode-model',
-                prefix: '/opencode model',
-                label: 'Loading OpenCode models…',
-                hint: 'Fetching opencode models catalog',
-                meta: '',
-                keywords: 'opencode model loading',
-                modelId: '',
-                opencodeModel: true,
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                const fav = !!(m && (m.favorite === true || m.favorite === '1' || m.favorite === 1));
-                return {
-                    category: 'opencode-model',
-                    prefix: '/opencode model ' + id,
-                    label: (fav ? '★ ' : '') + label + (current ? ' (current)' : ''),
-                    hint: (m && m.description) || ('Set OpenCode model to ' + id),
-                    meta: id,
-                    keywords: 'opencode model ' + id + ' ' + label + ' ' + id.replace(/[-_/]+/g, ' '),
-                    modelId: id,
-                    opencodeModel: true,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        // Keep the palette usable when the filter is broad (hundreds of OpenRouter ids).
-        const MAX = 40;
-        // Rank before clipping so a name hit cannot be hidden by description hits.
-        mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
-            - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
-        const clipped = mapped.length > MAX ? mapped.slice(0, MAX) : mapped;
-        if (mapped.length > MAX) {
-            items.push({
-                category: 'opencode-model',
-                prefix: '/opencode model',
-                label: '… ' + (mapped.length - MAX) + ' more — type to narrow (e.g. deepseek)',
-                hint: 'OpenCode catalog has ' + (slashPaletteSupplement.opencodeModelsCount || mapped.length) + ' models',
-                meta: '',
-                keywords: 'opencode model more filter',
-                modelId: '',
-                opencodeModel: true,
-                disabled: true,
-            });
-        }
-        return items.concat(clipped);
+    function buildOpenCodeModelPaletteItems(filterLower, opts) {
+        return agentControls.buildOpenCodeModelPaletteItems(filterLower, opts);
     }
-
-    const OPENCODE_EFFORT_LEVELS = [
-        'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
-    ];
 
     function seedOpenCodeSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'opencode', 'model');
-        if (serverModel && !slashPaletteSupplement.opencodeModelDirty) {
-            slashPaletteSupplement.opencodeModel = serverModel;
-            if (key) slashPaletteSupplement.opencodeModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'opencode', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.opencodeEffortDirty) {
-            slashPaletteSupplement.opencodeEffort = serverEffort;
-            if (key) slashPaletteSupplement.opencodeEffortKey = key;
-        } else if (!slashPaletteSupplement.opencodeEffortDirty && key && data && ((data.agent_pins && data.agent_pins.opencode) || ('opencode_effort' in data))) {
-            slashPaletteSupplement.opencodeEffort = '';
-            slashPaletteSupplement.opencodeEffortKey = key;
-        }
+        return agentControls.seedOpenCodeSupplementFromSessionData(data, sessionId);
     }
 
     function loadOpenCodeEffortForPalette() {
-        if (slashPaletteSupplement.opencodeEffortDirty) return;
-        if (!hasActiveOpenCodeAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.opencodeEffortLoading
-            || (slashPaletteSupplement.opencodeEffortKey === key && key)
-        ) {
-            return;
-        }
-        const effortGeneration = beginSupplementFetch('opencodeEffortGen');
-        slashPaletteSupplement.opencodeEffortLoading = true;
-        const url = key
-            ? '/api/opencode/effort?session=' + encodeURIComponent(key)
-            : '/api/opencode/effort';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:effort:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                // Don't clobber a palette pick that hasn't finished POSTing yet.
-                if (slashPaletteSupplement.opencodeEffortDirty || !isCurrentSupplementFetch('opencodeEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.opencodeEffort =
-                    (j && j.preferredEffort) || '';
-                slashPaletteSupplement.opencodeEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintOpenCodeUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.opencodeEffortLoading = false;
-            });
+        return agentControls.loadOpenCodeEffortForPalette();
     }
 
     function persistOpenCodeEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.opencodeEffortLoading = false;
-        beginSupplementFetch('opencodeEffortGen');
-        slashPaletteSupplement.opencodeEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.opencodeEffortDirty = true;
-            slashPaletteSupplement.opencodeEffortKey = '';
-            return;
-        }
-        // Optimistic key so a concurrent GET cannot wipe the pick before POST lands.
-        slashPaletteSupplement.opencodeEffortKey = sid;
-        slashPaletteSupplement.opencodeEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'opencode:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/opencode/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, effort: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.opencodeEffortKey = sid;
-                    slashPaletteSupplement.opencodeEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistOpenCodeEffortSelection(effort);
     }
 
     function buildOpenCodeEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('opencode')) return [];
-        if (!hasActiveOpenCodeAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadOpenCodeEffortForPalette();
-        let effortFilter = f
-            .replace(/^opencode\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
-        const preferred = String(slashPaletteSupplement.opencodeEffort || '').toLowerCase();
-        return OPENCODE_EFFORT_LEVELS
-            .map((id) => ({
-                category: 'opencode-effort',
-                prefix: '/opencode effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set OpenCode reasoning effort (--variant) to ' + id,
-                meta: id,
-                keywords: 'opencode effort reasoning variant ' + id,
-                modelId: id,
-                opencodeEffort: true,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
+        return agentControls.buildOpenCodeEffortPaletteItems(filterLower);
     }
 
     /** anyChat: load even without a /codex chip (user typed "codex" in the palette). */
     function loadCodexModelsForPalette(anyChat, opts) {
-        if (!anyChat && !hasActiveCodexAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const forceRefresh = !!(opts && opts.refresh);
-        if (
-            !forceRefresh
-            && (
-                slashPaletteSupplement.codexModelsLoading
-                || (slashPaletteSupplement.codexModels.length
-                    && slashPaletteSupplement.codexModelsKey === key)
-                || slashPaletteSupplement.codexModelsTried === key
-            )
-        ) {
-            return;
-        }
-        const modelsGeneration = beginSupplementFetch('codexModelsGen');
-        slashPaletteSupplement.codexModelsLoading = true;
-        const params = new URLSearchParams();
-        if (key) params.set('session', key);
-        if (forceRefresh) params.set('refresh', '1');
-        const qs = params.toString();
-        const url = qs ? '/api/codex/models?' + qs : '/api/codex/models';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:model:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.codexModels =
-                    j && j.success && Array.isArray(j.models) ? j.models : [];
-                if (!slashPaletteSupplement.codexModelDirty && isCurrentSupplementFetch('codexModelsGen', modelsGeneration)) {
-                    slashPaletteSupplement.codexModel = (j && j.preferredModel) || '';
-                }
-                slashPaletteSupplement.codexModelsKey = key;
-                slashPaletteSupplement.codexModelsSource =
-                    (j && j.source) || '';
-                slashPaletteSupplement.codexModelsCount =
-                    (j && (j.count != null ? j.count : slashPaletteSupplement.codexModels.length)) || 0;
-                slashPaletteSupplement.codexCommonEfforts =
-                    j && Array.isArray(j.commonEfforts) ? j.commonEfforts : [];
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintCodexUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.codexModelsCount || 0;
-                    const err = j && j.error ? String(j.error) : '';
-                    window.showToast(
-                        err && !n
-                            ? ('Codex models refresh failed: ' + err)
-                            : ('Codex models and effort support refreshed (' + n + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.codexModelsLoading = false;
-                slashPaletteSupplement.codexModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadCodexModelsForPalette(anyChat, opts);
     }
 
     function persistCodexModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.codexModelsLoading = false;
-        beginSupplementFetch('codexModelsGen');
-        if (id.toLowerCase() === 'refresh' || id.toLowerCase() === '__refresh__') {
-            slashPaletteSupplement.codexModelsKey = '';
-            slashPaletteSupplement.codexModels = [];
-            loadCodexModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.codexModel = id;
-        slashPaletteSupplement.codexModels = (slashPaletteSupplement.codexModels || []).map((m) => ({
-            ...m,
-            current: String(m && m.id) === id,
-        }));
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.codexModelDirty = true;
-            slashPaletteSupplement.codexModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.codexModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:model', _loadSessionSeq);
-        sessionMutationFetch('/api/codex/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.codexModel = id;
-                    slashPaletteSupplement.codexModelDirty = false;
-                    slashPaletteSupplement.codexModelsKey = sid;
-                    repaintCodexUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistCodexModelSelection(modelId);
     }
 
-    function buildCodexModelPaletteItems(filterLower) {
-        if (!hasActiveCodexAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadCodexModelsForPalette(true);
-        const models = slashPaletteSupplement.codexModels || [];
-        let modelFilter = f
-            .replace(/^codex\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'codex') modelFilter = '';
-        const preferred = String(slashPaletteSupplement.codexModel || '').toLowerCase();
-        // Stage as nested cmd chip — no instant run (CH-000482). Composes as
-        // `/codex /model refresh` after the sticky agent prefix.
-        const refreshItem = {
-            category: 'codex-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh Codex models',
-            hint: 'Refresh Codex models and per-model effort levels from codex debug models',
-            meta: 'refresh',
-            keywords: 'codex model refresh reload sync catalog debug models',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        if (slashPaletteSupplement.codexModelsLoading && !models.length) {
-            items.push({
-                category: 'codex-model',
-                prefix: '/codex model',
-                label: 'Loading Codex models…',
-                hint: 'Fetching codex debug models catalog',
-                meta: '',
-                keywords: 'codex model loading',
-                modelId: '',
-                codexModel: true,
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => {
-                const id = String((m && m.id) || '').trim();
-                if (!id) return null;
-                const label = String((m && m.label) || id).trim() || id;
-                const current = id.toLowerCase() === preferred;
-                const fav = !!(m && (m.favorite === true || m.favorite === '1' || m.favorite === 1));
-                const modelEfforts = Array.isArray(m && m.efforts) ? m.efforts : [];
-                const effortHint = modelEfforts.length
-                    ? 'Supported efforts: ' + modelEfforts.join(', ')
-                    : 'No verified effort levels in the Codex CLI catalog';
-                return {
-                    category: 'codex-model',
-                    prefix: '/codex model ' + id,
-                    label: (fav ? '★ ' : '') + label + (current ? ' (current)' : ''),
-                    hint: [
-                        (m && m.description) || ('Set Codex model to ' + id),
-                        effortHint,
-                    ].filter(Boolean).join(' · '),
-                    meta: id,
-                    keywords: 'codex model ' + id + ' ' + label + ' ' + id.replace(/[-_/]+/g, ' '),
-                    modelId: id,
-                    codexModel: true,
-                };
-            })
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        const MAX = 40;
-        // Rank before clipping so a name hit cannot be hidden by description hits.
-        mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
-            - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
-        const clipped = mapped.length > MAX ? mapped.slice(0, MAX) : mapped;
-        if (mapped.length > MAX) {
-            items.push({
-                category: 'codex-model',
-                prefix: '/codex model',
-                label: '… ' + (mapped.length - MAX) + ' more — type to narrow (e.g. gpt-5)',
-                hint: 'Codex catalog has ' + (slashPaletteSupplement.codexModelsCount || mapped.length) + ' models',
-                meta: '',
-                keywords: 'codex model more filter',
-                modelId: '',
-                codexModel: true,
-                disabled: true,
-            });
-        }
-        return items.concat(clipped);
+    function buildCodexModelPaletteItems(filterLower, opts) {
+        return agentControls.buildCodexModelPaletteItems(filterLower, opts);
     }
 
     function seedCodexSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const key = sessionId != null ? String(sessionId) : '';
-        const serverModel = sessionPin(data, 'codex', 'model');
-        if (serverModel && !slashPaletteSupplement.codexModelDirty) {
-            slashPaletteSupplement.codexModel = serverModel;
-            if (key) slashPaletteSupplement.codexModelsKey = key;
-        }
-        const serverEffort = sessionPin(data, 'codex', 'effort').toLowerCase();
-        if (serverEffort && !slashPaletteSupplement.codexEffortDirty) {
-            slashPaletteSupplement.codexEffort = serverEffort;
-            if (key) slashPaletteSupplement.codexEffortKey = key;
-        } else if (!slashPaletteSupplement.codexEffortDirty && key && data && ((data.agent_pins && data.agent_pins.codex) || ('codex_effort' in data))) {
-            slashPaletteSupplement.codexEffort = '';
-            slashPaletteSupplement.codexEffortKey = key;
-        }
+        return agentControls.seedCodexSupplementFromSessionData(data, sessionId);
     }
 
     function loadCodexEffortForPalette() {
-        if (slashPaletteSupplement.codexEffortDirty) return;
-        if (!hasActiveCodexAgentChip()) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        if (
-            slashPaletteSupplement.codexEffortLoading
-            || (slashPaletteSupplement.codexEffortKey === key && key)
-        ) {
-            return;
-        }
-        const effortGeneration = beginSupplementFetch('codexEffortGen');
-        slashPaletteSupplement.codexEffortLoading = true;
-        const url = key
-            ? '/api/codex/effort?session=' + encodeURIComponent(key)
-            : '/api/codex/effort';
-        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:effort:read', _loadSessionSeq);
-        fetch(url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (slashPaletteSupplement.codexEffortDirty || !isCurrentSupplementFetch('codexEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.codexEffort =
-                    (j && j.preferredEffort) || '';
-                slashPaletteSupplement.codexEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintCodexUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.codexEffortLoading = false;
-            });
+        return agentControls.loadCodexEffortForPalette();
     }
 
     /**
@@ -7506,24 +3653,7 @@
      * right before the badge snapshot, then flush the corrupted value on adopt.
      */
     async function ensureCodexEffortForSend(message) {
-        const gate = CuttleChatAgentModel.codexEffortFetchForSend({
-            messageText: message,
-            hasCodexChip: hasActiveCodexAgentChip(),
-            codexEffortDirty: slashPaletteSupplement.codexEffortDirty,
-            sessionKey: currentSessionId != null ? String(currentSessionId) : '',
-            effortKey: slashPaletteSupplement.codexEffortKey,
-        });
-        if (!gate.fetch) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        try {
-            const response = await fetch(gate.url, { cache: 'no-store' });
-            const result = await response.json();
-            if (!result || !result.success) return;
-            // A palette click may have set dirty while this fetch was in flight.
-            if (slashPaletteSupplement.codexEffortDirty) return;
-            slashPaletteSupplement.codexEffort = String(result.preferredEffort || '');
-            slashPaletteSupplement.codexEffortKey = key;
-        } catch (_) {}
+        return agentControls.ensureCodexEffortForSend(message);
     }
 
     /**
@@ -7540,774 +3670,261 @@
      * Other agents still attach when dirty so a pre-session pick is not lost.
      */
     function attachAgentIdentityToRequest(requestBody) {
-        if (!requestBody || typeof requestBody !== 'object') return;
-        const S = slashPaletteSupplement;
-        const pins = CuttleChatAgentModel.buildAgentPinsForRequest({
-            message: requestBody.message,
-            models: {
-                muse: {
-                    model: S.museModel, effort: S.museEffort,
-                    modelDirty: S.museModelDirty, effortDirty: S.museEffortDirty,
-                },
-                hermes: {
-                    model: S.hermesModel, effort: S.hermesEffort,
-                    modelDirty: S.hermesModelDirty, effortDirty: S.hermesEffortDirty,
-                },
-                opencode: {
-                    model: S.opencodeModel, effort: S.opencodeEffort,
-                    modelDirty: S.opencodeModelDirty, effortDirty: S.opencodeEffortDirty,
-                },
-                codex: {
-                    model: S.codexModel, effort: S.codexEffort,
-                    modelDirty: S.codexModelDirty, effortDirty: S.codexEffortDirty,
-                },
-                claude: {
-                    model: S.claudeModel, effort: S.claudeEffort,
-                    modelDirty: S.claudeModelDirty, effortDirty: S.claudeEffortDirty,
-                },
-            },
-        });
-        if (Object.keys(pins).length) requestBody.agent_pins = pins;
+        return agentControls.attachAgentIdentityToRequest(requestBody);
     }
 
     function persistCodexEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.codexEffortLoading = false;
-        beginSupplementFetch('codexEffortGen');
-        slashPaletteSupplement.codexEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.codexEffortDirty = true;
-            slashPaletteSupplement.codexEffortKey = '';
-            return;
-        }
-        slashPaletteSupplement.codexEffortKey = sid;
-        slashPaletteSupplement.codexEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'codex:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/codex/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                session: sid,
-                effort: id,
-                model: slashPaletteSupplement.codexModel || '',
-            }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.codexEffortKey = sid;
-                    slashPaletteSupplement.codexEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistCodexEffortSelection(effort);
     }
 
     function buildCodexEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('codex')) return [];
-        if (!hasActiveCodexAgentChip()) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadCodexEffortForPalette();
-        let effortFilter = f
-            .replace(/^codex\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
-        if (effortFilter === 'effort') effortFilter = '';
-        const preferred = String(slashPaletteSupplement.codexEffort || '').toLowerCase();
-        const selectedModel = String(slashPaletteSupplement.codexModel || '').toLowerCase();
-        const selectedRow = selectedModel
-            ? (slashPaletteSupplement.codexModels || []).find((m) =>
-                String(m && m.id || '').toLowerCase() === selectedModel
-            )
-            : null;
-        const levels = selectedRow && Array.isArray(selectedRow.efforts)
-            ? selectedRow.efforts
-            : selectedModel
-                ? []
-                : (slashPaletteSupplement.codexCommonEfforts || []);
-        if (!levels.length) {
-            return [{
-                category: 'codex-effort',
-                prefix: '/codex effort',
-                label: slashPaletteSupplement.codexModelsLoading
-                    ? 'Loading Codex effort support…'
-                    : 'No verified effort levels for ' + (selectedModel || 'the CLI default'),
-                hint: slashPaletteSupplement.codexModelsLoading
-                    ? 'Reading per-model levels from codex debug models'
-                    : 'Refresh the Codex model catalog to read current per-model effort support',
-                meta: '',
-                keywords: 'codex effort loading supported levels refresh',
-                modelId: '',
-                codexEffort: true,
-                disabled: true,
-            }];
-        }
-        const items = levels
-            .map((id) => ({
-                category: 'codex-effort',
-                prefix: '/codex effort ' + id,
-                label: 'Effort ' + id + (id.toLowerCase() === preferred ? ' (current)' : ''),
-                hint: 'Set Codex reasoning effort (model_reasoning_effort) to ' + id
-                    + (selectedModel ? ' for ' + selectedModel : ' (supported across the CLI catalog)'),
-                meta: id,
-                keywords: 'codex effort reasoning ' + id,
-                modelId: id,
-                codexEffort: true,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
-        if (!items.length && effortFilter) {
-            return [{
-                category: 'codex-effort',
-                prefix: '/codex effort',
-                label: '`' + effortFilter + '` is not supported'
-                    + (selectedModel ? ' by ' + selectedModel : ' across all models'),
-                hint: 'Supported: ' + levels.join(', '),
-                meta: '',
-                keywords: 'codex effort unsupported ' + effortFilter,
-                modelId: '',
-                codexEffort: true,
-                disabled: true,
-            }];
-        }
-        return items;
+        return agentControls.buildCodexEffortPaletteItems(filterLower);
     }
 
     /** anyChat: load even without a /claude chip (user typed "claude" in the palette). */
     function loadClaudeModelsForPalette(anyChat, opts) {
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const forceRefresh = !!(opts && opts.refresh);
-        const gate = CuttleChatAgentModel.claudeModelsFetchForPalette({
-            anyChat,
-            hasClaudeChip: hasActiveHarnessAgentChip('claude'),
-            loading: slashPaletteSupplement.claudeModelsLoading,
-            modelsLength: (slashPaletteSupplement.claudeModels || []).length,
-            modelsKey: slashPaletteSupplement.claudeModelsKey,
-            triedKey: slashPaletteSupplement.claudeModelsTried,
-            sessionKey: key,
-            forceRefresh,
-        });
-        if (!gate.fetch) return;
-        const modelsGeneration = beginSupplementFetch('claudeModelsGen');
-        slashPaletteSupplement.claudeModelsLoading = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:model:read', _loadSessionSeq);
-        fetch(gate.url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                const applied = CuttleChatAgentModel.applyClaudeModelsResponse(j, {
-                    modelDirty: slashPaletteSupplement.claudeModelDirty || !isCurrentSupplementFetch('claudeModelsGen', modelsGeneration),
-                });
-                slashPaletteSupplement.claudeModels = applied.models;
-                if (applied.model !== null) {
-                    slashPaletteSupplement.claudeModel = applied.model;
-                }
-                slashPaletteSupplement.claudeModelsKey = key;
-                slashPaletteSupplement.claudeModelsSource = applied.source;
-                slashPaletteSupplement.claudeModelsCount = applied.count;
-                slashPaletteSupplement.claudeCommonEfforts = applied.commonEfforts;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintClaudeUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-                if (forceRefresh && window.showToast) {
-                    const n = slashPaletteSupplement.claudeModelsCount || 0;
-                    const err = applied.error;
-                    window.showToast(
-                        err && !n
-                            ? ('Claude Code models refresh failed: ' + err)
-                            : ('Claude Code models and effort support refreshed (' + n + ')'),
-                        err && !n ? 'error' : 'success'
-                    );
-                }
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.claudeModelsLoading = false;
-                slashPaletteSupplement.claudeModelsTried = key; // empty/failed: don't refetch per render
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                const welcomeInput = document.getElementById('welcomeChatInput');
-                const chatInput = document.getElementById('chatInput');
-                if (welcomeInput && document.activeElement === welcomeInput) {
-                    syncSlashMenuFromInput(welcomeInput);
-                }
-                if (chatInput && document.activeElement === chatInput) {
-                    syncSlashMenuFromInput(chatInput);
-                }
-            });
+        return agentControls.loadClaudeModelsForPalette(anyChat, opts);
     }
 
     function persistClaudeModelSelection(modelId) {
-        const id = String(modelId || '').trim();
-        if (!id) return;
-        slashPaletteSupplement.claudeModelsLoading = false;
-        beginSupplementFetch('claudeModelsGen');
-        if (CuttleChatAgentModel.isClaudeModelRefreshPick(id)) {
-            slashPaletteSupplement.claudeModelsKey = '';
-            slashPaletteSupplement.claudeModels = [];
-            loadClaudeModelsForPalette(true, { refresh: true });
-            return;
-        }
-        slashPaletteSupplement.claudeModel = id;
-        slashPaletteSupplement.claudeModels =
-            CuttleChatAgentModel.markClaudeCurrentModel(
-                slashPaletteSupplement.claudeModels, id);
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.claudeModelDirty = true;
-            slashPaletteSupplement.claudeModelsKey = '';
-            return;
-        }
-        slashPaletteSupplement.claudeModelDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:model', _loadSessionSeq);
-        sessionMutationFetch('/api/claude/model', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ session: sid, model: id }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.claudeModel = id;
-                    slashPaletteSupplement.claudeModelDirty = false;
-                    slashPaletteSupplement.claudeModelsKey = sid;
-                    repaintClaudeUserBadges();
-                    persistStickySlashForCurrentSession();
-                    refreshHistoryAgentChips();
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistClaudeModelSelection(modelId);
     }
 
-    function buildClaudeModelPaletteItems(filterLower) {
-        if (!hasActiveHarnessAgentChip('claude')) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadClaudeModelsForPalette(true);
-        const models = slashPaletteSupplement.claudeModels || [];
-        const modelFilter = CuttleChatAgentModel.claudeModelFilterForPalette(f);
-        const preferred = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
-        // Stage as nested cmd chip — no instant run (same as Codex). Composes as
-        // `/claude /model refresh` after the sticky agent prefix.
-        const refreshItem = {
-            category: 'claude-cmd',
-            prefix: '/model refresh',
-            label: 'Refresh Claude Code models',
-            hint: 'Refresh Claude Code models and per-model effort levels from the installed CLI',
-            meta: 'refresh',
-            keywords: 'claude model refresh reload sync catalog',
-        };
-        const items = [];
-        if (
-            !modelFilter
-            || slashPaletteItemMatches(refreshItem, modelFilter)
-        ) {
-            items.push(refreshItem);
-        }
-        if (slashPaletteSupplement.claudeModelsLoading && !models.length) {
-            items.push({
-                category: 'claude-model',
-                prefix: '/claude model',
-                label: 'Loading Claude Code models…',
-                hint: 'Reading the Claude Code CLI model catalog',
-                meta: '',
-                keywords: 'claude model loading',
-                modelId: '',
-                claudeModel: true,
-                disabled: true,
-            });
-            return items;
-        }
-        const mapped = models
-            .map((m) => CuttleChatAgentModel.buildClaudeModelRow(m, preferred))
-            .filter(Boolean)
-            .filter((item) => (modelFilter ? slashPaletteItemMatches(item, modelFilter) : true));
-        const MAX = 40;
-        // Rank before clipping so a name hit cannot be hidden by description hits.
-        mapped.sort((a, b) => CuttleChatSlash.slashPaletteItemSearchRank(a, f)
-            - CuttleChatSlash.slashPaletteItemSearchRank(b, f));
-        const clipped = mapped.length > MAX ? mapped.slice(0, MAX) : mapped;
-        if (mapped.length > MAX) {
-            items.push({
-                category: 'claude-model',
-                prefix: '/claude model',
-                label: '… ' + (mapped.length - MAX) + ' more — type to narrow (e.g. opus)',
-                hint: 'Claude Code catalog has ' + (slashPaletteSupplement.claudeModelsCount || mapped.length) + ' models',
-                meta: '',
-                keywords: 'claude model more filter',
-                modelId: '',
-                claudeModel: true,
-                disabled: true,
-            });
-        }
-        return items.concat(clipped);
+    function buildClaudeModelPaletteItems(filterLower, opts) {
+        return agentControls.buildClaudeModelPaletteItems(filterLower, opts);
     }
 
     function seedClaudeSupplementFromSessionData(data, sessionId) {
-        if (!data || typeof data !== 'object') return;
-        const patch = CuttleChatAgentModel.claudeSeedPatchFromSessionData(data, {
-            modelDirty: slashPaletteSupplement.claudeModelDirty,
-            effortDirty: slashPaletteSupplement.claudeEffortDirty,
-            sessionKey: sessionId != null ? String(sessionId) : '',
-        });
-        if (patch.model !== undefined) slashPaletteSupplement.claudeModel = patch.model;
-        if (patch.modelsKey !== undefined) slashPaletteSupplement.claudeModelsKey = patch.modelsKey;
-        if (patch.effort !== undefined) slashPaletteSupplement.claudeEffort = patch.effort;
-        if (patch.effortKey !== undefined) slashPaletteSupplement.claudeEffortKey = patch.effortKey;
+        return agentControls.seedClaudeSupplementFromSessionData(data, sessionId);
     }
 
     function loadClaudeEffortForPalette() {
-        if (slashPaletteSupplement.claudeEffortDirty) return;
-        const key = currentSessionId != null ? String(currentSessionId) : '';
-        const gate = CuttleChatAgentModel.claudeEffortFetchForPalette({
-            hasClaudeChip: hasActiveHarnessAgentChip('claude'),
-            loading: slashPaletteSupplement.claudeEffortLoading,
-            effortKey: slashPaletteSupplement.claudeEffortKey,
-            sessionKey: key,
-        });
-        if (!gate.fetch) return;
-        const effortGeneration = beginSupplementFetch('claudeEffortGen');
-        slashPaletteSupplement.claudeEffortLoading = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:effort:read', _loadSessionSeq);
-        fetch(gate.url, { cache: 'no-store' })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (slashPaletteSupplement.claudeEffortDirty || !isCurrentSupplementFetch('claudeEffortGen', effortGeneration)) return;
-                slashPaletteSupplement.claudeEffort =
-                    CuttleChatAgentModel.applyClaudeEffortResponse(j);
-                slashPaletteSupplement.claudeEffortKey = key;
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                repaintClaudeUserBadges();
-                persistStickySlashForCurrentSession();
-                refreshHistoryAgentChips();
-            })
-            .catch(() => {})
-            .finally(() => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                slashPaletteSupplement.claudeEffortLoading = false;
-            });
+        return agentControls.loadClaudeEffortForPalette();
     }
 
     function persistClaudeEffortSelection(effort) {
-        const id = String(effort || '').trim().toLowerCase();
-        if (!id) return;
-        slashPaletteSupplement.claudeEffortLoading = false;
-        beginSupplementFetch('claudeEffortGen');
-        slashPaletteSupplement.claudeEffort = id;
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
-        if (!sid) {
-            slashPaletteSupplement.claudeEffortDirty = true;
-            slashPaletteSupplement.claudeEffortKey = '';
-            return;
-        }
-        slashPaletteSupplement.claudeEffortKey = sid;
-        slashPaletteSupplement.claudeEffortDirty = true;
-        const mutationToken = sessionMutations.capture(currentSessionId, 'claude:effort', _loadSessionSeq);
-        sessionMutationFetch('/api/claude/effort', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                session: sid,
-                effort: id,
-                model: slashPaletteSupplement.claudeModel || '',
-            }),
-        })
-            .then((r) => r.json())
-            .then((j) => {
-                if (!sessionMutations.current(mutationToken, currentSessionId, _loadSessionSeq)) return;
-                if (j && j.success) {
-                    slashPaletteSupplement.claudeEffortKey = sid;
-                    slashPaletteSupplement.claudeEffortDirty = false;
-                }
-            })
-            .catch(() => {});
+        return agentControls.persistClaudeEffortSelection(effort);
     }
 
     function buildClaudeEffortPaletteItems(filterLower) {
-        if (!agentSupportsEffort('claude')) return [];
-        if (!hasActiveHarnessAgentChip('claude')) return [];
-        const f = (filterLower || '').toLowerCase().trim();
-        if (!f) return [];
-        loadClaudeEffortForPalette();
-        const effortFilter = CuttleChatAgentModel.claudeEffortFilterForPalette(f);
-        const preferred = String(slashPaletteSupplement.claudeEffort || '').toLowerCase();
-        const selectedModel = String(slashPaletteSupplement.claudeModel || '').toLowerCase();
-        const levels = CuttleChatAgentModel.claudeEffortLevelsForModel({
-            selectedModel,
-            models: slashPaletteSupplement.claudeModels,
-            commonEfforts: slashPaletteSupplement.claudeCommonEfforts,
-        });
-        if (!levels.length) {
-            return [{
-                category: 'claude-effort',
-                prefix: '/claude effort',
-                label: slashPaletteSupplement.claudeModelsLoading
-                    ? 'Loading Claude Code effort support…'
-                    : 'No verified effort levels for ' + (selectedModel || 'the CLI default'),
-                hint: slashPaletteSupplement.claudeModelsLoading
-                    ? 'Reading per-model levels from the Claude Code CLI'
-                    : 'This model takes no --effort level; refresh the Claude Code catalog if that looks wrong',
-                meta: '',
-                keywords: 'claude effort loading supported levels refresh',
-                modelId: '',
-                claudeEffort: true,
-                disabled: true,
-            }];
-        }
-        const items = levels
-            .map((id) => CuttleChatAgentModel.buildClaudeEffortRow(id, {
-                preferredLower: preferred,
-                selectedModel,
-            }))
-            .filter((item) => (effortFilter ? slashPaletteItemMatches(item, effortFilter) : true));
-        if (!items.length && effortFilter) {
-            return [{
-                category: 'claude-effort',
-                prefix: '/claude effort',
-                label: '`' + effortFilter + '` is not supported'
-                    + (selectedModel ? ' by ' + selectedModel : ' by the CLI default model'),
-                hint: 'Supported: ' + levels.join(', '),
-                meta: '',
-                keywords: 'claude effort unsupported ' + effortFilter,
-                modelId: '',
-                claudeEffort: true,
-                disabled: true,
-            }];
-        }
-        return items;
+        return agentControls.buildClaudeEffortPaletteItems(filterLower);
     }
 
     /** `/restart <mode>` entries. Native Cuttle control — never an agent prompt. */
-    function buildRestartPaletteItems(filterLower) {
-        const f = (filterLower || '').trim();
-        if (!f) return [];
-        const defs = [
-            ['/restart status', 'Restart status', 'Show restart state and active work — no agent call'],
-            ['/restart graceful', 'Restart Flask (graceful)', 'Restart now if no other work is active'],
-            ['/restart when-idle', 'Restart Flask (when idle)', 'Restart once active work finishes'],
-            ['/restart force --yes', 'Restart Flask (force)', 'Interrupt active work and restart now'],
-        ];
-        return defs.map(([command, label, hint]) => ({
-            category: 'command',
-            prefix: command,
-            label: label,
-            hint: hint,
-            meta: command,
-            keywords: 'restart flask daemon reload ' + command.replace(/^\//, ''),
-            controlCommand: true,
-        }));
-    }
+    // Slash palette controller: menu DOM, keyboard navigation, filtering, the
+    // selection apply logic and the dismiss lifecycle are owned by
+    // chat_slash_palette.js (CuttleChatSlashPalette). The page shares the
+    // palette state so composer chips keep working, keeps the
+    // `applySlashSelection` draft choke point, and passes every page-owned
+    // capability in.
+    const slashPalette = CuttleChatSlashPalette.create({
+        win: window,
+        escapeHtmlInline,
+        clamp,
+        availableSlashCommands,
+        cursorAgentSlashCommandsForPalette,
+        harnessUsageSlashCommandsForPalette,
+        buildProjectPaletteItems,
+        buildProjectCommandPaletteItems,
+        agentControls,
+        readStarredSlashPrefixes,
+        readStarredProject,
+        normalizeStarredProjectPath,
+        isSlashCommandStarred,
+        isAgentDefaultStarred,
+        isProjectStarred,
+        toggleStarredProject,
+        toggleStarredAgentDefault,
+        toggleStarredSlashCommand,
+        getModelStarSpec: (cat) => MODEL_STAR_SPEC_BY_CATEGORY[cat],
+        loadAgentCapabilities,
+        loadCursorStarredDefault,
+        loadAllStarredDefaults,
+        loadSlashPaletteSupplement,
+        isPaletteLoading: () => slashPaletteSupplement.loading,
+        hasActiveCursorAgentChip,
+        loadCursorAgentModelsForPalette,
+        applySlashSelection,
+        saveDraft: () => saveComposerDraft(session.current() || 'new'),
+        findProjectById,
+        setChatProject,
+        autoResizeTextarea,
+        autoResizeWelcomeTextarea,
+        renderSlashChips,
+        markStickyAgentCleared,
+        persistStickySlashForCurrentSession,
+        isOrphanedCompanionChip,
+        onCursorModelPick,
+    });
+    slashPalette.bind();
 
-    /** Split a slash filter into tokens; all tokens must match (AND). */
-    function slashPaletteFilterTokens(filterLower) {
-        return CuttleChatSlash.slashPaletteFilterTokens(filterLower);
-    }
+    // History row/header markup lives in chat_history_view.js
+    // (CuttleChatHistoryView.createRenderers). The page binds its
+    // session/attention/project capabilities once and hands the renderers to
+    // the history panel controller and the full-list paint.
+    const historyView = CuttleChatHistoryView.createRenderers({
+        escapeHtml,
+        escapeHtmlInline,
+        currentSessionId: () => session.current(),
+        sessionIdsEqual,
+        sessionShowsHistorySpinner,
+        sessionHistoryAttentionKind,
+        resolveSessionProjectInfo,
+        projectChipHtml,
+        historyBranchFor,
+        chatTitleParts,
+        historyAttentionIconHTML: serverAttention.historyAttentionIconHTML,
+        openPaneEntriesForSession,
+        historyOpenPaneBadgeHTML: serverAttention.historyOpenPaneBadgeHTML,
+        historySubagentToggleTitle: CuttleChatHistoryView.historySubagentToggleTitle,
+        formatHistoryLastMessageAge,
+        resolveHistoryLastMessageMs,
+        historyRunningIconHTML,
+        formatChatDisplayId,
+    });
 
-    function slashPaletteItemHaystack(item) {
-        return CuttleChatSlash.slashPaletteItemHaystack(item);
-    }
+    // History panel search/filter + row-menu/modal controller: query/debounce/
+    // abort state, the `/project` + `/agent` filter chips and slash palette,
+    // search-result paint, the active-search hard gate, and the row overflow
+    // menu + rename/delete modal lifecycle live in chat_history_panel.js
+    // (CuttleChatHistoryPanel). The page supplies row/header renderers, project
+    // resolution, session/attention capabilities and action effects.
+    const historyPanel = CuttleChatHistoryPanel.create({
+        win: window,
+        doc: document,
+        storage: localStorage,
+        fetch: (...args) => window.fetch(...args),
+        escapeHtml,
+        parseSessionTimestamp,
+        formatChatDisplayId,
+        resolveSessionProjectInfo,
+        getProjects: () => projects,
+        stickyTitleChipsForSession,
+        parseTitleSlashChips,
+        getSlashCommands: () => CuttleChatSlash.SLASH_COMMANDS,
+        isAuthMode,
+        getAuthSessions: () => ((window.CuttleAuth && window.CuttleAuth.getSessions && window.CuttleAuth.getSessions()) || []),
+        applyGeneratingFlagsFromSessions,
+        isChatSessionDeleted,
+        getTerminalHistoryEntries,
+        createAuthHistoryItemHTML: historyView.createAuthHistoryItemHTML,
+        createHistoryItemHTML: historyView.createHistoryItemHTML,
+        createTerminalHistoryItemHTML: historyView.createTerminalHistoryItemHTML,
+        createHistorySectionHeaderHTML: historyView.createHistorySectionHeaderHTML,
+        scheduleSlashChipCompactLabels,
+        renderArchivedSection,
+        rememberActiveHistorySessions,
+        refreshArchivedSessions,
+        isArchivedSessionsLoaded: () => archivedSessionsLoaded,
+        syncHistoryRunningIndicators,
+        syncHistoryUnreadIndicators,
+        sessionHasUnread,
+        sessionHasUnreadError,
+        sessionHasPausedFollowup,
+        sessionHasActiveFollowup,
+        refreshLocalOpenPanes,
+        // Row menu + modal orchestration capabilities.
+        buildSessionMenuHTML,
+        refreshGitPushMenuMode: gitPush.refreshMenuMode,
+        closeChatChromeMenu,
+        isTerminalSessionId,
+        getChatSessionDisplayTitle,
+        readTerminalSessionRegistry,
+        writeTerminalSessionRegistry,
+        fetchWithTimeout,
+        currentSessionId: () => session.current(),
+        sessionIdsEqual,
+        toAuthDbSessionId,
+        deleteChatSession,
+        persistRenamedTitle,
+        refreshChatHistoryList,
+        updateChatSessionTitle,
+    });
 
-    function slashPaletteItemMatches(item, filterLower) {
-        return CuttleChatSlash.slashPaletteItemMatches(item, filterLower);
-    }
-
-    function filterSlashPaletteItems(filter) {
-        const f = (filter || '').toLowerCase();
-        const cmds = availableSlashCommands().filter((c) => slashPaletteItemMatches(c, f));
-        const cursorCmds = cursorAgentSlashCommandsForPalette().filter((c) =>
-            slashPaletteItemMatches(c, f)
-        );
-        const harnessUsageCmds = harnessUsageSlashCommandsForPalette().filter((c) =>
-            slashPaletteItemMatches(c, f)
-        );
-        const projs = buildProjectPaletteItems().filter((p) => slashPaletteItemMatches(p, f));
-        const projCmds = buildProjectCommandPaletteItems().filter((p) => slashPaletteItemMatches(p, f));
-        const cursorModels = buildCursorModelPaletteItems(f);
-        const museModels = buildMuseModelPaletteItems(f);
-        const museEfforts = buildMuseEffortPaletteItems(f);
-        const hermesModels = buildHermesModelPaletteItems(f);
-        const hermesEfforts = buildHermesEffortPaletteItems(f);
-        const opencodeModels = buildOpenCodeModelPaletteItems(f);
-        const opencodeEfforts = buildOpenCodeEffortPaletteItems(f);
-        const codexModels = buildCodexModelPaletteItems(f);
-        const codexEfforts = buildCodexEffortPaletteItems(f);
-        const claudeModels = buildClaudeModelPaletteItems(f);
-        const claudeEfforts = buildClaudeEffortPaletteItems(f);
-        const restartCmds = buildRestartPaletteItems(f).filter((c) =>
-            slashPaletteItemMatches(c, f)
-        );
-
-        const starredSet = new Set(readStarredSlashPrefixes());
-        const starredProject = readStarredProject();
-        const starredProjectPath = normalizeStarredProjectPath(
-            starredProject && starredProject.path
-        );
-        const starredProjectId =
-            starredProject && starredProject.id != null
-                ? String(starredProject.id)
-                : null;
-        function starredRank(item) {
-            // Single implementation lives in chat_slash.js; the closure
-            // supplies prefs gathered above.
-            return CuttleChatSlash.starredRank(item, {
-                prefixes: Array.from(starredSet),
-                projectId: starredProjectId,
-                projectPath: starredProjectPath,
-            });
-        }
-
-        function sortGroup(arr) {
-            return arr.slice().sort((a, b) => {
-                const disabled = Number(!!a.disabled) - Number(!!b.disabled);
-                if (disabled !== 0) return disabled;
-                const relevance = CuttleChatSlash.slashPaletteItemSearchRank(a, f)
-                    - CuttleChatSlash.slashPaletteItemSearchRank(b, f);
-                if (relevance !== 0) return relevance;
-                const sr = starredRank(a) - starredRank(b);
-                if (sr !== 0) return sr;
-                return String(a.label || '').localeCompare(String(b.label || ''), undefined, {
-                    sensitivity: 'base',
-                });
-            });
-        }
-
-        let merged;
-        if (!f) {
-            merged = []
-                .concat(sortGroup(cmds))
-                .concat(sortGroup(cursorCmds))
-                .concat(sortGroup(harnessUsageCmds))
-                .concat(sortGroup(projCmds))
-                .concat(sortGroup(projs));
-        } else {
-            merged = sortGroup(
-                cmds
-                    .concat(restartCmds)
-                    .concat(cursorCmds)
-                    .concat(harnessUsageCmds)
-                    .concat(projCmds)
-                    .concat(projs)
-                    .concat(cursorModels)
-                    .concat(museModels)
-                    .concat(museEfforts)
-                    .concat(hermesModels)
-                    .concat(hermesEfforts)
-                    .concat(opencodeModels)
-                    .concat(opencodeEfforts)
-                    .concat(codexModels)
-                    .concat(codexEfforts)
-                    .concat(claudeModels)
-                    .concat(claudeEfforts)
-            );
-        }
-
-        // Counts for type badges (before applying the active type filter).
-        const typeCounts = {};
-        merged.forEach((item) => {
-            const b = slashPaletteTypeBucket(item.category);
-            typeCounts[b] = (typeCounts[b] || 0) + 1;
-        });
-
-        const active = slashPaletteTypeFilter || 'all';
-        const filtered =
-            active === 'all'
-                ? merged
-                : merged.filter((item) => slashPaletteTypeBucket(item.category) === active);
-
-        return { items: filtered, allItems: merged, typeCounts: typeCounts };
-    }
-
-    const slashCtx = {
-        welcome: {
-            chips: [],
-            selectedIndex: 0,
-            filtered: [],
-            typeCounts: {},
-            replaceRange: null,
-            paletteDismissed: false,
-        },
-        chat: {
-            chips: [],
-            selectedIndex: 0,
-            filtered: [],
-            typeCounts: {},
-            replaceRange: null,
-            paletteDismissed: false,
-        },
-    };
+    const slashCtx = slashPalette.ctx;
 
     function slashContextKey(textarea) {
-        if (!textarea) return null;
-        if (textarea.id === 'welcomeChatInput') return 'welcome';
-        if (textarea.id === 'chatInput') return 'chat';
-        return null;
+        return slashPalette.contextKey(textarea);
     }
 
     function slashChipsRowId(key) {
-        return key === 'welcome' ? 'welcomeSlashChipsRow' : 'chatSlashChipsRow';
+        return slashPalette.chipsRowId(key);
     }
 
     function slashMenuId(key) {
-        return key === 'welcome' ? 'welcomeSlashCommandMenu' : 'chatSlashCommandMenu';
-    }
-
-    function parseSlashAtCursor(textarea) {
-        const v = textarea.value;
-        const cursor = textarea.selectionStart;
-        const lineStart = v.lastIndexOf('\n', cursor - 1) + 1;
-        const beforeInLine = v.slice(lineStart, cursor);
-        // Allow spaces in the query so `/model Sonnet 4.6` and `/1M medium` keep
-        // the palette open (previously [\w.-]* closed the menu on first space).
-        const re = /(?:^|\s)(\/[^\n]*)$/;
-        const m = beforeInLine.match(re);
-        if (!m) return null;
-        const full = m[0];
-        const afterSlash = m[1].slice(1); // drop leading /
-        return {
-            filter: (afterSlash || '').toLowerCase(),
-            replaceFrom: cursor - full.length,
-            replaceTo: cursor,
-        };
+        return slashPalette.menuId(key);
     }
 
     function hideSlashMenu(key, opts) {
-        const el = document.getElementById(slashMenuId(key));
-        if (el) {
-            el.hidden = true;
-            el.innerHTML = '';
-        }
-        slashCtx[key].replaceRange = null;
-        slashCtx[key].filtered = [];
-        slashCtx[key].typeCounts = {};
-        // Escape / outside-click: keep closed while the same `/…` token remains.
-        if (opts && opts.dismiss) {
-            slashCtx[key].paletteDismissed = true;
-        }
-    }
-
-    // Click / tap outside an open palette (and outside its composer) closes it
-    // like Escape: the `/…` token stays, but the menu won't reopen until the
-    // token changes. Capture phase so menu-item picks (handled on click) and
-    // textarea focus are unaffected — both targets are skipped below.
-    document.addEventListener('pointerdown', (e) => {
-        const pairs = { chat: 'chatInput', welcome: 'welcomeChatInput' };
-        for (const key of Object.keys(pairs)) {
-            const menu = document.getElementById(slashMenuId(key));
-            if (!menu || menu.hidden) continue;
-            const ta = document.getElementById(pairs[key]);
-            const t = e.target;
-            if ((ta && (t === ta || ta.contains(t))) || menu.contains(t)) continue;
-            hideSlashMenu(key, { dismiss: true });
-        }
-    }, true);
-
-    // Focus leaving this iframe also means clicking off the palette, e.g.
-    // into a neighboring pane or the shell's navigation rail.
-    window.addEventListener('blur', () => {
-        for (const key of ['chat', 'welcome']) {
-            const menu = document.getElementById(slashMenuId(key));
-            if (menu && !menu.hidden) hideSlashMenu(key, { dismiss: true });
-        }
-    });
-
-    function buildSlashPaletteFilterBarHtml(typeCounts) {
-        const counts = typeCounts || {};
-        const total = Object.keys(counts).reduce((n, k) => n + (counts[k] || 0), 0);
-        const active = slashPaletteTypeFilter || 'all';
-        const badges = [];
-        badges.push({
-            id: 'all',
-            label: 'All',
-            count: total,
-            active: active === 'all',
-        });
-        SLASH_PALETTE_TYPE_ORDER.forEach((bucket) => {
-            const n = counts[bucket] || 0;
-            if (!n) return;
-            badges.push({
-                id: bucket,
-                label: slashPaletteTypeBadgeLabel(bucket),
-                count: n,
-                active: active === bucket,
-            });
-        });
-        // If the saved filter points at an empty bucket, still show it so the
-        // user can see why the list is empty and switch back.
-        if (active !== 'all' && !(counts[active] > 0)) {
-            badges.push({
-                id: active,
-                label: slashPaletteTypeBadgeLabel(active),
-                count: 0,
-                active: true,
-            });
-        }
-        return (
-            '<div class="slash-palette-filters" role="tablist" aria-label="Filter command types">' +
-            badges
-                .map((b) => {
-                    return (
-                        '<button type="button" class="slash-palette-filter-badge' +
-                        (b.active ? ' is-active' : '') +
-                        '" role="tab" aria-selected="' +
-                        (b.active ? 'true' : 'false') +
-                        '" data-slash-type-filter="' +
-                        escapeHtmlInline(b.id) +
-                        '" data-kind="' +
-                        escapeHtmlInline(b.id) +
-                        '" title="' +
-                        escapeHtmlInline(b.label) +
-                        '">' +
-                        '<span class="slash-palette-filter-label">' +
-                        escapeHtmlInline(b.label) +
-                        '</span>' +
-                        '<span class="slash-palette-filter-count">' +
-                        b.count +
-                        '</span>' +
-                        '</button>'
-                    );
-                })
-                .join('') +
-            '</div>'
-        );
+        return slashPalette.hideMenu(key, opts);
     }
 
     function buildProjectChipHtml() {
         return projectChipHtml(currentProject, { composer: true });
     }
 
+    /** Branch to label a history row's checkout: the bound worktree's branch. */
+    function historyBranchFor(session) {
+        const uid = String((session && session.checkout_uid) || '').trim();
+        if (!uid || !window.CuttleChatWorktrees || !window.CuttleChatWorktrees.branchForUid) {
+            return '';
+        }
+        return window.CuttleChatWorktrees.branchForUid(uid) || '';
+    }
+
     function projectChipHtml(proj, opts) {
         opts = opts || {};
         if (!proj || !(proj.name || proj.path)) return '';
         const safe = escapeHtmlInline(proj.name || 'Project');
-        const pathBit = proj.path || proj.name || '';
+        const pathBit = (opts.composer && effectiveGitPath()) || proj.path || proj.name || '';
         const starred = isProjectStarred(proj);
+        const showBranch = !!opts.composer || !!opts.header || !!opts.history;
+        const worktreeChip = opts.worktree !== undefined
+            ? (showBranch && !!opts.worktree)
+            : (showBranch && !!currentCheckoutUid);
+        const branch = !showBranch
+            ? ''
+            : (opts.branch !== undefined ? String(opts.branch || '') : currentProjectBranch());
+        const branchBit = branch ? ((worktreeChip ? ' · worktree ' : ' · branch ') + branch) : '';
         const tip = escapeHtmlInline(
             (opts.composer
                 ? (starred
                     ? 'Starred default project (type /project or /cd to change): '
                     : 'Working project (type /project or /cd to change): ')
-                : 'Project used for this message: ') + pathBit
+                : 'Project used for this message: ') + pathBit + branchBit
         ).replace(/"/g, '&quot;');
-        const headerClass = opts.header ? ' slash-command-chip--header' : '';
+        // One chip, one style — the project chip looks identical in the composer,
+        // message headers and history rows (no per-surface variant classes).
+        const headerClass = '';
         const starredClass = starred ? ' slash-command-chip--starred' : '';
         const starIcon = starred
             ? '<span class="slash-chip-star" aria-hidden="true">★</span>'
             : '';
+        const branchSeg = branch
+            ? '<span class="slash-chip-seg slash-chip-seg--branch" title="' +
+              escapeHtmlInline(branch).replace(/"/g, '&quot;') +
+              '">' +
+              (worktreeChip ? '<span class="history-worktree-mark" aria-hidden="true">\uD83C\uDF3F </span>' : '') +
+              escapeHtmlInline(branch) +
+              '</span>'
+            : '';
+        const projectIcon =
+            '<span class="slash-chip-icon" aria-hidden="true">\uD83D\uDCC1</span>';
+        const labelHtml =
+            '<span class="slash-chip-seg slash-chip-seg--project">' +
+            projectIcon +
+            '<span class="slash-chip-label">' + safe + '</span>' +
+            '</span>' +
+            branchSeg;
+        const segmentedClass = ' slash-command-chip--segmented';
         return (
             '<span class="slash-command-chip slash-command-chip--project' +
+            segmentedClass +
             headerClass +
             starredClass +
-            '" role="img" aria-label="' +
+            '" role="img" aria-haspopup="true" aria-expanded="false" tabindex="0" aria-label="' +
             escapeHtmlInline(
-                (starred ? 'Starred project: ' : 'Project: ') + (proj.name || pathBit)
+                (starred ? 'Starred project: ' : 'Project: ') + (proj.name || pathBit) + branchBit
             ).replace(/"/g, '&quot;') +
             '" title="' +
             tip +
@@ -8317,10 +3934,7 @@
             tip +
             '">' +
             starIcon +
-            '<span class="slash-chip-icon" aria-hidden="true">\uD83D\uDCC1</span>' +
-            '<span class="slash-chip-label">' +
-            safe +
-            '</span>' +
+            labelHtml +
             '</span>'
         );
     }
@@ -8435,7 +4049,7 @@
         if (!row) return;
         const _idPrev = slashPaletteSupplement.sessionIdentity;
         const _idPath = (currentProject && currentProject.path) ? String(currentProject.path) : '';
-        const _idNextSid = String(currentSessionId != null ? currentSessionId : '');
+        const _idNextSid = String(session.current() != null ? session.current() : '');
         const _idNext = _idNextSid + '|' + _idPath; // (duplicate path suffix, inert) + '' + _idPath;
         if (_idPrev !== _idNext) {
             slashPaletteSupplement.sessionIdentity = _idNext;
@@ -8452,7 +4066,7 @@
         if (!visibleChips.length && !projChipHtml) {
             row.hidden = true;
             row.innerHTML = '';
-            scheduleAgentContextGaugeRefresh(60);
+            contextGauge.scheduleRefresh(60);
             return;
         }
         row.hidden = false;
@@ -8567,6 +4181,9 @@
                     : 'Selected item: ' + displayLabel;
                 const safeAria = escapeHtmlInline(aria).replace(/"/g, '&quot;');
                 const realIdx = chips.indexOf(chip);
+                const chipMenuAttrs = composerChipAgentId(chip)
+                    ? ' aria-haspopup="true" aria-expanded="false" tabindex="0"'
+                    : '';
                 // Segmented: per-segment titles only — no chip-wide tip dump.
                 const chipTitleAttr = labelInner.segmented
                     ? ''
@@ -8583,6 +4200,7 @@
                     '" role="group" aria-label="' +
                     safeAria +
                     '"' +
+                    chipMenuAttrs +
                     chipTitleAttr +
                     ' data-chip-index="' +
                     realIdx +
@@ -8601,27 +4219,27 @@
             })
             .join('');
         if (hasActiveCursorAgentChip(key)) {
-            loadCursorAgentModelsForPalette();
+            agentControls.loadCursorAgentModelsForPalette();
         }
         if (hasActiveMuseAgentChip(key)) {
-            loadMuseModelsForPalette();
-            loadMuseEffortForPalette();
+            agentControls.loadMuseModelsForPalette();
+            agentControls.loadMuseEffortForPalette();
         }
         if (hasActiveHermesAgentChip(key)) {
-            loadHermesModelsForPalette();
-            loadHermesEffortForPalette();
+            agentControls.loadHermesModelsForPalette();
+            agentControls.loadHermesEffortForPalette();
         }
         if (hasActiveOpenCodeAgentChip(key)) {
-            loadOpenCodeModelsForPalette();
-            loadOpenCodeEffortForPalette();
+            agentControls.loadOpenCodeModelsForPalette();
+            agentControls.loadOpenCodeEffortForPalette();
         }
         if (hasActiveCodexAgentChip(key)) {
-            loadCodexModelsForPalette();
-            loadCodexEffortForPalette();
+            agentControls.loadCodexModelsForPalette();
+            agentControls.loadCodexEffortForPalette();
         }
         if (hasActiveHarnessAgentChip('claude', key)) {
-            loadClaudeModelsForPalette();
-            loadClaudeEffortForPalette();
+            agentControls.loadClaudeModelsForPalette();
+            agentControls.loadClaudeEffortForPalette();
         }
         row.querySelectorAll('.slash-chip-remove').forEach((btn) => {
             btn.addEventListener('click', () => {
@@ -8635,596 +4253,100 @@
                 renderSlashChips(key, textarea);
                 renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
                 persistStickySlashForCurrentSession(true);
-                saveComposerDraftControls(currentSessionId || 'new', key);
+                saveComposerDraftControls(session.current() || 'new', key);
                 if (textarea) {
                     try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
                 }
             });
         });
+        chipConfigControl.bindRow(row, {
+            chips: slashCtx[key].chips,
+            composerChipAgentId,
+        });
         scheduleSlashChipCompactLabels(row);
-        scheduleAgentContextGaugeRefresh(60);
+        contextGauge.scheduleRefresh(60);
     }
 
-    function renderSlashMenu(key, textarea) {
-        loadAgentCapabilities();
-        loadCursorStarredDefault();
-        loadAllStarredDefaults();
-        const menu = document.getElementById(slashMenuId(key));
-        if (!menu) return;
-        const ctx = slashCtx[key];
-        const items = ctx.filtered || [];
-        const typeCounts = ctx.typeCounts || {};
-        const sel = clamp(ctx.selectedIndex, 0, Math.max(0, items.length - 1));
-        ctx.selectedIndex = items.length ? sel : 0;
-
-        const filterBar = buildSlashPaletteFilterBarHtml(typeCounts);
-        let listHtml = '';
-        if (!items.length) {
-            listHtml =
-                '<div class="slash-command-menu-status" role="status">No matches in this filter</div>';
-        } else {
-            listHtml = items
-                .map((cmd, i) => {
-                    const active = i === sel ? ' is-active' : '';
-                    const cat = cmd.category || 'command';
-                    const catClass =
-                        cat === 'skill'
-                              ? ' slash-command-item--skill'
-                              : cat === 'project-cmd'
-                                ? ' slash-command-item--project-cmd'
-                                : cat === 'project'
-                                  ? ' slash-command-item--project'
-                                  : cat === 'cursor' || cat === 'cursor-model' || cat === 'cursor-cmd'
-                                    ? ' slash-command-item--cursor'
-                                    : cat === 'muse' || cat === 'muse-model' || cat === 'muse-effort' || cat === 'muse-cmd'
-                                      ? ' slash-command-item--muse'
-                                      : cat === 'hermes' || cat === 'hermes-model' || cat === 'hermes-effort' || cat === 'hermes-cmd'
-                                        ? ' slash-command-item--hermes'
-                                        : cat === 'opencode' || cat === 'opencode-model' || cat === 'opencode-effort' || cat === 'opencode-cmd'
-                                          ? ' slash-command-item--opencode'
-                                          : cat === 'codex' || cat === 'codex-model' || cat === 'codex-effort' || cat === 'codex-cmd'
-                                            ? ' slash-command-item--codex'
-                                      : ' slash-command-item--command';
-                    const kind = escapeHtmlInline(slashPaletteCategoryLabel(cat));
-                    const meta =
-                        cat === 'command' || cat === 'cursor' || cat === 'muse'
-                            || cat === 'hermes' || cat === 'opencode' || cat === 'codex'
-                            ? escapeHtmlInline(cmd.prefix.replace(/\s+$/, ''))
-                            : escapeHtmlInline(cmd.meta || cmd.prefix.trim());
-                    const hint = cmd.hint ? escapeHtmlInline(cmd.hint) : '';
-                    const hintBlock = hint
-                        ? '<span class="slash-cmd-hint">' + hint + '</span>'
-                        : '';
-                    const canStar =
-                        !!cmd.stickySession || cat === 'project' || !!MODEL_STAR_SPEC_BY_CATEGORY[cat];
-                    const _modelStarSpec = MODEL_STAR_SPEC_BY_CATEGORY[cat];
-                    const starred = canStar
-                        && (_modelStarSpec
-                            ? isAgentDefaultStarred(_modelStarSpec, cmd)
-                            : (cat === 'project'
-                            ? isProjectStarred({
-                                id: cmd.projectId,
-                                path: cmd.projectPath,
-                                name: cmd.projectName,
-                            })
-                            : isSlashCommandStarred(cmd.prefix)));
-                    const starBtn = canStar
-                        ? (
-                            '<button type="button" class="slash-star-btn' +
-                            (starred ? ' is-starred' : '') +
-                            '" data-slash-star-idx="' +
-                            i +
-                            '" title="' +
-                            (cat === 'project'
-                                ? (starred
-                                    ? 'Unstar — stop using as default for new chats'
-                                    : 'Star — default working project for new chats (only one)')
-                                : (starred
-                                    ? 'Unstar — stop applying to new chats'
-                                    : 'Star — apply to new Cuttle chats')) +
-                            '" aria-label="' +
-                            (starred
-                                ? (cat === 'project' ? 'Unstar project' : 'Unstar command')
-                                : (cat === 'project' ? 'Star project' : 'Star command')) +
-                            '" aria-pressed="' +
-                            (starred ? 'true' : 'false') +
-                            '">' +
-                            (starred ? '★' : '☆') +
-                            '</button>'
-                        )
-                        : '';
-                    return (
-                        '<div role="option" class="slash-command-item' +
-                        catClass +
-                        active +
-                        '" data-slash-idx="' +
-                        i +
-                        '" id="slash-opt-' +
-                        key +
-                        '-' +
-                        i +
-                        '">' +
-                        '<button type="button" class="slash-command-item-main">' +
-                        '<span class="slash-cmd-block">' +
-                        '<span class="slash-cmd-row">' +
-                        '<span class="slash-palette-kind" data-kind="' +
-                        cat +
-                        '">' +
-                        kind +
-                        '</span>' +
-                        '<span class="slash-cmd-title">' +
-                        escapeHtmlInline(cmd.label) +
-                        '</span>' +
-                        '</span>' +
-                        hintBlock +
-                        '</span>' +
-                        '<span class="slash-cmd-meta" translate="no">' +
-                        meta +
-                        '</span>' +
-                        '</button>' +
-                        starBtn +
-                        '</div>'
-                    );
-                })
-                .join('');
-        }
-
-        menu.innerHTML =
-            '<div class="slash-palette-list" role="listbox">' +
-            listHtml +
-            '</div>' +
-            filterBar;
-        menu.hidden = false;
-
-        menu.querySelectorAll('[data-slash-type-filter]').forEach((btn) => {
-            btn.addEventListener('mousedown', (e) => e.preventDefault());
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const next = btn.getAttribute('data-slash-type-filter') || 'all';
-                setSlashPaletteTypeFilter(next);
-                syncSlashMenuFromInput(textarea);
-            });
-        });
-
-        menu.querySelectorAll('.slash-command-item-main').forEach((btn) => {
-            btn.addEventListener('mousedown', (e) => e.preventDefault());
-            btn.addEventListener('click', () => {
-                const row = btn.closest('[data-slash-idx]');
-                const idx = parseInt(row && row.getAttribute('data-slash-idx'), 10);
-                if (!Number.isNaN(idx)) applySlashSelection(textarea, key, idx);
-            });
-        });
-        menu.querySelectorAll('.slash-star-btn').forEach((btn) => {
-            btn.addEventListener('mousedown', (e) => e.preventDefault());
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const idx = parseInt(btn.getAttribute('data-slash-star-idx'), 10);
-                const cmd = ctx.filtered[idx];
-                if (!cmd) return;
-                if (cmd.category === 'project') {
-                    toggleStarredProject({
-                        id: cmd.projectId,
-                        path: cmd.projectPath,
-                        name: cmd.projectName,
-                    });
-                    renderSlashMenu(key, textarea);
-                    return;
-                }
-                const _starSpec = MODEL_STAR_SPEC_BY_CATEGORY[cmd.category || ''];
-                if (_starSpec) {
-                    toggleStarredAgentDefault(_starSpec.agent, _starSpec.kind, cmd.modelId, textarea, key);
-                    consumePaletteFilterText(textarea);
-                    return;
-                }
-                if (!cmd.stickySession) return;
-                toggleStarredSlashCommand(cmd.prefix);
-                if (!consumePaletteFilterText(textarea)) renderSlashMenu(key, textarea);
-            });
-        });
-        const activeEl = menu.querySelector('.slash-command-item.is-active');
-        if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
+    // ── Chip click menus ────────────────────────────────────────────────────
+    // Clicking the project chip opens a working-project picker; clicking an
+    // agent chip opens an agent/model/effort picker. Anchored, body-appended
+    // popover (mirrors the context-gauge popover pattern).
+    // Agent model/effort catalog + setters for the chip config modal. The
+    // page owns supplement state and IO; chat_chip_config.js renders them.
+    function agentMenuSpec(id) {
+        const S = slashPaletteSupplement;
+        const models = {
+            cursor: { build: () => agentControls.buildCursorModelPaletteItems('model'), load: () => agentControls.loadCursorAgentModelsForPalette(true), set: (v) => { S.preferredModel = v; beginSupplementFetch('cursorModelsGen'); }, current: () => String(S.preferredModel || 'auto').toLowerCase() },
+            muse: { build: () => agentControls.buildMuseModelPaletteItems('model'), load: () => agentControls.loadMuseModelsForPalette(true), set: persistMuseModelSelection, current: () => String(S.museModel || '').toLowerCase() },
+            hermes: { build: () => agentControls.buildHermesModelPaletteItems('model'), load: () => agentControls.loadHermesModelsForPalette(true), set: persistHermesModelSelection, current: () => String(S.hermesModel || '').toLowerCase() },
+            opencode: { build: (opts) => agentControls.buildOpenCodeModelPaletteItems('model', opts), load: () => agentControls.loadOpenCodeModelsForPalette(true), set: persistOpenCodeModelSelection, current: () => String(S.opencodeModel || '').toLowerCase() },
+            codex: { build: (opts) => agentControls.buildCodexModelPaletteItems('model', opts), load: () => agentControls.loadCodexModelsForPalette(true), set: persistCodexModelSelection, current: () => String(S.codexModel || '').toLowerCase() },
+            claude: { build: (opts) => agentControls.buildClaudeModelPaletteItems('model', opts), load: () => agentControls.loadClaudeModelsForPalette(true), set: persistClaudeModelSelection, current: () => String(S.claudeModel || '').toLowerCase() },
+        }[id];
+        const efforts = {
+            muse: { build: () => agentControls.buildMuseEffortPaletteItems('effort'), load: () => agentControls.loadMuseEffortForPalette(), set: persistMuseEffortSelection, current: () => String(S.museEffort || '').toLowerCase(), repaint: repaintMuseUserBadges },
+            hermes: { build: () => agentControls.buildHermesEffortPaletteItems('effort'), load: () => agentControls.loadHermesEffortForPalette(), set: persistHermesEffortSelection, current: () => String(S.hermesEffort || '').toLowerCase(), repaint: repaintHermesUserBadges },
+            opencode: { build: () => agentControls.buildOpenCodeEffortPaletteItems('effort'), load: () => agentControls.loadOpenCodeEffortForPalette(), set: persistOpenCodeEffortSelection, current: () => String(S.opencodeEffort || '').toLowerCase(), repaint: repaintOpenCodeUserBadges },
+            codex: { build: () => agentControls.buildCodexEffortPaletteItems('effort'), load: () => agentControls.loadCodexEffortForPalette(), set: persistCodexEffortSelection, current: () => String(S.codexEffort || '').toLowerCase(), repaint: repaintCodexUserBadges },
+            claude: { build: () => agentControls.buildClaudeEffortPaletteItems('effort'), load: () => agentControls.loadClaudeEffortForPalette(), set: persistClaudeEffortSelection, current: () => String(S.claudeEffort || '').toLowerCase(), repaint: repaintClaudeUserBadges },
+        }[id];
+        if (!models && !efforts) return null;
+        return { models: models || null, efforts: efforts || null };
     }
 
-    function applySlashSelectionInner(textarea, key, idx) {
-        const ctx = slashCtx[key];
-        const cmd = ctx.filtered[idx];
-        if (!cmd || !ctx.replaceRange) return;
-        const { from, to } = ctx.replaceRange;
-        const v = textarea.value;
+    // Chip config modal — DOM/IO owned by chat_chip_config.js; the page
+    // supplies state, palette catalogs/setters, and chip rendering.
+    const chipConfigControl = CuttleChipConfig.create({
+        escapeHtml: escapeHtmlInline,
+        getProjects: () => projects,
+        getCurrentProject: () => currentProject,
+        isProjectStarred, findProjectById, setChatProject,
+        getAgentEntries: () => CuttleChipConfig.stickyAgentEntries(
+            CuttleChatSlash.SLASH_COMMANDS, composerChipAgentId),
+        getAgentSpec: (id) => agentMenuSpec(String(id || '').toLowerCase()),
+        applyAgent: (entry) => applyStickyAgentCommand(entry),
+        rerenderChips: () => { renderSlashChips('welcome', document.getElementById('welcomeChatInput')); renderSlashChips('chat', document.getElementById('chatInput')); },
+        refreshBranch: () => refreshProjectBranch(true),
+        worktreesEnabled: () => !!(window.CuttleChatWorktrees && window.CuttleChatWorktrees.isEnabled()),
+        getWorktrees: (projectId) => (window.CuttleChatWorktrees
+            ? window.CuttleChatWorktrees.list(projectId) : Promise.resolve([])),
+        createWorktree: (projectId, branch) => (window.CuttleChatWorktrees
+            ? window.CuttleChatWorktrees.create(projectId, branch) : Promise.resolve(null)),
+        defaultWorktreeBranch: () => (window.CuttleChatWorktrees
+            ? window.CuttleChatWorktrees.defaultBranch(currentProject) : ''),
+        getChatCheckout: () => currentCheckoutUid,
+        setChatCheckout,
+        showToast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+    });
 
-        // Project entries set the chat's working project (cwd) instead of
-        // inserting a sticky command chip into the message text.
-        if (cmd.category === 'project') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            const proj =
-                findProjectById(cmd.projectId) || {
-                    id: cmd.projectId,
-                    name: cmd.projectName,
-                    path: cmd.projectPath,
-                };
-            setChatProject(proj);
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
+    // Probe the worktrees feature once (server 404s it when disabled) so the
+    // composer modal can show the Local/Worktree selector when available.
+    try {
+        if (window.CuttleChatWorktrees) {
+            window.CuttleChatWorktrees.probe().then(() => reconcileChatProject());
         }
+    } catch (_) {}
 
-        // Muse model picks are a chat setting, not part of the next message: apply
-        // and relabel the Muse chip. These entries only appear while the Muse
-        // badge is applied, so no chip auto-add here.
-        if (cmd.category === 'muse-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/muse\s+model\s+/i, '').trim();
-            if (!mid || mid === '__refresh__' || cmd.museRefresh || cmd.disabled) {
-                if (mid === '__refresh__' || cmd.museRefresh) {
-                    persistMuseModelSelection('__refresh__');
-                }
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            persistMuseModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'Muse Code model: ' + museModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Muse effort picks are a chat setting like model picks: apply, toast,
-        // send no message. Badge-gated, so no chip auto-add here either.
-        if (cmd.category === 'muse-effort') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/muse\s+effort\s+/i, '').trim();
-            persistMuseEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintMuseUserBadges();
-            (window.showToast || function () {})(
-                'Muse Code reasoning effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Hermes model picks — chat setting, no message sent (badge-gated).
-        if (cmd.category === 'hermes-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/hermes\s+model\s+/i, '').trim();
-            persistHermesModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'Hermes model: ' + hermesModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Hermes effort picks — chat setting like model picks.
-        if (cmd.category === 'hermes-effort') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/hermes\s+effort\s+/i, '').trim();
-            persistHermesEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintHermesUserBadges();
-            (window.showToast || function () {})(
-                'Hermes reasoning effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // OpenCode model picks — chat setting, no message sent (badge-gated).
-        if (cmd.category === 'opencode-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/opencode\s+model\s+/i, '').trim();
-            if (!mid || mid === '__refresh__' || cmd.opencodeRefresh || cmd.disabled) {
-                if (mid === '__refresh__' || cmd.opencodeRefresh) {
-                    persistOpenCodeModelSelection('__refresh__');
-                }
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            persistOpenCodeModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'OpenCode model: ' + opencodeModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // OpenCode effort picks — chat setting like model picks.
-        if (cmd.category === 'opencode-effort') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/opencode\s+effort\s+/i, '').trim();
-            persistOpenCodeEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintOpenCodeUserBadges();
-            (window.showToast || function () {})(
-                'OpenCode reasoning effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Codex model picks — chat setting, no message sent (badge-gated).
-        if (cmd.category === 'codex-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/codex\s+model\s+/i, '').trim();
-            if (!mid || mid === '__refresh__' || cmd.codexRefresh || cmd.disabled) {
-                if (mid === '__refresh__' || cmd.codexRefresh) {
-                    persistCodexModelSelection('__refresh__');
-                }
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            persistCodexModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'Codex model: ' + codexModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Codex effort picks — chat setting like model picks.
-        if (cmd.category === 'codex-effort') {
-            if (cmd.disabled) return;
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/codex\s+effort\s+/i, '').trim();
-            persistCodexEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintCodexUserBadges();
-            (window.showToast || function () {})(
-                'Codex reasoning effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Claude model picks — chat setting, no message sent (badge-gated).
-        if (cmd.category === 'claude-model') {
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const mid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/claude\s+model\s+/i, '').trim();
-            if (!mid || mid === '__refresh__' || cmd.claudeRefresh || cmd.disabled) {
-                if (mid === '__refresh__' || cmd.claudeRefresh) {
-                    persistClaudeModelSelection('__refresh__');
-                }
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            persistClaudeModelSelection(mid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            (window.showToast || function () {})(
-                'Claude Code model: ' + claudeModelLabel(mid),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        // Claude effort picks — chat setting like model picks.
-        if (cmd.category === 'claude-effort') {
-            if (cmd.disabled) return;
-            textarea.value = v.slice(0, from) + v.slice(to);
-            const eid =
-                String(cmd.modelId || '').trim()
-                || String(cmd.prefix || '').replace(/^\/claude\s+effort\s+/i, '').trim();
-            persistClaudeEffortSelection(eid);
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            repaintClaudeUserBadges();
-            (window.showToast || function () {})(
-                'Claude Code effort: ' + (eid || 'default'),
-                'success'
-            );
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-
-        textarea.value = v.slice(0, from) + v.slice(to);
-        // Model picks compose as `/cursor /model <id>` but should not become a second
-        // visible badge — the Cursor Agent chip already shows the preferred model.
-        if (cmd.category === 'cursor-model') {
-            const mid =
-                String(cmd.modelId || '').trim() ||
-                String(cmd.prefix || '')
-                    .replace(/^\/model\s+/i, '')
-                    .trim();
-            // Catalog refresh is a cursor-cmd chip now (staged + send). Ignore
-            // any stale __refresh__ model rows.
-            if (!mid || mid === '__refresh__' || cmd.disabled) {
-                ctx.replaceRange = null;
-                ctx.filtered = [];
-                ctx.paletteDismissed = false;
-                hideSlashMenu(key);
-                try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-                if (key === 'chat') autoResizeTextarea();
-                else autoResizeWelcomeTextarea();
-                return;
-            }
-            textarea.value = v.slice(0, from) + v.slice(to);
-            if (mid) {
-                slashPaletteSupplement.preferredModel = mid;
-                beginSupplementFetch('cursorModelsGen');
-            }
-            // Drop any prior model chips so we don't stack /model entries.
-            ctx.chips = ctx.chips.filter((c) => (c.category || '') !== 'cursor-model');
-            ctx.chips.push({
-                prefix: cmd.prefix,
-                label: preferredModelLabel(mid) || String(cmd.label || mid).replace(/\s*\(current\)\s*$/i, '').trim(),
-                category: 'cursor-model',
-                modelId: mid || undefined,
-            });
-            const other = key === 'chat' ? 'welcome' : 'chat';
-            slashCtx[other].chips = ctx.chips.slice();
-            ctx.replaceRange = null;
-            ctx.filtered = [];
-            ctx.paletteDismissed = false;
-            hideSlashMenu(key);
-            renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
-            renderSlashChips(key, textarea);
-            try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-            if (key === 'chat') autoResizeTextarea();
-            else autoResizeWelcomeTextarea();
-            return;
-        }
-        // Exclusive sticky agent: only one agent badge at a time (Cursor vs Muse etc.)
-        const _stickyMatch = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === cmd.prefix && s.stickySession);
-        if (_stickyMatch) {
-            ctx.chips = ctx.chips.filter((c) => {
+    function applyStickyAgentCommand(entry) {
+        const chip = {
+            prefix: entry.prefix,
+            label: entry.label,
+            category: entry.category || 'command',
+        };
+        ['welcome', 'chat'].forEach((k) => {
+            const ctx = slashCtx[k];
+            if (!ctx) return;
+            ctx.chips = (ctx.chips || []).filter((c) => {
                 const m = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
                 if (m && m.stickySession) return false;
-                return !isOrphanedCompanionChip(c, cmd);
+                return !isOrphanedCompanionChip(c, chip);
             });
-        }
-        ctx.chips.push({
-            prefix: cmd.prefix,
-            label: cmd.label,
-            category: cmd.category || 'command',
+            ctx.chips.push(chip);
         });
-        ctx.replaceRange = null;
-        ctx.filtered = [];
-        ctx.paletteDismissed = false;
-        hideSlashMenu(key);
-        // Sticky agent chips apply for the rest of the session — mirror to both composers.
-        const match = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === cmd.prefix);
-        if (match && match.stickySession) {
-            const other = key === 'chat' ? 'welcome' : 'chat';
-            slashCtx[other].chips = ctx.chips.slice();
-            renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
-            markStickyAgentCleared(false);
-            persistStickySlashForCurrentSession(true);
-        }
-        renderSlashChips(key, textarea);
-        try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
-        if (key === 'chat') autoResizeTextarea();
-        else autoResizeWelcomeTextarea();
+        markStickyAgentCleared(false);
+        persistStickySlashForCurrentSession(true);
+        renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+        renderSlashChips('chat', document.getElementById('chatInput'));
     }
 
     // Single choke point for every palette pick (click, Enter, Tab): the pick rewrites
@@ -9233,77 +4355,13 @@
     // resurrects on New Chat and pops the palette open with the previously picked model
     // as raw slash text. Persist synchronously: a debounce would lose a fast New Chat click.
     function applySlashSelection(textarea, key, idx) {
-        applySlashSelectionInner(textarea, key, idx);
+        slashPalette.applySelection(textarea, key, idx);
         try {
-            saveComposerDraft(currentSessionId || 'new', key);
+            saveComposerDraft(session.current() || 'new', key);
         } catch (_) {}
     }
-    // Palette star actions consume the filter text that found the row (the chip
-    // or default is now applied), so it must not linger as raw slash text: it
-    // would double-compose on send and resurrect on New Chat (popping the
-    // palette) via the composer draft. Only consumes when the whole composer
-    // is the filter fragment — message body is never touched.
-    function consumePaletteFilterText(textarea) {
-        if (!textarea) return false;
-        const v = String(textarea.value || '');
-        if (!v.trim()) return false;
-        const parsed = parseSlashAtCursor(textarea);
-        if (!parsed) return false;
-        const token = v.slice(parsed.replaceFrom, parsed.replaceTo);
-        if (v.trim() !== token.trim()) return false;
-        textarea.value = '';
-        try { syncSlashMenuFromInput(textarea); } catch (_) {}
-        try { saveComposerDraft(currentSessionId || 'new'); } catch (_) {}
-        return true;
-    }
-
     function syncSlashMenuFromInput(textarea) {
-        const key = slashContextKey(textarea);
-        if (!key) return;
-        const menu = document.getElementById(slashMenuId(key));
-        if (!menu) return;
-        const parsed = parseSlashAtCursor(textarea);
-        if (!parsed) {
-            slashCtx[key].paletteDismissed = false;
-            hideSlashMenu(key);
-            return;
-        }
-        // After Escape (or outside click), do not reopen on every keystroke
-        // while the line still starts with `/…`. Cleared when the slash token
-        // disappears (user deletes `/` or moves off it).
-        if (slashCtx[key].paletteDismissed) {
-            return;
-        }
-        loadSlashPaletteSupplement();
-        if (hasActiveCursorAgentChip(key)) {
-            loadCursorAgentModelsForPalette();
-        }
-        const result = filterSlashPaletteItems(parsed.filter);
-        const items = result.items || [];
-        const allItems = result.allItems || [];
-        slashCtx[key].filtered = items;
-        slashCtx[key].typeCounts = result.typeCounts || {};
-        slashCtx[key].replaceRange = { from: parsed.replaceFrom, to: parsed.replaceTo };
-        const _syncFilter = String(parsed.filter || '');
-                if (slashCtx[key].lastFilter !== _syncFilter) slashCtx[key].selectedIndex = 0;
-                else slashCtx[key].selectedIndex = clamp(slashCtx[key].selectedIndex, 0, Math.max(0, items.length - 1));
-                slashCtx[key].lastFilter = _syncFilter;
-        // No matches at all (before type filter) — hide, or show loading.
-        // Type-filter-only empty still opens the menu so badges stay usable.
-        if (!allItems.length) {
-            if (slashPaletteSupplement.loading) {
-                const menuWait = document.getElementById(slashMenuId(key));
-                if (menuWait) {
-                    menuWait.hidden = false;
-                    menuWait.innerHTML =
-                        '<div class="slash-command-menu-status" role="status">Loading commands…</div>';
-                }
-            } else {
-                hideSlashMenu(key);
-            }
-            return;
-        }
-        renderSlashMenu(key, textarea);
+        return slashPalette.syncFromInput(textarea);
     }
 
     /** Native Cuttle control commands are handled by Cuttle itself, so a sticky
@@ -9331,8 +4389,8 @@
 
     function composeMessageWithSlashChip(textarea) {
         const key = slashContextKey(textarea);
-        if (!key) return (textarea.value || '').trim();
         const body = (textarea.value || '').trim();
+        if (!key) return body;
         let chips = (slashCtx[key].chips && slashCtx[key].chips.length
             ? slashCtx[key].chips
             : null);
@@ -9342,23 +4400,11 @@
                 chips = slashCtx[other].chips;
             }
         }
-        if (!chips || !chips.length) return body;
-        // A control chip (or a typed control command) outranks stacked sticky
-        // agent chips: Cuttle dispatches it locally.
-        const controlIdx = chips.findIndex((c) => isControlCommandPrefix(c.prefix));
-        if (controlIdx >= 0) {
-            chips = chips.slice(controlIdx);
-        } else if (isNativeControlCommand(body)) {
-            return body;
-        }
-        const prefixPart = chips.map((c) => c.prefix).join('');
-        if (!body) {
-            const t = prefixPart.replace(/\s+$/, '').trim();
-            return t || prefixPart.trim();
-        }
-        const last = chips[chips.length - 1];
-        if (last.prefix.endsWith(' ')) return prefixPart + body;
-        return prefixPart + ' ' + body;
+        // Owned by chat_composer.js — DOM/state gather, domain composes.
+        return CuttleChatComposer.composeMessageWithSlashChip(
+            { body, chips: chips || [] },
+            { isControl: isNativeControlCommand }
+        );
     }
 
     /**
@@ -9441,27 +4487,18 @@
     }
 
     function persistStickySlashForCurrentSession(publishShared = false) {
-        const prefsId = currentSessionId || newComposerPrefsId;
+        const prefsId = session.current() || newComposerPrefsId;
         const chips = (slashCtx.chat.chips && slashCtx.chat.chips.length)
             ? slashCtx.chat.chips
             : (slashCtx.welcome.chips || []);
-        const sticky = (chips || []).filter((c) => {
-            const match = CuttleChatSlash.SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
-            return match && match.stickySession;
+        // Owned by chat_composer.js — DOM/state gather, domain decides.
+        const selection = CuttleChatComposer.stickySessionSelection(chips, {
+            commands: CuttleChatSlash.SLASH_COMMANDS,
+            liveLabel: liveAgentBadgeLabelForChip,
+            paletteCategory: resolveSlashChipPaletteCategory,
+            clearedPending: stickyAgentClearedPending,
         });
-        if (sticky.length) stickyAgentClearedPending = false;
-        const selection = {
-            stickyChips: sticky.map((c) => {
-                const live = liveAgentBadgeLabelForChip(c);
-                const paletteCat = resolveSlashChipPaletteCategory(c);
-                return {
-                    prefix: c.prefix,
-                    label: live || c.label,
-                    category: paletteCat || c.category || 'command',
-                };
-            }),
-            stickyCleared: sticky.length ? false : stickyAgentClearedPending,
-        };
+        if (selection.stickyChips.length) stickyAgentClearedPending = false;
         updateSessionPrefs(prefsId, selection);
         if (publishShared) publishSharedComposerSelection(selection);
     }
@@ -9474,14 +4511,14 @@
 
     function isStickyAgentCleared() {
         if (stickyAgentClearedPending) return true;
-        const prefs = currentSessionId ? getSessionPrefs(currentSessionId) : null;
+        const prefs = session.current() ? getSessionPrefs(session.current()) : null;
         return !!(prefs && prefs.stickyCleared);
     }
 
     function markStickyAgentCleared(cleared) {
         stickyAgentClearedPending = !!cleared;
-        if (currentSessionId) {
-            updateSessionPrefs(currentSessionId, { stickyCleared: !!cleared });
+        if (session.current()) {
+            updateSessionPrefs(session.current(), { stickyCleared: !!cleared });
         }
     }
 
@@ -9525,7 +4562,7 @@
         if (isLoadingThisSession() && !(liveStatus && liveStatus.active && liveStatus.slash_command)) return;
         const meta = CuttleChatAgentModel.turnSlashFromMessages(messages, liveStatus);
         if (meta !== undefined) {
-            turnBadgeBySession.set(String(canonicalizeChatSessionId(currentSessionId) || ''), meta);
+            turnBadgeBySession.set(String(canonicalizeChatSessionId(session.current()) || ''), meta);
         }
     }
 
@@ -9558,19 +4595,17 @@
         if (state && state.appliedRevision === revision && state.pins === pins) return;
         sharedComposerState.set(key, { ...state, revision, appliedRevision: revision, pins });
         const prefs = getSessionPrefs(sessionId);
-        const draft = prefs && prefs.composerDraft;
-        const composerDraft = CuttleChatComposer.draftWithSharedAgent(
-            draft, incoming, CuttleChatSlash.SLASH_COMMANDS
+        // Owned by chat_composer.js — server snapshot in, prefs patch out.
+        const patch = CuttleChatComposer.sharedSelectionPrefsPatch(
+            incoming,
+            prefs && prefs.composerDraft,
+            { commands: CuttleChatSlash.SLASH_COMMANDS }
         );
-        updateSessionPrefs(sessionId, {
-            stickyChips: incoming.stickyChips,
-            stickyCleared: !!incoming.stickyCleared,
-            composerDraft,
-        });
+        updateSessionPrefs(sessionId, patch);
         restoreSessionStickySlash(sessionId, []);
     }
 
-    function publishSharedComposerSelection(selection, sessionId = currentSessionId, retryId = null) {
+    function publishSharedComposerSelection(selection, sessionId = session.current(), retryId = null) {
         const sid = toAuthDbSessionId(sessionId);
         if (!isAuthMode() || !sid || !/^\d+$/.test(sid)) return;
         const key = String(canonicalizeChatSessionId(sessionId));
@@ -9602,21 +4637,18 @@
     }
 
     function restoreSessionStickySlash(sessionId, messages) {
-        const prefs = getSessionPrefs(sessionId);
-        const cleared = !!(prefs && prefs.stickyCleared);
-        stickyAgentClearedPending = cleared;
-        let sticky = prefs && Array.isArray(prefs.stickyChips) ? prefs.stickyChips.slice() : [];
-        if (!sticky.length && !cleared) {
-            const inferred = inferStickyChipsFromUserMessages(messages);
-            if (inferred.length) {
-                sticky = inferred;
-                if (sessionId != null && sessionId !== '') {
-                    updateSessionPrefs(sessionId, { stickyChips: sticky });
-                }
-            }
+        // Owned by chat_composer.js — prefs/history snapshot in, chips out.
+        const restored = CuttleChatComposer.stickyChipsToRestore(
+            getSessionPrefs(sessionId),
+            messages,
+            { infer: inferStickyChipsFromUserMessages }
+        );
+        stickyAgentClearedPending = restored.cleared;
+        if (restored.inferred && sessionId != null && sessionId !== '') {
+            updateSessionPrefs(sessionId, { stickyChips: restored.chips });
         }
-        slashCtx.welcome.chips = sticky.slice();
-        slashCtx.chat.chips = sticky.slice();
+        slashCtx.welcome.chips = restored.chips.slice();
+        slashCtx.chat.chips = restored.chips.slice();
         restoreComposerDraftControls(sessionId);
         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
         renderSlashChips('chat', document.getElementById('chatInput'));
@@ -9627,19 +4659,21 @@
 
     function persistProjectForCurrentSession(opts) {
         opts = opts || {};
-        if (!currentSessionId) return;
-        const bare = toAuthDbSessionId(currentSessionId);
+        if (!session.current()) return;
+        const bare = toAuthDbSessionId(session.current());
         const payload = {
             projectId: currentProject ? currentProject.id : null,
             projectPath: currentProject ? currentProject.path : '',
             projectName: currentProject ? currentProject.name : '',
+            checkoutUid: currentCheckoutUid || null,
+            checkoutPath: currentCheckoutPath || null,
         };
         // Keep hydrate/list caches aligned so a later reconcile cannot resurrect
         // the previous project (CH-000204: EP chip → Cuttle on send).
-        rememberSessionProject(currentSessionId, currentProject);
+        rememberSessionProject(session.current(), currentProject);
         // Write under both display and bare keys so reopen / history grouping stay in sync.
-        updateSessionPrefs(currentSessionId, payload);
-        if (bare && String(bare) !== String(currentSessionId)) {
+        updateSessionPrefs(session.current(), payload);
+        if (bare && String(bare) !== String(session.current())) {
             updateSessionPrefs(bare, payload);
         }
         if (opts.localOnly) return;
@@ -9653,50 +4687,14 @@
                     project_id: payload.projectId,
                     project_name: payload.projectName,
                     project_path: payload.projectPath,
+                    checkout_uid: payload.checkoutUid,
                 }),
             })).catch((e) => console.warn('[Cuttle Chat] persist session project failed:', e));
         }
     }
 
     function handleSlashKeyDown(event, textarea) {
-        const key = slashContextKey(textarea);
-        if (!key) return false;
-        const menu = document.getElementById(slashMenuId(key));
-        if (!menu || menu.hidden) return false;
-        const ctx = slashCtx[key];
-        const n = ctx.filtered.length;
-
-        // Allow Escape even when the type filter emptied the list.
-        if (event.key === 'Escape') {
-            event.preventDefault();
-            hideSlashMenu(key, { dismiss: true });
-            return true;
-        }
-        if (!n) return false;
-
-        if (event.key === 'ArrowDown') {
-            event.preventDefault();
-            ctx.selectedIndex = (ctx.selectedIndex + 1) % n;
-            renderSlashMenu(key, textarea);
-            return true;
-        }
-        if (event.key === 'ArrowUp') {
-            event.preventDefault();
-            ctx.selectedIndex = (ctx.selectedIndex - 1 + n) % n;
-            renderSlashMenu(key, textarea);
-            return true;
-        }
-        if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault();
-            applySlashSelection(textarea, key, ctx.selectedIndex);
-            return true;
-        }
-        if (event.key === 'Tab') {
-            event.preventDefault();
-            applySlashSelection(textarea, key, ctx.selectedIndex);
-            return true;
-        }
-        return false;
+        return slashPalette.handleKeyDown(event, textarea);
     }
 
     /**
@@ -9987,32 +4985,22 @@
     }
 
     function prettyCursorModelLabel(model) {
-        const raw = String(model || 'auto').trim() || 'auto';
-        if (/^auto$/i.test(raw) || /^default$/i.test(raw)) return 'Auto';
-        return raw;
+        return agentControls.prettyCursorModelLabel(model);
     }
 
     /** True for the unpinned/Auto model id (or an empty value meaning "not pinned"). */
     function isCursorAutoModelName(model) {
-        const raw = String(model || '').trim();
-        return !raw || /^auto$/i.test(raw) || /^default$/i.test(raw);
+        return agentControls.isCursorAutoModelName(model);
     }
 
     /** Canonical Cursor badge text everywhere (composer, queue, bubbles): "Cursor - Auto". */
     function cursorChipDisplayLabel(modelId) {
-        return 'Cursor - ' + preferredModelLabel(modelId);
+        return agentControls.cursorChipDisplayLabel(modelId);
     }
 
     /** Look up the human-readable label for a model ID from the loaded models list. */
     function preferredModelLabel(modelId) {
-        const id = String(modelId || 'auto').trim() || 'auto';
-        if (/^auto$/i.test(id) || /^default$/i.test(id)) return 'Auto';
-        const models = slashPaletteSupplement.cursorModels;
-        if (Array.isArray(models)) {
-            const found = models.find((m) => m && m.id === id);
-            if (found && found.label) return found.label;
-        }
-        return id;
+        return agentControls.preferredModelLabel(modelId);
     }
 
     /** Cursor Agent sticky or a model *setting* pick — not nested one-shots. */
@@ -10029,68 +5017,18 @@
      * 'auto' until /api/cursor-agent/models returns) was wiping Sonnet badges.
      */
     function collapseCursorSlashChips(chips, replacement) {
-        if (!Array.isArray(chips) || !chips.length) {
-            return replacement ? [replacement] : [];
-        }
-        const others = [];
-        let sawCursor = false;
-        let modelHint = null;
-        let existingCursor = null;
-        for (const c of chips) {
-            if (isCursorRelatedSlashChip(c)) {
-                sawCursor = true;
-                if (!existingCursor) existingCursor = c;
-                const src = String((c && (c.meta || c.prefix)) || '');
-                const m = src.match(/^\/model\s+(\S+)/i);
-                if (m) modelHint = m[1];
-                else if (c.category === 'cursor-model' && c.modelId) {
-                    modelHint = c.modelId;
-                }
-                continue;
-            }
-            others.push(c);
-        }
-        if (!sawCursor && !replacement) return chips.slice();
-        let chip = replacement || null;
-        if (!chip && modelHint) {
-            chip = {
-                label: cursorChipDisplayLabel(modelHint),
-                meta: '/model ' + modelHint,
-                category: 'cursor',
-            };
-        }
-        if (!chip && existingCursor) {
-            const lab = String(existingCursor.label || '').trim();
-            // Keep concrete badges ("Cursor - Sonnet…"); only upgrade bare sticky.
-            if (lab && !/^cursor(\s+agent)?$/i.test(lab)) {
-                chip = {
-                    label: lab,
-                    meta: existingCursor.meta || existingCursor.prefix || '/cursor',
-                    category: 'cursor',
-                };
-            }
-        }
-        if (!chip) {
-            chip = {
-                label: cursorChipDisplayLabel(
-                    slashPaletteSupplement.preferredModel || 'auto'
-                ),
-                meta: '/cursor',
-                category: 'cursor',
-            };
-        }
-        return [chip].concat(others);
+        return agentControls.collapseCursorSlashChips(chips, replacement);
     }
 
     /** True when sessionId refers to the currently open chat (live pins apply). */
     function isCurrentHistorySession(sessionId) {
-        if (sessionId == null || sessionId === '' || currentSessionId == null || currentSessionId === '') {
+        if (sessionId == null || sessionId === '' || session.current() == null || session.current() === '') {
             return false;
         }
-        if (String(sessionId) === String(currentSessionId)) return true;
+        if (String(sessionId) === String(session.current())) return true;
         try {
             const a = toAuthDbSessionId(sessionId);
-            const b = toAuthDbSessionId(currentSessionId);
+            const b = toAuthDbSessionId(session.current());
             return !!(a && b && String(a) === String(b));
         } catch (_) {
             return false;
@@ -10297,13 +5235,15 @@
         });
 
         chips = normalizeAgentSlashChips(chips, sessionId);
+        const agentChipIndexes = chips.map((c, i) => composerChipAgentId(c) ? i : -1).filter((i) => i >= 0);
+        const lastAgentChipIndex = agentChipIndexes.length ? agentChipIndexes[agentChipIndexes.length - 1] : -1;
         const chipsHtml = chips.length
             ? ('<span class="slash-chips-inline">'
-                + chips.map((c) => slashCommandChipHistoryHtml(
+                + chips.map((c, i) => '<span class="history-agent-chip' + (composerChipAgentId(c) ? ' is-agent-chip' : '') + (i === lastAgentChipIndex ? ' is-last-agent-chip' : '') + '">' + slashCommandChipHistoryHtml(
                     c.label,
                     c.meta || c.prefix || c.label,
                     c.category
-                )).join('')
+                ) + '</span>').join('')
                 + '</span>')
             : '';
         // A name that was nothing but slash tokens already shows as chips.
@@ -10347,15 +5287,6 @@
             else meta.insertBefore(next, meta.firstChild);
         });
         scheduleSlashChipCompactLabels(document.getElementById('chatHistory'));
-    }
-
-    /** Meta line above the name: chips, badges, state dots. Empty → hidden by CSS. */
-    function historyItemMetaHTML(parts) {
-        const html = (parts || [])
-            .filter(Boolean)
-            .map((s) => String(s).trim())
-            .join('');
-        return '<div class="history-item-meta">' + html + '</div>';
     }
 
     /** Meta line element, created on demand so live indicator updates have a home. */
@@ -10431,179 +5362,25 @@
 
     /** Frozen turn identity, also used when recreating typing UI after navigation. */
     function currentTypingSlashMeta() {
-        return turnBadgeBySession.get(String(canonicalizeChatSessionId(currentSessionId) || '')) || null;
+        return turnBadgeBySession.get(String(canonicalizeChatSessionId(session.current()) || '')) || null;
     }
 
     function syncPreferredModelFromResponse(data) {
-        if (!data) return;
-        const eff = String((data && (data.agent_effort || data.muse_effort)) || '').trim();
-        if (eff && slashPaletteSupplement.museEffort !== eff) {
-            slashPaletteSupplement.museEffort = eff;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const hermesEff = String((data && (data.agent_effort || data.hermes_effort)) || '').trim();
-        if (hermesEff && slashPaletteSupplement.hermesEffort !== hermesEff) {
-            slashPaletteSupplement.hermesEffort = hermesEff;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const opencodeEff = String((data && (data.agent_effort || data.opencode_effort)) || '').trim();
-        if (opencodeEff && slashPaletteSupplement.opencodeEffort !== opencodeEff) {
-            slashPaletteSupplement.opencodeEffort = opencodeEff;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const codexEff = String((data && (data.agent_effort || data.codex_effort)) || '').trim();
-        if (codexEff && slashPaletteSupplement.codexEffort !== codexEff) {
-            slashPaletteSupplement.codexEffort = codexEff;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const hermesModel = String(
-            (data && (data.agent_model || data.hermes_model)) || ''
-        ).trim();
-        if (
-            hermesModel
-            && hasActiveHermesAgentChip()
-            && slashPaletteSupplement.hermesModel !== hermesModel
-        ) {
-            slashPaletteSupplement.hermesModel = hermesModel;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const opencodeModel = String(
-            (data && (data.agent_model || data.opencode_model)) || ''
-        ).trim();
-        if (
-            opencodeModel
-            && hasActiveOpenCodeAgentChip()
-            && slashPaletteSupplement.opencodeModel !== opencodeModel
-        ) {
-            slashPaletteSupplement.opencodeModel = opencodeModel;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        const codexModel = String(
-            (data && (data.agent_model || data.codex_model)) || ''
-        ).trim();
-        if (
-            codexModel
-            && hasActiveCodexAgentChip()
-            && slashPaletteSupplement.codexModel !== codexModel
-        ) {
-            slashPaletteSupplement.codexModel = codexModel;
-            renderSlashChips('chat', document.getElementById('chatInput'));
-            renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-        }
-        if (String((data && data.agent_id) || '').toLowerCase() === 'claude'
-            || hasActiveHarnessAgentChip('claude')) {
-            const claudeModel = String((data && data.agent_model) || '').trim();
-            const claudeEff = String((data && data.agent_effort) || '').trim();
-            let claudeChanged = false;
-            if (claudeModel && slashPaletteSupplement.claudeModel !== claudeModel) {
-                slashPaletteSupplement.claudeModel = claudeModel;
-                claudeChanged = true;
-            }
-            if (claudeEff && slashPaletteSupplement.claudeEffort !== claudeEff) {
-                slashPaletteSupplement.claudeEffort = claudeEff;
-                claudeChanged = true;
-            }
-            if (claudeChanged) {
-                renderSlashChips('chat', document.getElementById('chatInput'));
-                renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
-            }
-        }
-        const pref =
-            (data.preferred_model || data.preferredModel || '').trim()
-            || (
-                data.cursor_run
-                && (data.cursor_run.requested_model || '').trim()
-            )
-            || '';
-        if (!pref) return;
-        const prev = (slashPaletteSupplement.preferredModel || '').trim();
-        if (prev === pref) return;
-        slashPaletteSupplement.preferredModel = pref;
-        renderSlashChips('chat', document.getElementById('chatInput'));
-        renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
+        return agentControls.syncPreferredModelFromResponse(data);
     }
 
     /** Build / refresh assistant header chips using Cursor run meta (model badge). */
     function enrichSlashCommandWithCursorRun(replySlash, cursorRun, stickyCmd) {
-        const isCursor =
-            (stickyCmd && String(stickyCmd.prefix || '').toLowerCase().startsWith('/cursor'))
-            || (replySlash && Array.isArray(replySlash.chips) && replySlash.chips.some(isCursorRelatedSlashChip));
-        if (!isCursor && !cursorRun) return replySlash || null;
-
-        // Chip label = requested/configured model. Prefer cursor_run, then this
-        // chat's preferred model — never invent "auto" when Sonnet (etc.) is set.
-        const sessionPreferred =
-            (slashPaletteSupplement.preferredModel || '').trim() || '';
-        const requestedRaw =
-            (cursorRun && cursorRun.requested_model)
-            || sessionPreferred
-            || 'auto';
-        const reportedRaw = (cursorRun && cursorRun.reported_model) || null;
-        const model = preferredModelLabel(requestedRaw);
-        let label = cursorChipDisplayLabel(requestedRaw);
-        const tipParts = ['/cursor', 'requested ' + model];
-        if (reportedRaw) {
-            const reqLabel = preferredModelLabel(requestedRaw);
-            const repLabel = preferredModelLabel(reportedRaw);
-            if (
-                repLabel.toLowerCase() !== reqLabel.toLowerCase()
-                && reportedRaw.toLowerCase() !== String(requestedRaw).toLowerCase()
-            ) {
-                tipParts.push('CLI reported ' + repLabel);
-                // Unpinned turn that came back as a named model really ran that
-                // model (premium usage). Badging it "Auto" hid the spend.
-                if (isCursorAutoModelName(requestedRaw) && !isCursorAutoModelName(reportedRaw)) {
-                    label = cursorChipDisplayLabel(reportedRaw);
-                }
-            }
-        }
-        if (cursorRun && cursorRun.request_id) {
-            tipParts.push('req ' + String(cursorRun.request_id).slice(0, 8) + '…');
-        }
-        if (cursorRun && cursorRun.cwd) tipParts.push('cwd ' + cursorRun.cwd);
-        const tip = tipParts.join(' · ');
-        const cursorChip = { label: label, meta: tip, category: 'cursor' };
-
-        const storedLooksSpecific = replySlash && Array.isArray(replySlash.chips)
-            && replySlash.chips.some((c) => {
-                const lab = String((c && c.label) || '').toLowerCase();
-                return lab && !/(^|\s)auto(\s|$)/i.test(lab) && lab.indexOf(' - auto') < 0;
-            });
-        if (storedLooksSpecific && isCursorAutoModelName(requestedRaw)) {
-            return replySlash;
-        }
-        if (replySlash && Array.isArray(replySlash.chips) && replySlash.chips.length) {
-            return { chips: collapseCursorSlashChips(replySlash.chips, cursorChip) };
-        }
-        return { chips: [cursorChip] };
+        return agentControls.enrichSlashCommandWithCursorRun(replySlash, cursorRun, stickyCmd);
     }
 
     function prettyMuseModelLabel(model) {
-        const raw = String(model || '').trim() || '';
-        const known = (slashPaletteSupplement.museModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label).replace(/^Muse\s+/i, '');
-        if (/^muse-spark-1\.3-contributor$/i.test(raw)) return 'Spark 1.3 (Contributor)';
-        if (/^muse-spark-1\.3$/i.test(raw)) return 'Spark 1.3';
-        if (/^muse-spark-1\.2-contributor$/i.test(raw)) return 'Spark 1.2 (Contributor)';
-        if (/^muse-spark-1\.2$/i.test(raw)) return 'Spark 1.2';
-        return raw.replace(/^muse-/i, '').replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return agentControls.prettyMuseModelLabel(model);
     }
 
     /** Full palette label for a Muse model id (e.g. toasts). */
     function museModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.museModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return agentControls.museModelLabel(model);
     }
 
     /**
@@ -10611,14 +5388,7 @@
      * Returns '' when neither model nor effort is available (caller keeps stock label).
      */
     function agentModelEffortBadgeLabel(agentName, modelLabel, effort) {
-        const name = String(agentName || '').trim();
-        if (!name) return '';
-        const model = String(modelLabel || '').trim();
-        const eff = String(effort || '').trim();
-        if (!model && !eff) return '';
-        if (model && eff) return name + ' - ' + model + ' · ' + eff;
-        if (model) return name + ' - ' + model;
-        return name + ' · ' + eff;
+        return agentControls.agentModelEffortBadgeLabel(agentName, modelLabel, effort);
     }
 
     /**
@@ -10706,54 +5476,7 @@
      * richer stored badge when the palette pin is still loading.
      */
     function enrichSlashCommandWithAgentPin(replySlash, spec) {
-        if (!replySlash || !Array.isArray(replySlash.chips)) return replySlash || null;
-        const model = String((spec && spec.model) || '').trim();
-        const effort = String((spec && spec.effort) || '').trim();
-        if (!model && !effort) return replySlash;
-        const matchChip = spec && spec.matchChip;
-        const agentName = String((spec && spec.agentName) || '').trim();
-        const prettyModel = String((spec && spec.prettyModel) || model).trim();
-        const slashMeta = String((spec && spec.slashMeta) || '').trim();
-        const agentCategory = String((spec && spec.category) || '').trim()
-            || (/^muse/i.test(agentName) ? 'muse'
-                : /^hermes/i.test(agentName) ? 'hermes'
-                    : /^opencode/i.test(agentName) ? 'opencode'
-                        : /^codex/i.test(agentName) ? 'codex'
-                            : /^cursor/i.test(agentName) ? 'cursor'
-                                : 'command');
-        let found = false;
-        const chips = replySlash.chips.map((chip) => {
-            if (!matchChip || !matchChip(chip)) return chip;
-            found = true;
-            const existingLabel = String((chip && chip.label) || '');
-            const existingMeta = String((chip && chip.meta) || '');
-            const nextLabel = agentModelEffortBadgeLabel(agentName, prettyModel, effort)
-                || existingLabel;
-            const nextMeta = slashMeta
-                + (model ? ' · model ' + model : '')
-                + (effort ? ' · effort ' + effort : '');
-            // Keep a richer history badge when we would strip effort/model.
-            const existingHasEffort = /\beffort\s+\S/i.test(existingMeta)
-                || /\s·\s+\S+$/.test(existingLabel);
-            const existingHasModel = / - /.test(existingLabel) || /model\s+\S/i.test(existingMeta);
-            if (existingHasEffort && !effort) return chip;
-            if (existingHasModel && !model && !effort) return chip;
-            if (existingLabel === nextLabel) {
-                if ((chip.category || '') === agentCategory) return chip;
-                return Object.assign({}, chip, { category: agentCategory });
-            }
-            // Upgrade bare chips, or model-only chips when effort is now known.
-            if (existingHasModel && effort && existingLabel.indexOf(' · ' + effort) === -1) {
-                return { label: nextLabel, meta: nextMeta || existingMeta, category: agentCategory };
-            }
-            if (existingHasModel && !effort) return chip;
-            return {
-                label: nextLabel,
-                meta: nextMeta || existingMeta,
-                category: agentCategory,
-            };
-        });
-        return found ? { chips } : replySlash;
+        return agentControls.enrichSlashCommandWithAgentPin(replySlash, spec);
     }
 
     function repaintAgentUserBadges(matchLabelRe, nextLabel) {
@@ -10802,167 +5525,65 @@
      * pin fetch was in flight would otherwise keep stale defaults.
      */
     function repaintMuseUserBadges() {
-        const model = String(slashPaletteSupplement.museModel || '').trim();
-        const eff = String(slashPaletteSupplement.museEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'Muse Code',
-            model ? prettyMuseModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^Muse Code/i, next);
+        return agentControls.repaintMuseUserBadges();
     }
 
     /** Add the actual Muse model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithMuseModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'Muse Code',
-            category: 'muse',
-            model: model,
-            effort: effort,
-            prettyModel: prettyMuseModelLabel(model),
-            slashMeta: '/muse',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                return /^\/muse\b/i.test(src) || /^Muse Code\b/i.test(String((chip && chip.label) || ''));
-            },
-        });
+        return agentControls.enrichSlashCommandWithMuseModel(replySlash, model, effort);
     }
 
     function prettyHermesModelLabel(model) {
-        const raw = String(model || '').trim();
-        if (!raw) return 'Hermes';
-        const known = (slashPaletteSupplement.hermesModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label);
-        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
-        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return agentControls.prettyHermesModelLabel(model);
     }
 
     function hermesModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.hermesModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return agentControls.hermesModelLabel(model);
     }
 
     function repaintHermesUserBadges() {
-        const model = String(slashPaletteSupplement.hermesModel || '').trim();
-        const eff = String(slashPaletteSupplement.hermesEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'Hermes',
-            model ? prettyHermesModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^Hermes\b/i, next);
+        return agentControls.repaintHermesUserBadges();
     }
 
     /** Add the actual Hermes model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithHermesModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'Hermes',
-            category: 'hermes',
-            model: model,
-            effort: effort,
-            prettyModel: prettyHermesModelLabel(model),
-            slashMeta: '/hermes',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                const label = String((chip && chip.label) || '');
-                return (
-                    /^\/hermes\b/i.test(src)
-                    || /^Hermes(\s+Agent)?\b/i.test(label)
-                    || /^Hermes -/i.test(label)
-                );
-            },
-        });
+        return agentControls.enrichSlashCommandWithHermesModel(replySlash, model, effort);
     }
 
     function prettyOpenCodeModelLabel(model) {
-        const raw = String(model || '').trim();
-        if (!raw) return 'OpenCode';
-        const known = (slashPaletteSupplement.opencodeModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label);
-        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
-        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return agentControls.prettyOpenCodeModelLabel(model);
     }
 
     function opencodeModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.opencodeModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return agentControls.opencodeModelLabel(model);
     }
 
     function repaintOpenCodeUserBadges() {
-        const model = String(slashPaletteSupplement.opencodeModel || '').trim();
-        const eff = String(slashPaletteSupplement.opencodeEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'OpenCode',
-            model ? prettyOpenCodeModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^OpenCode\b/i, next);
+        return agentControls.repaintOpenCodeUserBadges();
     }
 
     function prettyCodexModelLabel(model) {
-        const raw = String(model || '').trim();
-        if (!raw) return 'Codex';
-        const known = (slashPaletteSupplement.codexModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        if (known && known.label) return String(known.label);
-        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
-        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        return agentControls.prettyCodexModelLabel(model);
     }
 
     function codexModelLabel(model) {
-        const raw = String(model || '').trim();
-        const known = (slashPaletteSupplement.codexModels || []).find(
-            (m) => m && String(m.id).toLowerCase() === raw.toLowerCase()
-        );
-        return (known && known.label) || raw || 'default';
+        return agentControls.codexModelLabel(model);
     }
 
     function repaintCodexUserBadges() {
-        const model = String(slashPaletteSupplement.codexModel || '').trim();
-        const eff = String(slashPaletteSupplement.codexEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'Codex',
-            model ? prettyCodexModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^Codex\b/i, next);
+        return agentControls.repaintCodexUserBadges();
     }
 
     function prettyClaudeModelLabel(model) {
-        return CuttleChatAgentModel.prettyClaudeModelLabel(
-            model, slashPaletteSupplement.claudeModels);
+        return agentControls.prettyClaudeModelLabel(model);
     }
 
     function claudeModelLabel(model) {
-        return CuttleChatAgentModel.claudeModelLabel(
-            model, slashPaletteSupplement.claudeModels);
+        return agentControls.claudeModelLabel(model);
     }
 
     function repaintClaudeUserBadges() {
-        const model = String(slashPaletteSupplement.claudeModel || '').trim();
-        const eff = String(slashPaletteSupplement.claudeEffort || '').trim();
-        const next = agentModelEffortBadgeLabel(
-            'Claude Code',
-            model ? prettyClaudeModelLabel(model) : '',
-            eff
-        );
-        if (!next) return;
-        repaintAgentUserBadges(/^Claude\b/i, next);
+        return agentControls.repaintClaudeUserBadges();
     }
 
     /**
@@ -10973,93 +5594,22 @@
      * Appends a warning chip when the run reports drift_warning / effort_ignored.
      */
     function enrichSlashCommandWithAgentBadge(replySlash, data, stickyCmd) {
-        if (!data) return replySlash || null;
-        const agentId = String((data && data.agent_id) || '').trim().toLowerCase();
-        const stickyPrefix = agentId ? '' : String((stickyCmd && stickyCmd.prefix) || '').trim().toLowerCase();
-        const isMuse = agentId === 'muse' || stickyPrefix.startsWith('/muse');
-        const isHermes = agentId === 'hermes' || stickyPrefix.startsWith('/hermes');
-        const isOpenCode = agentId === 'opencode' || stickyPrefix.startsWith('/opencode');
-        const isCodex = agentId === 'codex' || stickyPrefix.startsWith('/codex');
-        const isClaude = agentId === 'claude' || stickyPrefix.startsWith('/claude');
-        if (!isMuse && !isHermes && !isOpenCode && !isCodex && !isClaude) return replySlash || null;
-        const model = String(
-            (data && (data.agent_model || data.model)) || ''
-        ).trim();
-        const effort = CuttleChatAgentModel.resolveAgentEffortForBadge({
-            data,
-            pinnedEfforts: data.routing_badge ? [] : [
-                slashPaletteSupplement.museEffort,
-                slashPaletteSupplement.hermesEffort,
-                slashPaletteSupplement.opencodeEffort,
-                slashPaletteSupplement.codexEffort,
-                slashPaletteSupplement.claudeEffort,
-            ],
-        });
-        let out = replySlash || null;
-        if (isMuse) out = enrichSlashCommandWithMuseModel(out, model, effort);
-        else if (isHermes) out = enrichSlashCommandWithHermesModel(out, model, effort);
-        else if (isOpenCode) out = enrichSlashCommandWithOpenCodeModel(out, model, effort);
-        else if (isCodex) out = enrichSlashCommandWithCodexModel(out, model, effort);
-        else if (isClaude) out = enrichSlashCommandWithClaudeModel(out, model, effort);
-        const warn = String((data && (data.drift_warning || data.effort_ignored)) || '').trim();
-        if (warn) {
-            try { console.warn('[badge-drift]', warn); } catch (_) {}
-            const chips = (out && Array.isArray(out.chips)) ? out.chips.slice() : [];
-            chips.push({ label: '⚠️ badge drift', meta: warn, category: 'warning' });
-            out = { chips };
-        }
-        return out;
+        return agentControls.enrichSlashCommandWithAgentBadge(replySlash, data, stickyCmd);
     }
 
     /** Add the actual OpenCode model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithOpenCodeModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'OpenCode',
-            category: 'opencode',
-            model: model,
-            effort: effort,
-            prettyModel: prettyOpenCodeModelLabel(model),
-            slashMeta: '/opencode',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                const label = String((chip && chip.label) || '');
-                return /^\/opencode\b/i.test(src) || /^OpenCode\b/i.test(label);
-            },
-        });
+        return agentControls.enrichSlashCommandWithOpenCodeModel(replySlash, model, effort);
     }
 
     /** Add the actual Codex model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithCodexModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'Codex',
-            category: 'codex',
-            model: model,
-            effort: effort,
-            prettyModel: prettyCodexModelLabel(model),
-            slashMeta: '/codex',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                const label = String((chip && chip.label) || '');
-                return /^\/codex\b/i.test(src) || /^Codex\b/i.test(label);
-            },
-        });
+        return agentControls.enrichSlashCommandWithCodexModel(replySlash, model, effort);
     }
 
     /** Add the actual Claude model (+ pinned effort) to its live reply badge. */
     function enrichSlashCommandWithClaudeModel(replySlash, model, effort) {
-        return enrichSlashCommandWithAgentPin(replySlash, {
-            agentName: 'Claude Code',
-            category: 'claude',
-            model: model,
-            effort: effort,
-            prettyModel: prettyClaudeModelLabel(model),
-            slashMeta: '/claude',
-            matchChip: (chip) => {
-                const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
-                const label = String((chip && chip.label) || '');
-                return /^\/claude\b/i.test(src) || /^Claude\b/i.test(label);
-            },
-        });
+        return agentControls.enrichSlashCommandWithClaudeModel(replySlash, model, effort);
     }
 
     /** Strip legacy Cursor banner/footer from older saved replies. */
@@ -11220,7 +5770,7 @@
     }
 
     function buildVegaWrapHtml(rawSpec) {
-        return CuttleChatMessages.buildVegaWrapHtml(rawSpec, { escapeHtmlInline });
+        return CuttleChatMarkdown.buildVegaWrapHtml(rawSpec, { escapeHtmlInline });
     }
 
     function activateVegaEmbeds(containerEl) {
@@ -11233,7 +5783,7 @@
     // garbage in terminals: zero-width/BOM/soft hyphen dropped, exotic spaces
     // flattened to ASCII space.
     function cleanCodeCopyText(raw) {
-        return CuttleChatMessages.cleanCodeCopyText(raw);
+        return CuttleChatMarkdown.cleanCodeCopyText(raw);
     }
 
     function attachCodeCopyButtons(containerEl) {
@@ -11476,7 +6026,7 @@
                 LOG_ERR('loadProjects: failed to parse JSON:', parseErr);
                 projects = [];
                 reconcileChatProject();
-                reloadHistoryListKeepingSearch();
+                historyPanel.reloadKeepingSearch();
                 return;
             }
 
@@ -11491,12 +6041,12 @@
             // Resolve this chat's project (session-stored or Cuttle default) and show its chip.
             reconcileChatProject();
             // History grouping needs the project list for the Cuttle default fallback.
-            reloadHistoryListKeepingSearch();
+            historyPanel.reloadKeepingSearch();
         } catch (error) {
             LOG_ERR('loadProjects: fetch error:', error);
             projects = [];
             reconcileChatProject();
-            reloadHistoryListKeepingSearch();
+            historyPanel.reloadKeepingSearch();
         }
     }
     
@@ -11559,6 +6109,7 @@
     }
 
     function renderProjectChips() {
+        refreshProjectBranch();
         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
         renderSlashChips('chat', document.getElementById('chatInput'));
     }
@@ -11609,6 +6160,7 @@
                 project_id: proj.id != null ? proj.id : null,
                 project_name: proj.name || '',
                 project_path: proj.path || '',
+                checkout_uid: currentCheckoutUid || null,
             };
         } else if (
             lastHydratedSessionProject
@@ -11624,6 +6176,7 @@
                 row.project_id = proj && proj.id != null ? proj.id : null;
                 row.project_name = proj ? (proj.name || null) : null;
                 row.project_path = proj ? (proj.path || null) : null;
+                row.checkout_uid = currentCheckoutUid || null;
             }
         } catch (_) {}
     }
@@ -11637,16 +6190,20 @@
                 proj = { id: byId.id, name: byId.name || proj.name, path: byId.path || proj.path || '' };
             }
         }
+        const prevProjectId = currentProject && currentProject.id != null ? String(currentProject.id) : '';
         currentProject = proj || null;
-        reportProjectToShell(currentProject && currentProject.path);
-        if (currentSessionId) {
-            rememberSessionProject(currentSessionId, proj);
+        const nextProjectId = currentProject && currentProject.id != null ? String(currentProject.id) : '';
+        // A different project starts fresh (Local); the chip can rebind a worktree.
+        if (prevProjectId !== nextProjectId) { currentCheckoutUid = ''; currentCheckoutPath = ''; }
+        reportProjectToShell(effectiveGitPath());
+        if (session.current()) {
+            rememberSessionProject(session.current(), proj);
             try {
                 const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                if (sessions[currentSessionId]) {
-                    sessions[currentSessionId].projectId = proj ? proj.id : null;
-                    sessions[currentSessionId].projectPath = proj ? proj.path : '';
-                    sessions[currentSessionId].projectName = proj ? proj.name : '';
+                if (sessions[session.current()]) {
+                    sessions[session.current()].projectId = proj ? proj.id : null;
+                    sessions[session.current()].projectPath = proj ? proj.path : '';
+                    sessions[session.current()].projectName = proj ? proj.name : '';
                     localStorage.setItem('chatSessions', JSON.stringify(sessions));
                 }
             } catch (_) {}
@@ -11667,12 +6224,43 @@
         }
     }
 
+    /** Bind this chat to a worktree checkout (null/empty = Local/primary). */
+    function setChatCheckout(checkout) {
+        const uid = checkout && checkout.checkout_uid ? String(checkout.checkout_uid) : '';
+        currentCheckoutUid = uid;
+        currentCheckoutPath = checkout && checkout.path ? String(checkout.path) : '';
+        if (session.current()) {
+            persistProjectForCurrentSession();
+            try {
+                const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
+                if (sessions[session.current()]) {
+                    sessions[session.current()].checkoutUid = uid || null;
+                    sessions[session.current()].checkoutPath = currentCheckoutPath || null;
+                    localStorage.setItem('chatSessions', JSON.stringify(sessions));
+                }
+            } catch (_) {}
+        }
+        renderProjectChips();
+        reportProjectToShell(effectiveGitPath());
+        if (uid) {
+            const branch = checkout && checkout.branch ? checkout.branch : uid;
+            addSystemMessage(`\u{1F33F} Worktree: ${branch}`, { persist: true });
+        } else {
+            addSystemMessage('\u{1F4C1} Local checkout', { persist: true });
+        }
+    }
+
     // --- Pending changes strip (shared module; multi-repo aware) ---
     let pendingChangesCtl = null;
 
     function schedulePendingChangesRefresh(delayMs, refreshOpts) {
         if (!pendingChangesCtl) return;
         pendingChangesCtl.scheduleRefresh(delayMs, refreshOpts);
+    }
+
+    /** Git-facing path for this chat: the bound checkout, else the project. */
+    function effectiveGitPath() {
+        return CuttleChatProject.effectiveGitPath(currentCheckoutPath, currentProject);
     }
 
     function reportProjectToShell(projectPath) {
@@ -11695,8 +6283,12 @@
             pendingChangesCtl = null;
         }
         pendingChangesCtl = window.CuttlePendingChangesPanel.create({
-            getProject: function () { return currentProject; },
-            getSessionId: function () { return currentSessionId; },
+            getProject: function () {
+                // Pending changes / git target the bound checkout when present.
+                return CuttleChatProject.pendingChangesProject(
+                    currentProject, effectiveGitPath(), currentProjectBranch(), currentCheckoutUid);
+            },
+            getSessionId: function () { return session.current(); },
             getPrompts: function () {
                 try {
                     if (typeof getComposerPromptHistory === 'function') {
@@ -11719,7 +6311,7 @@
             useShellHub: !!inAppShell,
             isPageBackgrounded: function () { return document.hidden; },
         });
-        reportProjectToShell(currentProject && currentProject.path);
+        reportProjectToShell(effectiveGitPath());
         if (!inAppShell) schedulePendingChangesRefresh(120);
     }
 
@@ -11744,23 +6336,25 @@
         // Gather session inputs (chat-page owns all session IO); the priority
         // chain itself lives in chat_project.js (pure over explicit inputs).
         let serverProj = null;
+        let serverSession = null;
         let mergedPrefs = null;
         let stored = null;
-        if (currentSessionId) {
-            serverProj = projectFieldsFromServerSession(findAuthServerSession(currentSessionId));
-            const prefs = getSessionPrefs(currentSessionId);
-            const barePrefs = getSessionPrefs(toAuthDbSessionId(currentSessionId));
+        if (session.current()) {
+            serverSession = findAuthServerSession(session.current());
+            serverProj = projectFieldsFromServerSession(serverSession);
+            const prefs = getSessionPrefs(session.current());
+            const barePrefs = getSessionPrefs(toAuthDbSessionId(session.current()));
             mergedPrefs = Object.assign({}, barePrefs || {}, prefs || {});
             try {
                 const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                stored = sessions[currentSessionId] || null;
+                stored = sessions[session.current()] || null;
             } catch (_) {
                 stored = null;
             }
         }
         const decided = CuttleChatProject.resolveChatProject({
             projects,
-            currentSessionId,
+            currentSessionId: session.current(),
             currentProject,
             serverFields: serverProj,
             prefs: mergedPrefs,
@@ -11770,16 +6364,27 @@
         const proj = decided.proj;
         const hadStored = decided.hadStored;
         currentProject = proj || null;
-        reportProjectToShell(currentProject && currentProject.path);
+        // Restore the chat's bound worktree checkout (server row, then prefs).
+        // An unsaved new chat has no session row yet: keep the in-memory pick
+        // instead of clearing it, or the chip snaps back to the primary branch.
+        if (session.current()) {
+            const checkout = CuttleChatProject.resolveCheckoutBinding({
+                serverSession, prefs: mergedPrefs, stored,
+                checkoutForUid: window.CuttleChatWorktrees && window.CuttleChatWorktrees.checkoutForUid,
+            });
+            currentCheckoutUid = checkout.uid;
+            currentCheckoutPath = checkout.path;
+        }
+        reportProjectToShell(effectiveGitPath());
         // Stamp the default onto prefs so history grouping matches the cwd chip
         // (auth sessions do not store project_id on the server).
-        if (currentSessionId && currentProject && !hadStored
-            && !sessionHasStoredProject(currentSessionId, null)
-            && authSessionListHas(currentSessionId)
-            && !projectFieldsFromServerSession(findAuthServerSession(currentSessionId))) {
+        if (session.current() && currentProject && !hadStored
+            && !sessionHasStoredProject(session.current(), null)
+            && authSessionListHas(session.current())
+            && !projectFieldsFromServerSession(findAuthServerSession(session.current()))) {
             persistProjectForCurrentSession();
-        } else if (currentSessionId && currentProject && hadStored) {
-            const prefs = getSessionPrefs(currentSessionId);
+        } else if (session.current() && currentProject && hadStored) {
+            const prefs = getSessionPrefs(session.current());
             const prefsStale = !prefs
                 || (currentProject.id != null && String(prefs.projectId) !== String(currentProject.id))
                 || (currentProject.path && String(prefs.projectPath || '') !== String(currentProject.path));
@@ -11795,7 +6400,7 @@
     /** Project to send with /api/chat — always prefers a real filesystem path. */
     function resolveOutboundProject() {
         const keepWelcomePick =
-            !currentSessionId
+            !session.current()
             && currentProject
             && (currentProject.path || currentProject.id != null || currentProject.name);
         // Don't re-read empty session storage on first send — that overwrites
@@ -11807,13 +6412,13 @@
         // Stale localStorage often keeps name "Escape Purgatory" with path Cuttle.
         const rebound = CuttleChatProject.rebindProjectToRegistry(currentProject, projects);
         currentProject = rebound.proj;
-        if (rebound.changed && currentSessionId) persistProjectForCurrentSession();
+        if (rebound.changed && session.current()) persistProjectForCurrentSession();
         return currentProject;
     }
 
     function applyOutboundProjectToRequest(requestBody) {
         CuttleChatProject.applyOutboundProjectToRequest(
-            requestBody, resolveOutboundProject());
+            requestBody, resolveOutboundProject(), currentCheckoutUid);
     }
     
     async function switchChatProject() {
@@ -11874,7 +6479,7 @@
                     const content = existing.querySelector('.system-message');
                     if (content) content.textContent = message;
                     existing.dataset.rawContent = String(message ?? '');
-                    if (!opts.skipScroll) autoScrollChatToBottom();
+                    if (!opts.skipScroll) transcriptNav.autoScrollChatToBottom();
                     // Already durable — do not POST a duplicate row on text tweak.
                     if (opts.persist && !existing.dataset.messageId) {
                         durablePersistSystemMessage(existing, message, opts);
@@ -11904,7 +6509,7 @@
         } else {
             messagesContainer.appendChild(messageDiv);
         }
-        if (!opts.skipScroll) autoScrollChatToBottom();
+        if (!opts.skipScroll) transcriptNav.autoScrollChatToBottom();
 
         // Sticky notices (e.g. Stopped generating) stay until the next send.
         // ``persist`` also means durable: write to the auth chat log so refresh /
@@ -11928,9 +6533,9 @@
     /** Write a system notice into chat_messages so it survives refresh / devices. */
     function durablePersistSystemMessage(el, message, opts) {
         opts = opts || {};
-        if (!el || !isAuthMode() || currentSessionId == null) return;
+        if (!el || !isAuthMode() || session.current() == null) return;
         if (el.dataset.persistInFlight === '1' || el.dataset.messageId) return;
-        const bare = toAuthDbSessionId(currentSessionId);
+        const bare = toAuthDbSessionId(session.current());
         if (!bare || !/^\d+$/.test(String(bare))) return;
         el.dataset.persistInFlight = '1';
         const body = {
@@ -11985,6 +6590,51 @@
     }
     
     // Chat history panel management
+    function setupHistoryDisplayFilters() {
+        const button = document.getElementById('chatHistoryFilterButton');
+        const popover = document.getElementById('chatHistoryDisplayFilters');
+        if (!button || !popover) return;
+        const key = 'chatHistoryDisplayFilters';
+        const defaults = { project: true, worktree: true, branch: true, agent: true, allAgents: false };
+        let prefs = defaults;
+        try { prefs = Object.assign({}, defaults, JSON.parse(localStorage.getItem(key) || '{}')); } catch (_) {}
+        const apply = () => {
+            document.body.classList.toggle('history-hide-project', !prefs.project);
+            document.body.classList.toggle('history-hide-worktree', !prefs.worktree);
+            document.body.classList.toggle('history-hide-branch', !prefs.branch);
+            document.body.classList.toggle('history-hide-agents', !prefs.agent);
+            document.body.classList.toggle('history-last-agent-only', prefs.agent && !prefs.allAgents);
+            popover.querySelectorAll('[data-history-display-pref]').forEach((input) => {
+                input.checked = !!prefs[input.dataset.historyDisplayPref];
+            });
+        };
+        apply();
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            popover.hidden = !popover.hidden;
+            button.setAttribute('aria-expanded', popover.hidden ? 'false' : 'true');
+        });
+        popover.addEventListener('click', (event) => event.stopPropagation());
+        popover.addEventListener('change', (event) => {
+            const input = event.target.closest('[data-history-display-pref]');
+            if (!input) return;
+            prefs[input.dataset.historyDisplayPref] = input.checked;
+            try { localStorage.setItem(key, JSON.stringify(prefs)); } catch (_) {}
+            apply();
+        });
+        document.addEventListener('click', (event) => {
+            if (popover.hidden || popover.contains(event.target) || button.contains(event.target)) return;
+            popover.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape' || popover.hidden) return;
+            popover.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+            button.focus();
+        });
+    }
+
     function getChatHistoryPanel() {
         return document.getElementById('chatHistoryPanel');
     }
@@ -12008,8 +6658,8 @@
     }
 
     function isHistoryPanelUiBusy() {
-        if (isHistoryDeleteModalOpen()) return true;
-        if (isHistoryRenameModalOpen()) return true;
+        if (historyPanel.isDeleteModalOpen()) return true;
+        if (historyPanel.isRenameModalOpen()) return true;
         if (isHistoryItemMenuOpen()) return true;
         // Full list rebuilds destroy the ⋮ button mid-click and close the menu.
         return !!document.querySelector(
@@ -12075,14 +6725,14 @@
     }
 
     function closeChatHistoryPanel() {
-        closeHistoryItemMenu();
-        closeHistoryDeleteModal();
-        closeHistoryRenameModal();
+        historyPanel.closeMenu();
+        historyPanel.closeDeleteModal();
+        historyPanel.closeRenameModal();
         if (window.CuttleTooltips && typeof window.CuttleTooltips.hide === 'function') {
             window.CuttleTooltips.hide();
         }
         // Don't keep "Show N more" reveals across open/close — each open starts fresh.
-        historyGroupVisibleCount.clear();
+        historyPanel.clearGroupReveals();
         const panel = getChatHistoryPanel();
         const overlay = document.getElementById('chatHistoryPanelOverlay');
         animateHistoryPanelSlide(panel);
@@ -12105,18 +6755,18 @@
     document.addEventListener('keydown', function (e) {
         if (e.key !== 'Escape') return;
         const menu = document.getElementById('historyItemOverflowMenu');
-        if (isHistoryDeleteModalOpen()) {
-            closeHistoryDeleteModal();
+        if (historyPanel.isDeleteModalOpen()) {
+            historyPanel.closeDeleteModal();
             e.preventDefault();
             return;
         }
-        if (isHistoryRenameModalOpen()) {
-            closeHistoryRenameModal();
+        if (historyPanel.isRenameModalOpen()) {
+            historyPanel.closeRenameModal();
             e.preventDefault();
             return;
         }
         if (menu && !menu.hidden) {
-            closeHistoryItemMenu();
+            historyPanel.closeMenu();
             e.preventDefault();
             return;
         }
@@ -12167,80 +6817,12 @@
     function authSessionIdForRequest() {
         // chat_page's currentSessionId is authoritative while on this page
         // (null = new chat / welcome — never fall back to auth's "latest").
-        return currentSessionId;
+        return session.current();
     }
 
     async function ensureAuthChatSession() {
         // Sessions are created on first message by /api/chat — never pre-create empties.
-        return currentSessionId;
-    }
-
-    function createHistorySectionHeaderHTML(title, opts) {
-        const showRefresh = !(opts && opts.showRefresh === false);
-        const project = opts && opts.project;
-        const collapsible = !!(opts && opts.collapsible && project && project.key);
-        const expanded = !(opts && opts.collapsed);
-        const count = Number(opts && opts.count) || 0;
-        const hasError = !!(opts && opts.hasError);
-        const hasUnread = !!(opts && opts.hasUnread) || hasError;
-        const hasQueued = !!(opts && opts.hasQueued);
-        const hasPaused = !!(opts && opts.hasPaused);
-        const refreshBtn = showRefresh
-            ? `<button type="button" class="history-refresh-btn" id="chatHistoryRefreshBtn" onclick="window.refreshChatHistoryList(event)" title="Refresh chats" aria-label="Refresh chat list">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="23 4 23 10 17 10"/>
-                        <polyline points="1 20 1 14 7 14"/>
-                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-                    </svg>
-                </button>`
-            : '';
-        const newChatBtn = (project && project.key !== '__none__' && project.key !== '__discord__')
-            ? `<button type="button" class="history-new-chat-btn"
-                    data-project-id="${escapeHtml(project.id != null ? String(project.id) : '')}"
-                    data-project-name="${escapeHtml(project.name || '')}"
-                    data-project-path="${escapeHtml(project.path || '')}"
-                    onclick="window.newChatForProject(event)"
-                    title="New chat in ${escapeHtml(project.name || 'this project')}"
-                    aria-label="New chat in ${escapeHtml(project.name || 'this project')}">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
-                        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                    </svg>
-                </button>`
-            : '';
-        const chevron = collapsible
-            ? `<span class="history-section-chevron" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="6 9 12 15 18 9"/>
-                    </svg>
-               </span>`
-            : '';
-        const countClass = hasError
-            ? ' has-unread has-unread-error'
-            : (hasUnread
-                ? ' has-unread'
-                : (hasQueued ? ' has-queued' : (!hasUnread && hasPaused ? ' has-paused-queue' : '')));
-        const countHtml = collapsible && count > 0
-            ? `<span class="history-section-count${countClass}" title="${count} chat${count === 1 ? '' : 's'}">${count}</span>`
-            : '';
-        const attentionDot = hasError
-            ? `<span class="history-section-unread-dot is-error" title="Unread error" aria-label="Unread error"></span>`
-            : (hasUnread
-                ? `<span class="history-section-unread-dot" title="Unread" aria-label="Unread"></span>`
-                : (hasQueued
-                    ? `<span class="history-section-queued-dot" title="Queued prompt" aria-label="Queued prompt"></span>`
-                    : (hasPaused
-                        ? `<span class="history-section-paused-dot" title="Paused queue" aria-label="Paused queued prompt"></span>`
-                        : '')));
-        const headerAttrs = collapsible
-            ? ` role="button" tabindex="0" data-project-key="${escapeHtml(String(project.key))}" aria-expanded="${expanded ? 'true' : 'false'}" onclick="window.toggleHistoryProjectCollapse(event)" onkeydown="window.toggleHistoryProjectCollapseKey(event)"`
-            : '';
-        return `
-            <div class="history-section-header${collapsible ? ' is-collapsible' : ''}"${headerAttrs}>
-                ${chevron}
-                <div class="history-section-title">${attentionDot}${escapeHtml(title)}${countHtml}</div>
-                <div class="history-section-actions" onclick="event.stopPropagation()">${newChatBtn}${refreshBtn}</div>
-            </div>
-        `;
+        return session.current();
     }
 
     /** "+" on a project heading: fresh chat already scoped to that project. */
@@ -12288,17 +6870,17 @@
             return Promise.resolve(loadChatSessions()).then(function () {
                 // Prefer re-applying search/filters — a full list paint races with
                 // typing (open refresh, generating poll, title refresh timers).
-                reloadHistoryListKeepingSearch();
-                if (currentSessionId) updateChatSessionTitle(currentSessionId);
+                historyPanel.reloadKeepingSearch();
+                if (session.current()) updateChatSessionTitle(session.current());
                 done();
             }).catch(function () {
-                reloadHistoryListKeepingSearch();
-                if (currentSessionId) updateChatSessionTitle(currentSessionId);
+                historyPanel.reloadKeepingSearch();
+                if (session.current()) updateChatSessionTitle(session.current());
                 done();
             });
         }
-        reloadHistoryListKeepingSearch();
-        if (currentSessionId) updateChatSessionTitle(currentSessionId);
+        historyPanel.reloadKeepingSearch();
+        if (session.current()) updateChatSessionTitle(session.current());
         done();
         return Promise.resolve();
     }
@@ -12331,67 +6913,10 @@
         } catch (_) {}
     }
 
+    // createNewChat is owned by chat_session.js (CuttleChatSession.createSessionBoot).
+    // The page builds the capability host lazily and keeps this thin call site.
     async function createNewChat() {
-        if (currentSessionId != null) saveComposerDraft(currentSessionId);
-        applyStarredSlashChips();
-        chatRestoreAbandoned = true;
-        clearChatRestoreVeil();
-        localStorage.setItem('autoResumeSession', 'false');
-
-        // Detach prior chat's local stream UI first — otherwise welcome stays
-        // disabled (processMessage) and/or isLoading parks the first send.
-        detachLocalGenerationForNavigation();
-
-        const chatMessages = document.getElementById('chatMessages');
-        if (chatMessages) {
-            chatMessages.innerHTML = '';
-        }
-        // Drop prior session's lazy-history offset — otherwise new-chat numbers
-        // keep starting at older_visible_count+1 from the chat we left.
-        resetChatHistoryWindow();
-        messageNavPinnedToBottom = true;
-        updateMessageNav();
-
-        document.getElementById('welcomeScreen').style.display = 'flex';
-        document.getElementById('chatArea').style.display = 'none';
-
-        document.querySelectorAll('.chat-history-item').forEach(item => {
-            item.classList.remove('active');
-        });
-
-        // Drop the previous chat id before reconcile. Otherwise the welcome
-        // screen inherits that session's project, then the first send (still
-        // unsaved) snaps to the Cuttle default.
-        releaseManualUnreadHoldIfLeaving(null);
-        currentSessionId = null;
-        adoptFollowupQueue(currentSessionId);
-        applyHistorySubagentExpandState();
-        applySessionIdentity(null);
-        currentProject = null;
-        hubLiveStatusCache = null;
-        reconcileChatProject();
-        // Prior chat's Tasks strip must not stick on welcome / new chat.
-        refreshChatWidgets();
-        closeChatHistoryPanel();
-
-        // Don't persist an empty session — wait until the user sends a message.
-        updateChatIdBadge(null);
-        loadPromptHistoryForSession(null);
-        localStorage.removeItem('lastChatSessionId');
-        if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
-            window.CuttleAuth.setCurrentChatSession(null);
-        }
-        stopMessageSync({ resetCursor: true });
-        clearFollowupQueue();
-        CuttleStopState.clearWaitingSuppression(stopState);
-        syncChatUrl(null);
-        reportSessionToShell(null);
-        restoreWelcomeStickySlash();
-        restoreComposerDraft('new', { force: true });
-        if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
-        resetChatAttentionState();
-        focusWelcomeComposer();
-        console.log('New chat ready (not saved until first message)');
+        return sessionBoot().createNewChat();
     }
     
     async function sendWelcomeMessage() {
@@ -12450,7 +6975,7 @@
         // Send the message through the main chat flow
         const userTs = Date.now();
         addMessageToUI(displayMessage, 'user', { timestamp: userTs, attachments });
-        autoScrollChatToBottom(true);
+        transcriptNav.autoScrollChatToBottom(true);
         saveChatSession(displayMessage, 'user', { attachments });
         recordPromptHistory(message || displayMessage);
 
@@ -12494,8 +7019,6 @@
     // ── Deep-link restore (?chat=) ─────────────────────────────
     // chat_page.html raises data-chat-restoring and kicks off the transcript
     // fetch before this file even parses; everything below consumes that.
-    const CHAT_RESTORE_TIMEOUT_MS = 10000;
-    let chatRestoreAbandoned = false;
 
     function clearChatRestoreVeil() {
         try { document.documentElement.removeAttribute('data-chat-restoring'); } catch (_) {}
@@ -12524,11 +7047,10 @@
         const chatMessages = document.getElementById('chatMessages');
         if (chatMessages) chatMessages.innerHTML = '';
         resetChatHistoryWindow();
-        messageNavPinnedToBottom = true;
-        updateMessageNav();
+        transcriptNav.resetNav();
         releaseManualUnreadHoldIfLeaving(null);
-        currentSessionId = null;
-        adoptFollowupQueue(currentSessionId);
+        session.create(null);
+        adoptFollowupQueue(session.current());
         applySessionIdentity(null);
         updateChatIdBadge(null);
         if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
@@ -12564,508 +7086,18 @@
         });
     }
 
-    /**
-     * Open the chat named by ?chat= as soon as *either* signal lands: the
-     * prefetched transcript (a 200 means the cookie is good, so we don't wait on
-     * auth.js) or auth settling. Neither within 10s → show the new-chat splash.
-     */
+    // bootRestoreSession is owned by chat_session.js (CuttleChatSession.createSessionBoot).
+    // The page builds the capability host lazily and keeps this thin call site.
     async function bootRestoreSession(sessionParam) {
-        // Never leave a spinner up, whatever happens below.
-        setTimeout(clearChatRestoreVeil, CHAT_RESTORE_TIMEOUT_MS + 2000);
-        const prefetch = takeChatTranscriptPrefetch(sessionParam);
-        let prefetchData = null;
-        const prefetchReady = prefetch
-            ? prefetch.then((data) => {
-                if (data && data.success) {
-                    prefetchData = data;
-                    return 'prefetch';
-                }
-                return null;
-            }).catch(() => null)
-            : null;
-        const authReady = waitForAuthReady(CHAT_RESTORE_TIMEOUT_MS)
-            .then((ok) => (ok ? 'auth' : null));
-
-        const winner = await firstTruthy([prefetchReady, authReady], CHAT_RESTORE_TIMEOUT_MS);
-        if (chatRestoreAbandoned) return;
-
-        if (winner) {
-            try {
-                await loadChatSession(sessionParam, {
-                    assumeAuth: winner === 'prefetch',
-                    prefetched: prefetchData,
-                    prefetchPromise: prefetch,
-                });
-            } finally {
-                clearChatRestoreVeil();
-            }
-            return;
-        }
-
-        // Anonymous chats live in localStorage and need no auth at all.
-        try {
-            const local = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-            if (local && local[sessionParam]) {
-                await loadChatSession(sessionParam);
-                return;
-            }
-        } catch (_) {}
-
-        chatRestoreAbandoned = true;
-        showWelcomeSplash();
-        if (typeof window.showToast === 'function') {
-            window.showToast('Chat took too long to load — starting a new chat.', 'warning');
-        }
+        return sessionBoot().bootRestoreSession(sessionParam);
     }
 
-    let _loadSessionSeq = 0;
-
+    // loadChatSession is owned by chat_session.js (CuttleChatSession.createLoader).
+    // The page builds the capability host lazily and keeps this thin call site.
     async function loadChatSession(sessionId, opts = {}) {
-        // Persist unsent text from the chat we're leaving (survives refresh).
-        if (currentSessionId != null && !sessionIdsEqual(currentSessionId, sessionId)) {
-            saveComposerDraft(currentSessionId);
-        } else if (currentSessionId == null) {
-            saveComposerDraft('new');
-        }
-        clearAllSlashChips();
-        CuttleStopState.clearWaitingSuppression(stopState);
-        sessionId = canonicalizeChatSessionId(sessionId);
-        const loadSeq = ++_loadSessionSeq;
-        // Close immediately on tap — don't wait for message fetch (felt stuck open on mobile).
-        closeChatHistoryPanel();
-
-        // Leaving a different chat's local stream — detach UI so this session
-        // isn't treated as generating (false follow-up queue).
-        if (
-            generation.loading
-            && (
-                generation.localSessionId == null
-                || !sessionIdsEqual(generation.localSessionId, sessionId)
-            )
-        ) {
-            detachLocalGenerationForNavigation();
-        }
-
-        // assumeAuth: the boot prefetch already got a 200 from the auth-only
-        // messages endpoint, so the cookie is valid even if auth.js hasn't emitted yet.
-        if (isAuthMode() || opts.assumeAuth) {
-            // Invalidate the per-session model cache before updating currentSessionId so
-            // any render or send that follows picks up the correct model for the new session.
-            if (currentSessionId !== sessionId) {
-                slashPaletteSupplement.preferredModel = 'auto';
-                slashPaletteSupplement.lastReportedModel = null;
-                slashPaletteSupplement.cursorModelsKey = '';
-                slashPaletteSupplement.cursorModelsLoaded = false;
-                // Same for Muse: don't carry previous session's contributor/plain pick
-                slashPaletteSupplement.museModel = '';
-                slashPaletteSupplement.museModels = [];
-                slashPaletteSupplement.museModelsKey = '';
-                slashPaletteSupplement.museModelsLoading = false;
-                slashPaletteSupplement.museModelDirty = false;
-                slashPaletteSupplement.museEffortDirty = false;
-                slashPaletteSupplement.museEffort = '';
-                slashPaletteSupplement.museEffortKey = '';
-                slashPaletteSupplement.museEffortLoading = false;
-                slashPaletteSupplement.hermesModel = '';
-                slashPaletteSupplement.hermesModels = [];
-                slashPaletteSupplement.hermesModelsKey = '';
-                slashPaletteSupplement.hermesModelsLoading = false;
-                slashPaletteSupplement.hermesModelDirty = false;
-                slashPaletteSupplement.hermesEffortDirty = false;
-                slashPaletteSupplement.hermesEffort = '';
-                slashPaletteSupplement.hermesEffortKey = '';
-                slashPaletteSupplement.hermesEffortLoading = false;
-                slashPaletteSupplement.opencodeModel = '';
-                slashPaletteSupplement.opencodeModels = [];
-                slashPaletteSupplement.opencodeModelsKey = '';
-                slashPaletteSupplement.opencodeModelsLoading = false;
-                slashPaletteSupplement.opencodeModelDirty = false;
-                slashPaletteSupplement.opencodeEffortDirty = false;
-                slashPaletteSupplement.opencodeEffort = '';
-                slashPaletteSupplement.opencodeEffortKey = '';
-                slashPaletteSupplement.opencodeEffortLoading = false;
-                slashPaletteSupplement.codexModel = '';
-                slashPaletteSupplement.codexModels = [];
-                slashPaletteSupplement.codexCommonEfforts = [];
-                slashPaletteSupplement.codexModelsKey = '';
-                slashPaletteSupplement.codexModelsLoading = false;
-                slashPaletteSupplement.codexModelDirty = false;
-                slashPaletteSupplement.codexEffortDirty = false;
-                slashPaletteSupplement.codexEffort = '';
-                slashPaletteSupplement.codexEffortKey = '';
-                slashPaletteSupplement.codexEffortLoading = false;
-                slashPaletteSupplement.claudeModel = '';
-                slashPaletteSupplement.claudeModels = [];
-                slashPaletteSupplement.claudeCommonEfforts = [];
-                slashPaletteSupplement.claudeModelsKey = '';
-                slashPaletteSupplement.claudeModelsLoading = false;
-                slashPaletteSupplement.claudeModelDirty = false;
-                slashPaletteSupplement.claudeEffortDirty = false;
-                slashPaletteSupplement.claudeEffort = '';
-                slashPaletteSupplement.claudeEffortKey = '';
-                slashPaletteSupplement.claudeEffortLoading = false;
-            }
-            releaseManualUnreadHoldIfLeaving(sessionId);
-            const prevSessionId = currentSessionId;
-            const switchingAway = prevSessionId != null
-                && !sessionIdsEqual(prevSessionId, sessionId);
-            // Opening this chat — stop any background completion poll for it.
-            cancelDetachedSessionCompletionWatch(sessionId);
-            currentSessionId = sessionId;
-            adoptFollowupQueue(currentSessionId);
-            // Opened chat defaults to idle until the one-shot live-status (below)
-            // confirms generating. Stale runningSessionIds / hub cache from a
-            // prior visit used to flash the purple title + history spinner for
-            // a few seconds while waiting on the shell heartbeat poll.
-            // Owned by chat_generation.js — an opened chat defaults to idle
-            // until the one-shot live-status confirms generating.
-            const openFlags = CuttleChatGeneration.decideSessionOpen({ switchingAway });
-            if (openFlags.clearHubCache) hubLiveStatusCache = null;
-            if (openFlags.deferGenerating) deferOpenChatGeneratingFromSessions = true;
-            if (openFlags.markIdle) setHistorySessionRunning(sessionId, false);
-            if (switchingAway) {
-                // Form-awaiting is DOM-derived; cleared messages must not keep
-                // the old chat's pending-form spinner on this title.
-                _mutateSessionIdSet(formAwaitingSessionIds, sessionId, false);
-            }
-            updateChatIdBadge(sessionId);
-            if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
-                window.CuttleAuth.setCurrentChatSession(sessionId);
-            }
-            loadPromptHistoryForSession(String(sessionId));
-            localStorage.setItem('lastChatSessionId', String(sessionId));
-            localStorage.setItem('autoResumeSession', 'true');
-            syncChatUrl(sessionId);
-            refreshChatWidgets();
-            // Prefs-only sticky restore BEFORE shell live-status can paint the
-            // working bubble (phone hub race). Transcript inference runs again
-            // after /messages below.
-            restoreSessionStickySlash(sessionId, []);
-            reportSessionToShell(sessionId, { preferFocus: true });
-            const loadT0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-            // Capture before markChatSessionRead so the title unread can survive open.
-            const openNeedsAck = sessionPrefsHasUnreadFlag(sessionId);
-            resetChatAttentionState({
-                needsAck: openNeedsAck,
-                isError: openNeedsAck && sessionPrefsUnreadIsError(sessionId),
-            });
-            // Don't block transcript load on refreshing the full session list —
-            // under a busy connection pool that await made reopen feel like 10–60s.
-            const sessionsRefresh = (window.CuttleAuth && typeof window.CuttleAuth.loadChatSessions === 'function')
-                ? Promise.resolve(window.CuttleAuth.loadChatSessions()).catch(() => {})
-                : Promise.resolve();
-
-            document.getElementById('welcomeScreen').style.display = 'none';
-            document.getElementById('chatArea').style.display = 'flex';
-            if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
-
-            const chatMessages = document.getElementById('chatMessages');
-            chatMessages.innerHTML = '';
-            lastSeenServerMessageId = 0;
-            resetChatHistoryWindow();
-            removeRemoteWaitingIndicator();
-            stopMessageSync();
-            // Drop a prior chat's hydrate so findAuthServerSession cannot briefly
-            // resolve the wrong project while this session's /messages is in flight.
-            if (
-                lastHydratedSessionProject
-                && !sessionIdsEqual(lastHydratedSessionProject.id, sessionId)
-            ) {
-                lastHydratedSessionProject = null;
-            }
-
-            const authSid = toAuthDbSessionId(sessionId);
-            let loadedMessages = [];
-            try {
-                // Boot deep-links already have this transcript in flight (started in
-                // chat_page.html) — reuse it instead of paying for a second round trip.
-                let data = opts.prefetched || null;
-                if (!data && opts.prefetchPromise) {
-                    try { data = await opts.prefetchPromise; } catch (_) { data = null; }
-                }
-                if (!data) {
-                    const prefetch = takeChatTranscriptPrefetch(sessionId);
-                    if (prefetch) data = await prefetch;
-                }
-                if (!data) {
-                    const response = await fetchWithTimeout(
-                        sessionMessagesUrl(authSid, { limit: CHAT_HISTORY_PAGE_SIZE }),
-                        { credentials: 'include', cache: 'no-store' },
-                        12000
-                    );
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}`);
-                    }
-                    data = await response.json();
-                }
-                // A newer loadChatSession started while we were fetching — drop this result.
-                if (loadSeq !== _loadSessionSeq) return;
-                if (data.success && Array.isArray(data.messages)) {
-                    loadedMessages = windowChatHistoryMessages(data);
-                    annotateMessageProjects(loadedMessages);
-                    if (data.project_id != null || data.project_path || data.project_name) {
-                        lastHydratedSessionProject = {
-                            id: authSid,
-                            project_id: data.project_id,
-                            project_name: data.project_name,
-                            project_path: data.project_path,
-                        };
-                    }
-                    // Apply this session's project BEFORE the generating bubble is
-                    // painted — otherwise the chip shows the previous chat's project
-                    // (common on phone when switching projects mid-run).
-                    reconcileChatProject();
-                    // Early refreshChatWidgets() above often still had the prior
-                    // chip path; re-fetch now that project matches this session.
-                    refreshChatWidgets();
-                    // Hydrate preferred model from transcript before painting so
-                    // collapse/composer don't flash "Cursor - Auto" while the
-                    // models API is still in flight.
-                    const fromHistory = preferredModelFromMessages(loadedMessages);
-                    if (fromHistory) {
-                        slashPaletteSupplement.preferredModel = fromHistory;
-                    }
-                    // Same for Muse: the messages payload carries the session
-                    // pins, so badges paint correctly on the first pass with
-                    // no /api/muse/* round trip (and no heal flicker).
-                    hydrateAgentSelectionFromSessionData(data, sessionId);
-                    applySessionIdentity(data);
-                    // Title from the same payload — don't wait for the session
-                    // list (history panel) or the delayed title-refresh timers.
-                    if (data.session_name) {
-                        rememberChatSessionTitle(sessionId, data.session_name);
-                        updateChatSessionTitle(sessionId);
-                    }
-                    beginSuppressChatAttention();
-                    try {
-                        // skipScroll/skipNav: bulk paint must not schedule bottom
-                        // autoScroll rAFs that race a pending CH-…-N message jump.
-                        loadedMessages.forEach(msg => {
-                            appendServerMessageToUI(msg, {
-                                announce: false,
-                                skipScroll: true,
-                                skipNav: true,
-                            });
-                        });
-                    } finally {
-                        endSuppressChatAttention();
-                    }
-                    updateMessageNav();
-                    // Server follow-ups travel with /messages — apply on open so a
-                    // stuck queue (e.g. CH-000441) drains without waiting for sync.
-                    applyServerFollowups(data.followups, data.followup_revision);
-                    acceptSessionAttention(sessionId, data.attention);
-                    // Transcript is on screen — drop the restore veil before the
-                    // live-status round trip, which nobody needs to wait behind.
-                    clearChatRestoreVeil();
-                    reconcileCuttleButtonLocks(loadedMessages);
-                    // Sticky agent BEFORE remote-waiting paint — otherwise
-                    // currentTypingSlashMeta() sees empty/other-chat chips and
-                    // the working bubble reopens without the agent badge.
-                    restoreSessionStickySlash(sessionId, loadedMessages);
-                    const liveStatus = await fetchChatLiveStatus(sessionId);
-                    if (loadSeq !== _loadSessionSeq) return;
-                    deferOpenChatGeneratingFromSessions = false;
-                    updateRemoteWaitingFromMessages(loadedMessages, liveStatus);
-                    healStaleGeneratingState();
-                    if (
-                        followupQueue.items.some((x) => !x.paused)
-                        && !isSessionGenerating()
-                        && !editingFollowupId
-                    ) {
-                        scheduleFollowupDrain(120);
-                    }
-                    refreshTypingIndicatorHeaderBadges();
-                }
-            } catch (e) {
-                if (loadSeq !== _loadSessionSeq) return;
-                deferOpenChatGeneratingFromSessions = false;
-                console.error('Failed to load auth session messages:', e);
-            }
-
-            clearChatRestoreVeil();
-            if (loadSeq !== _loadSessionSeq) return;
-
-            try { await sessionsRefresh; } catch (_) {}
-            if (loadSeq !== _loadSessionSeq) return;
-            // One-shot generating flags for *other* chats (history rows). The open
-            // chat stays idle until fetchChatLiveStatus above confirms — do not
-            // wait for HISTORY_GENERATING_POLL_MS / shell heartbeat.
-            try {
-                const list = (window.CuttleAuth && window.CuttleAuth.getSessions
-                    && window.CuttleAuth.getSessions()) || [];
-                if (list.length) applyGeneratingFlagsFromSessions(list);
-            } catch (_) {}
-            // Session list may have landed after the early chrome paint — refresh
-            // the open-chat title now that getSessions() is populated.
-            updateChatSessionTitle(sessionId);
-            reconcileChatProject();
-
-            // Idempotent re-apply (also covers the messages-load failure path
-            // where the early restore above never ran). Composer chips must
-            // match this session even when there is no generating bubble.
-            restoreSessionStickySlash(sessionId, loadedMessages);
-            _restorePendingAttachments();
-            restoreComposerDraft(sessionId, { force: true });
-
-            // Proactively fetch the per-session model preference so the composer chip
-            // and typing indicator show the correct model before the palette is opened.
-            loadCursorAgentModelsForPalette(true);
-            loadMuseModelsForPalette(true);
-
-            markChatSessionRead(sessionId);
-            document.querySelectorAll('.chat-history-item').forEach(item => {
-                item.classList.toggle('active', sessionIdsEqual(item.dataset.sessionId, sessionId));
-            });
-            applyHistorySubagentExpandState();
-            syncHistoryUnreadIndicators();
-            syncChatAttentionIndicators();
-            if (pendingMessageJump) consumePendingMessageJump();
-            else {
-                chatPinnedToBottom = true;
-                _ignoreChatScrollPinUntil = Date.now() + 300;
-                autoScrollChatToBottom(true);
-                messageNavPinnedToBottom = true;
-                _ignoreNavScrollPinUntil = Date.now() + 300;
-                autoScrollMessageNavToBottom(true);
-                requestAnimationFrame(() => {
-                    autoScrollChatToBottom(true);
-                    autoScrollMessageNavToBottom(true);
-                });
-                setTimeout(() => {
-                    autoScrollChatToBottom(true);
-                    autoScrollMessageNavToBottom(true);
-                }, 250);
-            }
-            setupChatHistoryLazyLoad();
-            // Re-apply after messages/sessions settle (server project beats stale empty local path).
-            reconcileChatProject();
-            startMessageSync();
-            try {
-                const ms = Math.round(
-                    ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - loadT0
-                );
-                window.CuttleNetDebug && window.CuttleNetDebug.event(
-                    'chat-load',
-                    'session=' + sessionId + ' msgs=' + loadedMessages.length + ' ' + ms + 'ms'
-                );
-            } catch (_) {}
-            return;
-        }
-
-        // Load messages for this session from localStorage
-        const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-        const session = sessions[sessionId];
-        
-        if (!session) {
-            console.error('Session not found:', sessionId);
-            closeChatHistoryPanel();
-            clearChatRestoreVeil();
-            return;
-        }
-        
-        releaseManualUnreadHoldIfLeaving(sessionId);
-        const prevSessionId = currentSessionId;
-        const switchingAway = prevSessionId != null
-            && !sessionIdsEqual(prevSessionId, sessionId);
-        currentSessionId = sessionId;
-        adoptFollowupQueue(currentSessionId);
-        if (switchingAway) {
-            hubLiveStatusCache = null;
-            setHistorySessionRunning(sessionId, false);
-            _mutateSessionIdSet(formAwaitingSessionIds, sessionId, false);
-        }
-        updateChatIdBadge(sessionId);
-        loadPromptHistoryForSession(sessionId);
-        _restorePendingAttachments();
-        restoreComposerDraft(sessionId, { force: true });
-        localStorage.setItem('lastChatSessionId', sessionId);
-        syncChatUrl(sessionId);
-        reportSessionToShell(sessionId, { preferFocus: true });
-        refreshChatWidgets();
-        const openNeedsAck = sessionPrefsHasUnreadFlag(sessionId);
-        resetChatAttentionState({
-            needsAck: openNeedsAck,
-            isError: openNeedsAck && sessionPrefsUnreadIsError(sessionId),
-        });
-        
-        // Re-enable auto-resume since user explicitly loaded this session
-        localStorage.setItem('autoResumeSession', 'true');
-        
-        // Show chat area
-        clearChatRestoreVeil();
-        document.getElementById('welcomeScreen').style.display = 'none';
-        document.getElementById('chatArea').style.display = 'flex';
-        if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
-        
-        // Load messages
-        const chatMessages = document.getElementById('chatMessages');
-        chatMessages.innerHTML = '';
-        
-        if (session.messages && session.messages.length > 0) {
-            beginSuppressChatAttention();
-            try {
-                session.messages.forEach(msg => {
-                    if (msg.role === 'assistant' && consumeCancelledAgentReply(msg.content, { announce: false })) return;
-                    const reportUrl = msg.report_url || (
-                        msg.query_id ? `/query_log.html?id=${msg.query_id}` : null
-                    );
-                    addMessageToUI(msg.content, msg.role, {
-                        report_url: reportUrl,
-                        query_id: msg.query_id,
-                        timestamp: msg.timestamp,
-                        slash_command: msg.slash_command,
-                        slash_command_failed: msg.slash_command_failed,
-                        attachments: msg.attachments,
-                        routing_badge: msg.routing_badge || undefined,
-                        usage: normalizeUsagePayload(msg.usage) || undefined,
-                        skipScroll: true,
-                        skipNav: true,
-                    });
-                });
-            } finally {
-                endSuppressChatAttention();
-            }
-            updateMessageNav();
-            reconcileCuttleButtonLocks(session.messages);
-        }
-        
-        // Update active state in sidebar
-        document.querySelectorAll('.chat-history-item').forEach(item => {
-            item.classList.remove('active');
-            if (item.dataset.sessionId === sessionId) {
-                item.classList.add('active');
-            }
-        });
-        applyHistorySubagentExpandState();
-
-        // Restore the project (cwd) this conversation was using
-        reconcileChatProject();
-        restoreSessionStickySlash(sessionId, session.messages);
-        markChatSessionRead(sessionId);
-        syncHistoryUnreadIndicators();
-        syncChatAttentionIndicators();
-        
-        // Scroll to bottom (or deep-linked message) - default stays pinned to bottom
-        if (pendingMessageJump) consumePendingMessageJump();
-        else {
-            chatPinnedToBottom = true;
-            _ignoreChatScrollPinUntil = Date.now() + 300;
-            autoScrollChatToBottom(true);
-            messageNavPinnedToBottom = true;
-            _ignoreNavScrollPinUntil = Date.now() + 300;
-            autoScrollMessageNavToBottom(true);
-            requestAnimationFrame(() => {
-                autoScrollChatToBottom(true);
-                autoScrollMessageNavToBottom(true);
-            });
-            setTimeout(() => {
-                autoScrollChatToBottom(true);
-                autoScrollMessageNavToBottom(true);
-            }, 250);
-        }
+        return sessionLoader().loadChatSession(sessionId, opts);
     }
-    
+
     // The server auto-names sessions (fallback + background LLM title) shortly
     // after each assistant reply; re-pull the list so the sidebar picks it up.
     // OpenAI titles are usually ready in ~1s; later ticks catch slower local models.
@@ -13107,17 +7139,17 @@
 
     async function applyHubLiveStatusPayload(live, sessionId) {
         if (!live || sessionId == null) return;
-        if (currentSessionId == null || !sessionIdsEqual(currentSessionId, sessionId)) return;
+        if (session.current() == null || !sessionIdsEqual(session.current(), sessionId)) return;
         hubLiveStatusCache = { sessionId: String(sessionId), live, at: Date.now() };
         shellHubSeen = true;
         // Batch live-status is the Electron strip's revision pulse — forward it.
         noteWidgetsRevision(live);
 
-        try { syncSubagentOrbs(live.subagents); } catch (_) {}
+        try { subagentLaunchers.syncLive(live.subagents); } catch (_) {}
         if (isLoadingThisSession()) {
             const statusLabel = live.status || undefined;
             ensureLocalTypingIndicator(statusLabel);
-            try { paintSubagentOrbs(); } catch (_) {}
+            try { subagentLaunchers.paintLive(); } catch (_) {}
         }
 
         if (live.status && (isLoadingThisSession() || document.getElementById('typing-indicator-remote'))) {
@@ -13142,7 +7174,7 @@
             } catch (_) {}
             await syncSessionMessagesFromServer();
             if (isLoadingThisSession() && !stopState.userStopped) {
-                const recovered = await recoverChatResultFromServer(currentSessionId);
+                const recovered = await recoveryController().recoverChatResultFromServer(session.current());
                 if (recovered && String(recovered.response || '').trim()) {
                     if (consumeCancelledAgentReply(recovered.response)) {
                         finishLocalStreamFromServerSync();
@@ -13154,7 +7186,7 @@
                             routing_badge: recovered.routing_badge || undefined,
                             usage: normalizeUsagePayload(recovered.usage) || undefined,
                         });
-                        notifyAssistantResponseReady(currentSessionId, { fromSync: true });
+                        notifyAssistantResponseReady(session.current(), { fromSync: true });
                         finishLocalStreamFromServerSync();
                     } else {
                         finishLocalStreamFromServerSync();
@@ -13175,106 +7207,201 @@
         }
     }
 
+    // Session lifecycle writers (adopt/save) are owned by chat_session.js
+    // (CuttleChatSession.createLifecycle). The host is built lazily on first
+    // use so page constants declared later in this IIFE are initialized; the
+    // page keeps only these thin call sites.
+    let _sessionLifecycle = null;
+    function sessionLifecycle() {
+        if (!_sessionLifecycle) {
+            _sessionLifecycle = CuttleChatSession.createLifecycle(session, {
+                canonicalizeChatSessionId: canonicalizeChatSessionId,
+                sessionIdsEqual: sessionIdsEqual,
+                toAuthDbSessionId: toAuthDbSessionId,
+                isAuthMode: isAuthMode,
+                migratePromptHistorySession: migratePromptHistorySession,
+                migrateSessionPrefs: migrateSessionPrefs,
+                migrateComposerDraft: migrateComposerDraft,
+                migrateLocalChatSession: migrateLocalChatSession,
+                turnBadgeBySession: turnBadgeBySession,
+                getCompletionNotifications: () => window.CuttleCompletionNotifications,
+                generation: generation,
+                getCompletionNotificationPendingId: () => completionNotificationPendingId,
+                releaseManualUnreadHoldIfLeaving: releaseManualUnreadHoldIfLeaving,
+                adoptFollowupQueue: adoptFollowupQueue,
+                updateChatIdBadge: updateChatIdBadge,
+                storage: localStorage,
+                getAuth: () => window.CuttleAuth,
+                syncChatUrl: syncChatUrl,
+                reportSessionToShell: reportSessionToShell,
+                clearSessionPrefs: clearSessionPrefs,
+                newComposerPrefsId: newComposerPrefsId,
+                persistProjectForCurrentSession: persistProjectForCurrentSession,
+                persistStickySlashForCurrentSession: persistStickySlashForCurrentSession,
+                flushDirtyAgentSelectionsOnAdopt: () => agentControls.flushDirtyAgentSelectionsOnAdopt(),
+                rebindGeneration: (g, sid) => CuttleChatGeneration.rebindGeneration(g, sid),
+                setHistorySessionRunning: setHistorySessionRunning,
+                refreshChatHistoryList: refreshChatHistoryList,
+                scheduleHistoryTitleRefresh: scheduleHistoryTitleRefresh,
+                startMessageSync: startMessageSync,
+                generateLocalChatId: generateLocalChatId,
+                getCurrentProject: () => currentProject,
+                normalizeAttachmentList: normalizeAttachmentList,
+                reloadHistoryListKeepingSearch: () => historyPanel.reloadKeepingSearch(),
+            });
+        }
+        return _sessionLifecycle;
+    }
+
+    // loadChatSession host (CuttleChatSession.createLoader). The page supplies
+    // every capability the loader needs plus the mutable page state it advances.
+    // Built lazily on first load so page constants declared later are initialized.
+    let _sessionLoader = null;
+    function sessionLoader() {
+        if (!_sessionLoader) {
+            _sessionLoader = CuttleChatSession.createLoader(session, {
+                sessionIdsEqual: sessionIdsEqual,
+                saveComposerDraft: saveComposerDraft,
+                clearAllSlashChips: clearAllSlashChips,
+                canonicalizeChatSessionId: canonicalizeChatSessionId,
+                closeChatHistoryPanel: closeChatHistoryPanel,
+                detachLocalGenerationForNavigation: detachLocalGenerationForNavigation,
+                isAuthMode: isAuthMode,
+                releaseManualUnreadHoldIfLeaving: releaseManualUnreadHoldIfLeaving,
+                cancelDetachedSessionCompletionWatch: (sid) => recoveryController().cancelDetachedSessionCompletionWatch(sid),
+                adoptFollowupQueue: adoptFollowupQueue,
+                setHistorySessionRunning: setHistorySessionRunning,
+                updateChatIdBadge: updateChatIdBadge,
+                loadPromptHistoryForSession: loadPromptHistoryForSession,
+                syncChatUrl: syncChatUrl,
+                refreshChatWidgets: refreshChatWidgets,
+                restoreSessionStickySlash: restoreSessionStickySlash,
+                reportSessionToShell: reportSessionToShell,
+                sessionPrefsHasUnreadFlag: sessionPrefsHasUnreadFlag,
+                resetChatAttentionState: resetChatAttentionState,
+                sessionPrefsUnreadIsError: sessionPrefsUnreadIsError,
+                resetChatHistoryWindow: resetChatHistoryWindow,
+                removeRemoteWaitingIndicator: removeRemoteWaitingIndicator,
+                stopMessageSync: stopMessageSync,
+                toAuthDbSessionId: toAuthDbSessionId,
+                takeChatTranscriptPrefetch: takeChatTranscriptPrefetch,
+                fetchWithTimeout: fetchWithTimeout,
+                sessionMessagesUrl: sessionMessagesUrl,
+                updateSessionUsageSummary: updateSessionUsageSummary,
+                refreshSessionUsageSummary: refreshSessionUsageSummary,
+                windowChatHistoryMessages: windowChatHistoryMessages,
+                annotateMessageProjects: annotateMessageProjects,
+                reconcileChatProject: reconcileChatProject,
+                preferredModelFromMessages: preferredModelFromMessages,
+                hydrateAgentSelectionFromSessionData: hydrateAgentSelectionFromSessionData,
+                applySessionIdentity: applySessionIdentity,
+                rememberChatSessionTitle: rememberChatSessionTitle,
+                updateChatSessionTitle: updateChatSessionTitle,
+                beginSuppressChatAttention: beginSuppressChatAttention,
+                appendServerMessageToUI: appendServerMessageToUI,
+                endSuppressChatAttention: endSuppressChatAttention,
+                applyServerFollowups: applyServerFollowups,
+                acceptSessionAttention: acceptSessionAttention,
+                clearChatRestoreVeil: clearChatRestoreVeil,
+                reconcileCuttleButtonLocks: reconcileCuttleButtonLocks,
+                fetchChatLiveStatus: fetchChatLiveStatus,
+                updateRemoteWaitingFromMessages: updateRemoteWaitingFromMessages,
+                healStaleGeneratingState: healStaleGeneratingState,
+                isSessionGenerating: isSessionGenerating,
+                scheduleFollowupDrain: scheduleFollowupDrain,
+                refreshTypingIndicatorHeaderBadges: refreshTypingIndicatorHeaderBadges,
+                applyGeneratingFlagsFromSessions: applyGeneratingFlagsFromSessions,
+                _restorePendingAttachments: _restorePendingAttachments,
+                restoreComposerDraft: restoreComposerDraft,
+                markChatSessionRead: markChatSessionRead,
+                applyHistorySubagentExpandState: () => historyPanel.applyHistorySubagentExpandState(),
+                syncHistoryUnreadIndicators: syncHistoryUnreadIndicators,
+                syncChatAttentionIndicators: syncChatAttentionIndicators,
+                setupChatHistoryLazyLoad: setupChatHistoryLazyLoad,
+                startMessageSync: startMessageSync,
+                consumeCancelledAgentReply: consumeCancelledAgentReply,
+                addMessageToUI: addMessageToUI,
+                normalizeUsagePayload: normalizeUsagePayload,
+                _mutateSessionIdSet: _mutateSessionIdSet,
+                CHAT_HISTORY_PAGE_SIZE: CHAT_HISTORY_PAGE_SIZE,
+                stopState: stopState,
+                transcriptNav: transcriptNav,
+                agentControls: agentControls,
+                formAwaitingSessionIds: formAwaitingSessionIds,
+                slashPaletteSupplement: slashPaletteSupplement,
+                generation: generation,
+                storage: localStorage,
+                pinChatLayout: function () {
+                    if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
+                },
+                getAuth: function () { return window.CuttleAuth; },
+                getNetDebug: function () { return window.CuttleNetDebug; },
+                getFollowupQueue: function () { return followupController().getState(); },
+                getEditingFollowupId: function () { return followupController().getEditingId(); },
+                setHubLiveStatusCache: function (v) { hubLiveStatusCache = v; },
+                setLastSeenServerMessageId: function (v) { lastSeenServerMessageId = v; },
+                setDeferOpenChatGeneratingFromSessions: function (v) { deferOpenChatGeneratingFromSessions = v; },
+                getLastHydratedSessionProject: function () { return lastHydratedSessionProject; },
+                setLastHydratedSessionProject: function (v) { lastHydratedSessionProject = v; },
+            });
+        }
+        return _sessionLoader;
+    }
+
+    // createNewChat / bootRestoreSession host (CuttleChatSession.createSessionBoot).
+    // The page supplies every capability these paths need plus the mutable page
+    // state they advance. Built lazily on first use so page constants declared
+    // later in this IIFE are initialized.
+    let _sessionBoot = null;
+    function sessionBoot() {
+        if (!_sessionBoot) {
+            _sessionBoot = CuttleChatSession.createSessionBoot(session, {
+                saveComposerDraft: saveComposerDraft,
+                applyStarredSlashChips: applyStarredSlashChips,
+                clearChatRestoreVeil: clearChatRestoreVeil,
+                storage: localStorage,
+                detachLocalGenerationForNavigation: detachLocalGenerationForNavigation,
+                resetChatHistoryWindow: resetChatHistoryWindow,
+                transcriptNav: transcriptNav,
+                releaseManualUnreadHoldIfLeaving: releaseManualUnreadHoldIfLeaving,
+                adoptFollowupQueue: adoptFollowupQueue,
+                applyHistorySubagentExpandState: () => historyPanel.applyHistorySubagentExpandState(),
+                applySessionIdentity: applySessionIdentity,
+                setCurrentProject: function (v) { currentProject = v; },
+                setHubLiveStatusCache: function (v) { hubLiveStatusCache = v; },
+                reconcileChatProject: reconcileChatProject,
+                refreshChatWidgets: refreshChatWidgets,
+                closeChatHistoryPanel: closeChatHistoryPanel,
+                updateChatIdBadge: updateChatIdBadge,
+                loadPromptHistoryForSession: loadPromptHistoryForSession,
+                getAuth: function () { return window.CuttleAuth; },
+                stopMessageSync: stopMessageSync,
+                clearFollowupQueue: clearFollowupQueue,
+                stopState: stopState,
+                syncChatUrl: syncChatUrl,
+                reportSessionToShell: reportSessionToShell,
+                restoreWelcomeStickySlash: restoreWelcomeStickySlash,
+                restoreComposerDraft: restoreComposerDraft,
+                pinChatLayout: function () {
+                    if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
+                },
+                resetChatAttentionState: resetChatAttentionState,
+                focusWelcomeComposer: focusWelcomeComposer,
+                takeChatTranscriptPrefetch: takeChatTranscriptPrefetch,
+                waitForAuthReady: waitForAuthReady,
+                firstTruthy: firstTruthy,
+                loadChatSession: loadChatSession,
+                showWelcomeSplash: showWelcomeSplash,
+                showToast: function (message, type) {
+                    if (typeof window.showToast === 'function') window.showToast(message, type);
+                },
+            });
+        }
+        return _sessionBoot;
+    }
+
     function adoptChatSessionId(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        sessionId = canonicalizeChatSessionId(sessionId);
-        const prev = currentSessionId;
-        if (prev && !sessionIdsEqual(sessionId, prev)) {
-            const prevBare = toAuthDbSessionId(prev);
-            const nextBare = toAuthDbSessionId(sessionId);
-            // Already bound to a Cuttle chat. Do not jump to a different numeric
-            // id — that painted this turn under another session's chrome (phone
-            // notification / CH- vs numeric remap / agent CLI session_id).
-            if (
-                prevBare && nextBare
-                && /^\d+$/.test(prevBare) && /^\d+$/.test(nextBare)
-                && prevBare !== nextBare
-            ) {
-                return;
-            }
-            migratePromptHistorySession(prev, sessionId);
-            migrateSessionPrefs(prev, sessionId);
-            migrateComposerDraft(prev, sessionId);
-            if (!isAuthMode()) migrateLocalChatSession(prev, sessionId);
-        }
-        const previousBadgeKey = String(canonicalizeChatSessionId(prev) || '');
-        if (previousBadgeKey !== String(sessionId) && turnBadgeBySession.has(previousBadgeKey)) {
-            turnBadgeBySession.set(String(sessionId), turnBadgeBySession.get(previousBadgeKey));
-            turnBadgeBySession.delete(previousBadgeKey);
-        }
-        const wasNew = currentSessionId == null || !sessionIdsEqual(currentSessionId, sessionId);
-        if (window.CuttleCompletionNotifications && generation.loading) {
-            window.CuttleCompletionNotifications.broker().adopt(prev || completionNotificationPendingId, sessionId);
-        }
-        releaseManualUnreadHoldIfLeaving(sessionId);
-        currentSessionId = sessionId;
-        adoptFollowupQueue(currentSessionId, {transfer: prev == null || !/^\d+$/.test(String(toAuthDbSessionId(prev)))});
-        updateChatIdBadge(sessionId);
-        localStorage.setItem('lastChatSessionId', String(sessionId));
-        if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
-            window.CuttleAuth.setCurrentChatSession(sessionId);
-        }
-        syncChatUrl(sessionId);
-        reportSessionToShell(sessionId);
-        if (prev == null) clearSessionPrefs(newComposerPrefsId);
-        // Persist project / sticky agent chosen before the server assigned an id.
-        persistProjectForCurrentSession();
-        persistStickySlashForCurrentSession(wasNew);
-        // Persist a Muse model/effort picked while the chat had no id yet. Only
-        // dirty picks persist here — persisting the in-memory default would
-        // clobber the stored pin (e.g. Contributor reset to plain Spark 1.3).
-        if (slashPaletteSupplement.museModelDirty) {
-            slashPaletteSupplement.museModelDirty = false;
-            persistMuseModelSelection(slashPaletteSupplement.museModel);
-        }
-        if (slashPaletteSupplement.museEffortDirty) {
-            slashPaletteSupplement.museEffortDirty = false;
-            persistMuseEffortSelection(slashPaletteSupplement.museEffort);
-        }
-        if (slashPaletteSupplement.hermesModelDirty) {
-            slashPaletteSupplement.hermesModelDirty = false;
-            persistHermesModelSelection(slashPaletteSupplement.hermesModel);
-        }
-        if (slashPaletteSupplement.hermesEffortDirty) {
-            slashPaletteSupplement.hermesEffortDirty = false;
-            persistHermesEffortSelection(slashPaletteSupplement.hermesEffort);
-        }
-        if (slashPaletteSupplement.opencodeModelDirty) {
-            slashPaletteSupplement.opencodeModelDirty = false;
-            persistOpenCodeModelSelection(slashPaletteSupplement.opencodeModel);
-        }
-        if (slashPaletteSupplement.opencodeEffortDirty) {
-            slashPaletteSupplement.opencodeEffortDirty = false;
-            persistOpenCodeEffortSelection(slashPaletteSupplement.opencodeEffort);
-        }
-        if (slashPaletteSupplement.codexModelDirty) {
-            slashPaletteSupplement.codexModelDirty = false;
-            persistCodexModelSelection(slashPaletteSupplement.codexModel);
-        }
-        if (slashPaletteSupplement.codexEffortDirty) {
-            slashPaletteSupplement.codexEffortDirty = false;
-            persistCodexEffortSelection(slashPaletteSupplement.codexEffort);
-        }
-        if (slashPaletteSupplement.claudeModelDirty) {
-            slashPaletteSupplement.claudeModelDirty = false;
-            persistClaudeModelSelection(slashPaletteSupplement.claudeModel);
-        }
-        if (slashPaletteSupplement.claudeEffortDirty) {
-            slashPaletteSupplement.claudeEffortDirty = false;
-            persistClaudeEffortSelection(slashPaletteSupplement.claudeEffort);
-        }
-        // Owned by chat_generation.js — rebind the local lock to the newly
-        // bound session while loading; idle means no lock to move.
-        const rebound = CuttleChatGeneration.rebindGeneration(generation, sessionId);
-        if (rebound) {
-            if (rebound.prev) setHistorySessionRunning(rebound.prev, false);
-            setHistorySessionRunning(rebound.sessionId, true);
-        }
-        if (wasNew) {
-            refreshChatHistoryList();
-            scheduleHistoryTitleRefresh();
-            startMessageSync();
-        }
+        return sessionLifecycle().adoptChatSessionId(sessionId);
     }
 
     // Owned by chat_generation.js — thin adapter: cadence decision lives
@@ -13304,8 +7431,64 @@
         if (opts.limit != null) params.set('limit', String(opts.limit));
         if (opts.beforeId != null) params.set('before_id', String(opts.beforeId));
         if (opts.afterId != null) params.set('after_id', String(opts.afterId));
+        if (localStorage.getItem('cuttleShowSessionUsageEstimate') === 'true') {
+            params.set('usage_summary', '1');
+            params.set('include_subagents', localStorage.getItem('cuttleSessionUsageIncludeSubagents') === 'true' ? '1' : '0');
+        }
         const q = params.toString();
         return `/api/auth/sessions/${encodeURIComponent(authSid)}/messages${q ? `?${q}` : ''}`;
+    }
+
+    function updateSessionUsageSummary(entries) {
+        const panel = document.getElementById('chatSessionUsage');
+        const totals = document.getElementById('chatSessionUsageTotals');
+        if (!panel || !totals) return;
+        const enabled = localStorage.getItem('cuttleShowSessionUsageEstimate') === 'true';
+        panel.hidden = !enabled;
+        if (!enabled) return;
+        // Missing data is not evidence of an empty session.
+        if (!Array.isArray(entries)) {
+            totals.textContent = entries === null ? 'Session usage unavailable' : 'Loading session usage…';
+            return;
+        }
+        const normalized = entries.map((entry) => CuttleChatUsage.normalize(entry && entry.usage, entry && entry.metadata)).filter(Boolean);
+        const sum = CuttleChatUsage.sum(normalized);
+        if (!sum) {
+            totals.textContent = 'No token usage recorded for this session';
+            return;
+        }
+        totals.innerHTML = CuttleChatUsage.render(sum, escapeHtml)
+            || 'No token usage recorded for this session';
+    }
+
+    async function refreshSessionUsageSummary() {
+        const id = session.current();
+        if (id == null || id === '' || localStorage.getItem('cuttleShowSessionUsageEstimate') !== 'true') {
+            updateSessionUsageSummary([]);
+            return;
+        }
+        const navSeq = session.navSeq();
+        const includeSubagents = localStorage.getItem('cuttleSessionUsageIncludeSubagents');
+        const isCurrent = () => session.navSeq() === navSeq && String(session.current()) === String(id)
+            && localStorage.getItem('cuttleSessionUsageIncludeSubagents') === includeSubagents;
+        updateSessionUsageSummary();
+        try {
+            const response = await fetchWithTimeout(
+                sessionMessagesUrl(toAuthDbSessionId(id), { limit: 1 }),
+                { credentials: 'include', cache: 'no-store' }, 12000
+            );
+            if (!response.ok) throw new Error('Usage request failed');
+            const data = await response.json();
+            if (isCurrent()) updateSessionUsageSummary(Array.isArray(data.usage_summary) ? data.usage_summary : null);
+        } catch (_) {
+            if (isCurrent()) updateSessionUsageSummary(null);
+        }
+    }
+
+    if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('storage', (event) => {
+            if (event && ['cuttleShowSessionUsageEstimate', 'cuttleSessionUsageIncludeSubagents'].includes(event.key)) refreshSessionUsageSummary();
+        });
     }
 
     function resetChatHistoryWindow() {
@@ -13386,7 +7569,7 @@
      * bubble the user was looking at stays put.
      */
     async function loadOlderChatMessages() {
-        if (!isAuthMode() || currentSessionId == null) return false;
+        if (!isAuthMode() || session.current() == null) return false;
         if (!chatHistoryHasMore || chatHistoryLoadingOlder) return false;
 
         const box = document.getElementById('chatMessages');
@@ -13413,9 +7596,9 @@
                     chatHistoryHasMore = false;
                     return false;
                 }
-                const authSid = toAuthDbSessionId(currentSessionId);
+                const authSid = toAuthDbSessionId(session.current());
                 if (!authSid) return false;
-                const sessionAtStart = String(currentSessionId);
+                const sessionAtStart = String(session.current());
                 const resp = await fetchWithTimeout(
                     sessionMessagesUrl(authSid, {
                         limit: CHAT_HISTORY_PAGE_SIZE,
@@ -13426,7 +7609,7 @@
                 );
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const data = await resp.json();
-                if (String(currentSessionId) !== sessionAtStart) return false;
+                if (String(session.current()) !== sessionAtStart) return false;
                 if (!data.success || !Array.isArray(data.messages)) {
                     chatHistoryHasMore = false;
                     return false;
@@ -13477,11 +7660,11 @@
             }
 
             applyChatHistoryPageMeta(pageMeta || {}, msgs);
-            updateMessageNav();
+            transcriptNav.updateMessageNav();
 
             const newHeight = box.scrollHeight;
             box.scrollTop = prevTop + (newHeight - prevHeight);
-            _ignoreChatScrollPinUntil = Date.now() + 200;
+            transcriptNav.holdScrollPin(200);
             return true;
         } catch (e) {
             console.warn('[Cuttle Chat] load older messages failed:', e);
@@ -13497,16 +7680,16 @@
         if (!box || _chatHistoryLazyScrollWired) return;
         _chatHistoryLazyScrollWired = true;
         box.addEventListener('scroll', () => {
-            if (!isAuthMode() || currentSessionId == null) return;
+            if (!isAuthMode() || session.current() == null) return;
             if (!chatHistoryHasMore || chatHistoryLoadingOlder) return;
-            if (Date.now() < _ignoreChatScrollPinUntil) return;
+            if (transcriptNav.isScrollPinHeld()) return;
             if (box.scrollTop > 72) return;
             loadOlderChatMessages();
         }, { passive: true });
     }
 
     function scheduleNextMessageSync() {
-        if (!isAuthMode() || currentSessionId == null) return;
+        if (!isAuthMode() || session.current() == null) return;
         if (messageSyncTimer) {
             clearTimeout(messageSyncTimer);
             messageSyncTimer = null;
@@ -13516,7 +7699,7 @@
             try {
                 await syncSessionMessagesFromServer();
             } finally {
-                if (isAuthMode() && currentSessionId != null) {
+                if (isAuthMode() && session.current() != null) {
                     scheduleNextMessageSync();
                 }
             }
@@ -13524,7 +7707,7 @@
     }
 
     function startMessageSync() {
-        if (!isAuthMode() || currentSessionId == null) return;
+        if (!isAuthMode() || session.current() == null) return;
         if (messageSyncTimer) return;
         scheduleNextMessageSync();
     }
@@ -13601,7 +7784,7 @@
         }
         const disclosure = el.querySelector('.supervised-activity-disclosure, .supervised-activity-card');
         if (disclosure) wireSupervisedActivityCard(disclosure);
-        try { mountMessageLaunchers(el, msg.role, opts); } catch (_) {}
+        try { subagentLaunchers.mountForMessage(el, msg.role, opts); } catch (_) {}
         if (changed && notifyTerminal && opts.supervised_terminal) {
             showSupervisedJumpNotification({
                 task_id: opts.supervised_task_id,
@@ -13763,8 +7946,8 @@
         `;
         messagesContainer.appendChild(typingDiv);
         scheduleSlashChipCompactLabels(typingDiv);
-        autoScrollChatToBottom();
-        try { paintSubagentOrbs(); } catch (_) {}
+        transcriptNav.autoScrollChatToBottom();
+        try { subagentLaunchers.paintLive(); } catch (_) {}
     }
 
     function ensureLocalTypingIndicator(statusText) {
@@ -13792,430 +7975,90 @@
             && !CuttleChatActivity.liveStatusPredatesReply(liveStatus, reply);
     }
 
-    const SUPERVISED_PHASE_LABELS = (window.CuttleSupervised && window.CuttleSupervised.PHASE_LABELS) || {
-        coordinating: 'Planning task…',
-        delegated: 'Working…',
-        worker_running: 'Working…',
-        follow_up: 'Working…',
-        reviewing: 'Reviewing results…',
-        awaiting_user: 'Awaiting your input…',
-        approved: 'Done',
-        cancelled: 'Cancelled',
-        failed: 'Failed',
-        escalated: 'Escalated',
-        budget_exhausted: 'Budget exhausted',
-        created: 'Thinking…',
-    };
-
-    const _supervisedJumpAck = new Set(
-        (function () {
-            try {
-                return JSON.parse(sessionStorage.getItem('cuttle_supervised_jump_ack') || '[]');
-            } catch (_) {
-                return [];
-            }
-        })()
-    );
-    let _supervisedBubbleObserver = null;
-
-    function acknowledgeSupervisedJump(eventId) {
-        const id = String(eventId || '');
-        if (!id) return;
-        _supervisedJumpAck.add(id);
-        try {
-            sessionStorage.setItem(
-                'cuttle_supervised_jump_ack',
-                JSON.stringify(Array.from(_supervisedJumpAck).slice(-40))
-            );
-        } catch (_) {}
-    }
-
-    function scrollToSupervisedBubble(bubble, opts) {
-        const highlight = !opts || opts.highlight !== false;
-        if (!bubble) return;
-        try {
-            bubble.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        } catch (_) {
-            try { bubble.scrollIntoView(); } catch (__) {}
+    // Supervised activity cards: the rendering/coordination decisions live in
+    // supervised_control.js (CuttleSupervised.createController); the page keeps
+    // thin delegating call sites and supplies DOM/transport/session effects.
+    let _supervisedController = null;
+    function supervisedController() {
+        if (!_supervisedController) {
+            _supervisedController = CuttleSupervised.createController({
+                win: window,
+                formatMessage: formatMessage,
+                stripLegacyAgentChrome: stripLegacyAgentChrome,
+                activateEnhancements: activateEnhancements,
+                currentSession: () => session.current(),
+                sessionIdsEqual: sessionIdsEqual,
+                toAuthDbSessionId: toAuthDbSessionId,
+                fetch: (url, opts) => fetch(url, opts),
+                toast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+                copyTextToClipboard: typeof copyTextToClipboard === 'function'
+                    ? copyTextToClipboard
+                    : null,
+                addUserMessage: (text, opts) => addMessageToUI(text, 'user', opts),
+                autoScroll: () => transcriptNav.autoScrollChatToBottom(true),
+                processMessage: processMessage,
+            });
         }
-        if (highlight) {
-            bubble.classList.add('supervised-bubble-highlight');
-            setTimeout(() => bubble.classList.remove('supervised-bubble-highlight'), 1600);
-        }
+        return _supervisedController;
     }
 
     function showSupervisedJumpNotification(task) {
-        const CS = window.CuttleSupervised;
-        if (!CS || !task || !task.terminal) return;
-        const ev = (task.delivery && task.delivery.terminal_event_id)
-            || task.supervised_delivery_event_id
-            || (String(task.task_id) + ':' + String(task.phase || ''));
-        if (!CS.shouldShowJumpNotification(task, _supervisedJumpAck)) return;
-        let bar = document.getElementById('supervisedJumpNotify');
-        if (!bar) {
-            bar = document.createElement('div');
-            bar.id = 'supervisedJumpNotify';
-            bar.className = 'supervised-jump-notify';
-            bar.setAttribute('role', 'status');
-            bar.setAttribute('aria-live', 'polite');
-            document.body.appendChild(bar);
-        }
-        const label = (CS.jumpLabel && CS.jumpLabel(task.phase))
-            || 'Background task completed';
-        bar.innerHTML = '';
-        const text = document.createElement('span');
-        text.textContent = label + ' · ';
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'supervised-jump-notify-btn';
-        btn.textContent = 'Jump to result';
-        btn.setAttribute('aria-label', label + '. Jump to result');
-        btn.addEventListener('click', () => {
-            acknowledgeSupervisedJump(ev);
-            const box = document.getElementById('chatMessages');
-            const bubble = CS.findCanonicalBubbleEl
-                ? CS.findCanonicalBubbleEl(box, task)
-                : null;
-            scrollToSupervisedBubble(bubble);
-            bar.hidden = true;
-        });
-        bar.appendChild(text);
-        bar.appendChild(btn);
-        bar.hidden = false;
-        bar.dataset.eventId = ev;
+        return supervisedController().showJumpNotification(task);
     }
 
     function upsertSupervisedActivityCard(task) {
-        const CS = window.CuttleSupervised;
-        if (!CS || !task || !task.task_id) return;
-        if (
-            task.parent_session_id != null
-            && currentSessionId != null
-            && String(task.parent_session_id) !== String(currentSessionId)
-            && String(task.parent_session_id) !== String(toAuthDbSessionId(currentSessionId))
-        ) {
-            const bare = String(currentSessionId).replace(/^db_session_/, '');
-            if (String(task.parent_session_id) !== bare) return;
-        }
-        const state = CS.activityStateFromTask(task);
-        if (!state) return;
-        const box = document.getElementById('chatMessages');
-        if (!box) return;
-
-        box.querySelectorAll('.message.system.supervised-activity-row').forEach((row) => {
-            try { row.remove(); } catch (_) {}
-        });
-
-        let bubble = CS.findCanonicalBubbleEl
-            ? CS.findCanonicalBubbleEl(box, task)
-            : box.querySelector(
-                `.message.assistant[data-supervised-task-id="${CSS.escape(String(task.task_id))}"]`
-            );
-        if (!bubble && task.coordinator_response_message_id) {
-            bubble = box.querySelector(
-                `.message[data-message-id="${CSS.escape(String(task.coordinator_response_message_id))}"]`
-            );
-        }
-        if (!bubble) return;
-
-        bubble.dataset.supervisedTaskId = String(task.task_id);
-        bubble.classList.add('supervised-coordinator-message');
-        if (task.coordinator_response_message_id != null) {
-            bubble.dataset.messageId = String(task.coordinator_response_message_id);
-        }
-
-        const contentEl = bubble.querySelector('.message-content');
-        if (contentEl) {
-            const nextRaw = String(
-                task.bubble_content
-                || (task.terminal && task.final_response)
-                || bubble.dataset.rawContent
-                || ''
-            );
-            let html;
-            if (nextRaw && /cuttle_supervised_activity|Working…|Planning|Reviewing|Thinking/i.test(nextRaw)) {
-                bubble.dataset.rawContent = nextRaw;
-                html = formatMessage(stripLegacyAgentChrome(nextRaw));
-            } else if (!task.terminal && CS.buildWorkingBubbleHtml) {
-                html = CS.buildWorkingBubbleHtml(state);
-                bubble.dataset.rawContent = state.phase_label || 'Working…';
-            } else {
-                const disclosure = CS.buildActivityDisclosureHtml
-                    ? CS.buildActivityDisclosureHtml(state)
-                    : '';
-                const body = String(task.final_response || nextRaw || state.phase_label || '');
-                bubble.dataset.rawContent = nextRaw || body;
-                html = formatMessage(stripLegacyAgentChrome(body)) + disclosure;
-            }
-            contentEl.innerHTML = html;
-            try { activateEnhancements(bubble); } catch (_) {}
-        }
-
-        const disclosure = bubble.querySelector('.supervised-activity-disclosure, .supervised-activity-card');
-        if (disclosure) wireSupervisedActivityCard(disclosure);
-
-        if (task.terminal) {
-            showSupervisedJumpNotification(task);
-        }
-        observeSupervisedCanonicalBubble(bubble, task);
+        return supervisedController().upsertActivityCard(task);
     }
 
     function wireSupervisedActivityCard(card) {
-        if (!card || card.__wiredSupervised) return;
-        card.__wiredSupervised = true;
-        card.addEventListener('click', async (ev) => {
-            const btn = ev.target && ev.target.closest
-                ? ev.target.closest('[data-supervised-action]')
-                : null;
-            if (!btn) return;
-            ev.preventDefault();
-            const action = btn.getAttribute('data-supervised-action');
-            const taskId = btn.getAttribute('data-task-id')
-                || card.getAttribute('data-supervised-task-id')
-                || (card.closest('[data-supervised-task-id]')
-                    && card.closest('[data-supervised-task-id]').getAttribute('data-supervised-task-id'));
-            if (action === 'followup') {
-                const form = card.querySelector('.supervised-activity-followup-form');
-                if (form) form.hidden = false;
-                const ta = card.querySelector('.supervised-activity-followup-input');
-                if (ta) ta.focus();
-                return;
-            }
-            if (action === 'followup_cancel') {
-                const form = card.querySelector('.supervised-activity-followup-form');
-                if (form) form.hidden = true;
-                return;
-            }
-            if (action === 'followup_submit') {
-                const ta = card.querySelector('.supervised-activity-followup-input');
-                const text = (ta && ta.value || '').trim();
-                if (!text) return;
-                btn.disabled = true;
-                try {
-                    await dispatchSupervisedTaskControl(taskId, 'followup', { instruction: text });
-                    if (ta) ta.value = '';
-                    const form = card.querySelector('.supervised-activity-followup-form');
-                    if (form) form.hidden = true;
-                } finally {
-                    btn.disabled = false;
-                }
-                return;
-            }
-            if (action === 'status') {
-                btn.disabled = true;
-                try {
-                    await dispatchSupervisedTaskControl(taskId, 'status');
-                } finally {
-                    btn.disabled = false;
-                }
-                return;
-            }
-            if (action === 'cancel') {
-                btn.disabled = true;
-                try {
-                    await dispatchSupervisedTaskControl(taskId, 'cancel');
-                } finally {
-                    btn.disabled = false;
-                }
-                return;
-            }
-            if (action === 'view_report') {
-                const reportUrl = btn.getAttribute('data-report-url')
-                    || (window.__lastSupervisedTask
-                        && window.__lastSupervisedTask.raw_report_url)
-                    || '';
-                if (reportUrl) {
-                    window.open(reportUrl + (reportUrl.includes('?') ? '&' : '?') + 'format=text', '_blank', 'noopener');
-                } else {
-                    (window.showToast || function () {})('No worker report artifact yet.', 'info');
-                }
-                return;
-            }
-            if (action === 'copy_details') {
-                const pre = card.querySelector('.supervised-activity-details-md');
-                const detailsText = (pre && (pre.textContent || pre.innerText) || '').trim();
-                if (!detailsText) {
-                    (window.showToast || function () {})('No activity details to copy.', 'info');
-                    return;
-                }
-                const copyFn = (typeof copyTextToClipboard === 'function')
-                    ? copyTextToClipboard
-                    : async (t) => {
-                        if (navigator.clipboard && window.isSecureContext) {
-                            await navigator.clipboard.writeText(t);
-                            return true;
-                        }
-                        return false;
-                    };
-                try {
-                    const ok = await copyFn(detailsText);
-                    (window.showToast || function () {})(
-                        ok ? 'Copied activity details' : 'Could not copy details',
-                        ok ? 'success' : 'error'
-                    );
-                } catch (_) {
-                    (window.showToast || function () {})('Could not copy details', 'error');
-                }
-                return;
-            }
-            if (action === 'view_activity') {
-                await dispatchSupervisedTaskControl(taskId, 'status');
-            }
-        });
+        return supervisedController().wireActivityCard(card);
     }
 
-    async function dispatchSupervisedTaskControl(taskId, action, params = {}) {
-        const key = `${taskId}:${action}:${params.instruction || ''}`;
-        if (!dispatchSupervisedTaskControl._inflight) dispatchSupervisedTaskControl._inflight = new Set();
-        if (dispatchSupervisedTaskControl._inflight.has(key)) return null;
-        dispatchSupervisedTaskControl._inflight.add(key);
-        try {
-            const response = await fetch(`/api/supervised/tasks/${encodeURIComponent(taskId)}/control`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action, ...params, session_id: currentSessionId }),
-            });
-            const body = await response.json();
-            if (!response.ok || body.success === false) throw new Error(body.error || `HTTP ${response.status}`);
-            if (body.supervised_task) upsertSupervisedActivityCard(body.supervised_task);
-            (window.showToast || function () {})(body.acknowledgement || 'Updated.', 'success');
-            return body;
-        } catch (err) {
-            (window.showToast || function () {})(String(err && err.message || err), 'error');
-            return null;
-        } finally {
-            dispatchSupervisedTaskControl._inflight.delete(key);
-        }
+    function dispatchSupervisedTaskControl(taskId, action, params) {
+        return supervisedController().dispatchTaskControl(taskId, action, params);
     }
 
-    async function dispatchSupervisedControlMessage(message, opts = {}) {
-        const onceKey = opts.onceKey || '';
-        if (onceKey && dispatchSupervisedControlMessage._inflight
-            && dispatchSupervisedControlMessage._inflight.has(onceKey)) {
-            return;
-        }
-        if (!dispatchSupervisedControlMessage._inflight) {
-            dispatchSupervisedControlMessage._inflight = new Set();
-        }
-        if (onceKey) dispatchSupervisedControlMessage._inflight.add(onceKey);
-        try {
-            const outbound = String(message || '').trim();
-            if (!isImmediateControlLaneMessage(outbound)) return;
-            const userTs = Date.now();
-            addMessageToUI(outbound, 'user', { timestamp: userTs });
-            autoScrollChatToBottom(true);
-            await processMessage(outbound, { controlLane: true });
-        } finally {
-            if (onceKey) dispatchSupervisedControlMessage._inflight.delete(onceKey);
-        }
+    async function dispatchSupervisedControlMessage(message, opts) {
+        return supervisedController().dispatchControlMessage(message, opts);
     }
 
     function observeSupervisedCanonicalBubble(bubble, task) {
-        if (!bubble || typeof IntersectionObserver === 'undefined') return;
-        if (_supervisedBubbleObserver) {
-            try { _supervisedBubbleObserver.disconnect(); } catch (_) {}
-        }
-        const el = document.getElementById('supervisedTaskIndicator');
-        if (!el) return;
-        _supervisedBubbleObserver = new IntersectionObserver((entries) => {
-            const entry = entries[0];
-            const active = task && !task.terminal;
-            if (!active) {
-                el.hidden = true;
-                return;
-            }
-            el.hidden = !!(entry && entry.isIntersecting);
-        }, { root: document.getElementById('chatMessages'), threshold: 0.12 });
-        _supervisedBubbleObserver.observe(bubble);
+        return supervisedController().observeCanonicalBubble(bubble, task);
     }
 
-    /** Tiny off-screen chip — never a worker card or pending-prompt modal. */
     function updateSupervisedTaskIndicator(liveStatus, sessionId) {
-        const el = document.getElementById('supervisedTaskIndicator');
-        if (!el) return;
-        if (
-            sessionId != null
-            && currentSessionId != null
-            && !sessionIdsEqual(sessionId, currentSessionId)
-        ) {
-            return;
-        }
-        const task = liveStatus && liveStatus.supervised_task;
-        window.__lastSupervisedTask = task || null;
-        if (task && task.task_id) {
-            upsertSupervisedActivityCard(task);
-        }
-        if (!task || !task.task_id || task.terminal) {
-            el.hidden = true;
-            el.classList.remove('is-terminal');
-            return;
-        }
-        const phaseEl = document.getElementById('supervisedTaskPhase');
-        const metaEl = document.getElementById('supervisedTaskMeta');
-        const detailEl = document.getElementById('supervisedTaskDetail');
-        if (phaseEl) phaseEl.textContent = 'Background task working';
-        if (metaEl) metaEl.textContent = '';
-        if (detailEl) detailEl.textContent = 'Jump to task';
-        el.classList.remove('is-terminal');
-        el.setAttribute('role', 'button');
-        el.setAttribute('tabindex', '0');
-        el.setAttribute('aria-label', 'Background task working. Jump to task.');
-        el.onclick = () => {
-            const box = document.getElementById('chatMessages');
-            const CS = window.CuttleSupervised;
-            const bubble = CS && CS.findCanonicalBubbleEl
-                ? CS.findCanonicalBubbleEl(box, task)
-                : null;
-            scrollToSupervisedBubble(bubble);
-        };
-        el.onkeydown = (ev) => {
-            if (ev.key === 'Enter' || ev.key === ' ') {
-                ev.preventDefault();
-                el.click();
-            }
-        };
-        const box = document.getElementById('chatMessages');
-        const CS = window.CuttleSupervised;
-        const bubble = CS && CS.findCanonicalBubbleEl
-            ? CS.findCanonicalBubbleEl(box, task)
-            : null;
-        if (!bubble) {
-            el.hidden = false;
-        } else {
-            observeSupervisedCanonicalBubble(bubble, task);
-        }
+        return supervisedController().updateTaskIndicator(liveStatus, sessionId);
     }
 
     function updateRemoteWaitingFromMessages(messages, liveStatus) {
         rememberTurnBadge(messages, liveStatus);
         refreshTypingIndicatorHeaderBadges();
         noteWidgetsRevision(liveStatus);
-        updateSupervisedTaskIndicator(liveStatus, currentSessionId);
+        updateSupervisedTaskIndicator(liveStatus, session.current());
         // Local stream owns this chat's turn — keep/restore the typing bubble
         // (it is wiped when switching chats or after a hard refresh race).
         if (
             generation.loading
             && generation.localSessionId != null
-            && currentSessionId != null
-            && sessionIdsEqual(generation.localSessionId, currentSessionId)
+            && session.current() != null
+            && sessionIdsEqual(generation.localSessionId, session.current())
         ) {
             const statusLabel = (liveStatus && liveStatus.status) || undefined;
             ensureLocalTypingIndicator(statusLabel);
-            setHistorySessionRunning(currentSessionId, true);
-            try { syncSubagentOrbs(liveStatus && liveStatus.subagents); } catch (_) {}
+            setHistorySessionRunning(session.current(), true);
+            try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             return;
         }
         // Generating in another chat in this tab — don't steal that stream's UI.
         if (generation.loading) {
             removeRemoteWaitingIndicator();
             const liveActiveOther = remoteLiveStatusLooksActive(liveStatus);
-            if (currentSessionId && liveActiveOther) {
-                setHistorySessionRunning(currentSessionId, true);
+            if (session.current() && liveActiveOther) {
+                setHistorySessionRunning(session.current(), true);
                 const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
                 addRemoteWaitingIndicator(statusLabel);
                 updateRemoteWaitingStatus(statusLabel, liveStatus && liveStatus.report_url);
-                try { syncSubagentOrbs(liveStatus && liveStatus.subagents); } catch (_) {}
+                try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             }
             return;
         }
@@ -14230,7 +8073,7 @@
             || transcriptEndsWithGenerationStop(messages)
         ) {
             removeRemoteWaitingIndicator();
-            if (currentSessionId) setHistorySessionRunning(currentSessionId, false);
+            if (session.current()) setHistorySessionRunning(session.current(), false);
             return;
         }
         // live-status is fetched in parallel with messages; a reply can already be
@@ -14241,17 +8084,17 @@
             && !turnAlreadyShowsAssistantReply();
         const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
         const wasGeneratingUi = !!document.getElementById('typing-indicator-remote')
-            || (currentSessionId != null
-                && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId)));
+            || (session.current() != null
+                && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current())));
         // Only show remote waiting when the server says a run is still active —
         // not merely because the last stored message is from the user (e.g. after Stop).
-        if (currentSessionId) {
-            setHistorySessionRunning(currentSessionId, liveActive);
+        if (session.current()) {
+            setHistorySessionRunning(session.current(), liveActive);
         }
         if (liveActive) {
             addRemoteWaitingIndicator(statusLabel);
             updateRemoteWaitingStatus(statusLabel, liveStatus && liveStatus.report_url);
-            try { syncSubagentOrbs(liveStatus && liveStatus.subagents); } catch (_) {}
+            try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             // Offer Stop for remote/other-tab runs too.
             const stopButton = document.getElementById('stopButton');
             if (stopButton) {
@@ -14273,77 +8116,63 @@
         }
     }
 
-    // A finished reply whose SSE stream died (refresh, network blip, Flask
-    // hiccup) is parked server-side. Collect it instead of losing the run.
-    // Owned by chat_pending_result.js — thin adapter: the page owns the
-    // pending/live transport, paint, clock, and turn/stop guards; the wait
-    // decisions live in the owner. After stream detach: one short poll at a
-    // time — 2s dual GETs were starving chat reloads / YouTube while a long
-    // agent ran.
-    async function collectPendingResult(sessionId, opts = {}) {
-        return CuttleChatPendingResult.waitForPendingResult(sessionId, opts, {
-            isStaleNav: () => CuttleTurnGuard.isStale(opts.navGen, turnGeneration),
-            isStopped: () => stopState.userStopped || stopState.abortSuppressed,
-            hasReplyForTurn: () => !!(inFlightUserMessage && turnAlreadyShowsAssistantReply()),
-            fetchPending: async (sid) => {
-                const resp = await fetchWithTimeout(
-                    `/api/chat-pending-result?session_id=${encodeURIComponent(sid)}`,
-                    { credentials: 'include', cache: 'no-store' },
-                    8000
-                );
-                return resp.json();
-            },
-            // Prefer hub cache for live-status when in the app shell (no extra GET).
-            fetchLive: (sid) => (inAppShell && shellHubSeen)
-                ? (getCachedHubLiveStatus(sid) || fetchChatLiveStatus(sid))
-                : fetchChatLiveStatus(sid),
-            liveLooksActive: (live) => liveStatusLooksActive(live),
-            recoverFromHistory: (sid) => recoverChatResultFromServer(sid),
-            onLiveStatus: (live) => {
-                if (isViewingSession(sessionId)) updateTypingStatus(live.status);
-            },
-            onReportUrl: (url) => {
-                if (isViewingSession(sessionId)) updateTypingIndicatorQueryLink(url);
-            },
-            consume: (sid) => consumeParkedChatResult(sid),
-            netDebug: (name, info) => {
-                try {
-                    window.CuttleNetDebug && window.CuttleNetDebug.event(name, info);
-                } catch (_) {}
-            },
-            sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-            now: () => Date.now(),
-        });
-    }
-
-    /** Ack/consume a parked reply after the browser actually received it via SSE. */
-    // Owned by chat_pending_result.js — thin adapter: the page owns the URL.
-    function consumeParkedChatResult(sessionId) {
-        CuttleChatPendingResult.consumeParkedChatResult(sessionId, (sid) => {
-            try {
-                fetchWithTimeout(
-                    `/api/chat-pending-result?session_id=${encodeURIComponent(sid)}&consume=1`,
-                    { credentials: 'include', cache: 'no-store' },
-                    5000
-                ).catch(() => {});
-            } catch (_) {}
-        });
-    }
-
-    /**
-     * After a Flask restart, recover durable restart status + chat history without
-     * requiring the user to send another message ("yo…did you finish?").
-     */
-    let _restartRecoverInFlight = false;
-    let _lastRestartNotifiedId = null;
-    // Owned by chat_pending_result.js — thin adapter: the page holds the
-    // in-flight guard + notified-id set and owns status/health transport,
-    // paint, and history sync effects; the poll decisions live in the owner.
-    async function recoverAfterFlaskRestart(opts = {}) {
-        if (_restartRecoverInFlight) return null;
-        _restartRecoverInFlight = true;
-        try {
-            return await CuttleChatPendingResult.waitForServerRecovery(opts, {
+    // Recovery (detached-turn completion, parked-result retrieval, history
+    // recovery, post-restart recovery) is owned by chat_pending_result.js as
+    // one controller per chat root. The page supplies every effect — transport
+    // URLs, paint, clock, turn/stop guards, the history-running chirp — as an
+    // explicit `host`; the sequencing and the guard/registry state live in the
+    // owner. Built lazily so page constants declared later are initialized.
+    let _recoveryController = null;
+    function recoveryController() {
+        if (!_recoveryController) {
+            _recoveryController = CuttleChatPendingResult.createRecoveryController({
+                sessionIdsEqual: sessionIdsEqual,
+                canonicalizeSessionId: (id) => canonicalizeChatSessionId(id),
+                toAuthDbSessionId: (id) => toAuthDbSessionId(id),
+                currentSession: () => session.current(),
+                isStaleNav: (navGen) => CuttleTurnGuard.isStale(navGen, turnGeneration),
+                isStopped: () => stopState.userStopped || stopState.abortSuppressed,
+                hasReplyForTurn: () => !!(inFlightUserMessage && turnAlreadyShowsAssistantReply()),
+                isViewing: (sid) => isViewingSession(sid),
+                isAuthMode: () => isAuthMode(),
+                inFlightUserText: () => inFlightUserMessage,
+                norm: (text) => normalizeMessageContentForMatch(text),
+                alreadyOnScreen: (role, content) => uiAlreadyHasMessage(role, content),
+                isCancelledText: (text) => isCancelledAgentText(text),
+                normalizeUsage: (usage) => normalizeUsagePayload(usage),
+                liveLooksActive: (live) => liveStatusLooksActive(live),
+                fetchPending: async (sid) => {
+                    const resp = await fetchWithTimeout(
+                        `/api/chat-pending-result?session_id=${encodeURIComponent(sid)}`,
+                        { credentials: 'include', cache: 'no-store' },
+                        8000
+                    );
+                    return resp.json();
+                },
+                fetchLive: (sid) => fetchChatLiveStatus(sid),
+                // Prefer hub cache for live-status when in the app shell (no extra GET).
+                fetchLiveForRecovery: (sid) => (inAppShell && shellHubSeen)
+                    ? (getCachedHubLiveStatus(sid) || fetchChatLiveStatus(sid))
+                    : fetchChatLiveStatus(sid),
+                consumeFetch: (sid) => {
+                    try {
+                        fetchWithTimeout(
+                            `/api/chat-pending-result?session_id=${encodeURIComponent(sid)}&consume=1`,
+                            { credentials: 'include', cache: 'no-store' },
+                            5000
+                        ).catch(() => {});
+                    } catch (_) {}
+                },
+                fetchMessages: async (authSid, limit) => {
+                    const resp = await fetchWithTimeout(
+                        sessionMessagesUrl(authSid, { limit }),
+                        { credentials: 'include', cache: 'no-store' },
+                        8000
+                    );
+                    if (!resp.ok) return { ok: false };
+                    return { ok: true, data: await resp.json() };
+                },
+                pageSize: CHAT_HISTORY_PAGE_SIZE,
                 fetchRestartStatus: async () => {
                     const resp = await fetchWithTimeout(
                         '/api/flask/restart/status?consume=1',
@@ -14359,18 +8188,32 @@
                     }, 4000);
                     return !!h.ok;
                 },
-                syncMessages: () => syncSessionMessagesFromServer(),
                 paintStatus: (text) => updateTypingStatus(text),
+                paintQueryLink: (url) => updateTypingIndicatorQueryLink(url),
+                paintSyncing: () => updateTypingStatus('Working… (syncing reply)'),
                 clearTyping: () => removeTypingIndicator(),
+                setHistoryRunning: (sid, on) => setHistorySessionRunning(sid, on),
+                notifyReady: (sid, opts) => notifyAssistantResponseReady(sid, opts),
+                syncMessages: () => syncSessionMessagesFromServer(),
                 toast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+                tryDetachedWatchViaBroker: () => {
+                    if (inAppShell && window.parent.cuttleActivityBroker) {
+                        window.parent.cuttleActivityBroker.refresh();
+                        return true;
+                    }
+                    return false;
+                },
+                classifyDetachedPoll: (step) => CuttleChatGeneration.classifyDetachedPoll(step),
+                netDebug: (name, info) => {
+                    try {
+                        window.CuttleNetDebug && window.CuttleNetDebug.event(name, info);
+                    } catch (_) {}
+                },
                 sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
                 now: () => Date.now(),
-                wasNotified: (id) => id === _lastRestartNotifiedId,
-                markNotified: (id) => { _lastRestartNotifiedId = id; },
             });
-        } finally {
-            _restartRecoverInFlight = false;
         }
+        return _recoveryController;
     }
 
     /**
@@ -14420,7 +8263,7 @@
                     // processMessage(text, { controlLane: true }).
                     sendControlCommand: (text) => processMessage(String(text), { controlLane: true }),
                     context: () => ({
-                        sessionId: currentSessionId,
+                        sessionId: session.current(),
                         projectPath: (currentProject && currentProject.path)
                             ? String(currentProject.path)
                             : undefined,
@@ -14604,53 +8447,6 @@
      * well under a second), so the card adopts whatever restart is in flight.
      */
 
-    /**
-     * When pending-result is empty after a detached stream, pull the assistant
-     * reply that follows this turn's user message from auth history (DB).
-     */
-    // Owned by chat_pending_result.js — thin adapter: the page owns the
-    // messages transport; match decisions live in the owner.
-    async function recoverChatResultFromServer(sessionId) {
-        return CuttleChatPendingResult.recoverChatResult(sessionId, {
-            isAuthMode: () => isAuthMode(),
-            toAuthDbSessionId: (sid) => toAuthDbSessionId(sid),
-            fetchMessages: async (authSid, limit) => {
-                const resp = await fetchWithTimeout(
-                    sessionMessagesUrl(authSid, { limit }),
-                    { credentials: 'include', cache: 'no-store' },
-                    8000
-                );
-                if (!resp.ok) return { ok: false };
-                return { ok: true, data: await resp.json() };
-            },
-            pageSize: CHAT_HISTORY_PAGE_SIZE,
-            inFlightText: inFlightUserMessage,
-            norm: (text) => normalizeMessageContentForMatch(text),
-            alreadyOnScreen: (role, content) => uiAlreadyHasMessage(role, content),
-            isCancelledText: (text) => isCancelledAgentText(text),
-            normalizeUsage: (usage) => normalizeUsagePayload(usage),
-            netDebug: (name, info) => {
-                try {
-                    window.CuttleNetDebug && window.CuttleNetDebug.event(name, info);
-                } catch (_) {}
-            },
-        });
-    }
-
-    /** Extra history polls before giving up with "No response received." */
-    // Owned by chat_pending_result.js — thin adapter.
-    async function recoverChatResultWithRetries(sessionId, attempts, gapMs) {
-        return CuttleChatPendingResult.recoverChatResultWithRetries(
-            sessionId, attempts, gapMs, {
-                isStopped: () => stopState.userStopped || stopState.abortSuppressed,
-                recover: (sid) => recoverChatResultFromServer(sid),
-                isViewing: () => isViewingSession(sessionId),
-                paintSyncing: () => updateTypingStatus('Working… (syncing reply)'),
-                sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-            }
-        );
-    }
-
     function fetchWithTimeout(url, opts = {}, timeoutMs = 5000) {
         const ctrl = new AbortController();
         const timer = setTimeout(() => {
@@ -14738,7 +8534,7 @@
             stopButton.style.display = 'none';
         }
         setWelcomeComposerEnabled(true);
-        if (followupQueue.items.length && !stopState.waitingSuppressed) {
+        if (followupController().getState().items.length && !stopState.waitingSuppressed) {
             scheduleFollowupDrain(80);
         }
     }
@@ -14757,7 +8553,7 @@
     }
 
     async function syncSessionMessagesFromServer() {
-        if (!isAuthMode() || currentSessionId == null) return;
+        if (!isAuthMode() || session.current() == null) return;
         // Background / minimized: skip churn; visibilitychange triggers a sync on return.
         if (pageIsBackgrounded()) return;
         const chatArea = document.getElementById('chatArea');
@@ -14776,20 +8572,20 @@
         if (!syncClaim) return;
 
         const syncSeq = syncClaim.token;
-        const sessionAtStart = String(currentSessionId);
+        const sessionAtStart = String(session.current());
         // Capture the existing navigation sequence for A->B->A fencing
         // (no second generation).
-        const navAtStart = _loadSessionSeq;
+        const navAtStart = session.navSeq();
         // True only while this request is still the current one: it owns
         // the claim, no navigation happened since, and the session still
         // matches. Required before ANY body-derived effect, including the
         // malformed active-status branch below.
         const syncStillCurrent = () =>
             CuttleChatGeneration.isSyncCurrent(messageSync, syncSeq)
-            && _loadSessionSeq === navAtStart
-            && String(currentSessionId) === sessionAtStart;
+            && session.navSeq() === navAtStart
+            && String(session.current()) === sessionAtStart;
         try {
-            const authSid = toAuthDbSessionId(currentSessionId);
+            const authSid = toAuthDbSessionId(session.current());
             let msgResp;
             let liveStatus = null;
             const useHubStatus = inAppShell && shellHubSeen;
@@ -14799,14 +8595,14 @@
                     { credentials: 'include', cache: 'no-store' },
                     8000
                 );
-                if (useHubStatus) liveStatus = getCachedHubLiveStatus(currentSessionId);
+                if (useHubStatus) liveStatus = getCachedHubLiveStatus(session.current());
             } else {
                 const pair = await Promise.all([
                     fetchWithTimeout(sessionMessagesUrl(authSid, { limit: CHAT_HISTORY_PAGE_SIZE }), {
                         credentials: 'include',
                         cache: 'no-store',
                     }, 8000),
-                    fetchChatLiveStatus(currentSessionId),
+                    fetchChatLiveStatus(session.current()),
                 ]);
                 msgResp = pair[0];
                 liveStatus = pair[1];
@@ -14822,14 +8618,15 @@
                 return;
             }
             if (!syncStillCurrent()) return;
+            updateSessionUsageSummary(data.usage_summary);
             applyServerFollowups(data.followups, data.followup_revision);
-            acceptSessionAttention(currentSessionId, data.attention);
+            acceptSessionAttention(session.current(), data.attention);
             // Keep badges truthful on incremental syncs too (same seeding as open).
-            hydrateAgentSelectionFromSessionData(data, currentSessionId);
+            hydrateAgentSelectionFromSessionData(data, session.current());
             applySessionIdentity(data);
             if (data.session_name) {
-                rememberChatSessionTitle(currentSessionId, data.session_name);
-                updateChatSessionTitle(currentSessionId);
+                rememberChatSessionTitle(session.current(), data.session_name);
+                updateChatSessionTitle(session.current());
             }
 
             let appendedAssistant = false;
@@ -14976,7 +8773,7 @@
                         || lastAsst.querySelector('.slash-command-chip--error')
                     )
                 );
-                notifyAssistantResponseReady(currentSessionId, {
+                notifyAssistantResponseReady(session.current(), {
                     fromSync: true,
                     isError: errFromUi,
                 });
@@ -14988,7 +8785,7 @@
                 reconcileCuttleButtonLocks(data.messages);
             }
 
-            if (addedAny) autoScrollChatToBottom();
+            if (addedAny) transcriptNav.autoScrollChatToBottom();
         } catch (e) {
             console.warn('[Cuttle Chat] message sync failed:', e);
         } finally {
@@ -15000,80 +8797,15 @@
         }
     }
 
+    // Owned by chat_session.js (CuttleChatSession.createLifecycle) — thin adapter.
     function saveChatSession(message, role, opts = {}) {
-        // Authenticated chats are persisted server-side in /api/chat
-        if (isAuthMode()) {
-            if (currentSessionId != null) {
-                localStorage.setItem('lastChatSessionId', String(currentSessionId));
-            }
-            localStorage.setItem('autoResumeSession', 'true');
-            if (role === 'assistant') scheduleHistoryTitleRefresh();
-            return;
-        }
-
-        if (!currentSessionId) {
-            // Create new session (CH-XXXXXX for anonymous local chats)
-            clearSessionPrefs(newComposerPrefsId);
-            currentSessionId = generateLocalChatId();
-            adoptFollowupQueue(currentSessionId);
-            localStorage.setItem('lastChatSessionId', currentSessionId);
-            updateChatIdBadge(currentSessionId);
-        }
-        
-        const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-        
-        if (!sessions[currentSessionId]) {
-            sessions[currentSessionId] = {
-                id: currentSessionId,
-                title: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
-                created: Date.now(),
-                updated: Date.now(),
-                messages: [],
-                projectId: currentProject ? currentProject.id : null,
-                projectPath: currentProject ? currentProject.path : '',
-                projectName: currentProject ? currentProject.name : '',
-            };
-        }
-        
-        const msg = { content: message, role: role, timestamp: Date.now() };
-        if (opts.query_id) msg.query_id = opts.query_id;
-        if (opts.report_url) msg.report_url = opts.report_url;
-        if (opts.slash_command) msg.slash_command = opts.slash_command;
-        if (opts.slash_command_failed) msg.slash_command_failed = true;
-        if (opts.usage) msg.usage = opts.usage;
-        if (opts.routing_badge) msg.routing_badge = opts.routing_badge;
-        const atts = normalizeAttachmentList(opts.attachments);
-        if (atts.length) msg.attachments = atts;
-        sessions[currentSessionId].messages.push(msg);
-        
-        sessions[currentSessionId].updated = Date.now();
-        
-        localStorage.setItem('chatSessions', JSON.stringify(sessions));
-        
-        // Re-enable auto-resume since user is actively chatting
-        localStorage.setItem('autoResumeSession', 'true');
-        
-        // Reload chat history to update sidebar (keep active search/filters)
-        reloadHistoryListKeepingSearch();
+        return sessionLifecycle().saveChatSession(message, role, opts);
     }
 
+    // Owned by chat_history_view.js (CuttleChatHistoryView.historyActionIcons) —
+    // thin alias so the shared chrome menu builder keeps a page-local name.
     function _historyActionIcons() {
-        return {
-            // Match in-chat chrome hamburger (3 lines), not a vertical kebab.
-            hamburger: '<span class="chat-chrome-hamburger" aria-hidden="true"><span></span><span></span><span></span></span>',
-            copy: '<svg class="chat-id-badge-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="18" cy="5" r="3" stroke="currentColor" stroke-width="2"/><circle cx="6" cy="12" r="3" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="19" r="3" stroke="currentColor" stroke-width="2"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><svg class="chat-id-badge-check" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-            pencil: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>',
-            trash: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
-            archive: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
-            unarchive: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><polyline points="12 12 12 16"/><polyline points="9.5 13.5 12 11 14.5 13.5"/></svg>',
-            starOutline: '<svg class="chat-star-menu-icon chat-star-menu-icon--outline" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.8 6.7 19.6l1-5.8-4.2-4.1 5.9-.9L12 3.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
-            starFilled: '<svg class="chat-star-menu-icon chat-star-menu-icon--filled" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.8 6.7 19.6l1-5.8-4.2-4.1 5.9-.9L12 3.5z"/></svg>',
-            unread: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="5" fill="currentColor" opacity="0.9"/><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.6" opacity="0.45"/></svg>',
-            gitPush: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 19V5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 12l7-7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-            terminal: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><polyline points="4 17 10 11 4 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="19" x2="20" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-            voice: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-            subagents: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="2.2" stroke="currentColor" stroke-width="2"/><circle cx="6" cy="18" r="2.2" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="12" r="2.2" stroke="currentColor" stroke-width="2"/><path d="M8.3 7.2c2.1 2 2.1 7.6 0 9.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8.4 12H15.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-        };
+        return CuttleChatHistoryView.historyActionIcons();
     }
 
     /** True until /api/terminal/status says otherwise — shared by both overflow menus. */
@@ -15110,6 +8842,16 @@
         }
         if (hasSession) {
             parts.push(
+                '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
+                + ' title="Export transcript (Markdown)" aria-label="Export transcript (Markdown)"'
+                + ' onclick="window.chatPageExportSession(\'' + sid + '\', event)">'
+                + icons.download
+                + '<span class="chat-chrome-menu-item-label">Export</span>'
+                + '</button>'
+            );
+        }
+        if (hasSession) {
+            parts.push(
                 '<button type="button" class="chat-chrome-menu-item'
                 + (starred ? ' is-starred' : '') + '" role="menuitem"'
                 + ' title="' + starLabel + '" aria-label="' + starLabel + '"'
@@ -15137,7 +8879,7 @@
                 + '</button>'
             );
         }
-        const subGroup = historySubagentGroupOwnedBy(sessionId);
+        const subGroup = historyPanel.historySubagentGroupOwnedBy(sessionId);
         if (subGroup && subGroup.getAttribute('data-force-expanded') !== '1') {
             const collapsed = subGroup.classList.contains('is-collapsed');
             const subLabel = collapsed ? 'Show sub-agents' : 'Hide sub-agents';
@@ -15150,7 +8892,7 @@
                 + '</button>'
             );
         }
-        parts.push(gitPushMenuHtml(icons));
+        parts.push(gitPush.menuHtml(icons));
         if (_terminalMenuAvailable) {
             parts.push(
                 '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
@@ -15197,123 +8939,129 @@
     }
 
     function closeAllSessionMenus() {
-        closeHistoryItemMenu();
+        historyPanel.closeMenu();
         closeChatChromeMenu();
     }
 
-    function historyStarredIconHTML() {
-        return '<span class="history-starred-icon" title="Starred" aria-label="Starred">★</span>';
+    function exportHHMM(ts) {
+        if (!ts) return '';
+        const d = new Date(ts);
+        if (Number.isNaN(d.getTime())) return '';
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        return hh + ':' + mm;
     }
 
-    function createHistoryDeleteActionsHTML(sessionId, opts) {
-        const icons = _historyActionIcons();
-        const includeRename = !!(opts && opts.includeRename);
-        const lastMs = Number(opts && opts.lastMessageMs) || 0;
-        const sid = String(sessionId).replace(/'/g, "\\'");
-        const timeHtml = lastMs > 0
-            ? `<time class="chat-time" datetime="${new Date(lastMs).toISOString()}" data-ts="${lastMs}" title="${escapeHtmlInline(new Date(lastMs).toLocaleString())}">${escapeHtmlInline(formatHistoryLastMessageAge(lastMs))}</time>`
-            : '';
-        const openHtml = historyOpenPaneBadgeHTML(sessionId);
-        return `
-            <div class="chat-actions" data-include-rename="${includeRename ? '1' : '0'}">
-                ${openHtml}
-                ${timeHtml}
-                <button type="button" class="chat-action-button chat-menu-btn"
-                    onclick="window.chatPageToggleHistoryMenu('${sid}', event)"
-                    title="Chat actions"
-                    aria-label="Chat actions"
-                    aria-haspopup="menu"
-                    aria-expanded="false">
-                    ${icons.hamburger}
-                </button>
-            </div>
-        `;
+    function exportAgentDisplayName(agent) {
+        const name = String(agent || '');
+        return ({ codex: 'Codex', cursor: 'Cursor', claude: 'Claude Code', muse: 'Muse Code', deepseek: 'DeepSeek', opencode: 'OpenCode', hermes: 'Hermes' })[name] || name;
     }
 
-    function historyItemEl(sessionId, event) {
-        const fromEvent = event && event.currentTarget && typeof event.currentTarget.closest === 'function'
-            ? event.currentTarget.closest('.chat-history-item')
-            : null;
-        if (fromEvent) return fromEvent;
-        if (sessionId == null || sessionId === '') return null;
-        return document.querySelector(`.chat-history-item[data-session-id="${CSS.escape(String(sessionId))}"]`);
-    }
-
-    function historyItemOverflowMenuEl() {
-        let el = document.getElementById('historyItemOverflowMenu');
-        if (el) {
-            el.className = 'history-item-menu chat-chrome-menu-dropdown';
-            return el;
+    /** Author label for one exported row: subagent speaker → routing badge → slash chip → UI fallback. */
+    function exportMessageAuthor(role, opts) {
+        const speaker = opts && opts.speaker && String(opts.speaker).trim();
+        if (speaker) return speaker;
+        if (role === 'user') return 'You';
+        const badge = opts && opts.routing_badge;
+        if (badge && badge.agent) return exportAgentDisplayName(badge.agent);
+        const sc = normalizeSlashCommandStored(opts && opts.slash_command);
+        if (sc && sc.chips && sc.chips.length) {
+            const meta = String((sc.chips[0] && sc.chips[0].meta) || '');
+            const m = meta.match(/^\/([a-z][\w-]*)/);
+            if (m) return exportAgentDisplayName(m[1]);
+            const label = String((sc.chips[0] && sc.chips[0].label) || '').split(/\s*[—-]\s*/)[0].trim();
+            if (label) return label;
         }
-        el = document.createElement('div');
-        el.id = 'historyItemOverflowMenu';
-        // Reuse in-chat chrome dropdown skin; history-item-menu only pins fixed coords.
-        el.className = 'history-item-menu chat-chrome-menu-dropdown';
-        el.setAttribute('role', 'menu');
-        el.hidden = true;
-        document.body.appendChild(el);
-        return el;
+        return assistantDisplayName({});
     }
 
-    function closeHistoryItemMenu() {
-        document.querySelectorAll('.chat-history-item.menu-open').forEach((item) => {
-            item.classList.remove('menu-open');
-            const btn = item.querySelector('.chat-menu-btn');
-            if (btn) btn.setAttribute('aria-expanded', 'false');
+function buildTranscriptMarkdown(sessionId, messages, isAuth) {
+        const title = String(getChatSessionDisplayTitle(sessionId).trim() || 'Chat transcript');
+        const lines = [];
+        const displayId = formatChatDisplayId(sessionId) || String(sessionId);
+        const at = new Date();
+        lines.push('# ' + title);
+        lines.push('Chat: ' + displayId + ' · Exported ' + at.toISOString().slice(0, 16).replace('T', ' ') + ' UTC');
+        lines.push('---');
+        lines.push('');
+        messages.filter((m) => m && m.role !== 'system').forEach((m) => {
+            const role = String(m.role || 'user');
+            const opts = authMessageOptsFromServer(m);
+            const contentRaw = String(m.content ?? '');
+            const body = role === 'assistant' ? stripLegacyAgentChrome(contentRaw) : contentRaw;
+            if (!body) return;
+            const ts = opts.timestamp > 0 ? Number(opts.timestamp) : 0;
+            const author = exportMessageAuthor(role, opts);
+            const stamp = exportHHMM(ts);
+            lines.push('**' + (stamp ? stamp + ' — ' : '') + author + '**');
+            lines.push('');
+            body.trim().split(/\r\n|\r|\n/).forEach((line) => lines.push(line));
+            lines.push('');
         });
-        const menu = document.getElementById('historyItemOverflowMenu');
-        if (menu) {
-            menu.hidden = true;
-            menu.innerHTML = '';
-        }
+        return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
     }
 
-    function positionHistoryItemMenu(btn, menu) {
-        if (!btn || !menu) return;
-        const rect = btn.getBoundingClientRect();
-        const menuW = menu.offsetWidth || 160;
-        const menuH = menu.offsetHeight || 120;
-        let top = rect.bottom + 4;
-        let left = rect.right - menuW;
-        if (left < 8) left = 8;
-        if (left + menuW > window.innerWidth - 8) {
-            left = Math.max(8, window.innerWidth - menuW - 8);
-        }
-        if (top + menuH > window.innerHeight - 8) {
-            top = Math.max(8, rect.top - menuH - 4);
-        }
-        menu.style.top = top + 'px';
-        menu.style.left = left + 'px';
+function downloadTranscriptMarkdown(text, sessionId) {
+        const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const displayId = formatChatDisplayId(sessionId) || 'chat';
+        const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const filename = 'cuttle-chat-' + String(displayId).replace(/[^A-Za-z0-9_-]/g, '').toLowerCase() + '-' + stamp + '.md';
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.rel = 'noopener';
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        try { a.remove(); } catch (_) {}
+        setTimeout(function () { try { URL.revokeObjectURL(url); } catch (_) {} }, 4000);
+        return filename;
     }
 
-    function toggleHistoryItemMenu(sessionId, event) {
+    async function exportChatSession(sessionId, event) {
         if (event) {
             event.stopPropagation();
             event.preventDefault();
         }
-        const item = historyItemEl(sessionId, event);
-        if (!item) return;
-        const alreadyOpen = item.classList.contains('menu-open');
-        closeHistoryItemMenu();
-        if (alreadyOpen) return;
-
-        closeHistoryDeleteModal();
-        closeHistoryRenameModal();
-        closeChatChromeMenu();
-        item.classList.add('menu-open');
-        const btn = item.querySelector('.chat-menu-btn');
-        if (btn) btn.setAttribute('aria-expanded', 'true');
-
-        const actions = item.querySelector('.chat-actions');
-        const includeRename = !!(actions && actions.getAttribute('data-include-rename') === '1');
-        const menu = historyItemOverflowMenuEl();
-        menu.innerHTML = buildSessionMenuHTML(sessionId, {
-            includeRename,
-            includeDelete: true,
-        });
-        menu.hidden = false;
-        positionHistoryItemMenu(btn, menu);
-        refreshGitPushMenuMode(menu);
+        if (sessionId == null || sessionId === '') return;
+        closeAllSessionMenus();
+        if (isAuthMode()) {
+            const authSid = toAuthDbSessionId(sessionId);
+            if (authSid == null || authSid === '') return;
+            const tz = -new Date().getTimezoneOffset();
+            const displayId = formatChatDisplayId(authSid) || String(authSid);
+            const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+            const safeId = String(displayId).replace(/[^A-Za-z0-9_-]/g, '').toLowerCase();
+            const filename = 'cuttle-chat-' + safeId + '-' + stamp + '.md';
+            const a = document.createElement('a');
+            a.href = '/api/auth/sessions/' + encodeURIComponent(authSid) + '/export?tz=' + tz;
+            a.download = filename;
+            a.rel = 'noopener';
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            try { a.remove(); } catch (_) {}
+            (window.showToast || function () {})('Exported ' + filename, 'success');
+            return;
+        }
+        let messages = null;
+        try {
+            const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
+            const s = sessions[sessionId] || sessions[String(sessionId)];
+            if (s && Array.isArray(s.messages)) messages = s.messages;
+        } catch (_) {}
+        if (!messages || !messages.some((m) => m && m.role !== 'system')) {
+            (window.showToast || function () {})('Nothing to export yet', 'error');
+            return;
+        }
+        const md = buildTranscriptMarkdown(sessionId, messages, false);
+        try {
+            const filename = downloadTranscriptMarkdown(md, sessionId);
+            (window.showToast || function () {})('Exported ' + filename, 'success');
+        } catch (e) {
+            (window.showToast || function () {})('Export failed: ' + String((e && e.message) || e), 'error');
+        }
     }
 
     async function toggleStarChatSession(sessionId, event) {
@@ -15332,8 +9080,8 @@
             if (!map[id]) return;
             map[id].starred = next;
             writeTerminalSessionRegistry(map);
-            reloadHistoryListKeepingSearch();
-            if (sessionIdsEqual(sessionId, currentSessionId)) updateChatSessionStarButton(currentSessionId);
+            historyPanel.reloadKeepingSearch();
+            if (sessionIdsEqual(sessionId, session.current())) updateChatSessionStarButton(session.current());
             return;
         }
 
@@ -15362,8 +9110,8 @@
                 console.warn('[Cuttle Chat] Star toggle error:', err);
                 return;
             }
-            reloadHistoryListKeepingSearch();
-            if (sessionIdsEqual(sessionId, currentSessionId)) updateChatSessionStarButton(currentSessionId);
+            historyPanel.reloadKeepingSearch();
+            if (sessionIdsEqual(sessionId, session.current())) updateChatSessionStarButton(session.current());
             return;
         }
 
@@ -15377,8 +9125,8 @@
             console.warn('[Cuttle Chat] Local star toggle failed:', err);
             return;
         }
-        reloadHistoryListKeepingSearch();
-        if (sessionIdsEqual(sessionId, currentSessionId)) updateChatSessionStarButton(currentSessionId);
+        historyPanel.reloadKeepingSearch();
+        if (sessionIdsEqual(sessionId, session.current())) updateChatSessionStarButton(session.current());
     }
 
     // Sessions this tab deleted. A /api/auth/sessions fetch that was already in
@@ -15458,180 +9206,6 @@
         await refreshArchivedSessions();
     }
 
-    let pendingDeleteSessionId = null;
-
-    function historyDeleteModalEl() {
-        return document.getElementById('historyDeleteModal');
-    }
-
-    let _gitPushConfirmResolve = null;
-
-    function gitPushConfirmModalEl() {
-        return document.getElementById('gitPushConfirmModal');
-    }
-
-    function closeGitPushConfirmModal(accepted) {
-        const modal = gitPushConfirmModalEl();
-        if (modal) modal.hidden = true;
-        const fn = _gitPushConfirmResolve;
-        _gitPushConfirmResolve = null;
-        if (typeof fn === 'function') fn(!!accepted);
-    }
-
-    function confirmGitPushModal(message) {
-        return new Promise(function (resolve) {
-            const modal = gitPushConfirmModalEl();
-            if (!modal) {
-                resolve(false);
-                return;
-            }
-            if (typeof _gitPushConfirmResolve === 'function') {
-                _gitPushConfirmResolve(false);
-            }
-            _gitPushConfirmResolve = resolve;
-            const subtitle = document.getElementById('gitPushConfirmSubtitle');
-            if (subtitle) subtitle.textContent = String(message || 'Are you sure you want to push?');
-            modal.hidden = false;
-            const cancel = document.getElementById('gitPushConfirmCancel');
-            if (cancel) cancel.focus();
-        });
-    }
-
-    function setupGitPushConfirmModal() {
-        const modal = gitPushConfirmModalEl();
-        if (!modal || modal.dataset.bound === '1') return;
-        modal.dataset.bound = '1';
-        const cancelBtn = document.getElementById('gitPushConfirmCancel');
-        const acceptBtn = document.getElementById('gitPushConfirmAccept');
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', function (e) {
-                e.stopPropagation();
-                closeGitPushConfirmModal(false);
-            });
-        }
-        if (acceptBtn) {
-            acceptBtn.addEventListener('click', function (e) {
-                e.stopPropagation();
-                closeGitPushConfirmModal(true);
-            });
-        }
-        modal.addEventListener('click', function (e) {
-            e.stopPropagation();
-            if (e.target === modal) closeGitPushConfirmModal(false);
-        });
-        document.addEventListener('keydown', function (e) {
-            if (e.key !== 'Escape') return;
-            if (!modal || modal.hidden) return;
-            e.preventDefault();
-            closeGitPushConfirmModal(false);
-        });
-    }
-
-    function isHistoryDeleteModalOpen() {
-        const modal = historyDeleteModalEl();
-        return !!(modal && !modal.hidden);
-    }
-
-    function closeHistoryDeleteModal() {
-        pendingDeleteSessionId = null;
-        const modal = historyDeleteModalEl();
-        if (modal) modal.hidden = true;
-        const confirmBtn = document.getElementById('historyDeleteConfirm');
-        if (confirmBtn) {
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = 'Delete';
-        }
-    }
-
-    function historyDeleteLabel(item, sessionId) {
-        const titleEl = item && item.querySelector('.chat-title');
-        const title = titleEl ? String(titleEl.textContent || '').trim() : '';
-        if (title) return title;
-        if (sessionId != null && sessionId !== '') {
-            const fallback = String(getChatSessionDisplayTitle(sessionId) || '').trim();
-            if (fallback) return fallback;
-        }
-        return 'this chat';
-    }
-
-    function openHistoryDeleteModal(sessionId, item) {
-        const modal = historyDeleteModalEl();
-        if (!modal) return;
-        pendingDeleteSessionId = sessionId;
-        const isTerminal = !!(item && item.getAttribute('data-kind') === 'terminal')
-            || isTerminalSessionId(sessionId);
-        const heading = document.getElementById('historyDeleteTitle');
-        const subtitle = document.getElementById('historyDeleteSubtitle');
-        if (heading) heading.textContent = isTerminal ? 'Delete terminal?' : 'Delete chat?';
-        if (subtitle) {
-            subtitle.textContent = '"' + historyDeleteLabel(item, sessionId) + '" will be removed. This cannot be undone.';
-        }
-        modal.hidden = false;
-        const cancel = document.getElementById('historyDeleteCancel');
-        if (cancel) cancel.focus();
-    }
-
-    function setupHistoryDeleteModal() {
-        const modal = historyDeleteModalEl();
-        if (!modal || modal.dataset.bound === '1') return;
-        modal.dataset.bound = '1';
-        const cancelBtn = document.getElementById('historyDeleteCancel');
-        const confirmBtn = document.getElementById('historyDeleteConfirm');
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                closeHistoryDeleteModal();
-            });
-        }
-        if (confirmBtn) {
-            confirmBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                confirmDeleteChatSession(pendingDeleteSessionId, e);
-            });
-        }
-        modal.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (e.target === modal) closeHistoryDeleteModal();
-        });
-    }
-
-    function requestDeleteChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        closeAllSessionMenus();
-        const item = historyItemEl(sessionId, event);
-        openHistoryDeleteModal(sessionId, item);
-    }
-
-    function cancelDeleteChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        closeHistoryDeleteModal();
-    }
-
-    async function confirmDeleteChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const sid = (sessionId != null && sessionId !== '') ? sessionId : pendingDeleteSessionId;
-        if (sid == null || sid === '') return;
-        const confirmBtn = document.getElementById('historyDeleteConfirm');
-        if (confirmBtn) {
-            confirmBtn.disabled = true;
-            confirmBtn.textContent = 'Deleting…';
-        }
-        try {
-            await deleteChatSession(sid);
-        } finally {
-            closeHistoryDeleteModal();
-        }
-    }
-
     async function deleteChatSession(sessionId) {
         if (isTerminalSessionId(sessionId)) {
             removeTerminalSessionFromStorage(sessionId);
@@ -15644,12 +9218,12 @@
                     }, '*');
                 }
             } catch (_) {}
-            loadChatHistory();
+            historyPanel.load();
             return;
         }
 
         // If this chat is actively generating, abort the local stream immediately.
-        if (sessionIdsEqual(currentSessionId, sessionId) && generation.loading) {
+        if (sessionIdsEqual(session.current(), sessionId) && generation.loading) {
             try {
                 if (activeRequestController) activeRequestController.abort();
             } catch (_) {}
@@ -15687,7 +9261,7 @@
                 return;
             }
 
-            if (sessionIdsEqual(currentSessionId, sessionId)) {
+            if (sessionIdsEqual(session.current(), sessionId)) {
                 await createNewChat();
             }
             clearSessionPrefs(sessionId);
@@ -15706,359 +9280,21 @@
         writePromptHistoryMap(phMap);
         clearSessionPrefs(sessionId);
 
-        if (currentSessionId === sessionId) {
+        if (session.current() === sessionId) {
             createNewChat();
         }
 
-        reloadHistoryListKeepingSearch();
+        historyPanel.reloadKeepingSearch();
     }
     
-    let pendingRenameSessionId = null;
-    let pendingRenameKind = 'chat'; // chat | terminal | local
-    let renameEditMode = false;
-    let renameSuggestGen = 0;
-    let renameSuggestInFlight = false;
-    let renameAvoidTitles = [];
 
-    function historyRenameModalEl() {
-        return document.getElementById('historyRenameModal');
-    }
-
-    function isHistoryRenameModalOpen() {
-        const modal = historyRenameModalEl();
-        return !!(modal && !modal.hidden);
-    }
-
-    function setHistoryRenameStatus(msg, isError) {
-        const status = document.getElementById('historyRenameStatus');
-        if (!status) return;
-        if (!msg) {
-            status.hidden = true;
-            status.textContent = '';
-            status.classList.remove('is-error');
-            return;
-        }
-        status.hidden = false;
-        status.textContent = msg;
-        status.classList.toggle('is-error', !!isError);
-    }
-
-    function descriptiveRenameTitle(fullTitle) {
-        const parsed = parseTitleSlashChips(String(fullTitle || ''));
-        const body = String(parsed.body || '').trim();
-        if (body) return body;
-        // Title was only slash chips — leave the editable field empty.
-        if (parsed.chips && parsed.chips.length) return '';
-        return String(fullTitle || '').trim();
-    }
-
-    function rememberRenameAvoid(title) {
-        const t = descriptiveRenameTitle(title);
-        if (!t) return;
-        const key = t.toLowerCase();
-        if (renameAvoidTitles.some((x) => String(x).toLowerCase() === key)) return;
-        renameAvoidTitles.push(t);
-        if (renameAvoidTitles.length > 12) renameAvoidTitles = renameAvoidTitles.slice(-12);
-    }
-
-    function syncHistoryRenamePreviewFromInput() {
-        const input = document.getElementById('historyRenameInput');
-        const preview = document.getElementById('historyRenamePreview');
-        if (!preview) return;
-        preview.textContent = input ? String(input.value || '') : '';
-    }
-
-    function setHistoryRenameSuggesting(loading) {
-        const loadingEl = document.getElementById('historyRenameLoading');
-        const preview = document.getElementById('historyRenamePreview');
-        const previewWrap = document.getElementById('historyRenamePreviewWrap');
-        const input = document.getElementById('historyRenameInput');
-        const editBtn = document.getElementById('historyRenameEdit');
-        if (loading) {
-            renameEditMode = false;
-            if (previewWrap) previewWrap.hidden = false;
-            if (loadingEl) loadingEl.hidden = false;
-            if (preview) preview.hidden = true;
-            if (input) input.hidden = true;
-            if (editBtn) {
-                editBtn.hidden = true;
-                editBtn.classList.remove('is-editing');
-                const pencil = editBtn.querySelector('.history-rename-edit-pencil');
-                const check = editBtn.querySelector('.history-rename-edit-check');
-                if (pencil) pencil.hidden = false;
-                if (check) check.hidden = true;
-            }
-            return;
-        }
-        if (loadingEl) loadingEl.hidden = true;
-        applyHistoryRenameEditMode(renameEditMode);
-    }
-
-    function applyHistoryRenameEditMode(editing) {
-        renameEditMode = !!editing;
-        const previewWrap = document.getElementById('historyRenamePreviewWrap');
-        const preview = document.getElementById('historyRenamePreview');
-        const loadingEl = document.getElementById('historyRenameLoading');
-        const input = document.getElementById('historyRenameInput');
-        const editBtn = document.getElementById('historyRenameEdit');
-        const hasText = !!(input && String(input.value || '').trim());
-        if (loadingEl) loadingEl.hidden = true;
-        if (renameEditMode) {
-            if (previewWrap) previewWrap.hidden = true;
-            if (preview) preview.hidden = true;
-            if (input) {
-                input.hidden = false;
-                try { input.focus({ preventScroll: true }); } catch (_) { try { input.focus(); } catch (__) {} }
-                try { input.select(); } catch (_) {}
-            }
-        } else {
-            syncHistoryRenamePreviewFromInput();
-            if (previewWrap) previewWrap.hidden = false;
-            if (preview) preview.hidden = false;
-            if (input) input.hidden = true;
-        }
-        if (editBtn) {
-            editBtn.hidden = !hasText && !renameEditMode;
-            editBtn.classList.toggle('is-editing', renameEditMode);
-            editBtn.title = renameEditMode ? 'Done editing' : 'Edit name';
-            editBtn.setAttribute('aria-label', renameEditMode ? 'Done editing' : 'Edit chat name');
-            const pencil = editBtn.querySelector('.history-rename-edit-pencil');
-            const check = editBtn.querySelector('.history-rename-edit-check');
-            if (pencil) pencil.hidden = renameEditMode;
-            if (check) check.hidden = !renameEditMode;
-        }
-    }
-
-    function closeHistoryRenameModal() {
-        pendingRenameSessionId = null;
-        pendingRenameKind = 'chat';
-        renameEditMode = false;
-        renameSuggestGen += 1;
-        renameSuggestInFlight = false;
-        renameAvoidTitles = [];
-        const modal = historyRenameModalEl();
-        if (modal) modal.hidden = true;
-        const saveBtn = document.getElementById('historyRenameSave');
-        if (saveBtn) {
-            saveBtn.disabled = false;
-            saveBtn.textContent = 'Save';
-        }
-        const resuggestBtn = document.getElementById('historyRenameResuggest');
-        if (resuggestBtn) resuggestBtn.disabled = false;
-        setHistoryRenameStatus('', false);
-        const input = document.getElementById('historyRenameInput');
-        if (input) input.value = '';
-        const preview = document.getElementById('historyRenamePreview');
-        if (preview) preview.textContent = '';
-    }
-
-    function resolveRenameCurrentTitle(sessionId, kind) {
-        if (kind === 'terminal') {
-            const map = readTerminalSessionRegistry();
-            const session = map[String(sessionId)];
-            return (session && (session.title || session.shell)) || 'Terminal';
-        }
-        if (kind === 'local') {
-            try {
-                const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                const session = sessions[sessionId] || sessions[String(sessionId)];
-                if (session && session.title) return String(session.title);
-            } catch (_) {}
-        }
-        return getChatSessionDisplayTitle(sessionId) || 'Chat';
-    }
-
-    async function suggestHistoryRenameTitle(opts) {
-        const force = !!(opts && opts.force);
-        const input = document.getElementById('historyRenameInput');
-        const saveBtn = document.getElementById('historyRenameSave');
-        const resuggestBtn = document.getElementById('historyRenameResuggest');
-        const sessionId = pendingRenameSessionId;
-        if (sessionId == null || sessionId === '') return null;
-
-        if (!force && input && String(input.value || '').trim() && pendingRenameKind !== 'chat') {
-            applyHistoryRenameEditMode(false);
-            return String(input.value).trim();
-        }
-
-        const canSuggest = pendingRenameKind === 'chat' && isAuthMode() && toAuthDbSessionId(sessionId) != null;
-        if (!canSuggest) {
-            const current = descriptiveRenameTitle(resolveRenameCurrentTitle(sessionId, pendingRenameKind));
-            if (input) input.value = current;
-            setHistoryRenameSuggesting(false);
-            applyHistoryRenameEditMode(false);
-            setHistoryRenameStatus('Pencil to edit', false);
-            return current;
-        }
-
-        const gen = ++renameSuggestGen;
-        renameSuggestInFlight = true;
-        if (saveBtn) saveBtn.disabled = true;
-        if (resuggestBtn) resuggestBtn.disabled = true;
-        setHistoryRenameSuggesting(true);
-        setHistoryRenameStatus('', false);
-        try {
-            const authSid = toAuthDbSessionId(sessionId);
-            const body = {};
-            if (force && renameAvoidTitles.length) {
-                body.avoid = renameAvoidTitles.slice();
-            } else if (input && String(input.value || '').trim()) {
-                // First open still may want to avoid the currently shown name on re-open.
-                rememberRenameAvoid(input.value);
-            }
-            const resp = await fetchWithTimeout(
-                `/api/auth/sessions/${encodeURIComponent(authSid)}/suggest-title`,
-                {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                },
-                90000
-            );
-            if (gen !== renameSuggestGen) return null;
-            const data = await resp.json().catch(() => ({}));
-            if (!resp.ok || !data.success) {
-                throw new Error((data && data.error) || ('HTTP ' + resp.status));
-            }
-            const title = descriptiveRenameTitle(
-                String(data.title || '').trim()
-                || resolveRenameCurrentTitle(sessionId, pendingRenameKind)
-            );
-            if (input) input.value = title;
-            rememberRenameAvoid(title);
-            setHistoryRenameSuggesting(false);
-            applyHistoryRenameEditMode(false);
-            const src = data.source === 'llm'
-                ? 'Suggested'
-                : (data.source === 'fallback' ? 'From first message' : 'Current title');
-            setHistoryRenameStatus(src + ' — pencil to edit', false);
-            return title;
-        } catch (err) {
-            if (gen !== renameSuggestGen) return null;
-            const fallback = descriptiveRenameTitle(resolveRenameCurrentTitle(sessionId, pendingRenameKind));
-            if (input) input.value = fallback;
-            setHistoryRenameSuggesting(false);
-            applyHistoryRenameEditMode(true);
-            setHistoryRenameStatus(
-                'Could not auto-suggest — edit manually (' + ((err && err.message) || 'error') + ')',
-                true
-            );
-            return fallback;
-        } finally {
-            if (gen === renameSuggestGen) {
-                renameSuggestInFlight = false;
-                if (saveBtn) saveBtn.disabled = false;
-                if (resuggestBtn) resuggestBtn.disabled = false;
-            }
-        }
-    }
-
-    function openHistoryRenameModal(sessionId, item) {
-        const modal = historyRenameModalEl();
-        if (!modal) return;
-        closeHistoryDeleteModal();
-        pendingRenameSessionId = sessionId;
-        renameAvoidTitles = [];
-        const isTerminal = !!(item && item.getAttribute('data-kind') === 'terminal')
-            || isTerminalSessionId(sessionId);
-        if (isTerminal) {
-            pendingRenameKind = 'terminal';
-        } else if (isAuthMode() && toAuthDbSessionId(sessionId) != null) {
-            pendingRenameKind = 'chat';
-        } else {
-            pendingRenameKind = 'local';
-        }
-
-        const heading = document.getElementById('historyRenameTitle');
-        if (heading) {
-            heading.textContent = pendingRenameKind === 'terminal' ? 'Rename terminal' : 'Rename chat';
-        }
-        const resuggestBtn = document.getElementById('historyRenameResuggest');
-        if (resuggestBtn) {
-            resuggestBtn.hidden = pendingRenameKind !== 'chat';
-        }
-
-        const currentFull = resolveRenameCurrentTitle(sessionId, pendingRenameKind);
-        const current = descriptiveRenameTitle(currentFull);
-        rememberRenameAvoid(current);
-        const input = document.getElementById('historyRenameInput');
-        if (input) input.value = current;
-
-        modal.hidden = false;
-        if (pendingRenameKind === 'chat') {
-            setHistoryRenameSuggesting(true);
-            suggestHistoryRenameTitle({ force: true });
-        } else {
-            setHistoryRenameSuggesting(false);
-            applyHistoryRenameEditMode(false);
-            setHistoryRenameStatus('Pencil to edit', false);
-        }
-    }
-
-    function setupHistoryRenameModal() {
-        const modal = historyRenameModalEl();
-        if (!modal || modal.dataset.bound === '1') return;
-        modal.dataset.bound = '1';
-        const cancelBtn = document.getElementById('historyRenameCancel');
-        const saveBtn = document.getElementById('historyRenameSave');
-        const resuggestBtn = document.getElementById('historyRenameResuggest');
-        const editBtn = document.getElementById('historyRenameEdit');
-        const input = document.getElementById('historyRenameInput');
-
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                closeHistoryRenameModal();
-            });
-        }
-        if (saveBtn) {
-            saveBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                confirmRenameChatSession(pendingRenameSessionId, e);
-            });
-        }
-        if (resuggestBtn) {
-            resuggestBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                suggestHistoryRenameTitle({ force: true });
-            });
-        }
-        if (editBtn) {
-            editBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (renameSuggestInFlight) return;
-                applyHistoryRenameEditMode(!renameEditMode);
-            });
-        }
-        if (input) {
-            input.addEventListener('input', () => {
-                if (renameEditMode) return;
-                syncHistoryRenamePreviewFromInput();
-            });
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (renameEditMode) {
-                        applyHistoryRenameEditMode(false);
-                    } else {
-                        confirmRenameChatSession(pendingRenameSessionId, e);
-                    }
-                }
-            });
-        }
-        modal.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (e.target === modal) closeHistoryRenameModal();
-        });
-    }
-
-    async function persistRenamedTitle(sessionId, newTitle) {
+    // Rename persistence effect (panel owns the modal; the page owns the API and
+    // the terminal shell postMessage contract). `renameKind` comes from the panel.
+    async function persistRenamedTitle(sessionId, newTitle, renameKind) {
         const title = String(newTitle || '').trim();
         if (!title) return false;
 
-        if (isTerminalSessionId(sessionId) || pendingRenameKind === 'terminal') {
+        if (isTerminalSessionId(sessionId) || renameKind === 'terminal') {
             const map = readTerminalSessionRegistry();
             const session = map[String(sessionId)];
             if (!session) return false;
@@ -16115,58 +9351,10 @@
         return true;
     }
 
-    async function confirmRenameChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const sid = (sessionId != null && sessionId !== '') ? sessionId : pendingRenameSessionId;
-        if (sid == null || sid === '') return;
-        const input = document.getElementById('historyRenameInput');
-        const newTitle = descriptiveRenameTitle(input ? String(input.value || '').trim() : '');
-        if (!newTitle) {
-            setHistoryRenameStatus('Enter a name (agent badges stay separate)', true);
-            applyHistoryRenameEditMode(true);
-            return;
-        }
-        const saveBtn = document.getElementById('historyRenameSave');
-        if (saveBtn) {
-            saveBtn.disabled = true;
-            saveBtn.textContent = 'Saving…';
-        }
-        try {
-            const ok = await persistRenamedTitle(sid, newTitle);
-            if (!ok) {
-                setHistoryRenameStatus('Could not rename this chat', true);
-                return;
-            }
-            closeHistoryRenameModal();
-            // refreshChatHistoryList already re-applies search/filters when active.
-            await refreshChatHistoryList();
-            if (currentSessionId != null && sessionIdsEqual(currentSessionId, sid)) {
-                updateChatSessionTitle(sid);
-            }
-        } catch (err) {
-            setHistoryRenameStatus((err && err.message) || 'Rename failed', true);
-        } finally {
-            if (saveBtn) {
-                saveBtn.disabled = false;
-                saveBtn.textContent = 'Save';
-            }
-        }
-    }
-
-    function renameChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-        }
-        closeAllSessionMenus();
-        const item = historyItemEl(sessionId, event);
-        openHistoryRenameModal(sessionId, item);
-    }
-
+    // Owned by chat_attention.js (CuttleChatAttention); the controller owns the
+    // status-slot icon markup. Kept as a page adapter for existing call sites.
     function historyRunningIconHTML() {
-        return `<span class="history-running-icon" title="Generating…" aria-label="Generating"></span>`;
+        return serverAttention.historyRunningIconHTML();
     }
 
     function sessionShowsHistorySpinner(sessionId) {
@@ -16202,11 +9390,14 @@
         return actionCardsController().awaitingSessionId(card);
     }
 
-    /** Keep history spinners in sync with pending action forms (restart / watch). */
+    /** Keep history spinners in sync with action forms that are actually executing.
+     *
+     * A form merely waiting for the user (unlocked question, a Flask-restart
+     * card still "Checking restart status…") is not work: the blue input dot
+     * owns it. Only a submitted/adopted restart or a running watch spins. */
     function syncHistoryFormAwaitingFromDom() {
         const next = new Set();
-        document.querySelectorAll('.cuttle-action-form.is-pending').forEach((card) => {
-            const sid = formAwaitingSessionIdFromCard(card);
+        actionCardsController().processingSessionIds().forEach((sid) => {
             if (sid == null || sid === '') return;
             next.add(String(canonicalizeChatSessionId(sid)));
         });
@@ -16217,11 +9408,11 @@
             }
         });
         next.forEach((id) => formAwaitingSessionIds.add(id));
-        if (currentSessionId != null && !serverAttention.get(toAuthDbSessionId(currentSessionId))) {
+        if (session.current() != null && !serverAttention.get(toAuthDbSessionId(session.current()))) {
             const awaitingInput = actionCardsController().awaitingInputSessionIds()
-                .some(sid => sessionIdsEqual(sid, currentSessionId));
-            if (!!(attentionPrefsFor(currentSessionId) || {}).awaitingInput !== awaitingInput) {
-                updateSessionPrefs(currentSessionId, { awaitingInput });
+                .some(sid => sessionIdsEqual(sid, session.current()));
+            if (!!(attentionPrefsFor(session.current()) || {}).awaitingInput !== awaitingInput) {
+                updateSessionPrefs(session.current(), { awaitingInput });
             }
         }
         syncHistoryUnreadIndicators();
@@ -16234,7 +9425,7 @@
     // own end calls can prove they still own the lock.
     function beginLocalGeneration() {
         const begun = CuttleChatGeneration.beginGeneration(generation, {
-            currentSessionId: currentSessionId,
+            currentSessionId: session.current(),
             requestSessionId: authSessionIdForRequest(),
         });
         CuttleStopState.clearAbortSuppression(stopState);
@@ -16267,26 +9458,11 @@
     }
 
     function syncHistoryRunningIndicators() {
-        document.querySelectorAll('.chat-history-item').forEach(item => {
-            const sid = item.dataset.sessionId;
-            const running = sessionShowsHistorySpinner(sid);
-            item.classList.toggle('is-running', running);
-            let icon = item.querySelector('.history-running-icon');
-            if (running && !icon) {
-                icon = document.createElement('span');
-                icon.className = 'history-running-icon';
-                icon.title = 'Active…';
-                icon.setAttribute('aria-label', 'Active');
-                const meta = historyItemMetaEl(item);
-                if (meta) meta.appendChild(icon);
-                else item.appendChild(icon);
-            } else if (!running && icon) {
-                icon.remove();
-            }
-        });
-        syncHistorySubagentAttention();
+        // The running spinner shares the far-left status slot with the unread /
+        // input / queue dots; syncHistoryUnreadIndicators owns that slot and the
+        // is-running class. Only the title icon is running-specific.
+        syncHistoryUnreadIndicators();
         updateSessionTitleRunningIcon();
-        scheduleChatActivityBroadcast();
     }
 
     /** Space tabs (app shell) mirror these dots. Push only the chats this
@@ -16299,7 +9475,7 @@
     // Snapshot decisions owned by chat_activity.js — page gathers, domain decides.
     function collectChatActivitySnapshot() {
         return CuttleChatActivity.collectFrameSnapshot({
-            currentSessionId,
+            currentSessionId: session.current(),
             localSessionId: generation.localSessionId,
             awaitingIds: [...formAwaitingSessionIds],
             canonicalize: canonicalizeChatSessionId,
@@ -16395,14 +9571,13 @@
     }
 
     function applyGeneratingFlagsFromSessions(serverSessions) {
-        const currentWasRunning = currentSessionId != null
-            && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId));
-        // Only mounted work in the open chat may supplement server execution.
+        const currentWasRunning = session.current() != null
+            && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current()));
+        // Only executing work in the open chat may supplement server execution.
         // Entries left behind by another chat must yield to an idle snapshot.
         const localPending = new Set();
-        document.querySelectorAll('.cuttle-action-form.is-pending').forEach(card => {
-            const sid = formAwaitingSessionIdFromCard(card);
-            if (sessionIdsEqual(sid, currentSessionId)) localPending.add(String(canonicalizeChatSessionId(sid)));
+        actionCardsController().processingSessionIds().forEach(sid => {
+            if (sessionIdsEqual(sid, session.current())) localPending.add(String(canonicalizeChatSessionId(sid)));
         });
         const still = new Set();
         (serverSessions || []).forEach((s) => {
@@ -16418,8 +9593,8 @@
             // open chat prefer live-status but allow a sessions fallback when
             // live-status was null (unfocused hub miss) and we didn't just switch.
             if (
-                currentSessionId != null
-                && sessionIdsEqual(s.id, currentSessionId)
+                session.current() != null
+                && sessionIdsEqual(s.id, session.current())
             ) {
                 if (s.awaiting_action) {
                     still.add(String(canonicalizeChatSessionId(s.id)));
@@ -16474,8 +9649,8 @@
             // the open chat — live-status owns that window.
             if (
                 deferOpenChatGeneratingFromSessions
-                && currentSessionId != null
-                && sessionIdsEqual(id, currentSessionId)
+                && session.current() != null
+                && sessionIdsEqual(id, session.current())
             ) {
                 return;
             }
@@ -16483,14 +9658,14 @@
                 setHistorySessionRunning(id, false);
             }
         });
-        const currentStillRunning = currentSessionId != null
-            && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId));
+        const currentStillRunning = session.current() != null
+            && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current()));
         if (
             currentWasRunning
             && !currentStillRunning
             && !generation.loading
             && !stopState.waitingSuppressed
-            && followupQueue.items.length
+            && followupController().getState().items.length
         ) {
             scheduleFollowupDrain(80);
         }
@@ -16575,8 +9750,8 @@
             archivedChatSessions = [];
             archivedSessionsLoaded = true;
             renderArchivedSection();
-            if (typeof currentSessionId !== 'undefined' && currentSessionId != null && currentSessionId !== '')
-                updateChatSessionTitle(currentSessionId);
+            if (session.current() != null && session.current() !== '')
+                updateChatSessionTitle(session.current());
             return;
         }
         try {
@@ -16602,8 +9777,8 @@
         renderArchivedSection();
         // Archived marks arrive after the title renders on page load (and
         // change on archive toggle) — re-sync the title-bar badge.
-        if (typeof currentSessionId !== 'undefined' && currentSessionId != null && currentSessionId !== '')
-            updateChatSessionTitle(currentSessionId);
+        if (session.current() != null && session.current() !== '')
+            updateChatSessionTitle(session.current());
     }
 
     function renderArchivedSection() {
@@ -16630,7 +9805,7 @@
         const count = visible.length;
         let itemsHtml = '';
         visible.forEach((s) => {
-            itemsHtml += createAuthHistoryItemHTML(s, {});
+            itemsHtml += historyView.createAuthHistoryItemHTML(s, {});
         });
         // Header template + section class live in CuttleChatHistoryArchive;
         // the page keeps container/row-DOM wiring (it owns the row renderer
@@ -16654,1125 +9829,38 @@
         });
     }
 
-    function paintHistoryEntries(entries, renderEntry, opts) {
-        const historyContainer = document.getElementById('chatHistory');
-        if (!historyContainer) return;
-        const options = opts || {};
-        const showRefresh = options.showRefresh !== false;
-        if (!entries.length) {
-            const icon = options.emptyIcon || '💬';
-            const title = options.emptyTitle || 'No chats yet';
-            const text = options.emptyText || 'Start a new conversation';
-            CuttleChatHistoryView.paint(historyContainer, `
-                ${createHistorySectionHeaderHTML('Your chats')}
-                <div class="empty-state">
-                    <div class="empty-state-icon">${icon}</div>
-                    <div class="empty-state-title">${escapeHtml(title)}</div>
-                    <div class="empty-state-text">${escapeHtml(text)}</div>
-                </div>
-            `, renderArchivedSection);
-            return;
-        }
-        const groups = groupSessionsByProject(entries);
-        let html = '';
-        groups.forEach((group, groupIdx) => {
-            const expanded = isHistoryProjectSectionExpanded(group, groupIdx);
-            const unread = historyGroupHasUnread(group);
-            const unreadError = historyGroupHasUnreadError(group);
-            const queuedAny = historyGroupHasActiveFollowup(group);
-            const pausedAny = historyGroupHasPausedFollowup(group);
-            const queued = !unread && queuedAny;
-            const paused = !unread && !queued && pausedAny;
-            const sectionClass = [
-                expanded ? '' : ' is-collapsed',
-                unreadError ? ' has-unread-error' : '',
-                unread ? ' has-unread' : '',
-                queued ? ' has-queued' : '',
-                paused ? ' has-paused-queue' : '',
-            ].join('');
-            const safeKey = escapeHtml(String(group.project.key));
-            html += `<div class="history-section${sectionClass}" data-project-key="${safeKey}" data-has-error="${unreadError ? '1' : '0'}" data-has-unread="${unread ? '1' : '0'}" data-has-queued="${queuedAny ? '1' : '0'}" data-has-paused="${pausedAny ? '1' : '0'}">`;
-            html += createHistorySectionHeaderHTML(group.project.name, {
-                showRefresh: showRefresh && groupIdx === 0,
-                project: group.project,
-                collapsible: true,
-                collapsed: !expanded,
-                count: group.entries.length,
-                hasError: unreadError,
-                hasUnread: unread,
-                hasQueued: queued,
-                hasPaused: paused,
-            });
-            html += `<div class="history-section-body">${renderHistoryGroupBody(group, renderEntry)}</div>`;
-            html += '</div>';
-        });
-        CuttleChatHistoryView.paint(historyContainer, html, () => {
-            syncHistoryRunningIndicators();
-            syncHistoryUnreadIndicators();
-            applyHistorySubagentExpandState();
-            scheduleSlashChipCompactLabels(historyContainer);
-            renderArchivedSection();
-        });
-    }
-
-    function loadChatHistory() {
-        // Hard gate: accidental full-list paints (auth-changed, loadProjects, poll)
-        // must not wipe an active search or filter chips.
-        if (historySearchQueryActive()) {
-            softRefreshHistorySearchIndicators();
-            return;
-        }
-        closeHistoryItemMenu();
-        refreshLocalOpenPanes();
-        const historyContainer = document.getElementById('chatHistory');
-        if (!historyContainer) return;
-
-        const terminalEntries = getTerminalHistoryEntries();
-
-        if (isAuthMode()) {
-            const serverSessions = ((window.CuttleAuth.getSessions && window.CuttleAuth.getSessions()) || [])
-                .filter((s) => !isChatSessionDeleted(s && s.id));
-            if (!serverSessions.length && !terminalEntries.length) {
-                paintHistoryEntries([], null, {});
-                return;
-            }
-            applyGeneratingFlagsFromSessions(serverSessions);
-            // Record the main-list ids before the Archived fetch resolves so
-            // an unfiltered (?archived=-unaware) response can't duplicate it.
-            rememberActiveHistorySessions(serverSessions);
-            // First paint kicks off the Archived section fetch (cached after).
-            if (!archivedSessionsLoaded) refreshArchivedSessions();
-            const entries = serverSessions.map((s) => ({
-                sessionId: s.id,
-                session: null,
-                // Sort by last message only — last_activity can bump on non-message
-                // touches and reshuffle the sidebar without a new turn.
-                updated: parseSessionTimestamp(s.last_message_time)
-                    || parseSessionTimestamp(s.last_activity),
-                serverSession: s,
-            })).concat(terminalEntries);
-            paintHistoryEntries(entries, (entry, itemOpts) => {
-                if (entry.isTerminal) return createTerminalHistoryItemHTML(entry.session);
-                return createAuthHistoryItemHTML(entry.serverSession, itemOpts);
-            });
-            return;
-        }
-
-        const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-        const sessionArray = Object.values(sessions);
-        const entries = sessionArray.map((session) => ({
-            sessionId: session.id,
-            session,
-            updated: Number(session.updated) || 0,
-        })).concat(terminalEntries);
-
-        paintHistoryEntries(entries, (entry) => {
-            if (entry.isTerminal) return createTerminalHistoryItemHTML(entry.session);
-            return createHistoryItemHTML(entry.session);
-        });
-    }
-
-    function createAuthHistoryItemHTML(s, extraOpts) {
-        const sid = s.id;
-        const title = s.session_name || (`Chat ${sid}`);
-        const active = sessionIdsEqual(currentSessionId, sid) ? ' active' : '';
-        const running = sessionShowsHistorySpinner(sid);
-        const runningClass = running ? ' is-running' : '';
-        const attention = sessionHistoryAttentionKind(sid, s);
-        const unreadClass = attention === 'input' ? ' has-input' : (attention === 'unread' || attention === 'error') ? ' has-unread' : '';
-        const errorClass = attention === 'error' ? ' has-unread-error' : '';
-        const queuedClass = attention === 'queued' ? ' has-queued' : '';
-        const pausedClass = attention === 'paused' ? ' has-paused-queue' : '';
-        const starred = !!Number(s.starred);
-        const starredClass = starred ? ' is-starred' : '';
-        const runningIcon = running ? historyRunningIconHTML() : '';
-        const starredIcon = starred ? historyStarredIconHTML() : '';
-        const count = Number(s.message_count) || 0;
-        const origin = String(s.origin || '').trim().toLowerCase();
-        const parentId = s.parent_session_id != null ? String(s.parent_session_id) : '';
-        const itemOpts = extraOpts || {};
-        const childCount = Math.max(0, Number(itemOpts.subagentChildCount) || 0);
-        const subExpanded = !!itemOpts.subagentExpanded;
-        const subForce = !!itemOpts.subagentForceExpanded;
-        const subagentClass = (origin === 'subagent' || parentId) ? ' is-subagent' : '';
-        const hasSubagentsClass = childCount > 0 ? ' has-subagents' : '';
-        const discordName = String(s.discord_username || '').trim();
-        const participants = Array.isArray(s.discord_participants) ? s.discord_participants : [];
-        const participantNames = participants
-            .map((p) => String((p && (p.discord_username || p.discord_user_id)) || '').trim())
-            .filter(Boolean);
-        const isDiscordOrigin = origin === 'discord_dm' || origin === 'discord_guild';
-        const discordTip = participantNames.length
-            ? ('Discord · ' + participantNames.join(', '))
-            : (discordName ? ('Discord · ' + discordName) : 'Discord');
-        const discordBadge = (isDiscordOrigin || participantNames.length)
-            ? `<span class="history-kind-badge" title="${escapeHtml(discordTip)}">Discord</span>`
-            : '';
-        const subagentBadge = (origin === 'subagent' || parentId)
-            ? `<span class="history-kind-badge history-subagent-badge" title="Sub-agent of ${escapeHtml(parentId ? ('CH-' + String(parentId).padStart(6, '0')) : 'parent chat')}">Subagent</span>`
-            : '';
-        const badge = count > 0
-            ? `<span class="history-msg-badge" title="${count} message${count === 1 ? '' : 's'}" aria-label="${count} messages">
-                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                <span class="history-msg-count">${count}</span>
-               </span>`
-            : '';
-        const subToggleTitle = historySubagentToggleTitle(childCount, subExpanded, subForce);
-        const subCountBadge = childCount > 0
-            ? `<button type="button" class="history-subagent-count-badge" data-child-count="${childCount}" title="${escapeHtml(subToggleTitle)}" aria-label="${escapeHtml(subToggleTitle)}" onclick="window.toggleHistorySubagentGroup('${sid}', event)">
-                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8.4 7.2c2.2 2 2.2 7.6 0 9.6"/><path d="M8.5 12H15.5"/></svg>
-                <span class="history-msg-count">${childCount}</span>
-               </button>`
-            : '';
-        const subToggle = childCount > 0
-            ? `<button type="button" class="history-subagent-toggle" data-child-count="${childCount}" aria-expanded="${subExpanded ? 'true' : 'false'}" aria-controls="history-subagents-${escapeHtml(String(sid))}-kids" title="${escapeHtml(subToggleTitle)}" aria-label="${escapeHtml(subToggleTitle)}" onclick="window.toggleHistorySubagentGroup('${sid}', event)">
-                <span class="history-subagent-chevron" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="6 9 12 15 18 9"/>
-                    </svg>
-                </span>
-               </button>`
-            : '';
-        const parts = chatTitleParts(title, sid);
-        const openClass = openPaneEntriesForSession(sid).length ? ' is-open-pane' : '';
-        const snippet = String(s.search_snippet || s.snippet || '').trim();
-        const isContentMatch = String(s.match || '').toLowerCase() === 'content';
-        const snippetText = snippet || (isContentMatch ? 'Matched in message body' : '');
-        const snippetHtml = snippetText
-            ? `<div class="history-search-snippet${isContentMatch ? ' is-content-match' : ''}">${escapeHtml(snippetText)}</div>`
-            : '';
-        const contentBadge = isContentMatch
-            ? `<span class="history-kind-badge history-match-badge" title="Matched in message body">In messages</span>`
-            : '';
-        return `<div class="chat-history-item${active}${runningClass}${unreadClass}${errorClass}${queuedClass}${pausedClass}${starredClass}${openClass}${subagentClass}${hasSubagentsClass}" data-session-id="${sid}" data-parent-session-id="${escapeHtml(parentId)}" data-search-match="${isContentMatch ? 'content' : 'title'}" data-chat-title="${escapeHtml(title).replace(/"/g, '&quot;')}" onclick="window.chatPageLoadSession('${sid}')">
-            ${historyAttentionIconHTML(attention)}
-            ${subToggle}
-            <div class="history-item-body">
-                ${historyItemMetaHTML([parts.chipsHtml, discordBadge, subagentBadge, contentBadge, subCountBadge, badge, starredIcon, runningIcon])}
-                <div class="chat-title">${parts.titleHtml}</div>
-                ${snippetHtml}
-            </div>
-            ${createHistoryDeleteActionsHTML(sid, { includeRename: true, starred, lastMessageMs: resolveHistoryLastMessageMs(s) })}
-        </div>`;
-    }
-    
-    function createHistoryItemHTML(session) {
-        const isActive = currentSessionId === session.id;
-        const running = sessionShowsHistorySpinner(session.id);
-        const attention = sessionHistoryAttentionKind(session.id, session);
-        const starred = !!session.starred;
-        const parts = chatTitleParts(session.title, session.id);
-        const openClass = openPaneEntriesForSession(session.id).length ? ' is-open-pane' : '';
-        const isContentMatch = String(session.match || '').toLowerCase() === 'content';
-        const contentBadge = isContentMatch
-            ? '<span class="history-kind-badge history-match-badge" title="Matched in message body">In messages</span>'
-            : '';
-        const snippet = String(session.search_snippet || session.snippet || '').trim();
-        const snippetText = snippet || (isContentMatch ? 'Matched in message body' : '');
-        const snippetHtml = snippetText
-            ? `<div class="history-search-snippet${isContentMatch ? ' is-content-match' : ''}">${escapeHtml(snippetText)}</div>`
-            : '';
-        const meta = historyItemMetaHTML([
-            '<span class="chat-icon">💬</span>',
-            parts.chipsHtml,
-            contentBadge,
-            starred ? historyStarredIconHTML() : '',
-            running ? historyRunningIconHTML() : '',
-        ]);
-        const unreadClass = attention === 'input' ? ' has-input' : (attention === 'unread' || attention === 'error') ? ' has-unread' : '';
-        const errorClass = attention === 'error' ? ' has-unread-error' : '';
-        const queuedClass = attention === 'queued' ? ' has-queued' : '';
-        const pausedClass = attention === 'paused' ? ' has-paused-queue' : '';
-        return `
-            <div class="chat-history-item ${isActive ? 'active' : ''}${running ? ' is-running' : ''}${unreadClass}${errorClass}${queuedClass}${pausedClass}${starred ? ' is-starred' : ''}${openClass}" 
-                 data-session-id="${session.id}"
-                 data-search-match="${isContentMatch ? 'content' : 'title'}"
-                 data-chat-title="${escapeHtml(String(session.title || '')).replace(/"/g, '&quot;')}"
-                 onclick="window.chatPageLoadSession('${session.id}')">
-                ${historyAttentionIconHTML(attention)}
-                <div class="history-item-body">
-                    ${meta}
-                    <div class="chat-title">${parts.titleHtml}</div>
-                    ${snippetHtml}
-                </div>
-                ${createHistoryDeleteActionsHTML(session.id, { includeRename: true, starred, lastMessageMs: resolveHistoryLastMessageMs(session) })}
-            </div>
-        `;
-    }
-
-    function createTerminalHistoryItemHTML(session) {
-        const sid = String(session.id).replace(/'/g, "\\'");
-        const displayId = formatChatDisplayId(session.id) || '';
-        const title = session.title || session.shell || 'Terminal';
-        const starred = !!session.starred;
-        const openClass = openPaneEntriesForSession(session.id).length ? ' is-open-pane' : '';
-        const meta = historyItemMetaHTML([
-            '<span class="chat-icon" aria-hidden="true">⌨️</span>',
-            '<span class="history-kind-badge" title="Terminal session">Terminal</span>',
-            displayId
-                ? `<span class="history-chat-handle" title="${escapeHtml(displayId)}">${escapeHtml(displayId)}</span>`
-                : '',
-            starred ? historyStarredIconHTML() : '',
-        ]);
-        return `
-            <div class="chat-history-item is-terminal${starred ? ' is-starred' : ''}${openClass}"
-                 data-session-id="${escapeHtml(String(session.id))}"
-                 data-kind="terminal"
-                 onclick="window.chatPageOpenTerminalSession('${sid}')">
-                <div class="history-item-body">
-                    ${meta}
-                    <div class="chat-title">${escapeHtml(title)}</div>
-                </div>
-                ${createHistoryDeleteActionsHTML(session.id, { includeRename: true, starred, lastMessageMs: resolveHistoryLastMessageMs(session) })}
-            </div>
-        `;
-    }
-    
-    let historySearchSeq = 0;
-    let historySearchTimer = null;
-    let historySearchAbort = null;
-
-    /** Active history filters from the Search slash palette (AND across kinds, OR within). */
-    const historySearchFilters = {
-        projects: [], // { key, name, path }
-        agents: [],   // { key, id, label, prefix }
-    };
-    let historySlashPaletteItems = [];
-    let historySlashPaletteIndex = 0;
-
-    function historyFiltersActive() {
-        return historySearchFilters.projects.length > 0
-            || historySearchFilters.agents.length > 0;
-    }
-
-    function normalizeHistoryFilterKey(kind, value) {
-        return String(kind || '') + ':' + String(value || '').trim().toLowerCase();
-    }
-
-    function sessionProjectFields(session) {
-        const s = session || {};
-        let name = String(s.project_name || s.projectName || '').trim();
-        let path = String(s.project_path || s.projectPath || '').trim();
-        if (!name && !path && s.id != null) {
-            try {
-                const info = resolveSessionProjectInfo(s.id, s);
-                if (info && info.key !== '__none__') {
-                    name = String(info.name || '').trim();
-                    path = String(info.path || '').trim();
-                    // Avoid inventing the default Cuttle project badge for chats
-                    // that truly have no project when listing filters/matching.
-                    if (info.name === 'No project') {
-                        name = '';
-                        path = '';
-                    }
-                }
-            } catch (_) {}
-        }
-        return { name, path };
-    }
-
-    function sessionMatchesProjectFilter(session, filter) {
-        if (!filter) return true;
-        const fields = sessionProjectFields(session);
-        const name = fields.name.toLowerCase();
-        const path = fields.path.toLowerCase().replace(/\\/g, '/');
-        const wantName = String(filter.name || '').trim().toLowerCase();
-        const wantPath = String(filter.path || '').trim().toLowerCase().replace(/\\/g, '/');
-        if (wantPath && path && (path === wantPath || path.includes(wantPath) || wantPath.includes(path))) {
-            return true;
-        }
-        if (wantName && name && (name === wantName || name.includes(wantName))) return true;
-        if (wantName && path && path.includes(wantName)) return true;
-        return false;
-    }
-
-    function sessionAgentHaystack(session) {
-        const s = session || {};
-        const bits = [
-            s.session_name,
-            s.title,
-            s.id,
-        ];
-        stickyTitleChipsForSession(s.id).forEach((c) => {
-            bits.push(c.prefix, c.label, c.meta);
-        });
-        try {
-            const parsed = parseTitleSlashChips(s.session_name || s.title || '');
-            (parsed.chips || []).forEach((c) => bits.push(c.prefix, c.label, c.meta));
-        } catch (_) {}
-        return bits.join(' ').toLowerCase();
-    }
-
-    function sessionMatchesAgentFilter(session, filter) {
-        if (!filter) return true;
-        const hay = sessionAgentHaystack(session);
-        const prefix = String(filter.prefix || '').trim().toLowerCase();
-        const id = String(filter.id || '').trim().toLowerCase();
-        if (prefix && hay.includes(prefix.trim())) return true;
-        if (id && (hay.includes('/' + id) || hay.includes(id))) return true;
-        return false;
-    }
-
-    function sessionMatchesHistoryFilters(session) {
-        if (historySearchFilters.projects.length) {
-            const ok = historySearchFilters.projects.some((p) => sessionMatchesProjectFilter(session, p));
-            if (!ok) return false;
-        }
-        if (historySearchFilters.agents.length) {
-            const ok = historySearchFilters.agents.some((a) => sessionMatchesAgentFilter(session, a));
-            if (!ok) return false;
-        }
-        return true;
-    }
-
-    function historySessionHaystack(session) {
-        const s = session || {};
-        const participants = Array.isArray(s.discord_participants) ? s.discord_participants : [];
-        const participantBits = participants.map((p) => (
-            (p && (p.discord_username || p.discord_user_id)) || ''
-        ));
-        const proj = sessionProjectFields(s);
-        return [
-            s.session_name,
-            s.title,
-            s.id,
-            formatChatDisplayId(s.id),
-            s.discord_username,
-            s.project_name,
-            proj.name,
-            proj.path,
-            s.origin,
-            ...participantBits,
-        ].join(' ').toLowerCase();
-    }
-
-    function localSessionMatchesSearch(session, searchTerm) {
-        if (!sessionMatchesHistoryFilters(session)) return false;
-        if (!searchTerm) return true;
-        if (historySessionHaystack(session).includes(searchTerm)) return true;
-        const messages = session && session.messages;
-        if (!Array.isArray(messages)) return false;
-        return messages.some((msg) => String((msg && msg.content) || '').toLowerCase().includes(searchTerm));
-    }
-
-    function collectHistoryFilterProjects() {
-        const byKey = new Map();
-        const add = (name, path) => {
-            const n = String(name || '').trim();
-            const p = String(path || '').trim();
-            if (!n && !p) return;
-            const label = n || p.split(/[\\/]/).filter(Boolean).pop() || p;
-            const key = normalizeHistoryFilterKey('project', p || n);
-            if (byKey.has(key)) return;
-            byKey.set(key, { key, name: label, path: p });
-        };
-        (projects || []).forEach((p) => add(p.name || p.project_name, p.path || p.project_path));
-        try {
-            const listed = ((window.CuttleAuth && window.CuttleAuth.getSessions && window.CuttleAuth.getSessions()) || []);
-            listed.forEach((s) => add(s.project_name, s.project_path));
-        } catch (_) {}
-        return Array.from(byKey.values()).sort((a, b) => a.name.localeCompare(b.name));
-    }
-
-    function collectHistoryFilterAgents() {
-        return CuttleChatSlash.SLASH_COMMANDS
-            .filter((c) => c && c.stickySession)
-            .map((c) => {
-                const prefix = String(c.prefix || '').trim();
-                const id = prefix.replace(/^\/+/, '').split(/\s/)[0].toLowerCase();
-                return {
-                    key: normalizeHistoryFilterKey('agent', id),
-                    id,
-                    label: c.label || id,
-                    prefix,
-                };
-            })
-            .filter((a, i, arr) => a.id && arr.findIndex((x) => x.id === a.id) === i);
-    }
-
-    function renderHistoryFilterChips() {
-        const el = document.getElementById('historySearchFilterChips');
-        if (!el) return;
-        const chips = [];
-        historySearchFilters.projects.forEach((p) => {
-            chips.push({
-                kind: 'project',
-                key: p.key,
-                label: '📁 ' + (p.name || 'Project'),
-                title: p.path || p.name,
-            });
-        });
-        historySearchFilters.agents.forEach((a) => {
-            chips.push({
-                kind: 'agent',
-                key: a.key,
-                label: (a.prefix || ('/' + a.id)).trim(),
-                title: a.label || a.id,
-            });
-        });
-        if (!chips.length) {
-            el.hidden = true;
-            el.innerHTML = '';
-            return;
-        }
-        el.hidden = false;
-        el.innerHTML = chips.map((c) => (
-            '<span class="history-filter-chip" data-kind="' + escapeHtml(c.kind) + '" data-key="' + escapeHtml(c.key) + '" title="' + escapeHtml(c.title || c.label) + '">' +
-            '<span class="history-filter-chip-label">' + escapeHtml(c.label) + '</span>' +
-            '<button type="button" class="history-filter-chip-remove" data-history-filter-remove="' + escapeHtml(c.key) + '" aria-label="Remove filter">×</button>' +
-            '</span>'
-        )).join('');
-        el.querySelectorAll('[data-history-filter-remove]').forEach((btn) => {
-            btn.addEventListener('click', (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                removeHistorySearchFilter(btn.getAttribute('data-history-filter-remove'));
-            });
-        });
-    }
-
-    function removeHistorySearchFilter(key) {
-        const k = String(key || '');
-        historySearchFilters.projects = historySearchFilters.projects.filter((p) => p.key !== k);
-        historySearchFilters.agents = historySearchFilters.agents.filter((a) => a.key !== k);
-        renderHistoryFilterChips();
-        searchChats();
-    }
-
-    function addHistoryProjectFilter(proj) {
-        if (!proj) return;
-        const key = proj.key || normalizeHistoryFilterKey('project', proj.path || proj.name);
-        if (historySearchFilters.projects.some((p) => p.key === key)) return;
-        historySearchFilters.projects.push({
-            key,
-            name: proj.name || '',
-            path: proj.path || '',
-        });
-        renderHistoryFilterChips();
-    }
-
-    function addHistoryAgentFilter(agent) {
-        if (!agent) return;
-        const key = agent.key || normalizeHistoryFilterKey('agent', agent.id);
-        if (historySearchFilters.agents.some((a) => a.key === key)) return;
-        historySearchFilters.agents.push({
-            key,
-            id: agent.id,
-            label: agent.label || agent.id,
-            prefix: agent.prefix || ('/' + agent.id + ' '),
-        });
-        renderHistoryFilterChips();
-    }
-
-    function parseHistorySlashDraft(raw) {
-        const text = String(raw || '');
-        const m = text.match(/(?:^|\s)(\/[^\n]*)$/);
-        if (!m) return null;
-        const token = m[1];
-        const start = text.length - token.length;
-        return { token, start, before: text.slice(0, start) };
-    }
-
-    /** True when project name/path matches a slash query like "esc" → Escape Purgatory. */
-    function historyProjectMatchesQuery(proj, query) {
-        const q = String(query || '').trim().toLowerCase();
-        if (!q) return true;
-        const name = String((proj && proj.name) || '').toLowerCase();
-        const path = String((proj && proj.path) || '').toLowerCase().replace(/\\/g, '/');
-        const hay = (name + ' ' + path).trim();
-        if (!hay) return false;
-        if (hay.includes(q)) return true;
-        // Word / path-segment prefixes: "esc" → "escape", "ep" → no unless present
-        const parts = hay.split(/[^a-z0-9]+/).filter(Boolean);
-        if (parts.some((w) => w.startsWith(q))) return true;
-        // Compact acronym-ish: "ep" from "Escape Purgatory"
-        if (q.length >= 2) {
-            const initials = parts.map((w) => w[0]).join('');
-            if (initials.startsWith(q) || initials.includes(q)) return true;
-        }
-        return false;
-    }
-
-    function historyAgentMatchesQuery(agent, query) {
-        const q = String(query || '').trim().toLowerCase();
-        if (!q) return true;
-        const id = String((agent && agent.id) || '').toLowerCase();
-        const label = String((agent && agent.label) || '').toLowerCase();
-        const prefix = String((agent && agent.prefix) || '').toLowerCase();
-        if (id.startsWith(q) || id.includes(q)) return true;
-        if (label.includes(q)) return true;
-        if (prefix.includes(q)) return true;
-        return false;
-    }
-
-    function pushHistoryProjectPaletteItems(items, needle) {
-        collectHistoryFilterProjects().forEach((p) => {
-            if (!historyProjectMatchesQuery(p, needle)) return;
-            items.push({
-                kind: 'project',
-                id: p.key,
-                prefix: '/project',
-                label: p.name + (p.path ? ' — ' + p.path : ''),
-                apply: () => addHistoryProjectFilter(p),
-            });
-        });
-    }
-
-    function pushHistoryAgentPaletteItems(items, needle) {
-        collectHistoryFilterAgents().forEach((a) => {
-            if (!historyAgentMatchesQuery(a, needle)) return;
-            items.push({
-                kind: 'agent',
-                id: a.key,
-                prefix: (a.prefix || ('/' + a.id)).trim(),
-                label: a.label,
-                apply: () => addHistoryAgentFilter(a),
-            });
-        });
-    }
-
-    function buildHistorySlashPaletteItems(token) {
-        const t = String(token || '').trim().toLowerCase();
-        const items = [];
-        const q = t.replace(/^\/+/, '');
-
-        const projectCmd = /^(?:project|p|cd)(?:\s+(.*))?$/i.exec(q);
-        const agentCmd = /^agent(?:\s+(.*))?$/i.exec(q);
-        const isRoot = t === '/' || q === '';
-
-        if (isRoot || /^(?:p|pr|pro|proj|project|cd)$/i.test(q)) {
-            items.push({
-                kind: 'hint',
-                id: 'hint-project',
-                prefix: '/project',
-                label: 'Filter by project…',
-                apply: null,
-            });
-        }
-        if (isRoot || /^(?:a|ag|age|agen|agent)$/i.test(q)) {
-            items.push({
-                kind: 'hint',
-                id: 'hint-agent',
-                prefix: '/agent',
-                label: 'Filter by agent…',
-                apply: null,
-            });
-        }
-
-        if (isRoot) {
-            pushHistoryProjectPaletteItems(items, '');
-            pushHistoryAgentPaletteItems(items, '');
-        } else if (projectCmd) {
-            // /project, /p esc, /cd Escape…
-            pushHistoryProjectPaletteItems(items, String(projectCmd[1] || '').trim());
-        } else if (agentCmd) {
-            pushHistoryAgentPaletteItems(items, String(agentCmd[1] || '').trim());
-        } else {
-            // Bare query: /esc → Escape Purgatory, /cur → Cursor, etc.
-            pushHistoryProjectPaletteItems(items, q);
-            pushHistoryAgentPaletteItems(items, q);
-        }
-
-        // Dedupe by id
-        const seen = new Set();
-        return items.filter((it) => {
-            const k = it.kind + ':' + it.id;
-            if (seen.has(k)) return false;
-            seen.add(k);
-            return true;
-        }).slice(0, 40);
-    }
-
-    function hideHistorySlashPalette() {
-        const el = document.getElementById('historySearchSlashPalette');
-        if (el) {
-            el.hidden = true;
-            el.innerHTML = '';
-        }
-        historySlashPaletteItems = [];
-        historySlashPaletteIndex = 0;
-    }
-
-    function paintHistorySlashPalette(items) {
-        const el = document.getElementById('historySearchSlashPalette');
-        if (!el) return;
-        historySlashPaletteItems = items || [];
-        if (!historySlashPaletteItems.length) {
-            el.hidden = false;
-            el.innerHTML = '<div class="history-slash-palette-empty">No matching filters. Try /project or /agent</div>';
-            return;
-        }
-        if (historySlashPaletteIndex >= historySlashPaletteItems.length) {
-            historySlashPaletteIndex = 0;
-        }
-        let html = '';
-        let lastKind = '';
-        historySlashPaletteItems.forEach((it, idx) => {
-            if (it.kind !== lastKind && (it.kind === 'project' || it.kind === 'agent')) {
-                html += '<div class="history-slash-palette-section">' + escapeHtml(it.kind === 'project' ? 'Projects' : 'Agents') + '</div>';
-                lastKind = it.kind;
-            } else if (it.kind === 'hint' && lastKind !== 'hint') {
-                html += '<div class="history-slash-palette-section">Filters</div>';
-                lastKind = 'hint';
-            }
-            html += (
-                '<button type="button" class="history-slash-palette-item' + (idx === historySlashPaletteIndex ? ' is-active' : '') + '" data-history-slash-idx="' + idx + '" role="option" aria-selected="' + (idx === historySlashPaletteIndex ? 'true' : 'false') + '">' +
-                '<span class="hslp-prefix">' + escapeHtml(it.prefix || '') + '</span>' +
-                '<span class="hslp-label">' + escapeHtml(it.label || '') + '</span>' +
-                '</button>'
-            );
-        });
-        el.hidden = false;
-        el.innerHTML = html;
-        el.querySelectorAll('[data-history-slash-idx]').forEach((btn) => {
-            btn.addEventListener('mousedown', (ev) => {
-                ev.preventDefault();
-                const idx = Number(btn.getAttribute('data-history-slash-idx'));
-                applyHistorySlashPaletteItem(idx);
-            });
-        });
-    }
-
-    function applyHistorySlashPaletteItem(idx) {
-        const item = historySlashPaletteItems[idx];
-        const input = document.getElementById('searchInput');
-        if (!item || !input) return;
-        const draft = parseHistorySlashDraft(input.value);
-        if (item.kind === 'hint') {
-            input.value = (draft ? draft.before : '') + item.prefix + ' ';
-            hideHistorySlashPalette();
-            onHistorySearchInput({ target: input });
-            input.focus();
-            return;
-        }
-        if (typeof item.apply === 'function') item.apply();
-        input.value = draft ? draft.before.replace(/\s+$/, '') : '';
-        hideHistorySlashPalette();
-        searchChats();
-        input.focus();
-    }
-
-    function onHistorySearchInput() {
-        const input = document.getElementById('searchInput');
-        const raw = (input && input.value) || '';
-        const draft = parseHistorySlashDraft(raw);
-        if (draft && draft.token.startsWith('/')) {
-            const items = buildHistorySlashPaletteItems(draft.token);
-            paintHistorySlashPalette(items);
-            // While composing a slash filter, still apply text-before + active chips.
-            searchChats({ slashDraft: draft });
-            return;
-        }
-        hideHistorySlashPalette();
-        searchChats();
-    }
-
-    function clearHistorySearch() {
-        const input = document.getElementById('searchInput');
-        if (!input) return;
-        input.value = '';
-        hideHistorySlashPalette();
-        searchChats();
-        input.focus({ preventScroll: true });
-    }
-
-    function onHistorySearchKeydown(ev) {
-        const el = document.getElementById('historySearchSlashPalette');
-        const open = el && !el.hidden && historySlashPaletteItems.length;
-        if (!open) {
-            if (ev.key === 'Escape' && historyFiltersActive()) {
-                // keep chips; just blur handled elsewhere
-            }
-            return;
-        }
-        if (ev.key === 'ArrowDown') {
-            ev.preventDefault();
-            historySlashPaletteIndex = (historySlashPaletteIndex + 1) % historySlashPaletteItems.length;
-            paintHistorySlashPalette(historySlashPaletteItems);
-            return;
-        }
-        if (ev.key === 'ArrowUp') {
-            ev.preventDefault();
-            historySlashPaletteIndex = (historySlashPaletteIndex - 1 + historySlashPaletteItems.length) % historySlashPaletteItems.length;
-            paintHistorySlashPalette(historySlashPaletteItems);
-            return;
-        }
-        if (ev.key === 'Enter') {
-            ev.preventDefault();
-            applyHistorySlashPaletteItem(historySlashPaletteIndex);
-            return;
-        }
-        if (ev.key === 'Escape') {
-            ev.preventDefault();
-            hideHistorySlashPalette();
-            const input = document.getElementById('searchInput');
-            const draft = parseHistorySlashDraft(input && input.value);
-            if (input && draft) {
-                input.value = draft.before.replace(/\s+$/, '');
-                searchChats();
-            }
-        }
-    }
-
-    function filterTerminalHistory(searchTerm) {
-        return getTerminalHistoryEntries().filter((entry) => {
-            const s = entry.session || {};
-            // Terminals rarely have project/agent; hide when project/agent filters are on.
-            if (historyFiltersActive()) return false;
-            const hay = [
-                s.title,
-                s.shell,
-                s.id,
-                formatChatDisplayId(s.id),
-                'terminal',
-            ].join(' ').toLowerCase();
-            return !searchTerm || hay.includes(searchTerm);
-        });
-    }
-
-    function paintSearchResults(sessions, terminalEntries, renderSession, emptyOpts) {
-        const historyContainer = document.getElementById('chatHistory');
-        if (!historyContainer) return;
-        repaintHistorySearch = () => paintSearchResults(sessions, terminalEntries, renderSession, emptyOpts);
-        const options = Object.assign({ showRefresh: false }, emptyOpts || {});
-
-        const toEntry = (session) => {
-            const isServer = session.session_name != null || session.message_count != null;
-            const match = String(session.match || '').toLowerCase();
-            return {
-                sessionId: session.id,
-                session: isServer ? null : session,
-                updated: parseSessionTimestamp(session.last_message_time)
-                    || parseSessionTimestamp(session.last_activity)
-                    || Number(session.updated)
-                    || 0,
-                serverSession: isServer ? session : null,
-                searchMatch: match === 'content' ? 'content' : (match === 'title' ? 'title' : ''),
-            };
-        };
-
-        const titleSessions = [];
-        const contentSessions = [];
-        (sessions || []).forEach((session) => {
-            if (String(session.match || '').toLowerCase() === 'content') contentSessions.push(session);
-            else titleSessions.push(session);
-        });
-
-        const titleEntries = titleSessions.map(toEntry);
-        const contentEntries = contentSessions.map(toEntry);
-        const termEntries = terminalEntries || [];
-        const all = titleEntries.concat(contentEntries).concat(termEntries);
-
-        if (!all.length) {
-            const icon = options.emptyIcon || '🔍';
-            const title = options.emptyTitle || 'No results found';
-            const text = options.emptyText || 'Try a different search term';
-            CuttleChatHistoryView.paint(historyContainer, `
-                ${createHistorySectionHeaderHTML('Search')}
-                <div class="empty-state">
-                    <div class="empty-state-icon">${icon}</div>
-                    <div class="empty-state-title">${escapeHtml(title)}</div>
-                    <div class="empty-state-text">${escapeHtml(text)}</div>
-                </div>
-            `);
-            return;
-        }
-
-        const renderEntry = (entry, itemOpts) => {
-            if (entry.isTerminal) return createTerminalHistoryItemHTML(entry.session);
-            if (entry.serverSession) return renderSession(entry.serverSession, itemOpts);
-            return renderSession(entry.session, itemOpts);
-        };
-
-        // Search uses match-kind sections (not project/recency groups) so a late
-        // content-search wave cannot bury title hits under unrelated recent chats.
-        let html = '';
-        const paintTier = (key, label, entries) => {
-            if (!entries.length) return;
-            const group = {
-                project: { key, id: null, name: label, path: '' },
-                entries: entries.slice().sort((a, b) => {
-                    const aStarred = entryIsStarred(a);
-                    const bStarred = entryIsStarred(b);
-                    if (aStarred && !bStarred) return -1;
-                    if (bStarred && !aStarred) return 1;
-                    const d = (b.updated || 0) - (a.updated || 0);
-                    if (d !== 0) return d;
-                    return String(b.sessionId).localeCompare(String(a.sessionId), undefined, {
-                        numeric: true,
-                    });
-                }),
-                latest: 0,
-            };
-            html += `<div class="history-section history-search-tier" data-search-tier="${escapeHtml(key)}" data-project-key="${escapeHtml(key)}">`;
-            html += createHistorySectionHeaderHTML(label, {
-                showRefresh: false,
-                project: group.project,
-                collapsible: false,
-                collapsed: false,
-                count: group.entries.length,
-            });
-            html += `<div class="history-section-body">${renderHistoryGroupBody(group, renderEntry)}</div>`;
-            html += '</div>';
-        };
-
-        paintTier('__search_titles__', 'Matching titles', titleEntries.concat(termEntries));
-        paintTier('__search_content__', 'In messages', contentEntries);
-
-        CuttleChatHistoryView.paint(historyContainer, html, () => {
-            syncHistoryRunningIndicators();
-            syncHistoryUnreadIndicators();
-            applyHistorySubagentExpandState();
-            scheduleSlashChipCompactLabels(historyContainer);
-            renderArchivedSection();
-        });
-    }
-
-    function searchChats(opts) {
-        closeHistoryItemMenu();
-        opts = opts || {};
-        const rawFull = (document.getElementById('searchInput') && document.getElementById('searchInput').value) || '';
-        const clear = document.getElementById('historySearchClear');
-        if (clear) clear.hidden = !rawFull;
-        repaintHistorySearch = null;
-        const draft = opts.slashDraft || parseHistorySlashDraft(rawFull);
-        const composingSlash = !!(draft && String(draft.token || '').startsWith('/'));
-        const rawForText = draft ? draft.before : rawFull;
-        const searchTerm = String(rawForText || '').trim().toLowerCase();
-        const filtersOn = historyFiltersActive();
-
-        if (historySearchTimer) {
-            clearTimeout(historySearchTimer);
-            historySearchTimer = null;
-        }
-        if (historySearchAbort) {
-            try { historySearchAbort.abort(); } catch (_) {}
-            historySearchAbort = null;
-        }
-        if (!searchTerm && !filtersOn) {
-            historySearchSeq += 1;
-            historySearchLiveQuery = '';
-            // Keep the slash filter palette open while the user is composing /project|/agent.
-            if (!composingSlash) hideHistorySlashPalette();
-            loadChatHistory();
-            return;
-        }
-
-        historySearchLiveQuery = searchTerm || '__filters__';
-        const seq = ++historySearchSeq;
-        const terminalEntries = filterTerminalHistory(searchTerm);
-
-        if (isAuthMode()) {
-            const listed = ((window.CuttleAuth.getSessions && window.CuttleAuth.getSessions()) || [])
-                .filter((s) => !isChatSessionDeleted(s && s.id))
-                .filter((s) => sessionMatchesHistoryFilters(s));
-            const titleHits = listed
-                .filter((s) => !searchTerm || historySessionHaystack(s).includes(searchTerm))
-                .map((s) => Object.assign({}, s, { match: 'title' }));
-            paintSearchResults(
-                titleHits,
-                terminalEntries,
-                createAuthHistoryItemHTML,
-                titleHits.length || terminalEntries.length
-                    ? null
-                    : {
-                        emptyIcon: '🔍',
-                        emptyTitle: searchTerm ? 'Searching messages…' : 'No matching chats',
-                        emptyText: searchTerm ? 'Looking through chat contents' : 'Try another /project or /agent filter',
-                    },
-            );
-
-            if (!searchTerm) return;
-
-            historySearchTimer = setTimeout(() => {
-                if (seq !== historySearchSeq) return;
-                const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-                historySearchAbort = controller;
-                const url = `/api/auth/sessions/search?q=${encodeURIComponent(String(rawForText || '').trim())}`;
-                fetch(url, {
-                    credentials: 'include',
-                    cache: 'no-store',
-                    signal: controller ? controller.signal : undefined,
-                }).then((res) => (res.ok ? res.json() : null)).then((data) => {
-                    if (seq !== historySearchSeq) return;
-                    if (!data || !data.success || !Array.isArray(data.sessions)) {
-                        if (!titleHits.length && !terminalEntries.length) {
-                            paintSearchResults([], [], (s) => createAuthHistoryItemHTML(s), {
-                                emptyIcon: '🔍',
-                                emptyTitle: 'No results found',
-                                emptyText: 'Try a different search term',
-                            });
-                        }
-                        return;
-                    }
-                    const byId = new Map();
-                    titleHits.forEach((s) => byId.set(String(s.id), s));
-                    data.sessions.forEach((s) => {
-                        if (isChatSessionDeleted(s && s.id)) return;
-                        if (!sessionMatchesHistoryFilters(s)) return;
-                        const key = String(s.id);
-                        const existing = byId.get(key);
-                        const matchKind = String(s.match || '').toLowerCase() === 'title' ? 'title' : 'content';
-                        if (!existing) {
-                            byId.set(key, Object.assign({}, s, { match: matchKind }));
-                            return;
-                        }
-                        // Keep title rank; attach snippet from content hit if present.
-                        if (matchKind === 'title') existing.match = 'title';
-                        if (s.snippet && !existing.snippet) existing.snippet = s.snippet;
-                        if (s.search_snippet && !existing.search_snippet) {
-                            existing.search_snippet = s.search_snippet;
-                        }
-                    });
-                    // Title matches first, then content; recency within each tier.
-                    const merged = Array.from(byId.values()).sort((a, b) => {
-                        const am = String(a.match || '') === 'title' ? 0 : 1;
-                        const bm = String(b.match || '') === 'title' ? 0 : 1;
-                        if (am !== bm) return am - bm;
-                        const at = parseSessionTimestamp(a.last_message_time)
-                            || parseSessionTimestamp(a.last_activity)
-                            || 0;
-                        const bt = parseSessionTimestamp(b.last_message_time)
-                            || parseSessionTimestamp(b.last_activity)
-                            || 0;
-                        return bt - at;
-                    });
-                    paintSearchResults(
-                        merged,
-                        terminalEntries,
-                        createAuthHistoryItemHTML,
-                        {
-                            emptyIcon: '🔍',
-                            emptyTitle: 'No results found',
-                            emptyText: 'Try a different search term',
-                        },
-                    );
-                }).catch((err) => {
-                    if (err && err.name === 'AbortError') return;
-                    if (seq !== historySearchSeq) return;
-                    if (!titleHits.length && !terminalEntries.length) {
-                        paintSearchResults([], [], (s) => createAuthHistoryItemHTML(s), {
-                            emptyIcon: '🔍',
-                            emptyTitle: 'No results found',
-                            emptyText: 'Try a different search term',
-                        });
-                    }
-                });
-            }, 280);
-            return;
-        }
-
-        const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-        const filtered = Object.values(sessions)
-            .filter((session) => localSessionMatchesSearch(session, searchTerm))
-            .map((session) => {
-                const titleHit = !searchTerm || historySessionHaystack(session).includes(searchTerm);
-                return Object.assign({}, session, { match: titleHit ? 'title' : 'content' });
-            })
-            .sort((a, b) => {
-                const am = a.match === 'title' ? 0 : 1;
-                const bm = b.match === 'title' ? 0 : 1;
-                if (am !== bm) return am - bm;
-                return (Number(b.updated) || 0) - (Number(a.updated) || 0);
-            });
-        paintSearchResults(
-            filtered,
-            terminalEntries,
-            (s) => createHistoryItemHTML(s),
-            {
-                emptyIcon: '🔍',
-                emptyTitle: 'No results found',
-                emptyText: 'Try a different search term or /project /agent filter',
-            },
-        );
-    }
-    
     // Message Handling
-    /** Id of the follow-up currently being edited in the queue panel (or null). */
-    let editingFollowupId = null;
-    /** Prior paused flag for the item under edit (restored on save/cancel). */
-    let editingFollowupWasPaused = false;
-
+    // Follow-up edit state + transitions are owned by the queue controller;
+    // these are the thin call sites the edit UI and keyboard handlers use.
     function followupEditableText(item) {
-        if (!item) return '';
-        if (item.rawMessage != null) return String(item.rawMessage);
-        return String(item.content || '');
+        return CuttleFollowupQueue.followupEditableText(item);
     }
 
-    function beginEditFollowup(id) {
-        if (!id || !followupQueue.items.some((x) => x.id === id)) return;
-        const item = followupQueue.items.find((x) => x.id === id);
-        if (!item) return;
-        editingFollowupId = id;
-        editingFollowupWasPaused = !!item.paused;
-        // Soft-pause so /followups/take cannot yank the message mid-edit.
-        if (!item.paused) {
-            CuttleFollowupQueue.setPaused(followupQueue, id, true);
-            persistFollowupPut();
-        }
-        clearTimeout(followupDrainTimer);
-        followupDrainTimer = null;
-        renderFollowupQueue();
-    }
+    function beginEditFollowup(id) { followupController().beginEdit(id); }
 
-    function finishEditFollowup(opts = {}) {
-        const resumeDrain = opts.resumeDrain !== false;
-        const id = editingFollowupId;
-        editingFollowupId = null;
-        if (id) {
-            const item = followupQueue.items.find((x) => x.id === id);
-            if (item) CuttleFollowupQueue.setPaused(followupQueue, id, editingFollowupWasPaused);
-        }
-        editingFollowupWasPaused = false;
-        renderFollowupQueue();
-        persistFollowupPut();
-        if (
-            resumeDrain
-            && followupQueue.items.some((x) => !x.paused)
-            && !isSessionGenerating()
-        ) {
-            scheduleFollowupDrain(180);
-        }
-    }
+    function finishEditFollowup(opts = {}) { followupController().finishEdit(opts); }
 
-    function cancelEditFollowup() {
-        finishEditFollowup({ resumeDrain: true });
-    }
+    function cancelEditFollowup() { followupController().cancelEdit(); }
 
-    function saveEditFollowup(id, nextText) {
-        if (!id) return;
-        const item = followupQueue.items.find((x) => x.id === id);
-        if (!item) return;
-        const text = String(nextText ?? '').trim();
-        if (!text && !(item.attachments && item.attachments.length)) {
-            // Empty with no attachments — drop it rather than keeping a blank send.
-            editingFollowupId = null;
-            editingFollowupWasPaused = false;
-            removeFollowup(id);
-            return;
-        }
-        item.rawMessage = text;
-        item.content = formatMessageWithAttachments(text, item.attachments || []);
-        finishEditFollowup({ resumeDrain: true });
-    }
+    function saveEditFollowup(id, nextText) { followupController().saveEdit(id, nextText); }
 
     function renderFollowupQueue() {
         const root = document.getElementById('followupQueue');
         if (!root) return;
-        patchLiveSessionFollowupQueue(currentSessionId, followupQueue.items);
-        if (!followupQueue.items.length) {
-            editingFollowupId = null;
+        const ctl = followupController();
+        ctl.pruneEditing();
+        const queueItems = ctl.getState().items;
+        const editingId = ctl.getEditingId();
+        patchLiveSessionFollowupQueue(session.current(), queueItems);
+        if (!queueItems.length) {
             root.hidden = true;
             root.innerHTML = '';
             syncHistoryUnreadIndicators();
             return;
         }
-        if (editingFollowupId && !followupQueue.items.some((x) => x.id === editingFollowupId)) {
-            editingFollowupId = null;
-        }
         root.hidden = false;
-        const items = followupQueue.items.map((item, idx) => {
-            const isEditing = item.id === editingFollowupId;
+        const itemsHtml = queueItems.map((item, idx) => {
+            const isEditing = item.id === editingId;
             if (isEditing) {
                 const editVal = escapeHtml(followupEditableText(item));
                 return `
@@ -17793,7 +9881,7 @@
             const parsed = parseStoredSlashCommandMessage(raw);
             let preview;
             if (parsed && parsed.chips.length) {
-                const chips = normalizeAgentSlashChips(parsed.chips, currentSessionId);
+                const chips = normalizeAgentSlashChips(parsed.chips, session.current());
                 const chipsHtml = chips
                     .map((c) => slashCommandChipHistoryHtml(c.label, c.meta, c.category))
                     .join('');
@@ -17827,18 +9915,18 @@
                 </div>
             `;
         }).join('');
-        const otherPaused = followupQueue.items.filter(
-            (x) => x.paused && x.id !== editingFollowupId
+        const otherPaused = queueItems.filter(
+            (x) => x.paused && x.id !== editingId
         ).length;
-        const titleBits = [`Queued · ${followupQueue.items.length}`];
-        if (editingFollowupId) titleBits.push('editing · send paused');
+        const titleBits = [`Queued · ${queueItems.length}`];
+        if (editingId) titleBits.push('editing · send paused');
         if (otherPaused) titleBits.push(`${otherPaused} paused`);
         root.innerHTML = `
             <div class="followup-queue-header">
                 <span class="followup-queue-title">${titleBits.join(' · ')}</span>
                 <button type="button" class="followup-queue-clear" id="followupQueueClear">Clear all</button>
             </div>
-            <div class="followup-queue-list">${items}</div>
+            <div class="followup-queue-list">${itemsHtml}</div>
         `;
         root.querySelector('#followupQueueClear')?.addEventListener('click', clearFollowupQueue);
         root.querySelectorAll('[data-remove-followup]').forEach((btn) => {
@@ -17931,13 +10019,8 @@
     }
 
     function followupAuthSid() {
-        if (!isAuthMode() || currentSessionId == null) return null;
-        return toAuthDbSessionId(currentSessionId);
-    }
-
-    // Owned by chat_activity.js — thin adapter.
-    function followupQueueFingerprint(items) {
-        return CuttleChatActivity.followupQueueFingerprint(items);
+        if (!isAuthMode() || session.current() == null) return null;
+        return toAuthDbSessionId(session.current());
     }
 
     function patchLiveSessionFollowupQueue(sessionId, followups) {
@@ -17953,103 +10036,29 @@
     }
 
     function applyServerFollowups(list, revision) {
-        // Don't clobber an in-progress take, unsynced edits, a queue edit,
-        // or an identical list (owned reconcile decision).
-        if (followupQueue.dirty && !followupQueue.takeInFlight) {
-            persistFollowupPut();
-            return;
-        }
-        const r = CuttleFollowupQueue.reconcileServerList(followupQueue, list,
-            { editingId: editingFollowupId, revision }, CuttleChatActivity);
-        if (!r.applied && r.reason !== 'same') return;
-        patchLiveSessionFollowupQueue(currentSessionId, followupQueue.items);
-        renderFollowupQueue();
-        if ((followupQueue.items.some((x) => !x.paused) || getSessionPrefs(currentSessionId)?.[followupClaimField]) && !isSessionGenerating() && !editingFollowupId) {
-            scheduleFollowupDrain(250);
-        }
-        try { scheduleChatActivityBroadcast(); } catch (_) {}
+        followupController().applyServerList(list, revision);
     }
 
-    function rememberUnsyncedQueue(sid, state) {
-        updateSessionPrefs(sid, {[followupWriteField]: state.dirty ? {
-            items: state.items, base: state.base, revision: state.revision,
-        } : null});
+    // ---- follow-up transport (owned by the page) ----
+    async function followupPutRequest(sid, body) {
+        const response = await fetch('/api/auth/sessions/' + sid + '/followups', {
+            method: 'PUT', credentials: 'include', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await response.json().catch(() => ({}));
+        return { ok: response.ok, status: response.status, data };
     }
 
-    async function persistFollowupAppend(item) {
-        // Rebased revisioned PUT also handles appends. Keeping one mutation path
-        // means a failed append retains its intent and cannot be dropped by a GET.
-        return persistFollowupPut();
+    async function followupTakeRequest(sid, body) {
+        const response = await fetch('/api/auth/sessions/' + sid + '/followups/take', {
+            method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await response.json().catch(() => ({}));
+        return { ok: response.ok, status: response.status, data };
     }
 
-    async function persistFollowupPut(sid = followupAuthSid(), state = followupQueue) {
-        if (!sid) return true;
-        CuttleFollowupQueue.markDirty(state);
-        rememberUnsyncedQueue(sid, state);
-        if (state.write) return state.write;
-        const write = sessionMutations.enqueue(sid + ':followups', async () => {
-            for (let attempt = 0; attempt < 4; attempt++) {
-                const version = state.editVersion;
-                let desired = JSON.parse(JSON.stringify(state.items));
-                const base = JSON.parse(JSON.stringify(state.base));
-                const response = await fetch('/api/auth/sessions/' + sid + '/followups', {
-                    method: 'PUT', credentials: 'include', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({followups: desired, revision: state.revision}),
-                });
-                const data = await response.json();
-                if (response.status === 409 && data.conflict) {
-                    state.revision = data.revision;
-                    state.items = CuttleFollowupQueue.mergeEdits(base, state.items, data.followups);
-                    state.base = data.followups;
-                    rememberUnsyncedQueue(sid, state);
-                    continue;
-                }
-                if (!response.ok || !data.success) throw new Error(data.error || 'Queue sync failed');
-                state.revision = data.revision;
-                state.base = data.followups || desired;
-                CuttleFollowupQueue.markClean(state, version);
-                rememberUnsyncedQueue(sid, state);
-                patchLiveSessionFollowupQueue(sid, state.base);
-                if (!state.dirty) {
-                    state.items = state.base;
-                    if (followupQueue === state && sessionIdsEqual(currentSessionId, sid)) renderFollowupQueue();
-                    return true;
-                }
-            }
-            return false;
-        }).catch(() => false).finally(() => { state.write = null; });
-        state.write = write;
-        return write;
-    }
-
-    function enqueueFollowup(message, opts = {}) {
-        const item = CuttleFollowupQueue.enqueue(followupQueue, {
-            content: message,
-            attachments: opts.attachments,
-            rawMessage: opts.rawMessage,
-            paused: opts.paused,
-        }, { now: () => Date.now(), rand: () => Math.random() });
-        renderFollowupQueue();
-        persistFollowupAppend(item);
-        return item;
-    }
-
-    const STEER_AGENT_LABELS = { codex: 'Codex', muse: 'Muse Code' };
-    let steeringText = '';
-
-    /**
-     * Codex / Muse Code accept input while a turn runs — hand the follow-up to
-     * the live turn instead of queueing it. The server persists the user row;
-     * resolves false (caller queues) when nothing steerable is running.
-     */
-    async function trySteerRunningTurn(message, attachments) {
-        const sid = currentSessionId;
-        const text = String(message || '').trim();
-        if (sid == null || sid === '' || !text) return false;
-        if (Array.isArray(attachments) && attachments.length) return false;
-        if (steeringText === text) return true;
-        steeringText = text;
-        let data = null;
+    async function followupSteerRequest(sid, text) {
         try {
             const resp = await fetch('/api/chat-steer', {
                 method: 'POST',
@@ -18057,167 +10066,42 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ session_id: sid, message: text }),
             });
-            data = await resp.json().catch(() => null);
+            return await resp.json().catch(() => null);
         } catch (_) {
-            data = null;
-        } finally {
-            steeringText = '';
+            return null;
         }
-        if (!data || !data.steered) return false;
-        if (sessionIdsEqual(currentSessionId, sid)) {
-            addMessageToUI(text, 'user', {
-                timestamp: Date.now(),
-                steered: true,
-                steered_agent: data.agent,
-            });
-            autoScrollChatToBottom(true);
-            saveChatSession(text, 'user');
-        }
-        recordPromptHistory(text);
-        const label = STEER_AGENT_LABELS[data.agent] || data.agent || 'agent';
-        (window.showToast || function () {})(`Sent into the running ${label} turn.`, 'success');
-        return true;
     }
 
-    function toggleFollowupPaused(id) {
-        if (!id) return;
-        const current = followupQueue.items.find((x) => x.id === id);
-        if (!current) return;
-        const item = CuttleFollowupQueue.setPaused(followupQueue, id, !current.paused);
-        renderFollowupQueue();
-        persistFollowupPut();
-        if (!item.paused && !isSessionGenerating()) scheduleFollowupDrain(120);
-    }
-
-    function removeFollowup(id) {
-        if (!id) return;
-        if (editingFollowupId === id) {
-            editingFollowupId = null;
-            editingFollowupWasPaused = false;
-        }
-        CuttleFollowupQueue.removeItem(followupQueue, id);
-        renderFollowupQueue();
-        persistFollowupPut();
-    }
-
-    function clearFollowupQueue() {
-        editingFollowupId = null;
-        editingFollowupWasPaused = false;
-        CuttleFollowupQueue.clearAll(followupQueue);
-        renderFollowupQueue();
-        persistFollowupPut();
-    }
-
-    function scheduleFollowupDrain(delayMs = 120) {
-        if (editingFollowupId) return;
-        clearTimeout(followupDrainTimer);
-        followupDrainTimer = setTimeout(() => {
-            drainNextFollowup();
-        }, delayMs);
-    }
-
-    /**
-     * Merge every pending follow-up into one outbound turn so the agent sees
-     * the full queue at once (instead of N serial replies).
-     * Sticky slash prefix from the first item is kept on the combined message
-     * so /cursor · /claude routing still works.
-     */
-    // Owned by chat_activity.js — DOM/state gather, domain decides.
-    function combineFollowupBatch(items) {
-        return CuttleChatActivity.combineFollowupBatch(items, {
-            stickyPrefixFor: (raw) => {
-                const sticky = getStickySlashCommandFromMessage(raw);
-                return sticky ? sticky.prefix : '';
-            },
-            formatWithAttachments: formatMessageWithAttachments,
-        });
-    }
-
-    async function drainNextFollowup() {
-        // Wait until this chat is fully idle (no local stream, no remote run).
-        if (editingFollowupId) return;
-        healStaleGeneratingState();
-        if (isSessionGenerating()) return;
-        // Re-check after heal — edit may have started while we were waiting.
-        if (editingFollowupId) return;
-        const origin = currentSessionId;
-        const state = followupQueue;
-        if (state.takeInFlight) return;
-        let batch = [];
-        const sid = followupAuthSid();
-        if (sid) {
-            if (state.dirty && !await persistFollowupPut()) return;
-            if (editingFollowupId || !sessionIdsEqual(currentSessionId, origin) || followupQueue !== state) return;
-            const claimId = getSessionPrefs(sid)?.[followupClaimField] || ('queue-' + Date.now() + '-' + Math.random().toString(36).slice(2));
-            updateSessionPrefs(sid, {[followupClaimField]: claimId});
-            const takeVersion = state.editVersion;
-            CuttleFollowupQueue.beginTake(state);
-            try {
-                const response = await fetch('/api/auth/sessions/' + sid + '/followups/take', {
-                    method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({revision: state.revision, claim_id: claimId}),
-                });
-                const data = await response.json();
-                if (response.status === 409) {
-                    updateSessionPrefs(sid, {[followupClaimField]: null});
-                    state.revision = data.revision;
-                    state.items = state.editVersion !== takeVersion
-                        ? CuttleFollowupQueue.mergeEdits(state.base, state.items, data.followups || [])
-                        : data.followups || [];
-                    state.base = data.followups || [];
-                    rememberUnsyncedQueue(sid, state);
-                    return;
-                }
-                if (!response.ok || !data.success) return;
-                const editedDuringTake = state.editVersion !== takeVersion;
-                const editedItems = state.items;
-                state.revision = data.revision;
-                state.items = data.remaining || [];
-                state.base = state.items.slice();
-                batch = data.followups || [];
-                if (editedDuringTake || editingFollowupId || !sessionIdsEqual(currentSessionId, origin) || followupQueue !== state) {
-                    // Restore to the captured chat when navigation or editing
-                    // races the claim; retain the write if the network fails.
-                    state.items = editedDuringTake ? editedItems : [...batch, ...state.items];
-                    state.editVersion++;
-                    state.dirty = true;
-                    rememberUnsyncedQueue(sid, state);
-                    updateSessionPrefs(sid, {[followupClaimField]: null});
-                    await persistFollowupPut(sid, state);
-                    return;
-                }
-                updateSessionPrefs(sid, {[followupClaimField]: null});
-            } catch (_) { return; }
-            finally { CuttleFollowupQueue.endTake(state); }
-        } else {
-            batch = CuttleFollowupQueue.resolveTake(state, editingFollowupId, null, CuttleChatActivity);
-        }
-        // Keep editing state if the edited item remained in the queue.
-        if (editingFollowupId && !followupQueue.items.some((x) => x.id === editingFollowupId)) {
-            editingFollowupId = null;
-            editingFollowupWasPaused = false;
-        }
-        renderFollowupQueue();
-        const combined = combineFollowupBatch(batch);
-        if (!combined) return;
-        const atts = combined.attachments || [];
-        const displayMessage = combined.displayMessage;
-        const message = combined.message;
+    function showFollowupChatArea() {
         const chatArea = document.getElementById('chatArea');
         if (chatArea && chatArea.style.display === 'none') {
             document.getElementById('welcomeScreen').style.display = 'none';
             chatArea.style.display = 'flex';
             if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
         }
-        addMessageToUI(displayMessage, 'user', { timestamp: Date.now(), attachments: atts });
-        autoScrollChatToBottom(true);
-        saveChatSession(displayMessage, 'user', { attachments: atts });
-        recordPromptHistory(message);
-        await processMessage(message, { attachments: atts });
     }
 
+    // ---- thin call sites (caller contracts; decisions live in the controller) ----
+    function enqueueFollowup(message, opts = {}) {
+        return followupController().enqueue(message, opts);
+    }
+
+    async function trySteerRunningTurn(message, attachments) {
+        return followupController().steer(message, attachments);
+    }
+
+    function toggleFollowupPaused(id) { followupController().togglePaused(id); }
+
+    function removeFollowup(id) { followupController().remove(id); }
+
+    function clearFollowupQueue() { followupController().clear(); }
+
+    function scheduleFollowupDrain(delayMs = 120) { followupController().requestDrain(delayMs); }
+
+    async function drainNextFollowup() { return followupController().drain(); }
+
     async function requestServerCancelCurrentRun(opts = {}) {
-        const sid = currentSessionId;
+        const sid = session.current();
         if (sid == null || sid === '') return null;
         const body = { session_id: sid };
         if (opts.cancelJobs) body.cancel_jobs = true;
@@ -18301,14 +10185,13 @@
         const announce = opts.announce !== false;
         const inflight = inFlightUserMessage;
         if (typeof window !== 'undefined' && window.CuttleCompletionNotifications) {
-            window.CuttleCompletionNotifications.broker().cancel(currentSessionId || completionNotificationPendingId).catch(() => {});
+            window.CuttleCompletionNotifications.broker().cancel(session.current() || completionNotificationPendingId).catch(() => {});
         }
         const watchIds = runningWatchJobIds();
         const cancelJobs = (!inflight && watchIds.length > 0) || isProjectShellTurn(inflight);
         CuttleStopState.requestStop(stopState);
         inFlightUserMessage = null;
-        clearTimeout(followupDrainTimer);
-        followupDrainTimer = null;
+        followupController().cancelDrain();
         // Keep the stopped activity and durable notice immediately; cancellation
         // can take seconds, and its acknowledgment must not replace the notice.
         retainStoppedAgentBubble();
@@ -18326,7 +10209,7 @@
         removeRemoteWaitingIndicator();
         // Force: Stop owns the turn outright (the re-send claims a new token).
         endLocalGeneration();
-        if (currentSessionId) setHistorySessionRunning(currentSessionId, false);
+        if (session.current()) setHistorySessionRunning(session.current(), false);
         activeRequestController = null;
         const chatInput = document.getElementById('chatInput');
         const sendButton = document.getElementById('sendButton');
@@ -18353,8 +10236,21 @@
 
     async function processMessage(message, opts = {}) {
         const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
-        const controlLane = !!opts.controlLane || isImmediateControlLaneMessage(message);
-        const stickyCmd = getStickySlashCommandFromMessage(message);
+        // PREPARE stage — the pre-submit send decision record (control-lane
+        // classification, sticky/slash meta, pending typing badge) is owned
+        // by chat_generation.js; the page passes resolvers + applies effects.
+        const sendPlan = CuttleChatGeneration.prepareSend({
+            message,
+            controlLaneOpt: !!opts.controlLane,
+            isImmediateControl: isImmediateControlLaneMessage,
+            stickyOf: getStickySlashCommandFromMessage,
+            slashMetaOf: slashCommandMetaFromUserMessage,
+            pendingSlashOf: pendingSlashForTypingIndicator,
+            sessionKey: String(canonicalizeChatSessionId(session.current()) || ''),
+        });
+        const controlLane = sendPlan.controlLane;
+        const stickyCmd = sendPlan.stickyCmd;
+        const replySlash = sendPlan.replySlash;
         let responseData = null;
         // This turn's generation-lock token: end calls below release only
         // if no newer turn (or detach) has since claimed generation.
@@ -18363,7 +10259,7 @@
         const prevInFlight = inFlightUserMessage;
         const prevController = activeRequestController;
         if (!controlLane) {
-            if (window.CuttleCompletionNotifications) window.CuttleCompletionNotifications.broker().begin(currentSessionId || completionNotificationPendingId);
+            if (window.CuttleCompletionNotifications) window.CuttleCompletionNotifications.broker().begin(session.current() || completionNotificationPendingId);
             CuttleStopState.beginSend(stopState);
             inFlightUserMessage = message;
             turnGenToken = beginLocalGeneration();
@@ -18382,23 +10278,18 @@
         // Welcome composer is only for the first turn
         setWelcomeComposerEnabled(false);
 
-        const replySlash = slashCommandMetaFromUserMessage(message);
-
         // New turn owns the typing indicator — drop the previous turn's
         // sub-agent orbs first so they never bleed into a turn that uses none.
         // Live-status / stream syncs repopulate when this turn spawns sub-agents.
-        try { clearSubagentOrbs(); } catch (_) {}
+        try { subagentLaunchers.clearLive(); } catch (_) {}
         // Add typing indicator — pass slash meta so chip appears immediately
-        const pendingSlash = replySlash
-            ? pendingSlashForTypingIndicator(replySlash, stickyCmd)
-            : null;
-        turnBadgeBySession.set(String(canonicalizeChatSessionId(currentSessionId) || ''), pendingSlash);
-        addTypingIndicator(pendingSlash);
+        turnBadgeBySession.set(sendPlan.badgeKey, sendPlan.pendingSlash);
+        addTypingIndicator(sendPlan.pendingSlash);
 
         let skipFollowupDrain = false;
         let controlController = null;
         // Declared outside try so catch/finally can still gate paints after a switch.
-        let boundSessionId = canonicalizeChatSessionId(currentSessionId);
+        let boundSessionId = canonicalizeChatSessionId(session.current());
         // Snapshot nav generation at send time. New Chat / history switch bumps
         // turnGeneration; zombie status/adopt must not touch the new UI.
         const turnNavGen = CuttleTurnGuard.capture(turnGeneration);
@@ -18411,57 +10302,57 @@
         // the freshness/binding truth table lives in CuttleTurnGuard.
         const canPaintTurnHere = () => CuttleTurnGuard.canPaintHere(turnNavGen, turnSessionId(), {
             gen: turnGeneration.gen,
-            currentSessionId,
+            currentSessionId: session.current(),
             isViewing: (id) => isViewingSession(id),
         });
         try {
             await ensureAuthChatSession();
             // Send to API with project context (stream for status updates; JSON fallback if SSE fails)
-            const requestBody = {
+            // SUBMIT stage — the outbound request body, the origin session
+            // binding, and the transport policy (SSE-vs-JSON, control-lane
+            // JSON-only) are owned by chat_generation.js (planSubmit). The page
+            // gathers the values, applies the page-owned identity/project
+            // mutators, and owns the fetch/SSE transport.
+            const submitPlan = CuttleChatGeneration.planSubmit({
                 message: message,
-                session_id: authSessionIdForRequest(),
-                stream: true,
-            };
-            // Stable per-send id so a stream=false retry cannot mint a second
-            // chat when this first POST still has a null session_id (CH-000559).
-            requestBody.chat_request_id =
-                'ct_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+                sessionId: authSessionIdForRequest(),
+                currentSessionId: session.current(),
+                controlLane: controlLane,
+                stickyAgent: stickyAgentOverrideForRequest(message),
+                attachments: attachments.length
+                    ? CuttleChatAttachments.requestAttachmentPayload(attachments)
+                    : null,
+                controlRequestIdOpt: opts.controlRequestId,
+                // Stable per-send id so a stream=false retry cannot mint a
+                // second chat when this first POST still has a null session_id
+                // (CH-000559).
+                newChatRequestId: () => (
+                    'ct_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10)
+                ),
+                newControlRequestId: () => (
+                    (window.CuttleSupervised
+                        && window.CuttleSupervised.newControlRequestId
+                        && window.CuttleSupervised.newControlRequestId())
+                    || (`cr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`)
+                ),
+                canonicalize: canonicalizeChatSessionId,
+            });
+            const requestBody = submitPlan.body;
             // Pin this turn to the chat that sent it. Switching chats updates
             // currentSessionId; recovery/paint must keep using the origin id
             // or the reply lands in the newly opened transcript (phone bug).
-            boundSessionId = canonicalizeChatSessionId(
-                requestBody.session_id != null && requestBody.session_id !== ''
-                    ? requestBody.session_id
-                    : currentSessionId
-            );
-            const agentOverride = stickyAgentOverrideForRequest(message);
-            if (agentOverride) requestBody.sticky_agent = agentOverride;
+            boundSessionId = submitPlan.boundSessionId;
             // New-chat model/effort picks (dirty, no session yet) must travel
             // with this POST — adopt-time pin POSTs race the agent + badge.
             attachAgentIdentityToRequest(requestBody);
             if (controlLane) {
-                // Exactly-once control-lane idempotency key (server dedupes).
-                // Prefer a stable id for this turn; never regenerate on transport retry.
-                if (!opts.controlRequestId) {
-                    requestBody.control_request_id =
-                        (window.CuttleSupervised
-                            && window.CuttleSupervised.newControlRequestId
-                            && window.CuttleSupervised.newControlRequestId())
-                        || (`cr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
-                } else {
-                    requestBody.control_request_id = opts.controlRequestId;
-                }
-                inFlightControlRequestId = requestBody.control_request_id;
+                // Control-lane idempotency key is chosen by the owner.
+                inFlightControlRequestId = submitPlan.controlRequestId;
                 // Stamp the latest unmarked user bubble so sync can claim by control id.
                 const userEl = claimUnmarkedMessageEl('user', message);
                 if (userEl) {
-                    userEl.dataset.controlRequestId = requestBody.control_request_id;
+                    userEl.dataset.controlRequestId = submitPlan.controlRequestId;
                 }
-                // Control lane: JSON only — avoid SSE detach/retry double POST.
-                requestBody.stream = false;
-            }
-            if (attachments.length) {
-                requestBody.attachments = CuttleChatAttachments.requestAttachmentPayload(attachments);
             }
 
             // Include current project if available (path + id + name so /cursor
@@ -18521,10 +10412,13 @@
                     let sawProgress = false;
                     try { window.CuttleNetDebug && window.CuttleNetDebug.event('stream-hold', 'POST /api/chat'); } catch (_) {}
 
-                    // Bytes/framing live in chat_stream.js; the page keeps
-                    // request, classification, session, paint, and turn
-                    // effects. onEvents applies the whole batch, then
-                    // reports stop — last final frame wins, as before.
+                    // Bytes/framing live in chat_stream.js; event
+                    // classification, the per-event effect plan (paint gating +
+                    // final-event selection) and session adoption live in
+                    // chat_pending_result.js / chat_turn_guard.js; the page
+                    // keeps request, DOM paint, and turn effects. onEvents
+                    // applies the whole batch, then reports stop — last final
+                    // frame wins, as before.
                     const streamOutcome = await CuttleChatStream.readEvents(response.body, {
                         holdMs: STREAM_HOLD_MAX_MS,
                         readTimeoutMs: STREAM_READ_TIMEOUT_MS,
@@ -18533,50 +10427,54 @@
                             for (const ev of events) {
                                 try {
                                     // Owned by chat_pending_result.js — event
-                                    // classification; the page applies paint,
-                                    // session-adopt, and finalResult effects.
+                                    // classification + per-event effect plan;
+                                    // the page applies DOM paint, session-adopt,
+                                    // and finalResult effects.
                                     const streamEv = CuttleChatPendingResult.classifyStreamEvent(ev);
-                                    if (streamEv.kind === 'status') {
-                                        sawProgress = true;
-                                        if (canPaintTurnHere()) updateTypingStatus(streamEv.message);
-                                    } else if (streamEv.kind === 'session') {
+                                    if (streamEv.kind === 'session') {
                                         const sid = canonicalizeChatSessionId(streamEv.sessionId);
                                         requestBody.session_id = sid;
                                         if (boundSessionId == null) boundSessionId = sid;
                                         // Never yank the open chat to a different id mid-turn.
-                                        // turnNavGen gates zombies after New Chat (welcome is
-                                        // currentSessionId == null — must not re-adopt chat A).
-                                        if (
-                                            !CuttleTurnGuard.isStale(turnNavGen, turnGeneration)
-                                            && (
-                                                currentSessionId == null
-                                                || sessionIdsEqual(currentSessionId, sid)
-                                                || (boundSessionId != null && isViewingSession(boundSessionId))
-                                            )
-                                        ) {
+                                        // The freshness/binding truth table lives in
+                                        // CuttleTurnGuard.shouldAdoptStreamSession; a stale
+                                        // turn after New Chat (welcome is
+                                        // currentSessionId == null) must not re-adopt chat A.
+                                        if (CuttleTurnGuard.shouldAdoptStreamSession(
+                                            turnNavGen, turnGeneration, boundSessionId, sid, {
+                                                currentSessionId: session.current(),
+                                                sessionIdsEqual: sessionIdsEqual,
+                                                isViewing: (id) => isViewingSession(id),
+                                            }
+                                        )) {
                                             adoptChatSessionId(sid);
                                         }
-                                    } else if (streamEv.kind === 'busy') {
-                                        finalResult = streamEv.result;
-                                    } else if (streamEv.kind === 'query') {
-                                        sawProgress = true;
-                                        if (canPaintTurnHere() && ev.slash_command) {
-                                            rememberTurnBadge([], { active: true, slash_command: ev.slash_command });
-                                            refreshTypingIndicatorHeaderBadges();
-                                        }
-                                        if (streamEv.reportUrl && canPaintTurnHere()) {
-                                            updateTypingIndicatorQueryLink(streamEv.reportUrl);
-                                            const qid = streamEv.queryId || '';
-                                            (window.showToast || function() {})('Running…', 'info', {
-                                                linkUrl: qid
-                                                    ? ('/query_log.html?id=' + encodeURIComponent(qid))
-                                                    : streamEv.reportUrl,
-                                                linkText: 'View query log'
-                                            });
-                                        }
-                                    } else if (streamEv.kind === 'response') {
-                                        finalResult = ev;
+                                        continue;
                                     }
+                                    const streamPlan = CuttleChatPendingResult.planStreamEvent(
+                                        streamEv, ev, {
+                                            canPaint: canPaintTurnHere(),
+                                            slashCommand: !!ev.slash_command,
+                                        }
+                                    );
+                                    if (streamPlan.progress) sawProgress = true;
+                                    if (streamPlan.paintStatus != null) {
+                                        updateTypingStatus(streamPlan.paintStatus);
+                                    }
+                                    if (streamPlan.paintBadge) {
+                                        rememberTurnBadge([], { active: true, slash_command: ev.slash_command });
+                                        refreshTypingIndicatorHeaderBadges();
+                                    }
+                                    if (streamPlan.paintLink) {
+                                        updateTypingIndicatorQueryLink(streamPlan.reportUrl);
+                                        (window.showToast || function() {})('Running…', 'info', {
+                                            linkUrl: streamPlan.queryId
+                                                ? ('/query_log.html?id=' + encodeURIComponent(streamPlan.queryId))
+                                                : streamPlan.reportUrl,
+                                            linkText: 'View query log'
+                                        });
+                                    }
+                                    if (streamPlan.final != null) finalResult = streamPlan.final;
                                 } catch (e) { /* skip */ }
                             }
                             return finalResult != null;
@@ -18596,25 +10494,16 @@
                     if (finalResult) {
                         try { window.CuttleNetDebug && window.CuttleNetDebug.event('stream-done', 'got response event'); } catch (_) {}
                         // Pop parked copy now that the browser actually got the SSE event.
-                        consumeParkedChatResult(
+                        recoveryController().consumeParkedChatResult(
                             finalResult.session_id
                             || turnSessionId()
                             || requestBody.session_id
                         );
-                        return {
-                            ...finalResult,
-                            success: finalResult.success,
-                            response: finalResult.response,
-                            session_id: finalResult.session_id,
-                            type: finalResult.response_type,
-                            query_id: finalResult.query_id,
-                            report_url: finalResult.report_url,
-                            cursor_run: finalResult.cursor_run || null,
-                            usage: finalResult.usage || null,
-                            // Must forward busy so processMessage can enqueue
-                            // the turn instead of rendering a "Still working" bubble.
-                            busy: !!finalResult.busy,
-                        };
+                        // Final-result shaping (response_type -> type,
+                        // cursor_run/usage/busy normalization) is owned by
+                        // chat_pending_result.js; the page forwards the shaped
+                        // payload so processMessage can enqueue a busy turn.
+                        return CuttleChatPendingResult.shapeStreamFinalResult(finalResult);
                     }
                     // Detached or stream ended without a final event — wait for
                     // the parked reply (short polls; does not hold a socket open).
@@ -18625,12 +10514,12 @@
                     const pendingDeps = {
                         // Unfocused split panes poll slower so the focused
                         // pane keeps connection-pool headroom.
-                        wait: (sid) => collectPendingResult(sid, {
+                        wait: (sid) => recoveryController().collectPendingResult(sid, {
                             waitMs: 90 * 60 * 1000,
                             pollMs: pendingPollMs,
                             navGen: turnNavGen,
                         }),
-                        retries: (sid) => recoverChatResultWithRetries(sid, 5, 1600),
+                        retries: (sid) => recoveryController().recoverChatResultWithRetries(sid, 5, 1600),
                         fetchLive: (sid) => fetchChatLiveStatus(sid).catch(() => null),
                         liveLooksActive: (live) => liveStatusLooksActive(live),
                         canPaint: () => canPaintTurnHere(),
@@ -18664,10 +10553,16 @@
             try {
                 // Control-lane: force non-stream so we never fall through SSE detach
                 // into a second POST with the same control_request_id.
-                data = await fetchChatPayload(controlLane ? false : true);
+                data = await fetchChatPayload(submitPlan.firstTransportStream);
             } catch (streamErr) {
-                if (streamErr && streamErr.name === 'AbortError') throw streamErr;
-                if (controlLane) {
+                // SUBMIT fallback policy is owned by chat_generation.js
+                // (classifySubmitFailure); the page owns transport + recovery.
+                const submitFailure = CuttleChatGeneration.classifySubmitFailure({
+                    controlLane: controlLane,
+                    errorName: streamErr && streamErr.name,
+                });
+                if (submitFailure === 'abort') throw streamErr;
+                if (submitFailure === 'control-recover') {
                     // Do not transport-retry control commands — server may have
                     // already applied; recover from history / live status instead.
                     console.warn('[Cuttle Chat] Control-lane request failed; not retrying POST:', streamErr);
@@ -18676,7 +10571,7 @@
                     // page owns transport/guards.
                     const laneOutcome = await CuttleChatPendingResult.recoverControlLaneFailure(
                         sid, streamErr, {
-                            retries: (rsid) => recoverChatResultWithRetries(rsid, 3, 800),
+                            retries: (rsid) => recoveryController().recoverChatResultWithRetries(rsid, 3, 800),
                             controlRequestId: requestBody.control_request_id,
                         }
                     );
@@ -18704,12 +10599,12 @@
                             paintStatus: (text) => updateTypingStatus(text),
                             // Flask restart may be in progress — recover durable
                             // status + history without another user message.
-                            recoverServer: (opts) => recoverAfterFlaskRestart(opts),
-                            wait: (wsid) => collectPendingResult(wsid, {
+                            recoverServer: (opts) => recoveryController().recoverAfterFlaskRestart(opts),
+                            wait: (wsid) => recoveryController().collectPendingResult(wsid, {
                                 waitMs: 90 * 60 * 1000,
                                 navGen: turnNavGen,
                             }),
-                            retries: (rsid) => recoverChatResultWithRetries(rsid, 5, 1600),
+                            retries: (rsid) => recoveryController().recoverChatResultWithRetries(rsid, 5, 1600),
                             fetchLive: (fsid) => fetchChatLiveStatus(fsid),
                             waitOpts: {},
                         }
@@ -18732,6 +10627,11 @@
             }
 
             responseData = data;
+
+            // /branch may have moved the working branch — refresh the project chip.
+            if (data && String(data.native_command || '') === '/branch') {
+                try { refreshProjectBranch(true); } catch (_) {}
+            }
 
             // Typed completion metadata may request a Flask restart. Generate
             // the native inline form here; agents never need proprietary tags.
@@ -18783,7 +10683,29 @@
                 boundSessionId = canonicalizeChatSessionId(data.session_id);
             }
 
-            if (!canPaintTurnHere()) {
+            // Finalize disposition is owned by chat_pending_result.js — the
+            // page gathers the snapshot (turn identity / cancellation / busy)
+            // and applies the matching effect below. Branch order lives in
+            // the owner; do not re-derive it here.
+            const finalizeDisp = CuttleChatPendingResult.classifyTurnFinalize({
+                canPaint: canPaintTurnHere(),
+                stopped: stopState.userStopped,
+                cancelledText: isCancelledAgentText(data && (data.response || data.output)),
+                busy: !!(data && data.busy),
+                controlLane: controlLane,
+                noReply: !!(data && data.no_reply),
+                success: !!(data && data.success),
+                hasResponse: !!(data && String(data.response || data.output || '').trim()),
+                responseTruthy: !!(data && data.response),
+                uiSystem: !!(data && data.ui === 'system'),
+                hasNotice: !!(data && data.notice),
+                preferredModelSet: !!(
+                    data
+                    && data.preferred_model
+                    && /Model set to/i.test(String(data.response || data.output || ''))
+                ),
+            });
+            if (finalizeDisp.kind === 'not-here') {
                 // Switched chats while this turn was in flight. Reply is already
                 // on the server under the origin session — never append it to the
                 // open transcript (refresh used to "fix" the phantom bubble).
@@ -18805,8 +10727,8 @@
                     // If we are somehow still on that session's pane (id drift /
                     // focus race), chirp alone left an empty transcript until refresh.
                     if (
-                        currentSessionId != null
-                        && sessionIdsEqual(currentSessionId, readySid)
+                        session.current() != null
+                        && sessionIdsEqual(session.current(), readySid)
                         && openTranscriptMissingThisTurnReply()
                         && readyBody
                     ) {
@@ -18816,27 +10738,15 @@
                         });
                     }
                 }
-            } else if (stopState.userStopped) {
+            } else if (finalizeDisp.kind === 'cancelled') {
                 consumeCancelledAgentReply(data && (data.response || data.output));
                 // Stop already cleaned UI; don't append a partial/error reply.
-            } else if (consumeCancelledAgentReply(data && (data.response || data.output))) {
-                // Late cancel confirmation without a local Stop click (other pane / dropped stream).
-            } else if (
-                !data.busy
-                && (
-                    data.ui === 'system'
-                    || data.notice
-                    || (
-                        data.preferred_model
-                        && /Model set to/i.test(String(data.response || data.output || ''))
-                    )
-                )
-            ) {
+            } else if (finalizeDisp.kind === 'system-notice') {
                 const notice = String(data.notice || '').trim()
                     || ('⚡ Model: ' + preferredModelLabel(data.preferred_model));
                 if (notice) addSystemMessage(notice, { persist: true, kind: 'model-change' });
                 if (data.session_id) adoptChatSessionId(data.session_id);
-            } else if (data.busy && !controlLane) {
+            } else if (finalizeDisp.kind === 'busy-queue') {
                 // Previous reply is still generating — queue this turn as a
                 // follow-up instead of faking an assistant bubble or racing again.
                 skipFollowupDrain = true;
@@ -18858,7 +10768,7 @@
                 });
                 startMessageSync();
                 // Re-attach waiting UI for the still-running first prompt.
-                const sid = currentSessionId != null ? currentSessionId : data.session_id;
+                const sid = session.current() != null ? session.current() : data.session_id;
                 Promise.resolve(fetchChatLiveStatus(sid)).then((live) => {
                     updateRemoteWaitingFromMessages([], live || {
                         active: true,
@@ -18872,19 +10782,19 @@
                         status: 'Still working on your previous message…',
                     });
                 });
-            } else if (data.no_reply || (data.success && !(String(data.response || data.output || '').trim()))) {
+            } else if (finalizeDisp.kind === 'wait-sync') {
                 // Detached stream with no parked payload yet — don't fake
                 // "No response received." Message sync / pending poll will
                 // attach the real reply when the worker finishes.
                 if (data.session_id) adoptChatSessionId(data.session_id);
                 startMessageSync();
-                const sid = currentSessionId != null ? currentSessionId : data.session_id;
+                const sid = session.current() != null ? session.current() : data.session_id;
                 Promise.resolve(fetchChatLiveStatus(sid)).then((live) => {
                     if (liveStatusLooksActive(live) || (live && live.generating)) {
                         updateRemoteWaitingFromMessages([], live);
                     }
                 }).catch(() => {});
-            } else if (data.success && data.response) {
+            } else if (finalizeDisp.kind === 'assistant') {
                 // Canonical supervised bubble: update in place; never append a
                 // second worker/result participant for this task.
                 const CS = window.CuttleSupervised;
@@ -19000,7 +10910,7 @@
                         }
                         if (data.session_id) adoptChatSessionId(data.session_id);
                         removeRemoteWaitingIndicator();
-                        notifyAssistantResponseReady(currentSessionId || generation.localSessionId, {
+                        notifyAssistantResponseReady(session.current() || generation.localSessionId, {
                             isError: !!assistantFailed,
                         });
                         startMessageSync();
@@ -19030,7 +10940,7 @@
                             usage: normalizeUsagePayload(data.usage) || undefined,
                         });
                     }
-                    autoScrollChatToBottom();
+                    transcriptNav.autoScrollChatToBottom();
                 }
                 if (!controlLane) {
                 saveChatSession(data.response, 'assistant', {
@@ -19053,7 +10963,7 @@
                 // Reply is on screen — drop any remote-waiting UI a parallel
                 // sync may have armed from a stale live-status snapshot.
                 removeRemoteWaitingIndicator();
-                notifyAssistantResponseReady(currentSessionId || generation.localSessionId, {
+                notifyAssistantResponseReady(session.current() || generation.localSessionId, {
                     isError: !!assistantFailed,
                 });
                 startMessageSync();
@@ -19086,7 +10996,7 @@
                     if (data.session_id) {
                         adoptChatSessionId(data.session_id);
                     }
-                    notifyAssistantResponseReady(currentSessionId || generation.localSessionId, {
+                    notifyAssistantResponseReady(session.current() || generation.localSessionId, {
                         isError: true,
                     });
                     startMessageSync();
@@ -19130,7 +11040,7 @@
                         slash_command_failed: !!stickyCmd,
                     });
                     notifyAssistantResponseReady(
-                        currentSessionId || generation.localSessionId || turnSessionId(),
+                        session.current() || generation.localSessionId || turnSessionId(),
                         { isError: true }
                     );
                 } else {
@@ -19205,7 +11115,7 @@
         const clearComposer = () => {
             if (overrideText != null) return;
             input.value = '';
-            clearComposerDraft(currentSessionId);
+            clearComposerDraft(session.current());
         };
 
         if (!isSendableComposerMessage(message, attachments)) {
@@ -19227,7 +11137,7 @@
             message,
             normalizedMessage: normalizeMessageContentForMatch(message),
             inFlightMessage: normalizeMessageContentForMatch(inFlightUserMessage),
-            queuedMessages: followupQueue.items.map((x) => normalizeMessageContentForMatch(x.content)),
+            queuedMessages: followupController().getState().items.map((x) => normalizeMessageContentForMatch(x.content)),
         });
         if (plan.action === 'ignore-guard') {
             // Unreachable here (guard already returned above); kept so the
@@ -19284,7 +11194,7 @@
             // Add user message to UI
             const userTs = Date.now();
             addMessageToUI(displayMessage, 'user', { timestamp: userTs, attachments });
-            autoScrollChatToBottom(true);
+            transcriptNav.autoScrollChatToBottom(true);
 
             // Save to session
             saveChatSession(displayMessage, 'user', { attachments });
@@ -19336,7 +11246,7 @@
         }
         const looksUrl = /^https?:\/\//i.test(a) || (a.charAt(0) === '/' && a.charAt(1) !== '/');
         if (looksUrl) {
-            if (typeof isSafeMediaSrc === 'function' && !isSafeMediaSrc(a)) {
+            if (!CuttleChatMedia.isSafeMediaSrc(a)) {
                 return '<img src="/img/cuttle-avatar.png?v=3" alt="" class="assistant-avatar-img">';
             }
             return '<img src="' + escapeHtmlInline(a) + '" alt="" class="assistant-avatar-img">';
@@ -19521,7 +11431,7 @@
                     <span class="message-sender-group">
                         <span class="message-sender">${sender}</span>
                         ${headerChip}
-                        ${role === 'assistant' ? getTtsPlayButtonHtml() : ''}
+                        ${role === 'assistant' ? chatTts.playButtonHtml() : ''}
                     </span>
                     <span class="message-timestamp" data-ts="${ts}">${timeLabel}</span>
                 </div>
@@ -19542,14 +11452,14 @@
         try {
             activateEnhancements(messageDiv);
         } catch (_) {}
-        try { mountMessageLaunchers(messageDiv, role, opts); } catch (_) {}
+        try { subagentLaunchers.mountForMessage(messageDiv, role, opts); } catch (_) {}
         scheduleSlashChipCompactLabels(messageDiv);
-        if (!opts.skipNav) updateMessageNav();
+        if (!opts.skipNav) transcriptNav.updateMessageNav();
         if (!opts.skipScroll) {
-            autoScrollChatToBottom();
-            if (role === 'assistant' && chatPinnedToBottom) {
+            transcriptNav.autoScrollChatToBottom();
+            if (role === 'assistant' && transcriptNav.isFollowingLatest()) {
                 // Late layout (code blocks, images) can grow the bubble after paint.
-                requestAnimationFrame(() => autoScrollChatToBottom(true));
+                requestAnimationFrame(() => transcriptNav.autoScrollChatToBottom(true));
             }
         }
         return messageDiv;
@@ -19576,251 +11486,15 @@
     const THUMB_DOWN_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/>
     </svg>`;
-    const TTS_PLAY_ICON = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>`;
-    const TTS_STOP_ICON = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>`;
-    const TTS_LOADING_ICON = `<svg class="message-tts-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9" opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/></svg>`;
 
-    /** Cached chat TTS prefs (play button visibility). */
-    let chatTtsPrefs = { enabled: true };
-
-    function applyChatTtsPrefsToUi() {
-        const root = document.getElementById('chatMessages');
-        if (root) root.classList.toggle('chat-tts-disabled', !chatTtsPrefs.enabled);
-        document.querySelectorAll('.message-tts-btn').forEach((btn) => {
-            btn.hidden = !chatTtsPrefs.enabled;
-        });
-    }
-
-    function loadChatTtsPrefs() {
-        fetch('/api/settings/chat-tts')
-            .then((r) => (r.ok ? r.json() : null))
-            .then((d) => {
-                if (d && d.success && d.chat_tts) {
-                    chatTtsPrefs = {
-                        enabled: d.chat_tts.enabled !== false,
-                        tts_model: d.chat_tts.tts_model,
-                        voice: d.chat_tts.voice,
-                        summarize: d.chat_tts.summarize !== false,
-                    };
-                }
-                applyChatTtsPrefsToUi();
-            })
-            .catch(() => {});
-    }
-
-    function getTtsPlayButtonHtml() {
-        const hidden = chatTtsPrefs && chatTtsPrefs.enabled === false ? ' hidden' : '';
-        return (
-            `<button type="button" class="message-tts-btn message-icon-btn"${hidden} ` +
-            `title="Listen (summarize + speak)" aria-label="Listen to message" ` +
-            `onclick="window.chatPageSpeakMessage(this)">${TTS_PLAY_ICON}</button>`
-        );
-    }
-
-    let _chatTtsAudio = null;
-    let _chatTtsActiveBtn = null;
-
-    function _resetTtsButton(btn) {
-        if (!btn) return;
-        btn.classList.remove('is-loading', 'is-playing');
-        btn.innerHTML = TTS_PLAY_ICON;
-        btn.title = 'Listen (summarize + speak)';
-        btn.disabled = false;
-    }
-
-    function stopChatTtsPlayback(exceptBtn) {
-        if (_chatTtsAudio) {
-            try {
-                _chatTtsAudio.pause();
-                _chatTtsAudio.onended = null;
-                _chatTtsAudio.onerror = null;
-                _chatTtsAudio.removeAttribute('src');
-                _chatTtsAudio.load();
-            } catch (_) {}
-            _chatTtsAudio = null;
-        }
-        if (_chatTtsActiveBtn && _chatTtsActiveBtn !== exceptBtn) {
-            _resetTtsButton(_chatTtsActiveBtn);
-        }
-        if (_chatTtsActiveBtn !== exceptBtn) {
-            _chatTtsActiveBtn = null;
-        }
-    }
-
-    /**
-     * On first successful speak: show expanded Transcript (spoken text) above
-     * Progress, and collapse the original body under "Full summary".
-     */
-    function applyTtsTranscriptLayout(messageEl, spokenText) {
-        const content = messageEl && messageEl.querySelector
-            ? messageEl.querySelector('.message-content')
-            : null;
-        const spoken = String(spokenText || '').trim();
-        if (!content || !spoken) return;
-
-        let transcript = content.querySelector(':scope > .tts-transcript-block');
-        if (transcript) {
-            const line = transcript.querySelector('.tts-transcript-body');
-            if (line) line.textContent = spoken;
-            transcript.open = true;
-            const full = content.querySelector(':scope > .tts-full-summary-block');
-            if (full) full.open = false;
-            return;
-        }
-
-        const keepClass = (el) =>
-            el.classList.contains('thinking-block')
-            || el.classList.contains('tool-block')
-            || el.classList.contains('pipeline-trace-block')
-            || el.classList.contains('tts-transcript-block')
-            || el.classList.contains('tts-full-summary-block');
-
-        const toWrap = [];
-        Array.from(content.childNodes).forEach((node) => {
-            if (node.nodeType === 1) {
-                if (!keepClass(node)) toWrap.push(node);
-            } else if (node.nodeType === 3 && String(node.textContent || '').trim()) {
-                toWrap.push(node);
-            }
-        });
-
-        transcript = document.createElement('details');
-        transcript.className = 'thinking-block tts-transcript-block';
-        transcript.open = true;
-        const tSum = document.createElement('summary');
-        tSum.textContent = 'Transcript';
-        const tInner = document.createElement('div');
-        tInner.className = 'thinking-inner';
-        const tLine = document.createElement('div');
-        tLine.className = 'thinking-line tts-transcript-body';
-        tLine.textContent = spoken;
-        tInner.appendChild(tLine);
-        transcript.appendChild(tSum);
-        transcript.appendChild(tInner);
-
-        const full = document.createElement('details');
-        full.className = 'thinking-block tts-full-summary-block';
-        full.open = false;
-        const fSum = document.createElement('summary');
-        fSum.textContent = 'Full summary';
-        const fBody = document.createElement('div');
-        fBody.className = 'tts-full-summary-body thinking-inner';
-        toWrap.forEach((n) => fBody.appendChild(n));
-        full.appendChild(fSum);
-        full.appendChild(fBody);
-
-        // Transcript first (above Progress); full body last (collapsed).
-        content.insertBefore(transcript, content.firstChild);
-        content.appendChild(full);
-        messageEl.classList.add('has-tts-transcript');
-    }
-
-    async function speakMessageFromButton(btn) {
-        const messageEl = btn && btn.closest ? btn.closest('.message') : null;
-        if (!messageEl || !messageEl.classList.contains('assistant')) return;
-
-        // Toggle stop if this bubble is already playing.
-        if (btn.classList.contains('is-playing') && _chatTtsActiveBtn === btn) {
-            stopChatTtsPlayback();
-            _resetTtsButton(btn);
-            return;
-        }
-        stopChatTtsPlayback(btn);
-
-        // Reuse cached audio for this bubble.
-        const cachedUrl = messageEl._cuttleTtsUrl;
-        if (cachedUrl) {
-            if (messageEl._cuttleTtsSpoken) {
-                applyTtsTranscriptLayout(messageEl, messageEl._cuttleTtsSpoken);
-            }
-            _playTtsUrl(btn, cachedUrl, {
-                summarized: !!messageEl._cuttleTtsSummarized,
-            });
-            return;
-        }
-
-        const text = getMessageSpeakText(btn);
-        if (!text || !String(text).trim()) {
-            (window.showToast || function () {})('Nothing to speak in this message', 'error');
-            return;
-        }
-
-        btn.classList.add('is-loading');
-        btn.disabled = true;
-        btn.innerHTML = TTS_LOADING_ICON;
-        btn.title = 'Generating speech…';
-        _chatTtsActiveBtn = btn;
-
-        try {
-            const r = await fetch('/api/chat/tts', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: text }),
-            });
-            const d = await r.json().catch(() => ({}));
-            if (!r.ok || !d.success || !d.audio_base64) {
-                throw new Error((d && d.error) || ('TTS failed (' + r.status + ')'));
-            }
-            const bin = atob(d.audio_base64);
-            const bytes = new Uint8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-            const blob = new Blob([bytes], { type: d.content_type || 'audio/mpeg' });
-            const url = URL.createObjectURL(blob);
-            messageEl._cuttleTtsUrl = url;
-            messageEl._cuttleTtsSpoken = d.spoken_text || '';
-            messageEl._cuttleTtsSummarized = !!d.summarized;
-            applyTtsTranscriptLayout(messageEl, messageEl._cuttleTtsSpoken);
-            _playTtsUrl(btn, url, { summarized: !!d.summarized });
-        } catch (e) {
-            _resetTtsButton(btn);
-            _chatTtsActiveBtn = null;
-            (window.showToast || function () {})(String(e.message || e), 'error');
-        }
-    }
-
-    function _playTtsUrl(btn, url, meta) {
-        meta = meta || {};
-        stopChatTtsPlayback(btn);
-        const audio = new Audio(url);
-        _chatTtsAudio = audio;
-        _chatTtsActiveBtn = btn;
-        btn.classList.remove('is-loading');
-        btn.classList.add('is-playing');
-        btn.disabled = false;
-        btn.innerHTML = TTS_STOP_ICON;
-        btn.title = meta.summarized ? 'Playing summary — click to stop' : 'Stop';
-        audio.onended = function () {
-            if (_chatTtsActiveBtn === btn) {
-                _resetTtsButton(btn);
-                _chatTtsActiveBtn = null;
-            }
-            _chatTtsAudio = null;
-            if (typeof meta.onEnded === 'function') {
-                try { meta.onEnded(); } catch (_) {}
-            }
-        };
-        audio.onerror = function () {
-            _resetTtsButton(btn);
-            _chatTtsActiveBtn = null;
-            _chatTtsAudio = null;
-            (window.showToast || function () {})('Audio playback failed', 'error');
-            if (typeof meta.onError === 'function') {
-                try { meta.onError(); } catch (_) {}
-            }
-        };
-        audio.play().catch((err) => {
-            _resetTtsButton(btn);
-            _chatTtsActiveBtn = null;
-            _chatTtsAudio = null;
-            (window.showToast || function () {})(String(err.message || err), 'error');
-            if (typeof meta.onError === 'function') {
-                try { meta.onError(err); } catch (_) {}
-            }
-        });
-        if (typeof meta.onPlay === 'function') {
-            try { meta.onPlay(audio); } catch (_) {}
-        }
-    }
+    // Bubble speech: prefs, speaker buttons and the shared audio channel (chat_tts.js).
+    const chatTts = CuttleChatTts.create({
+        win: window,
+        fetch: (url, opts) => fetch(url, opts),
+        toast: (message, variant) => (window.showToast || function () {})(message, variant),
+        speakTextFor: getMessageSpeakText,
+        normalizeUsage: normalizeUsagePayload,
+    });
 
     // ── Voice mode: owned by chat_voice.js; the page supplies chat send + TTS ──
     function lastAssistantMessageEl() {
@@ -19858,137 +11532,12 @@
         saveChatSession(message, 'user');
         recordPromptHistory(spokenText || message);
         applyStickySlashAfterComposerSend(message);
-        const controlLane = isImmediateControlLaneMessage(message);
-        if (!controlLane) {
-            beginLocalGeneration();
-            inFlightUserMessage = message;
-        }
-        await processMessage(message, { controlLane });
-    }
-
-    /** Cached per bubble, shared with the bubble's speaker button. */
-    async function voiceSpeechForMessage(messageEl) {
-        if (messageEl._cuttleTtsUrl) {
-            return {
-                url: messageEl._cuttleTtsUrl,
-                spoken: messageEl._cuttleTtsSpoken || '',
-                summarized: !!messageEl._cuttleTtsSummarized,
-                voiceUsage: messageEl._cuttleVoiceUsage || null,
-            };
-        }
-        const btn = messageEl.querySelector('.message-tts-btn');
-        const text = btn
-            ? getMessageSpeakText(btn)
-            : String(messageEl.dataset.rawContent || '').trim();
-        if (!text) return null;
-        const r = await fetch('/api/chat/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: text }),
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok || !d.success || !d.audio_base64) {
-            throw new Error((d && d.error) || ('TTS failed (' + r.status + ')'));
-        }
-        const bin = atob(d.audio_base64);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        const blob = new Blob([bytes], { type: d.content_type || 'audio/mpeg' });
-        messageEl._cuttleTtsUrl = URL.createObjectURL(blob);
-        messageEl._cuttleTtsSpoken = d.spoken_text || text;
-        messageEl._cuttleTtsSummarized = !!d.summarized;
-        try {
-            messageEl._cuttleVoiceUsage = (d.usage && typeof d.usage === 'object')
-                ? normalizeUsagePayload(d.usage)
-                : null;
-        } catch (_) {
-            messageEl._cuttleVoiceUsage = null;
-        }
-        applyTtsTranscriptLayout(messageEl, messageEl._cuttleTtsSpoken);
-        return {
-            url: messageEl._cuttleTtsUrl,
-            spoken: messageEl._cuttleTtsSpoken,
-            summarized: messageEl._cuttleTtsSummarized,
-            voiceUsage: messageEl._cuttleVoiceUsage || null,
-        };
-    }
-
-    function playVoiceSpeech(messageEl, speech) {
-        const btn = messageEl.querySelector('.message-tts-btn');
-        return playVoiceAudio(speech.url, btn, !!speech.summarized);
-    }
-
-    /** Playback analyser feeding the voice ring; null-safe when unavailable. */
-    let _voiceAudioCtx = null;
-    let _voicePlaybackAnalyser = null;
-    let _voicePlaybackFrame = null;
-
-    function voicePlaybackLevel() {
-        if (!_voicePlaybackAnalyser || !_voicePlaybackFrame) return null;
-        try {
-            _voicePlaybackAnalyser.getFloatTimeDomainData(_voicePlaybackFrame);
-            let sum = 0;
-            for (let i = 0; i < _voicePlaybackFrame.length; i++) {
-                sum += _voicePlaybackFrame[i] * _voicePlaybackFrame[i];
-            }
-            return Math.sqrt(sum / (_voicePlaybackFrame.length || 1));
-        } catch (_) {
-            return null;
-        }
-    }
-
-    /** One audio channel for replies, narration and bubble speakers. */
-    function playVoiceAudio(url, btn, summarized) {
-        stopChatTtsPlayback(btn || null);
-        const audio = new Audio(url);
-        _chatTtsAudio = audio;
-        try {
-            const Ctx = window.AudioContext || window.webkitAudioContext;
-            if (Ctx) {
-                if (!_voiceAudioCtx) _voiceAudioCtx = new Ctx();
-                if (_voiceAudioCtx && _voiceAudioCtx.state === 'suspended') {
-                    _voiceAudioCtx.resume().catch(() => {});
-                }
-                const src = _voiceAudioCtx.createMediaElementSource(audio);
-                const analyser = _voiceAudioCtx.createAnalyser();
-                analyser.fftSize = 1024;
-                src.connect(analyser);
-                analyser.connect(_voiceAudioCtx.destination);
-                _voicePlaybackAnalyser = analyser;
-                _voicePlaybackFrame = new Float32Array(analyser.fftSize);
-            }
-        } catch (_) {
-            _voicePlaybackAnalyser = null;
-            _voicePlaybackFrame = null;
-        }
-        if (btn) {
-            _chatTtsActiveBtn = btn;
-            btn.classList.remove('is-loading');
-            btn.classList.add('is-playing');
-            btn.disabled = false;
-            btn.innerHTML = TTS_STOP_ICON;
-            btn.title = summarized ? 'Playing summary — click to stop' : 'Stop';
-        }
-        return new Promise((resolve) => {
-            let settled = false;
-            const finish = (outcome) => {
-                if (settled) return;
-                settled = true;
-                if (btn && _chatTtsActiveBtn === btn) {
-                    _resetTtsButton(btn);
-                    _chatTtsActiveBtn = null;
-                }
-                if (_chatTtsAudio === audio) _chatTtsAudio = null;
-                _voicePlaybackAnalyser = null;
-                _voicePlaybackFrame = null;
-                resolve(outcome);
-            };
-            audio.onended = () => finish('ended');
-            audio.onerror = () => finish('error');
-            // stopChatTtsPlayback pauses and drops onended; settle so the caller never hangs.
-            audio.addEventListener('pause', () => finish(audio.ended ? 'ended' : 'stopped'));
-            audio.play().catch(() => finish('blocked'));
-        });
+        // Turn lifecycle (control-lane classification, busy-lock begin, in-flight
+        // tracking, prepare/submit/stream/finalize) is owned by the shared
+        // turn-submission interface: processMessage over chat_generation. Voice
+        // is a thin submitter, exactly like the terminal/button/action-card and
+        // supervised lanes — never a second execution lifecycle.
+        await processMessage(message);
     }
 
     const chatVoice = CuttleChatVoice.create({
@@ -20001,11 +11550,11 @@
         enqueue: (message, spoken) => enqueueFollowup(message, { rawMessage: spoken }),
         submit: submitVoiceTurn,
         lastAssistantMessage: lastAssistantMessageEl,
-        speechFor: voiceSpeechForMessage,
-        play: playVoiceSpeech,
-        stopSpeech: () => stopChatTtsPlayback(),
-        playClip: (url) => playVoiceAudio(url, null, false),
-        playbackLevel: voicePlaybackLevel,
+        speechFor: chatTts.speechForMessage,
+        play: chatTts.playSpeech,
+        stopSpeech: () => chatTts.stop(),
+        playClip: (url) => chatTts.playAudio(url, null, false),
+        playbackLevel: chatTts.playbackLevel,
         usageFor: (el) => (el && el._cuttleUsage) || null,
         sumUsage: (parts) => CuttleChatUsage.sum(parts),
         usageHtml: (usage) => getMessageUsageHtml(usage),
@@ -20139,495 +11688,39 @@
         return '';
     }
 
-    // ── Agent context radial (Cursor / Muse / OpenCode / Codex) ─────────────
-    const CONTEXT_GAUGE_AGENTS = new Set(['cursor', 'muse', 'opencode', 'codex', 'antigravity', 'hermes', 'claude', 'deepseek']);
-    let _agentContextStatus = null;
-    let _agentContextFetchTimer = 0;
-    let _agentContextBusy = false;
-    let _contextGaugePopoverEl = null;
+    // Agent context radial (Cursor / Muse / OpenCode / Codex …): owned by
+    // chat_context_gauge.js. The page supplies page scope as capabilities; the
+    // controller owns the status/timer/popover state.
+    const contextGauge = CuttleChatContextGauge.create({
+        win: window,
+        fetch: (url, opts) => fetch(url, opts),
+        escapeHtml,
+        normalizeUsage: normalizeUsagePayload,
+        getSlashCtx: () => slashCtx,
+        getSessionId: () => session.current(),
+        getProjectPath: () => (currentProject && currentProject.path) ? String(currentProject.path) : '',
+        toast: (message, variant) => (window.showToast || function () {})(message, variant),
+    });
 
-    function stickyContextGaugeAgentId() {
-        for (const key of ['chat', 'welcome']) {
-            const chips = (slashCtx[key] && slashCtx[key].chips) || [];
-            for (const chip of chips) {
-                const prefix = String((chip && chip.prefix) || '').toLowerCase();
-                const meta = String((chip && chip.meta) || '').toLowerCase();
-                const cat = String((chip && chip.category) || '').toLowerCase();
-                const label = String((chip && chip.label) || '').toLowerCase();
-                for (const aid of CONTEXT_GAUGE_AGENTS) {
-                    if (
-                        prefix === '/' + aid
-                        || prefix.startsWith('/' + aid + ' ')
-                        || cat === aid
-                        || meta.startsWith('/' + aid)
-                        || (aid === 'muse' && label.startsWith('muse code'))
-                        || (aid === 'opencode' && label.startsWith('opencode'))
-                        || (aid === 'codex' && label.startsWith('codex'))
-                        || (aid === 'cursor' && (label.startsWith('cursor') || cat === 'cursor'))
-                    ) {
-                        return aid;
-                    }
-                }
-            }
-        }
-        return null;
-    }
+    // Transcript navigation: follow-latest scroll, nav rail + pins, jumps,
+    // ?msg= deep links and message refs (chat_transcript_nav.js).
+    const transcriptNav = CuttleChatTranscriptNav.create({
+        win: window,
+        storage: localStorage,
+        escapeHtmlInline,
+        recordSelector: CHAT_RECORD_SELECTOR,
+        currentSessionId: () => session.current(),
+        formatChatDisplayId,
+        olderVisibleCount: () => chatHistoryOlderVisibleCount,
+        hasOlderMessages: () => chatHistoryHasMore,
+        loadOlderMessages: loadOlderChatMessages,
+        unseenBelow: () => chatUnseenBelow,
+        attentionIsError: () => chatAttentionIsError,
+        clearUnseenBelow: clearChatUnseenBelow,
+        activateViewport: activateChatViewport,
+        copyText: copyTextToClipboard,
+    });
 
-    function formatContextTokenCount(n) {
-        const v = Number(n) || 0;
-        if (v >= 1_000_000) {
-            const m = v / 1_000_000;
-            return (m >= 10 ? Math.round(m) : Math.round(m * 10) / 10) + 'M';
-        }
-        if (v >= 1000) {
-            const k = v / 1000;
-            return (k >= 100 ? Math.round(k) : Math.round(k * 10) / 10) + 'k';
-        }
-        return String(Math.round(v));
-    }
-
-    function applyContextGaugeDom(btn, status) {
-        if (!btn) return;
-        const arc = btn.querySelector('.context-gauge-arc');
-        const pct = Math.max(0, Math.min(100, Number(status && status.percent) || 0));
-        const used = Number(status && status.used_tokens) || 0;
-        const limit = Number(status && status.limit_tokens) || 0;
-        const agent = (status && status.agent_id) || stickyContextGaugeAgentId() || 'agent';
-        const aggregated = (status && status.token_source) === 'aggregated' && used <= 0;
-        if (arc) {
-            const filled = aggregated ? 0 : Math.round(pct * 10) / 10;
-            arc.setAttribute('stroke-dasharray', filled + ' ' + (100 - filled));
-        }
-        btn.classList.toggle('context-gauge--warn', !aggregated && pct >= 60 && pct < 85);
-        btn.classList.toggle('context-gauge--hot', !aggregated && pct >= 85);
-        const tipParts = [
-            agent.charAt(0).toUpperCase() + agent.slice(1) + ' context',
-        ];
-        if (aggregated) {
-            tipParts.push('awaiting next reply');
-        } else {
-            tipParts.push(Math.round(pct) + '%');
-            if (used || limit) {
-                tipParts.push(
-                    formatContextTokenCount(used) + ' / ' + formatContextTokenCount(limit)
-                );
-            }
-        }
-        if (status && status.hint) tipParts.push(status.hint);
-        tipParts.push('Click for details / Compact');
-        btn.title = tipParts.join(' · ');
-        btn.setAttribute(
-            'aria-label',
-            aggregated
-                ? agent + ' context awaiting next reply'
-                : (agent + ' context ' + Math.round(pct) + ' percent')
-        );
-    }
-
-    function setContextGaugeVisible(visible) {
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            const btn = document.getElementById(id);
-            if (!btn) return;
-            btn.hidden = !visible;
-            if (!visible) {
-                btn.classList.remove('context-gauge--warn', 'context-gauge--hot');
-                const arc = btn.querySelector('.context-gauge-arc');
-                if (arc) arc.setAttribute('stroke-dasharray', '0 100');
-            }
-        });
-        if (!visible) closeContextGaugePopover();
-    }
-
-    function paintContextGaugeFromStatus(status) {
-        _agentContextStatus = status && status.success ? status : null;
-        const agent = stickyContextGaugeAgentId();
-        if (!agent) {
-            setContextGaugeVisible(false);
-            return;
-        }
-        setContextGaugeVisible(true);
-        const payload = status && status.success
-            ? status
-            : {
-                success: true,
-                agent_id: agent,
-                percent: 0,
-                used_tokens: 0,
-                limit_tokens: 1000000,
-                hint: 'Waiting for the next turn to report context size.',
-            };
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            applyContextGaugeDom(document.getElementById(id), payload);
-        });
-        const pop = _contextGaugePopoverEl;
-        if (pop && !pop.hidden) renderContextGaugePopover(pop, payload);
-    }
-
-    function noteUsageForContextGauge(usage, agentHint) {
-        const u = normalizeUsagePayload(usage);
-        const agent = normalizeAgentHint(agentHint) || stickyContextGaugeAgentId();
-        if (!agent || !CONTEXT_GAUGE_AGENTS.has(agent)) return;
-        const raw = usage && typeof usage === 'object' ? usage : {};
-        const peak = Number(
-            raw.context_tokens != null ? raw.context_tokens
-                : (raw.peak_context_tokens != null ? raw.peak_context_tokens : raw.contextTokens)
-        ) || 0;
-        // Billing input is summed across calls. Only seed the ring from an
-        // explicit occupancy stamp; the API supplies live/transcript fallbacks.
-        let fill = peak;
-        if (agent === 'cursor' && peak > 0) {
-            const cr = Number(raw.cache_read_tokens || raw.cacheReadTokens || 0) || 0;
-            const cw = Number(raw.cache_write_tokens || raw.cacheWriteTokens || 0) || 0;
-            const sumIn = ((u && u.prompt_tokens) || 0) + cr + cw;
-            if (peak >= 400000 && cr >= 200000 && peak >= cr &&
-                    Math.abs(peak - sumIn) <= Math.max(2000, peak * 0.03)) fill = 0;
-        }
-        if (!fill) scheduleAgentContextGaugeRefresh(250);
-        if (!fill) return;
-        const prev = _agentContextStatus || {};
-        const limit = Number(prev.limit_tokens) || (
-            (agent === 'opencode' || agent === 'codex') ? 200000 : 1000000
-        );
-        const pct = Math.min(100, Math.round((1000 * fill) / limit) / 10);
-        paintContextGaugeFromStatus({
-            success: true,
-            agent_id: agent,
-            model: (u && u.model) || prev.model || '',
-            used_tokens: fill,
-            limit_tokens: limit,
-            percent: pct,
-            estimated: true,
-            compact_available: true,
-            hint: pct >= 85
-                ? 'Context is nearly full — compact soon to avoid overflows.'
-                : (pct >= 60
-                    ? 'Context is filling up — compact when the thread feels heavy.'
-                    : 'Context looks healthy.'),
-            has_resume: prev.has_resume,
-        });
-        scheduleAgentContextGaugeRefresh(250);
-    }
-
-    function normalizeAgentHint(raw) {
-        const s = String(raw || '').toLowerCase().replace(/^\//, '');
-        for (const aid of CONTEXT_GAUGE_AGENTS) {
-            if (s === aid || s.startsWith(aid + ' ') || s.startsWith(aid + '_')) return aid;
-        }
-        return null;
-    }
-
-    async function fetchAgentContextStatus(opts) {
-        const live = !!(opts && opts.live);
-        const agent = stickyContextGaugeAgentId();
-        if (!agent) {
-            setContextGaugeVisible(false);
-            _agentContextStatus = null;
-            return null;
-        }
-        setContextGaugeVisible(true);
-        if (!currentSessionId) {
-            paintContextGaugeFromStatus({
-                success: true,
-                agent_id: agent,
-                percent: 0,
-                used_tokens: 0,
-                limit_tokens: (agent === 'opencode' || agent === 'codex') ? 200000 : 1000000,
-                hint: 'No agent session yet — send a message to start tracking context.',
-            });
-            return _agentContextStatus;
-        }
-        const qs = new URLSearchParams();
-        qs.set('agent', agent);
-        qs.set('session', String(currentSessionId));
-        if (live) qs.set('live', '1');
-        const path = (currentProject && currentProject.path) ? String(currentProject.path) : '';
-        if (path) qs.set('path', path);
-        try {
-            const res = await fetch('/api/agent-context?' + qs.toString(), {
-                credentials: 'same-origin',
-            });
-            const data = await res.json().catch(() => ({}));
-            if (data && data.success) {
-                paintContextGaugeFromStatus(data);
-                return data;
-            }
-            paintContextGaugeFromStatus({
-                success: true,
-                agent_id: agent,
-                percent: (_agentContextStatus && _agentContextStatus.percent) || 0,
-                used_tokens: (_agentContextStatus && _agentContextStatus.used_tokens) || 0,
-                limit_tokens: (_agentContextStatus && _agentContextStatus.limit_tokens) || 1000000,
-                hint: (data && data.error) || 'Could not load context status.',
-            });
-        } catch (_) {
-            /* keep last paint */
-        }
-        return _agentContextStatus;
-    }
-
-    function scheduleAgentContextGaugeRefresh(delayMs) {
-        if (_agentContextFetchTimer) clearTimeout(_agentContextFetchTimer);
-        _agentContextFetchTimer = setTimeout(() => {
-            _agentContextFetchTimer = 0;
-            fetchAgentContextStatus();
-        }, delayMs == null ? 80 : delayMs);
-    }
-
-    function ensureContextGaugePopover() {
-        if (_contextGaugePopoverEl && _contextGaugePopoverEl.isConnected) {
-            return _contextGaugePopoverEl;
-        }
-        const el = document.createElement('div');
-        el.className = 'context-gauge-popover';
-        el.hidden = true;
-        el.setAttribute('role', 'dialog');
-        el.setAttribute('aria-label', 'Agent context usage');
-        document.body.appendChild(el);
-        _contextGaugePopoverEl = el;
-        return el;
-    }
-
-    function closeContextGaugePopover() {
-        const el = _contextGaugePopoverEl;
-        if (!el) return;
-        el.hidden = true;
-        el.innerHTML = '';
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            const btn = document.getElementById(id);
-            if (btn) btn.setAttribute('aria-expanded', 'false');
-        });
-    }
-
-    function renderContextGaugePopover(el, status) {
-        const agent = (status && status.agent_id) || stickyContextGaugeAgentId() || 'agent';
-        const pct = Math.round(Number(status && status.percent) || 0);
-        const used = Number(status && status.used_tokens) || 0;
-        const limit = Number(status && status.limit_tokens) || 0;
-        const model = (status && status.model) ? String(status.model) : '';
-        const hint = (status && status.hint) || '';
-        const aggregated = (status && status.token_source) === 'aggregated' && used <= 0;
-        const label = agent.charAt(0).toUpperCase() + agent.slice(1);
-        const meter = aggregated
-            ? `<strong>—</strong> · waiting for next reply`
-            : (`<strong>${pct}%</strong>` +
-                (used || limit
-                    ? ` · ${escapeHtml(formatContextTokenCount(used))} / ${escapeHtml(formatContextTokenCount(limit))}`
-                    : '') +
-                (model ? ` · ${escapeHtml(model)}` : ''));
-        const canCompact = !(status && status.compact_available === false);
-        el.innerHTML =
-            `<p class="context-gauge-popover-title">${escapeHtml(label)} context</p>` +
-            `<p class="context-gauge-popover-meter">${meter}</p>` +
-            (hint ? `<p class="context-gauge-popover-hint">${escapeHtml(hint)}</p>` : '') +
-            `<div class="context-gauge-popover-actions">` +
-            (canCompact
-                ? (`<button type="button" class="context-gauge-compact-btn" data-action="compact"` +
-                    (_agentContextBusy ? ' disabled' : '') +
-                    `>${_agentContextBusy ? 'Compacting…' : 'Compact'}</button>`)
-                : '') +
-            `<button type="button" class="context-gauge-popover-close" data-action="close">Close</button>` +
-            `</div>`;
-    }
-
-    function positionContextGaugePopover(anchorBtn, pop) {
-        const rect = anchorBtn.getBoundingClientRect();
-        const pad = 8;
-        pop.style.visibility = 'hidden';
-        pop.hidden = false;
-        const pw = pop.offsetWidth || 240;
-        const ph = pop.offsetHeight || 120;
-        let left = rect.right - pw;
-        let top = rect.top - ph - 8;
-        if (top < pad) top = rect.bottom + 8;
-        if (left < pad) left = pad;
-        if (left + pw > window.innerWidth - pad) {
-            left = Math.max(pad, window.innerWidth - pw - pad);
-        }
-        pop.style.left = Math.round(left) + 'px';
-        pop.style.top = Math.round(top) + 'px';
-        pop.style.visibility = '';
-    }
-
-    async function openContextGaugePopover(anchorBtn) {
-        const agent = stickyContextGaugeAgentId();
-        if (!agent || !anchorBtn) return;
-        const pop = ensureContextGaugePopover();
-        let status = _agentContextStatus;
-        const needsLive = agent === 'codex' && (
-            !status
-            || status.agent_id !== agent
-            || status.token_source === 'aggregated'
-            || !(Number(status.used_tokens) > 0)
-        );
-        if (!status || status.agent_id !== agent || needsLive) {
-            status = await fetchAgentContextStatus({ live: needsLive });
-        }
-        renderContextGaugePopover(pop, status || { agent_id: agent, percent: 0 });
-        positionContextGaugePopover(anchorBtn, pop);
-        anchorBtn.setAttribute('aria-expanded', 'true');
-        const compactBtn = pop.querySelector('[data-action="compact"]');
-        if (compactBtn) {
-            compactBtn.onclick = () => runAgentContextCompact(anchorBtn);
-        }
-        const closeBtn = pop.querySelector('[data-action="close"]');
-        if (closeBtn) closeBtn.onclick = () => closeContextGaugePopover();
-    }
-
-    async function runAgentContextCompact(anchorBtn) {
-        const agent = stickyContextGaugeAgentId();
-        if (!agent || _agentContextBusy) return;
-        if (!currentSessionId) {
-            try {
-                if (window.showToast) window.showToast('Send a message first so the agent session exists.', 'info');
-            } catch (_) {}
-            return;
-        }
-        _agentContextBusy = true;
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            const b = document.getElementById(id);
-            if (b) b.classList.add('context-gauge--busy');
-        });
-        const pop = ensureContextGaugePopover();
-        if (!pop.hidden) {
-            renderContextGaugePopover(pop, _agentContextStatus || { agent_id: agent, percent: 0 });
-            if (anchorBtn) positionContextGaugePopover(anchorBtn, pop);
-        }
-        try {
-            const body = {
-                agent,
-                session: currentSessionId,
-                path: (currentProject && currentProject.path) ? String(currentProject.path) : '',
-            };
-            const res = await fetch('/api/agent-context/compact', {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            const data = await res.json().catch(() => ({}));
-            if (data && data.success) {
-                try {
-                    if (window.showToast) {
-                        window.showToast(
-                            (agent.charAt(0).toUpperCase() + agent.slice(1)) + ' context compacted',
-                            'success'
-                        );
-                    }
-                } catch (_) {}
-                if (data.status && data.status.success) {
-                    paintContextGaugeFromStatus(data.status);
-                } else {
-                    scheduleAgentContextGaugeRefresh(400);
-                }
-            } else {
-                const err = (data && data.error) || 'Compact failed';
-                try {
-                    if (window.showToast) window.showToast(err, 'error');
-                } catch (_) {}
-            }
-        } catch (e) {
-            try {
-                if (window.showToast) window.showToast(String(e && e.message || e), 'error');
-            } catch (_) {}
-        } finally {
-            _agentContextBusy = false;
-            ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-                const b = document.getElementById(id);
-                if (b) b.classList.remove('context-gauge--busy');
-            });
-            if (anchorBtn && _contextGaugePopoverEl && !_contextGaugePopoverEl.hidden) {
-                openContextGaugePopover(anchorBtn);
-            } else {
-                closeContextGaugePopover();
-            }
-        }
-    }
-
-    function initContextGaugeControls() {
-        ['chatContextGauge', 'welcomeContextGauge'].forEach((id) => {
-            const btn = document.getElementById(id);
-            if (!btn || btn.dataset.contextGaugeBound) return;
-            btn.dataset.contextGaugeBound = '1';
-            btn.addEventListener('click', (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                if (btn.getAttribute('aria-expanded') === 'true'
-                    && _contextGaugePopoverEl
-                    && !_contextGaugePopoverEl.hidden) {
-                    closeContextGaugePopover();
-                    return;
-                }
-                openContextGaugePopover(btn);
-            });
-        });
-        document.addEventListener('click', (ev) => {
-            const pop = _contextGaugePopoverEl;
-            if (!pop || pop.hidden) return;
-            const t = ev.target;
-            if (pop.contains(t)) return;
-            if (t && t.closest && t.closest('.context-gauge-btn')) return;
-            closeContextGaugePopover();
-        });
-        document.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Escape') closeContextGaugePopover();
-        });
-        scheduleAgentContextGaugeRefresh(200);
-    }
-
-    /** Compact share id: CH-000102-9 (chat display id + 1-based bubble index). */
-    function formatMessageRef(sessionId, messageIndex) {
-        const chatId = formatChatDisplayId(sessionId);
-        const idx = Number(messageIndex);
-        if (!chatId || !Number.isFinite(idx) || idx < 1) return null;
-        return chatId + '-' + Math.floor(idx);
-    }
-
-    function parseMessageRef(raw) {
-        const s = String(raw || '').trim();
-        const m = s.match(/^(CH-[A-Z0-9]+)-(\d+)$/i);
-        if (!m) return null;
-        const idx = parseInt(m[2], 10);
-        if (!Number.isFinite(idx) || idx < 1) return null;
-        return { chatId: m[1].toUpperCase(), messageIndex: idx };
-    }
-
-    function getMessageRefForButton(btn) {
-        const messageEl = btn && btn.closest ? btn.closest('.message') : null;
-        if (!messageEl || messageEl.dataset.stopped === 'true') return null;
-        let idx = parseInt(messageEl.dataset.messageIndex || '', 10);
-        if (!Number.isFinite(idx) || idx < 1) {
-            const box = document.getElementById('chatMessages');
-            const list = box
-                ? Array.from(box.querySelectorAll(CHAT_RECORD_SELECTOR + ':not(.system)'))
-                : [];
-            idx = list.indexOf(messageEl) + 1;
-            if (idx > 0) messageEl.dataset.messageIndex = String(idx);
-        }
-        return formatMessageRef(currentSessionId, idx);
-    }
-
-    function buildMessageShareUrl(ref) {
-        if (!ref) return '';
-        try {
-            const url = new URL(window.location.href);
-            const parsed = parseMessageRef(ref);
-            if (!parsed) return '';
-            url.searchParams.set('chat', parsed.chatId);
-            url.searchParams.set('msg', String(parsed.messageIndex));
-            url.searchParams.delete('session');
-            return url.pathname + url.search + url.hash;
-        } catch (_) {
-            return '';
-        }
-    }
-
-    async function copyMessageRefToClipboard(btn) {
-        const ref = getMessageRefForButton(btn);
-        if (!ref) return { ok: false, ref: null };
-        const ok = await copyTextToClipboard(ref);
-        return { ok, ref };
-    }
-    
     function formatTimeAgo(ts) {
         if (!ts || ts <= 0) return 'now';
         const diff = Date.now() - ts;
@@ -20754,454 +11847,6 @@
         return Promise.resolve(copyTextFallback(text));
     }
     
-    const MESSAGE_PINS_STORAGE_KEY = 'chat_message_pins_v1';
-    const MESSAGE_NAV_PIN_SVG =
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
-        + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-        + '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.13-1.87V5a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v3.89a2 2 0 0 1-1.13 1.87L12 13z"/>'
-        + '<path d="M7 5h10"/>'
-        + '</svg>';
-
-    function readPinnedMessageKeys() {
-        try {
-            const sid = currentSessionId != null ? String(currentSessionId) : '';
-            if (!sid) return new Set();
-            const raw = localStorage.getItem(MESSAGE_PINS_STORAGE_KEY);
-            const map = raw ? JSON.parse(raw) : {};
-            const list = Array.isArray(map[sid]) ? map[sid] : [];
-            return new Set(list.map(String));
-        } catch (_) {
-            return new Set();
-        }
-    }
-
-    function writePinnedMessageKeys(keySet) {
-        try {
-            const sid = currentSessionId != null ? String(currentSessionId) : '';
-            if (!sid) return;
-            const raw = localStorage.getItem(MESSAGE_PINS_STORAGE_KEY);
-            const map = raw ? JSON.parse(raw) : {};
-            map[sid] = Array.from(keySet);
-            localStorage.setItem(MESSAGE_PINS_STORAGE_KEY, JSON.stringify(map));
-        } catch (_) {}
-    }
-
-    function getMessagePinKey(el, idx) {
-        if (!el) return 'idx:' + idx;
-        if (el.dataset.messageId) return 'id:' + el.dataset.messageId;
-        const role = el.classList.contains('user') ? 'u' : 'a';
-        const tsEl = el.querySelector('[data-ts]');
-        const ts = tsEl && tsEl.dataset.ts ? String(tsEl.dataset.ts) : '';
-        const text = ((el.querySelector('.message-content') || {}).textContent || '')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .slice(0, 80);
-        if (ts || text) return 'fp:' + role + ':' + ts + ':' + text;
-        return 'idx:' + idx;
-    }
-
-    function updateMessageNav() {
-        const nav = document.getElementById('messageNav');
-        const messagesContainer = document.getElementById('chatMessages');
-        if (!nav || !messagesContainer) return;
-
-        const messages = Array.from(messagesContainer.querySelectorAll(CHAT_RECORD_SELECTOR + ':not(.system)'));
-        if (messages.length === 0) {
-            nav.innerHTML = '';
-            nav.style.display = 'none';
-            updateJumpToBottomVisibility();
-            return;
-        }
-
-        const pinnedKeys = readPinnedMessageKeys();
-        const indexBase = Math.max(0, Number(chatHistoryOlderVisibleCount) || 0);
-        const items = messages.map((el, i) => {
-            const idx = indexBase + i + 1;
-            const pinKey = getMessagePinKey(el, idx);
-            el.dataset.messageIndex = String(idx);
-            el.dataset.pinKey = pinKey;
-            const pinned = pinnedKeys.has(pinKey);
-            el.classList.toggle('is-pinned-message', pinned);
-            const ref = formatMessageRef(currentSessionId, idx);
-            if (ref) {
-                el.querySelectorAll('.message-share-ref-btn').forEach((btn) => {
-                    btn.title = 'Copy message ref (' + ref + ')';
-                    btn.setAttribute('aria-label', 'Copy message reference ' + ref);
-                });
-            }
-            return { idx, pinKey, pinned };
-        });
-
-        const pinnedItems = items.filter((it) => it.pinned);
-        const restItems = items.filter((it) => !it.pinned);
-
-        const renderItem = (it) => (
-            `<button type="button" class="message-nav-item${it.pinned ? ' is-pinned' : ''}" `
-            + `data-index="${it.idx}" data-pin-key="${escapeHtmlInline(it.pinKey)}" `
-            + `title="Jump to message ${it.idx}">`
-            + `<span class="message-nav-pin" data-pin-toggle="1" title="${it.pinned ? 'Unpin' : 'Pin for quick jump'}" `
-            + `aria-label="${it.pinned ? 'Unpin message' : 'Pin message'}">${MESSAGE_NAV_PIN_SVG}</span>`
-            + `<span class="message-nav-num">${it.idx}</span>`
-            + `</button>`
-        );
-
-        let html = pinnedItems.map(renderItem).join('');
-        if (pinnedItems.length && restItems.length) {
-            html += '<div class="message-nav-sep" aria-hidden="true"></div>';
-        }
-        html += restItems.map(renderItem).join('');
-
-        nav.style.display = 'flex';
-        const wasPinned = messageNavPinnedToBottom;
-        // Preserve scroll position across rebuild — innerHTML resets scrollTop to 0.
-        const prevTop = nav.scrollTop;
-        const prevHeight = nav.scrollHeight;
-        nav.innerHTML = html;
-        setupMessageNavScrollSync();
-        setupMessageNavClicks();
-        updateJumpToBottomVisibility();
-        // Default to bottom on first paint; otherwise follow only when on standby
-        // (not scrolled up, not hovered/focused).
-        if (wasPinned && !isMessageNavInteracting()) {
-            autoScrollMessageNavToBottom(true);
-        } else if (!wasPinned) {
-            // Restore where user was if we shouldn't auto-follow.
-            try {
-                // If content grew, keep same visual offset; otherwise restore absolute top.
-                const newHeight = nav.scrollHeight;
-                nav.scrollTop = prevTop + (newHeight - prevHeight);
-            } catch (_) {}
-        }
-    }
-
-    let _messageNavClickSetup = false;
-    function setupMessageNavClicks() {
-        const nav = document.getElementById('messageNav');
-        if (!nav || _messageNavClickSetup) return;
-        _messageNavClickSetup = true;
-        nav.addEventListener('click', (e) => {
-            const pinBtn = e.target && e.target.closest
-                ? e.target.closest('[data-pin-toggle]')
-                : null;
-            if (pinBtn) {
-                e.preventDefault();
-                e.stopPropagation();
-                const item = pinBtn.closest('.message-nav-item');
-                if (!item) return;
-                toggleMessagePin(item.dataset.pinKey);
-                return;
-            }
-            const item = e.target && e.target.closest
-                ? e.target.closest('.message-nav-item')
-                : null;
-            if (!item) return;
-            e.preventDefault();
-            jumpToMessage(parseInt(item.dataset.index, 10));
-        });
-    }
-
-    function toggleMessagePin(pinKey) {
-        if (!pinKey) return;
-        const keys = readPinnedMessageKeys();
-        if (keys.has(pinKey)) keys.delete(pinKey);
-        else keys.add(pinKey);
-        writePinnedMessageKeys(keys);
-        updateMessageNav();
-    }
-
-    let _messageNavScrollSetup = false;
-    function setupMessageNavScrollSync() {
-        const messagesContainer = document.getElementById('chatMessages');
-        if (!messagesContainer || _messageNavScrollSetup) return;
-        _messageNavScrollSetup = true;
-
-        const checkActive = () => {
-            syncChatPinnedFromScroll();
-            syncMessageNavPinnedFromScroll();
-            const messages = Array.from(messagesContainer.querySelectorAll(CHAT_RECORD_SELECTOR + ':not(.system)'));
-            const navItems = document.querySelectorAll('.message-nav-item');
-            if (navItems.length) {
-                const rect = messagesContainer.getBoundingClientRect();
-                const containerMid = rect.top + rect.height * 0.4;
-                let activeIdx = null;
-                messages.forEach((el) => {
-                    const r = el.getBoundingClientRect();
-                    if (r.top <= containerMid) {
-                        const idx = parseInt(el.dataset.messageIndex, 10);
-                        if (Number.isFinite(idx)) activeIdx = idx;
-                    }
-                });
-                navItems.forEach((btn) => {
-                    btn.classList.toggle(
-                        'active',
-                        activeIdx != null && parseInt(btn.dataset.index, 10) === activeIdx
-                    );
-                });
-            }
-            updateJumpToBottomVisibility();
-        };
-        messagesContainer.addEventListener('scroll', checkActive, { passive: true });
-        // Also track nav's own scroll/hover so we don't steal interaction
-        const nav = document.getElementById('messageNav');
-        if (nav) {
-            nav.addEventListener('scroll', syncMessageNavPinnedFromScroll, { passive: true });
-            nav.addEventListener('mouseenter', syncMessageNavPinnedFromScroll, { passive: true });
-            nav.addEventListener('wheel', syncMessageNavPinnedFromScroll, { passive: true });
-            nav.addEventListener('touchstart', syncMessageNavPinnedFromScroll, { passive: true });
-        }
-        checkActive();
-    }
-
-    function isChatScrolledUp(thresholdPx) {
-        const box = document.getElementById('chatMessages');
-        if (!box) return false;
-        const gap = box.scrollHeight - box.scrollTop - box.clientHeight;
-        return gap > (thresholdPx == null ? 140 : thresholdPx);
-    }
-
-    function syncChatPinnedFromScroll() {
-        if (Date.now() < _ignoreChatScrollPinUntil) return;
-        chatPinnedToBottom = !isChatScrolledUp(AUTOSCROLL_STICK_PX);
-        if (chatPinnedToBottom) {
-            // Reached the latest content — clear jump glow only (title may still need ack).
-            clearChatUnseenBelow();
-        }
-    }
-
-    function isMessageNavScrolledUp(thresholdPx) {
-        const nav = document.getElementById('messageNav');
-        if (!nav) return false;
-        // Hidden or not scrollable → treat as pinned
-        if (nav.style.display === 'none' || nav.scrollHeight <= nav.clientHeight + 4) return false;
-        const gap = nav.scrollHeight - nav.scrollTop - nav.clientHeight;
-        return gap > (thresholdPx == null ? NAV_AUTOSCROLL_STICK_PX : thresholdPx);
-    }
-
-    function isMessageNavInteracting() {
-        const nav = document.getElementById('messageNav');
-        if (!nav) return false;
-        try {
-            if (nav.matches(':hover')) return true;
-            if (nav.matches(':focus-within')) return true;
-            // Any child focused (keyboard nav)
-            if (document.activeElement && nav.contains(document.activeElement)) return true;
-        } catch (_) {}
-        return false;
-    }
-
-    function syncMessageNavPinnedFromScroll() {
-        if (Date.now() < _ignoreNavScrollPinUntil) return;
-        // If user is actively hovering/interacting, don't flip pinned just yet —
-        // wait until they leave / scroll to bottom.
-        if (isMessageNavInteracting() && isMessageNavScrolledUp(4)) {
-            messageNavPinnedToBottom = false;
-            return;
-        }
-        messageNavPinnedToBottom = !isMessageNavScrolledUp(NAV_AUTOSCROLL_STICK_PX);
-    }
-
-    function autoScrollMessageNavToBottom(force) {
-        const nav = document.getElementById('messageNav');
-        if (!nav) return;
-        if (nav.style.display === 'none') return;
-        if (!force && !messageNavPinnedToBottom) return;
-        if (!force && isMessageNavInteracting()) return;
-        if (!force && isMessageNavScrolledUp(NAV_AUTOSCROLL_STICK_PX)) return;
-        _ignoreNavScrollPinUntil = Date.now() + 150;
-        nav.scrollTop = nav.scrollHeight;
-        messageNavPinnedToBottom = true;
-        requestAnimationFrame(() => {
-            nav.scrollTop = nav.scrollHeight;
-            messageNavPinnedToBottom = true;
-        });
-    }
-
-    /**
-     * Follow new content only while the reader is parked at the bottom. Pin is
-     * remembered from the last user scroll — measuring gap *after* inserting a
-     * tall reply always looks like they scrolled away. Pass true for their own
-     * actions (send, open chat, jump-to-bottom).
-     */
-    function autoScrollChatToBottom(force) {
-        const box = document.getElementById('chatMessages');
-        if (!box) return;
-        // Message-ref jumps (CH-000430-99) must win over late bottom scrolls.
-        if (Date.now() < _suppressAutoScrollUntil) {
-            updateJumpToBottomVisibility();
-            return;
-        }
-        if (!force && !chatPinnedToBottom) {
-            updateJumpToBottomVisibility();
-            return;
-        }
-        _ignoreChatScrollPinUntil = Date.now() + 150;
-        box.scrollTop = box.scrollHeight;
-        chatPinnedToBottom = true;
-        clearChatUnseenBelow();
-        requestAnimationFrame(() => {
-            if (Date.now() < _suppressAutoScrollUntil) {
-                updateJumpToBottomVisibility();
-                return;
-            }
-            box.scrollTop = box.scrollHeight;
-            chatPinnedToBottom = true;
-            clearChatUnseenBelow();
-            updateJumpToBottomVisibility();
-        });
-    }
-
-    function updateJumpToBottomVisibility() {
-        const btn = document.getElementById('chatJumpBottom');
-        const box = document.getElementById('chatMessages');
-        if (!btn || !box) return;
-        const area = document.getElementById('chatArea');
-        const chatVisible = area && area.style.display !== 'none';
-        const show = chatVisible && box.scrollHeight > box.clientHeight + 40 && isChatScrolledUp(140);
-        btn.hidden = !show;
-        btn.classList.toggle('is-visible', show);
-        // Glow only when a finalized reply landed while scrolled up (not mere ack / scroll).
-        const hasUnseen = show && chatUnseenBelow;
-        btn.classList.toggle('has-unseen', hasUnseen);
-        btn.classList.toggle('has-unseen-error', hasUnseen && chatAttentionIsError);
-        btn.title = hasUnseen
-            ? (chatAttentionIsError ? 'Error — jump to latest' : 'New messages — jump to latest')
-            : 'Jump to latest';
-        btn.setAttribute(
-            'aria-label',
-            hasUnseen
-                ? (chatAttentionIsError ? 'Error — jump to latest' : 'New messages — jump to latest')
-                : 'Jump to latest messages'
-        );
-    }
-
-    function jumpToBottom(smooth) {
-        const box = document.getElementById('chatMessages');
-        if (!box) return;
-        _suppressAutoScrollUntil = 0;
-        chatPinnedToBottom = true;
-        _ignoreChatScrollPinUntil = Date.now() + 400;
-        clearChatUnseenBelow();
-        activateChatViewport();
-        box.scrollTo({
-            top: box.scrollHeight,
-            behavior: smooth === false ? 'auto' : 'smooth',
-        });
-        requestAnimationFrame(() => {
-            chatPinnedToBottom = true;
-            clearChatUnseenBelow();
-            updateJumpToBottomVisibility();
-        });
-    }
-
-    function jumpToMessage(index, opts) {
-        const messagesContainer = document.getElementById('chatMessages');
-        const el = messagesContainer?.querySelector(`.message[data-message-index="${index}"]`);
-        if (!el) return false;
-        chatPinnedToBottom = false;
-        _suppressAutoScrollUntil = Date.now() + 600;
-        _ignoreChatScrollPinUntil = Date.now() + 600;
-        const instant = !!(opts && opts.instant);
-        // Scroll the chat box itself — scrollIntoView can move outer shell/iframe
-        // ancestors and loses to pending autoScroll rAFs after session load.
-        try {
-            const boxRect = messagesContainer.getBoundingClientRect();
-            const elRect = el.getBoundingClientRect();
-            const delta = (elRect.top + elRect.height / 2) - (boxRect.top + boxRect.height / 2);
-            messagesContainer.scrollTo({
-                top: Math.max(0, messagesContainer.scrollTop + delta),
-                behavior: instant ? 'auto' : 'smooth',
-            });
-        } catch (_) {
-            try {
-                el.scrollIntoView({
-                    behavior: instant ? 'auto' : 'smooth',
-                    block: 'center',
-                });
-            } catch (__) {}
-        }
-        if (!(opts && opts.skipFlash)) {
-            el.classList.remove('message-ref-flash');
-            // Restart CSS animation if the same bubble is targeted twice.
-            void el.offsetWidth;
-            el.classList.add('message-ref-flash');
-            setTimeout(() => {
-                try { el.classList.remove('message-ref-flash'); } catch (_) {}
-            }, 2200);
-        }
-        updateJumpToBottomVisibility();
-        return true;
-    }
-
-    /** Pending ?msg=N (or CH-xxx-N) jump after the transcript finishes painting. */
-    let pendingMessageJump = null;
-
-    function queueMessageJump(messageIndex) {
-        const idx = parseInt(messageIndex, 10);
-        if (!Number.isFinite(idx) || idx < 1) {
-            pendingMessageJump = null;
-            return;
-        }
-        pendingMessageJump = idx;
-        // Hold bottom-stick while the session paints so load-time scrolls can't win.
-        _suppressAutoScrollUntil = Date.now() + 1200;
-    }
-
-    function consumePendingMessageJump() {
-        const idx = pendingMessageJump;
-        if (!idx) return;
-        pendingMessageJump = null;
-        _suppressAutoScrollUntil = Date.now() + 1200;
-        // Indices are assigned in updateMessageNav — call after messages are in the DOM.
-        // Older bubbles may still be behind the lazy window; load pages until found.
-        (async () => {
-            const settle = (found) => {
-                if (!found) {
-                    _clearMsgQueryParam();
-                    return;
-                }
-                // Re-assert after layout/rAF so late autoScroll or image layout
-                // cannot yank the viewport back to the bottom.
-                requestAnimationFrame(() => {
-                    jumpToMessage(idx, { instant: true, skipFlash: true });
-                    requestAnimationFrame(() => {
-                        jumpToMessage(idx, { instant: true, skipFlash: true });
-                    });
-                });
-                setTimeout(() => jumpToMessage(idx, { instant: true, skipFlash: true }), 80);
-                setTimeout(() => jumpToMessage(idx, { instant: true, skipFlash: true }), 280);
-                _clearMsgQueryParam();
-            };
-
-            updateMessageNav();
-            if (jumpToMessage(idx, { instant: true })) {
-                settle(true);
-                return;
-            }
-            let guard = 40;
-            while (chatHistoryHasMore && guard-- > 0) {
-                const loaded = await loadOlderChatMessages();
-                updateMessageNav();
-                if (jumpToMessage(idx, { instant: true })) {
-                    settle(true);
-                    return;
-                }
-                if (!loaded) break;
-            }
-            updateMessageNav();
-            settle(!!jumpToMessage(idx, { instant: true }));
-        })();
-    }
-
-    function _clearMsgQueryParam() {
-        try {
-            const url = new URL(window.location.href);
-            if (url.searchParams.has('msg')) {
-                url.searchParams.delete('msg');
-                history.replaceState(null, '', url.pathname + url.search + url.hash);
-            }
-        } catch (_) {}
-    }
-    
     function addTypingIndicator(slashMeta) {
         const messagesContainer = document.getElementById('chatMessages');
         if (!messagesContainer) return;
@@ -21247,9 +11892,9 @@
         
         messagesContainer.appendChild(typingDiv);
         scheduleSlashChipCompactLabels(typingDiv);
-        updateMessageNav();
-        autoScrollChatToBottom();
-        try { paintSubagentOrbs(); } catch (_) {}
+        transcriptNav.updateMessageNav();
+        transcriptNav.autoScrollChatToBottom();
+        try { subagentLaunchers.paintLive(); } catch (_) {}
         armConnectingWatchdog();
         // Keep tool/status text moving even when the SSE body stalls (Electron HTTPS).
         armStreamStatusPoll();
@@ -21275,45 +11920,46 @@
         // App shell batches live-status for all panes — don't open a per-pane
         // poll that competes for the shared HTTPS connection pool.
         if (inAppShell) {
-            reportSessionToShell(currentSessionId);
+            reportSessionToShell(session.current());
             return;
         }
         // SSE can stall on Electron/HTTPS while the agent keeps updating live-status.
         // Poll with short timeouts so typing text still moves and connections free up.
-        let lastStatus = '';
-        let stagnantTicks = 0;
+        // Cadence, the tick branch decision and the {lastStatus, stagnantTicks}
+        // bookkeeping are owned by chat_stream_transport.js; the page keeps the
+        // timer, the live-status fetch, DOM paint and the recovery effects.
+        const pollState = CuttleChatStreamTransport.createStatusPollState();
         streamStatusPollTimer = setInterval(async () => {
-            if (!isLoadingThisSession() || currentSessionId == null) {
+            const gate = CuttleChatStreamTransport.planStatusPollStart({
+                loadingThisSession: isLoadingThisSession(),
+                sessionId: session.current(),
+                backgrounded: pageIsBackgrounded(),
+            });
+            if (gate.stop) {
                 clearStreamStatusPoll();
                 return;
             }
-            if (pageIsBackgrounded()) return;
-            const live = await fetchChatLiveStatus(currentSessionId);
-            if (!live) return;
-            if (live.status) {
-                if (live.status === lastStatus) stagnantTicks += 1;
-                else {
-                    stagnantTicks = 0;
-                    lastStatus = live.status;
-                }
-                updateTypingStatus(live.status);
-            }
-            try { syncSubagentOrbs(live.subagents); } catch (_) {}
-            if (live.report_url) updateTypingIndicatorQueryLink(live.report_url);
+            if (gate.skip) return;
+            const live = await fetchChatLiveStatus(session.current());
+            const plan = CuttleChatStreamTransport.planStatusPollLive(
+                pollState, live, liveStatusLooksActive(live));
+            if (plan.skip) return;
+            if (plan.paintStatus != null) updateTypingStatus(plan.paintStatus);
+            try { subagentLaunchers.syncLive(plan.subagents); } catch (_) {}
+            if (plan.reportUrl) updateTypingIndicatorQueryLink(plan.reportUrl);
 
-            const stillGoing = liveStatusLooksActive(live);
-            if (!stillGoing) {
+            if (plan.recover) {
                 // Run finished server-side — pull the reply even if SSE/pending stalled.
                 clearStreamStatusPoll();
                 try {
                     window.CuttleNetDebug && window.CuttleNetDebug.event(
                         'status-poll-idle',
-                        'recovering session=' + currentSessionId
+                        'recovering session=' + session.current()
                     );
                 } catch (_) {}
                 await syncSessionMessagesFromServer();
                 if (isLoadingThisSession()) {
-                    const recovered = await recoverChatResultFromServer(currentSessionId);
+                    const recovered = await recoveryController().recoverChatResultFromServer(session.current());
                     if (recovered && String(recovered.response || '').trim()) {
                         if (consumeCancelledAgentReply(recovered.response)) {
                             finishLocalStreamFromServerSync();
@@ -21325,7 +11971,7 @@
                                 routing_badge: recovered.routing_badge || undefined,
                                 usage: normalizeUsagePayload(recovered.usage) || undefined,
                             });
-                            notifyAssistantResponseReady(currentSessionId, { fromSync: true });
+                            notifyAssistantResponseReady(session.current(), { fromSync: true });
                             finishLocalStreamFromServerSync();
                         } else {
                             finishLocalStreamFromServerSync();
@@ -21338,67 +11984,12 @@
             }
             // Same tool status for a long time while still "active" — nudge pending
             // recovery in case the worker died without clearing live-status.
-            if (stagnantTicks >= 24) { // ~24 * 3.5s ≈ 84s
-                stagnantTicks = 0;
+            if (plan.resync) {
                 try {
                     await syncSessionMessagesFromServer();
                 } catch (_) {}
             }
-        }, 3500);
-    }
-    // Companion-HTTP target for an HTTPS pool stall (armConnectingWatchdog).
-    // Pure except for the injected getDesktopConfig: resolves to
-    // { probeUrl, destBase, httpPort } or null (fail closed — the caller
-    // shows a generic message instead of guessing an unrelated endpoint).
-    // Local paired mode requires matching host and HTTPS port. Explicit
-    // single targets never auto-downgrade. Only true legacy
-    // default-mode (exact https://127.0.0.1|localhost:8080 with no config
-    // available, e.g. plain browser) keeps the documented :8000 companion.
-    function poolStallSameHost(cfgHost, normHost, loopback127) {
-        const cfgNorm = String(cfgHost || '').trim().replace(/^\[|\]$/g, '').toLowerCase();
-        if (!cfgNorm) return false;
-        if (cfgNorm === normHost) return true;
-        return !!(loopback127 && (cfgNorm === '127.0.0.1' || cfgNorm === 'localhost'));
-    }
-    function poolStallTarget(host, httpPort) {
-        return {
-            probeUrl: `http://${host}:${httpPort}/api/status`,
-            destBase: `http://${host}:${httpPort}`,
-            httpPort,
-        };
-    }
-    async function poolStallHttpTarget({ origin, getDesktopConfig }) {
-        const m = /^https:\/\/(\[[^\]]+\]|[^/:]+):(\d+)$/i.exec(String(origin || ''));
-        if (!m) return null;
-        const host = m[1];
-        const httpsPort = Number(m[2]);
-        if (!Number.isSafeInteger(httpsPort) || httpsPort < 1 || httpsPort > 65535) return null;
-        const normHost = host.replace(/^\[|\]$/g, '').toLowerCase();
-        const loopback127 = normHost === '127.0.0.1' || normHost === 'localhost';
-        let cfg = null;
-        try {
-            cfg = typeof getDesktopConfig === 'function' ? await getDesktopConfig() : null;
-        } catch (_) {
-            cfg = null;
-        }
-        // Explicit connections never change protocol, including saved configs
-        // that contain companion metadata from an older desktop build.
-        const ep = cfg ? cfg.endpoint : null;
-        if (ep && ep.kind === 'single') return null;
-        // A local paired target knows both owner-resolved listeners.
-        if (cfg && Number(cfg.httpsPort) === httpsPort
-            && poolStallSameHost(cfg.host, normHost, loopback127)) {
-            const httpPort = Number(cfg.httpPort);
-            if (Number.isSafeInteger(httpPort) && httpPort >= 1 && httpPort <= 65535) {
-                return poolStallTarget(host, httpPort);
-            }
-            return null;
-        }
-        // Plain-browser legacy compatibility: no desktop config is available.
-        if (!cfg && loopback127 && httpsPort === 8080) {
-            return poolStallTarget('127.0.0.1', 8000);
-        }
-        return null;
+        }, CuttleChatStreamTransport.STATUS_POLL_MS);
     }
     function armConnectingWatchdog() {
         clearConnectingWatchdog();
@@ -21407,15 +11998,19 @@
             const el = document.getElementById('typing-status')
                 || document.querySelector('#typing-indicator .typing-status');
             if (!el) return;
-            const text = (el.textContent || '').trim();
-            if (text !== 'Connecting...' && text.indexOf('Still connecting') < 0) return;
+            // Label gate, live-status preemption, probe interpretation and
+            // pool-stall target resolution are owned by
+            // chat_stream_transport.js; the page keeps the timer, DOM reads,
+            // fetch, navigation and message paint.
+            if (!CuttleChatStreamTransport.watchdogWantsLive(el.textContent)) return;
 
             // Prefer live generation status over a health probe (SSE may be stalled).
-            if (currentSessionId != null) {
-                const live = await fetchChatLiveStatus(currentSessionId);
-                if (live && (live.active || live.generating) && live.status) {
-                    updateTypingStatus(live.status);
-                    if (live.report_url) updateTypingIndicatorQueryLink(live.report_url);
+            if (session.current() != null) {
+                const live = await fetchChatLiveStatus(session.current());
+                const livePlan = CuttleChatStreamTransport.planWatchdogAfterLive(live);
+                if (livePlan.kind === 'live') {
+                    updateTypingStatus(livePlan.status);
+                    if (livePlan.reportUrl) updateTypingIndicatorQueryLink(livePlan.reportUrl);
                     return;
                 }
             }
@@ -21425,16 +12020,17 @@
                 const r = await fetchWithTimeout('/api/status', {
                     credentials: 'include',
                     cache: 'no-store',
-                }, 4000);
-                if (!document.getElementById('typing-indicator')) return;
+                }, CuttleChatStreamTransport.WATCHDOG_PROBE_MS);
                 const cur = document.getElementById('typing-status')
                     || document.querySelector('#typing-indicator .typing-status');
-                if (!cur || (cur.textContent || '').indexOf('Still connecting') < 0) return;
-                if (r.ok) {
-                    cur.textContent = 'Server is up — waiting for chat stream…';
-                } else {
-                    cur.textContent = `Server health HTTP ${r.status} — try refreshing or restart Flask`;
-                }
+                const probe = CuttleChatStreamTransport.planWatchdogProbe({
+                    ok: r.ok,
+                    status: r.status,
+                    hasIndicator: !!document.getElementById('typing-indicator'),
+                    stillConnecting: !!cur && (cur.textContent || '').indexOf('Still connecting') >= 0,
+                });
+                if (probe.abort) return;
+                cur.textContent = probe.message;
             } catch (_) {
                 if (!document.getElementById('typing-indicator')) return;
                 const cur = document.getElementById('typing-status')
@@ -21445,19 +12041,19 @@
                     // known — poolStallHttpTarget never guesses an unrelated
                     // default for custom/explicit origins.
                     const inElectron = !!(window.electron && window.electron.isElectron);
-                    const stallTarget = await poolStallHttpTarget({
+                    const stallTarget = await CuttleChatStreamTransport.poolStallHttpTarget({
                         origin: window.location.origin || '',
                         getDesktopConfig: inElectron && window.electron.desktop && window.electron.desktop.getConfig
                             ? () => window.electron.desktop.getConfig()
                             : null,
                     });
                     if (stallTarget) {
-                        cur.textContent = `HTTPS pool stalled — switching to HTTP portal (:${stallTarget.httpPort})…`;
+                        cur.textContent = CuttleChatStreamTransport.poolStallSwitchMessage(stallTarget.httpPort);
                         try {
                             const probe = await fetchWithTimeout(stallTarget.probeUrl, {
                                 cache: 'no-store',
                                 mode: 'cors',
-                            }, 3000);
+                            }, CuttleChatStreamTransport.POOL_STALL_PROBE_MS);
                             if (probe && probe.ok) {
                                 const dest = stallTarget.destBase + (window.location.pathname || '/app_shell.html')
                                     + (window.location.search || '') + (window.location.hash || '');
@@ -21472,69 +12068,29 @@
                             }
                         } catch (_) { /* fall through */ }
                     }
-                    cur.textContent = inElectron
-                        ? 'Cannot reach Cuttle API — Electron connection pool stalled. Quit Cuttle.exe fully and reopen (or use the HTTP portal for your connected host).'
-                        : 'Cannot reach Cuttle API quickly — stream may be stalled. Try Stop, or open the HTTP portal for this host.';
+                    cur.textContent = CuttleChatStreamTransport.watchdogStallMessage(inElectron);
                 }
             }
-        }, 12000);
-    }
-
-    function rememberSubagentOrbList(raw) {
-        if (raw === undefined) return;
-        _subagentOrbList = normalizeSubagentList(raw);
-    }
-
-    // Orbs live inside the fleet cards now (running/queued cards render the
-    // mini orbit); the indicator keeps only the parent orbit + status line.
-    // Badges still mount onto the in-progress bubble as soon as a child attaches.
-    function paintSubagentOrbs() {
-        mountLiveSubagentBadges();
-    }
-
-    function syncSubagentOrbs(subagents) {
-        rememberSubagentOrbList(subagents);
-        paintSubagentOrbs();
-    }
-
-    function clearSubagentOrbs() {
-        _subagentOrbList = [];
-        paintSubagentOrbs();
-    }
-
-    function mountLiveSubagentBadges() {
-        if (typeof document === 'undefined' || !document.querySelectorAll) return;
-        // Badges link to the child sessions as soon as they attach — mount
-        // onto the in-progress bubble, not just the finalized reply.
-        // Empty list unmounts (mountSubagentLaunchers removes on empty html).
-        document.querySelectorAll('#typing-indicator, #typing-indicator-remote').forEach((el) => {
-            try { mountSubagentLaunchers(el, _subagentOrbList); } catch (_) {}
-        });
+        }, CuttleChatStreamTransport.WATCHDOG_MS);
     }
 
     function updateTypingStatus(statusText) {
-        const next = statusText || 'Connecting...';
-        chatVoice.onAgentStatus(next);
         const indicator = document.getElementById('typing-indicator');
         const el = indicator ? indicator.querySelector('.typing-status') : document.getElementById('typing-status');
-        if (el) {
-            if (el.textContent === next) {
-                if (next !== 'Connecting...' && next.indexOf('Still connecting') < 0) {
-                    clearConnectingWatchdog();
-                }
-                return;
-            }
-            clearConnectingWatchdog();
-            el.textContent = next;
+        const plan = CuttleChatStreamTransport.planTypingStatusUpdate({
+            statusText: statusText,
+            hasIndicator: !!indicator,
+            currentText: el ? el.textContent : null,
+        });
+        chatVoice.onAgentStatus(plan.text);
+        if (plan.paint && el) {
+            el.textContent = plan.text;
             el.style.display = 'block';
             el.style.visibility = 'visible';
-            autoScrollChatToBottom();
-        } else {
-            clearConnectingWatchdog();
+            transcriptNav.autoScrollChatToBottom();
         }
-        if (!statusText || statusText === 'Connecting...') {
-            armConnectingWatchdog();
-        }
+        if (plan.clearWatchdog) clearConnectingWatchdog();
+        if (plan.armWatchdog) armConnectingWatchdog();
     }
     
     function updateTypingIndicatorQueryLink(reportUrl) {
@@ -21584,115 +12140,13 @@
         const indicator = document.getElementById('typing-indicator');
         if (indicator) {
             indicator.remove();
-            autoScrollChatToBottom();
+            transcriptNav.autoScrollChatToBottom();
         }
     }
     
-    function fmtPricingRate(v) {
-        if (v === null || v === undefined || v === '') return '—';
-        const n = Number(v);
-        if (!Number.isFinite(n)) return '—';
-        if (n === 0) return 'Free';
-        if (n >= 1 || Math.abs(n * 100 - Math.round(n * 100)) < 1e-9) return '$' + n.toFixed(2);
-        return '$' + n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
-    }
-
-    function fmtPricingContext(v) {
-        const n = Number(v);
-        if (!Number.isFinite(n) || n <= 0) return '';
-        if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
-        if (n >= 1e3) return Math.round(n / 1e3) + 'K';
-        return String(n);
-    }
-
-    /** ``<cuttle_pricing>`` JSON → table; the active model's row is highlighted. */
+    /** ``<cuttle_pricing>`` JSON → table; owned by CuttleChatMessages. */
     function renderCuttlePricingHtml(rawBody) {
-        let payload = null;
-        try {
-            payload = JSON.parse(String(rawBody || '').trim());
-        } catch (_) {
-            payload = null;
-        }
-        const rows = payload && Array.isArray(payload.rows) ? payload.rows : [];
-        if (!rows.length) return '';
-        const has = (key) => rows.some((r) => r && r[key] !== undefined && r[key] !== null && r[key] !== '');
-        const showTask = has('task');
-        const showBench = has('bench_cost');
-        const showScore = showBench && has('bench_score');
-        const bench = (payload && payload.bench) || {};
-        const benchLabel = String(bench.label || 'Benchmark');
-        const showCache = has('cache_read');
-        const showCtx = has('context');
-        const showNotes = has('note') || has('variants');
-        const inline = (s) => CuttleChatMarkdown.formatInlineMarkdown(escapeHtmlInline(String(s || '')));
-        let html = '<div class="message-table-wrap cuttle-pricing-wrap">'
-            + '<table class="message-table cuttle-pricing"><thead><tr>'
-            + '<th>Model</th>'
-            + '<th style="text-align:right">Input</th>'
-            + '<th style="text-align:right">Output</th>'
-            + (showBench
-                ? '<th style="text-align:right" title="'
-                    + escapeHtmlInline('Measured mean cost per task on ' + benchLabel
-                        + (bench.credit ? ' (data: ' + bench.credit + ')' : ''))
-                    + '">$ / task<br><span class="cuttle-pricing-sub">'
-                    + escapeHtmlInline(benchLabel) + '</span></th>'
-                : '')
-            + (showScore ? '<th style="text-align:right">Solved</th>' : '')
-            + (showTask
-                ? '<th style="text-align:right" title="'
-                    + escapeHtmlInline('Estimated cost of one typical agentic coding task: '
-                        + String((payload && payload.task_basis) || ''))
-                    + '">≈ / task</th>'
-                : '')
-            + (showCache ? '<th style="text-align:right">Cache read</th>' : '')
-            + (showCtx ? '<th style="text-align:right">Context</th>' : '')
-            + (showNotes ? '<th>Notes</th>' : '')
-            + '</tr></thead><tbody>';
-        rows.forEach((r) => {
-            if (!r || typeof r !== 'object') return;
-            const active = !!r.active;
-            const label = String(r.label || r.model || '').trim();
-            const model = String(r.model || '').trim();
-            const modelCell = '<span class="cuttle-pricing-label">' + escapeHtmlInline(label) + '</span>'
-                + (active ? ' <span class="cuttle-pricing-badge">Active</span>' : '')
-                + (model && model !== label
-                    ? '<br><code class="cuttle-pricing-id">' + escapeHtmlInline(model) + '</code>'
-                    : '');
-            const notes = [r.variants, r.note].filter((s) => s).map(inline).join('<br>');
-            html += '<tr class="cuttle-pricing-row' + (active ? ' is-active' : '') + '">'
-                + '<td>' + modelCell + '</td>'
-                + '<td class="cuttle-pricing-num">' + escapeHtmlInline(fmtPricingRate(r.input)) + '</td>'
-                + '<td class="cuttle-pricing-num">' + escapeHtmlInline(fmtPricingRate(r.output)) + '</td>'
-                + (showBench
-                    ? '<td class="cuttle-pricing-num cuttle-pricing-task">'
-                        + escapeHtmlInline(fmtPricingRate(r.bench_cost))
-                        + (r.bench_cost !== undefined && r.bench_effort
-                            ? '<br><span class="cuttle-pricing-sub">' + escapeHtmlInline(r.bench_effort) + '</span>'
-                            : '')
-                        + '</td>'
-                    : '')
-                + (showScore
-                    ? '<td class="cuttle-pricing-num">'
-                        + (r.bench_score !== undefined && r.bench_score !== null
-                            ? escapeHtmlInline(Number(r.bench_score).toFixed(1) + '%')
-                            : '—')
-                        + '</td>'
-                    : '')
-                + (showTask
-                    ? '<td class="cuttle-pricing-num cuttle-pricing-task">'
-                        + escapeHtmlInline(fmtPricingRate(r.task)) + '</td>'
-                    : '')
-                + (showCache
-                    ? '<td class="cuttle-pricing-num">' + escapeHtmlInline(fmtPricingRate(r.cache_read)) + '</td>'
-                    : '')
-                + (showCtx
-                    ? '<td class="cuttle-pricing-num">' + escapeHtmlInline(fmtPricingContext(r.context)) + '</td>'
-                    : '')
-                + (showNotes ? '<td class="cuttle-pricing-note">' + notes + '</td>' : '')
-                + '</tr>';
-        });
-        html += '</tbody></table></div>';
-        return html;
+        return CuttleChatMessages.renderCuttlePricingHtml(rawBody, { escapeHtmlInline });
     }
 
 
@@ -21703,8 +12157,8 @@
             clamp,
             renderMdLinkChip,
             renderCuttlePricingHtml,
-            mediaKindFromUrl,
-            buildMediaThumbHtml,
+            mediaKindFromUrl: CuttleChatMedia.mediaKindFromUrl,
+            buildMediaThumbHtml: chatMedia.buildMediaThumbHtml,
         };
     }
 
@@ -21838,8 +12292,8 @@
             if (!spec.project_path && currentProject && currentProject.path) {
                 spec.project_path = String(currentProject.path);
             }
-            if (!spec.session_id && currentSessionId != null && currentSessionId !== '') {
-                spec.session_id = String(currentSessionId);
+            if (!spec.session_id && session.current() != null && session.current() !== '') {
+                spec.session_id = String(session.current());
             }
             // Do not bake a huge inline. token into data-fallback — data-spec is
             // enough; tokenForCard rebuilds from data-spec when the pending id is gone.
@@ -22124,7 +12578,7 @@
             escapeHtmlInline,
             renderMdLinkChip,
             isSafeMdHref,
-            buildMediaThumbHtml,
+            buildMediaThumbHtml: chatMedia.buildMediaThumbHtml,
         });
         text = codeLinkStructured.text;
         // Live array: handle/git linking below pushes chips the restore
@@ -22265,14 +12719,14 @@
         initializeTheme();
 
         // Chat TTS play-button prefs (Settings → Chat voice)
-        loadChatTtsPrefs();
+        chatTts.loadPrefs();
 
         // file:// chips → host OS default application
         bindMdLinkChipClicks();
         bindChatHandleLinkClicks();
         bindGitCommitLinkClicks();
         // Markdown / attachment image+video lightbox
-        bindCuttleMediaLightbox();
+        chatMedia.bind();
         
         // Load agent name from settings
         agentName = localStorage.getItem('agentName') || 'Cuttle';
@@ -22297,19 +12751,19 @@
             if (typeof loadProjects === 'function') {
                 loadProjects();
             } else {
-                reloadHistoryListKeepingSearch();
+                historyPanel.reloadKeepingSearch();
             }
             const urlParams = new URLSearchParams(window.location.search);
             const wanted = urlParams.get('chat') || urlParams.get('session');
             if (!wanted || !isAuthMode()) return;
             // The restore already gave up and handed the user a new chat — don't
             // yank them into the old one when auth finally settles.
-            if (chatRestoreAbandoned) return;
+            if (sessionBoot().isRestoreAbandoned()) return;
             // Only settle the deep link before a chat is open. Auth refreshes
             // fire repeatedly; once the user is reading a chat, re-reading the
             // URL could yank them into a different one mid-click.
-            if (currentSessionId != null) {
-                if (String(currentSessionId) === String(wanted) && !messageSyncTimer) {
+            if (session.current() != null) {
+                if (String(session.current()) === String(wanted) && !messageSyncTimer) {
                     startMessageSync();
                 }
                 return;
@@ -22343,20 +12797,20 @@
         }
 
         // Load chat history from localStorage
-        loadChatHistory();
+        historyPanel.load();
         
         // Landing on Chat always shows the welcome splash unless a session is
         // requested via ?chat= (or legacy ?session=). History / New Chat manage the rest.
         const urlParams = new URLSearchParams(window.location.search);
         const sessionParam = urlParams.get('chat') || urlParams.get('session');
         const msgParam = urlParams.get('msg');
-        if (msgParam) queueMessageJump(msgParam);
+        if (msgParam) transcriptNav.queueMessageJump(msgParam);
         // Also accept compact refs in hash: #CH-000102-9 or #msg-9
         try {
             const hash = String(window.location.hash || '').replace(/^#/, '');
-            const fromHash = parseMessageRef(hash);
+            const fromHash = transcriptNav.parseMessageRef(hash);
             if (fromHash) {
-                queueMessageJump(fromHash.messageIndex);
+                transcriptNav.queueMessageJump(fromHash.messageIndex);
                 if (!sessionParam) {
                     // If only a hash ref was given, still open that chat.
                     waitForAuthReady().then(function () {
@@ -22365,7 +12819,7 @@
                 }
             } else {
                 const mOnly = hash.match(/^msg-?(\d+)$/i);
-                if (mOnly) queueMessageJump(mOnly[1]);
+                if (mOnly) transcriptNav.queueMessageJump(mOnly[1]);
             }
         } catch (_) {}
 
@@ -22412,7 +12866,7 @@
                 CuttlePromptHistory.resetBrowse(promptHistoryState);
                 syncSlashMenuFromInput(welcomeInput);
                 // Frame removal need not fire unload; save before a fast space switch.
-                saveComposerDraft(currentSessionId || 'new');
+                saveComposerDraft(session.current() || 'new');
             });
             wireComposerEmoticons(welcomeInput);
             LOG('DOMContentLoaded: welcome input keydown listener attached');
@@ -22426,7 +12880,7 @@
                 CuttlePromptHistory.resetBrowse(promptHistoryState);
                 syncSlashMenuFromInput(chatInput);
                 // Frame removal need not fire unload; save before a fast space switch.
-                saveComposerDraft(currentSessionId || 'new');
+                saveComposerDraft(session.current() || 'new');
             });
             wireComposerEmoticons(chatInput);
             chatInput.style.height = 'auto';
@@ -22437,7 +12891,7 @@
 
         // Flush drafts on refresh / Electron restart / pane unload.
         const flushComposerDraft = () => {
-            try { saveComposerDraft(currentSessionId || 'new'); } catch (_) {}
+            try { saveComposerDraft(session.current() || 'new'); } catch (_) {}
         };
         window.addEventListener('pagehide', flushComposerDraft);
         window.addEventListener('beforeunload', flushComposerDraft);
@@ -22513,9 +12967,9 @@
             const t = e.target;
             if (t.closest?.('#historyItemOverflowMenu')) return;
             if (t.closest?.('.chat-menu-btn')) return;
-            closeHistoryItemMenu();
+            historyPanel.closeMenu();
         }, true);
-        window.addEventListener('resize', closeHistoryItemMenu);
+        window.addEventListener('resize', function () { historyPanel.closeMenu(); });
         window.addEventListener('resize', () => scheduleSlashChipCompactLabels(document));
         if (typeof ResizeObserver === 'function') {
             try {
@@ -22532,11 +12986,11 @@
         }
         const historyScroll = document.getElementById('chatHistory');
         if (historyScroll) {
-            historyScroll.addEventListener('scroll', closeHistoryItemMenu, { passive: true });
+            historyScroll.addEventListener('scroll', function () { historyPanel.closeMenu(); }, { passive: true });
         }
-        setupHistoryDeleteModal();
-        setupGitPushConfirmModal();
-        setupHistoryRenameModal();
+        historyPanel.setupModals();
+        setupHistoryDisplayFilters();
+        gitPush.setupConfirmModal();
 
         // Cross-device: refresh open session when tab becomes visible / focused
         const syncIfVisible = function () {
@@ -22548,8 +13002,8 @@
             }
             // After sleep / Flask restart, stale running flags can trap follow-ups.
             healStaleGeneratingState();
-            if (currentSessionId != null) {
-                markChatSessionRead(currentSessionId);
+            if (session.current() != null) {
+                markChatSessionRead(session.current());
                 syncHistoryUnreadIndicators();
             }
             syncSessionMessagesFromServer();
@@ -22578,7 +13032,7 @@
                     const changed = next !== shellPaneFocused;
                     shellPaneFocused = next;
                     if (messageSyncTimer) scheduleNextMessageSync();
-                    if (changed && shellPaneFocused && currentSessionId != null) {
+                    if (changed && shellPaneFocused && session.current() != null) {
                         syncSessionMessagesFromServer();
                     }
                     // Hidden panes stop usage-live polling while away; rescan
@@ -22592,8 +13046,8 @@
                 }
                 if (e.data.type === 'cuttle-live-status') {
                     const sid = e.data.sessionId;
-                    if (sid == null || currentSessionId == null) return;
-                    if (!sessionIdsEqual(sid, currentSessionId)) return;
+                    if (sid == null || session.current() == null) return;
+                    if (!sessionIdsEqual(sid, session.current())) return;
                     applyHubLiveStatusPayload(e.data.status || null, sid);
                     return;
                 }
@@ -22622,7 +13076,7 @@
             document.addEventListener('pointerdown', function () {
                 notifyShellPaneActivity();
             }, true);
-            if (currentSessionId != null) reportSessionToShell(currentSessionId);
+            if (session.current() != null) reportSessionToShell(session.current());
             // Ask shell to re-broadcast focus (in case we loaded after click).
             try {
                 window.parent.postMessage({ type: 'cuttle-pane-activity' }, '*');
@@ -22638,14 +13092,14 @@
         if (jumpBottomBtn) {
             jumpBottomBtn.addEventListener('click', (e) => {
                 e.preventDefault();
-                jumpToBottom(true);
+                transcriptNav.jumpToBottom(true);
             });
         }
-        setupMessageNavScrollSync();
+        transcriptNav.setupMessageNavScrollSync();
         setupChatAttentionListeners();
-        updateJumpToBottomVisibility();
+        transcriptNav.updateJumpToBottomVisibility();
         updateSessionTitleUnreadDot();
-        try { initContextGaugeControls(); } catch (e) { LOG_ERR('context gauge init', e); }
+        try { contextGauge.init(); } catch (e) { LOG_ERR('context gauge init', e); }
 
         LOG('DOMContentLoaded: init complete. In iframe=', window !== window.parent);
     });
@@ -22655,17 +13109,17 @@
     window.toggleChatHistoryPanel = toggleChatHistoryPanel;
     window.openChatHistoryPanel = openChatHistoryPanel;
     window.closeChatHistoryPanel = closeChatHistoryPanel;
-    window.toggleHistoryGroupExpand = revealMoreHistoryGroup; // back-compat alias
-    window.revealMoreHistoryGroup = revealMoreHistoryGroup;
-    window.collapseHistoryGroupReveal = collapseHistoryGroupReveal;
-    window.toggleHistoryProjectCollapse = toggleHistoryProjectCollapse;
-    window.toggleHistorySubagentGroup = toggleHistorySubagentGroup;
+    window.toggleHistoryGroupExpand = (event) => historyPanel.revealMore(event); // back-compat alias
+    window.revealMoreHistoryGroup = (event) => historyPanel.revealMore(event);
+    window.collapseHistoryGroupReveal = (event) => historyPanel.collapseReveal(event);
+    window.toggleHistoryProjectCollapse = (event) => historyPanel.toggleProjectCollapse(event);
+    window.toggleHistorySubagentGroup = (sessionId, event) => historyPanel.toggleSubagentGroup(sessionId, event);
     window.toggleHistoryProjectCollapseKey = function (event) {
         if (!event) return;
         const key = event.key || event.code;
         if (key !== 'Enter' && key !== ' ' && key !== 'Spacebar' && key !== 'Space') return;
         event.preventDefault();
-        toggleHistoryProjectCollapse(event);
+        historyPanel.toggleProjectCollapse(event);
     };
     window.newChatForProject = newChatForProject;
     window.toggleTheme = toggleTheme;
@@ -22684,108 +13138,19 @@
     window.chatPageToggleArchiveSession = toggleArchiveChatSession;
     window.chatPageToggleArchiveSection = toggleArchiveSection;
     window.chatPageToggleArchiveSectionKey = toggleArchiveSectionKey;
-    window.chatPageRequestDeleteSession = requestDeleteChatSession;
-    window.chatPageCancelDeleteSession = cancelDeleteChatSession;
-    window.chatPageConfirmDeleteSession = confirmDeleteChatSession;
+    window.chatPageRequestDeleteSession = (sessionId, event) => historyPanel.requestDelete(sessionId, event);
+    window.chatPageCancelDeleteSession = (sessionId, event) => historyPanel.cancelDelete(sessionId, event);
+    window.chatPageConfirmDeleteSession = (sessionId, event) => historyPanel.confirmDelete(sessionId, event);
     window.chatPageDeleteSession = deleteChatSession;
-    window.chatPageRenameSession = renameChatSession;
+    window.chatPageRenameSession = (sessionId, event) => historyPanel.renameSession(sessionId, event);
     window.chatPageToggleStarSession = toggleStarChatSession;
     window.chatPageToggleCurrentStar = toggleCurrentChatStar;
     window.chatPageToggleCurrentStarFromMenu = toggleCurrentChatStarFromMenu;
     window.chatPageMarkUnreadSession = markSessionUnreadManual;
     window.chatPageMarkCurrentUnreadFromMenu = markCurrentSessionUnreadFromMenu;
-    window.chatPageGitPush = pushCurrentChatProject;
 
-    async function openGitPushSubmenu(triggerBtn) {
-        const wrap = triggerBtn && triggerBtn.closest
-            ? triggerBtn.closest('[data-git-push-wrap]')
-            : null;
-        if (!wrap) return;
-        const submenu = wrap.querySelector('[data-git-push-submenu]');
-        if (!submenu) {
-            pushCurrentChatProject();
-            return;
-        }
-
-        const pushFromRepos = (repos) => {
-            applyGitPushMenuMode(wrap, gitPushIsMultiRepo(repos));
-            if (!repos.length) {
-                pushCurrentChatProject();
-                return true;
-            }
-            if (repos.length === 1) {
-                pushCurrentChatProject(null, repos[0].repo_root);
-                return true;
-            }
-            return false;
-        };
-
-        // Single-repo (or none): push immediately — no caret / submenu flash.
-        const known = knownProjectGitRepos();
-        if (known && !gitPushIsMultiRepo(known)) {
-            pushFromRepos(known);
-            return;
-        }
-
-        const opening = submenu.hidden;
-        document.querySelectorAll('[data-git-push-submenu]').forEach((el) => {
-            if (el !== submenu) el.hidden = true;
-        });
-        document.querySelectorAll('[data-git-push-trigger]').forEach((el) => {
-            el.setAttribute('aria-expanded', 'false');
-        });
-        if (!opening) {
-            submenu.hidden = true;
-            triggerBtn.setAttribute('aria-expanded', 'false');
-            return;
-        }
-
-        if (known && gitPushIsMultiRepo(known)) {
-            applyGitPushMenuMode(wrap, true);
-            triggerBtn.setAttribute('aria-expanded', 'true');
-            submenu.innerHTML = known.map((r) => {
-                const root = String(r.repo_root || '');
-                const label = escapeHtmlInline(String(r.label || root));
-                const branch = r.branch ? (' · ' + escapeHtmlInline(String(r.branch))) : '';
-                const enc = encodeURIComponent(root);
-                return (
-                    '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-                    + ' data-git-push-repo="' + enc + '"'
-                    + ' title="' + label + '">'
-                    + '<span class="chat-chrome-menu-item-label">' + label + branch + '</span>'
-                    + '</button>'
-                );
-            }).join('');
-            submenu.hidden = false;
-            return;
-        }
-
-        submenu.innerHTML = '<div class="chat-chrome-menu-item is-muted">Loading repos…</div>';
-        submenu.hidden = false;
-        triggerBtn.setAttribute('aria-expanded', 'true');
-        const repos = await fetchProjectGitRepos(true);
-        if (!submenu.isConnected) return;
-        if (pushFromRepos(repos)) {
-            submenu.innerHTML = '';
-            submenu.hidden = true;
-            triggerBtn.setAttribute('aria-expanded', 'false');
-            return;
-        }
-        applyGitPushMenuMode(wrap, true);
-        submenu.innerHTML = repos.map((r) => {
-            const root = String(r.repo_root || '');
-            const label = escapeHtmlInline(String(r.label || root));
-            const branch = r.branch ? (' · ' + escapeHtmlInline(String(r.branch))) : '';
-            const enc = encodeURIComponent(root);
-            return (
-                '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-                + ' data-git-push-repo="' + enc + '"'
-                + ' title="' + label + '">'
-                + '<span class="chat-chrome-menu-item-label">' + label + branch + '</span>'
-                + '</button>'
-            );
-        }).join('');
-    }
+    window.chatPageExportSession = exportChatSession;
+    window.chatPageGitPush = (event, repoRoot) => gitPush.push(event, repoRoot);
 
     document.addEventListener('click', function (e) {
         const t = e.target;
@@ -22800,30 +13165,30 @@
             } catch (_) {
                 root = repoBtn.getAttribute('data-git-push-repo') || '';
             }
-            pushCurrentChatProject(e, root || null);
+            gitPush.push(e, root || null);
             return;
         }
         const trigger = t.closest('[data-git-push-trigger]');
         if (trigger) {
             e.preventDefault();
             e.stopPropagation();
-            openGitPushSubmenu(trigger);
+            gitPush.openSubmenu(trigger);
         }
     }, true);
 
-    window.chatPageToggleHistoryMenu = toggleHistoryItemMenu;
-    window.searchChats = searchChats;
-    window.onHistorySearchInput = onHistorySearchInput;
-    window.clearHistorySearch = clearHistorySearch;
-    window.onHistorySearchKeydown = onHistorySearchKeydown;
+    window.chatPageToggleHistoryMenu = (sessionId, event) => historyPanel.toggleMenu(sessionId, event);
+    window.searchChats = (opts) => historyPanel.search(opts);
+    window.onHistorySearchInput = (ev) => historyPanel.onInput(ev);
+    window.clearHistorySearch = () => historyPanel.clear();
+    window.onHistorySearchKeydown = (ev) => historyPanel.onKeydown(ev);
     window.refreshChatHistoryList = refreshChatHistoryList;
     window.sendMessage = sendMessage;
     window.handleInputKeyDown = handleInputKeyDown;
     window.autoResizeTextarea = autoResizeTextarea;
-    window.chatPageJumpToMessage = jumpToMessage;
-    window.chatPageJumpToBottom = jumpToBottom;
+    window.chatPageJumpToMessage = transcriptNav.jumpToMessage;
+    window.chatPageJumpToBottom = transcriptNav.jumpToBottom;
     window.chatPageCopyMessageRef = async function(btn) {
-        const { ok, ref } = await copyMessageRefToClipboard(btn);
+        const { ok, ref } = await transcriptNav.copyMessageRefToClipboard(btn);
         if (ok && ref) {
             btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
             btn.title = 'Copied ' + ref;
@@ -22844,7 +13209,7 @@
     window.chatPageTurnFeedback = async function(btn) {
         const qid = btn && btn.getAttribute('data-query-id');
         const value = btn && btn.getAttribute('data-feedback');
-        if (!qid || !value || currentSessionId == null) return;
+        if (!qid || !value || session.current() == null) return;
         const group = btn.closest('.message-footer-icons');
         const buttons = group ? Array.from(group.querySelectorAll('.message-feedback-btn')) : [btn];
         const active = buttons.find((b) => b.classList.contains('is-on'));
@@ -22861,7 +13226,7 @@
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: currentSessionId, query_id: qid, feedback: next }),
+                body: JSON.stringify({ session_id: session.current(), query_id: qid, feedback: next }),
             });
             const data = await resp.json().catch(() => ({}));
             if (!resp.ok || !data.success) throw new Error((data && data.error) || ('HTTP ' + resp.status));
@@ -22871,7 +13236,7 @@
         }
     };
     window.chatPageSpeakMessage = function(btn) {
-        return speakMessageFromButton(btn);
+        return chatTts.speakFromButton(btn);
     };
     window.chatPageEnterVoiceMode = chatVoice.enter;
     window.chatPageExitVoiceMode = chatVoice.exit;
@@ -22988,13 +13353,13 @@
     function fillChatChromeMenu() {
         const dropdown = document.getElementById('chatChromeMenuDropdown');
         if (!dropdown) return;
-        const sid = currentSessionId;
+        const sid = session.current();
         const hasSession = sid != null && sid !== '';
         dropdown.innerHTML = buildSessionMenuHTML(hasSession ? sid : null, {
             includeRename: hasSession,
             includeDelete: hasSession,
         });
-        refreshGitPushMenuMode(dropdown);
+        gitPush.refreshMenuMode(dropdown);
     }
 
     function toggleChatChromeMenu(forceOpen) {
@@ -23003,7 +13368,7 @@
         if (!btn || !dropdown) return;
         const open = forceOpen == null ? dropdown.hidden : !!forceOpen;
         if (open) {
-            closeHistoryItemMenu();
+            historyPanel.closeMenu();
             fillChatChromeMenu();
         }
         dropdown.hidden = !open;
@@ -23036,12 +13401,12 @@
     try {
         window._e2eChat = {
             addMessageToUI,
-            updateMessageNav,
-            autoScrollMessageNavToBottom,
-            autoScrollChatToBottom,
-            isMessageNavScrolledUp,
-            isMessageNavInteracting,
-            syncMessageNavPinnedFromScroll,
+            updateMessageNav: transcriptNav.updateMessageNav,
+            autoScrollMessageNavToBottom: transcriptNav.autoScrollMessageNavToBottom,
+            autoScrollChatToBottom: transcriptNav.autoScrollChatToBottom,
+            isMessageNavScrolledUp: transcriptNav.isMessageNavScrolledUp,
+            isMessageNavInteracting: transcriptNav.isMessageNavInteracting,
+            syncMessageNavPinnedFromScroll: transcriptNav.syncMessageNavPinnedFromScroll,
             getNav: () => document.getElementById('messageNav'),
             getChat: () => document.getElementById('chatMessages'),
             getSlashCtx: () => slashCtx,

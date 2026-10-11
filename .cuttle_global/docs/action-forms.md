@@ -41,12 +41,14 @@ Options are **id + label only**. **Omit `action` entirely.**
 ```
 
 - Click → toast `Selected: …` and lock. **No progress bar.**
-- By default does **not** auto-resume the agent (user may still reply in chat).
-- Set `"resume": true` when the pick should start a turn (e.g. plan Approve /
-  CreatePlan bridge). The run endpoint returns `injected_user_message`; the
-  client sends it as a normal turn (`sendMessage({text})`), which is the **only**
-  writer of the answer bubble — the endpoint does not persist its own copy.
-  **Asking the user a question = always `resume: true`**, then end your turn.
+- **A pure Q&A card resumes the agent by default** — the pick starts a turn.
+  Set `"resume": false` to toast + lock only (record/dismiss without waking the
+  agent). Side-effect (flask.restart, …) and watch cards stay silent unless they
+  explicitly opt in.
+- On resume the run endpoint returns `injected_user_message`; the client sends
+  it as a normal turn (`sendMessage({text})`), which is the **only** writer of
+  the answer bubble — the endpoint does not persist its own copy. End your turn
+  after asking.
 - One question, one answer → `"mode": "choice"`.
 - One question, several answers → `"mode": "multi"` (checkboxes + **Submit** / **Cancel**).
 - **Two or more questions → ONE `"mode": "form"` card**, never several cards.

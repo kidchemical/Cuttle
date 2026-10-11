@@ -20,6 +20,12 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from flask import Blueprint, jsonify, request
+
+from api.http_authz import authenticated_required, loopback_or_owner, owner_required
+
+shared_media_bp = Blueprint("shared_media", __name__)
+
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
 VIDEO_EXTS = {".mp4", ".webm", ".mov", ".m4v", ".ogg", ".ogv"}
 MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
@@ -680,3 +686,71 @@ def rewrite_local_media_refs(
 
     out = _MEDIA_SRC_RE.sub(_media_sub, out)
     return out, staged
+
+
+@shared_media_bp.route("/api/shared-media/stage", methods=["POST"])
+@owner_required
+def api_shared_media_stage():
+    """Copy a local image/video into /output/shared/ for chat previews (LAN-safe)."""
+    try:
+        data = request.get_json(silent=True) or {}
+        raw_path = (data.get("path") or data.get("src") or "").strip()
+        if not raw_path:
+            return jsonify({"success": False, "error": "path required"}), 400
+        preferred = (data.get("filename") or data.get("name") or "").strip() or None
+        result = stage_file(raw_path, preferred_name=preferred)
+        status = 200 if result.get("success") else 400
+        return jsonify(result), status
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@shared_media_bp.route("/api/shared-media/poster", methods=["POST", "GET"])
+@authenticated_required
+def api_shared_media_poster():
+    """Ensure a mid-frame poster exists for a staged /output/shared video."""
+    try:
+        if request.method == "GET":
+            url = (request.args.get("url") or request.args.get("src") or "").strip()
+        else:
+            data = request.get_json(silent=True) or {}
+            url = (data.get("url") or data.get("src") or "").strip()
+        if not url:
+            return jsonify({"success": False, "error": "url required"}), 400
+        result = ensure_poster_for_shared_url(url)
+        status = 200 if result.get("success") else 400
+        return jsonify(result), status
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@shared_media_bp.route("/api/shared-media/meta", methods=["GET", "POST"])
+@authenticated_required
+def api_shared_media_meta():
+    """Return original filename/path for a staged /output/shared media URL."""
+    try:
+        if request.method == "GET":
+            url = (request.args.get("url") or request.args.get("src") or "").strip()
+        else:
+            data = request.get_json(silent=True) or {}
+            url = (data.get("url") or data.get("src") or "").strip()
+        if not url:
+            return jsonify({"success": False, "error": "url required"}), 400
+        result = read_stage_meta(url)
+        status = 200 if result.get("success") else 400
+        return jsonify(result), status
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@shared_media_bp.route("/api/shared-media/purge", methods=["POST", "GET"])
+def api_shared_media_purge():
+    """Delete staged shared-media files older than TTL (default 7 days)."""
+    _user, err = loopback_or_owner()
+    if err:
+        return err
+    try:
+        result = purge_expired()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
