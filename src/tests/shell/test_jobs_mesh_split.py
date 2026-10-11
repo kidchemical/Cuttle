@@ -12,7 +12,7 @@ JOBS_HTML = WEB / "jobs_page.html"
 MESH_HTML = WEB / "mesh_page.html"
 JOBS_JS = WEB / "js" / "jobs" / "jobs_page.js"
 MESH_JS = WEB / "js" / "mesh" / "mesh_page.js"
-SHELL_JS = WEB / "js" / "shell" / "app_shell.js"
+SHELL_JS = WEB / "js" / "shell" / "shell_rail.js"
 SHELL_HTML = WEB / "app_shell.html"
 APPS_JS = WEB / "js" / "shell" / "apps_page.js"
 
