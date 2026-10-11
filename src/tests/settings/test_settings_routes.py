@@ -130,12 +130,21 @@ def test_settings_owner_write_round_trip(tmp_path, monkeypatch):
 
 def test_subagent_preferences_accept_live_models_and_efforts(tmp_path, monkeypatch):
     """Models offered by Settings must save even outside the bundled snapshot."""
+    from api.agent_harness import agent_models as am
+
     isolated = _isolated_settings(monkeypatch, tmp_path)
     ctx = _auth_client(tmp_path, monkeypatch)
     ctx['client'].set_cookie('session_token', ctx['token'])
     live_model = 'openrouter/new-provider/new-reasoning-model'
     monkeypatch.setattr('api.agent_harness.agent_models.load_agent_catalog',
-                        lambda agent, fallback: ([{'id': live_model, 'efforts': ['low', 'high']}], 'fixture'))
+                        lambda agent, fallback: (
+                            am.normalize_catalog_rows('opencode', [{
+                                'id': live_model,
+                                'supports_variant': True,
+                                'variant_levels': ['low', 'high'],
+                            }]),
+                            'fixture',
+                        ))
     for model, effort in [('', ''), (live_model, ''), (live_model, 'high'), ('', 'high')]:
         pref = {'opencode': {'agent': 'opencode', 'model': model, 'effort': effort}}
         res = ctx['client'].post('/api/settings/agent-adapters', json={'subagents': pref}, environ_base=LAN)

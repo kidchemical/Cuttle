@@ -132,20 +132,24 @@ def list_cursor_models_for_validation(*, live: bool = False) -> List[str]:
 
 
 def effort_options(agent: str, model: str = "") -> Tuple[bool, List[str]]:
-    """(supports_effort, allowed levels) from the harness manifest.
+    """(supports_effort, allowed levels) from live catalog with manifest fallback.
 
     Unknown agents / manifest errors → (True, []) meaning "accept anything".
     """
     try:
         from api.agent_harness.catalog import list_agent_manifests
+        from api.agent_harness.agent_models import (
+            load_agent_catalog, catalog_model_efforts, effective_effort_options,
+        )
 
         for m in list_agent_manifests():
             if m.id != agent:
                 continue
-            if not m.supports_effort:
-                return False, []
-            levels = (m.model_efforts or {}).get(model or "") or list(m.efforts or [])
-            return True, [str(x).lower() for x in levels]
+            rows, _source = load_agent_catalog(m.id, m.models)
+            live = catalog_model_efforts(rows)
+            return effective_effort_options(
+                live, model, m.supports_effort, m.efforts, m.model_efforts
+            )
     except Exception:
         pass
     return True, []

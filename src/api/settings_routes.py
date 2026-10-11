@@ -223,6 +223,7 @@ def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
         from api.agent_harness.catalog import get_agent, list_agents
         from api.agent_harness.agent_models import (
             load_agent_catalog, catalog_model_ids, catalog_model_efforts,
+            effective_effort_options,
         )
         raw = data['subagents']
         if not isinstance(raw, dict) or not raw:
@@ -248,17 +249,22 @@ def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
                 manifest = pair[0]
                 # Settings offers the live CLI catalog, so saves must validate
                 # against that same owner rather than the manifest snapshot.
-                if target not in catalogs and model:
+                if target not in catalogs and (model or effort):
                     rows, _source = load_agent_catalog(target, manifest.models)
                     catalogs[target] = (catalog_model_ids(rows), catalog_model_efforts(rows))
                 model_ids, live_efforts = catalogs.get(target, (manifest.models, {}))
                 if model and (not manifest.supports_model_pin or model not in model_ids):
                     return False, f'Unsupported model for {target}', {}
-                model_efforts = dict(manifest.model_efforts or {})
-                model_efforts.update(live_efforts)
-                valid_efforts = model_efforts.get(model, manifest.efforts)
-                if effort and (not manifest.supports_effort or effort not in valid_efforts):
-                    return False, f'Unsupported effort for {target}', {}
+                if effort:
+                    live_supported, valid_efforts = effective_effort_options(
+                        live_efforts,
+                        model,
+                        manifest.supports_effort,
+                        manifest.efforts,
+                        manifest.model_efforts,
+                    )
+                    if not live_supported or effort not in valid_efforts:
+                        return False, f'Unsupported effort for {target}', {}
             out[aid] = {'agent': target, 'model': model, 'effort': effort}
         clean['subagents'] = out
     if not clean:

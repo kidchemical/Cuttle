@@ -48,6 +48,115 @@ def test_bulk_and_row_helpers(monkeypatch):
     assert am.catalog_model_ids(out["b"]["models"]) == ["y"]
 
 
+def test_opencode_variants_normalize_to_model_efforts():
+    rows = am.normalize_catalog_rows(
+        "opencode",
+        [
+            {"id": "provider/reasoning", "supports_variant": True,
+             "variant_levels": ["low", "high"]},
+            {"id": "provider/plain", "supports_variant": False,
+             "variant_levels": []},
+        ],
+    )
+    assert am.catalog_model_efforts(rows) == {
+        "provider/reasoning": ["low", "high"],
+        "provider/plain": [],
+    }
+    assert am.catalog_effort_summary(rows, True, ["medium"]) == (
+        True,
+        ["low", "high"],
+        {"provider/reasoning": ["low", "high"], "provider/plain": []},
+    )
+
+
+def test_effective_agent_catalog_persists_capabilities_and_uses_last_good(
+    tmp_path, monkeypatch
+):
+    from api import model_catalog_delta
+
+    monkeypatch.setattr(
+        model_catalog_delta,
+        "_snapshot_path",
+        lambda agent: tmp_path / f"{agent}.json",
+    )
+    live_rows = [
+        {"id": "provider/reasoning", "label": "Reasoning",
+         "supports_variant": True, "variant_levels": ["low", "high"]}
+    ]
+    monkeypatch.setitem(am._CATALOG_LOADERS, "opencode", lambda refresh: (live_rows, "cli"))
+
+    rows, source = am.load_agent_catalog("opencode", ["manifest-model"])
+    assert source == "cli"
+    assert am.catalog_model_efforts(rows) == {"provider/reasoning": ["low", "high"]}
+    persisted = model_catalog_delta.load_catalog("opencode")
+    assert persisted["models"][0]["variant_levels"] == ["low", "high"]
+
+    monkeypatch.setitem(
+        am._CATALOG_LOADERS,
+        "opencode",
+        lambda refresh: ([{"id": "manifest-model"}], "favorites_fallback"),
+    )
+    rows, source = am.load_agent_catalog("opencode", ["manifest-model"])
+    assert source == "last_successful_cache"
+    assert rows[0]["efforts"] == ["low", "high"]
+
+
+def test_settings_enrichment_uses_live_variant_support(monkeypatch):
+    agents = [{
+        "id": "opencode",
+        "available": True,
+        "models": ["manifest-model"],
+        "supports_effort": True,
+        "efforts": ["low", "high"],
+        "model_efforts": {},
+    }]
+    monkeypatch.setattr(
+        am,
+        "list_agent_models_bulk",
+        lambda ids, fallbacks=None, refresh=False: {
+            "opencode": {
+                "models": am.normalize_catalog_rows(
+                    "opencode",
+                    [{"id": "provider/plain", "supports_variant": False,
+                      "variant_levels": []}],
+                ),
+                "source": "cli",
+            }
+        },
+    )
+    out = am.enrich_agent_catalog(agents)
+    assert out[0]["models"] == ["provider/plain"]
+    assert out[0]["supports_effort"] is False
+    assert out[0]["model_efforts"] == {"provider/plain": []}
+
+
+def test_router_effort_validation_uses_live_per_model_levels(monkeypatch):
+    from api.agent_router import registry
+
+    monkeypatch.setitem(
+        am._CATALOG_LOADERS,
+        "opencode",
+        lambda refresh: (
+            am.normalize_catalog_rows(
+                "opencode",
+                [{"id": "provider/reasoning", "supports_variant": True,
+                  "variant_levels": ["custom-low", "custom-high"]}],
+            ),
+            "cli",
+        ),
+    )
+    assert registry.effort_options("opencode", "provider/reasoning") == (
+        True, ["custom-low", "custom-high"]
+    )
+    assert registry.validate_effort(
+        "opencode", "provider/reasoning", "custom-high"
+    ) == ("custom-high", None)
+    clean, error = registry.validate_effort(
+        "opencode", "provider/reasoning", "max"
+    )
+    assert clean == "" and error and "custom-low, custom-high" in error
+
+
 def _stub_catalog(monkeypatch):
     import api.agent_harness.catalog as catalog_mod
 
