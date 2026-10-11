@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from api.subagents.types import (
@@ -85,6 +86,8 @@ def _row_batch(db, row: Any) -> BatchRecord:
         watch_id=str(d.get("watch_id") or ""),
         widget_id=str(d.get("widget_id") or ""),
         attach_message_id=d.get("attach_message_id"),
+        created_at=str(d.get("created_at") or ""),
+        finished_at=str(d.get("finished_at") or ""),
         children=_load_children(db, bid) if bid else [],
     )
 
@@ -222,18 +225,38 @@ def list_running_for_parent(db, parent_session_id: int) -> List[BatchRecord]:
     ]
 
 
+# Terminal batches that never bound a parent bubble stay paintable only through
+# the parent turn's synthesis window. Without this bound a CLI-spawned batch (no
+# parent bubble will ever bind) or a dead-owner run paints orbs/cards on every
+# later turn forever.
+_TERMINAL_UNATTACHED_GRACE_SEC = 900
+
+
+def _batch_age_sec(batch: BatchRecord) -> float:
+    raw = (batch.finished_at or batch.created_at or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        when = datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return 0.0
+    return max(0.0, (datetime.now(timezone.utc) - when).total_seconds())
+
+
 def list_live_for_parent(db, parent_session_id: int) -> List[BatchRecord]:
     """Batches that should paint extra orbs on the parent typing indicator.
 
-    Running batches always. Unattached batches (even after ``--wait`` finishes)
-    stay until the parent assistant bubble binds chips, so orbs last through
-    synthesis instead of vanishing the moment children complete.
+    Running batches always. A terminal batch that never bound a parent bubble
+    stays only briefly (the parent turn's synthesis window), so orbs last through
+    synthesis instead of vanishing the moment children complete — but a stale or
+    CLI-spawned batch (nothing will ever bind it) drops after the grace rather
+    than painting every later turn.
     """
     out: List[BatchRecord] = []
     for batch in list_batches_for_parent(db, parent_session_id):
         if batch.status not in TERMINAL_BATCH:
             out.append(batch)
-        elif not batch.attach_message_id:
+        elif not batch.attach_message_id and _batch_age_sec(batch) < _TERMINAL_UNATTACHED_GRACE_SEC:
             out.append(batch)
     return out
 

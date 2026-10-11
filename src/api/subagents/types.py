@@ -164,6 +164,8 @@ class BatchRecord:
     watch_id: str = ""
     widget_id: str = ""
     attach_message_id: Optional[int] = None
+    created_at: str = ""
+    finished_at: str = ""
     children: List[ChildRecord] = field(default_factory=list)
 
     def public(self) -> Dict[str, Any]:

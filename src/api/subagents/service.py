@@ -653,9 +653,21 @@ def public_parent_subagents(session_id: Any, *, db=None) -> List[Dict[str, Any]]
         return []
     try:
         db = _open_db(db)
+        # A batch whose owning process died must not keep painting orbs on the
+        # parent typing indicator. Reconcile orphans + finalize before listing,
+        # so a dead-owner run stops bleeding into later turns.
+        live = store.list_live_for_parent(db, int(sid))
+        if any(
+            c.status not in TERMINAL_CHILD and c.owner_pid
+            for b in live for c in b.children
+        ):
+            _reconcile(db)
+            for b in live:
+                _finalize_if_complete(db, b)
+            live = store.list_live_for_parent(db, int(sid))
         card = _launcher_fn()
         launchers: List[Dict[str, Any]] = []
-        for batch in store.list_live_for_parent(db, int(sid)):
+        for batch in live:
             for child in batch.children:
                 launchers.append(card(child))
         return launchers

@@ -972,3 +972,35 @@ def test_run_child_turn_stamps_the_owning_process(tmp_path: Path):
     )
     assert seen["owner"] == os.getpid()
     assert seen["query_id"] == ""
+
+
+def test_list_live_for_parent_drops_stale_unattached(tmp_path: Path):
+    """A terminal batch with no parent bubble must not paint orbs forever.
+
+    Regression: a CLI-spawned (or dead-owner) batch never binds a parent
+    bubble, so it stayed in the live set and its cards painted on every later
+    turn's typing indicator.
+    """
+    from api.subagents import store
+
+    db, _db_path, owner, parent = _seed(tmp_path)
+    running = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all", lifetime="one_shot")
+    attached = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all", lifetime="one_shot")
+    store.update_batch(db, attached.id, status="done", finished=True, attach_message_id=123)
+    recent = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all", lifetime="one_shot")
+    store.update_batch(db, recent.id, status="done", finished=True)
+    stale = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all", lifetime="one_shot")
+    store.update_batch(db, stale.id, status="done", finished=True)
+    conn = db._get_connection()
+    conn.execute(
+        "UPDATE subagent_batches SET finished_at = '2020-01-01 00:00:00' WHERE id = ?",
+        (stale.id,),
+    )
+    conn.commit()
+    conn.close()
+
+    live = {b.id for b in store.list_live_for_parent(db, parent)}
+    assert running.id in live          # running batches always paint
+    assert recent.id in live           # freshly-finished, no bubble yet: synthesis window
+    assert attached.id not in live     # terminal + bound to a bubble
+    assert stale.id not in live        # terminal + unattached + old: dropped
