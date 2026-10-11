@@ -851,3 +851,199 @@ def test_route_retry_lane_wired_into_chat_route_sync(workflow_env, monkeypatch):
     body = res.get_json()
     assert body["response"] == "wired-routed"
     assert body["session_id"] == 777
+
+
+# --------------------------------------------------------------------------
+# Harness lane (Phase 6B slice 7)
+# --------------------------------------------------------------------------
+
+
+def test_harness_empty_prompt_body_is_verbatim():
+    from api.chat_turn_workflow import harness_empty_prompt_body
+
+    body = harness_empty_prompt_body("cursor", 42)
+    assert body["success"] is True
+    assert body["type"] == "cursor_error"
+    assert body["session_id"] == 42
+    assert 'prompt after /cursor' in body["response"]
+
+
+def test_build_harness_stream_turn_builds_prepared_and_io():
+    from api.chat_turn_workflow import build_harness_stream_turn
+
+    ran = []
+
+    def run_harness(agent_id, prompt, status_queue=None):
+        ran.append((agent_id, prompt))
+        return {"success": True, "response": "ok", "type": "cursor"}
+
+    prepared, io = build_harness_stream_turn(
+        "/cursor do it",
+        session_id=777,
+        data={},
+        project_path="/tmp/proj",
+        wants_stream=True,
+        agent_id="cursor",
+        prompt="do it",
+        auth_user=dict(USER),
+        persist_user_turn=lambda sid: None,
+        make_saver=lambda sid, project_path=None: None,
+        notify_mobile=lambda sid, body: None,
+        run_harness=run_harness,
+    )
+    assert prepared.message == "/cursor do it"
+    assert prepared.session_id == 777
+    assert prepared.project_path == "/tmp/proj"
+    assert io.run_harness is run_harness
+    shortcut = io.format_shortcut(
+        "harness_empty_prompt", type("S", (), {"agent_id": "cursor"})()
+    )
+    assert shortcut["type"] == "cursor_error"
+
+
+def test_run_harness_sync_turn_runs_persists_and_releases():
+    from api import chat_delivery
+    from api.chat_turn_workflow import run_harness_sync_turn
+
+    sid = "6b-harness-sync"
+    persisted = []
+    saved = []
+    body, status = run_harness_sync_turn(
+        "/cursor do it",
+        session_id=sid,
+        data={},
+        project_path="/tmp/proj",
+        wants_stream=False,
+        agent_id="cursor",
+        prompt="do it",
+        auth_user=dict(USER),
+        persist_user_turn=lambda s: persisted.append(s),
+        make_saver=lambda s, project_path=None: (lambda b: saved.append(b)),
+        notify_mobile=lambda s, b: None,
+        delivery=chat_delivery,
+        run_harness=lambda aid, prompt, status_queue=None: {
+            "success": True, "response": "ran", "type": "cursor",
+        },
+    )
+    assert status == 200 and body["response"] == "ran"
+    assert body["session_id"] == sid
+    assert persisted == [sid]
+    assert saved and saved[0]["response"] == "ran"
+    assert chat_delivery.try_begin(sid) is True  # released
+    chat_delivery.end(sid)
+
+
+def test_run_harness_sync_turn_busy_returns_409():
+    from api import chat_delivery
+    from api.chat_turn_workflow import run_harness_sync_turn
+
+    sid = "6b-harness-busy"
+    assert chat_delivery.try_begin(sid) is True
+    try:
+        body, status = run_harness_sync_turn(
+            "/cursor do it",
+            session_id=sid,
+            data={},
+            project_path="/tmp/proj",
+            wants_stream=False,
+            agent_id="cursor",
+            prompt="do it",
+            auth_user=dict(USER),
+            persist_user_turn=lambda s: None,
+            make_saver=lambda s, project_path=None: None,
+            notify_mobile=lambda s, b: None,
+            delivery=chat_delivery,
+            run_harness=lambda *a, **k: {"success": True},
+        )
+        assert status == 409 and body["error"] == "busy"
+    finally:
+        chat_delivery.end(sid)
+
+
+def test_harness_lane_wired_into_chat_route_sync(workflow_env, monkeypatch):
+    wca, db = workflow_env
+
+    def fake_run(agent_id, prompt, chat_session_id, **kwargs):
+        return {"success": True, "response": "harness-wired", "type": "cursor"}
+
+    res = _post(wca, "/cursor do it", runner=fake_run, monkeypatch=monkeypatch)
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["response"] == "harness-wired"
+    assert body["session_id"] == 777
+    assert [r["role"] for r in db.rows] == ["user", "assistant"]
+
+
+def test_harness_lane_wired_into_chat_route_empty_prompt(workflow_env):
+    wca, _db = workflow_env
+    res = _post(wca, "/cursor")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["type"] == "cursor_error"
+    assert "prompt after /cursor" in body["response"]
+
+
+# --------------------------------------------------------------------------
+# Pipeline lane (Phase 6B slice 8)
+# --------------------------------------------------------------------------
+
+
+def test_build_pipeline_stream_turn_builds_prepared_and_io():
+    from api.chat_turn_workflow import build_pipeline_stream_turn
+
+    def run_pipeline(status_queue=None):
+        return {"success": True, "response": "p", "type": "pipeline_execution"}
+
+    prepared, io = build_pipeline_stream_turn(
+        "plain probe",
+        session_id=777,
+        data={},
+        project_path="/tmp/proj",
+        wants_stream=True,
+        persist_user=lambda: None,
+        make_saver=lambda: None,
+        notify_mobile=lambda b: None,
+        run_pipeline=run_pipeline,
+    )
+    assert prepared.message == "plain probe"
+    assert prepared.session_id == 777
+    assert prepared.project_path == ""
+    assert io.run_pipeline is run_pipeline
+    assert io.run_harness is io.format_shortcut
+
+
+def test_run_pipeline_sync_lane_runs_saves_and_releases():
+    from api import chat_delivery
+    from api.chat_turn_workflow import run_pipeline_sync_lane
+
+    sid = "6b-pipeline-sync"
+    persisted = []
+    saved = []
+    body, status = run_pipeline_sync_lane(
+        sid,
+        delivery=chat_delivery,
+        persist_user=lambda: persisted.append(sid),
+        run=lambda: {"success": True, "response": "pipe", "type": "pipeline_execution"},
+        make_saver=lambda: (lambda b: saved.append(b)),
+        usage_meta_fn=lambda _r: None,
+    )
+    assert status == 200 and body["response"] == "pipe"
+    assert body["type"] == "pipeline_execution"
+    assert persisted == [sid]
+    assert saved and saved[0]["response"] == "pipe"
+    assert chat_delivery.try_begin(sid) is True  # released
+    chat_delivery.end(sid)
+
+
+def test_pipeline_lane_wired_into_chat_route_sync(workflow_env, monkeypatch):
+    wca, db = workflow_env
+    monkeypatch.setattr(
+        wca,
+        "process_message_with_bot",
+        lambda *a, **k: {"success": True, "response": "pipe-wired", "type": "pipeline_execution"},
+    )
+    res = _post(wca, "plain pipeline probe")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["response"] == "pipe-wired"
+    assert body["session_id"] == 777

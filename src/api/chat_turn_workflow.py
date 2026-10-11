@@ -1289,3 +1289,236 @@ def run_route_retry_sync_turn(
     if isinstance(body, dict):
         body.setdefault('session_id', session_id)
     return body, out.status
+
+
+# ---------------------------------------------------------------------------
+# Harness lane (Phase 6B slice 7)
+# ---------------------------------------------------------------------------
+
+
+def harness_empty_prompt_body(agent_id: Any, session_id: Any) -> Dict[str, Any]:
+    """Terminal body when a harness slash command has no prompt.
+
+    Moved verbatim from the ``/api/chat`` ingress: the route's early return
+    and the stream lane's ``format_shortcut`` both used this shape. Pure
+    data — the route keeps request capture and ``jsonify``.
+    """
+    _eaid = agent_id
+    return {
+        'success': True,
+        'response': (
+            f'❌ Please provide a prompt after /{_eaid}. '
+            f'Example: `/{_eaid} "summarize this repo"`'
+        ),
+        'session_id': session_id,
+        'type': f'{_eaid}_error',
+    }
+
+
+def build_harness_stream_turn(
+    message_content: str,
+    *,
+    session_id: Any,
+    data: Any,
+    project_path: Any,
+    wants_stream: bool,
+    agent_id: str,
+    prompt: str,
+    auth_user: Any,
+    persist_user_turn: Callable[[Any], None],
+    make_saver: Callable[..., Any],
+    notify_mobile: Callable[[Any, Dict[str, Any]], None],
+    run_harness: Callable[..., Dict[str, Any]],
+) -> Tuple[Any, Any]:
+    """Build the harness stream turn (LANE 7 stream arm).
+
+    Returns ``(PreparedAgentTurn, StreamTurnIO)``; the route frames SSE
+    through its transport helper. Moved verbatim from the ingress. The
+    runner (with its identity kwargs) is injected so this owner never
+    imports the entry module.
+    """
+    from api.chat_coordinator import PreparedAgentTurn, StreamTurnIO
+
+    def _format_shortcut(kind, sel):
+        if kind == "harness_empty_prompt":
+            return harness_empty_prompt_body(sel.agent_id or agent_id, session_id)
+        raise RuntimeError(f'unexpected shortcut arm: {kind}')
+
+    def _unreachable(*_a, **_k):
+        raise RuntimeError('unreachable arm in harness stream lane')
+
+    io = StreamTurnIO(
+        run_harness=run_harness,
+        run_router=_unreachable,
+        persist_user=lambda: (persist_user_turn(session_id) if auth_user else None),
+        make_saver=lambda: make_saver(
+            session_id if auth_user else None, project_path=project_path
+        ),
+        notify_mobile=lambda b: notify_mobile(session_id, b),
+        format_shortcut=_format_shortcut,
+    )
+    prepared = PreparedAgentTurn(
+        message=message_content, session_id=session_id,
+        wants_stream=wants_stream,
+        request_data=data or {}, project_path=project_path or '',
+    )
+    return prepared, io
+
+
+def run_harness_sync_turn(
+    message_content: str,
+    *,
+    session_id: Any,
+    data: Any,
+    project_path: Any,
+    wants_stream: bool,
+    agent_id: str,
+    prompt: str,
+    auth_user: Any,
+    persist_user_turn: Callable[[Any], None],
+    make_saver: Callable[..., Any],
+    notify_mobile: Callable[[Any, Dict[str, Any]], None],
+    delivery: Any,
+    run_harness: Callable[..., Dict[str, Any]],
+) -> Tuple[Optional[Dict[str, Any]], int]:
+    """Run the harness sync turn through the shared coordinator.
+
+    Returns ``(body, status)``; the route jsonifies. Moved verbatim from
+    the ingress (including the guarded-saver log policy). The runner (with
+    its identity kwargs) is injected so this owner never imports the entry
+    module.
+    """
+    from api.chat_coordinator import (
+        AgentSelection,
+        AgentTurnIO,
+        PreparedAgentTurn,
+        submit_agent_turn,
+    )
+
+    def _guarded_saver():
+        saver = make_saver(session_id, project_path=project_path)
+        if saver is None:
+            return None
+
+        def _guarded(body):
+            try:
+                saver(body)
+            except Exception as _se:
+                print(f'[CHAT] harness persist failed: {_se}')
+
+        return _guarded
+
+    def _unreachable(*_a, **_k):
+        raise RuntimeError('unreachable arm in harness sync lane')
+
+    io = AgentTurnIO(
+        run_harness=run_harness,
+        run_router=_unreachable,
+        persist_user=lambda: (persist_user_turn(session_id) if auth_user else None),
+        make_saver=_guarded_saver,
+        should_save=lambda b: bool(auth_user and result_kept_for_history(b)),
+        notify_mobile=lambda b: notify_mobile(session_id, b),
+        format_shortcut=_unreachable,
+    )
+    out = submit_agent_turn(
+        PreparedAgentTurn(
+            message=message_content, session_id=session_id,
+            wants_stream=wants_stream,
+            request_data=data or {}, project_path=project_path or '',
+        ),
+        io=io, delivery=delivery, claim=True,
+        selection=AgentSelection(kind='harness', agent_id=agent_id, prompt=prompt),
+    )
+    body = out.body
+    if isinstance(body, dict) and session_id is not None:
+        body.setdefault('session_id', session_id)
+    return body, out.status
+
+
+# ---------------------------------------------------------------------------
+# Pipeline lane (Phase 6B slice 8)
+# ---------------------------------------------------------------------------
+
+
+def build_pipeline_stream_turn(
+    message_content: str,
+    *,
+    session_id: Any,
+    data: Any,
+    project_path: Any,
+    wants_stream: bool,
+    persist_user: Callable[[], None],
+    make_saver: Callable[[], Any],
+    notify_mobile: Callable[[Dict[str, Any]], None],
+    run_pipeline: Callable[..., Dict[str, Any]],
+) -> Tuple[Any, Any]:
+    """Build the pipeline stream turn (LANE 8 stream arm).
+
+    Returns ``(PreparedAgentTurn, StreamTurnIO)``; the route frames SSE
+    through ``_stream_pipeline_turn_response``. Moved verbatim from the
+    ingress: the pipeline arm runs the injected ``run_pipeline`` (the
+    compat ``process_message_with_bot`` entry) and is finalized raw (its
+    saver rewrites before persisting, the wire rewrite is re-applied by
+    the transport adapter). ``project_path`` is unused for this arm
+    (explicit pipeline selection, worker not rewritten).
+    """
+    from api.chat_coordinator import PreparedAgentTurn, StreamTurnIO
+
+    def _unreachable(*_a, **_k):
+        raise RuntimeError('unreachable arm in pipeline stream lane')
+
+    io = StreamTurnIO(
+        run_harness=_unreachable,
+        run_router=_unreachable,
+        persist_user=persist_user,
+        make_saver=make_saver,
+        notify_mobile=notify_mobile,
+        format_shortcut=_unreachable,
+        run_pipeline=run_pipeline,
+    )
+    prepared = PreparedAgentTurn(
+        message=message_content, session_id=session_id,
+        wants_stream=wants_stream,
+        request_data=data or {},
+        # Unused: selection is explicit pipeline (no catalog
+        # match) and the pipeline worker is not rewritten.
+        project_path='',
+    )
+    return prepared, io
+
+
+def run_pipeline_sync_lane(
+    session_id: Any,
+    *,
+    delivery: Any,
+    persist_user: Callable[[], None],
+    run: Callable[[], Dict[str, Any]],
+    make_saver: Callable[[], Any],
+    usage_meta_fn: Callable[[Dict[str, Any]], Optional[Dict[str, Any]]],
+) -> Tuple[Dict[str, Any], int]:
+    """Run the leftover-pipeline sync lane through the shared skeleton.
+
+    Builds the pipeline saver from the injected ``make_saver`` factory
+    (the shared ``make_assistant_saver`` is the sole eligibility policy)
+    and delegates to ``run_pipeline_sync_turn``. The route keeps request
+    capture, the busy 409 transport and ``jsonify``. Moved verbatim from
+    the ingress; the saver's return value flows into the body builder
+    exactly as the old inline wrapper did.
+    """
+    def _save_assistant(res):
+        saver = make_saver()
+        if saver is None:
+            return res
+        saver(res)
+        return res
+
+    return run_pipeline_sync_turn(
+        session_id,
+        delivery=delivery,
+        persist_user=persist_user,
+        run=run,
+        save_assistant=_save_assistant,
+        build_body=lambda res: build_pipeline_body(
+            res, session_id, usage_meta_fn=usage_meta_fn,
+        ),
+    )

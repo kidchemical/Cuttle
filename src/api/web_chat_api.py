@@ -3850,122 +3850,64 @@ def chat_endpoint():
         _harness_match = _match_harness_slash(message_content, project_path=project_path)
         if _harness_match:
             _hid, prompt = _harness_match
+            # Harness lane (Phase 6B slice 7): the empty-prompt body, IO
+            # construction and coordinator submit are owned by
+            # api.chat_turn_workflow; the route keeps request capture, the
+            # busy SSE/409 transport, SSE framing and jsonify.
+            from api.chat_turn_workflow import (
+                build_harness_stream_turn as _build_harness_stream_turn,
+                harness_empty_prompt_body as _harness_empty_prompt_body,
+                run_harness_sync_turn as _run_harness_sync_turn,
+            )
+
             if not prompt:
-                return jsonify({
-                    'success': True,
-                    'response': (
-                        f'❌ Please provide a prompt after /{_hid}. '
-                        f'Example: `/{_hid} "summarize this repo"`'
-                    ),
-                    'session_id': chat_session_id,
-                    'type': f'{_hid}_error',
-                })
+                return jsonify(_harness_empty_prompt_body(_hid, chat_session_id))
             busy_resp = _reject_if_chat_busy(chat_session_id, wants_stream)
             if busy_resp is not None:
                 return busy_resp
-            if wants_stream:
-                from api.chat_coordinator import (
-                    PreparedAgentTurn as _PreparedAgentTurn,
-                    StreamTurnIO as _StreamTurnIO,
-                )
 
-                def _stream_format_shortcut(_kind, _sel):
-                    if _kind == "harness_empty_prompt":
-                        _eaid = _sel.agent_id or _hid
-                        return {
-                            'success': True,
-                            'response': (
-                                f'❌ Please provide a prompt after /{_eaid}. '
-                                f'Example: `/{_eaid} "summarize this repo"`'
-                            ),
-                            'session_id': chat_session_id,
-                            'type': f'{_eaid}_error',
-                        }
-                    raise RuntimeError(f'unexpected shortcut arm: {_kind}')
-
-                def _stream_unreachable_harness(*_a, **_k):
-                    raise RuntimeError('unreachable arm in harness stream lane')
-
-                _stream_harness_io = _StreamTurnIO(
-                    run_harness=lambda _aid, _prompt, status_queue=None: _run_pinned_harness_turn(
-                        _aid, _prompt, chat_session_id, project_path=project_path,
-                        status_queue=status_queue, **_ident_run_kw,
-                    ),
-                    run_router=_stream_unreachable_harness,
-                    persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
-                    make_saver=lambda: _make_auth_assistant_saver(
-                        chat_session_id if _auth_user else None,
-                        project_path=project_path,
-                    ),
-                    notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
-                    format_shortcut=_stream_format_shortcut,
-                )
-                return _stream_agent_turn_response(
-                    _PreparedAgentTurn(
-                        message=message_content, session_id=chat_session_id,
-                        wants_stream=wants_stream,
-                        request_data=data or {}, project_path=project_path or '',
-                    ),
-                    io=_stream_harness_io,
-                )
-            from api import chat_delivery as _chat_delivery
-            from api.chat_coordinator import (
-                AgentSelection as _AgentSelection,
-                AgentTurnIO as _AgentTurnIO,
-                PreparedAgentTurn as _PreparedAgentTurn,
-                submit_agent_turn as _submit_turn,
-            )
-            from api.chat_turn_workflow import (
-                result_kept_for_history as _result_kept_for_history,
-            )
-
-            def _guarded_harness_saver():
-                _saver = _make_auth_assistant_saver(
-                    chat_session_id,
-                    project_path=project_path,
-                )
-                if _saver is None:
-                    return None
-
-                def _guarded(_body):
-                    try:
-                        _saver(_body)
-                    except Exception as _se:
-                        print(f'[CHAT] harness persist failed: {_se}')
-
-                return _guarded
-
-            def _harness_unreachable(*_a, **_k):
-                raise RuntimeError('unreachable arm in harness sync lane')
-
-            _harness_io = _AgentTurnIO(
-                run_harness=lambda _aid, _prompt, status_queue=None: _run_pinned_harness_turn(
+            def _harness_run(_aid, _prompt, status_queue=None):
+                return _run_pinned_harness_turn(
                     _aid, _prompt, chat_session_id, project_path=project_path,
                     status_queue=status_queue, **_ident_run_kw,
-                ),
-                run_router=_harness_unreachable,
-                persist_user=lambda: (_persist_user_turn(chat_session_id) if _auth_user else None),
-                make_saver=_guarded_harness_saver,
-                should_save=lambda _b: bool(
-                    _auth_user and _result_kept_for_history(_b)
-                ),
-                notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
-                format_shortcut=_harness_unreachable,
-            )
-            _turn_out = _submit_turn(
-                _PreparedAgentTurn(
-                    message=message_content, session_id=chat_session_id,
+                )
+
+            if wants_stream:
+                _harness_prepared, _harness_io = _build_harness_stream_turn(
+                    message_content,
+                    session_id=chat_session_id,
+                    data=data,
+                    project_path=project_path,
                     wants_stream=wants_stream,
-                    request_data=data or {}, project_path=project_path or '',
-                ),
-                io=_harness_io, delivery=_chat_delivery, claim=True,
-                selection=_AgentSelection(kind='harness', agent_id=_hid, prompt=prompt),
+                    agent_id=_hid,
+                    prompt=prompt,
+                    auth_user=_auth_user,
+                    persist_user_turn=_persist_user_turn,
+                    make_saver=_make_auth_assistant_saver,
+                    notify_mobile=_emit_chat_complete_mobile,
+                    run_harness=_harness_run,
+                )
+                return _stream_agent_turn_response(
+                    _harness_prepared, io=_harness_io
+                )
+            from api import chat_delivery as _chat_delivery
+            _lane_body, _lane_status = _run_harness_sync_turn(
+                message_content,
+                session_id=chat_session_id,
+                data=data,
+                project_path=project_path,
+                wants_stream=wants_stream,
+                agent_id=_hid,
+                prompt=prompt,
+                auth_user=_auth_user,
+                persist_user_turn=_persist_user_turn,
+                make_saver=_make_auth_assistant_saver,
+                notify_mobile=_emit_chat_complete_mobile,
+                delivery=_chat_delivery,
+                run_harness=_harness_run,
             )
-            if _turn_out.status == 409:
-                return jsonify(_turn_out.body), 409
-            _lane_body = _turn_out.body
-            if isinstance(_lane_body, dict) and chat_session_id is not None:
-                _lane_body.setdefault('session_id', chat_session_id)
+            if _lane_status == 409:
+                return jsonify(_lane_body), 409
             return jsonify(_lane_body)
 
         # Attachments were already analyzed above (before slash dispatch); history
@@ -3998,101 +3940,71 @@ def chat_endpoint():
 
             print("[API] POST /api/chat: authenticated user, processing message")
 
-            # Process message with bot (session kind for per-channel pipeline routing)
+            # Pipeline lane (Phase 6B slice 8): the sync/stream IO
+            # construction and coordinator submit are owned by
+            # api.chat_turn_workflow; the route keeps request capture, the
+            # busy 409 transport, SSE framing and jsonify. The shared
+            # saver (make_assistant_saver) is the sole eligibility policy;
+            # the ingress-resolved project_path is its fallback when the
+            # session carries no project (action_forms keeps live-session
+            # precedence for the card embed).
             from api.http_authz import is_owner_user as _is_owner_user
             _user_is_owner = _is_owner_user(user)
             _session_id = f"db_session_{chat_session_id}"
-            if not wants_stream:
-                from api.chat_turn_workflow import run_pipeline_sync_turn as _run_lane
-                from api.chat_turn_workflow import build_pipeline_body as _build_body
 
-                def _pipeline_save_assistant(_res):
-                    # Shared saver (make_assistant_saver) is the sole
-                    # eligibility policy: persist-anything lived here
-                    # ([ERR-20261001-001]). The ingress-resolved
-                    # project_path is supplied as the saver's fallback
-                    # so the turn's action context survives a missing
-                    # session project; action_forms remains authoritative
-                    # for live-session precedence. Return the (possibly
-                    # rewritten-in-place) result for the body.
-                    _saver = _make_auth_assistant_saver(
-                        chat_session_id,
-                        project_path=project_path,
-                    )
-                    if _saver is None:
-                        return _res
-                    _saver(_res)
-                    return _res
-
-                _lane_body, _lane_status = _run_lane(
-                    chat_session_id,
-                    delivery=_chat_delivery,
-                    persist_user=lambda: db.add_message(
-                        chat_session_id,
-                        'user',
-                        history_message,
-                        metadata=_user_msg_meta,
-                    ),
-                    run=lambda: process_message_with_bot(
-                        message_content, _session_id,
-                        session_kind='web_user', routing_key=f'web_user_{user["id"]}',
-                        is_owner=_user_is_owner, status_queue=None,
-                        ),
-                    save_assistant=_pipeline_save_assistant,
-                    build_body=lambda _res: _build_body(
-                        _res, chat_session_id,
-                        usage_meta_fn=_usage_meta_from_assistant_result,
-                    ),
+            def _pipeline_run(status_queue=None):
+                return process_message_with_bot(
+                    message_content, _session_id,
+                    session_kind='web_user', routing_key=f'web_user_{user["id"]}',
+                    is_owner=_user_is_owner, status_queue=status_queue,
                 )
-                if _lane_status == 409:
-                    return jsonify(_lane_body), 409
-                return jsonify(_lane_body)
-            from api.chat_coordinator import (
-                PreparedAgentTurn as _PreparedAgentTurn,
-                StreamTurnIO as _StreamTurnIO,
-            )
 
-            def _pipeline_unreachable(*_a, **_k):
-                raise RuntimeError('unreachable arm in pipeline stream lane')
-
-            # Shared saver (make_assistant_saver) is the sole eligibility
-            # policy: the persist-anything on_save lived here
-            # ([ERR-20261001-001], now unified). The factory runs in the
-            # request thread on first next(); the ingress-resolved
-            # project_path below is the saver's fallback when the
-            # session carries no project. Action_forms keeps live-session
-            # precedence for the card embed itself.
-            _stream_pipeline_io = _StreamTurnIO(
-                run_harness=_pipeline_unreachable,
-                run_router=_pipeline_unreachable,
-                persist_user=lambda: db.add_message(
+            def _pipeline_persist_user():
+                return db.add_message(
                     chat_session_id,
                     'user',
                     history_message,
                     metadata=_user_msg_meta,
-                ),
-                make_saver=lambda: _make_auth_assistant_saver(
+                )
+
+            def _pipeline_make_saver():
+                return _make_auth_assistant_saver(
                     chat_session_id,
                     project_path=project_path,
-                ),
+                )
+
+            if not wants_stream:
+                from api.chat_turn_workflow import (
+                    run_pipeline_sync_lane as _run_pipeline_sync_lane,
+                )
+                _lane_body, _lane_status = _run_pipeline_sync_lane(
+                    chat_session_id,
+                    delivery=_chat_delivery,
+                    persist_user=_pipeline_persist_user,
+                    run=lambda: _pipeline_run(status_queue=None),
+                    make_saver=_pipeline_make_saver,
+                    usage_meta_fn=_usage_meta_from_assistant_result,
+                )
+                if _lane_status == 409:
+                    return jsonify(_lane_body), 409
+                return jsonify(_lane_body)
+
+            from api.chat_turn_workflow import (
+                build_pipeline_stream_turn as _build_pipeline_stream_turn,
+            )
+            _pipeline_prepared, _pipeline_io = _build_pipeline_stream_turn(
+                message_content,
+                session_id=chat_session_id,
+                data=data,
+                project_path=project_path,
+                wants_stream=wants_stream,
+                persist_user=_pipeline_persist_user,
+                make_saver=_pipeline_make_saver,
                 notify_mobile=lambda _b: _emit_chat_complete_mobile(chat_session_id, _b),
-                format_shortcut=_pipeline_unreachable,
-                run_pipeline=lambda status_queue=None: process_message_with_bot(
-                    message_content, _session_id,
-                    session_kind='web_user', routing_key=f'web_user_{user["id"]}',
-                    is_owner=_user_is_owner, status_queue=status_queue,
-                    ),
+                run_pipeline=_pipeline_run,
             )
             return _stream_pipeline_turn_response(
-                _PreparedAgentTurn(
-                    message=message_content, session_id=chat_session_id,
-                    wants_stream=wants_stream,
-                    request_data=data or {},
-                    # Unused: selection is explicit pipeline (no catalog
-                    # match) and the pipeline worker is not rewritten.
-                    project_path='',
-                ),
-                io=_stream_pipeline_io,
+                _pipeline_prepared, io=_pipeline_io
             )
         
         # Cookie was required above; missing resolve must not run a harness turn.

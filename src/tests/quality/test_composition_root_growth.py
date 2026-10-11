@@ -46,7 +46,11 @@ CEILINGS = {
     # lane, and route/retry lane moved to api.chat_turn_workflow (help_response,
     # classify_router_family, run_router_config_lane, build_route_retry_stream_turn,
     # run_route_retry_sync_turn); route keeps capture, busy SSE/409, SSE framing, jsonify.
-    "src/api/web_chat_api.py": 5934,
+    # -88 more (2026-10-11): Phase 6B slices 7-8 — harness lane and pipeline lane
+    # moved to api.chat_turn_workflow (harness_empty_prompt_body,
+    # build_harness_stream_turn, run_harness_sync_turn, build_pipeline_stream_turn,
+    # run_pipeline_sync_lane); route keeps capture, busy SSE/409, SSE framing, jsonify.
+    "src/api/web_chat_api.py": 5846,
 }
 NET_GROWTH_LIMIT = 150
 TRAILER = "Composition-Root-Growth:"
