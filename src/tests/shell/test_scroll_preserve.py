@@ -41,7 +41,7 @@ CuttleScroll.setHtml(self, '<p>new</p>', { selector: '.nothing' });
 assert.equal(self.scrollLeft, 55);
 assert.equal(self.scrollTop, 7);
 """
-    subprocess.run(["node", "-e", script], check=True)
+    subprocess.run(["node", "-"], input=script, text=True, check=True)
 
 
 def test_jobs_page_uses_scroll_preserve():

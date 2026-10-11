@@ -101,7 +101,7 @@ process.stdout.write(JSON.stringify({ ok: true }));
 def _run():
     script = HARNESS.replace("__SOURCE__", OWNER_JS.read_text(encoding="utf-8"))
     proc = subprocess.run(
-        ["node", "-e", script],
+        ["node", "-"], input=script,
         capture_output=True, text=True, encoding="utf-8", timeout=30,
     )
     assert proc.returncode == 0, proc.stderr

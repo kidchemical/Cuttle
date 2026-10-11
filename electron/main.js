@@ -2254,6 +2254,8 @@ app.on('second-instance', () => {
  */
 function ensureDesktopShortcuts() {
     try {
+        // The electron smoke harness denies all subprocess execution.
+        if (process.env.CUTTLE_ELECTRON_SMOKE === '1') return;
         const repoRoot = process.env.CUTTLE_REPO_ROOT || path.join(__dirname, '..');
         if (process.platform === 'win32') {
             const script = path.join(repoRoot, 'src', 'scripts', 'create_desktop_shortcuts.ps1');

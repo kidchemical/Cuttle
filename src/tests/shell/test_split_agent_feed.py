@@ -62,7 +62,7 @@ def test_new_pane_mount_reapplies_agent_feed_visibility():
 mountNewLeafFrame(3, frame, mainEl, '/chat_page.html');
 assert.equal(availabilityCalls, 1, 'mount applies live agent-feed visibility to the new pane');
 """
-    subprocess.run(["node", "-e", script], check=True)
+    subprocess.run(["node", "-"], input=script, text=True, check=True)
 
 
 @node_only
@@ -96,7 +96,7 @@ for (const btn of buttons) {
         'disabled flag keeps the icon hidden');
 }
 """
-    subprocess.run(["node", "-e", script], check=True)
+    subprocess.run(["node", "-"], input=script, text=True, check=True)
 
 
 def test_mount_source_references_availability():

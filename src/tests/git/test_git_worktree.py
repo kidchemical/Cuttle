@@ -39,9 +39,11 @@ def test_add_lists_and_detects_branch(tmp_path):
     out = worktree_add(repo, path=str(target), new_branch="cuttle/x", base_ref="main")
     assert out["branch"] == "cuttle/x"
     assert target.is_dir()
-    paths = {e["path"] for e in worktree_list(str(repo))}
-    assert str(target).rstrip("/") in {p.rstrip("/") for p in paths}
-    assert branch_checked_out_in_worktree(str(repo), "cuttle/x") == str(target)
+    # Git reports paths with forward slashes even on Windows.
+    norm = lambda p: str(p).replace("\\", "/").rstrip("/")
+    paths = {norm(e["path"]) for e in worktree_list(str(repo))}
+    assert norm(target) in paths
+    assert norm(branch_checked_out_in_worktree(str(repo), "cuttle/x")) == norm(target)
     assert branch_checked_out_in_worktree(str(repo), "nope") is None
 
 

@@ -109,7 +109,7 @@ assert.equal(byId['nav-git'].pinned, false);
 const labels = apps.map(a => a.label);
 assert.deepEqual(labels, [...labels].sort((a, b) => a.localeCompare(b)));
 """
-    subprocess.run(["node", "-e", script], check=True)
+    subprocess.run(["node", "-"], input=script, text=True, check=True)
 
 
 APPS_STUB = """
@@ -199,7 +199,7 @@ _col = colWith('<svg></svg>');
 apps = getAppsList();
 assert.ok(apps[0].icon.includes('<svg'), 'signed-out placeholder still forwarded');
 """
-    subprocess.run(["node", "-e", script], check=True)
+    subprocess.run(["node", "-"], input=script, text=True, check=True)
 
 
 @node_only
@@ -238,7 +238,7 @@ const fireMenu = (id) => {
 assert.deepEqual(fireMenu('nav-git'), ['Open', 'Add to blade bar']);
 assert.deepEqual(fireMenu('nav-notifications'), ['Open']);
 """
-    subprocess.run(["node", "-e", script], check=True)
+    subprocess.run(["node", "-"], input=script, text=True, check=True)
 
 
 APPS_AVATAR_STUB = """
@@ -313,7 +313,7 @@ winHandlers['message']({ source: parentWindow, data: { type: 'cuttle-apps', apps
 assert.ok(iconOf('nav-account').classList.contains('has-initials'), 'initials tile flagged');
 assert.ok(!iconOf('nav-account').classList.contains('has-photo'));
 """
-    subprocess.run(["node", "-e", script], check=True)
+    subprocess.run(["node", "-"], input=script, text=True, check=True)
 
 
 def test_workspace_is_unpinnable_footer_utility():

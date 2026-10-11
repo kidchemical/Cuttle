@@ -184,7 +184,7 @@ def test_executor_refusal_preserves_work_and_never_schedules(worker, checkout, t
 def test_coordinator_embeds_preservation_owner(monkeypatch):
     monkeypatch.setattr(platform, 'submit_job', lambda **kwargs: kwargs)
     job = platform.submit_self_update(target_worker_id='fixture')
-    assert job['params']['checkout_helper_text'] == (SCRIPTS / 'client-update-checkout.py').read_text()
+    assert job['params']['checkout_helper_text'] == (SCRIPTS / 'client-update-checkout.py').read_text(encoding='utf-8')
 
 
 @pytest.mark.parametrize('missing', ['client-self-update.ps1', 'client-self-update.sh', 'client-update-checkout.py'])

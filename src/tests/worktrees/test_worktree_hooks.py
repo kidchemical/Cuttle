@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from api.worktrees import cleanup, hooks, registry
@@ -34,6 +35,8 @@ def test_hook_parses_and_runs_in_worktree(tmp_path):
 
 
 def test_hook_without_posix_command_is_not_run_on_posix(tmp_path):
+    if os.name == "nt":
+        return  # a Windows-only hook IS the platform command there
     proj = _project_with_hook(tmp_path, "setup:\n  run: echo windows-only\n")
     assert hooks.command_for_platform(hooks.load_setup_hook(str(proj))) is None
 
