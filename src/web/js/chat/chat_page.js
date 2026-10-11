@@ -7452,18 +7452,8 @@
             totals.textContent = 'No token usage recorded for this session';
             return;
         }
-        const input = sum.cache_inclusive === true
-            ? Math.max(0, sum.prompt_tokens - sum.cache_read_tokens - sum.cache_write_tokens)
-            : sum.prompt_tokens;
-        const cached = sum.cache_read_tokens + sum.cache_write_tokens;
-        const pieces = [
-            `Input ${CuttleChatUsage.formatTokenCount(input)}`,
-            `Cached input ${CuttleChatUsage.formatTokenCount(cached)}`,
-            `Output ${CuttleChatUsage.formatTokenCount(sum.completion_tokens)}`,
-        ];
-        const cost = CuttleChatUsage.formatUsageCostUsd(sum.cost, sum.cost_estimated);
-        pieces.push(cost ? `Est. cost ${cost}` : 'Est. cost unavailable');
-        totals.textContent = pieces.join(' · ');
+        totals.innerHTML = CuttleChatUsage.render(sum, escapeHtml)
+            || 'No token usage recorded for this session';
     }
 
     async function refreshSessionUsageSummary() {

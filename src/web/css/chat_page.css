@@ -4302,28 +4302,11 @@ pre.has-code-copy:hover .code-copy-btn,
 .chat-session-usage {
     max-width: 820px;
     margin: 7px auto 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 4px 14px;
-    color: var(--text-secondary);
-    font-size: 11px;
-    line-height: 1.4;
-    text-align: center;
 }
 
 .chat-session-usage[hidden] { display: none; }
-.chat-session-usage-totals { min-width: 0; }
-.chat-session-usage-subagents {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    white-space: nowrap;
-    cursor: pointer;
-}
-.chat-session-usage-subagents input { margin: 0; accent-color: var(--accent-color); }
+.chat-session-usage-totals { width: 100%; min-width: 0; }
+.chat-session-usage-totals .message-usage { width: 100%; }
 
 .input-wrapper {
     max-width: 820px;
