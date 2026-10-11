@@ -127,3 +127,31 @@ def test_git_push_menu_moved_to_owner():
     assert "function pushCurrentChatProject(" not in text
     assert "function openGitPushSubmenu(" not in text
     assert "function setupGitPushConfirmModal(" not in text
+
+
+def test_supervised_activity_cards_moved_to_owner():
+    """4F moved supervised activity-card rendering/coordination into
+    supervised_control.js (CuttleSupervised.createController); the page keeps
+    thin call sites and no private card state or decision bodies."""
+    text = CHAT_JS.read_text(encoding="utf-8")
+    owner = (CHAT_JS.parent / "supervised_control.js").read_text(encoding="utf-8")
+    assert "function createController(host) {" in owner
+    assert "function upsertActivityCard(task) {" in owner
+    assert "function wireActivityCard(card) {" in owner
+    assert "async function dispatchTaskControl(taskId, action, params = {}) {" in owner
+    assert "async function dispatchControlMessage(message, opts = {}) {" in owner
+    assert "function updateTaskIndicator(liveStatus, sessionId) {" in owner
+    assert "CuttleSupervised.createController(" in text
+    assert "supervisedController().showJumpNotification(task)" in text
+    assert "supervisedController().upsertActivityCard(task)" in text
+    assert "supervisedController().wireActivityCard(card)" in text
+    assert "supervisedController().updateTaskIndicator(liveStatus, sessionId)" in text
+    # The page keeps no private supervised state and no decision bodies.
+    assert "const _supervisedJumpAck = new Set(" not in text
+    assert "let _supervisedBubbleObserver = null;" not in text
+    assert "const SUPERVISED_PHASE_LABELS" not in text
+    assert "function acknowledgeSupervisedJump(" not in text
+    assert "function scrollToSupervisedBubble(" not in text
+    assert "dispatchSupervisedTaskControl._inflight" not in text
+    assert "dispatchSupervisedControlMessage._inflight" not in text
+    assert "supervised-activity-row" in owner  # only removed / hidden, not mounted

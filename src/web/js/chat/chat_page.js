@@ -7856,399 +7856,59 @@
             && !CuttleChatActivity.liveStatusPredatesReply(liveStatus, reply);
     }
 
-    const SUPERVISED_PHASE_LABELS = (window.CuttleSupervised && window.CuttleSupervised.PHASE_LABELS) || {
-        coordinating: 'Planning task…',
-        delegated: 'Working…',
-        worker_running: 'Working…',
-        follow_up: 'Working…',
-        reviewing: 'Reviewing results…',
-        awaiting_user: 'Awaiting your input…',
-        approved: 'Done',
-        cancelled: 'Cancelled',
-        failed: 'Failed',
-        escalated: 'Escalated',
-        budget_exhausted: 'Budget exhausted',
-        created: 'Thinking…',
-    };
-
-    const _supervisedJumpAck = new Set(
-        (function () {
-            try {
-                return JSON.parse(sessionStorage.getItem('cuttle_supervised_jump_ack') || '[]');
-            } catch (_) {
-                return [];
-            }
-        })()
-    );
-    let _supervisedBubbleObserver = null;
-
-    function acknowledgeSupervisedJump(eventId) {
-        const id = String(eventId || '');
-        if (!id) return;
-        _supervisedJumpAck.add(id);
-        try {
-            sessionStorage.setItem(
-                'cuttle_supervised_jump_ack',
-                JSON.stringify(Array.from(_supervisedJumpAck).slice(-40))
-            );
-        } catch (_) {}
-    }
-
-    function scrollToSupervisedBubble(bubble, opts) {
-        const highlight = !opts || opts.highlight !== false;
-        if (!bubble) return;
-        try {
-            bubble.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        } catch (_) {
-            try { bubble.scrollIntoView(); } catch (__) {}
+    // Supervised activity cards: the rendering/coordination decisions live in
+    // supervised_control.js (CuttleSupervised.createController); the page keeps
+    // thin delegating call sites and supplies DOM/transport/session effects.
+    let _supervisedController = null;
+    function supervisedController() {
+        if (!_supervisedController) {
+            _supervisedController = CuttleSupervised.createController({
+                win: window,
+                formatMessage: formatMessage,
+                stripLegacyAgentChrome: stripLegacyAgentChrome,
+                activateEnhancements: activateEnhancements,
+                currentSession: () => session.current(),
+                sessionIdsEqual: sessionIdsEqual,
+                toAuthDbSessionId: toAuthDbSessionId,
+                fetch: (url, opts) => fetch(url, opts),
+                toast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+                copyTextToClipboard: typeof copyTextToClipboard === 'function'
+                    ? copyTextToClipboard
+                    : null,
+                addUserMessage: (text, opts) => addMessageToUI(text, 'user', opts),
+                autoScroll: () => transcriptNav.autoScrollChatToBottom(true),
+                processMessage: processMessage,
+            });
         }
-        if (highlight) {
-            bubble.classList.add('supervised-bubble-highlight');
-            setTimeout(() => bubble.classList.remove('supervised-bubble-highlight'), 1600);
-        }
+        return _supervisedController;
     }
 
     function showSupervisedJumpNotification(task) {
-        const CS = window.CuttleSupervised;
-        if (!CS || !task || !task.terminal) return;
-        const ev = (task.delivery && task.delivery.terminal_event_id)
-            || task.supervised_delivery_event_id
-            || (String(task.task_id) + ':' + String(task.phase || ''));
-        if (!CS.shouldShowJumpNotification(task, _supervisedJumpAck)) return;
-        let bar = document.getElementById('supervisedJumpNotify');
-        if (!bar) {
-            bar = document.createElement('div');
-            bar.id = 'supervisedJumpNotify';
-            bar.className = 'supervised-jump-notify';
-            bar.setAttribute('role', 'status');
-            bar.setAttribute('aria-live', 'polite');
-            document.body.appendChild(bar);
-        }
-        const label = (CS.jumpLabel && CS.jumpLabel(task.phase))
-            || 'Background task completed';
-        bar.innerHTML = '';
-        const text = document.createElement('span');
-        text.textContent = label + ' · ';
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'supervised-jump-notify-btn';
-        btn.textContent = 'Jump to result';
-        btn.setAttribute('aria-label', label + '. Jump to result');
-        btn.addEventListener('click', () => {
-            acknowledgeSupervisedJump(ev);
-            const box = document.getElementById('chatMessages');
-            const bubble = CS.findCanonicalBubbleEl
-                ? CS.findCanonicalBubbleEl(box, task)
-                : null;
-            scrollToSupervisedBubble(bubble);
-            bar.hidden = true;
-        });
-        bar.appendChild(text);
-        bar.appendChild(btn);
-        bar.hidden = false;
-        bar.dataset.eventId = ev;
+        return supervisedController().showJumpNotification(task);
     }
 
     function upsertSupervisedActivityCard(task) {
-        const CS = window.CuttleSupervised;
-        if (!CS || !task || !task.task_id) return;
-        if (
-            task.parent_session_id != null
-            && session.current() != null
-            && String(task.parent_session_id) !== String(session.current())
-            && String(task.parent_session_id) !== String(toAuthDbSessionId(session.current()))
-        ) {
-            const bare = String(session.current()).replace(/^db_session_/, '');
-            if (String(task.parent_session_id) !== bare) return;
-        }
-        const state = CS.activityStateFromTask(task);
-        if (!state) return;
-        const box = document.getElementById('chatMessages');
-        if (!box) return;
-
-        box.querySelectorAll('.message.system.supervised-activity-row').forEach((row) => {
-            try { row.remove(); } catch (_) {}
-        });
-
-        let bubble = CS.findCanonicalBubbleEl
-            ? CS.findCanonicalBubbleEl(box, task)
-            : box.querySelector(
-                `.message.assistant[data-supervised-task-id="${CSS.escape(String(task.task_id))}"]`
-            );
-        if (!bubble && task.coordinator_response_message_id) {
-            bubble = box.querySelector(
-                `.message[data-message-id="${CSS.escape(String(task.coordinator_response_message_id))}"]`
-            );
-        }
-        if (!bubble) return;
-
-        bubble.dataset.supervisedTaskId = String(task.task_id);
-        bubble.classList.add('supervised-coordinator-message');
-        if (task.coordinator_response_message_id != null) {
-            bubble.dataset.messageId = String(task.coordinator_response_message_id);
-        }
-
-        const contentEl = bubble.querySelector('.message-content');
-        if (contentEl) {
-            const nextRaw = String(
-                task.bubble_content
-                || (task.terminal && task.final_response)
-                || bubble.dataset.rawContent
-                || ''
-            );
-            let html;
-            if (nextRaw && /cuttle_supervised_activity|Working…|Planning|Reviewing|Thinking/i.test(nextRaw)) {
-                bubble.dataset.rawContent = nextRaw;
-                html = formatMessage(stripLegacyAgentChrome(nextRaw));
-            } else if (!task.terminal && CS.buildWorkingBubbleHtml) {
-                html = CS.buildWorkingBubbleHtml(state);
-                bubble.dataset.rawContent = state.phase_label || 'Working…';
-            } else {
-                const disclosure = CS.buildActivityDisclosureHtml
-                    ? CS.buildActivityDisclosureHtml(state)
-                    : '';
-                const body = String(task.final_response || nextRaw || state.phase_label || '');
-                bubble.dataset.rawContent = nextRaw || body;
-                html = formatMessage(stripLegacyAgentChrome(body)) + disclosure;
-            }
-            contentEl.innerHTML = html;
-            try { activateEnhancements(bubble); } catch (_) {}
-        }
-
-        const disclosure = bubble.querySelector('.supervised-activity-disclosure, .supervised-activity-card');
-        if (disclosure) wireSupervisedActivityCard(disclosure);
-
-        if (task.terminal) {
-            showSupervisedJumpNotification(task);
-        }
-        observeSupervisedCanonicalBubble(bubble, task);
+        return supervisedController().upsertActivityCard(task);
     }
 
     function wireSupervisedActivityCard(card) {
-        if (!card || card.__wiredSupervised) return;
-        card.__wiredSupervised = true;
-        card.addEventListener('click', async (ev) => {
-            const btn = ev.target && ev.target.closest
-                ? ev.target.closest('[data-supervised-action]')
-                : null;
-            if (!btn) return;
-            ev.preventDefault();
-            const action = btn.getAttribute('data-supervised-action');
-            const taskId = btn.getAttribute('data-task-id')
-                || card.getAttribute('data-supervised-task-id')
-                || (card.closest('[data-supervised-task-id]')
-                    && card.closest('[data-supervised-task-id]').getAttribute('data-supervised-task-id'));
-            if (action === 'followup') {
-                const form = card.querySelector('.supervised-activity-followup-form');
-                if (form) form.hidden = false;
-                const ta = card.querySelector('.supervised-activity-followup-input');
-                if (ta) ta.focus();
-                return;
-            }
-            if (action === 'followup_cancel') {
-                const form = card.querySelector('.supervised-activity-followup-form');
-                if (form) form.hidden = true;
-                return;
-            }
-            if (action === 'followup_submit') {
-                const ta = card.querySelector('.supervised-activity-followup-input');
-                const text = (ta && ta.value || '').trim();
-                if (!text) return;
-                btn.disabled = true;
-                try {
-                    await dispatchSupervisedTaskControl(taskId, 'followup', { instruction: text });
-                    if (ta) ta.value = '';
-                    const form = card.querySelector('.supervised-activity-followup-form');
-                    if (form) form.hidden = true;
-                } finally {
-                    btn.disabled = false;
-                }
-                return;
-            }
-            if (action === 'status') {
-                btn.disabled = true;
-                try {
-                    await dispatchSupervisedTaskControl(taskId, 'status');
-                } finally {
-                    btn.disabled = false;
-                }
-                return;
-            }
-            if (action === 'cancel') {
-                btn.disabled = true;
-                try {
-                    await dispatchSupervisedTaskControl(taskId, 'cancel');
-                } finally {
-                    btn.disabled = false;
-                }
-                return;
-            }
-            if (action === 'view_report') {
-                const reportUrl = btn.getAttribute('data-report-url')
-                    || (window.__lastSupervisedTask
-                        && window.__lastSupervisedTask.raw_report_url)
-                    || '';
-                if (reportUrl) {
-                    window.open(reportUrl + (reportUrl.includes('?') ? '&' : '?') + 'format=text', '_blank', 'noopener');
-                } else {
-                    (window.showToast || function () {})('No worker report artifact yet.', 'info');
-                }
-                return;
-            }
-            if (action === 'copy_details') {
-                const pre = card.querySelector('.supervised-activity-details-md');
-                const detailsText = (pre && (pre.textContent || pre.innerText) || '').trim();
-                if (!detailsText) {
-                    (window.showToast || function () {})('No activity details to copy.', 'info');
-                    return;
-                }
-                const copyFn = (typeof copyTextToClipboard === 'function')
-                    ? copyTextToClipboard
-                    : async (t) => {
-                        if (navigator.clipboard && window.isSecureContext) {
-                            await navigator.clipboard.writeText(t);
-                            return true;
-                        }
-                        return false;
-                    };
-                try {
-                    const ok = await copyFn(detailsText);
-                    (window.showToast || function () {})(
-                        ok ? 'Copied activity details' : 'Could not copy details',
-                        ok ? 'success' : 'error'
-                    );
-                } catch (_) {
-                    (window.showToast || function () {})('Could not copy details', 'error');
-                }
-                return;
-            }
-            if (action === 'view_activity') {
-                await dispatchSupervisedTaskControl(taskId, 'status');
-            }
-        });
+        return supervisedController().wireActivityCard(card);
     }
 
-    async function dispatchSupervisedTaskControl(taskId, action, params = {}) {
-        const key = `${taskId}:${action}:${params.instruction || ''}`;
-        if (!dispatchSupervisedTaskControl._inflight) dispatchSupervisedTaskControl._inflight = new Set();
-        if (dispatchSupervisedTaskControl._inflight.has(key)) return null;
-        dispatchSupervisedTaskControl._inflight.add(key);
-        try {
-            const response = await fetch(`/api/supervised/tasks/${encodeURIComponent(taskId)}/control`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action, ...params, session_id: session.current() }),
-            });
-            const body = await response.json();
-            if (!response.ok || body.success === false) throw new Error(body.error || `HTTP ${response.status}`);
-            if (body.supervised_task) upsertSupervisedActivityCard(body.supervised_task);
-            (window.showToast || function () {})(body.acknowledgement || 'Updated.', 'success');
-            return body;
-        } catch (err) {
-            (window.showToast || function () {})(String(err && err.message || err), 'error');
-            return null;
-        } finally {
-            dispatchSupervisedTaskControl._inflight.delete(key);
-        }
+    function dispatchSupervisedTaskControl(taskId, action, params) {
+        return supervisedController().dispatchTaskControl(taskId, action, params);
     }
 
-    async function dispatchSupervisedControlMessage(message, opts = {}) {
-        const onceKey = opts.onceKey || '';
-        if (onceKey && dispatchSupervisedControlMessage._inflight
-            && dispatchSupervisedControlMessage._inflight.has(onceKey)) {
-            return;
-        }
-        if (!dispatchSupervisedControlMessage._inflight) {
-            dispatchSupervisedControlMessage._inflight = new Set();
-        }
-        if (onceKey) dispatchSupervisedControlMessage._inflight.add(onceKey);
-        try {
-            const outbound = String(message || '').trim();
-            if (!isImmediateControlLaneMessage(outbound)) return;
-            const userTs = Date.now();
-            addMessageToUI(outbound, 'user', { timestamp: userTs });
-            transcriptNav.autoScrollChatToBottom(true);
-            await processMessage(outbound, { controlLane: true });
-        } finally {
-            if (onceKey) dispatchSupervisedControlMessage._inflight.delete(onceKey);
-        }
+    async function dispatchSupervisedControlMessage(message, opts) {
+        return supervisedController().dispatchControlMessage(message, opts);
     }
 
     function observeSupervisedCanonicalBubble(bubble, task) {
-        if (!bubble || typeof IntersectionObserver === 'undefined') return;
-        if (_supervisedBubbleObserver) {
-            try { _supervisedBubbleObserver.disconnect(); } catch (_) {}
-        }
-        const el = document.getElementById('supervisedTaskIndicator');
-        if (!el) return;
-        _supervisedBubbleObserver = new IntersectionObserver((entries) => {
-            const entry = entries[0];
-            const active = task && !task.terminal;
-            if (!active) {
-                el.hidden = true;
-                return;
-            }
-            el.hidden = !!(entry && entry.isIntersecting);
-        }, { root: document.getElementById('chatMessages'), threshold: 0.12 });
-        _supervisedBubbleObserver.observe(bubble);
+        return supervisedController().observeCanonicalBubble(bubble, task);
     }
 
-    /** Tiny off-screen chip — never a worker card or pending-prompt modal. */
     function updateSupervisedTaskIndicator(liveStatus, sessionId) {
-        const el = document.getElementById('supervisedTaskIndicator');
-        if (!el) return;
-        if (
-            sessionId != null
-            && session.current() != null
-            && !sessionIdsEqual(sessionId, session.current())
-        ) {
-            return;
-        }
-        const task = liveStatus && liveStatus.supervised_task;
-        window.__lastSupervisedTask = task || null;
-        if (task && task.task_id) {
-            upsertSupervisedActivityCard(task);
-        }
-        if (!task || !task.task_id || task.terminal) {
-            el.hidden = true;
-            el.classList.remove('is-terminal');
-            return;
-        }
-        const phaseEl = document.getElementById('supervisedTaskPhase');
-        const metaEl = document.getElementById('supervisedTaskMeta');
-        const detailEl = document.getElementById('supervisedTaskDetail');
-        if (phaseEl) phaseEl.textContent = 'Background task working';
-        if (metaEl) metaEl.textContent = '';
-        if (detailEl) detailEl.textContent = 'Jump to task';
-        el.classList.remove('is-terminal');
-        el.setAttribute('role', 'button');
-        el.setAttribute('tabindex', '0');
-        el.setAttribute('aria-label', 'Background task working. Jump to task.');
-        el.onclick = () => {
-            const box = document.getElementById('chatMessages');
-            const CS = window.CuttleSupervised;
-            const bubble = CS && CS.findCanonicalBubbleEl
-                ? CS.findCanonicalBubbleEl(box, task)
-                : null;
-            scrollToSupervisedBubble(bubble);
-        };
-        el.onkeydown = (ev) => {
-            if (ev.key === 'Enter' || ev.key === ' ') {
-                ev.preventDefault();
-                el.click();
-            }
-        };
-        const box = document.getElementById('chatMessages');
-        const CS = window.CuttleSupervised;
-        const bubble = CS && CS.findCanonicalBubbleEl
-            ? CS.findCanonicalBubbleEl(box, task)
-            : null;
-        if (!bubble) {
-            el.hidden = false;
-        } else {
-            observeSupervisedCanonicalBubble(bubble, task);
-        }
+        return supervisedController().updateTaskIndicator(liveStatus, sessionId);
     }
 
     function updateRemoteWaitingFromMessages(messages, liveStatus) {
