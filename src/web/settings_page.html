@@ -89,6 +89,16 @@
                         <button type="button" class="control-button" data-device-update>Update this device</button>
                     </div>
                 </div>
+                <div class="setting-item setting-item--stack">
+                    <div class="setting-label">
+                        <strong>Phone app (Android / Capacitor)</strong><button type="button" class="cuttle-info" data-tooltip="The phone app updates itself from an APK this host serves at /api/mobile/android — it is not a mesh worker and does not use the device Update button. This shows the served APK and can rebuild it." aria-label="About Phone app">i</button>
+                        <div class="setting-description">APK served to the phone app. The phone shows its own “Update available” prompt. Rebuild re-runs Gradle <code>assembleDebug</code> on this host.</div>
+                    </div>
+                    <div class="setting-control setting-control--stack">
+                        <div class="device-update-status" data-android-status role="status" aria-live="polite" hidden></div>
+                        <button type="button" class="control-button" data-android-rebuild>Rebuild phone app (APK)</button>
+                    </div>
+                </div>
             </div>
 
             <div class="settings-group">
@@ -764,7 +774,7 @@
     <script src="/js/media/background_effect_blend.js"></script>
     <script src="/js/shared/toast.js"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
-    <script src="/js/settings/settings_releases.js?v=20261011deviceUpdate3"></script>
+    <script src="/js/settings/settings_releases.js?v=20261011androidRow"></script>
     <script src="/js/settings/settings_storage.js?v=20261007"></script>
     <script src="/js/shared/searchable_select.js?v=20261009combo1"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261009a"></script>

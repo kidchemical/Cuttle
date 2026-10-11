@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional
 
 from flask import Flask, jsonify, request, send_file
 
+from api.http_authz import owner_required
 from api.mobile_android_artifacts import baked_hash as apk_baked_hash, inspect_apk, sha256_file
 
 _API_DIR = Path(__file__).resolve().parent
@@ -511,6 +512,19 @@ def register_mobile_android_update_routes(app: Flask) -> None:
             as_attachment=True,
             download_name="app-debug.apk",
         )
+
+    @app.route("/api/mobile/android/rebuild", methods=["POST"])
+    @owner_required
+    def api_mobile_android_rebuild():
+        """Kick a phone-app APK rebuild/publish (owner only). Body: {force?: bool}."""
+        data = request.get_json(silent=True) or {}
+        force = bool(data.get("force"))
+        try:
+            info = kick_apk_rebuild(force=force)
+        except Exception as exc:
+            return jsonify({"success": False, "error": str(exc)}), 500
+        started = bool(info.get("started")) or info.get("reason") == "already_current"
+        return jsonify({"success": started, **info})
 
     # On Flask import: if the phone-app sources moved ahead of dist/update, start Gradle.
     try:

@@ -17,6 +17,16 @@
         const sourceSelect = root.querySelector('[data-update-source]');
         const deviceUpdateBtn = root.querySelector('[data-device-update]');
         const deviceStatus = root.querySelector('[data-device-update-status]');
+        const androidStatus = root.querySelector('[data-android-status]');
+        const androidBtn = root.querySelector('[data-android-rebuild]');
+        const setAndroidStatus = (text, kind) => {
+            if (!androidStatus) return;
+            const msg = String(text || '').trim();
+            androidStatus.textContent = msg;
+            androidStatus.hidden = !msg;
+            androidStatus.classList.toggle('is-error', kind === 'error');
+            androidStatus.classList.toggle('is-ok', kind === 'ok');
+        };
         const setDeviceStatus = (text, kind) => {
             if (!deviceStatus) return;
             const msg = String(text || '').trim();
@@ -213,6 +223,60 @@
                 }
             });
         }
+        // Phone app (Android/Capacitor): the phone updates itself from the APK
+        // this host serves; this row reflects that + can rebuild it.
+        async function loadAndroid() {
+            if (!androidStatus && !androidBtn) return;
+            try {
+                const r = await fetch('/api/mobile/android', { cache: 'no-store' });
+                const d = await r.json().catch(() => ({}));
+                if (!d || d.ok === false) { setAndroidStatus('Phone app status unavailable.', 'error'); return; }
+                const ver = d.packageVersion || '?';
+                const code = d.versionCode != null ? ' (' + d.versionCode + ')' : '';
+                if (d.artifact) {
+                    setAndroidStatus('APK v' + ver + code + ' ready · ' + String(d.hash || '').slice(0, 12), 'ok');
+                } else if (d.building) {
+                    setAndroidStatus('Rebuilding APK… (Gradle build in progress)', 'info');
+                } else if (d.rebuildError) {
+                    setAndroidStatus('APK not built: ' + d.rebuildError, 'error');
+                } else {
+                    setAndroidStatus('No APK published — phones will not see an update.', '');
+                }
+            } catch (_) {
+                setAndroidStatus('Phone app status unavailable.', 'error');
+            }
+        }
+        if (androidBtn) {
+            androidBtn.addEventListener('click', async () => {
+                androidBtn.disabled = true;
+                setAndroidStatus('Requesting APK rebuild…', 'info');
+                try {
+                    const r = await fetch('/api/mobile/android/rebuild', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({}),
+                    });
+                    const d = await r.json().catch(() => ({}));
+                    if (!r.ok || !d.success) throw new Error(d.error || d.reason || ('HTTP ' + r.status));
+                    setAndroidStatus('APK rebuild started (Gradle) — this can take a few minutes.', 'info');
+                    const deadline = Date.now() + 10 * 60 * 1000;
+                    while (Date.now() < deadline) {
+                        await new Promise((res) => setTimeout(res, 5000));
+                        const sd = await fetch('/api/mobile/android', { cache: 'no-store' })
+                            .then((sr) => sr.json()).catch(() => ({}));
+                        if (sd.artifact) { setAndroidStatus('APK ready — phones will offer the update.', 'ok'); return; }
+                        if (sd.rebuildError) { setAndroidStatus('APK rebuild failed: ' + sd.rebuildError, 'error'); return; }
+                        if (!sd.building) { setAndroidStatus('Rebuild finished.', ''); return; }
+                    }
+                    setAndroidStatus('Still rebuilding — check back shortly.', 'info');
+                } catch (error) {
+                    setAndroidStatus(String(error.message || error), 'error');
+                } finally {
+                    androidBtn.disabled = false;
+                }
+            });
+        }
+        loadAndroid();
         if (autoEnabled) load(false);
         else showManualOnly();
     }

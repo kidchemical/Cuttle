@@ -112,3 +112,24 @@ are the only verification — say so in the release notes.
 build Client updates; update every device from the release. Source-checkout
 Hosts may still build an `app.asar` for their Clients, which accept it only over
 the Host's pinned HTTPS identity. Linux Clients never swap in place.
+
+## Android phone app (Capacitor) APK
+
+The phone app is **not** a mesh worker and does not use the desktop Update
+button/Settings device channel. It updates itself from an APK the host serves:
+
+- The host hashes `apps/mobile` sources and serves `GET /api/mobile/android`
+  (manifest) and `GET /api/mobile/android/app-debug.apk`. The phone app polls
+  the manifest and shows its own **“Update available — Download & install”**
+  prompt; no APK is committed to git.
+- Build/publish on the host: auto-rebuild is opt-in
+  (`CUTTLE_MOBILE_AUTO_REBUILD=1`), otherwise publish a matching signed APK:
+  `python -m api.mobile_android_update publish --apk PATH` (also `status`,
+  `rebuild [--force]`).
+- Settings → 📦 Cuttle updates → **Phone app (Android / Capacitor)** shows the
+  served APK (version/code/hash, building/failed) and has an owner-only
+  **Rebuild phone app (APK)** button (`POST /api/mobile/android/rebuild`) that
+  re-runs Gradle `assembleDebug`.
+- **Release rule:** when phone sources change, republish the APK so phones are
+  not left stale — desktop/web can ship fine while the APK lags. Keep the APK
+  version/versionCode in step with the release.
