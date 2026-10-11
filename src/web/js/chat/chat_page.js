@@ -388,60 +388,35 @@
         return markSessionUnreadManual(session.current(), event);
     }
 
-    let _gitPushInFlight = false;
-    let _gitReposCache = { path: '', repos: [], at: 0 };
-
     function currentProjectPathKey() {
         // Git/branch scope: the bound worktree checkout, else the project path.
         return effectiveGitPath();
     }
 
-    /** Sync known repos for the current project (cache or pending-changes panel). */
-    function knownProjectGitRepos() {
-        const path = currentProjectPathKey();
-        if (!path) return null;
-        const now = Date.now();
-        if (
-            _gitReposCache.path === path
-            && (now - _gitReposCache.at) < 15000
-            && Array.isArray(_gitReposCache.repos)
-        ) {
-            return _gitReposCache.repos;
-        }
-        if (pendingChangesCtl && typeof pendingChangesCtl.getRepos === 'function') {
-            const fromPanel = pendingChangesCtl.getRepos() || [];
-            if (fromPanel.length) {
-                _gitReposCache = { path, repos: fromPanel, at: now };
-                return fromPanel;
+    // Git push menu + action owner: the menu HTML/mode, repo cache, multi-repo
+    // submenu, confirm modal and push transport live in git/git_push_report.js
+    // (CuttleGitPushReport). The page supplies project identity, the
+    // pending-changes repo snapshot and DOM/toast/close effects as explicit
+    // host capabilities; the inline-handler wiring below stays page-side.
+    const gitPush = CuttleGitPushReport.create({
+        getProjectPath: function () { return currentProjectPathKey(); },
+        getPendingRepos: function () {
+            if (pendingChangesCtl && typeof pendingChangesCtl.getRepos === 'function') {
+                return pendingChangesCtl.getRepos() || [];
             }
-        }
-        return null;
-    }
-
-    async function fetchProjectGitRepos(force) {
-        const path = currentProjectPathKey();
-        if (!path) return [];
-        if (!force) {
-            const known = knownProjectGitRepos();
-            if (known) return known;
-        }
-        try {
-            const qs = new URLSearchParams();
-            qs.set('path', path);
-            const resp = await fetch('/api/git/repos?' + qs.toString(), {
-                credentials: 'include',
-                cache: 'no-store',
-            });
-            const data = await resp.json().catch(() => null);
-            const repos = (data && data.success && Array.isArray(data.repos))
-                ? data.repos
-                : [];
-            _gitReposCache = { path, repos, at: Date.now() };
-            return repos;
-        } catch (_) {
-            return _gitReposCache.path === path ? (_gitReposCache.repos || []) : [];
-        }
-    }
+            return [];
+        },
+        getCurrentProject: function () { return currentProject; },
+        closeMenus: function () { closeAllSessionMenus(); },
+        escapeHtmlInline: escapeHtmlInline,
+        toast: function () {
+            const t = window.showToast;
+            if (typeof t === 'function') return t.apply(window, arguments);
+        },
+        closeToast: function (id) {
+            if (typeof window.closeCuttleToast === 'function') window.closeCuttleToast(id);
+        },
+    });
 
     // Branch shown on the segmented project chip (star | name | branch).
     // Cache + fetch live in chat_chip_config.js (branchFor / refreshBranch).
@@ -452,201 +427,6 @@
     /** Refresh the project chip branch (cached ~15s). Re-renders when it changes. */
     function refreshProjectBranch(force) {
         return CuttleChipConfig.refreshBranch(currentProjectPathKey(), renderProjectChips, force);
-    }
-
-    async function pushCurrentChatProject(event, repoRoot) {
-        if (event) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
-        closeAllSessionMenus();
-        const toast = window.showToast || function () {};
-        if (_gitPushInFlight) {
-            toast('Git push already in progress…', 'info');
-            return;
-        }
-        const path = currentProject && currentProject.path
-            ? String(currentProject.path)
-            : '';
-        const projectId = currentProject && currentProject.id != null
-            ? currentProject.id
-            : null;
-        if (!path && projectId == null) {
-            toast('No project selected', 'error');
-            return;
-        }
-
-        const repos = await fetchProjectGitRepos(true);
-        const wantRoot = repoRoot ? String(repoRoot).replace(/\\/g, '/').toLowerCase() : '';
-        let info = null;
-        if (wantRoot && Array.isArray(repos)) {
-            info = repos.find(function (r) {
-                const root = String((r && r.repo_root) || '').replace(/\\/g, '/').toLowerCase();
-                return root === wantRoot;
-            }) || null;
-        }
-        if (!info && Array.isArray(repos) && repos.length === 1) info = repos[0];
-        const projectName = (currentProject && currentProject.name)
-            ? String(currentProject.name)
-            : 'this project';
-        const repoName = (info && (info.repo || info.label))
-            ? String(info.repo || info.label)
-            : 'the remote';
-        const remoteName = (info && info.remote) ? String(info.remote) : 'origin';
-        const branchName = (info && info.branch) ? String(info.branch) : 'HEAD';
-        const confirmMsg = 'Are you sure you want to push '
-            + projectName
-            + ' to '
-            + repoName
-            + ' '
-            + remoteName
-            + ' '
-            + branchName
-            + '?';
-        const accepted = await confirmGitPushModal(confirmMsg);
-        if (!accepted) return;
-
-        _gitPushInFlight = true;
-        const name = projectName;
-        const repoLabel = repoRoot
-            ? String(repoRoot).replace(/\\/g, '/').split('/').filter(Boolean).pop()
-            : '';
-        const closePushProgress = function () {
-            try {
-                if (typeof window.closeCuttleToast === 'function') window.closeCuttleToast('git-push');
-            } catch (_) {}
-        };
-        toast('Pushing ' + (repoLabel || name) + '…', 'info', {
-            toastId: 'git-push',
-            sticky: true,
-            progress: true,
-            skipHistory: true
-        });
-        try {
-            const body = {};
-            if (path) body.path = path;
-            if (projectId != null) body.project_id = projectId;
-            if (repoRoot) body.repo_root = String(repoRoot);
-            const resp = await fetch('/api/git/push', {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            const data = await resp.json().catch(() => ({}));
-            if (!resp.ok || !data.success) {
-                if (data.push_report && window.CuttleGitPushReport) window.CuttleGitPushReport.show(data.push_report, {projectPath: path || data.repo_root, repoRoot: data.repo_root});
-                let err = String(
-                    (data && (data.error || data.message))
-                    || ('Git push failed (' + resp.status + ')')
-                ).trim();
-                err = err.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || err;
-                if (err.length > 220) err = err.slice(0, 217) + '…';
-                closePushProgress();
-                toast(err, 'error');
-                return;
-            }
-            const branch = data.branch ? String(data.branch) : '';
-            const remote = data.remote ? String(data.remote) : '';
-            const output = String(data.output || '');
-            let okMsg = data.message || 'Push successful';
-            if (/everything up-to-date/i.test(output)) {
-                okMsg = branch ? (branch + ' already up to date') : 'Already up to date';
-            } else if (branch && remote) {
-                okMsg = 'Pushed ' + branch + ' → ' + remote;
-            } else if (branch) {
-                okMsg = 'Pushed ' + branch;
-            }
-            // Single-repo projects don't need the repo prefix; the outcome
-            // reuses the progress toast id so it swaps in place (one toast,
-            // one history entry per push).
-            if (repoLabel && Array.isArray(repos) && repos.length > 1) okMsg = repoLabel + ': ' + okMsg;
-            closePushProgress();
-            toast(okMsg, 'success', { toastId: 'git-push' });
-        } catch (err) {
-            closePushProgress();
-            toast((err && err.message) || 'Git push failed', 'error');
-        } finally {
-            _gitPushInFlight = false;
-        }
-    }
-
-    /** Caret / submenu only when the project has more than one git repo. */
-    function gitPushIsMultiRepo(repos) {
-        return Array.isArray(repos) && repos.length > 1;
-    }
-
-    function applyGitPushMenuMode(wrap, multi) {
-        if (!wrap) return;
-        const trigger = wrap.querySelector('[data-git-push-trigger]');
-        if (!trigger) return;
-        let caret = trigger.querySelector('.chat-chrome-menu-caret');
-        if (multi) {
-            wrap.setAttribute('data-git-push-multi', '1');
-            trigger.setAttribute('aria-haspopup', 'true');
-            if (!caret) {
-                caret = document.createElement('span');
-                caret.className = 'chat-chrome-menu-caret';
-                caret.setAttribute('aria-hidden', 'true');
-                caret.textContent = '▸';
-                trigger.appendChild(caret);
-            }
-        } else {
-            wrap.removeAttribute('data-git-push-multi');
-            trigger.removeAttribute('aria-haspopup');
-            trigger.setAttribute('aria-expanded', 'false');
-            if (caret) caret.remove();
-            const submenu = wrap.querySelector('[data-git-push-submenu]');
-            if (submenu) {
-                submenu.innerHTML = '';
-                submenu.hidden = true;
-            }
-        }
-    }
-
-    function gitPushMenuHtml(icons) {
-        const known = knownProjectGitRepos();
-        const multi = gitPushIsMultiRepo(known);
-        return (
-            '<div class="chat-chrome-menu-item-wrap is-git-push" data-git-push-wrap="1"'
-            + (multi ? ' data-git-push-multi="1"' : '')
-            + '>'
-            + '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-            + ' title="Git push" aria-label="Git push"'
-            + (multi ? ' aria-haspopup="true" aria-expanded="false"' : '')
-            + ' data-git-push-trigger="1"'
-            + (_gitPushInFlight ? ' aria-disabled="true"' : '')
-            + '>'
-            + icons.gitPush
-            + '<span class="chat-chrome-menu-item-label">Git push</span>'
-            + (multi
-                ? '<span class="chat-chrome-menu-caret" aria-hidden="true">▸</span>'
-                : '')
-            + '</button>'
-            + '<div class="chat-chrome-menu-submenu" data-git-push-submenu="1" hidden role="menu"></div>'
-            + '</div>'
-        );
-    }
-
-    /** After menu HTML lands, refresh repo count and show/hide the caret. */
-    function refreshGitPushMenuMode(rootEl) {
-        const wraps = rootEl
-            ? rootEl.querySelectorAll('[data-git-push-wrap]')
-            : document.querySelectorAll('[data-git-push-wrap]');
-        if (!wraps.length) return;
-        const known = knownProjectGitRepos();
-        if (known) {
-            const multi = gitPushIsMultiRepo(known);
-            wraps.forEach((wrap) => applyGitPushMenuMode(wrap, multi));
-            return;
-        }
-        fetchProjectGitRepos(false).then((repos) => {
-            const multi = gitPushIsMultiRepo(repos);
-            wraps.forEach((wrap) => {
-                if (!wrap.isConnected) return;
-                applyGitPushMenuMode(wrap, multi);
-            });
-        }).catch(() => {});
     }
 
     function copyTextToClipboard(text) {
@@ -4102,7 +3882,7 @@
         refreshLocalOpenPanes,
         // Row menu + modal orchestration capabilities.
         buildSessionMenuHTML,
-        refreshGitPushMenuMode,
+        refreshGitPushMenuMode: gitPush.refreshMenuMode,
         closeChatChromeMenu,
         isTerminalSessionId,
         getChatSessionDisplayTitle,
@@ -9444,7 +9224,7 @@
                 + '</button>'
             );
         }
-        parts.push(gitPushMenuHtml(icons));
+        parts.push(gitPush.menuHtml(icons));
         if (_terminalMenuAvailable) {
             parts.push(
                 '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
@@ -9756,69 +9536,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         // Archiving the open chat keeps it open — it only leaves the list.
         await refreshChatHistoryList();
         await refreshArchivedSessions();
-    }
-
-    let _gitPushConfirmResolve = null;
-
-    function gitPushConfirmModalEl() {
-        return document.getElementById('gitPushConfirmModal');
-    }
-
-    function closeGitPushConfirmModal(accepted) {
-        const modal = gitPushConfirmModalEl();
-        if (modal) modal.hidden = true;
-        const fn = _gitPushConfirmResolve;
-        _gitPushConfirmResolve = null;
-        if (typeof fn === 'function') fn(!!accepted);
-    }
-
-    function confirmGitPushModal(message) {
-        return new Promise(function (resolve) {
-            const modal = gitPushConfirmModalEl();
-            if (!modal) {
-                resolve(false);
-                return;
-            }
-            if (typeof _gitPushConfirmResolve === 'function') {
-                _gitPushConfirmResolve(false);
-            }
-            _gitPushConfirmResolve = resolve;
-            const subtitle = document.getElementById('gitPushConfirmSubtitle');
-            if (subtitle) subtitle.textContent = String(message || 'Are you sure you want to push?');
-            modal.hidden = false;
-            const cancel = document.getElementById('gitPushConfirmCancel');
-            if (cancel) cancel.focus();
-        });
-    }
-
-    function setupGitPushConfirmModal() {
-        const modal = gitPushConfirmModalEl();
-        if (!modal || modal.dataset.bound === '1') return;
-        modal.dataset.bound = '1';
-        const cancelBtn = document.getElementById('gitPushConfirmCancel');
-        const acceptBtn = document.getElementById('gitPushConfirmAccept');
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', function (e) {
-                e.stopPropagation();
-                closeGitPushConfirmModal(false);
-            });
-        }
-        if (acceptBtn) {
-            acceptBtn.addEventListener('click', function (e) {
-                e.stopPropagation();
-                closeGitPushConfirmModal(true);
-            });
-        }
-        modal.addEventListener('click', function (e) {
-            e.stopPropagation();
-            if (e.target === modal) closeGitPushConfirmModal(false);
-        });
-        document.addEventListener('keydown', function (e) {
-            if (e.key !== 'Escape') return;
-            if (!modal || modal.hidden) return;
-            e.preventDefault();
-            closeGitPushConfirmModal(false);
-        });
     }
 
     async function deleteChatSession(sessionId) {
@@ -13909,7 +13626,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             historyScroll.addEventListener('scroll', function () { historyPanel.closeMenu(); }, { passive: true });
         }
         historyPanel.setupModals();
-        setupGitPushConfirmModal();
+        gitPush.setupConfirmModal();
 
         // Cross-device: refresh open session when tab becomes visible / focused
         const syncIfVisible = function () {
@@ -14069,98 +13786,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     window.chatPageMarkCurrentUnreadFromMenu = markCurrentSessionUnreadFromMenu;
 
     window.chatPageExportSession = exportChatSession;
-    window.chatPageGitPush = pushCurrentChatProject;
-
-    async function openGitPushSubmenu(triggerBtn) {
-        const wrap = triggerBtn && triggerBtn.closest
-            ? triggerBtn.closest('[data-git-push-wrap]')
-            : null;
-        if (!wrap) return;
-        const submenu = wrap.querySelector('[data-git-push-submenu]');
-        if (!submenu) {
-            pushCurrentChatProject();
-            return;
-        }
-
-        const pushFromRepos = (repos) => {
-            applyGitPushMenuMode(wrap, gitPushIsMultiRepo(repos));
-            if (!repos.length) {
-                pushCurrentChatProject();
-                return true;
-            }
-            if (repos.length === 1) {
-                pushCurrentChatProject(null, repos[0].repo_root);
-                return true;
-            }
-            return false;
-        };
-
-        // Single-repo (or none): push immediately — no caret / submenu flash.
-        const known = knownProjectGitRepos();
-        if (known && !gitPushIsMultiRepo(known)) {
-            pushFromRepos(known);
-            return;
-        }
-
-        const opening = submenu.hidden;
-        document.querySelectorAll('[data-git-push-submenu]').forEach((el) => {
-            if (el !== submenu) el.hidden = true;
-        });
-        document.querySelectorAll('[data-git-push-trigger]').forEach((el) => {
-            el.setAttribute('aria-expanded', 'false');
-        });
-        if (!opening) {
-            submenu.hidden = true;
-            triggerBtn.setAttribute('aria-expanded', 'false');
-            return;
-        }
-
-        if (known && gitPushIsMultiRepo(known)) {
-            applyGitPushMenuMode(wrap, true);
-            triggerBtn.setAttribute('aria-expanded', 'true');
-            submenu.innerHTML = known.map((r) => {
-                const root = String(r.repo_root || '');
-                const label = escapeHtmlInline(String(r.label || root));
-                const branch = r.branch ? (' · ' + escapeHtmlInline(String(r.branch))) : '';
-                const enc = encodeURIComponent(root);
-                return (
-                    '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-                    + ' data-git-push-repo="' + enc + '"'
-                    + ' title="' + label + '">'
-                    + '<span class="chat-chrome-menu-item-label">' + label + branch + '</span>'
-                    + '</button>'
-                );
-            }).join('');
-            submenu.hidden = false;
-            return;
-        }
-
-        submenu.innerHTML = '<div class="chat-chrome-menu-item is-muted">Loading repos…</div>';
-        submenu.hidden = false;
-        triggerBtn.setAttribute('aria-expanded', 'true');
-        const repos = await fetchProjectGitRepos(true);
-        if (!submenu.isConnected) return;
-        if (pushFromRepos(repos)) {
-            submenu.innerHTML = '';
-            submenu.hidden = true;
-            triggerBtn.setAttribute('aria-expanded', 'false');
-            return;
-        }
-        applyGitPushMenuMode(wrap, true);
-        submenu.innerHTML = repos.map((r) => {
-            const root = String(r.repo_root || '');
-            const label = escapeHtmlInline(String(r.label || root));
-            const branch = r.branch ? (' · ' + escapeHtmlInline(String(r.branch))) : '';
-            const enc = encodeURIComponent(root);
-            return (
-                '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-                + ' data-git-push-repo="' + enc + '"'
-                + ' title="' + label + '">'
-                + '<span class="chat-chrome-menu-item-label">' + label + branch + '</span>'
-                + '</button>'
-            );
-        }).join('');
-    }
+    window.chatPageGitPush = (event, repoRoot) => gitPush.push(event, repoRoot);
 
     document.addEventListener('click', function (e) {
         const t = e.target;
@@ -14175,14 +13801,14 @@ function downloadTranscriptMarkdown(text, sessionId) {
             } catch (_) {
                 root = repoBtn.getAttribute('data-git-push-repo') || '';
             }
-            pushCurrentChatProject(e, root || null);
+            gitPush.push(e, root || null);
             return;
         }
         const trigger = t.closest('[data-git-push-trigger]');
         if (trigger) {
             e.preventDefault();
             e.stopPropagation();
-            openGitPushSubmenu(trigger);
+            gitPush.openSubmenu(trigger);
         }
     }, true);
 
@@ -14369,7 +13995,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             includeRename: hasSession,
             includeDelete: hasSession,
         });
-        refreshGitPushMenuMode(dropdown);
+        gitPush.refreshMenuMode(dropdown);
     }
 
     function toggleChatChromeMenu(forceOpen) {

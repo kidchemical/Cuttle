@@ -20,6 +20,7 @@ node_only = pytest.mark.skipif(
 
 CHAT_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
 CHAT_HTML = Path(__file__).resolve().parents[2] / "web" / "chat_page.html"
+GIT_PUSH_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "git/git_push_report.js"
 
 
 @node_only
@@ -81,3 +82,28 @@ def test_create_new_chat_and_boot_restore_moved_to_owner():
 def test_chat_page_html_loads_busted_script():
     html = CHAT_HTML.read_text(encoding="utf-8")
     assert 'src="/js/chat/chat_page.js?v=' in html
+
+
+def test_git_push_menu_moved_to_owner():
+    """3E pt2 moved the git push menu/action into git_push_report.js
+    (CuttleGitPushReport.create); the page keeps thin call sites."""
+    text = CHAT_JS.read_text(encoding="utf-8")
+    owner = GIT_PUSH_JS.read_text(encoding="utf-8")
+    assert "function create(host) {" in owner
+    assert "function menuHtml(icons) {" in owner
+    assert "function openSubmenu(triggerBtn) {" in owner
+    assert "function setupConfirmModal() {" in owner
+    assert "const gitPush = CuttleGitPushReport.create({" in text
+    assert "gitPush.menuHtml(icons)" in text
+    assert "refreshGitPushMenuMode: gitPush.refreshMenuMode," in text
+    assert "gitPush.openSubmenu(trigger)" in text
+    assert "gitPush.push(e, root || null)" in text
+    assert "gitPush.setupConfirmModal();" in text
+    assert "gitPush.refreshMenuMode(dropdown);" in text
+    # The old page-side implementations are gone (one owner, no duplicates).
+    assert "function gitPushMenuHtml(" not in text
+    assert "function applyGitPushMenuMode(" not in text
+    assert "function refreshGitPushMenuMode(" not in text
+    assert "function pushCurrentChatProject(" not in text
+    assert "function openGitPushSubmenu(" not in text
+    assert "function setupGitPushConfirmModal(" not in text
