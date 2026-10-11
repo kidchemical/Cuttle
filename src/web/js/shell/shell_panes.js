@@ -7,7 +7,116 @@
             win: window, doc: document, fetch, setTimeout, clearTimeout,
             URL, URLSearchParams, AbortController, getSplitColumns, getLiveFrame,
             findColumnIndexForSource, columnState, chatSurfaceKind, broadcastToFrames,
+            getColumnEl, getSplitColumnCount, pauseAllShellPaneStreams,
+            pauseShellFrameStreams, armFrameReveal, stampComposerDraftScope,
+            withCacheBust, attachFrameLoadListener, cancelPendingReveal,
         } = host;
+
+        // Frame creation and soft teardown belong to the pane lifetime. The
+        // composition root supplies its existing transition and layout hooks.
+        function createContentFrame(colIdx) {
+            const frame = doc.createElement('iframe');
+            frame.frameBorder = '0';
+            frame.allowFullscreen = true;
+            frame.allow = 'clipboard-read; clipboard-write';
+            frame.setAttribute('aria-label', 'Cuttle Content');
+            if (colIdx === 0) {
+                frame.id = 'contentFrame';
+                frame.name = 'contentFrame';
+            }
+            return frame;
+        }
+
+        function replaceFrameInPlace(colIdx, page) {
+            const col = getColumnEl(colIdx);
+            if (!col) return null;
+            const mainEl = col.querySelector('.shell-main');
+            if (!mainEl) return null;
+            pauseAllShellPaneStreams();
+            let frame = getLiveFrame(colIdx);
+            if (!frame) {
+                frame = createContentFrame(colIdx);
+                mainEl.appendChild(frame);
+                attachFrameLoadListener(colIdx, frame);
+            }
+            Array.from(mainEl.querySelectorAll('iframe')).forEach((f) => {
+                if (f !== frame) { try { f.remove(); } catch (_) {} }
+            });
+            armFrameReveal(colIdx, frame, mainEl, []);
+            stampComposerDraftScope(frame, colIdx);
+            const target = withCacheBust(page);
+            setTimeout(() => { try { frame.src = target; } catch (_) {} }, 0);
+            return frame;
+        }
+
+        function replaceFrame(colIdx, page) {
+            if (getSplitColumnCount() > 1) return replaceFrameInPlace(colIdx, page);
+            const col = getColumnEl(colIdx);
+            if (!col) return null;
+            const mainEl = col.querySelector('.shell-main');
+            if (!mainEl) return null;
+            const oldFrames = Array.from(mainEl.querySelectorAll('iframe'))
+                .filter((f) => !f.classList.contains('shell-frame-outgoing'));
+            oldFrames.forEach(pauseShellFrameStreams);
+            const newFrame = createContentFrame(colIdx);
+            if (colIdx === 0) oldFrames.forEach((f) => {
+                f.removeAttribute('id'); f.removeAttribute('name');
+            });
+            armFrameReveal(colIdx, newFrame, mainEl, oldFrames);
+            mainEl.appendChild(newFrame);
+            stampComposerDraftScope(newFrame, colIdx);
+            newFrame.src = withCacheBust(page);
+            return newFrame;
+        }
+
+        function parkShellIframes(container) {
+            if (!container) return;
+            Array.from(container.querySelectorAll('iframe')).forEach((frame) => {
+                try { cancelPendingReveal(frame); } catch (_) {}
+                try { pauseShellFrameStreams(frame); } catch (_) {}
+                try {
+                    if (frame.contentDocument !== null) {
+                        frame.contentWindow?.postMessage({ type: 'cuttle-pane-teardown' }, '*');
+                    }
+                } catch (_) {}
+                try { frame.style.display = 'none'; frame.style.pointerEvents = 'none'; } catch (_) {}
+                setTimeout(() => { try { frame.remove(); } catch (_) {} }, 0);
+            });
+        }
+
+        function discardSplitSubtree(container) {
+            if (!container || container.dataset?.splitDiscarded === '1') return;
+            try {
+                container.dataset.splitDiscarded = '1';
+                container.style.display = 'none';
+                container.style.pointerEvents = 'none';
+                container.setAttribute('aria-hidden', 'true');
+                if (container.classList?.contains('split-column')) {
+                    container.dataset.column = `discarded-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                }
+                container.querySelectorAll('.split-column, .split-group').forEach((el) => {
+                    el.dataset.splitDiscarded = '1';
+                    el.style.pointerEvents = 'none';
+                    if (el.classList.contains('split-column')) {
+                        el.dataset.column = `discarded-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                    }
+                });
+            } catch (_) {}
+            try {
+                container.querySelectorAll('iframe').forEach((frame) => {
+                    try { cancelPendingReveal(frame); } catch (_) {}
+                    try {
+                        frame.style.display = 'none';
+                        frame.style.pointerEvents = 'none';
+                        frame.setAttribute('aria-hidden', 'true');
+                    } catch (_) {}
+                    try {
+                        frame.removeAttribute('src');
+                        frame.srcdoc = '<!doctype html><title></title>';
+                    } catch (_) {}
+                });
+            } catch (_) {}
+        }
 
         // Chromium shares ~6 HTTP/1.1 connections per origin across all chat iframes.
         let focusedColumnIdx = 0;
@@ -207,6 +316,7 @@
         }, true);
         window.getOpenPaneSessions = getOpenPaneSessions;
         return { setFocusedColumn, focusedColumnIndex: () => focusedColumnIdx, broadcastUsageLiveWake,
+            createContentFrame, replaceFrameInPlace, replaceFrame, parkShellIframes, discardSplitSubtree,
             registerPaneChatSession, getOpenPaneSessions, registerPaneProject, refreshPendingChangesPath,
             schedulePendingChangesHub, pollPendingChangesHub, pollLiveStatusHub, clearPaneColumn,
             scheduleBroadcastOpenPanes, remapColumns, swapColumns, hasSessions, broadcastFocus: broadcastPaneFocus,

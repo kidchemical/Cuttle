@@ -1257,6 +1257,12 @@ paneController = CuttleShellPanes.create({
     win: window, doc: document, fetch, setTimeout, clearTimeout, URL, URLSearchParams,
     AbortController, getSplitColumns, getLiveFrame, findColumnIndexForSource,
     columnState, chatSurfaceKind, broadcastToFrames, isChatPageFrame,
+    getColumnEl, getSplitColumnCount: () => getSplitColumns().length,
+    pauseAllShellPaneStreams, pauseShellFrameStreams, armFrameReveal,
+    stampComposerDraftScope: (frame, idx) => stampComposerDraftScope(frame, idx),
+    withCacheBust: (page) => withCacheBust(page),
+    attachFrameLoadListener: (idx, frame) => attachFrameLoadListener(idx, frame),
+    cancelPendingReveal,
 });
 
 applyUiAnimationPrefs();
@@ -1418,79 +1424,11 @@ function pauseAllShellPaneStreams() {
  * wedges before paint.
  */
 function replaceFrameInPlace(colIdx, page) {
-    const col = getColumnEl(colIdx);
-    if (!col) return null;
-    const mainEl = col.querySelector('.shell-main');
-    if (!mainEl) return null;
-
-    pauseAllShellPaneStreams();
-
-    let frame = getLiveFrame(colIdx);
-    if (!frame) {
-        frame = document.createElement('iframe');
-        frame.frameBorder = '0';
-        frame.allowFullscreen = true;
-        frame.allow = 'clipboard-read; clipboard-write';
-        frame.setAttribute('aria-label', 'Cuttle Content');
-        if (colIdx === 0) {
-            frame.id = 'contentFrame';
-            frame.name = 'contentFrame';
-        }
-        mainEl.appendChild(frame);
-        attachFrameLoadListener(colIdx, frame);
-    }
-
-    // Drop any leftover stacked frames from older replaceFrame crossfades.
-    Array.from(mainEl.querySelectorAll('iframe')).forEach((f) => {
-        if (f === frame) return;
-        try { f.remove(); } catch (_) {}
-    });
-
-    armFrameReveal(colIdx, frame, mainEl, []);
-    stampComposerDraftScope(frame, colIdx);
-    const target = withCacheBust(page);
-    // Let pause-streams close EventSources before the navigation request.
-    setTimeout(() => {
-        try { frame.src = target; } catch (_) {}
-    }, 0);
-    return frame;
+    return paneController.replaceFrameInPlace(colIdx, page);
 }
 
 function replaceFrame(colIdx, page) {
-    // Split view: never tear down / recreate the content iframe.
-    if (getSplitColumns().length > 1) {
-        return replaceFrameInPlace(colIdx, page);
-    }
-
-    const col = getColumnEl(colIdx);
-    if (!col) return null;
-    const mainEl = col.querySelector('.shell-main');
-    if (!mainEl) return null;
-
-    const oldFrames = Array.from(mainEl.querySelectorAll('iframe')).filter(
-        (f) => !f.classList.contains('shell-frame-outgoing')
-    );
-    oldFrames.forEach(pauseShellFrameStreams);
-
-    const newFrame = document.createElement('iframe');
-    newFrame.frameBorder = '0';
-    newFrame.allowFullscreen = true;
-    newFrame.allow = 'clipboard-read; clipboard-write';
-    newFrame.setAttribute('aria-label', 'Cuttle Content');
-    if (colIdx === 0) {
-        oldFrames.forEach((f) => {
-            f.removeAttribute('id');
-            f.removeAttribute('name');
-        });
-        newFrame.id = 'contentFrame';
-        newFrame.name = 'contentFrame';
-    }
-
-    armFrameReveal(colIdx, newFrame, mainEl, oldFrames);
-    mainEl.appendChild(newFrame);
-    stampComposerDraftScope(newFrame, colIdx);
-    newFrame.src = withCacheBust(page);
-    return newFrame;
+    return paneController.replaceFrame(colIdx, page);
 }
 
 // ── Apply initial state (column 0) ──────────────────────────────
@@ -1522,68 +1460,11 @@ if (col0) {
 }
 
 function parkShellIframes(root) {
-    if (!root) return;
-    // Pause first; avoid about:blank (wedges live chat EventSources on Electron).
-    Array.from(root.querySelectorAll('iframe')).forEach((frame) => {
-        try { cancelPendingReveal(frame); } catch (_) {}
-        try { pauseShellFrameStreams(frame); } catch (_) {}
-        try {
-            // Guard: contentWindow access during load can freeze Chromium.
-            if (frame.contentDocument !== null) {
-                frame.contentWindow?.postMessage({ type: 'cuttle-pane-teardown' }, '*');
-            }
-        } catch (_) {}
-        try {
-            frame.style.display = 'none';
-            frame.style.pointerEvents = 'none';
-        } catch (_) {}
-        const doomed = frame;
-        setTimeout(() => {
-            try { doomed.remove(); } catch (_) {}
-        }, 0);
-    });
+    return paneController.parkShellIframes(root);
 }
 
-/**
- * Tear down a subtree without probing live iframe contentWindows and without
- * destroying a loaded chat document (sync or deferred remove freezes Chromium).
- * Marks the node + descendant panes/groups discarded (excluded from layout
- * counts) and soft-neutralizes iframes via srcdoc. Nodes stay hidden in the DOM.
- */
 function discardSplitSubtree(root) {
-    if (!root || root.dataset?.splitDiscarded === '1') return;
-    try {
-        root.dataset.splitDiscarded = '1';
-        root.style.display = 'none';
-        root.style.pointerEvents = 'none';
-        root.setAttribute('aria-hidden', 'true');
-        // Scrub indices so querySelector/getColumnEl never hits stale stubs.
-        if (root.classList?.contains('split-column')) {
-            root.dataset.column = `discarded-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        }
-        root.querySelectorAll('.split-column, .split-group').forEach((el) => {
-            el.dataset.splitDiscarded = '1';
-            el.style.pointerEvents = 'none';
-            if (el.classList.contains('split-column')) {
-                el.dataset.column = `discarded-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-            }
-        });
-    } catch (_) {}
-    try {
-        root.querySelectorAll('iframe').forEach((frame) => {
-            try { cancelPendingReveal(frame); } catch (_) {}
-            try {
-                frame.style.display = 'none';
-                frame.style.pointerEvents = 'none';
-                frame.setAttribute('aria-hidden', 'true');
-            } catch (_) {}
-            try {
-                // Soft unload — do not frame.remove() / root.remove() (Chrome freeze).
-                frame.removeAttribute('src');
-                frame.srcdoc = '<!doctype html><title></title>';
-            } catch (_) {}
-        });
-    } catch (_) {}
+    return paneController.discardSplitSubtree(root);
 }
 
 // ── Close a leaf pane (never the last remaining leaf) ───────────
@@ -1908,11 +1789,9 @@ function createSplitLeafColumn(page, leafId) {
     if (mainEl) {
         // Ensure main is empty before attaching a fresh frame.
         while (mainEl.firstChild) mainEl.removeChild(mainEl.firstChild);
-        frame = document.createElement('iframe');
-        frame.frameBorder = '0';
-        frame.allowFullscreen = true;
-        frame.allow = 'clipboard-read; clipboard-write';
-        frame.setAttribute('aria-label', 'Cuttle Content');
+        frame = paneController.createContentFrame(
+            parseInt(clone.dataset.column, 10)
+        );
         mainEl.appendChild(frame);
     }
     ensurePaneDropOverlay(clone);

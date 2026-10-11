@@ -16,13 +16,25 @@ def test_navigation_preserves_page_url_and_history_contracts():
 
 def test_frame_lifetime_contracts_are_characterized():
     source = (SHELL / "app_shell.js").read_text(encoding="utf-8")
-    assert "function replaceFrameInPlace(colIdx, page)" in source
-    assert "if (getSplitColumns().length > 1)" in source
+    owner = (SHELL / "shell_panes.js").read_text(encoding="utf-8")
+    assert "function replaceFrameInPlace(colIdx, page)" in owner
+    assert "if (getSplitColumnCount() > 1)" in owner
     assert "type: 'cuttle-pause-streams'" in source
-    assert "type: 'cuttle-pane-teardown'" in source
-    assert "frame.srcdoc = '<!doctype html><title></title>'" in source
-    assert "frameEl.dataset.shellLoadBound = '1'" in source
+    assert "type: 'cuttle-pane-teardown'" in owner
+    assert "frame.srcdoc = '<!doctype html><title></title>'" in owner
+    assert "paneController.replaceFrame(colIdx, page)" in source
     assert "e.data?.type === 'cuttle-page-ready'" in source
+
+
+def test_frame_creation_and_teardown_are_owned_by_pane_controller():
+    source = (SHELL / "app_shell.js").read_text(encoding="utf-8")
+    owner = (SHELL / "shell_panes.js").read_text(encoding="utf-8")
+    assert "function createContentFrame(colIdx)" in owner
+    assert "function parkShellIframes(container)" in owner
+    assert "function discardSplitSubtree(container)" in owner
+    assert "return paneController.parkShellIframes(root)" in source
+    assert "return paneController.discardSplitSubtree(root)" in source
+    assert "paneController.createContentFrame(" in source
 
 
 def test_cross_pane_message_contracts_are_characterized():
