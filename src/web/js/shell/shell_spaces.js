@@ -1578,6 +1578,7 @@
         // Window contracts the shell/Electron consume by bare name.
         win.isSpaceCtxOpen = isSpaceCtxOpen;
         win.switchSpace = switchSpace;
+        win.addSpace = addSpace;
 
         return {
             state: spacesState,
