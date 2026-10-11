@@ -7288,6 +7288,7 @@
                 fetchWithTimeout: fetchWithTimeout,
                 sessionMessagesUrl: sessionMessagesUrl,
                 updateSessionUsageSummary: updateSessionUsageSummary,
+                refreshSessionUsageSummary: refreshSessionUsageSummary,
                 windowChatHistoryMessages: windowChatHistoryMessages,
                 annotateMessageProjects: annotateMessageProjects,
                 reconcileChatProject: reconcileChatProject,
@@ -7445,8 +7446,12 @@
         const enabled = localStorage.getItem('cuttleShowSessionUsageEstimate') === 'true';
         panel.hidden = !enabled;
         if (!enabled) return;
-        const list = Array.isArray(entries) ? entries : [];
-        const normalized = list.map((entry) => CuttleChatUsage.normalize(entry && entry.usage, entry && entry.metadata)).filter(Boolean);
+        // Missing data is not evidence of an empty session.
+        if (!Array.isArray(entries)) {
+            totals.textContent = entries === null ? 'Session usage unavailable' : 'Loading session usage…';
+            return;
+        }
+        const normalized = entries.map((entry) => CuttleChatUsage.normalize(entry && entry.usage, entry && entry.metadata)).filter(Boolean);
         const sum = CuttleChatUsage.sum(normalized);
         if (!sum) {
             totals.textContent = 'No token usage recorded for this session';
@@ -7462,15 +7467,22 @@
             updateSessionUsageSummary([]);
             return;
         }
+        const navSeq = session.navSeq();
+        const includeSubagents = localStorage.getItem('cuttleSessionUsageIncludeSubagents');
+        const isCurrent = () => session.navSeq() === navSeq && String(session.current()) === String(id)
+            && localStorage.getItem('cuttleSessionUsageIncludeSubagents') === includeSubagents;
+        updateSessionUsageSummary();
         try {
             const response = await fetchWithTimeout(
                 sessionMessagesUrl(toAuthDbSessionId(id), { limit: 1 }),
                 { credentials: 'include', cache: 'no-store' }, 12000
             );
-            if (!response.ok) return;
+            if (!response.ok) throw new Error('Usage request failed');
             const data = await response.json();
-            if (String(session.current()) === String(id)) updateSessionUsageSummary(data.usage_summary);
-        } catch (_) {}
+            if (isCurrent()) updateSessionUsageSummary(Array.isArray(data.usage_summary) ? data.usage_summary : null);
+        } catch (_) {
+            if (isCurrent()) updateSessionUsageSummary(null);
+        }
     }
 
     if (typeof window !== 'undefined' && window.addEventListener) {

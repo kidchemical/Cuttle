@@ -251,8 +251,17 @@ def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
                 # against that same owner rather than the manifest snapshot.
                 if target not in catalogs and (model or effort):
                     rows, _source = load_agent_catalog(target, manifest.models)
-                    catalogs[target] = (catalog_model_ids(rows), catalog_model_efforts(rows))
-                model_ids, live_efforts = catalogs.get(target, (manifest.models, {}))
+                    catalogs[target] = (rows, catalog_model_ids(rows), catalog_model_efforts(rows))
+                rows, model_ids, live_efforts = catalogs.get(target, ([], manifest.models, {}))
+                refreshed = False
+                # A dropdown can hold an id from the live catalog that became
+                # available after the last catalog refresh. Refresh once before
+                # rejecting it so saves follow the list Settings actually uses.
+                if model and manifest.supports_model_pin and model not in model_ids:
+                    rows, _source = load_agent_catalog(target, manifest.models, refresh=True)
+                    catalogs[target] = (rows, catalog_model_ids(rows), catalog_model_efforts(rows))
+                    model_ids, live_efforts = catalogs[target][1], catalogs[target][2]
+                    refreshed = True
                 if model and (not manifest.supports_model_pin or model not in model_ids):
                     return False, f'Unsupported model for {target}', {}
                 if effort:
@@ -263,6 +272,17 @@ def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
                         manifest.efforts,
                         manifest.model_efforts,
                     )
+                    if (not live_supported or effort not in valid_efforts) and not refreshed:
+                        rows, _source = load_agent_catalog(target, manifest.models, refresh=True)
+                        catalogs[target] = (rows, catalog_model_ids(rows), catalog_model_efforts(rows))
+                        live_efforts = catalogs[target][2]
+                        live_supported, valid_efforts = effective_effort_options(
+                            live_efforts,
+                            model,
+                            manifest.supports_effort,
+                            manifest.efforts,
+                            manifest.model_efforts,
+                        )
                     if not live_supported or effort not in valid_efforts:
                         return False, f'Unsupported effort for {target}', {}
             out[aid] = {'agent': target, 'model': model, 'effort': effort}

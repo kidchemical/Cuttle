@@ -18,6 +18,7 @@
         if (root.CuttleSearchableSelect && select) {
             root.CuttleSearchableSelect.enhance(select, {
                 label: (select.getAttribute && select.getAttribute('aria-label')) || 'Model',
+                floating: true,
             });
         }
         let rows = [], ticket = 0, current = {}, effortModel = '', efforts = {};

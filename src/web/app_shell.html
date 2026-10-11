@@ -8,7 +8,7 @@
     <title>Cuttle</title>
     <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
     <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
-    <link rel="stylesheet" href="/css/app_shell.css?v=20261011updateSpinner">
+    <link rel="stylesheet" href="/css/app_shell.css?v=20261011sharedModal1">
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
     <link rel="stylesheet" href="/css/video_background.css?v=20260927blendTarget">
     <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
@@ -382,13 +382,15 @@
     </section>
 </div>
 
-<div class="cuttle-modal" id="cuttleRestartModal" hidden>
-    <section class="cuttle-modal-card" role="dialog" aria-modal="true" aria-labelledby="cuttleRestartTitle">
-        <h2 id="cuttleRestartTitle">Update ready</h2>
-        <p class="cuttle-modal-text">Cuttle updated to <strong data-restart-version>the latest</strong>. Restart Cuttle now to apply it, or keep working and restart later.</p>
-        <div class="cuttle-modal-actions">
-            <button type="button" class="control-button btn-info" data-restart-now>Restart now</button>
-            <button type="button" class="control-button" data-restart-later>Later</button>
+<div class="auth-modal-overlay" id="cuttleRestartModal" hidden role="dialog" aria-modal="true" aria-labelledby="cuttleRestartTitle" aria-describedby="cuttleRestartDescription">
+    <section class="auth-modal update-restart-modal">
+        <div class="auth-modal-header">
+            <h2 class="auth-modal-title" id="cuttleRestartTitle">Update ready</h2>
+            <p class="auth-modal-subtitle" id="cuttleRestartDescription">Cuttle updated to <strong data-restart-version>the latest</strong>. Restart now to apply it, or keep working and restart later.</p>
+        </div>
+        <div class="logout-confirm-actions">
+            <button type="button" class="logout-confirm-btn logout-confirm-submit" data-restart-now>Restart now</button>
+            <button type="button" class="logout-confirm-btn logout-confirm-cancel" data-restart-later>Later</button>
         </div>
     </section>
 </div>
@@ -399,6 +401,7 @@
 <script src="/js/media/youtube_id.js"></script>
 <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
 <script src="/js/shared/auth.js?v=20261008sync"></script>
+<script src="/js/shared/modal.js?v=20261011modal1"></script>
 <script src="/js/shell/desktop_update_policy.js?v=20260819role"></script>
 <script src="/js/chat/chat_find.js?v=20260819find"></script>
 <script src="/js/spaces/spaces_state.js?v=20260930spaces1"></script>
@@ -412,8 +415,8 @@
 <script src="/js/achievements/celebrate.js?v=20261003vfx1"></script>
 <script src="/js/achievements/achievements.js?v=20261003ach1"></script>
 <script src="/js/shell/whats_new.js?v=20261008whatsNew"></script>
-<script src="/js/shell/account_panel.js?v=20261008acct"></script>
-<script src="/js/shell/shell_electron.js?v=20261011shell5f"></script>
+<script src="/js/shell/account_panel.js?v=20261011sharedModal1"></script>
+<script src="/js/shell/shell_electron.js?v=20261011sharedModal1"></script>
 <script src="/js/shell/shell_mobile.js?v=20261011shell5f"></script>
 <script src="/js/shell/shell_panes.js?v=20261011pane5b"></script>
 <script src="/js/shell/shell_spaces.js?v=20261011spaces5c"></script>

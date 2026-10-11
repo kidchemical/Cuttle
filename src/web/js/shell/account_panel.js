@@ -144,10 +144,17 @@
             return document.getElementById('logoutConfirmModal');
         }
 
+        function modalController() {
+            const modal = getModal();
+            return root.CuttleModal ? root.CuttleModal.create(modal) : null;
+        }
+
         function close() {
             const modal = getModal();
             if (!modal) return;
-            modal.classList.remove('active');
+            const controller = modalController();
+            if (controller) controller.close();
+            else modal.classList.remove('active');
             // Drop credential fields from the DOM when the panel closes.
             clearProfileForms();
             const submit = document.getElementById('logoutConfirmSubmit');
@@ -224,7 +231,9 @@
                 statusEl.textContent = linked ? 'Google linked — avatar syncs to this account.' : '';
             }
 
-            modal.classList.add('active');
+            const controller = modalController();
+            if (controller) controller.open();
+            else modal.classList.add('active');
             const cancel = document.getElementById('logoutConfirmCancel');
             if (cancel) cancel.focus();
         }

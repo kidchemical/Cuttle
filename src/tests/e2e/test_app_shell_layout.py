@@ -248,6 +248,44 @@ def _assert_blocked_api_free(blocked):
         assert ":8080" not in url, f"live Flask touched: {url}"
 
 
+def test_update_restart_popup_uses_shared_account_modal_surface(browser, static_server):
+    world = ShellWorld()
+    context, page, errors, blocked = _open(browser, static_server, world)
+    try:
+        _load_shell(page, static_server)
+        surface = page.evaluate("""() => {
+            const account = document.getElementById('logoutConfirmModal');
+            const restart = document.getElementById('cuttleRestartModal');
+            window.CuttleModal.create(account).open();
+            const restartController = window.CuttleModal.create(restart);
+            restartController.open();
+            const result = {
+                accountCard: account.querySelector('.auth-modal'),
+                restartCard: restart.querySelector('.auth-modal'),
+                accountOverlay: getComputedStyle(account).backgroundColor,
+                restartOverlay: getComputedStyle(restart).backgroundColor,
+                restartVisible: restartController.isOpen(),
+                sharedClass: account.classList.contains('auth-modal-overlay')
+                    && restart.classList.contains('auth-modal-overlay'),
+                buttons: [...restart.querySelectorAll('button')].map(b => b.className),
+            };
+            result.accountBackground = getComputedStyle(result.accountCard).backgroundImage;
+            result.restartBackground = getComputedStyle(result.restartCard).backgroundImage;
+            restartController.close();
+            result.closed = restart.hidden && !restart.classList.contains('active');
+            return result;
+        }""")
+        assert surface['sharedClass']
+        assert surface['accountOverlay'] == surface['restartOverlay']
+        assert surface['accountBackground'] == surface['restartBackground']
+        assert surface['restartVisible'] and surface['closed']
+        assert 'logout-confirm-submit' in surface['buttons'][0]
+        assert not errors
+        _assert_blocked_api_free(blocked)
+    finally:
+        context.close()
+
+
 def test_nested_split_restore_preserves_order_identity(browser, static_server):
     """Seeded nested v2 layout restores leaf order, ids, flex, orientation."""
     world = ShellWorld()
