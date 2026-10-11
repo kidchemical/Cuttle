@@ -22,6 +22,15 @@
         container.scrollLeft = left;
     }
 
+    function entrySearchMatchRank(entry) {
+        // Lower sorts first: title matches above content-only matches.
+        const s = (entry && (entry.serverSession || entry.session)) || {};
+        const m = String((entry && entry.searchMatch) || s.match || '').toLowerCase();
+        if (m === 'title') return 0;
+        if (m === 'content') return 1;
+        return 2;
+    }
+
     function paint(container, html, enhance) {
         // Compare source markup, since tooltips and live indicators modify DOM.
         if (rendered.get(container) === html) {
@@ -35,5 +44,5 @@
         });
     }
 
-    root.CuttleChatHistoryView = { paint, preserveScroll };
+    root.CuttleChatHistoryView = { paint, preserveScroll, entrySearchMatchRank };
 })(globalThis);
