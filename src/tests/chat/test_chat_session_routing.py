@@ -96,7 +96,10 @@ def test_client_pins_in_flight_turn_to_bound_session():
     assert "isViewingSession" in src
     # Recovery after stream detach must use the origin session, not currentSessionId.
     assert "const pendingSid = turnSessionId() || requestBody.session_id" in src
-    assert "if (!canPaintTurnHere())" in src
+    # Turn identity is owned by the finalize disposition (chat_pending_result);
+    # the page feeds it canPaintTurnHere() and applies the 'not-here' effect.
+    assert "canPaint: canPaintTurnHere()" in src
+    assert "if (finalizeDisp.kind === 'not-here')" in src
     # Hub/status idle recovery must not treat another chat's isLoading as this one.
     assert "isLoadingThisSession()" in src
     assert "never append it to the" in src or "never append it to the open" in src

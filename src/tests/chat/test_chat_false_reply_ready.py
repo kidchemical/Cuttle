@@ -76,8 +76,9 @@ def test_pending_miss_skips_painted_after_nav():
 
 def test_background_notify_requires_nonempty_body():
     src = _src()
-    # The !canPaintTurnHere branch must require readyBody, not success||trim.
-    idx = src.find("if (!canPaintTurnHere())")
+    # The not-here (can't paint here) branch must require readyBody, not
+    # success||trim. The branch choice is owned by chat_pending_result.
+    idx = src.find("if (finalizeDisp.kind === 'not-here') {")
     assert idx >= 0
     window = src[idx : idx + 1200]
     assert "readyBody" in window

@@ -11263,7 +11263,29 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 boundSessionId = canonicalizeChatSessionId(data.session_id);
             }
 
-            if (!canPaintTurnHere()) {
+            // Finalize disposition is owned by chat_pending_result.js — the
+            // page gathers the snapshot (turn identity / cancellation / busy)
+            // and applies the matching effect below. Branch order lives in
+            // the owner; do not re-derive it here.
+            const finalizeDisp = CuttleChatPendingResult.classifyTurnFinalize({
+                canPaint: canPaintTurnHere(),
+                stopped: stopState.userStopped,
+                cancelledText: isCancelledAgentText(data && (data.response || data.output)),
+                busy: !!(data && data.busy),
+                controlLane: controlLane,
+                noReply: !!(data && data.no_reply),
+                success: !!(data && data.success),
+                hasResponse: !!(data && String(data.response || data.output || '').trim()),
+                responseTruthy: !!(data && data.response),
+                uiSystem: !!(data && data.ui === 'system'),
+                hasNotice: !!(data && data.notice),
+                preferredModelSet: !!(
+                    data
+                    && data.preferred_model
+                    && /Model set to/i.test(String(data.response || data.output || ''))
+                ),
+            });
+            if (finalizeDisp.kind === 'not-here') {
                 // Switched chats while this turn was in flight. Reply is already
                 // on the server under the origin session — never append it to the
                 // open transcript (refresh used to "fix" the phantom bubble).
@@ -11296,27 +11318,15 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         });
                     }
                 }
-            } else if (stopState.userStopped) {
+            } else if (finalizeDisp.kind === 'cancelled') {
                 consumeCancelledAgentReply(data && (data.response || data.output));
                 // Stop already cleaned UI; don't append a partial/error reply.
-            } else if (consumeCancelledAgentReply(data && (data.response || data.output))) {
-                // Late cancel confirmation without a local Stop click (other pane / dropped stream).
-            } else if (
-                !data.busy
-                && (
-                    data.ui === 'system'
-                    || data.notice
-                    || (
-                        data.preferred_model
-                        && /Model set to/i.test(String(data.response || data.output || ''))
-                    )
-                )
-            ) {
+            } else if (finalizeDisp.kind === 'system-notice') {
                 const notice = String(data.notice || '').trim()
                     || ('⚡ Model: ' + preferredModelLabel(data.preferred_model));
                 if (notice) addSystemMessage(notice, { persist: true, kind: 'model-change' });
                 if (data.session_id) adoptChatSessionId(data.session_id);
-            } else if (data.busy && !controlLane) {
+            } else if (finalizeDisp.kind === 'busy-queue') {
                 // Previous reply is still generating — queue this turn as a
                 // follow-up instead of faking an assistant bubble or racing again.
                 skipFollowupDrain = true;
@@ -11352,7 +11362,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         status: 'Still working on your previous message…',
                     });
                 });
-            } else if (data.no_reply || (data.success && !(String(data.response || data.output || '').trim()))) {
+            } else if (finalizeDisp.kind === 'wait-sync') {
                 // Detached stream with no parked payload yet — don't fake
                 // "No response received." Message sync / pending poll will
                 // attach the real reply when the worker finishes.
@@ -11364,7 +11374,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         updateRemoteWaitingFromMessages([], live);
                     }
                 }).catch(() => {});
-            } else if (data.success && data.response) {
+            } else if (finalizeDisp.kind === 'assistant') {
                 // Canonical supervised bubble: update in place; never append a
                 // second worker/result participant for this task.
                 const CS = window.CuttleSupervised;

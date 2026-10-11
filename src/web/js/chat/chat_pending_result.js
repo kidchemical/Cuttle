@@ -4,6 +4,7 @@
    Owner: the post-send result lifecycle as explicit decisions plus
    injected-effect async orchestration —
      * SSE event classification (status/session/busy/query/response)
+     * turn finalize disposition (which branch a finished turn takes)
      * pending-result waiter loop (collectPendingResult)
      * history recovery matching (recoverChatResult[WithRetries])
      * parked-reply consume ack
@@ -73,6 +74,52 @@
         }
         if (ev.type === 'response') return { kind: 'response' };
         return { kind: 'ignore' };
+    }
+
+    // ---------- Turn finalize disposition (pure) ----------
+
+    /**
+     * Decide what a finished turn does with its server result. This is the
+     * one place the finalize branch order lives (moved verbatim from the
+     * processMessage if/else cascade); the page gathers the snapshot and
+     * applies the matching effect. Branch order is load-bearing:
+     *  1. a stale/nav-away turn never paints here (turn identity),
+     *  2. user Stop or a [CANCELLED] payload is terminal (cancellation),
+     *  3. a system/model notice,
+     *  4. a still-busy session queues the turn as a follow-up,
+     *  5. a detached/empty reply waits for message-sync recovery,
+     *  6. a success reply paints,
+     *  7. anything else is an error.
+     * input: {
+     *   canPaint      — CuttleTurnGuard.canPaintHere for this turn,
+     *   stopped       — CuttleStopState userStopped,
+     *   cancelledText — isCancelledAgentText(response || output),
+     *   busy          — data.busy,
+     *   controlLane   — this send is a control-lane command,
+     *   noReply       — data.no_reply,
+     *   success       — data.success,
+     *   hasResponse   — String(response || output).trim() is non-empty,
+     *   responseTruthy— data.response is truthy,
+     *   uiSystem      — data.ui === 'system',
+     *   hasNotice     — data.notice is set,
+     *   preferredModelSet — data.preferred_model + a "Model set to" reply,
+     * }.
+     * Returns { kind: 'not-here' | 'cancelled' | 'system-notice' |
+     *  'busy-queue' | 'wait-sync' | 'assistant' | 'error' }.
+     */
+    function classifyTurnFinalize(input) {
+        input = input || {};
+        if (!input.canPaint) return { kind: 'not-here' };
+        if (input.stopped || input.cancelledText) return { kind: 'cancelled' };
+        if (!input.busy && (input.uiSystem || input.hasNotice || input.preferredModelSet)) {
+            return { kind: 'system-notice' };
+        }
+        if (input.busy && !input.controlLane) return { kind: 'busy-queue' };
+        if (input.noReply || (input.success && !input.hasResponse)) {
+            return { kind: 'wait-sync' };
+        }
+        if (input.success && input.responseTruthy) return { kind: 'assistant' };
+        return { kind: 'error' };
     }
 
     // ---------- Pending-result waiter ----------
@@ -619,6 +666,7 @@
         DETACHED_WAIT_MS: DETACHED_WAIT_MS,
         DEFAULT_POLL_MS: DEFAULT_POLL_MS,
         classifyStreamEvent: classifyStreamEvent,
+        classifyTurnFinalize: classifyTurnFinalize,
         waitForPendingResult: waitForPendingResult,
         findRecoverableAssistant: findRecoverableAssistant,
         recoverChatResult: recoverChatResult,

@@ -436,6 +436,24 @@ const mkR = (o) => {
   out.restartTimeout = [await PR.waitForServerRecovery(
     { waitMs: 3000, pollMs: 1000 }, deps), log];
 }
+// ---------- turn finalize disposition (pure branch order) ----------
+const fin = (o) => PR.classifyTurnFinalize(o);
+out.finNotHere = fin({ canPaint: false, success: true, responseTruthy: true, hasResponse: true });
+out.finNotHereBeatsStop = fin({ canPaint: false, stopped: true });
+out.finStopped = fin({ canPaint: true, stopped: true, success: true, responseTruthy: true, hasResponse: true });
+out.finCancelledLate = fin({ canPaint: true, cancelledText: true });
+out.finStoppedBeatsNotice = fin({ canPaint: true, stopped: true, hasNotice: true });
+out.finSystemUi = fin({ canPaint: true, success: true, hasResponse: true, responseTruthy: true, uiSystem: true });
+out.finSystemNotice = fin({ canPaint: true, success: true, hasResponse: true, responseTruthy: true, hasNotice: true });
+out.finSystemPreferred = fin({ canPaint: true, success: true, hasResponse: true, responseTruthy: true, preferredModelSet: true });
+out.finBusy = fin({ canPaint: true, busy: true, success: true, hasResponse: true, responseTruthy: true });
+out.finBusyControl = fin({ canPaint: true, busy: true, controlLane: true, success: true, hasResponse: true, responseTruthy: true });
+out.finNoReply = fin({ canPaint: true, success: true, noReply: true });
+out.finEmptySuccess = fin({ canPaint: true, success: true, hasResponse: false });
+out.finAssistant = fin({ canPaint: true, success: true, hasResponse: true, responseTruthy: true });
+out.finError = fin({ canPaint: true, success: false });
+out.finErrorControl = fin({ canPaint: true, busy: true, controlLane: true, success: false });
+out.finNull = fin(null);
 process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error('HARNESS-ERROR', e); process.exit(2); });
 """
@@ -571,6 +589,31 @@ def test_stream_event_classification():
 
 
 @node_only
+def test_turn_finalize_disposition():
+    res = _run()
+    # Branch order is load-bearing: canPaint first, then cancel, then
+    # system-notice, busy, wait-sync, assistant, else error.
+    assert res["finNotHere"] == {"kind": "not-here"}
+    assert res["finNotHereBeatsStop"] == {"kind": "not-here"}
+    assert res["finStopped"] == {"kind": "cancelled"}
+    assert res["finCancelledLate"] == {"kind": "cancelled"}
+    assert res["finStoppedBeatsNotice"] == {"kind": "cancelled"}
+    assert res["finSystemUi"] == {"kind": "system-notice"}
+    assert res["finSystemNotice"] == {"kind": "system-notice"}
+    assert res["finSystemPreferred"] == {"kind": "system-notice"}
+    assert res["finBusy"] == {"kind": "busy-queue"}
+    # busy + control lane skips the follow-up queue.
+    assert res["finBusyControl"] == {"kind": "assistant"}
+    assert res["finNoReply"] == {"kind": "wait-sync"}
+    assert res["finEmptySuccess"] == {"kind": "wait-sync"}
+    assert res["finAssistant"] == {"kind": "assistant"}
+    assert res["finError"] == {"kind": "error"}
+    assert res["finErrorControl"] == {"kind": "error"}
+    # Defensive: a missing snapshot defaults canPaint false.
+    assert res["finNull"] == {"kind": "not-here"}
+
+
+@node_only
 def test_detach_settle_paths():
     res = _run()
     assert res["settleHit"][0] == {"outcome": "data", "data": {"success": True, "response": "w"}}
@@ -640,6 +683,7 @@ def test_page_delegates_lifecycle_to_owner():
     src = CHAT_PAGE_JS.read_text(encoding="utf-8")
     for call in [
         "CuttleChatPendingResult.classifyStreamEvent(",
+        "CuttleChatPendingResult.classifyTurnFinalize(",
         "CuttleChatPendingResult.waitForPendingResult(",
         "CuttleChatPendingResult.recoverChatResult(",
         "CuttleChatPendingResult.recoverChatResultWithRetries(",
@@ -663,6 +707,7 @@ def test_page_delegates_lifecycle_to_owner():
         "pending-miss-nav",
         "Flask restart complete (",
         "Wait for it to finish, or stop it first.",
+        "} else if (data.success && data.response) {",
     ]:
         assert gone not in src, f"page still owns {gone}"
     html = CHAT_PAGE_HTML.read_text(encoding="utf-8")
