@@ -421,6 +421,14 @@
     // Branch shown on the segmented project chip (star | name | branch).
     // Cache + fetch live in chat_chip_config.js (branchFor / refreshBranch).
     function currentProjectBranch() {
+        if (currentCheckoutUid) {
+            const liveBranch = currentCheckoutPath && CuttleChipConfig.branchFor(currentCheckoutPath);
+            if (liveBranch) return liveBranch;
+            const branch = window.CuttleChatWorktrees
+                && window.CuttleChatWorktrees.branchForUid(currentCheckoutUid);
+            if (branch) return branch;
+            if (!currentCheckoutPath) return '';
+        }
         return CuttleChipConfig.branchFor(currentProjectPathKey());
     }
 
@@ -3868,7 +3876,7 @@
         opts = opts || {};
         if (!proj || !(proj.name || proj.path)) return '';
         const safe = escapeHtmlInline(proj.name || 'Project');
-        const pathBit = proj.path || proj.name || '';
+        const pathBit = (opts.composer && effectiveGitPath()) || proj.path || proj.name || '';
         const starred = isProjectStarred(proj);
         const showBranch = !!opts.composer || !!opts.header || !!opts.history;
         const worktreeChip = opts.worktree !== undefined
@@ -3896,7 +3904,7 @@
             ? '<span class="slash-chip-seg slash-chip-seg--branch" title="' +
               escapeHtmlInline(branch).replace(/"/g, '&quot;') +
               '">' +
-              (worktreeChip ? '\uD83C\uDF3F ' : '') +
+              (worktreeChip ? '<span class="history-worktree-mark" aria-hidden="true">\uD83C\uDF3F </span>' : '') +
               escapeHtmlInline(branch) +
               '</span>'
             : '';
@@ -4313,7 +4321,11 @@
 
     // Probe the worktrees feature once (server 404s it when disabled) so the
     // composer modal can show the Local/Worktree selector when available.
-    try { if (window.CuttleChatWorktrees) window.CuttleChatWorktrees.probe(); } catch (_) {}
+    try {
+        if (window.CuttleChatWorktrees) {
+            window.CuttleChatWorktrees.probe().then(() => reconcileChatProject());
+        }
+    } catch (_) {}
 
     function applyStickyAgentCommand(entry) {
         const chip = {
@@ -5223,13 +5235,15 @@
         });
 
         chips = normalizeAgentSlashChips(chips, sessionId);
+        const agentChipIndexes = chips.map((c, i) => composerChipAgentId(c) ? i : -1).filter((i) => i >= 0);
+        const lastAgentChipIndex = agentChipIndexes.length ? agentChipIndexes[agentChipIndexes.length - 1] : -1;
         const chipsHtml = chips.length
             ? ('<span class="slash-chips-inline">'
-                + chips.map((c) => slashCommandChipHistoryHtml(
+                + chips.map((c, i) => '<span class="history-agent-chip' + (composerChipAgentId(c) ? ' is-agent-chip' : '') + (i === lastAgentChipIndex ? ' is-last-agent-chip' : '') + '">' + slashCommandChipHistoryHtml(
                     c.label,
                     c.meta || c.prefix || c.label,
                     c.category
-                )).join('')
+                ) + '</span>').join('')
                 + '</span>')
             : '';
         // A name that was nothing but slash tokens already shows as chips.
@@ -6322,10 +6336,12 @@
         // Gather session inputs (chat-page owns all session IO); the priority
         // chain itself lives in chat_project.js (pure over explicit inputs).
         let serverProj = null;
+        let serverSession = null;
         let mergedPrefs = null;
         let stored = null;
         if (session.current()) {
-            serverProj = projectFieldsFromServerSession(findAuthServerSession(session.current()));
+            serverSession = findAuthServerSession(session.current());
+            serverProj = projectFieldsFromServerSession(serverSession);
             const prefs = getSessionPrefs(session.current());
             const barePrefs = getSessionPrefs(toAuthDbSessionId(session.current()));
             mergedPrefs = Object.assign({}, barePrefs || {}, prefs || {});
@@ -6348,18 +6364,18 @@
         const proj = decided.proj;
         const hadStored = decided.hadStored;
         currentProject = proj || null;
-        reportProjectToShell(effectiveGitPath());
         // Restore the chat's bound worktree checkout (server row, then prefs).
         // An unsaved new chat has no session row yet: keep the in-memory pick
         // instead of clearing it, or the chip snaps back to the primary branch.
         if (session.current()) {
-            const storedCheckout = (serverProj && serverProj.checkoutUid)
-                || (mergedPrefs && mergedPrefs.checkoutUid)
-                || (stored && stored.checkoutUid) || '';
-            currentCheckoutUid = String(storedCheckout || '').trim();
-            currentCheckoutPath = String((mergedPrefs && mergedPrefs.checkoutPath)
-                || (stored && stored.checkoutPath) || '').trim();
+            const checkout = CuttleChatProject.resolveCheckoutBinding({
+                serverSession, prefs: mergedPrefs, stored,
+                checkoutForUid: window.CuttleChatWorktrees && window.CuttleChatWorktrees.checkoutForUid,
+            });
+            currentCheckoutUid = checkout.uid;
+            currentCheckoutPath = checkout.path;
         }
+        reportProjectToShell(effectiveGitPath());
         // Stamp the default onto prefs so history grouping matches the cwd chip
         // (auth sessions do not store project_id on the server).
         if (session.current() && currentProject && !hadStored
@@ -6574,6 +6590,51 @@
     }
     
     // Chat history panel management
+    function setupHistoryDisplayFilters() {
+        const button = document.getElementById('chatHistoryFilterButton');
+        const popover = document.getElementById('chatHistoryDisplayFilters');
+        if (!button || !popover) return;
+        const key = 'chatHistoryDisplayFilters';
+        const defaults = { project: true, worktree: true, branch: true, agent: true, allAgents: false };
+        let prefs = defaults;
+        try { prefs = Object.assign({}, defaults, JSON.parse(localStorage.getItem(key) || '{}')); } catch (_) {}
+        const apply = () => {
+            document.body.classList.toggle('history-hide-project', !prefs.project);
+            document.body.classList.toggle('history-hide-worktree', !prefs.worktree);
+            document.body.classList.toggle('history-hide-branch', !prefs.branch);
+            document.body.classList.toggle('history-hide-agents', !prefs.agent);
+            document.body.classList.toggle('history-last-agent-only', prefs.agent && !prefs.allAgents);
+            popover.querySelectorAll('[data-history-display-pref]').forEach((input) => {
+                input.checked = !!prefs[input.dataset.historyDisplayPref];
+            });
+        };
+        apply();
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            popover.hidden = !popover.hidden;
+            button.setAttribute('aria-expanded', popover.hidden ? 'false' : 'true');
+        });
+        popover.addEventListener('click', (event) => event.stopPropagation());
+        popover.addEventListener('change', (event) => {
+            const input = event.target.closest('[data-history-display-pref]');
+            if (!input) return;
+            prefs[input.dataset.historyDisplayPref] = input.checked;
+            try { localStorage.setItem(key, JSON.stringify(prefs)); } catch (_) {}
+            apply();
+        });
+        document.addEventListener('click', (event) => {
+            if (popover.hidden || popover.contains(event.target) || button.contains(event.target)) return;
+            popover.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+        });
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape' || popover.hidden) return;
+            popover.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+            button.focus();
+        });
+    }
+
     function getChatHistoryPanel() {
         return document.getElementById('chatHistoryPanel');
     }
@@ -12869,6 +12930,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             historyScroll.addEventListener('scroll', function () { historyPanel.closeMenu(); }, { passive: true });
         }
         historyPanel.setupModals();
+        setupHistoryDisplayFilters();
         gitPush.setupConfirmModal();
 
         // Cross-device: refresh open session when tab becomes visible / focused

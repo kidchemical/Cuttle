@@ -211,12 +211,16 @@ def self_update_worker():
     target = str(data.get("target") or data.get("target_worker_id") or data.get("worker_id") or "").strip()
     if not target:
         return jsonify({"success": False, "error": "target required"}), 400
+    # Interactive (titlebar) updates defer the restart so the client can ask;
+    # programmatic host->worker updates auto-restart as before.
+    defer_restart = bool(data.get("defer_restart"))
     result = plat.submit_self_update(
         target_worker_id=target,
         repo=str(data.get("repo") or "").strip(),
-        restart_electron=not bool(data.get("no_electron")),
-        restart_daemon=not bool(data.get("no_daemon")),
+        restart_electron=not bool(data.get("no_electron")) and not defer_restart,
+        restart_daemon=not bool(data.get("no_daemon")) and not defer_restart,
         submitted_by=str(data.get("submitted_by") or "jobs-ui").strip() or "jobs-ui",
+        update_source=str(data.get("update_source") or "official").strip() or "official",
     )
     code = 200 if result.get("success") else 400
     return jsonify(result), code

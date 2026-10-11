@@ -56,31 +56,33 @@ def open_settings(browser, static_server, world, width=1280):
     return page
 
 
-def test_default_agent_saves_clears_and_rolls_back(browser, static_server):
+def test_default_agent_button_saves_and_failed_save_keeps_default_unset(browser, static_server):
     world = AgentWorld()
+    world.prefixes = []
     page = open_settings(browser, static_server, world)
     try:
-        select = page.locator("#defaultAgentSelect")
-        expect(select).to_be_enabled()
-        expect(select).to_have_value("/alpha ")
-        assert select.locator('option[value="/missing "]').evaluate("(opt) => opt.disabled")
-        assert select.locator('option[value="/helper "]').count() == 0
-        select.select_option("")
-        expect(page.locator("#defaultAgentStatus")).to_contain_text("use the router")
-        assert world.saves == [{"prefixes": []}]
-        assert page.evaluate("localStorage.getItem('cuttleStarredSlashCommands')") == "[]"
-        page.reload(wait_until="domcontentloaded")
-        expect(select).to_be_enabled()
-        expect(select).to_have_value("")
-        select.select_option("/alpha ")
-        expect(page.locator("#defaultAgentStatus")).to_contain_text("saved")
+        card = page.locator('.agent-card[data-agent-id="alpha"]')
+        card.locator('.agent-card-head').click()
+        button = card.get_by_role("button", name="Set as default")
+        button.click()
         assert world.prefixes == ["/alpha "]
-        world.fail_save = True
-        select.select_option("")
-        expect(page.locator("#defaultAgentStatus")).to_contain_text("Owner required")
-        expect(select).to_have_value("/alpha ")
-        expect(select).to_be_enabled()
+        expect(card.locator('.agent-default-chip')).to_have_text("Default")
+        expect(card.get_by_role("button", name="Default agent")).to_be_disabled()
         assert page.evaluate("JSON.parse(localStorage.getItem('cuttleStarredSlashCommands'))") == ["/alpha "]
+    finally:
+        page.close()
+
+    world = AgentWorld()
+    world.prefixes = []
+    world.fail_save = True
+    page = open_settings(browser, static_server, world)
+    try:
+        card = page.locator('.agent-card[data-agent-id="alpha"]')
+        card.locator('.agent-card-head').click()
+        card.get_by_role("button", name="Set as default").click()
+        expect(card.get_by_role("button", name="Set as default")).to_be_enabled()
+        expect(card.locator('.agent-default-chip')).to_have_count(0)
+        assert world.prefixes == []
     finally:
         page.close()
 
@@ -113,20 +115,13 @@ def test_rows_keyboard_reload_and_phone_layout(browser, static_server):
         page.close()
 
 
-def test_removed_default_and_load_failure_preserve_saved_state(browser, static_server):
+def test_removed_default_is_not_assigned_to_another_agent(browser, static_server):
     world = AgentWorld()
     world.prefixes = ["/removed "]
     page = open_settings(browser, static_server, world)
     try:
-        select = page.locator("#defaultAgentSelect")
-        expect(select).to_be_enabled()
-        expect(select).to_have_value("/removed ")
-        expect(select.locator('option[value="/removed "]')).to_contain_text("Unavailable")
-        assert world.saves == []
-        world.fail_load = True
-        page.reload(wait_until="domcontentloaded")
-        expect(select).to_contain_text("Could not load")
-        expect(select).to_be_disabled()
+        expect(page.locator("#defaultAgentSelect")).to_have_count(0)
+        expect(page.locator('.agent-default-chip')).to_have_count(0)
         assert world.saves == []
     finally:
         page.close()

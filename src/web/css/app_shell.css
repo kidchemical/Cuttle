@@ -846,6 +846,23 @@ body.is-reordering-spaces iframe {
     color: #fff;
 }
 
+/* Channel chip: OFFICIAL (upstream) / HOST (this paired host). Text carries the
+   meaning; blue/green reinforces it (never color-only). */
+.shell-win-update-chip {
+    display: inline-block;
+    padding: 0 5px;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    line-height: 14px;
+    background: rgba(255, 255, 255, 0.22);
+    color: #fff;
+}
+.shell-win-update-chip[hidden] {
+    display: none !important;
+}
+
 /* Mesh / git self-update (version behind host) — green download cue */
 .shell-win-btn.shell-win-update.is-mesh-update {
     background: #2da44e;
@@ -2721,3 +2738,42 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
 }
 
 .shell-space-activity.is-input { background: #3b82f6; box-shadow: 0 0 8px #3b82f688; }
+
+/* Update button spinner (shown while an update is running). */
+.shell-win-update-spinner {
+    display: none;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.45);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: cuttle-win-spin 0.7s linear infinite;
+}
+.shell-win-btn.shell-win-update.is-busy .shell-win-update-spinner { display: inline-block; }
+.shell-win-btn.shell-win-update.is-busy .shell-win-update-icon { display: none; }
+@keyframes cuttle-win-spin { to { transform: rotate(360deg); } }
+
+/* Restart-after-update modal. */
+.cuttle-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 10080;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.5);
+}
+.cuttle-modal[hidden] { display: none; }
+.cuttle-modal-card {
+    width: min(460px, 100%);
+    padding: 24px 26px 20px;
+    border: 1px solid var(--panel-border, rgba(255, 255, 255, 0.14));
+    border-radius: 14px;
+    background: var(--panel-bg, #1b2230);
+    color: var(--text, #e8edf5);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.cuttle-modal-card h2 { margin: 0 0 8px; font-size: 1.15rem; }
+.cuttle-modal-text { margin: 0 0 18px; line-height: 1.5; color: var(--text-secondary, #aab4c3); }
+.cuttle-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }

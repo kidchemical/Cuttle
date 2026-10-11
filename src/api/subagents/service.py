@@ -223,6 +223,31 @@ def spawn(
     if len(specs) > MAX_CHILDREN:
         raise SubagentError(f"at most {MAX_CHILDREN} sub-agents per batch")
     specs = [apply_profile(s, db=db, user_id=user_id) for s in specs]
+    # Apply per-CLI child defaults only to fields the child did not choose.
+    # "native" means no Cuttle-imposed subagent preference.
+    try:
+        import re
+        from api.auth_db import get_auth_db
+        from api.agent_harness.catalog import list_agents
+        from managers.settings_manager import get_settings_manager
+        known = {str(a).lower() for a in list_agents()}
+        recent = get_auth_db().get_messages(int(parent_session_id), limit=40)
+        parent_agent = ''
+        for msg in reversed(recent if isinstance(recent, list) else []):
+            if msg.get('role') != 'user': continue
+            match = re.match(r'^/([a-z0-9_-]+)(?:\s|$)', str(msg.get('content') or '').strip(), re.I)
+            if match and match.group(1).lower() in known:
+                parent_agent = match.group(1).lower(); break
+        prefs = get_settings_manager().get_setting('agent_subagent_defaults') or {}
+        pref = prefs.get(parent_agent, {}) if parent_agent and isinstance(prefs, dict) else {}
+        if pref and str(pref.get('agent') or 'native').lower() != 'native':
+            for spec in specs:
+                if not spec.agent_explicit:
+                    spec.agent = str(pref['agent'])
+                    if not spec.model_explicit: spec.model = str(pref.get('model') or '')
+                    if not spec.effort_explicit: spec.effort = str(pref.get('effort') or '')
+    except Exception:
+        pass
     collect_n = normalize_collect(collect)
     lifetime_n = normalize_lifetime(lifetime)
     project_path = str(parent.get("project_path") or "")

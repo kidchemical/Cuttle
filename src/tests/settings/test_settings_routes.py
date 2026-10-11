@@ -18,6 +18,7 @@ READS = [
     "/api/settings/video-background",
     "/api/settings/git-auto-commit",
     "/api/settings/timeouts",
+    "/api/settings/update-source",
     "/api/settings/github-app",
     "/api/settings/agent-adapters",
     "/api/app-settings",
@@ -33,6 +34,7 @@ WRITES = [
     ("POST", "/api/settings/video-background", {"enabled": False}),
     ("POST", "/api/settings/git-auto-commit", {"git_auto_commit": False}),
     ("POST", "/api/settings/timeouts", {"agent_run_seconds": 3600}),
+    ("POST", "/api/settings/update-source", {"update_source": "host"}),
     ("POST", "/api/settings/agent-adapters", {"steer": {"claude": True}}),
     ("POST", "/api/settings/github-app", {"app_id": "1", "installation_id": "2"}),
     ("POST", "/api/settings/github-app/test", {}),
@@ -265,3 +267,25 @@ def test_retired_bot_settings_route_is_gone():
     rules = {str(r.rule) for r in wca.app.url_map.iter_rules()}
     assert "/api/settings" not in rules
     assert all(f["name"] != "bot" for f in SETTING_FAMILIES)
+
+
+def test_update_source_round_trip(tmp_path, monkeypatch):
+    """Device update channel persists (official<->host) and rejects bad values."""
+    isolated = _isolated_settings(monkeypatch, tmp_path)
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx["client"].set_cookie("session_token", ctx["token"])
+
+    body = ctx["client"].get("/api/settings/update-source", environ_base=LAN).get_json()
+    assert body["success"] is True and body["update_source"] == "official"
+
+    res = ctx["client"].post(
+        "/api/settings/update-source", json={"update_source": "host"}, environ_base=LAN
+    )
+    assert res.status_code == 200, res.get_json()
+    assert res.get_json()["update_source"] == "host"
+    assert (isolated.get_setting("device_workers") or {}).get("update_source") == "host"
+
+    res = ctx["client"].post(
+        "/api/settings/update-source", json={"update_source": "bogus"}, environ_base=LAN
+    )
+    assert res.status_code == 400

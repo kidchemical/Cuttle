@@ -103,6 +103,7 @@ contextBridge.exposeInMainWorld('electron', {
         showConnect: () => ipcRenderer.invoke('desktop-show-connect'),
         updateStatus: () => ipcRenderer.invoke('desktop-update-status'),
         applyUpdate: () => ipcRenderer.invoke('desktop-apply-update'),
+        relaunchApp: () => ipcRenderer.invoke('desktop-relaunch-app'),
         onUpdateAvailable: (callback) => {
             const handler = (_event, payload) => callback(payload);
             ipcRenderer.on('desktop-update-available', handler);

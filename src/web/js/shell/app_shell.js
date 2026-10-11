@@ -45,6 +45,7 @@ let cuttleTitlebarCancelHide = null;
     const closeBtn = document.getElementById('shellWinClose');
     const drag = document.getElementById('shellTitlebarDrag');
     const updateBtn = document.getElementById('shellWinUpdate');
+    const updateChip = document.getElementById('shellWinUpdateChip');
     const hostBtn = document.getElementById('shellTitlebarHost');
     const workersBtn = document.getElementById('shellTitlebarWorkers');
 
@@ -133,6 +134,15 @@ let cuttleTitlebarCancelHide = null;
         return !!(desktopCfg && desktopCfg.clientMode);
     };
 
+    // Configured update channel for this device: 'host' (follow the paired
+    // Host) or 'official' (follow upstream / release). A thin Client defaults
+    // to its Host; a local install defaults to upstream.
+    const configuredUpdateSource = () => {
+        const s = String((desktopCfg && desktopCfg.updateSource) || '').toLowerCase();
+        if (s === 'host' || s === 'official') return s;
+        return isRemoteClient() ? 'host' : 'official';
+    };
+
     const refreshUpdateBtn = () => {
         if (!updateBtn) return;
         const asarOn = asarUpdateAvailable && isRemoteClient();
@@ -145,16 +155,43 @@ let cuttleTitlebarCancelHide = null;
         updateBtn.classList.toggle('is-asar-update', asarOn && !preferMesh);
         if (!on) {
             updateBtn.classList.remove('is-busy');
+            if (updateChip) { updateChip.hidden = true; updateChip.textContent = ''; }
             return;
         }
         updateBtn.classList.remove('is-busy');
         const label = updateBtn.querySelector('.shell-win-update-label');
         if (label) label.textContent = 'Update';
+        // Channel chip: always show which channel the (single) button updates.
+        const decision = (typeof cuttleUpdateChannels === 'function')
+            ? cuttleUpdateChannels({
+                configuredSource: configuredUpdateSource(),
+                host: { available: meshOn },
+                official: { available: false },
+            })
+            : null;
+        const activeChannel = decision && decision.buttons[0] ? decision.buttons[0].source : '';
+        meshUpdate.channel = activeChannel;
+        if (updateChip) {
+            if (activeChannel) {
+                updateChip.hidden = false;
+                updateChip.textContent = activeChannel === 'host' ? 'HOST' : 'OFFICIAL';
+                updateChip.dataset.source = activeChannel;
+            } else {
+                updateChip.hidden = true;
+                updateChip.textContent = '';
+            }
+        }
         if (preferMesh) {
             const local = meshUpdate.localVersion || '?';
             const host = meshUpdate.hostVersion || '?';
-            updateBtn.title = `Update available — ${local} → ${host} (git pull + restart)`;
-            updateBtn.setAttribute('aria-label', `Update Cuttle from ${local} to ${host}`);
+            if (meshUpdate.wrongBranch) {
+                updateBtn.title = `Wrong branch — on ${meshUpdate.branch || '?'}, host is on ${meshUpdate.hostBranch || '?'}. `
+                    + 'Update cannot fast-forward across branches; switch this device to the host branch.';
+                updateBtn.setAttribute('aria-label', `Wrong branch: ${meshUpdate.branch || '?'} vs host ${meshUpdate.hostBranch || '?'}`);
+            } else {
+                updateBtn.title = `Update available — ${local} → ${host} (git pull + restart)`;
+                updateBtn.setAttribute('aria-label', `Update Cuttle from ${local} to ${host}`);
+            }
         } else {
             updateBtn.title = 'Update Cuttle desktop shell (download from host)';
             updateBtn.setAttribute('aria-label', 'Update Cuttle desktop shell');
@@ -251,6 +288,7 @@ let cuttleTitlebarCancelHide = null;
     const applyMeshUpdateFromWorkers = (data) => {
         const hostVer = String((data && data.host_cuttle_version) || '').trim();
         const hostRev = String((data && data.host_git_rev) || '').trim();
+        const hostBranch = String((data && data.host_git_branch) || '').trim();
         const list = Array.isArray(data && data.workers) ? data.workers : [];
         const isClient = !!(desktopCfg && desktopCfg.clientMode);
         // Never fall back to host self_worker_id on a Client — that compared
@@ -325,6 +363,9 @@ let cuttleTitlebarCancelHide = null;
             localRev: myRev,
             hostRev,
             samePackageVersion: !!(myVer && hostVer && myVer === hostVer),
+            wrongBranch: !!(me && me.wrong_branch),
+            branch: String((me && me.git_branch) || '').trim(),
+            hostBranch,
         };
         refreshUpdateBtn();
     };
@@ -412,6 +453,11 @@ let cuttleTitlebarCancelHide = null;
                 body: JSON.stringify({
                     target: meshUpdate.target,
                     submitted_by: 'titlebar',
+                    // Channel: follow the paired Host's working tree, or upstream.
+                    update_source: meshUpdate.channel || configuredUpdateSource(),
+                    // A titlebar click is interactive: pull now, but ask before
+                    // restarting (programmatic host→worker updates still auto-restart).
+                    defer_restart: true,
                     // Host Electron refresh should not kill cuttle_daemon.
                     no_daemon: !isClient,
                 }),
@@ -496,23 +542,54 @@ let cuttleTitlebarCancelHide = null;
                     + '. Check Desktop\\cuttle-self-update-last.log on that machine.'
                 );
             }
-            if (window.showToast) {
-                window.showToast(
-                    `Updated to ${meshUpdate.localVersion || expectHost}.`,
-                    'success'
-                );
-            }
-            setTimeout(() => {
-                updateBtn.classList.remove('is-busy');
-                if (label) label.textContent = 'Update';
-                refreshUpdateBtn();
-            }, 1500);
+            // The checkout is current — ask before restarting (titlebar clicks
+            // defer the restart; see defer_restart above).
+            updateBtn.classList.remove('is-busy');
+            if (label) label.textContent = 'Update';
+            refreshUpdateBtn();
+            showRestartModal(meshUpdate.localVersion || expectHost);
         } catch (err) {
             updateBtn.classList.remove('is-busy');
             if (label) label.textContent = 'Update';
             if (window.showToast) window.showToast(err.message || String(err), 'error');
         }
     });
+
+    // "Update ready" modal: restart the app now, or keep working.
+    const restartModal = document.getElementById('cuttleRestartModal');
+    const showRestartModal = (version) => {
+        if (!restartModal) return;
+        const v = restartModal.querySelector('[data-restart-version]');
+        if (v) v.textContent = String(version || 'the latest');
+        restartModal.hidden = false;
+    };
+    const hideRestartModal = () => { if (restartModal) restartModal.hidden = true; };
+    if (restartModal) {
+        restartModal.querySelector('[data-restart-now]')?.addEventListener('click', async () => {
+            hideRestartModal();
+            if (api.desktop && typeof api.desktop.relaunchApp === 'function') {
+                api.desktop.relaunchApp();
+                return;
+            }
+            // Older Electron without the relaunch IPC: ask the mesh updater to
+            // restart (the pull is a no-op, but it stops/relaunches the client).
+            try {
+                await fetch('/api/workers/self-update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        target: meshUpdate.target,
+                        submitted_by: 'titlebar-restart',
+                        update_source: meshUpdate.channel || configuredUpdateSource(),
+                        no_daemon: !isClient,
+                    }),
+                });
+            } catch (_) {
+                window.location.reload();
+            }
+        });
+        restartModal.querySelector('[data-restart-later]')?.addEventListener('click', hideRestartModal);
+    }
 
     // Fullscreen: titlebar overlays and auto-hides; a top-edge hotzone reveals it.
     // Iframes swallow mousemove, so a dedicated strip is required.

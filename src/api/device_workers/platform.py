@@ -29,6 +29,7 @@ def list_workers(*, online_only: bool = False) -> Dict[str, Any]:
     from api.device_workers.capabilities import (
         cuttle_git_rev as local_cuttle_git_rev,
         cuttle_version as local_cuttle_version,
+        git_branch as local_git_branch,
         git_revs_differ,
     )
 
@@ -39,6 +40,7 @@ def list_workers(*, online_only: bool = False) -> Dict[str, Any]:
     out: List[Dict[str, Any]] = []
     local_ver = local_cuttle_version()
     local_rev = local_cuttle_git_rev()
+    local_branch = local_git_branch()
     for w in workers:
         is_self = str(w.get("worker_id") or "") == self_id
         w = dict(w)
@@ -80,6 +82,20 @@ def list_workers(*, online_only: bool = False) -> Dict[str, Any]:
         w["git_mismatch"] = rev_mismatch
         boot_rev = str(meta.get("boot_git_rev") or w.get("boot_git_rev") or "").strip()
         w["boot_git_rev"] = boot_rev
+        # Tracking branch/upstream (advertised by the worker heartbeat). A Client
+        # on a different branch than the Host can never fast-forward to the
+        # Host's rev — Update would no-op forever. Surface it so Devices shows
+        # *why* instead of a silent success.
+        peer_branch = str(meta.get("git_branch") or w.get("git_branch") or "").strip()
+        peer_upstream = str(meta.get("git_upstream") or w.get("git_upstream") or "").strip()
+        w["git_branch"] = peer_branch
+        w["git_upstream"] = peer_upstream
+        w["wrong_branch"] = bool(
+            (not is_self) and local_branch and peer_branch and peer_branch != local_branch
+        )
+        w["update_source"] = str(
+            meta.get("update_source") or w.get("update_source") or "official"
+        ).strip().lower() or "official"
         # Disk rev is what the worker advertises as cuttle_git_rev; boot is the
         # rev loaded into the live claim loop. Differ ⇒ stale process (CH-000478).
         stale_process = bool(
@@ -117,6 +133,7 @@ def list_workers(*, online_only: bool = False) -> Dict[str, Any]:
         "self_worker_id": self_id,
         "host_cuttle_version": local_ver,
         "host_git_rev": local_rev,
+        "host_git_branch": local_branch,
         "online_remote": online_remote,
         "online_total": sum(1 for w in out if w.get("online")),
         "outdated_workers": [
@@ -916,15 +933,22 @@ def submit_self_update(
     restart_daemon: bool = True,
     submitted_by: str = "platform",
     host: str = "",
+    update_source: str = "official",
 ) -> Dict[str, Any]:
     """Enqueue cuttle_self_update on a Client worker (preservation checks + fast-forward, then relaunch).
 
     Embeds the Host's current updater scripts so Clients still on an old
     checkout run the latest updater even before git pull succeeds.
+    ``update_source`` selects the channel: ``official`` (configured upstream /
+    git remote) or ``host`` (this Host's served git bundle — Scenario B).
     """
+    source = str(update_source or "official").strip().lower()
+    if source not in ("official", "host"):
+        source = "official"
     params: Dict[str, Any] = {
         "restart_electron": bool(restart_electron),
         "restart_daemon": bool(restart_daemon),
+        "update_source": source,
     }
     if repo:
         params["repo"] = repo
@@ -933,6 +957,18 @@ def submit_self_update(
     # Deliver all three files as one contract. Missing/empty Host files refuse
     # submission rather than falling back to an old Client lifecycle script.
     scripts_dir = Path(__file__).resolve().parents[3] / ".cuttle_global" / "scripts"
+    # This Host's pinned TLS SPKI, embedded into the delivered helper so the
+    # Client can reach us over HTTPS even when its own config has no pin. The
+    # pin is public (a cert fingerprint), not a secret.
+    host_pin = ""
+    try:
+        from api.tls_cert import current_fingerprint
+
+        host_pin = str((current_fingerprint() or {}).get("spki_sha256") or "")
+    except Exception:
+        host_pin = ""
+    if host_pin:
+        params["host_spki"] = host_pin
     for name, key in (
         ("client-self-update.ps1", "script_text"),
         ("client-self-update.sh", "script_text_posix"),
@@ -941,6 +977,8 @@ def submit_self_update(
         text = (scripts_dir / name).read_text(encoding="utf-8")
         if not text.strip():
             raise RuntimeError(f"self-update delivery file is empty: {name}")
+        if name == "client-update-checkout.py" and host_pin:
+            text = text.replace('EMBEDDED_HOST_SPKI = ""', f'EMBEDDED_HOST_SPKI = {host_pin!r}')
         params[key] = text
     params["script_name"] = "client-self-update.ps1"
     params["script_name_posix"] = "client-self-update.sh"

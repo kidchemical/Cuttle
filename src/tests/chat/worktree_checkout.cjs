@@ -37,4 +37,27 @@ eq(worktrees.slug('Hello World!'), 'hello-world', 'slug');
 eq(worktrees.defaultBranch({ name: 'My Game' }, 'cuttle'), 'cuttle/my-game', 'default branch');
 eq(worktrees.defaultBranch({ name: 'Game' }), 'cuttle/game', 'default prefix');
 
-console.log(pass + ' worktree checkout scenarios passed');
+// Checkout paths cannot be borrowed from a different browser-stored ID.
+const stale = { checkoutUid: 'old', checkoutPath: '/old' };
+eq(project.resolveCheckoutBinding({ serverSession: { checkout_uid: 'new' }, prefs: stale }),
+    { uid: 'new', path: '' }, 'different stale path rejected');
+eq(project.resolveCheckoutBinding({ serverSession: { checkout_uid: null }, prefs: stale }),
+    { uid: '', path: '' }, 'server local checkout beats stale device');
+eq(project.resolveCheckoutBinding({ serverSession: {}, prefs: stale }),
+    { uid: 'old', path: '/old' }, 'legacy row falls back to paired local identity');
+eq(project.resolveCheckoutBinding({ prefs: { checkoutUid: '' }, stored: stale }),
+    { uid: '', path: '' }, 'local preference clear beats older storage');
+eq(project.resolveCheckoutBinding({ serverSession: { checkout_uid: 'old' }, prefs: stale }),
+    { uid: 'old', path: '/old' }, 'matching offline path retained');
+
+(async () => {
+    global.fetch = async () => ({ status: 200, json: async () => ({
+        worktrees: [{ checkout_uid: 'new', path: '/new', branch: 'refactor/work' }],
+    }) });
+    await worktrees.probe();
+    eq(project.resolveCheckoutBinding({ serverSession: { checkout_uid: 'new' }, prefs: stale,
+        checkoutForUid: worktrees.checkoutForUid }),
+        { uid: 'new', path: '/new' }, 'cold load registry resolves server checkout');
+    eq(worktrees.branchForUid('new'), 'refactor/work', 'branch belongs to resolved checkout');
+    console.log(pass + ' worktree checkout scenarios passed');
+})().catch((err) => { console.error(err); process.exit(1); });

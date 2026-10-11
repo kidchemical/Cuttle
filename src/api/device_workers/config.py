@@ -154,6 +154,9 @@ def default_settings() -> Dict[str, Any]:
         "stale_seconds": 45,
         "interactive_priority": "low",
         "local_worker": True,
+        # Update channel this device follows: 'official' (git remote / release)
+        # or 'host' (the paired Host's served git bundle / asar). Scenario B.
+        "update_source": "official",
         "allowed_path_prefixes": [],
         # When true, host may auto-suggest/enqueue mesh plans (still prefer explicit verbs).
         "auto_mesh": False,

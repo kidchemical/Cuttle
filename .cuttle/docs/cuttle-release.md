@@ -19,7 +19,7 @@ with no rev yet). Bump SemVer at release time only:
 # or --minor / --major / --set 0.3.0   (Windows: .venv\Scripts\python.exe)
 ```
 
-Jobs → Devices shows host version, flags mismatches (⚠), and **Update** queues `cuttle_self_update`. Clients update from the **git remote** (`git fetch --all --prune` + guarded `git merge --ff-only --no-overwrite-ignore` of the configured upstream), not the Host working tree — unpushed Host commits never appear in Update. The updater refuses dirty/untracked files, detached HEAD, missing upstream and local commits/divergence before stopping Client processes; it does not stash or hard-reset local work. Older updater revisions used reset-hard: refresh those scripts before relying on this guard.
+Jobs → Devices shows host version, flags mismatches (⚠), and **Update** queues `cuttle_self_update`. The **OFFICIAL** channel updates from the **git remote** (`git fetch --all --prune` + guarded `git merge --ff-only --no-overwrite-ignore` of the configured upstream); unpushed Host commits do not appear there. The **HOST** channel (`device_workers.update_source: "host"`, Scenario B) instead fast-forwards from a self-contained `git bundle` the Host serves at `/api/desktop/git[/bundle]` (pinned HTTPS), so a source-checkout Client can follow the Host's working tree with no push. Either way the Client must be **on the Host's branch** — a mismatch (`main` vs `dev`) is reported as `wrong_branch` and refused, never silently no-op'd. The updater refuses dirty/untracked files, detached HEAD, missing upstream and local commits/divergence before stopping Client processes; it does not stash or hard-reset local work. Older updater revisions used reset-hard: refresh those scripts before relying on this guard.
 
 **After bump → commit → push (reload ladder, least disruptive first):**
 
@@ -112,3 +112,24 @@ are the only verification — say so in the release notes.
 build Client updates; update every device from the release. Source-checkout
 Hosts may still build an `app.asar` for their Clients, which accept it only over
 the Host's pinned HTTPS identity. Linux Clients never swap in place.
+
+## Android phone app (Capacitor) APK
+
+The phone app is **not** a mesh worker and does not use the desktop Update
+button/Settings device channel. It updates itself from an APK the host serves:
+
+- The host hashes `apps/mobile` sources and serves `GET /api/mobile/android`
+  (manifest) and `GET /api/mobile/android/app-debug.apk`. The phone app polls
+  the manifest and shows its own **“Update available — Download & install”**
+  prompt; no APK is committed to git.
+- Build/publish on the host: auto-rebuild is opt-in
+  (`CUTTLE_MOBILE_AUTO_REBUILD=1`), otherwise publish a matching signed APK:
+  `python -m api.mobile_android_update publish --apk PATH` (also `status`,
+  `rebuild [--force]`).
+- Settings → 📦 Cuttle updates → **Phone app (Android / Capacitor)** shows the
+  served APK (version/code/hash, building/failed) and has an owner-only
+  **Rebuild phone app (APK)** button (`POST /api/mobile/android/rebuild`) that
+  re-runs Gradle `assembleDebug`.
+- **Release rule:** when phone sources change, republish the APK so phones are
+  not left stale — desktop/web can ship fine while the APK lags. Keep the APK
+  version/versionCode in step with the release.

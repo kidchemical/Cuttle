@@ -115,6 +115,27 @@ def test_executor_fast_forward_preserves_personal_and_delivers_helper(worker, ch
 
 
 @pytest.mark.parametrize('embedded', [False, True])
+def test_executor_noop_reports_not_advanced(worker, checkout, tmp_path, embedded):
+    """An already-current checkout must report no-op, not silent success.
+
+    This is the failure that made a Client on the wrong branch look updated.
+    """
+    module, calls = worker
+    client, remote = checkout
+    if not embedded:
+        install_scripts(client)
+    # Bring the client fully up to upstream first so the update is a no-op.
+    git(client, 'fetch', 'origin')
+    git(client, 'merge', '--ff-only', 'origin/main')
+    result = module.execute_job({'type': 'cuttle_self_update', 'params': params(client, embedded)})
+    assert result['scheduled'] is True
+    assert result['advanced'] is False
+    assert 'no-op' in result['note']
+    assert result['branch'] == 'main'
+    assert result['upstream'] == 'origin/main'
+
+
+@pytest.mark.parametrize('embedded', [False, True])
 @pytest.mark.parametrize('state', ['modified', 'staged', 'untracked', 'local_commit', 'diverged', 'ignored_collision', 'ignored_directory_collision', 'detached', 'no_upstream'])
 def test_executor_refusal_preserves_work_and_never_schedules(worker, checkout, tmp_path, state, embedded):
     module, calls = worker

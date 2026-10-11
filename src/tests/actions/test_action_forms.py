@@ -989,15 +989,26 @@ def test_qa_form_resume_flag():
     assert res["resume"] is True
     assert res["selected"] == ["b"]
 
-    # Without resume flag, stays silent
+    # A pure Q&A card resumes by default now — an omitted flag used to swallow
+    # the pick (toast + lock only; the agent never saw the answer).
     spec2 = normalize_action_form_spec(
         {"mode": "choice", "title": "Pick", "options": [{"id": "a", "label": "A"}]},
         project_path=r"C:\Projects\Cuttle",
     )
-    assert not spec2.get("resume")
+    assert spec2.get("resume") is True
     token2 = encode_form_fallback(spec2)
     res2 = execute_action_form_submission(form_token=token2, selection={"option": "a"}, session_id="db_session_1")
-    assert not res2.get("resume")
+    assert res2.get("resume") is True
+
+    # Explicit opt-out stays silent.
+    spec3 = normalize_action_form_spec(
+        {"mode": "choice", "title": "Pick", "resume": False, "options": [{"id": "a", "label": "A"}]},
+        project_path=r"C:\Projects\Cuttle",
+    )
+    assert not spec3.get("resume")
+    token3 = encode_form_fallback(spec3)
+    res3 = execute_action_form_submission(form_token=token3, selection={"option": "a"}, session_id="db_session_1")
+    assert not res3.get("resume")
 
 
 def test_qa_multi_submits_all_picks_and_resumes(tmp_path: Path):

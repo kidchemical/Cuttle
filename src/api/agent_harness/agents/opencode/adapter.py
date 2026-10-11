@@ -11,8 +11,12 @@ import asyncio
 import json
 import os
 import re
+import secrets
+import tempfile
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from core.runtime_paths import runtime_state_path
 
 from api.agent_harness.activity import put_status
 from api.agent_harness.agents.opencode.session_store import (
@@ -49,6 +53,156 @@ _HEARTBEAT_SEC = 4.0
 # past asyncio's 64 KiB default and readline() raises mid-turn.
 _STREAM_LIMIT = 64 * 1024 * 1024
 _WRITING_BUF_KEY = "__writing_buf__"
+
+
+async def _git_common_directory(cwd: str, chat_session_id: Any) -> Optional[Path]:
+    """Identify linked checkouts using Git's own metadata, never path ancestry."""
+    proc = await asyncio.create_subprocess_exec(
+        "git", "rev-parse", "--path-format=absolute", "--git-common-dir",
+        cwd=cwd, env=agent_cli_env(), stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    attach_to_chat_run(chat_session_id, proc)
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        if proc.returncode != 0:
+            return None
+        value = out.decode().strip()
+        return Path(value).resolve() if value else None
+    finally:
+        if proc.returncode is None:
+            await kill_process_tree(proc)
+
+
+async def _session_command(exe: str, cwd: str, chat_session_id: Any, *args: str) -> bytes:
+    scratch = runtime_state_path("sessions", "opencode-recovery")
+    scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # OpenCode exits before large piped exports finish flushing. A regular file
+    # makes its stdout writes synchronous and preserves the entire transcript.
+    with tempfile.TemporaryFile(dir=scratch) as output:
+        proc = await asyncio.create_subprocess_exec(
+            exe, *args, cwd=cwd, env=agent_cli_env(), stdin=asyncio.subprocess.DEVNULL,
+            stdout=output, stderr=asyncio.subprocess.PIPE, limit=_STREAM_LIMIT,
+        )
+        attach_to_chat_run(chat_session_id, proc)
+        try:
+            await asyncio.wait_for(proc.communicate(), timeout=30)
+            if proc.returncode != 0:
+                raise ValueError("OpenCode conversation recovery failed; no turn was started.")
+            output.seek(0)
+            out = output.read(_STREAM_LIMIT + 1)
+            if len(out) > _STREAM_LIMIT:
+                raise ValueError("OpenCode conversation is too large to recover; no turn was started.")
+            return out
+        finally:
+            if proc.returncode is None:
+                await kill_process_tree(proc)
+
+
+async def _copy_session_to_directory(exe: str, cwd: str, resume: str, chat_session_id: Any) -> str:
+    """Copy through supported export/import, preserving the original transcript.
+
+    Some OpenCode versions route --fork back to the source directory. Import
+    explicitly uses the launch directory; fresh IDs avoid overwriting source rows.
+    """
+    data = json.loads(await _session_command(exe, cwd, chat_session_id, "export", resume))
+    if (not isinstance(data, dict) or not isinstance(data.get("info"), dict)
+            or data["info"].get("id") != resume or not isinstance(data.get("messages"), list)):
+        raise ValueError("OpenCode exported an invalid conversation; no turn was started.")
+    suffix = secrets.token_hex(8)
+    ids = {resume: resume + suffix}
+    try:
+        for message in data["messages"]:
+            ids[message["info"]["id"]] = message["info"]["id"] + suffix
+            for part in message["parts"]:
+                ids[part["id"]] = part["id"] + suffix
+    except (KeyError, TypeError) as exc:
+        raise ValueError("OpenCode exported an invalid conversation; no turn was started.") from exc
+
+    def remap(value):
+        if isinstance(value, dict):
+            return {key: remap(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [remap(item) for item in value]
+        return ids.get(value, value) if isinstance(value, str) else value
+
+    copied = remap(data)
+    copied["info"].pop("share", None)
+    copied["info"].pop("parentID", None)
+    # Sensitive transcript scratch belongs to the Cuttle home, not the checkout.
+    scratch = runtime_state_path("sessions", "opencode-recovery")
+    scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=scratch) as directory:
+        path = Path(directory) / "session.json"
+        path.touch(mode=0o600)
+        path.write_text(json.dumps(copied), encoding="utf-8")
+        await _session_command(exe, cwd, chat_session_id, "import", str(path))
+    new_id = ids[resume]
+    verified = json.loads(await _session_command(exe, cwd, chat_session_id, "export", new_id))
+    if (verified.get("info", {}).get("id") != new_id
+            or Path(verified.get("info", {}).get("directory", "")).resolve() != Path(cwd).resolve()
+            or verified.get("messages") != copied["messages"]):
+        raise ValueError("OpenCode conversation recovery could not be verified; no turn was started.")
+    save_opencode_resume_id(cwd, chat_session_id, new_id)
+    return new_id
+
+
+async def _resume_directory(exe: str, cwd: str, resume: str, chat_session_id: Any) -> Tuple[str, str]:
+    """Align the native session with the selected checkout before execution.
+
+    OpenCode can execute a resumed session in its saved directory while `run`
+    subscribes in the launch directory. That mismatch hides all stdout events.
+    Inspect through the vendor CLI, and copy mismatched same-repo sessions using
+    export/import. Never redirect execution into a different checkout to resume.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        exe, "session", "list", "--format", "json",
+        cwd=cwd, env=agent_cli_env(), stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        limit=_STREAM_LIMIT,
+    )
+    attach_to_chat_run(chat_session_id, proc)
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        if proc.returncode != 0:
+            raise ValueError("Could not inspect the OpenCode session directory; no turn was started.")
+        try:
+            rows = json.loads(out)
+        except (ValueError, UnicodeError):
+            rows = None
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict) or row.get("id") != resume:
+                    continue
+                directory = row.get("directory")
+                if not isinstance(directory, str) or not directory.strip() or not Path(directory).is_absolute():
+                    break
+                native = Path(directory).resolve()
+                project = Path(cwd).resolve()
+                if not native.is_dir():
+                    raise ValueError(
+                        "OpenCode session directory is outside the selected project or no longer exists; "
+                        "select its original project or start a new chat. No turn was started."
+                    )
+                if native == project:
+                    return str(project), resume
+                selected_repo = await _git_common_directory(str(project), chat_session_id)
+                native_repo = await _git_common_directory(str(native), chat_session_id)
+                if selected_repo is not None and selected_repo == native_repo:
+                    recovered = await _copy_session_to_directory(exe, str(project), resume, chat_session_id)
+                    return str(project), recovered
+                if selected_repo is None and native_repo is None and native.is_relative_to(project):
+                    return str(native), resume
+                raise ValueError(
+                    "OpenCode session belongs to a different repository; select its original "
+                    "project or start a new chat. No turn was started."
+                )
+        raise ValueError("OpenCode session was not found in the CLI session list; start a new chat. No turn was started.")
+    except asyncio.TimeoutError as exc:
+        raise ValueError("OpenCode session lookup timed out; no turn was started. Retry after checking the CLI.") from exc
+    finally:
+        if proc.returncode is None:
+            await kill_process_tree(proc)
 
 
 def _first_line(text: Any, limit: int = 120) -> str:
@@ -771,7 +925,23 @@ class Adapter:
         cmd: List[str] = [exe, "run", "--format", "json", "--auto"]
         r = (resume or "").strip()
         if r:
-            cmd.extend(["--session", r])
+            try:
+                cwd, recovered_resume = await _resume_directory(exe, cwd, r, chat_session_id)
+            except (ValueError, OSError) as exc:
+                return AgentResult(success=False, error=str(exc), output="", model=mid)
+            cmd.extend(["--session", recovered_resume])
+            if recovered_resume != r:
+                put_status(status_queue, "Recovering OpenCode conversation in the selected checkout…")
+                prompt = (
+                    "[Cuttle workspace recovery]\n"
+                    f"This conversation has been copied into the selected checkout: {cwd}\n"
+                    "Use this directory for this turn. Paths and checkout selections in older "
+                    "messages describe previous work; verify the current branch and working tree "
+                    "before making changes. The original native session is preserved.\n\n"
+                    + prompt
+                )
+        # Explicitly override stale PWD hints in vendor versions that trust them.
+        cmd.extend(["--dir", cwd])
         if mid:
             cmd.extend(["--model", mid])
         _effort_ignored = None

@@ -339,6 +339,24 @@
         if (uid) requestBody.checkout_uid = uid;
     }
 
+    /** Restore a checkout atomically; explicit server clears beat device prefs. */
+    function resolveCheckoutBinding(opts) {
+        const sources = [opts.serverSession, opts.prefs, opts.stored];
+        const source = sources.find((row) => row && (
+            Object.prototype.hasOwnProperty.call(row, 'checkout_uid')
+            || Object.prototype.hasOwnProperty.call(row, 'checkoutUid')));
+        const uid = source ? String((Object.prototype.hasOwnProperty.call(source, 'checkout_uid')
+            ? source.checkout_uid : source.checkoutUid) || '').trim() : '';
+        if (!uid) return { uid: '', path: '' };
+        const registered = opts.checkoutForUid ? opts.checkoutForUid(uid) : null;
+        if (registered && registered.path) return { uid, path: String(registered.path) };
+        // Legacy/offline storage is usable only for the SAME checkout ID.
+        const local = sources.find((row) => row
+            && String(row.checkout_uid || row.checkoutUid || '').trim() === uid
+            && (row.checkout_path || row.checkoutPath));
+        return { uid, path: local ? String(local.checkout_path || local.checkoutPath) : '' };
+    }
+
     function currentProjectPathKey(proj) {
         return proj && proj.path ? String(proj.path) : '';
     }
@@ -382,6 +400,7 @@
         resolveChatProject,
         rebindProjectToRegistry,
         applyOutboundProjectToRequest,
+        resolveCheckoutBinding,
         currentProjectPathKey,
         effectiveGitPath,
         pendingChangesProject,

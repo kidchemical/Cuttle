@@ -120,6 +120,7 @@ async function probeAndResolve(parsed) {
 /** Apply a connected target and persist its endpoint policy in one place. */
 function applyConnectTarget({ host, httpPort, httpsPort, clientMode, policy }) {
     applyDesktopTarget({ host, httpPort, httpsPort, clientMode });
+    const existing = loadDesktopConfig();
     saveDesktopConfig({
         mode: clientMode ? 'client' : 'local',
         host,
@@ -128,7 +129,10 @@ function applyConnectTarget({ host, httpPort, httpsPort, clientMode, policy }) {
         scheme: policy.scheme,
         endpoint: policy,
         lastError: '',
-        workerMode: loadDesktopConfig().workerMode !== false,
+        workerMode: existing.workerMode !== false,
+        // Default the update channel to the paired Host (Scenario B); an
+        // explicit user choice of 'official' is preserved.
+        updateSource: String(existing.updateSource || '').toLowerCase() === 'official' ? 'official' : 'host',
     });
 }
 
@@ -567,6 +571,8 @@ function publicDesktopConfig() {
         httpPort: FLASK_HTTP_PORT,
         httpsPort: FLASK_HTTPS_PORT,
         scheme: cfg.scheme || '',
+        // Configured update channel ('host' | 'official'); empty = infer from role.
+        updateSource: String(cfg.updateSource || ''),
         // Selected-endpoint policy for web clients (pool-switch companion
         // resolution): kind/single/companion-known. Absent on legacy configs.
         endpoint: cfg.endpoint || null,
@@ -2046,6 +2052,15 @@ ipcMain.handle('desktop-use-local', async () => {
 });
 ipcMain.handle('desktop-update-status', () => checkDesktopUpdate());
 ipcMain.handle('desktop-apply-update', () => applyDesktopUpdate());
+// Relaunch the app in place (used after a git update when the user picks
+// "Restart now" in the Update-ready modal). Electron-owned, same class as the
+// asar swap in applyDesktopUpdate.
+ipcMain.handle('desktop-relaunch-app', () => {
+    app.isQuitting = true;
+    app.relaunch();
+    app.exit(0);
+    return { ok: true };
+});
 
 // ── Gizmo pop-outs: always-on-top desktop windows (experimental `gizmos`) ──
 // The shell sends the full wanted set; main opens/closes to match. Only ids
@@ -2233,8 +2248,40 @@ app.on('second-instance', () => {
     createWindow();
 });
 
+/**
+ * Create/repair the Host / Client / Daemon desktop launchers (idempotent).
+ * Skips when they already exist, so it costs nothing on normal starts.
+ */
+function ensureDesktopShortcuts() {
+    try {
+        const repoRoot = process.env.CUTTLE_REPO_ROOT || path.join(__dirname, '..');
+        if (process.platform === 'win32') {
+            const script = path.join(repoRoot, 'src', 'scripts', 'create_desktop_shortcuts.ps1');
+            if (!fs.existsSync(script)) return;
+            const marker = path.join(app.getPath('desktop'), 'Cuttle Host.lnk');
+            if (fs.existsSync(marker)) return;
+            spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Quiet'], {
+                detached: true, stdio: 'ignore', windowsHide: true,
+            }).unref();
+        } else if (process.platform === 'linux') {
+            const script = path.join(repoRoot, 'src', 'scripts', 'create_desktop_shortcuts.sh');
+            if (!fs.existsSync(script)) return;
+            let desktop = path.join(os.homedir(), 'Desktop');
+            try {
+                const out = spawnSync('xdg-user-dir', ['DESKTOP'], { encoding: 'utf8', timeout: 3000 });
+                if (out && out.stdout && out.stdout.trim()) desktop = out.stdout.trim();
+            } catch (_) { /* default Desktop */ }
+            if (fs.existsSync(path.join(desktop, 'cuttle-host.desktop'))) return;
+            spawn('bash', [script, '--quiet'], { detached: true, stdio: 'ignore' }).unref();
+        }
+    } catch (err) {
+        console.warn('desktop shortcuts:', (err && err.message) || err);
+    }
+}
+
 app.whenReady().then(async () => {
     createTray();
+    ensureDesktopShortcuts();
 
     const activate = () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();

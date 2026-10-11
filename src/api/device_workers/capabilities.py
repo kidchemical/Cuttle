@@ -212,6 +212,51 @@ def cuttle_git_rev(*, force: bool = False) -> str:
     return rev
 
 
+def _repo_root() -> Path:
+    root = Path(__file__).resolve().parents[3]
+    env_root = (os.environ.get("CUTTLE_REPO_ROOT") or "").strip()
+    return Path(env_root) if env_root else root
+
+
+def _git_stdout(*args: str) -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(_repo_root()), *args],
+            capture_output=True,
+            text=True,
+            timeout=4,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if completed.returncode == 0:
+            return (completed.stdout or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def git_branch() -> str:
+    """Current branch name; empty on detached HEAD or outside a work tree."""
+    name = _git_stdout("rev-parse", "--abbrev-ref", "HEAD")
+    return "" if name == "HEAD" else name
+
+
+def git_upstream() -> str:
+    """Configured upstream ref (e.g. ``origin/dev``); empty when unset."""
+    return _git_stdout("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+
+
+def update_source() -> str:
+    """This device's update channel from settings: 'official' or 'host'."""
+    try:
+        from managers.settings_manager import get_settings_manager
+
+        block = get_settings_manager().get_setting("device_workers") or {}
+        src = str((block or {}).get("update_source") or "official").strip().lower()
+        return "host" if src == "host" else "official"
+    except Exception:
+        return "official"
+
+
 def git_revs_differ(a: str, b: str) -> bool:
     """True when both revs are present and do not refer to the same commit."""
     left = (a or "").strip().lower()
@@ -338,6 +383,9 @@ def collect_capabilities(
         "cuttle_version": cuttle_version(),
         "cuttle_git_rev": disk_rev,
         "boot_git_rev": boot,
+        "git_branch": git_branch(),
+        "git_upstream": git_upstream(),
+        "update_source": update_source(),
         "boot_at": boot_at(),
         "stale_process": bool(boot and disk_rev and git_revs_differ(boot, disk_rev)),
     }
