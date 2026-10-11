@@ -59,3 +59,12 @@ These files under `.cuttle/rules/` are compiled into the fresh/full Cuttle-chat 
    for default rollout practice and surface placement. The Experimental tab owns
    toggles, not feature workflows. This guidance applies to Cuttle development,
    not features in guest projects.
+
+8. **Composition roots stay thin (no monolith regrowth)** — never add domain
+   behavior or private state to `src/web/js/chat/chat_page.js`,
+   `src/web/js/shell/app_shell.js`, or `src/api/web_chat_api.py`. Put new
+   behavior in its owning `chat_*.js` / `shell_*.js` / `api.*` module and keep
+   only a call site (or injected `host`/`deps`) in the root. The per-file line
+   ceilings in `src/tests/quality/test_composition_root_growth.py` fail the build
+   on regrowth. Owner map: `docs/architecture/repository-map.md`; principle:
+   `docs/architecture/ARCHITECTURE_PRINCIPLES.md` §2 (composition roots compose).
