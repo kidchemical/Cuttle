@@ -217,7 +217,7 @@ flowchart LR
 | `.cuttle_global/` | Shared configuration for all projects ([reference](.cuttle_global/README.md)). |
 | `.cuttle/` | Cuttle repository project configuration ([reference](.cuttle/README.md)). |
 | `.cuttle/personal/` | Install-local project overlay (gitignored). Rule/doc Markdown appends a delta; supported YAML overlays replace by basename. See the [overlay contract](docs/architecture/cuttle-home.md#personal-overlays). |
-| `_personal/` | Your dogfood skills and docs (gitignored); not part of the product |
+| `_personal/` | **Deprecated** dogfood skills/docs (gitignored); not part of the product. Do not recreate — install-local material belongs in the Cuttle home. |
 | `/settings_page.html` | API keys and preferences in the UI |
 
 **Your existing `.env` and settings are never overwritten by docs or templates.**
