@@ -715,6 +715,14 @@
                 });
         }
 
+        // Window contracts the shell page + e2e consume by bare name.
+        win.refreshAgentFeedAvailability = refreshAgentFeedAvailability;
+        win.applyAgentFeedAvailability = applyAgentFeedAvailability;
+        Object.defineProperty(win, 'lastUILayout', {
+            configurable: true,
+            get: () => lastUILayout,
+        });
+
         return {
             // Layout + persistence.
             applyLayoutToColumn,

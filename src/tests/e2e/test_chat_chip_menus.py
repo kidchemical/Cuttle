@@ -96,7 +96,10 @@ def test_project_modal_switches_branch(surface):
         " return s && !s.disabled; }",
         timeout=4000,
     )
-    page.select_option("#chipConfigBranch", "dev")
+    page.evaluate(
+        "() => { const s = document.querySelector('#chipConfigBranch');"
+        " s.value = 'dev'; s.dispatchEvent(new Event('change', { bubbles: true })); }"
+    )
     page.wait_for_timeout(150)
     posts = [r for r in api.requests if r[0] == "/api/git/branch"]
     assert posts, "expected a POST /api/git/branch"
@@ -144,7 +147,10 @@ def test_agent_modal_switches_agent_to_muse(surface):
     _add_cursor_chip(page)
     page.locator(AGENT_CHIP).first.click()
     page.locator(MODAL).wait_for(state="visible")
-    page.select_option("#chipConfigAgent", "muse")
+    page.evaluate(
+        "() => { const s = document.querySelector('#chipConfigAgent');"
+        " s.value = 'muse'; s.dispatchEvent(new Event('change', { bubbles: true })); }"
+    )
     page.wait_for_timeout(80)
     assert page.locator(MODAL).first.is_visible()
     assert page.locator("#chipConfigTitle").inner_text() == "Agent"

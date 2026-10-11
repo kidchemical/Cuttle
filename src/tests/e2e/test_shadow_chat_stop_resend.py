@@ -304,6 +304,8 @@ EXPECTED_ROUTE_DENIES = frozenset({
     ("GET", "/api/project-commands"),
     # Real git status spawn; stays blocked for B1.
     ("GET", "/api/git/pending-changes"),
+    # Branch/repo discovery spawns `git rev-parse`; stays blocked for B1.
+    ("GET", "/api/git/repos"),
 })
 
 # Modern page preferences, empty-queue probes and VFX remain denied by the private shadow. Enumerate

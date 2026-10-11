@@ -80,7 +80,6 @@ ALLOW_EXACT = frozenset({
     ("GET", "/api/projects"),
     ("GET", "/api/gizmos/tasks"),
     ("GET", "/api/worktrees"),
-    ("GET", "/api/git/repos"),
     ("GET", "/api/status"),
     ("GET", "/"),
     ("GET", "/chat_page.html"),
