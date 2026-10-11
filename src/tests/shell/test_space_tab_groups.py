@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 SHELL_JS = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "shell/app_shell.js"
+OWNER_JS = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "shell/shell_spaces.js"
 ELECTRON_JS = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "shell/shell_electron.js"
 SHELL_CSS = Path(__file__).resolve().parents[3] / "src" / "web" / "css" / "app_shell.css"
 SPACES_DIR = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "spaces"
@@ -16,7 +17,8 @@ DROP_JS = SPACES_DIR / "spaces_drop.js"
 
 def test_group_color_presets():
     # Palette owner is spaces_state.js (single source of truth, Phase 1);
-    # the shell consumes CuttleSpaces.COLORS / sanitizeColor / DEFAULT_COLOR.
+    # the Spaces tab-strip owner consumes CuttleSpaces.COLORS / sanitizeColor /
+    # DEFAULT_COLOR without forking a copy.
     mod = STATE_JS.read_text(encoding="utf-8")
     assert "const COLORS = [" in mod
     assert "const DEFAULT_COLOR = '#e8eaed'" in mod  # new groups start white
@@ -24,10 +26,12 @@ def test_group_color_presets():
         assert name in mod
     # Only preset swatches persist; arbitrary strings never become colors.
     assert "function sanitizeColor(" in mod
-    src = SHELL_JS.read_text(encoding="utf-8")
-    assert "const SPACE_GROUP_COLORS = [" not in src  # no forked copy
-    assert "const SPACE_GROUP_DEFAULT_COLOR" not in src
-    assert "CuttleSpaces.sanitizeColor" in src
+    owner = OWNER_JS.read_text(encoding="utf-8")
+    shell = SHELL_JS.read_text(encoding="utf-8")
+    assert "const SPACE_GROUP_COLORS = [" not in owner  # no forked copy
+    assert "const SPACE_GROUP_DEFAULT_COLOR" not in owner
+    assert "const SPACE_GROUP_COLORS = [" not in shell
+    assert "CuttleSpaces.sanitizeColor" in owner
 
 
 def test_groups_persist_with_spaces_state():
@@ -37,13 +41,13 @@ def test_groups_persist_with_spaces_state():
     assert "groups: []" in mod
     assert "entry.groupId" in mod
     assert "entry.color" in mod
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert "CuttleSpaces.loadSpacesState(" in src
     assert "CuttleSpaces.saveSpacesState(" in src
 
 
 def test_tab_menu_offers_rename_color_group():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert "function openSpaceTabMenu(" in src
     assert "data-ctx-act=\"rename\"" in src
     assert ">Rename<" in src
@@ -51,11 +55,11 @@ def test_tab_menu_offers_rename_color_group():
     assert ">Add to group<" in src
     assert ">New group<" in src  # group submenu lists New group + existing groups
     assert ">Remove from group<" in src
-    assert "host.addEventListener('contextmenu'" in src
+    assert "hostEl.addEventListener('contextmenu'" in src
 
 
 def test_group_bubble_edits_name_color_ungroup_delete():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert "function openSpaceGroupBubbleFor(" in src
     assert 'placeholder="Name group"' in src
     assert ">Ungroup<" in src
@@ -66,7 +70,7 @@ def test_group_bubble_edits_name_color_ungroup_delete():
 
 
 def test_grouped_tabs_render_pill_and_accent():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert "function spaceGroupPillHtml(" in src
     assert "has-accent" in src
     assert "--space-accent" in src
@@ -154,7 +158,7 @@ def test_buttonless_moves_cancel_drags():
 
 
 def test_groups_collapse_and_expand():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert "function toggleSpaceGroupCollapsed(" in src
     assert "CuttleSpaces.toggleGroupCollapsed(spacesState, gid" in src
     mod = STATE_JS.read_text(encoding="utf-8")
@@ -167,7 +171,7 @@ def test_groups_collapse_and_expand():
 
 
 def test_open_menu_pins_fullscreen_titlebar():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     electron = ELECTRON_JS.read_text(encoding="utf-8")
     assert "function isSpaceCtxOpen(" in src
     # The 420ms auto-hide lives in the Electron owner (shell_electron.js): it
@@ -176,22 +180,26 @@ def test_open_menu_pins_fullscreen_titlebar():
     assert "isSpaceCtxOpen()) return true;" in electron
     assert "shell-space-rename" in electron
     assert electron.count("if (isTitlebarPinned()) return;") >= 2
-    # The page owns the space-menu wiring and delegates to the owner:
-    # opening layers drops a hide timer a previous close just armed...
+    # The Spaces owner wires the space-menu layering and delegates titlebar
+    # hide scheduling to the Electron owner: opening layers drops a hide
+    # timer a previous close just armed...
     assert "CuttleShellElectron.cancelTitlebarHide()" in src
     # ...and closing re-arms it when the pointer is away.
     assert "CuttleShellElectron.rescheduleTitlebarHide()" in src
+    # The owner exports the predicate the Electron titlebar bails on.
+    assert "win.isSpaceCtxOpen = isSpaceCtxOpen;" in src
 
 
 def test_spaces_scripts_load_before_shell():
     html = (Path(__file__).resolve().parents[3] / "src" / "web" / "app_shell.html").read_text(encoding="utf-8")
     idx = {}
-    for name in ("spaces_state.js", "spaces_groups.js", "spaces_order.js", "spaces_drop.js", "spaces_activity.js", "app_shell.js"):
+    for name in ("spaces_state.js", "spaces_groups.js", "spaces_order.js", "spaces_drop.js", "spaces_activity.js", "shell_spaces.js", "app_shell.js"):
         pos = html.find(name)
         assert pos >= 0, name + " not loaded by app_shell.html"
         idx[name] = pos
     for name in ("spaces_state.js", "spaces_groups.js", "spaces_order.js", "spaces_drop.js", "spaces_activity.js"):
-        assert idx[name] < idx["app_shell.js"], name + " must load before app_shell.js"
+        assert idx[name] < idx["shell_spaces.js"], name + " must load before shell_spaces.js"
+    assert idx["shell_spaces.js"] < idx["app_shell.js"]
 
 
 def test_group_tint_css():
@@ -204,7 +212,7 @@ def test_group_tint_css():
 
 
 def test_group_sleeve_and_active_only_underline():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert "shell-space-group-sleeve" in src
     assert "closeSleeve" in src
     css = SHELL_CSS.read_text(encoding="utf-8")

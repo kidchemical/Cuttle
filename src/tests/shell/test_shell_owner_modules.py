@@ -49,10 +49,12 @@ def test_electron_owner_holds_chrome_and_zoom():
 
 def test_shell_delegates_electron_chrome_and_zoom():
     page = SHELL_JS.read_text(encoding="utf-8")
+    # The space-menu titlebar hide scheduling moved to the Spaces owner (5C).
+    spaces = (SHELL / "shell_spaces.js").read_text(encoding="utf-8")
     assert "CuttleShellElectron.handleZoomMessage(e.data);" in page
     assert "CuttleShellElectron.injectElectronZoomHandler(frameEl);" in page
-    assert "CuttleShellElectron.rescheduleTitlebarHide();" in page
-    assert "CuttleShellElectron.cancelTitlebarHide();" in page
+    assert "CuttleShellElectron.rescheduleTitlebarHide();" in spaces
+    assert "CuttleShellElectron.cancelTitlebarHide();" in spaces
     # One owner: the moved bodies are gone from the composition root.
     assert "function initElectronTitlebar(" not in page
     assert "function injectElectronZoomHandler(" not in page
