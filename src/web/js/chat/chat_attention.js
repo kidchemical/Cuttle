@@ -91,6 +91,13 @@
             try { return host.openPaneSnapshot() || []; } catch (_) { return []; }
         }
 
+        // Whether a session currently has an active run (open chat turn or a
+        // submitted/adopted action form). Injected by the page; default idle.
+        function sessionIsRunning(sid) {
+            if (typeof host.sessionShowsHistorySpinner !== 'function') return false;
+            try { return !!host.sessionShowsHistorySpinner(sid); } catch (_) { return false; }
+        }
+
         function historyUnreadIconHTML(isError) {
             const err = !!isError;
             return `<span class="history-unread-icon${err ? ' is-error' : ''}" title="${err ? 'Unread error' : 'Unread'}" aria-label="${err ? 'Unread error' : 'Unread'}"></span>`;
@@ -104,7 +111,12 @@
             return `<span class="history-paused-icon" title="Paused queue" aria-label="Paused queued prompt"></span>`;
         }
 
+        function historyRunningIconHTML() {
+            return `<span class="history-running-icon" title="Generating…" aria-label="Generating"></span>`;
+        }
+
         function historyAttentionIconHTML(kind) {
+            if (kind === 'running') return historyRunningIconHTML();
             if (kind === 'input') return '<span class="history-input-icon" title="Awaiting your input" aria-label="Awaiting your input"></span>';
             if (kind === 'error') return historyUnreadIconHTML(true);
             if (kind === 'unread') return historyUnreadIconHTML(false);
@@ -312,6 +324,27 @@
             }
         }
 
+        /** Paint the single far-left status glyph for a history row. */
+        function syncHistoryLeftStatusIcon(item, kind) {
+            const wanted = kind === 'running' ? 'history-running-icon'
+                : kind === 'input' ? 'history-input-icon'
+                : (kind === 'unread' || kind === 'error') ? 'history-unread-icon'
+                : kind === 'queued' ? 'history-queued-icon'
+                : kind === 'paused' ? 'history-paused-icon'
+                : '';
+            const selector = ':scope > .history-running-icon, :scope > .history-unread-icon,'
+                + ' :scope > .history-queued-icon, :scope > .history-paused-icon,'
+                + ' :scope > .history-input-icon';
+            const current = item.querySelector(selector);
+            if (current && wanted && current.classList.contains(wanted)) {
+                if (wanted === 'history-unread-icon') current.classList.toggle('is-error', kind === 'error');
+                return;
+            }
+            if (current) current.remove();
+            if (!wanted) return;
+            item.insertAdjacentHTML('afterbegin', historyAttentionIconHTML(kind));
+        }
+
         function syncHistoryUnreadIndicators() {
             if (doc && typeof doc.querySelectorAll === 'function') {
                 doc.querySelectorAll('.chat-history-item').forEach((item) => {
@@ -321,58 +354,22 @@
                     const kind = typeof host.attentionKindFor === 'function'
                         ? host.attentionKindFor(sid, sessionObj)
                         : '';
-                    item.classList.toggle('has-unread', kind === 'unread' || kind === 'error');
-                    item.classList.toggle('has-unread-error', kind === 'error');
-                    item.classList.toggle('has-queued', kind === 'queued');
-                    item.classList.toggle('has-paused-queue', kind === 'paused');
-                    let inputIcon = item.querySelector('.history-input-icon');
-                    if (kind !== 'input' && inputIcon) { inputIcon.remove(); inputIcon = null; }
-                    item.classList.toggle('has-input', kind === 'input');
-                    let unreadIcon = item.querySelector('.history-unread-icon');
-                    let queuedIcon = item.querySelector('.history-queued-icon');
-                    let pausedIcon = item.querySelector('.history-paused-icon');
-                    const clearAll = () => {
-                        if (unreadIcon) { unreadIcon.remove(); unreadIcon = null; }
-                        if (queuedIcon) { queuedIcon.remove(); queuedIcon = null; }
-                        if (pausedIcon) { pausedIcon.remove(); pausedIcon = null; }
-                    };
-                    if (kind === 'input') {
-                        clearAll();
-                        if (!inputIcon) item.insertAdjacentHTML('afterbegin', historyAttentionIconHTML('input'));
-                    } else if (kind === 'error' || kind === 'unread') {
-                        if (queuedIcon) queuedIcon.remove();
-                        if (pausedIcon) pausedIcon.remove();
-                        if (!unreadIcon) {
-                            unreadIcon = doc.createElement('span');
-                            unreadIcon.className = 'history-unread-icon';
-                            item.insertBefore(unreadIcon, item.firstChild);
-                        }
-                        unreadIcon.classList.toggle('is-error', kind === 'error');
-                        unreadIcon.title = kind === 'error' ? 'Unread error' : 'Unread';
-                        unreadIcon.setAttribute('aria-label', kind === 'error' ? 'Unread error' : 'Unread');
-                    } else if (kind === 'queued') {
-                        if (unreadIcon) unreadIcon.remove();
-                        if (pausedIcon) pausedIcon.remove();
-                        if (!queuedIcon) {
-                            queuedIcon = doc.createElement('span');
-                            queuedIcon.className = 'history-queued-icon';
-                            queuedIcon.title = 'Queued prompt';
-                            queuedIcon.setAttribute('aria-label', 'Queued prompt');
-                            item.insertBefore(queuedIcon, item.firstChild);
-                        }
-                    } else if (kind === 'paused') {
-                        if (unreadIcon) unreadIcon.remove();
-                        if (queuedIcon) queuedIcon.remove();
-                        if (!pausedIcon) {
-                            pausedIcon = doc.createElement('span');
-                            pausedIcon.className = 'history-paused-icon';
-                            pausedIcon.title = 'Paused queue';
-                            pausedIcon.setAttribute('aria-label', 'Paused queued prompt');
-                            item.insertBefore(pausedIcon, item.firstChild);
-                        }
-                    } else {
-                        clearAll();
-                    }
+                    // One status slot on the left: an active run wins over the
+                    // attention dot so the spinner and unread markers never sit
+                    // on two lines.
+                    const running = sessionIsRunning(sid);
+                    const attention = running ? '' : kind;
+                    const statusKind = running ? 'running' : attention;
+                    item.classList.toggle('is-running', running);
+                    item.classList.toggle('has-unread', attention === 'unread' || attention === 'error');
+                    item.classList.toggle('has-unread-error', attention === 'error');
+                    item.classList.toggle('has-queued', attention === 'queued');
+                    item.classList.toggle('has-paused-queue', attention === 'paused');
+                    item.classList.toggle('has-input', attention === 'input');
+                    syncHistoryLeftStatusIcon(item, statusKind);
+                    // Older markup parked the spinner in the meta line; clear it here.
+                    const metaSpinner = item.querySelector('.history-item-meta .history-running-icon');
+                    if (metaSpinner) metaSpinner.remove();
                 });
             }
             syncHistoryProjectAttentionIndicators();
@@ -388,8 +385,10 @@
 
         return {
             get, accept, mark, flush,
-            historyUnreadIconHTML, historyQueuedIconHTML, historyPausedIconHTML, historyAttentionIconHTML,
+            historyUnreadIconHTML, historyQueuedIconHTML, historyPausedIconHTML,
+            historyRunningIconHTML, historyAttentionIconHTML,
             historyOpenPaneCount, historyOpenPaneBadgeHTML, syncHistoryOpenPaneIndicators,
+            syncHistoryLeftStatusIcon,
             syncHistoryUnreadIndicators, syncHistoryProjectAttentionIndicators,
             updateSessionTitleUnreadDot,
         };

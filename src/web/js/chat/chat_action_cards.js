@@ -1169,13 +1169,43 @@
             } catch (_) {}
             return currentCtx().sessionId || null;
         }
+        // A card is executing work — not merely waiting on a person — only once
+        // a run is genuinely underway: a submitted/adopted restart tracking a
+        // restart id, or a submitted watch/execution painting progress. A freshly
+        // rendered Flask-restart controller ("Checking restart status…") is still
+        // a request for input, so it must not spin the history row.
+        function cardProcessingNow(card) {
+            if (!card) return false;
+            const locked = card.getAttribute('data-locked') === '1'
+                || card.classList.contains('cuttle-action-form--locked');
+            const restartId = String(card.getAttribute('data-restart-id') || '').trim();
+            if (locked) return !!restartId;
+            if (card.getAttribute('data-restart-pending-sync') === '1') return false;
+            return card.classList.contains('is-pending');
+        }
+        function processingSessionIds() {
+            const ids = new Set();
+            chatRoot.querySelectorAll('.cuttle-action-form').forEach(card => {
+                if (!cardProcessingNow(card)) return;
+                const sid = formAwaitingSessionIdFromCard(card);
+                if (sid) ids.add(sid);
+            });
+            return [...ids];
+        }
         function awaitingInputSessionIds() {
             const ids = new Set();
             chatRoot.querySelectorAll('.cuttle-action-form').forEach(card => {
+                if (cardProcessingNow(card)) return;
                 if (card.getAttribute('data-locked') === '1'
-                    || card.classList.contains('is-pending')
-                    || card.getAttribute('data-restart-pending-sync') === '1') return;
-                if (!card.querySelector('[data-action-form-submit]:not(:disabled), [data-action-form-option]:not(:disabled)')) return;
+                    || card.classList.contains('cuttle-action-form--locked')) return;
+                if (card.classList.contains('is-cancelled')) return;
+                const restartId = String(card.getAttribute('data-restart-id') || '').trim();
+                const pendingSync = card.getAttribute('data-restart-pending-sync') === '1';
+                const interactive = !!card.querySelector(
+                    '[data-action-form-submit]:not(:disabled), [data-action-form-option]:not(:disabled)');
+                // A fresh restart controller disables its controls while it checks
+                // status, but it still waits on a person — keep it "awaiting input".
+                if (!interactive && !(pendingSync && !restartId)) return;
                 const sid = formAwaitingSessionIdFromCard(card);
                 if (sid) ids.add(sid);
             });
@@ -1725,6 +1755,7 @@
             runningWatchJobIds,
             awaitingSessionId: formAwaitingSessionIdFromCard,
             awaitingInputSessionIds,
+            processingSessionIds,
             disposeCard,
             destroy,
         };

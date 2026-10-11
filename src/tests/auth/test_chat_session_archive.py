@@ -25,6 +25,65 @@ def test_archive_hides_from_list_and_search(owner_session):
     assert db.search_user_chats(uid, "keep me") == []
 
 
+def _child_session(db, user_id, parent_id, name):
+    sid = db.create_subagent_chat_session(
+        user_id, parent_session_id=parent_id, session_name=name
+    )
+    db.add_message(sid, "user", "hello")
+    return sid
+
+
+def test_archive_cascades_to_subagent_children(owner_session):
+    db = owner_session.db
+    uid = owner_session.user_id
+    parent = _session_with_message(db, uid, "parent")
+    c1 = _child_session(db, uid, parent, "child A")
+    c2 = _child_session(db, uid, parent, "child B")
+
+    assert db.set_session_archived(parent, uid, True) is True
+    active = {s["id"] for s in db.get_user_chat_sessions(uid)}
+    assert parent not in active and c1 not in active and c2 not in active
+    archived = {s["id"] for s in db.get_archived_chat_sessions(uid)}
+    assert {parent, c1, c2} <= archived
+
+
+def test_archive_cascades_through_nested_children(owner_session):
+    db = owner_session.db
+    uid = owner_session.user_id
+    parent = _session_with_message(db, uid, "parent")
+    child = _child_session(db, uid, parent, "child")
+    grandchild = _child_session(db, uid, child, "grandchild")
+
+    db.set_session_archived(parent, uid, True)
+    archived = {s["id"] for s in db.get_archived_chat_sessions(uid)}
+    assert {parent, child, grandchild} <= archived
+
+
+def test_archive_child_leaves_parent_and_siblings(owner_session):
+    db = owner_session.db
+    uid = owner_session.user_id
+    parent = _session_with_message(db, uid, "parent")
+    c1 = _child_session(db, uid, parent, "child 1")
+    c2 = _child_session(db, uid, parent, "child 2")
+
+    db.set_session_archived(c1, uid, True)
+    active = {s["id"] for s in db.get_user_chat_sessions(uid)}
+    assert parent in active and c2 in active and c1 not in active
+
+
+def test_unarchive_cascades_to_children(owner_session):
+    db = owner_session.db
+    uid = owner_session.user_id
+    parent = _session_with_message(db, uid, "parent")
+    child = _child_session(db, uid, parent, "child")
+
+    db.set_session_archived(parent, uid, True)
+    assert db.set_session_archived(parent, uid, False) is True
+    active = {s["id"] for s in db.get_user_chat_sessions(uid)}
+    assert {parent, child} <= active
+    assert db.get_archived_chat_sessions(uid) == []
+
+
 def test_unarchive_restores_to_list(owner_session):
     db = owner_session.db
     uid = owner_session.user_id
@@ -91,6 +150,22 @@ def test_patch_archived_round_trip(owner_session):
     assert resp.status_code == 200
     default = client.get("/api/auth/sessions").get_json()["sessions"]
     assert [s["id"] for s in default] == [sid]
+
+
+def test_patch_archived_cascades_to_children(owner_session):
+    client = _client(owner_session)
+    sid = _session_with_message(owner_session.db, owner_session.user_id, "http parent")
+    child = _child_session(owner_session.db, owner_session.user_id, sid, "http child")
+
+    resp = client.patch(f"/api/auth/sessions/{sid}", json={"archived": True})
+    assert resp.status_code == 200
+
+    default = client.get("/api/auth/sessions").get_json()["sessions"]
+    assert sid not in {s["id"] for s in default}
+    assert child not in {s["id"] for s in default}
+
+    only = client.get("/api/auth/sessions?archived=only").get_json()["sessions"]
+    assert {sid, child} <= {s["id"] for s in only}
 
 
 def test_patch_archived_missing_session_404(owner_session):

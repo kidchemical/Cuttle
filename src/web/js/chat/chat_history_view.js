@@ -209,7 +209,7 @@
             const pausedClass = attention === 'paused' ? ' has-paused-queue' : '';
             const starred = !!Number(s.starred);
             const starredClass = starred ? ' is-starred' : '';
-            const runningIcon = running ? ctx.historyRunningIconHTML() : '';
+            const statusKind = running ? 'running' : attention;
             const starredIcon = starred ? historyStarredIconHTML() : '';
             const count = Number(s.message_count) || 0;
             const origin = String(s.origin || '').trim().toLowerCase();
@@ -277,10 +277,10 @@
                 ? `<span class="history-kind-badge history-match-badge" title="Matched in message body">In messages</span>`
                 : '';
             return `<div class="chat-history-item${active}${runningClass}${unreadClass}${errorClass}${queuedClass}${pausedClass}${starredClass}${openClass}${subagentClass}${hasSubagentsClass}" data-session-id="${sid}" data-parent-session-id="${escapeHtml(parentId)}" data-search-match="${isContentMatch ? 'content' : 'title'}" data-chat-title="${escapeHtml(title).replace(/"/g, '&quot;')}" onclick="window.chatPageLoadSession('${sid}')">
-            ${ctx.historyAttentionIconHTML(attention)}
+            ${ctx.historyAttentionIconHTML(statusKind)}
             ${subToggle}
             <div class="history-item-body">
-                ${historyItemMetaHTML([projectChip, parts.chipsHtml, discordBadge, subagentBadge, contentBadge, subCountBadge, badge, starredIcon, runningIcon])}
+                ${historyItemMetaHTML([projectChip, parts.chipsHtml, discordBadge, subagentBadge, contentBadge, subCountBadge, badge, starredIcon])}
                 <div class="chat-title">${parts.titleHtml}</div>
                 ${snippetHtml}
             </div>
@@ -318,8 +318,8 @@
                 parts.chipsHtml,
                 contentBadge,
                 starred ? historyStarredIconHTML() : '',
-                running ? ctx.historyRunningIconHTML() : '',
             ]);
+            const statusKind = running ? 'running' : attention;
             const unreadClass = attention === 'input' ? ' has-input' : (attention === 'unread' || attention === 'error') ? ' has-unread' : '';
             const errorClass = attention === 'error' ? ' has-unread-error' : '';
             const queuedClass = attention === 'queued' ? ' has-queued' : '';
@@ -330,7 +330,7 @@
                  data-search-match="${isContentMatch ? 'content' : 'title'}"
                  data-chat-title="${escapeHtml(String(session.title || '')).replace(/"/g, '&quot;')}"
                  onclick="window.chatPageLoadSession('${session.id}')">
-                ${ctx.historyAttentionIconHTML(attention)}
+                ${ctx.historyAttentionIconHTML(statusKind)}
                 <div class="history-item-body">
                     ${meta}
                     <div class="chat-title">${parts.titleHtml}</div>

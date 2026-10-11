@@ -1599,6 +1599,7 @@
             }
         },
         attentionKindFor: (sid, sessionObj) => sessionHistoryAttentionKind(sid, sessionObj),
+        sessionShowsHistorySpinner: (sid) => sessionShowsHistorySpinner(sid),
         syncSubagentAttention: () => historyPanel.syncHistorySubagentAttention(),
         scheduleBroadcast: () => scheduleChatActivityBroadcast(),
         currentSessionId: () => session.current(),
@@ -9683,8 +9684,10 @@ function downloadTranscriptMarkdown(text, sessionId) {
         return true;
     }
 
+    // Owned by chat_attention.js (CuttleChatAttention); the controller owns the
+    // status-slot icon markup. Kept as a page adapter for existing call sites.
     function historyRunningIconHTML() {
-        return `<span class="history-running-icon" title="Generating…" aria-label="Generating"></span>`;
+        return serverAttention.historyRunningIconHTML();
     }
 
     function sessionShowsHistorySpinner(sessionId) {
@@ -9720,11 +9723,14 @@ function downloadTranscriptMarkdown(text, sessionId) {
         return actionCardsController().awaitingSessionId(card);
     }
 
-    /** Keep history spinners in sync with pending action forms (restart / watch). */
+    /** Keep history spinners in sync with action forms that are actually executing.
+     *
+     * A form merely waiting for the user (unlocked question, a Flask-restart
+     * card still "Checking restart status…") is not work: the blue input dot
+     * owns it. Only a submitted/adopted restart or a running watch spins. */
     function syncHistoryFormAwaitingFromDom() {
         const next = new Set();
-        document.querySelectorAll('.cuttle-action-form.is-pending').forEach((card) => {
-            const sid = formAwaitingSessionIdFromCard(card);
+        actionCardsController().processingSessionIds().forEach((sid) => {
             if (sid == null || sid === '') return;
             next.add(String(canonicalizeChatSessionId(sid)));
         });
@@ -9785,26 +9791,11 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
 
     function syncHistoryRunningIndicators() {
-        document.querySelectorAll('.chat-history-item').forEach(item => {
-            const sid = item.dataset.sessionId;
-            const running = sessionShowsHistorySpinner(sid);
-            item.classList.toggle('is-running', running);
-            let icon = item.querySelector('.history-running-icon');
-            if (running && !icon) {
-                icon = document.createElement('span');
-                icon.className = 'history-running-icon';
-                icon.title = 'Active…';
-                icon.setAttribute('aria-label', 'Active');
-                const meta = historyItemMetaEl(item);
-                if (meta) meta.appendChild(icon);
-                else item.appendChild(icon);
-            } else if (!running && icon) {
-                icon.remove();
-            }
-        });
-        historyPanel.syncHistorySubagentAttention();
+        // The running spinner shares the far-left status slot with the unread /
+        // input / queue dots; syncHistoryUnreadIndicators owns that slot and the
+        // is-running class. Only the title icon is running-specific.
+        syncHistoryUnreadIndicators();
         updateSessionTitleRunningIcon();
-        scheduleChatActivityBroadcast();
     }
 
     /** Space tabs (app shell) mirror these dots. Push only the chats this
@@ -9915,11 +9906,10 @@ function downloadTranscriptMarkdown(text, sessionId) {
     function applyGeneratingFlagsFromSessions(serverSessions) {
         const currentWasRunning = session.current() != null
             && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current()));
-        // Only mounted work in the open chat may supplement server execution.
+        // Only executing work in the open chat may supplement server execution.
         // Entries left behind by another chat must yield to an idle snapshot.
         const localPending = new Set();
-        document.querySelectorAll('.cuttle-action-form.is-pending').forEach(card => {
-            const sid = formAwaitingSessionIdFromCard(card);
+        actionCardsController().processingSessionIds().forEach(sid => {
             if (sessionIdsEqual(sid, session.current())) localPending.add(String(canonicalizeChatSessionId(sid)));
         });
         const still = new Set();
