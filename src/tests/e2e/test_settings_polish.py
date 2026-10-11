@@ -21,7 +21,7 @@ def test_all_settings_tabs_fit_phone_and_desktop(browser, static_server, tab):
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
     try:
-        expect(page.locator('#defaultAgentSelect')).to_be_enabled()
+        expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
         page.evaluate('(tab) => CuttleSettingsTabs.setTab(tab)', tab)
         panel = page.locator('#panel-' + tab)
         expect(panel).to_be_visible()
@@ -109,7 +109,7 @@ def test_existing_info_tooltip_opens_and_dismisses(browser, static_server, touch
     page.route(static_server + '/api/**', SettingsWorld().handle)
     try:
         page.goto(static_server + '/settings_page.html?tab=agents', wait_until='domcontentloaded')
-        expect(page.locator('#defaultAgentSelect')).to_be_enabled()
+        expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
         page.evaluate("CuttleSettingsTabs.setTab('appearance')")
         info = page.get_by_role('button', name='About Page Transitions', exact=True)
         tip = page.locator('#cuttle-shared-tooltip')
@@ -153,7 +153,7 @@ def test_existing_info_tooltip_opens_and_dismisses(browser, static_server, touch
                     description: 'Details with "quotes" & special characters.',
                     needs_restart: true, enabled: false});
         }""")
-        expect(page.locator('[data-experimental-flag="example"]')).to_contain_text('restart')
+        expect(dynamic).to_have_attribute('data-tooltip', __import__('re').compile('restart'))
         if touch:
             dynamic.tap()
         else:

@@ -1,5 +1,28 @@
 # Settings modernization
 
+## Shared app controls and help
+
+Non-chat app pages load `css/page_controls.css` after their page styles and
+`js/shared/page_controls.js` after the shared select component. This owns compact
+action sizing, theme surfaces, focus treatment, and responsive control sizing.
+Chat keeps its existing presentation.
+
+The existing `CuttleSearchableSelect` component now supports optional
+`floating: true` and `searchable: false` presentation. App pages use floating
+menus for both catalog searches and short option lists, with identical hover
+and selected-entry styling. The native select remains the value/change source.
+Menus are portaled to the body (or their open native dialog), use the browser top layer where available,
+fit above or below their trigger, and close when their trigger is removed.
+Legacy consumers keep the original presentation unless they opt in.
+
+Settings descriptions belong in `button.cuttle-info` tooltips. Current status,
+errors, units/values, and conditional workflow notices remain visible, since
+they report the current configuration or explain the next action.
+
+Subagent preference saves validate models and effort against the same live
+agent catalog offered by Settings; bundled manifests provide offline fallback.
+The UI restores persisted selections on a rejected save.
+
 > **Status: mixed historical/current.** The opening "still unbuilt" list predates
 > later shipped work recorded below; check the code and later sections for current state.
 

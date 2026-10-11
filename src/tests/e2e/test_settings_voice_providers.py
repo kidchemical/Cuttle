@@ -2,6 +2,7 @@
 import json
 from urllib.parse import urlparse, parse_qs
 from playwright.sync_api import expect
+from .control_helpers import choose
 from .test_settings_agents import AgentWorld, open_settings
 from .test_shared_diff_modal import browser, static_server  # noqa: F401
 
@@ -49,7 +50,7 @@ class VoiceWorld(AgentWorld):
 
 
 def show_voice(page):
-    expect(page.locator('#defaultAgentSelect')).to_be_enabled()
+    expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
     page.evaluate("CuttleSettingsTabs.setTab('voice')")
     page.locator('#voiceDetails').evaluate('(element) => element.open = true')
 
@@ -62,30 +63,30 @@ def test_voice_and_narrator_catalogs_efforts_custom_defaults_and_save(browser,st
         model=page.locator('#chatTtsModel'); narrator=page.locator('#chatTtsNarratorModel'); effort=page.locator('#chatTtsNarratorEffort')
         expect(model).to_have_value('tts-old'); expect(narrator).to_have_value('haiku-new'); expect(effort).to_have_value('high')
         expect(effort).to_be_enabled(); assert model.locator('option[value="wrong-operation"]').count()==0
-        narrator.select_option('haiku-budget'); expect(effort).to_be_disabled()
-        narrator.select_option('haiku-new'); expect(effort).to_have_value('high'); effort.select_option('low')
-        model.select_option('tts-new'); page.locator('#chatTtsVoice').select_option('coral')
-        page.locator('#chatTtsProvider').select_option('elevenlabs'); expect(model).to_contain_text('speech-new')
+        choose(page, narrator, 'haiku-budget'); expect(effort).to_be_disabled()
+        choose(page, narrator, 'haiku-new'); expect(effort).to_have_value('high'); choose(page, effort, 'low')
+        choose(page, model, 'tts-new'); choose(page, page.locator('#chatTtsVoice'), 'coral')
+        choose(page, page.locator('#chatTtsProvider'), 'elevenlabs'); expect(model).to_contain_text('speech-new')
         expect(page.locator('#chatTtsStabilityRow')).to_be_visible()
-        page.locator('#chatTtsProvider').select_option('openai'); expect(model).to_have_value('tts-new')
+        choose(page, page.locator('#chatTtsProvider'), 'openai'); expect(model).to_have_value('tts-new')
         expect(page.locator('#chatTtsVoice')).to_have_value('coral'); expect(page.locator('#chatTtsStabilityRow')).to_be_hidden()
         page.evaluate('refreshNarratorModels()'); assert any('refresh=1' in url for url in world.requests)
         expect(effort).to_have_value('low')
         world.fail_models=True; page.evaluate('refreshChatTtsModels()')
         expect(page.locator('#chatTtsModelStatus')).to_contain_text('selection is preserved'); expect(model).to_have_value('tts-new')
-        model.select_option('__custom_model__'); page.locator('#chatTtsCustomModel').fill('future-tts')
-        narrator.select_option('__custom_model__'); page.locator('#chatTtsNarratorCustomModel').fill('future-text')
+        choose(page, model, '__custom_model__'); page.locator('#chatTtsCustomModel').fill('future-tts')
+        choose(page, narrator, '__custom_model__'); page.locator('#chatTtsNarratorCustomModel').fill('future-text')
         world.fail_save=True; page.evaluate('saveChatTtsSettings()')
         expect(page.locator('.cuttle-toast').last).to_contain_text('Save failed')
         expect(page.locator('#chatTtsCustomModel')).to_have_value('future-tts')
         world.fail_save=False; world.fail_models=False; page.evaluate('saveChatTtsSettings()')
         expect(model).to_have_value('future-tts'); assert world.conf['summarize_models']['anthropic']=='future-text'
         assert world.conf['summarize_efforts']['anthropic']['haiku-new']=='low'
-        model.select_option(''); narrator.select_option(''); page.evaluate('saveChatTtsSettings()')
+        choose(page, model, ''); choose(page, narrator, ''); page.evaluate('saveChatTtsSettings()')
         expect(model).to_have_value(''); assert world.conf['models']['openai']=='' and world.conf['summarize_models']['anthropic']==''
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         for selector in ('#chatTtsModel', '#chatTtsNarratorModel'):
-            assert 35 <= page.locator(selector).bounding_box()['height'] <= 65
+            assert 34 <= page.locator(selector).locator('..').locator('.cuttle-combo-trigger').bounding_box()['height'] <= 65
         page.locator('#panel-voice').screenshot(path='temp/voice-providers-phone.png')
         page.set_viewport_size({'width':1280,'height':900}); assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         assert not errors,errors
@@ -96,7 +97,7 @@ def test_slow_previous_speech_catalog_cannot_replace_new_provider(browser,static
     world=VoiceWorld(); world.delay=True; page=open_settings(browser,static_server,world)
     try:
         show_voice(page); expect(page.locator('#chatTtsModelStatus')).to_contain_text('Loading')
-        page.locator('#chatTtsProvider').select_option('elevenlabs')
+        choose(page, page.locator('#chatTtsProvider'), 'elevenlabs')
         expect(page.locator('#chatTtsModel')).to_contain_text('speech-new')
         assert world.pending is not None
         world.pending.fulfill(content_type='application/json',body=json.dumps(world.models('openai','speech_generation')))

@@ -128,9 +128,31 @@ def test_settings_owner_write_round_trip(tmp_path, monkeypatch):
     assert res.status_code == 400
 
 
+def test_subagent_preferences_accept_live_models_and_efforts(tmp_path, monkeypatch):
+    """Models offered by Settings must save even outside the bundled snapshot."""
+    isolated = _isolated_settings(monkeypatch, tmp_path)
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx['client'].set_cookie('session_token', ctx['token'])
+    live_model = 'openrouter/new-provider/new-reasoning-model'
+    monkeypatch.setattr('api.agent_harness.agent_models.load_agent_catalog',
+                        lambda agent, fallback: ([{'id': live_model, 'efforts': ['low', 'high']}], 'fixture'))
+    for model, effort in [('', ''), (live_model, ''), (live_model, 'high'), ('', 'high')]:
+        pref = {'opencode': {'agent': 'opencode', 'model': model, 'effort': effort}}
+        res = ctx['client'].post('/api/settings/agent-adapters', json={'subagents': pref}, environ_base=LAN)
+        assert res.status_code == 200, res.get_json()
+        assert isolated.get_setting('agent_subagent_defaults') == pref
+    for model, effort in [('unknown-model', ''), (live_model, 'max'), (live_model, 'invalid')]:
+        res = ctx['client'].post('/api/settings/agent-adapters', json={'subagents': {
+            'opencode': {'agent': 'opencode', 'model': model, 'effort': effort}}}, environ_base=LAN)
+        assert res.status_code == 400, res.get_json()
+    assert isolated.get_setting('agent_subagent_defaults')['opencode']['effort'] == 'high'
+
+
 def test_agent_adapters_round_trip(tmp_path, monkeypatch):
     """Adapter controls and per-parent subagent defaults round-trip."""
     isolated = _isolated_settings(monkeypatch, tmp_path)
+    monkeypatch.setattr('api.agent_harness.agent_models.load_agent_catalog',
+                        lambda agent, fallback: ([{'id': mid} for mid in fallback], 'fixture'))
     monkeypatch.delenv("CUTTLE_AGENT_STEER", raising=False)
     monkeypatch.delenv("CUTTLE_ALLOW_PROJECT_ADAPTERS", raising=False)
     ctx = _auth_client(tmp_path, monkeypatch)
