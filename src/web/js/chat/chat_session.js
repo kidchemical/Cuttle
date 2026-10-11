@@ -246,7 +246,7 @@
                 sessionPrefsUnreadIsError, resetChatHistoryWindow,
                 removeRemoteWaitingIndicator, stopMessageSync, toAuthDbSessionId,
                 takeChatTranscriptPrefetch, fetchWithTimeout, sessionMessagesUrl,
-                updateSessionUsageSummary,
+                updateSessionUsageSummary, refreshSessionUsageSummary,
                 windowChatHistoryMessages, annotateMessageProjects,
                 reconcileChatProject, preferredModelFromMessages,
                 hydrateAgentSelectionFromSessionData, applySessionIdentity,
@@ -311,6 +311,7 @@
                 // Opening this chat — stop any background completion poll for it.
                 cancelDetachedSessionCompletionWatch(sessionId);
                 const loadSeq = session.open(sessionId);
+                if (updateSessionUsageSummary) updateSessionUsageSummary();
                 adoptFollowupQueue(session.current());
                 // Opened chat defaults to idle until the one-shot live-status (below)
                 // confirms generating. Stale runningSessionIds / hub cache from a
@@ -402,6 +403,10 @@
                     if (loadSeq !== session.navSeq()) return;
                     if (data.success && Array.isArray(data.messages)) {
                         if (updateSessionUsageSummary) updateSessionUsageSummary(data.usage_summary);
+                        // Prefetches created before estimates were enabled may
+                        // omit totals. Fetch them now rather than waiting for
+                        // the next periodic history sync.
+                        if (!Array.isArray(data.usage_summary) && refreshSessionUsageSummary) refreshSessionUsageSummary();
                         loadedMessages = windowChatHistoryMessages(data);
                         annotateMessageProjects(loadedMessages);
                         if (data.project_id != null || data.project_path || data.project_name) {

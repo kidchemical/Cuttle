@@ -42,11 +42,16 @@
             var bare = String(chat).trim();
             if (bare.indexOf('db_session_') === 0) bare = bare.slice('db_session_'.length);
             if (!bare) return;
+            var query = new URLSearchParams({ limit: '10' });
+            if (localStorage.getItem('cuttleShowSessionUsageEstimate') === 'true') {
+                query.set('usage_summary', '1');
+                query.set('include_subagents', localStorage.getItem('cuttleSessionUsageIncludeSubagents') === 'true' ? '1' : '0');
+            }
             window.__cuttleChatPrefetch = {
                 id: String(chat),
                 startedAt: Date.now(),
                 promise: fetch(
-                    '/api/auth/sessions/' + encodeURIComponent(bare) + '/messages?limit=10',
+                    '/api/auth/sessions/' + encodeURIComponent(bare) + '/messages?' + query.toString(),
                     { credentials: 'include', cache: 'no-store' }
                 ).then(function (r) {
                     return r.ok ? r.json() : null;
@@ -481,8 +486,8 @@
     <script src="/js/shared/searchable_select.js?v=20261011closedComboFix2"></script>
     <script src="/js/chat/chat_worktrees.js?v=20261010wt1"></script>
     <script src="/js/chat/chat_chip_config.js?v=20261009chipmodal2"></script>
-    <script src="/js/chat/chat_session.js?v=20261011sessionusage1"></script>
-    <script src="/js/chat/chat_page.js?v=20261011sessionusage1"></script>
+    <script src="/js/chat/chat_session.js?v=20261011usageBoot2"></script>
+    <script src="/js/chat/chat_page.js?v=20261011usageBoot2"></script>
     <!-- highlight.js / Vega: load after boot so offline WAN never blocks the chat UI -->
     <script src="/js/shared/optional_cdn.js?v=20260815vegaReady"></script>
 </body>

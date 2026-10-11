@@ -43,7 +43,12 @@ CEILINGS = {
     # (chat_context_gauge), session lifecycle (chat_session), history panel
     # (chat_history_panel), stream transport (chat_stream_transport) and the
     # turn/recovery owners hold the moved domains; the page keeps call sites.
-    "src/web/js/chat/chat_page.js": 13405,
+    # +12 (2026-10-11): merge dev 9d2c79a — the session-usage panel's
+    # unavailable/loading states plus the prefetch refresh and nav-seq guard.
+    # This DOM + fetch panel logic is page orchestration and cannot live in
+    # chat_usage.js (contractually pure, no DOM/I/O); session data loading
+    # already lives in the chat_session owner. Behavior merged, not relocated.
+    "src/web/js/chat/chat_page.js": 13417,
     # Phase 7 (2026-10-11): 8,280 -> 4,182. app_shell.js now composes the pane
     # lifecycle (shell_panes), Spaces UI (shell_spaces), rail/apps (shell_rail)
     # and Electron chrome/mobile/SSH (shell_electron, shell_mobile) owners.

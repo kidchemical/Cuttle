@@ -2,6 +2,7 @@
 import json
 from urllib.parse import urlparse
 
+import pytest
 from playwright.sync_api import expect
 from .control_helpers import choose
 from .test_shared_diff_modal import browser, static_server, apply_request_guard, IsolatedAPI  # noqa: F401
@@ -147,6 +148,44 @@ def test_subagent_model_and_effort_only_show_for_non_native_choice(browser, stat
         assert json.loads(saved.value.request.post_data)['subagents'] == {
             'opencode': {'agent':'alpha','model':'','effort':''}
         }
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width', [1280, 390])
+def test_agent_dropdown_panel_is_anchored_to_clicked_control(browser, static_server, width):
+    page = open_settings(browser, static_server, AgentWorld(), width=width)
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    try:
+        card = page.locator('.agent-card[data-agent-id="opencode"]')
+        card.locator('.agent-card-head').click()
+        for label in ['Default model', 'Default effort', 'Default subagent', 'Default model']:
+            select = card.locator('.agent-config-row').filter(has_text=label).locator('select')
+            trigger = select.locator('xpath=..').locator('.cuttle-combo-trigger')
+            trigger.evaluate("element => element.scrollIntoView({block: 'center'})")
+            trigger.click()
+            panel = page.locator('.cuttle-combo-popup')
+            expect(panel).to_have_count(1)
+            expect(panel).to_be_visible()
+            geometry = page.evaluate("""(select) => {
+            const panel = document.querySelector('.cuttle-combo-popup');
+            const trigger = select.__cuttleSearchable.trigger;
+            const pr = panel.getBoundingClientRect(), tr = trigger.getBoundingClientRect();
+            return {parentIsBody: panel.parentElement === document.body, top: pr.top, bottom: pr.bottom,
+                triggerTop: tr.top, triggerBottom: tr.bottom,
+                left: pr.left, triggerLeft: tr.left,
+                ownList: panel.querySelector('.cuttle-combo-list').id === trigger.getAttribute('aria-controls')};
+            }""", select.element_handle())
+            assert geometry['parentIsBody']
+            assert geometry['ownList']
+            assert abs(geometry['left'] - geometry['triggerLeft']) < 2
+            assert abs(geometry['top'] - geometry['triggerBottom'] - 6) < 2, geometry
+            if label == 'Default model':
+                expect(panel).to_contain_text('openrouter/model')
+            page.keyboard.press('Escape')
+            expect(panel).to_have_count(0)
+        assert not errors
     finally:
         page.close()
 

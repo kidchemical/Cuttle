@@ -109,10 +109,10 @@
             if (root.CuttleSearchableSelect) {
                 root.CuttleSearchableSelect.enhance(target, {
                     label: target.getAttribute('aria-label') || 'Executor',
-                    className: 'background-helper-dropdown' });
+                    className: 'background-helper-dropdown', floating: true });
                 root.CuttleSearchableSelect.enhance(model, {
                     label: model.getAttribute('aria-label') || 'Model',
-                    className: 'background-helper-dropdown' });
+                    className: 'background-helper-dropdown', floating: true });
             }
             let rows = [], defaultEfforts = [], ticket = 0, draft = {...saved};
             const current = () => targets.find(t => t.key === target.value);

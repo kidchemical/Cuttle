@@ -543,13 +543,20 @@
 
         // "Update ready" modal: restart the app now, or keep working.
         const restartModal = document.getElementById('cuttleRestartModal');
+        const restartPopup = restartModal && window.CuttleModal
+            ? window.CuttleModal.create(restartModal) : null;
         const showRestartModal = (version) => {
             if (!restartModal) return;
             const v = restartModal.querySelector('[data-restart-version]');
             if (v) v.textContent = String(version || 'the latest');
-            restartModal.hidden = false;
+            if (restartPopup) restartPopup.open();
+            else { restartModal.hidden = false; restartModal.classList.add('active'); }
         };
-        const hideRestartModal = () => { if (restartModal) restartModal.hidden = true; };
+        const hideRestartModal = () => {
+            if (!restartModal) return;
+            if (restartPopup) restartPopup.close();
+            else { restartModal.classList.remove('active'); restartModal.hidden = true; }
+        };
         if (restartModal) {
             restartModal.querySelector('[data-restart-now]')?.addEventListener('click', async () => {
                 hideRestartModal();

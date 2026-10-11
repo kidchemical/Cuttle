@@ -135,26 +135,68 @@ def test_subagent_preferences_accept_live_models_and_efforts(tmp_path, monkeypat
     isolated = _isolated_settings(monkeypatch, tmp_path)
     ctx = _auth_client(tmp_path, monkeypatch)
     ctx['client'].set_cookie('session_token', ctx['token'])
-    live_model = 'openrouter/new-provider/new-reasoning-model'
-    monkeypatch.setattr('api.agent_harness.agent_models.load_agent_catalog',
-                        lambda agent, fallback: (
-                            am.normalize_catalog_rows('opencode', [{
-                                'id': live_model,
-                                'supports_variant': True,
-                                'variant_levels': ['low', 'high'],
-                            }]),
-                            'fixture',
-                        ))
-    for model, effort in [('', ''), (live_model, ''), (live_model, 'high'), ('', 'high')]:
+    live_model = 'openrouter/~openai/gpt-luna-latest'
+    effort_model = 'openrouter/existing-model'
+    refreshes = []
+
+    def load_catalog(agent, fallback, refresh=False):
+        refreshes.append(bool(refresh))
+        if not refresh:
+            # Reproduce a Settings page whose catalog was loaded before the new
+            # OpenCode model and effort level appeared.
+            return am.normalize_catalog_rows('opencode', [
+                {'id': 'openrouter/older-model'},
+                {'id': effort_model, 'supports_variant': True, 'variant_levels': ['low']},
+            ]), 'cache'
+        return am.normalize_catalog_rows('opencode', [{
+            'id': live_model,
+            'supports_variant': True,
+            'variant_levels': ['low', 'high'],
+        }, {
+            'id': effort_model,
+            'supports_variant': True,
+            'variant_levels': ['low', 'high'],
+        }]), 'cli_refresh'
+
+    monkeypatch.setattr('api.agent_harness.agent_models.load_agent_catalog', load_catalog)
+    for model, effort in [('', ''), (live_model, ''), (live_model, 'high'), ('', 'high'),
+                          (effort_model, 'high')]:
         pref = {'opencode': {'agent': 'opencode', 'model': model, 'effort': effort}}
         res = ctx['client'].post('/api/settings/agent-adapters', json={'subagents': pref}, environ_base=LAN)
         assert res.status_code == 200, res.get_json()
         assert isolated.get_setting('agent_subagent_defaults') == pref
+    assert True in refreshes
     for model, effort in [('unknown-model', ''), (live_model, 'max'), (live_model, 'invalid')]:
         res = ctx['client'].post('/api/settings/agent-adapters', json={'subagents': {
             'opencode': {'agent': 'opencode', 'model': model, 'effort': effort}}}, environ_base=LAN)
         assert res.status_code == 400, res.get_json()
     assert isolated.get_setting('agent_subagent_defaults')['opencode']['effort'] == 'high'
+
+
+def test_opencode_luna_subagent_save_uses_real_cached_catalog(tmp_path, monkeypatch):
+    """Exercise the real CLI cache loader, not a mocked list of accepted ids."""
+    from api.agent_harness.agents.opencode import model_catalog as mc
+    from api.agent_harness.agent_models import load_agent_catalog, catalog_model_ids
+    from api.agent_harness.catalog import get_agent
+
+    monkeypatch.setenv('CUTTLE_HOME', str(tmp_path / 'home'))
+    isolated = _isolated_settings(monkeypatch, tmp_path)
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx['client'].set_cookie('session_token', ctx['token'])
+    model = 'openrouter/~openai/gpt-luna-latest'
+    monkeypatch.setattr(mc, '_cache_path', lambda: tmp_path / 'opencode_models_cache.json')
+    mc._write_cache(mc._parse_models_stdout(model + '\n{\"variants\": {\"low\": {}, \"high\": {}}}'), refreshed=True)
+    monkeypatch.setattr(mc, '_run_opencode_models', lambda **kwargs: (_ for _ in ()).throw(
+        AssertionError('Fresh cached model must not require a CLI call')))
+    rows, source = load_agent_catalog('opencode', get_agent('opencode')[0].models)
+    assert source == 'cache'
+    assert model in catalog_model_ids(rows)
+    for effort in ['', 'high']:
+        pref = {'opencode': {'agent': 'opencode', 'model': model, 'effort': effort}}
+        res = ctx['client'].post('/api/settings/agent-adapters', json={'subagents': pref}, environ_base=LAN)
+        assert res.status_code == 200, res.get_json()
+        assert isolated.get_setting('agent_subagent_defaults') == pref
+        assert ctx['client'].get('/api/settings/agent-adapters', environ_base=LAN).get_json()['subagents'] == pref
 
 
 def test_agent_adapters_round_trip(tmp_path, monkeypatch):
