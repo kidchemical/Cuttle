@@ -77,7 +77,10 @@ def _run_project_chip_js(script: str) -> dict:
     stored_check = _extract(
         src,
         "    function sessionHasStoredProject(sessionId, sessionObj) {",
-        "    function isHistoryProjectSectionExpanded(",
+        # Slice 3A commit 3 moved isHistoryProjectSectionExpanded (and the rest
+        # of project grouping) into chat_history_panel.js; the page's next
+        # project/session function is isChatSessionStarred.
+        "    function isChatSessionStarred(sessionId) {",
     )
     set_chat = _extract(
         src,

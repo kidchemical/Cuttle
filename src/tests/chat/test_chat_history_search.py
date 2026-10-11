@@ -173,6 +173,43 @@ def test_history_js_hard_gates_full_list_paint_while_searching():
     assert "In messages" in panel
 
 
+def test_history_grouping_moved_to_view_and_panel():
+    """Slice 3A commit 3: project grouping + subagent nesting split owners.
+
+    Pure algorithms/templates live in chat_history_view.js; persisted
+    collapse/expand prefs, reveal counts, DOM toggles and the grouped repaint
+    live in chat_history_panel.js. The page forwards the window inline names.
+    """
+    view = VIEW_JS.read_text(encoding="utf-8")
+    for fn in (
+        "function nestHistoryEntries(",
+        "function renderHistoryGroupBody(",
+        "function groupSessionsByProject(",
+        "function entryIsStarred(",
+        "function historySubagentToggleTitle(",
+        "function visibleHistoryRoots(",
+    ):
+        assert fn in view, fn
+
+    panel = PANEL_JS.read_text(encoding="utf-8")
+    for fn in (
+        "function isHistoryProjectSectionExpanded(",
+        "function toggleHistoryProjectCollapse(",
+        "function toggleHistorySubagentGroup(",
+        "function paintHistoryEntries(",
+        "function readHistoryProjectCollapsePrefs(",
+        "function readHistorySubagentExpandPrefs(",
+        "isProjectSectionExpanded: isHistoryProjectSectionExpanded",
+    ):
+        assert fn in panel, fn
+
+    page = CHAT_JS.read_text(encoding="utf-8")
+    # The page no longer owns the algorithms; it composes and forwards.
+    assert "function groupSessionsByProject(" not in page
+    assert "window.revealMoreHistoryGroup = (event) => historyPanel.revealMore(event);" in page
+    assert "window.toggleHistorySubagentGroup = (sessionId, event) => historyPanel.toggleSubagentGroup(sessionId, event);" in page
+
+
 def test_chat_page_asset_versions_bump_for_capacitor_cache():
     """Capacitor WebViews cache ?v= JS/CSS as immutable — bump when search UI changes."""
     import re

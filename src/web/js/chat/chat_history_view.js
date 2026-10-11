@@ -10,6 +10,10 @@
     'use strict';
     const rendered = new WeakMap();
 
+    /** Initial chats shown per project; each "Show N more" adds another page. */
+    const HISTORY_GROUP_PREVIEW_LIMIT = 5;
+    const HISTORY_GROUP_PAGE_SIZE = 5;
+
     function preserveScroll(container, update) {
         const top = container.scrollTop;
         const left = container.scrollLeft;
@@ -374,7 +378,326 @@
         };
     }
 
+    /** Normalize a grouped history entry to its session object. */
+    function historyGroupEntrySessionObj(entry) {
+        if (!entry) return null;
+        return entry.session || entry.serverSession || null;
+    }
+
+    /** Inject a per-entry predicate to summarize a project group. */
+    function historyGroupSomeEntry(group, lookup) {
+        if (typeof lookup !== 'function') return false;
+        return !!(group && group.entries && group.entries.some((entry) => (
+            lookup(entry.sessionId, historyGroupEntrySessionObj(entry))
+        )));
+    }
+
+    function historyGroupHasUnread(group, opts) {
+        return historyGroupSomeEntry(group, opts && opts.hasUnread);
+    }
+
+    function historyGroupHasUnreadError(group, opts) {
+        return historyGroupSomeEntry(group, opts && opts.hasUnreadError);
+    }
+
+    function historyGroupHasPausedFollowup(group, opts) {
+        return historyGroupSomeEntry(group, opts && opts.hasPausedFollowup);
+    }
+
+    function historyGroupHasActiveFollowup(group, opts) {
+        return historyGroupSomeEntry(group, opts && opts.hasActiveFollowup);
+    }
+
+    function historyGroupContainsCurrent(group, opts) {
+        const current = opts && opts.currentSessionId;
+        if (current == null || !group || !group.entries) return false;
+        const eq = (opts && typeof opts.sessionIdsEqual === 'function')
+            ? opts.sessionIdsEqual
+            : function (a, b) { return String(a) === String(b); };
+        return group.entries.some((entry) => eq(entry.sessionId, current));
+    }
+
+    /** Show-more/show-less control markup for a project group. */
+    function historyGroupToggleHTML(groupKey, total, visible, escapeFn) {
+        const esc = typeof escapeFn === 'function' ? escapeFn : (s) => String(s);
+        const safeKey = esc(String(groupKey));
+        if (total <= HISTORY_GROUP_PREVIEW_LIMIT) return '';
+        if (visible >= total) {
+            return `<button type="button" class="history-show-all-btn" data-group-key="${safeKey}" data-total="${total}" onclick="window.collapseHistoryGroupReveal(event)">Show less</button>`;
+        }
+        const step = Math.min(HISTORY_GROUP_PAGE_SIZE, total - visible);
+        const label = step === 1 ? 'Show 1 more' : `Show ${step} more`;
+        return `<button type="button" class="history-show-all-btn" data-group-key="${safeKey}" data-total="${total}" onclick="window.revealMoreHistoryGroup(event)">${esc(label)}</button>`;
+    }
+
+    function entryIsStarred(entry) {
+        if (!entry) return false;
+        if (entry.serverSession) return !!Number(entry.serverSession.starred);
+        if (entry.session) return !!entry.session.starred;
+        return false;
+    }
+
+    function historyEntryParentId(entry) {
+        if (!entry) return '';
+        const s = entry.serverSession || entry.session || {};
+        const pid = s.parent_session_id;
+        if (pid == null || pid === '') return '';
+        return String(pid);
+    }
+
+    function historyLookupNestedEntry(nested, sessionId, opts) {
+        if (!nested || !nested.byId || sessionId == null || sessionId === '') return null;
+        const eq = (opts && typeof opts.sessionIdsEqual === 'function')
+            ? opts.sessionIdsEqual
+            : function (a, b) { return String(a) === String(b); };
+        const toAuth = (opts && typeof opts.toAuthDbSessionId === 'function') ? opts.toAuthDbSessionId : null;
+        const key = String(sessionId);
+        if (nested.byId.has(key)) return nested.byId.get(key);
+        const bare = toAuth ? toAuth(sessionId) : null;
+        if (bare != null && nested.byId.has(String(bare))) return nested.byId.get(String(bare));
+        for (const [id, entry] of nested.byId.entries()) {
+            if (eq(id, sessionId)) return entry;
+            if (String(id) === key) return entry;
+        }
+        return null;
+    }
+
+    function nestHistoryEntries(entries) {
+        const list = Array.isArray(entries) ? entries.slice() : [];
+        const byId = new Map();
+        list.forEach((e) => {
+            const id = String(e && e.sessionId != null ? e.sessionId : '');
+            if (id) byId.set(id, e);
+        });
+        const childrenByParent = new Map();
+        const roots = [];
+        list.forEach((e) => {
+            const pid = historyEntryParentId(e);
+            if (pid && byId.has(pid)) {
+                if (!childrenByParent.has(pid)) childrenByParent.set(pid, []);
+                childrenByParent.get(pid).push(e);
+            } else {
+                roots.push(e);
+            }
+        });
+        return { roots: roots, childrenByParent: childrenByParent, byId: byId };
+    }
+
+    function historySessionAncestorIds(sessionId, nested, opts) {
+        const ids = [];
+        let cur = sessionId;
+        const seen = new Set();
+        while (cur != null && cur !== '') {
+            const key = String(cur);
+            if (seen.has(key)) break;
+            seen.add(key);
+            const entry = historyLookupNestedEntry(nested, cur, opts);
+            const pid = historyEntryParentId(entry);
+            if (!pid) break;
+            if (!historyLookupNestedEntry(nested, pid, opts)) break;
+            ids.push(pid);
+            cur = pid;
+        }
+        return ids;
+    }
+
+    function isHistorySubagentGroupExpanded(parentId, nested, opts) {
+        opts = opts || {};
+        const pid = String(parentId || '');
+        if (!pid) return false;
+        if (opts.searchActive) return true;
+        const current = opts.currentSessionId;
+        if (current != null && current !== '') {
+            const eq = (typeof opts.sessionIdsEqual === 'function')
+                ? opts.sessionIdsEqual
+                : function (a, b) { return String(a) === String(b); };
+            const ancestors = historySessionAncestorIds(current, nested, opts);
+            for (let i = 0; i < ancestors.length; i++) {
+                if (ancestors[i] === pid) return true;
+                if (eq(ancestors[i], pid)) return true;
+            }
+        }
+        const prefs = opts.prefs || {};
+        return prefs[pid] === 'expanded';
+    }
+
+    function visibleHistoryRoots(nested, visibleLimit, opts) {
+        const roots = (nested && Array.isArray(nested.roots)) ? nested.roots : [];
+        const limit = Math.max(0, Number(visibleLimit) || 0);
+        const visible = roots.slice(0, limit);
+        const current = opts && opts.currentSessionId;
+        if (current == null || current === '') return visible;
+        const eq = (opts && typeof opts.sessionIdsEqual === 'function')
+            ? opts.sessionIdsEqual
+            : function (a, b) { return String(a) === String(b); };
+        const ancestors = historySessionAncestorIds(current, nested, opts);
+        const rootId = ancestors.length ? ancestors[ancestors.length - 1] : String(current);
+        const matchesRoot = (e) => {
+            const id = e && e.sessionId;
+            if (id == null) return false;
+            if (String(id) === String(rootId)) return true;
+            return eq(id, rootId);
+        };
+        const already = visible.some(matchesRoot);
+        if (already) return visible;
+        const missing = roots.find(matchesRoot);
+        return missing ? visible.concat([missing]) : visible;
+    }
+
+    function historySubagentNoun(count) {
+        const n = Math.max(0, Number(count) || 0);
+        return n === 1 ? 'sub-agent' : 'sub-agents';
+    }
+
+    function historySubagentToggleTitle(count, expanded, force) {
+        const n = Math.max(0, Number(count) || 0);
+        const noun = historySubagentNoun(n);
+        const amount = n ? (n + ' ' + noun) : noun;
+        if (force) return amount + ' (open because this chat is a sub-agent)';
+        return (expanded ? 'Hide ' : 'Show ') + amount;
+    }
+
+    /**
+     * Render a project group's nested tree and visible roots. Pure: the panel
+     * injects the reveal limit resolver, the active-search flag, persisted
+     * expansion prefs and session-id equality.
+     * opts: { getVisibleLimit, searchActive, currentSessionId, prefs,
+     *         sessionIdsEqual }
+     */
+    function renderHistoryGroupBody(group, renderEntry, opts) {
+        opts = opts || {};
+        const esc = typeof opts.escapeHtml === 'function' ? opts.escapeHtml : (s) => String(s);
+        const key = group.project.key;
+        const nested = nestHistoryEntries(group.entries);
+        const total = nested.roots.length;
+        const visibleLimit = typeof opts.getVisibleLimit === 'function'
+            ? opts.getVisibleLimit(key, total)
+            : Math.min(HISTORY_GROUP_PREVIEW_LIMIT, total);
+        const visible = visibleHistoryRoots(nested, visibleLimit, {
+            currentSessionId: opts.currentSessionId,
+            sessionIdsEqual: opts.sessionIdsEqual,
+        });
+        const searchActive = !!opts.searchActive;
+        const prefs = opts.prefs || {};
+
+        function renderTree(entry) {
+            const pid = String(entry && entry.sessionId != null ? entry.sessionId : '');
+            const kids = nested.childrenByParent.get(pid) || [];
+            const expanded = kids.length
+                ? isHistorySubagentGroupExpanded(pid, nested, {
+                    searchActive: searchActive,
+                    currentSessionId: opts.currentSessionId,
+                    prefs: prefs,
+                    sessionIdsEqual: opts.sessionIdsEqual,
+                })
+                : false;
+            const force = !!(kids.length && opts.currentSessionId != null
+                && historySessionAncestorIds(opts.currentSessionId, nested, {
+                    sessionIdsEqual: opts.sessionIdsEqual,
+                }).some((id) => {
+                    if (id === pid) return true;
+                    return typeof opts.sessionIdsEqual === 'function'
+                        ? opts.sessionIdsEqual(id, pid)
+                        : String(id) === String(pid);
+                }));
+            const itemHtml = renderEntry(entry, {
+                subagentChildCount: kids.length,
+                subagentExpanded: expanded,
+                subagentForceExpanded: force,
+            });
+            if (!kids.length) return itemHtml;
+            const safePid = esc(pid);
+            let html = '<div class="history-subagent-group'
+                + (expanded ? '' : ' is-collapsed')
+                + '" data-parent-session-id="' + safePid + '"'
+                + (force ? ' data-force-expanded="1"' : '')
+                + '>';
+            html += itemHtml;
+            html += '<div class="history-subagent-children" id="history-subagents-'
+                + safePid + '-kids" role="group">';
+            kids.forEach((child) => {
+                html += renderTree(child);
+            });
+            html += '</div></div>';
+            return html;
+        }
+
+        let html = '';
+        visible.forEach((entry) => {
+            html += renderTree(entry);
+        });
+        html += historyGroupToggleHTML(key, total, visibleLimit, opts.escapeHtml);
+        return html;
+    }
+
+    /**
+     * Group/order history entries by project, origin, star, match and recency.
+     * opts: { resolveSessionProjectInfo, entryIsStarred }
+     */
+    function groupSessionsByProject(entries, opts) {
+        opts = opts || {};
+        const resolve = typeof opts.resolveSessionProjectInfo === 'function'
+            ? opts.resolveSessionProjectInfo
+            : function () { return { key: '__none__', id: null, name: 'No project', path: '' }; };
+        const isStarred = typeof opts.entryIsStarred === 'function' ? opts.entryIsStarred : entryIsStarred;
+        const groups = new Map();
+        (entries || []).forEach((entry) => {
+            const origin = String(
+                (entry.serverSession && entry.serverSession.origin)
+                || (entry.session && entry.session.origin)
+                || ''
+            ).trim().toLowerCase();
+            const proj = (origin === 'discord_dm' || origin === 'discord_guild')
+                ? { key: '__discord__', id: null, name: 'Discord', path: '' }
+                // Prefer the entry's own row (server rows carry project
+                // fields): passing only entry.session (null for server
+                // entries) forced a full-list scan per chat — O(n²) paints.
+                : resolve(entry.sessionId, historyGroupEntrySessionObj(entry));
+            if (!groups.has(proj.key)) {
+                groups.set(proj.key, { project: proj, entries: [], latest: 0 });
+            }
+            const g = groups.get(proj.key);
+            g.entries.push(entry);
+            const u = Number(entry.updated) || 0;
+            if (u > g.latest) g.latest = u;
+        });
+        const list = Array.from(groups.values());
+        // Most recently active project first; "No project" stays last.
+        list.sort((a, b) => {
+            if (a.project.key === '__none__') return 1;
+            if (b.project.key === '__none__') return -1;
+            const d = (b.latest || 0) - (a.latest || 0);
+            if (d !== 0) return d;
+            return String(a.project.name).localeCompare(String(b.project.name), undefined, {
+                sensitivity: 'base',
+            });
+        });
+        list.forEach((g) => {
+            g.entries.sort((a, b) => {
+                // Starred favorites float to the top of each project category.
+                const aStarred = isStarred(a);
+                const bStarred = isStarred(b);
+                if (aStarred && !bStarred) return -1;
+                if (bStarred && !aStarred) return 1;
+                // Search: title matches before content matches, even if content is newer.
+                const aMatch = entrySearchMatchRank(a);
+                const bMatch = entrySearchMatchRank(b);
+                if (aMatch !== bMatch) return aMatch - bMatch;
+                // Opening a chat must not move it: order by last message only.
+                const d = (b.updated || 0) - (a.updated || 0);
+                if (d !== 0) return d;
+                // Stable tie-break so equal timestamps don't reshuffle on refresh.
+                return String(b.sessionId).localeCompare(String(a.sessionId), undefined, {
+                    numeric: true,
+                });
+            });
+        });
+        return list;
+    }
+
     root.CuttleChatHistoryView = {
+        HISTORY_GROUP_PREVIEW_LIMIT,
+        HISTORY_GROUP_PAGE_SIZE,
         paint,
         preserveScroll,
         entrySearchMatchRank,
@@ -382,5 +705,23 @@
         historyStarredIconHTML,
         historyItemMetaHTML,
         createRenderers,
+        historyGroupEntrySessionObj,
+        historyGroupHasUnread,
+        historyGroupHasUnreadError,
+        historyGroupHasPausedFollowup,
+        historyGroupHasActiveFollowup,
+        historyGroupContainsCurrent,
+        historyGroupToggleHTML,
+        entryIsStarred,
+        historyEntryParentId,
+        historyLookupNestedEntry,
+        nestHistoryEntries,
+        historySessionAncestorIds,
+        isHistorySubagentGroupExpanded,
+        visibleHistoryRoots,
+        historySubagentNoun,
+        historySubagentToggleTitle,
+        renderHistoryGroupBody,
+        groupSessionsByProject,
     };
 })(globalThis);

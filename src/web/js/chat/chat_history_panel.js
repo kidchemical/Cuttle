@@ -18,8 +18,13 @@
 
    Pure search helpers (`entrySearchMatchRank`) and history row/header
    markup (`createRenderers`) live in `chat_history_view.js`. Project
-   grouping and attention projection remain page/view owners (commits
-   3–4) and are injected here as narrow capabilities.
+   grouping and subagent nesting also split there: the pure algorithms and
+   templates (`nestHistoryEntries`, `renderHistoryGroupBody`,
+   `groupSessionsByProject`, `historySubagentToggleTitle`, …) live in the
+   view, while THIS controller owns persisted collapse/expand prefs,
+   per-project reveal counts, DOM toggles and the grouped repaint. Attention
+   projection remains a page/attention owner (commit 4) and is injected here
+   as narrow capabilities.
 
    Interface: `create(deps)` → one controller per chat frame exposing
    `search`, `onInput`, `onKeydown`, `clear`, `load`,
@@ -29,9 +34,13 @@
    `hideSlashPalette`, `closeMenu`, `toggleMenu`, `requestDelete`,
    `cancelDelete`, `confirmDelete`, `isDeleteModalOpen`,
    `closeDeleteModal`, `renameSession`, `closeRenameModal`,
-   `isRenameModalOpen`, `setupModals`. The page keeps the `window.*`
-   inline-handler names as thin forwarders and routes history-refresh
-   call sites through this controller.
+   `isRenameModalOpen`, `setupModals`, plus the grouping/nesting surface
+   `isProjectSectionExpanded`, `revealMore`, `collapseReveal`,
+   `toggleProjectCollapse`, `toggleSubagentGroup`,
+   `applyHistorySubagentExpandState`, `syncHistorySubagentAttention`,
+   `historySubagentGroupOwnedBy`, `paintEntries`. The page keeps the
+   `window.*` inline-handler names as thin forwarders and routes
+   history-refresh call sites through this controller.
 
    deps: { win, doc, storage, fetch, escapeHtml,
            parseSessionTimestamp, formatChatDisplayId,
@@ -41,12 +50,13 @@
            applyGeneratingFlagsFromSessions, isChatSessionDeleted,
            getTerminalHistoryEntries, createAuthHistoryItemHTML,
            createHistoryItemHTML, createTerminalHistoryItemHTML,
-           createHistorySectionHeaderHTML, renderHistoryGroupBody,
-           paintHistoryEntries, entryIsStarred,
+           createHistorySectionHeaderHTML,
+           sessionHasUnread, sessionHasUnreadError,
+           sessionHasPausedFollowup, sessionHasActiveFollowup,
            scheduleSlashChipCompactLabels, renderArchivedSection,
            rememberActiveHistorySessions, refreshArchivedSessions,
            isArchivedSessionsLoaded, syncHistoryRunningIndicators,
-           syncHistoryUnreadIndicators, applyHistorySubagentExpandState,
+           syncHistoryUnreadIndicators,
            refreshLocalOpenPanes,
            buildSessionMenuHTML, refreshGitPushMenuMode,
            closeChatChromeMenu, isTerminalSessionId,
@@ -1236,8 +1246,8 @@
                 const group = {
                     project: { key, id: null, name: label, path: '' },
                     entries: entries.slice().sort((a, b) => {
-                        const aStarred = deps.entryIsStarred(a);
-                        const bStarred = deps.entryIsStarred(b);
+                        const aStarred = view.entryIsStarred(a);
+                        const bStarred = view.entryIsStarred(b);
                         if (aStarred && !bStarred) return -1;
                         if (bStarred && !aStarred) return 1;
                         const d = (b.updated || 0) - (a.updated || 0);
@@ -1256,7 +1266,7 @@
                     collapsed: false,
                     count: group.entries.length,
                 });
-                html += `<div class="history-section-body">${deps.renderHistoryGroupBody(group, renderEntry)}</div>`;
+                html += `<div class="history-section-body">${renderHistoryGroupBody(group, renderEntry)}</div>`;
                 html += '</div>';
             };
 
@@ -1266,7 +1276,7 @@
             view.paint(historyContainer, html, () => {
                 deps.syncHistoryRunningIndicators();
                 deps.syncHistoryUnreadIndicators();
-                deps.applyHistorySubagentExpandState();
+                applyHistorySubagentExpandState();
                 deps.scheduleSlashChipCompactLabels(historyContainer);
                 deps.renderArchivedSection();
             });
@@ -1480,7 +1490,7 @@
                 const serverSessions = deps.getAuthSessions()
                     .filter((s) => !deps.isChatSessionDeleted(s && s.id));
                 if (!serverSessions.length && !terminalEntries.length) {
-                    deps.paintHistoryEntries([], null, {});
+                    paintHistoryEntries([], null, {});
                     return;
                 }
                 deps.applyGeneratingFlagsFromSessions(serverSessions);
@@ -1498,7 +1508,7 @@
                         || deps.parseSessionTimestamp(s.last_activity),
                     serverSession: s,
                 })).concat(terminalEntries);
-                deps.paintHistoryEntries(entries, (entry, itemOpts) => {
+                paintHistoryEntries(entries, (entry, itemOpts) => {
                     if (entry.isTerminal) return deps.createTerminalHistoryItemHTML(entry.session);
                     return deps.createAuthHistoryItemHTML(entry.serverSession, itemOpts);
                 });
@@ -1513,7 +1523,7 @@
                 updated: Number(session.updated) || 0,
             })).concat(terminalEntries);
 
-            deps.paintHistoryEntries(entries, (entry) => {
+            paintHistoryEntries(entries, (entry) => {
                 if (entry.isTerminal) return deps.createTerminalHistoryItemHTML(entry.session);
                 return deps.createHistoryItemHTML(entry.session);
             });
@@ -1526,6 +1536,310 @@
                 return true;
             }
             return false;
+        }
+
+        // ---- Project grouping + subagent nesting --------------------------
+        // Pure algorithms/templates live in chat_history_view.js
+        // (CuttleChatHistoryView). This controller owns persisted collapse/
+        // expand prefs, per-project reveal counts, DOM toggles and the grouped
+        // list repaint; project resolution and session identity are injected.
+        const HISTORY_GROUP_PREVIEW_LIMIT = view.HISTORY_GROUP_PREVIEW_LIMIT;
+        const HISTORY_GROUP_PAGE_SIZE = view.HISTORY_GROUP_PAGE_SIZE;
+        const HISTORY_PROJECT_COLLAPSE_KEY = 'cuttle.historyProjectCollapse';
+        const HISTORY_SUBAGENT_EXPAND_KEY = 'cuttle.historySubagentExpand';
+        /** projectKey → how many chats currently revealed (at least PREVIEW). */
+        const historyGroupVisibleCount = new Map();
+
+        function readHistoryProjectCollapsePrefs() {
+            try {
+                const raw = storage.getItem(HISTORY_PROJECT_COLLAPSE_KEY);
+                const parsed = raw ? JSON.parse(raw) : {};
+                return parsed && typeof parsed === 'object' ? parsed : {};
+            } catch (_) {
+                return {};
+            }
+        }
+
+        function writeHistoryProjectCollapsePrefs(map) {
+            try {
+                storage.setItem(HISTORY_PROJECT_COLLAPSE_KEY, JSON.stringify(map || {}));
+            } catch (_) {}
+        }
+
+        function readHistorySubagentExpandPrefs() {
+            try {
+                const raw = storage.getItem(HISTORY_SUBAGENT_EXPAND_KEY);
+                const parsed = raw ? JSON.parse(raw) : {};
+                return parsed && typeof parsed === 'object' ? parsed : {};
+            } catch (_) {
+                return {};
+            }
+        }
+
+        function writeHistorySubagentExpandPrefs(map) {
+            try {
+                storage.setItem(HISTORY_SUBAGENT_EXPAND_KEY, JSON.stringify(map || {}));
+            } catch (_) {}
+        }
+
+        /** Default expand latest project (+ open/unread/queue); honor stored overrides. */
+        function isHistoryProjectSectionExpanded(group, groupIdx) {
+            if (!group || !group.project) return true;
+            const key = String(group.project.key);
+            const prefs = readHistoryProjectCollapsePrefs();
+            const pref = prefs[key];
+            if (pref === 'expanded') return true;
+            if (pref === 'collapsed') return false;
+            if (view.historyGroupContainsCurrent(group, {
+                currentSessionId: deps.currentSessionId(),
+                sessionIdsEqual: deps.sessionIdsEqual,
+            })) return true;
+            if (view.historyGroupHasUnread(group, { hasUnread: deps.sessionHasUnread })) return true;
+            if (view.historyGroupHasActiveFollowup(group, { hasActiveFollowup: deps.sessionHasActiveFollowup })) return true;
+            if (view.historyGroupHasPausedFollowup(group, { hasPausedFollowup: deps.sessionHasPausedFollowup })) return true;
+            return groupIdx === 0;
+        }
+
+        function getHistoryGroupVisibleLimit(groupKey, total) {
+            const t = Math.max(0, Number(total) || 0);
+            const stored = historyGroupVisibleCount.get(String(groupKey));
+            if (stored == null || !isFinite(stored)) {
+                return Math.min(HISTORY_GROUP_PREVIEW_LIMIT, t);
+            }
+            return Math.min(Math.max(HISTORY_GROUP_PREVIEW_LIMIT, Math.floor(stored)), t);
+        }
+
+        function renderHistoryGroupBody(group, renderEntry) {
+            return view.renderHistoryGroupBody(group, renderEntry, {
+                getVisibleLimit: getHistoryGroupVisibleLimit,
+                searchActive: historySearchQueryActive(),
+                currentSessionId: deps.currentSessionId(),
+                prefs: readHistorySubagentExpandPrefs(),
+                sessionIdsEqual: deps.sessionIdsEqual,
+                escapeHtml: escapeHtml,
+            });
+        }
+
+        function repaintHistoryGroups() {
+            // Active search repaints its own result wave; otherwise the panel
+            // reloads while preserving any active search/filters.
+            if (!repaintIfSearchActive()) reloadHistoryListKeepingSearch();
+        }
+
+        /** Drop "Show N more" reveals; each panel open starts fresh. */
+        function clearHistoryGroupReveals() {
+            historyGroupVisibleCount.clear();
+        }
+
+        function revealMoreHistoryGroup(event) {
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+            const btn = event && event.currentTarget;
+            const key = btn && btn.getAttribute('data-group-key');
+            if (!key) return;
+            const total = Math.max(0, Number(btn.getAttribute('data-total')) || 0);
+            const cur = getHistoryGroupVisibleLimit(key, total || Number.MAX_SAFE_INTEGER);
+            const next = Math.min(
+                total || (cur + HISTORY_GROUP_PAGE_SIZE),
+                cur + HISTORY_GROUP_PAGE_SIZE
+            );
+            historyGroupVisibleCount.set(String(key), next);
+            repaintHistoryGroups();
+        }
+
+        function collapseHistoryGroupReveal(event) {
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+            const btn = event && event.currentTarget;
+            const key = btn && btn.getAttribute('data-group-key');
+            if (!key) return;
+            historyGroupVisibleCount.set(String(key), HISTORY_GROUP_PREVIEW_LIMIT);
+            repaintHistoryGroups();
+        }
+
+        function toggleHistoryProjectCollapse(event) {
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+            const header = event && event.currentTarget;
+            if (!header) return;
+            // Action buttons stopPropagation themselves; belt-and-suspenders.
+            if (event && event.target && event.target.closest
+                && event.target.closest('.history-section-actions')) {
+                return;
+            }
+            const section = header.closest && header.closest('.history-section');
+            const key = (section && section.getAttribute('data-project-key'))
+                || header.getAttribute('data-project-key');
+            if (!key) return;
+            const prefs = readHistoryProjectCollapsePrefs();
+            const currentlyExpanded = !(section && section.classList.contains('is-collapsed'));
+            prefs[String(key)] = currentlyExpanded ? 'collapsed' : 'expanded';
+            writeHistoryProjectCollapsePrefs(prefs);
+            repaintHistoryGroups();
+        }
+
+        function historySubagentGroupOwnedBy(sessionId) {
+            if (sessionId == null || sessionId === '') return null;
+            const key = String(sessionId);
+            const cssEscape = (win.CSS && win.CSS.escape) ? win.CSS.escape : (s) => String(s);
+            let group = doc.querySelector(`.history-subagent-group[data-parent-session-id="${cssEscape(key)}"]`);
+            if (group) return group;
+            const bare = deps.toAuthDbSessionId(sessionId);
+            if (bare && String(bare) !== key) {
+                group = doc.querySelector(`.history-subagent-group[data-parent-session-id="${cssEscape(String(bare))}"]`);
+            }
+            return group;
+        }
+
+        function historySubagentGroupContainsCurrent(group) {
+            if (!group || deps.currentSessionId() == null) return false;
+            const kids = group.querySelectorAll('.history-subagent-children .chat-history-item');
+            for (let i = 0; i < kids.length; i++) {
+                if (deps.sessionIdsEqual(kids[i].dataset.sessionId, deps.currentSessionId())) return true;
+            }
+            return false;
+        }
+
+        function syncHistorySubagentAttention() {
+            doc.querySelectorAll('.history-subagent-group').forEach((group) => {
+                const items = group.querySelectorAll('.history-subagent-children .chat-history-item');
+                let input = false;
+                let error = false;
+                let unread = false;
+                let queued = false;
+                let paused = false;
+                let running = false;
+                items.forEach((item) => {
+                    if (item.classList.contains('has-input')) input = true;
+                    if (item.classList.contains('has-unread-error')) error = true;
+                    if (item.classList.contains('has-unread')) unread = true;
+                    if (item.classList.contains('has-queued')) queued = true;
+                    if (item.classList.contains('has-paused-queue')) paused = true;
+                    if (item.classList.contains('is-running')) running = true;
+                });
+                const badge = group.querySelector(':scope > .chat-history-item .history-subagent-count-badge');
+                if (!badge) return;
+                badge.classList.toggle('has-input', input);
+                badge.classList.toggle('has-unread-error', error);
+                badge.classList.toggle('has-unread', !error && unread);
+                badge.classList.toggle('has-queued', !error && !unread && queued);
+                badge.classList.toggle('has-paused-queue', !error && !unread && !queued && paused);
+                badge.classList.toggle('is-running', running);
+            });
+        }
+
+        function applyHistorySubagentExpandState() {
+            const searchActive = historySearchQueryActive();
+            const prefs = readHistorySubagentExpandPrefs();
+            doc.querySelectorAll('.history-subagent-group').forEach((group) => {
+                const pid = group.getAttribute('data-parent-session-id') || '';
+                const force = historySubagentGroupContainsCurrent(group);
+                const expanded = force || searchActive || prefs[pid] === 'expanded';
+                group.classList.toggle('is-collapsed', !expanded);
+                if (force) group.setAttribute('data-force-expanded', '1');
+                else group.removeAttribute('data-force-expanded');
+                const countEl = group.querySelector(':scope > .chat-history-item [data-child-count]');
+                const count = countEl ? (Number(countEl.getAttribute('data-child-count')) || 0) : 0;
+                const title = view.historySubagentToggleTitle(count, expanded, force);
+                group.querySelectorAll(':scope > .chat-history-item .history-subagent-toggle, :scope > .chat-history-item .history-subagent-count-badge').forEach((el) => {
+                    el.title = title;
+                    el.setAttribute('aria-label', title);
+                    if (el.classList.contains('history-subagent-toggle')) {
+                        el.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+                    }
+                });
+            });
+            syncHistorySubagentAttention();
+        }
+
+        function setHistorySubagentGroupExpanded(parentId, expanded) {
+            if (parentId == null || parentId === '') return;
+            const prefs = readHistorySubagentExpandPrefs();
+            prefs[String(parentId)] = expanded ? 'expanded' : 'collapsed';
+            writeHistorySubagentExpandPrefs(prefs);
+            applyHistorySubagentExpandState();
+        }
+
+        function toggleHistorySubagentGroup(sessionId, event) {
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+            closeHistoryItemMenu();
+            const group = historySubagentGroupOwnedBy(sessionId);
+            if (!group || group.getAttribute('data-force-expanded') === '1') return;
+            const expand = group.classList.contains('is-collapsed');
+            setHistorySubagentGroupExpanded(group.getAttribute('data-parent-session-id') || sessionId, expand);
+        }
+
+        function paintHistoryEntries(entries, renderEntry, opts) {
+            const historyContainer = doc.getElementById('chatHistory');
+            if (!historyContainer) return;
+            const options = opts || {};
+            const showRefresh = options.showRefresh !== false;
+            if (!entries.length) {
+                const icon = options.emptyIcon || '💬';
+                const title = options.emptyTitle || 'No chats yet';
+                const text = options.emptyText || 'Start a new conversation';
+                view.paint(historyContainer, `
+                    ${deps.createHistorySectionHeaderHTML('Your chats')}
+                    <div class="empty-state">
+                        <div class="empty-state-icon">${icon}</div>
+                        <div class="empty-state-title">${escapeHtml(title)}</div>
+                        <div class="empty-state-text">${escapeHtml(text)}</div>
+                    </div>
+                `, deps.renderArchivedSection);
+                return;
+            }
+            const groups = view.groupSessionsByProject(entries, {
+                resolveSessionProjectInfo: deps.resolveSessionProjectInfo,
+                entryIsStarred: view.entryIsStarred,
+            });
+            let html = '';
+            groups.forEach((group, groupIdx) => {
+                const expanded = isHistoryProjectSectionExpanded(group, groupIdx);
+                const unread = view.historyGroupHasUnread(group, { hasUnread: deps.sessionHasUnread });
+                const unreadError = view.historyGroupHasUnreadError(group, { hasUnreadError: deps.sessionHasUnreadError });
+                const queuedAny = view.historyGroupHasActiveFollowup(group, { hasActiveFollowup: deps.sessionHasActiveFollowup });
+                const pausedAny = view.historyGroupHasPausedFollowup(group, { hasPausedFollowup: deps.sessionHasPausedFollowup });
+                const queued = !unread && queuedAny;
+                const paused = !unread && !queued && pausedAny;
+                const sectionClass = [
+                    expanded ? '' : ' is-collapsed',
+                    unreadError ? ' has-unread-error' : '',
+                    unread ? ' has-unread' : '',
+                    queued ? ' has-queued' : '',
+                    paused ? ' has-paused-queue' : '',
+                ].join('');
+                const safeKey = escapeHtml(String(group.project.key));
+                html += `<div class="history-section${sectionClass}" data-project-key="${safeKey}" data-has-error="${unreadError ? '1' : '0'}" data-has-unread="${unread ? '1' : '0'}" data-has-queued="${queuedAny ? '1' : '0'}" data-has-paused="${pausedAny ? '1' : '0'}">`;
+                html += deps.createHistorySectionHeaderHTML(group.project.name, {
+                    showRefresh: showRefresh && groupIdx === 0,
+                    project: group.project,
+                    collapsible: true,
+                    collapsed: !expanded,
+                    count: group.entries.length,
+                    hasError: unreadError,
+                    hasUnread: unread,
+                    hasQueued: queued,
+                    hasPaused: paused,
+                });
+                html += `<div class="history-section-body">${renderHistoryGroupBody(group, renderEntry)}</div>`;
+                html += '</div>';
+            });
+            view.paint(historyContainer, html, () => {
+                deps.syncHistoryRunningIndicators();
+                deps.syncHistoryUnreadIndicators();
+                applyHistorySubagentExpandState();
+                deps.scheduleSlashChipCompactLabels(historyContainer);
+                deps.renderArchivedSection();
+            });
         }
 
         return {
@@ -1558,6 +1872,17 @@
                 setupHistoryDeleteModal();
                 setupHistoryRenameModal();
             },
+            // Project grouping + subagent nesting.
+            isProjectSectionExpanded: isHistoryProjectSectionExpanded,
+            revealMore: revealMoreHistoryGroup,
+            collapseReveal: collapseHistoryGroupReveal,
+            clearGroupReveals: clearHistoryGroupReveals,
+            toggleProjectCollapse: toggleHistoryProjectCollapse,
+            toggleSubagentGroup: toggleHistorySubagentGroup,
+            applyHistorySubagentExpandState: applyHistorySubagentExpandState,
+            syncHistorySubagentAttention: syncHistorySubagentAttention,
+            historySubagentGroupOwnedBy: historySubagentGroupOwnedBy,
+            paintEntries: paintHistoryEntries,
         };
     }
 

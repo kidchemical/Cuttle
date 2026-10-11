@@ -46,6 +46,7 @@ def test_input_card_submit_and_remove_update_title_history_and_space():
         const isAuthMode = () => true; const findAuthServerSession = () => null;
         const sessionHistoryAttentionKind = sid => CuttleChatActivity.sessionHistoryAttentionKind({prefs: getSessionPrefs(sid)});
         const syncHistorySubagentAttention = () => {};
+        const historyPanel = { syncHistorySubagentAttention: () => {} };
         const scheduleChatActivityBroadcast = () => {};
         const syncHistoryRunningIndicators = () => {};
         const ctl = CuttleChatActionCards.mountCards(document.getElementById('chatMessages'), {

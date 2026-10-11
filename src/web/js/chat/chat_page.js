@@ -2306,47 +2306,6 @@
         return { key, id, name: name || 'Project', path };
     }
 
-    /** Initial chats shown per project; each "Show N more" adds another page. */
-    const HISTORY_GROUP_PREVIEW_LIMIT = 5;
-    const HISTORY_GROUP_PAGE_SIZE = 5;
-    /** projectKey → how many chats currently revealed (at least PREVIEW). */
-    const historyGroupVisibleCount = new Map();
-    const HISTORY_PROJECT_COLLAPSE_KEY = 'cuttle.historyProjectCollapse';
-
-    function readHistoryProjectCollapsePrefs() {
-        try {
-            const raw = localStorage.getItem(HISTORY_PROJECT_COLLAPSE_KEY);
-            const parsed = raw ? JSON.parse(raw) : {};
-            return parsed && typeof parsed === 'object' ? parsed : {};
-        } catch (_) {
-            return {};
-        }
-    }
-
-    function writeHistoryProjectCollapsePrefs(map) {
-        try {
-            localStorage.setItem(HISTORY_PROJECT_COLLAPSE_KEY, JSON.stringify(map || {}));
-        } catch (_) {}
-    }
-
-    const HISTORY_SUBAGENT_EXPAND_KEY = 'cuttle.historySubagentExpand';
-
-    function readHistorySubagentExpandPrefs() {
-        try {
-            const raw = localStorage.getItem(HISTORY_SUBAGENT_EXPAND_KEY);
-            const parsed = raw ? JSON.parse(raw) : {};
-            return parsed && typeof parsed === 'object' ? parsed : {};
-        } catch (_) {
-            return {};
-        }
-    }
-
-    function writeHistorySubagentExpandPrefs(map) {
-        try {
-            localStorage.setItem(HISTORY_SUBAGENT_EXPAND_KEY, JSON.stringify(map || {}));
-        } catch (_) {}
-    }
-
     function sessionHasStoredProject(sessionId, sessionObj) {
         if (projectFieldsFromServerSession(sessionObj || findAuthServerSession(sessionId))) {
             return true;
@@ -2361,340 +2320,6 @@
         ) {
             return true;
         }
-        return false;
-    }
-
-    function historyGroupEntrySessionObj(entry) {
-        if (!entry) return null;
-        return entry.session || entry.serverSession || null;
-    }
-
-    function historyGroupHasUnread(group) {
-        return !!(group && group.entries && group.entries.some((entry) => (
-            sessionHasUnread(entry.sessionId, historyGroupEntrySessionObj(entry))
-        )));
-    }
-
-    function historyGroupHasUnreadError(group) {
-        return !!(group && group.entries && group.entries.some((entry) => (
-            sessionHasUnreadError(entry.sessionId, historyGroupEntrySessionObj(entry))
-        )));
-    }
-
-    function historyGroupHasPausedFollowup(group) {
-        return !!(group && group.entries && group.entries.some((entry) => (
-            sessionHasPausedFollowup(entry.sessionId, historyGroupEntrySessionObj(entry))
-        )));
-    }
-
-    function historyGroupHasActiveFollowup(group) {
-        return !!(group && group.entries && group.entries.some((entry) => (
-            sessionHasActiveFollowup(entry.sessionId, historyGroupEntrySessionObj(entry))
-        )));
-    }
-
-    function historyGroupContainsCurrent(group) {
-        if (session.current() == null || !group || !group.entries) return false;
-        return group.entries.some((entry) => sessionIdsEqual(entry.sessionId, session.current()));
-    }
-
-    /** Default expand latest project (+ open/unread/queue); honor localStorage overrides. */
-    function isHistoryProjectSectionExpanded(group, groupIdx) {
-        if (!group || !group.project) return true;
-        const key = String(group.project.key);
-        const prefs = readHistoryProjectCollapsePrefs();
-        const pref = prefs[key];
-        if (pref === 'expanded') return true;
-        if (pref === 'collapsed') return false;
-        if (historyGroupContainsCurrent(group)) return true;
-        if (historyGroupHasUnread(group)) return true;
-        if (historyGroupHasActiveFollowup(group)) return true;
-        if (historyGroupHasPausedFollowup(group)) return true;
-        return groupIdx === 0;
-    }
-
-    function getHistoryGroupVisibleLimit(groupKey, total) {
-        const t = Math.max(0, Number(total) || 0);
-        const stored = historyGroupVisibleCount.get(String(groupKey));
-        if (stored == null || !isFinite(stored)) {
-            return Math.min(HISTORY_GROUP_PREVIEW_LIMIT, t);
-        }
-        return Math.min(Math.max(HISTORY_GROUP_PREVIEW_LIMIT, Math.floor(stored)), t);
-    }
-
-    function historyGroupToggleHTML(groupKey, total, visible) {
-        const safeKey = escapeHtml(String(groupKey));
-        if (total <= HISTORY_GROUP_PREVIEW_LIMIT) return '';
-        if (visible >= total) {
-            return `<button type="button" class="history-show-all-btn" data-group-key="${safeKey}" data-total="${total}" onclick="window.collapseHistoryGroupReveal(event)">Show less</button>`;
-        }
-        const step = Math.min(HISTORY_GROUP_PAGE_SIZE, total - visible);
-        const label = step === 1 ? 'Show 1 more' : `Show ${step} more`;
-        return `<button type="button" class="history-show-all-btn" data-group-key="${safeKey}" data-total="${total}" onclick="window.revealMoreHistoryGroup(event)">${escapeHtml(label)}</button>`;
-    }
-
-    function renderHistoryGroupBody(group, renderEntry) {
-        const key = group.project.key;
-        const nested = nestHistoryEntries(group.entries);
-        const total = nested.roots.length;
-        const visibleLimit = getHistoryGroupVisibleLimit(key, total);
-        const visible = visibleHistoryRoots(nested, visibleLimit, { currentSessionId: session.current() });
-        const searchActive = historyPanel.isSearchActive();
-        const prefs = readHistorySubagentExpandPrefs();
-
-        function renderTree(entry) {
-            const pid = String(entry && entry.sessionId != null ? entry.sessionId : '');
-            const kids = nested.childrenByParent.get(pid) || [];
-            const expanded = kids.length
-                ? isHistorySubagentGroupExpanded(pid, nested, {
-                    searchActive: searchActive,
-                    currentSessionId: session.current(),
-                    prefs: prefs,
-                })
-                : false;
-            const force = !!(kids.length && session.current() != null
-                && historySessionAncestorIds(session.current(), nested).some((id) => sessionIdsEqual(id, pid)));
-            const itemHtml = renderEntry(entry, {
-                subagentChildCount: kids.length,
-                subagentExpanded: expanded,
-                subagentForceExpanded: force,
-            });
-            if (!kids.length) return itemHtml;
-            let html = '<div class="history-subagent-group'
-                + (expanded ? '' : ' is-collapsed')
-                + '" data-parent-session-id="' + escapeHtml(pid) + '"'
-                + (force ? ' data-force-expanded="1"' : '')
-                + '>';
-            html += itemHtml;
-            html += '<div class="history-subagent-children" id="history-subagents-'
-                + escapeHtml(pid) + '-kids" role="group">';
-            kids.forEach((child) => {
-                html += renderTree(child);
-            });
-            html += '</div></div>';
-            return html;
-        }
-
-        let html = '';
-        visible.forEach((entry) => {
-            html += renderTree(entry);
-        });
-        html += historyGroupToggleHTML(key, total, visibleLimit);
-        return html;
-    }
-
-    function repaintHistoryGroups() {
-        // Active search repaints its own result wave; otherwise the panel reloads
-        // while preserving any active search/filters.
-        if (!historyPanel.repaintIfSearchActive()) historyPanel.reloadKeepingSearch();
-    }
-
-    function revealMoreHistoryGroup(event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const btn = event && event.currentTarget;
-        const key = btn && btn.getAttribute('data-group-key');
-        if (!key) return;
-        const total = Math.max(0, Number(btn.getAttribute('data-total')) || 0);
-        const cur = getHistoryGroupVisibleLimit(key, total || Number.MAX_SAFE_INTEGER);
-        const next = Math.min(
-            total || (cur + HISTORY_GROUP_PAGE_SIZE),
-            cur + HISTORY_GROUP_PAGE_SIZE
-        );
-        historyGroupVisibleCount.set(String(key), next);
-        repaintHistoryGroups();
-    }
-
-    function collapseHistoryGroupReveal(event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const btn = event && event.currentTarget;
-        const key = btn && btn.getAttribute('data-group-key');
-        if (!key) return;
-        historyGroupVisibleCount.set(String(key), HISTORY_GROUP_PREVIEW_LIMIT);
-        repaintHistoryGroups();
-    }
-
-    function toggleHistoryProjectCollapse(event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const header = event && event.currentTarget;
-        if (!header) return;
-        // Action buttons stopPropagation themselves; belt-and-suspenders.
-        if (event && event.target && event.target.closest
-            && event.target.closest('.history-section-actions')) {
-            return;
-        }
-        const section = header.closest && header.closest('.history-section');
-        const key = (section && section.getAttribute('data-project-key'))
-            || header.getAttribute('data-project-key');
-        if (!key) return;
-        const prefs = readHistoryProjectCollapsePrefs();
-        const currentlyExpanded = !(section && section.classList.contains('is-collapsed'));
-        prefs[String(key)] = currentlyExpanded ? 'collapsed' : 'expanded';
-        writeHistoryProjectCollapsePrefs(prefs);
-        repaintHistoryGroups();
-    }
-
-    function historySubagentGroupOwnedBy(sessionId) {
-        if (sessionId == null || sessionId === '') return null;
-        const key = String(sessionId);
-        let group = document.querySelector(`.history-subagent-group[data-parent-session-id="${CSS.escape(key)}"]`);
-        if (group) return group;
-        const bare = toAuthDbSessionId(sessionId);
-        if (bare && String(bare) !== key) {
-            group = document.querySelector(`.history-subagent-group[data-parent-session-id="${CSS.escape(String(bare))}"]`);
-        }
-        return group;
-    }
-
-    function historySubagentGroupContainsCurrent(group) {
-        if (!group || session.current() == null) return false;
-        const kids = group.querySelectorAll('.history-subagent-children .chat-history-item');
-        for (let i = 0; i < kids.length; i++) {
-            if (sessionIdsEqual(kids[i].dataset.sessionId, session.current())) return true;
-        }
-        return false;
-    }
-
-    function syncHistorySubagentAttention() {
-        document.querySelectorAll('.history-subagent-group').forEach((group) => {
-            const items = group.querySelectorAll('.history-subagent-children .chat-history-item');
-            let input = false;
-            let error = false;
-            let unread = false;
-            let queued = false;
-            let paused = false;
-            let running = false;
-            items.forEach((item) => {
-                if (item.classList.contains('has-input')) input = true;
-                if (item.classList.contains('has-unread-error')) error = true;
-                if (item.classList.contains('has-unread')) unread = true;
-                if (item.classList.contains('has-queued')) queued = true;
-                if (item.classList.contains('has-paused-queue')) paused = true;
-                if (item.classList.contains('is-running')) running = true;
-            });
-            const badge = group.querySelector(':scope > .chat-history-item .history-subagent-count-badge');
-            if (!badge) return;
-            badge.classList.toggle('has-input', input);
-            badge.classList.toggle('has-unread-error', error);
-            badge.classList.toggle('has-unread', !error && unread);
-            badge.classList.toggle('has-queued', !error && !unread && queued);
-            badge.classList.toggle('has-paused-queue', !error && !unread && !queued && paused);
-            badge.classList.toggle('is-running', running);
-        });
-    }
-
-    function applyHistorySubagentExpandState() {
-        const searchActive = historyPanel.isSearchActive();
-        const prefs = readHistorySubagentExpandPrefs();
-        document.querySelectorAll('.history-subagent-group').forEach((group) => {
-            const pid = group.getAttribute('data-parent-session-id') || '';
-            const force = historySubagentGroupContainsCurrent(group);
-            const expanded = force || searchActive || prefs[pid] === 'expanded';
-            group.classList.toggle('is-collapsed', !expanded);
-            if (force) group.setAttribute('data-force-expanded', '1');
-            else group.removeAttribute('data-force-expanded');
-            const countEl = group.querySelector(':scope > .chat-history-item [data-child-count]');
-            const count = countEl ? (Number(countEl.getAttribute('data-child-count')) || 0) : 0;
-            const title = historySubagentToggleTitle(count, expanded, force);
-            group.querySelectorAll(':scope > .chat-history-item .history-subagent-toggle, :scope > .chat-history-item .history-subagent-count-badge').forEach((el) => {
-                el.title = title;
-                el.setAttribute('aria-label', title);
-                if (el.classList.contains('history-subagent-toggle')) {
-                    el.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-                }
-            });
-        });
-        syncHistorySubagentAttention();
-    }
-
-    function setHistorySubagentGroupExpanded(parentId, expanded) {
-        if (parentId == null || parentId === '') return;
-        const prefs = readHistorySubagentExpandPrefs();
-        prefs[String(parentId)] = expanded ? 'expanded' : 'collapsed';
-        writeHistorySubagentExpandPrefs(prefs);
-        applyHistorySubagentExpandState();
-    }
-
-    function toggleHistorySubagentGroup(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        historyPanel.closeMenu();
-        const group = historySubagentGroupOwnedBy(sessionId);
-        if (!group || group.getAttribute('data-force-expanded') === '1') return;
-        const expand = group.classList.contains('is-collapsed');
-        setHistorySubagentGroupExpanded(group.getAttribute('data-parent-session-id') || sessionId, expand);
-    }
-
-    function groupSessionsByProject(entries) {
-        const groups = new Map();
-        (entries || []).forEach((entry) => {
-            const origin = String(
-                (entry.serverSession && entry.serverSession.origin)
-                || (entry.session && entry.session.origin)
-                || ''
-            ).trim().toLowerCase();
-            const proj = (origin === 'discord_dm' || origin === 'discord_guild')
-                ? { key: '__discord__', id: null, name: 'Discord', path: '' }
-                // Prefer the entry's own row (server rows carry project
-                // fields): passing only entry.session (null for server
-                // entries) forced a full-list scan per chat — O(n²) paints.
-                : resolveSessionProjectInfo(entry.sessionId, historyGroupEntrySessionObj(entry));
-            if (!groups.has(proj.key)) {
-                groups.set(proj.key, { project: proj, entries: [], latest: 0 });
-            }
-            const g = groups.get(proj.key);
-            g.entries.push(entry);
-            const u = Number(entry.updated) || 0;
-            if (u > g.latest) g.latest = u;
-        });
-        const list = Array.from(groups.values());
-        // Most recently active project first; "No project" stays last.
-        list.sort((a, b) => {
-            if (a.project.key === '__none__') return 1;
-            if (b.project.key === '__none__') return -1;
-            const d = (b.latest || 0) - (a.latest || 0);
-            if (d !== 0) return d;
-            return String(a.project.name).localeCompare(String(b.project.name), undefined, {
-                sensitivity: 'base',
-            });
-        });
-        list.forEach((g) => {
-            g.entries.sort((a, b) => {
-                // Starred favorites float to the top of each project category.
-                const aStarred = entryIsStarred(a);
-                const bStarred = entryIsStarred(b);
-                if (aStarred && !bStarred) return -1;
-                if (bStarred && !aStarred) return 1;
-                // Search: title matches before content matches, even if content is newer.
-                const aMatch = CuttleChatHistoryView.entrySearchMatchRank(a);
-                const bMatch = CuttleChatHistoryView.entrySearchMatchRank(b);
-                if (aMatch !== bMatch) return aMatch - bMatch;
-                // Opening a chat must not move it: order by last message only.
-                const d = (b.updated || 0) - (a.updated || 0);
-                if (d !== 0) return d;
-                // Stable tie-break so equal timestamps don't reshuffle on refresh.
-                return String(b.sessionId).localeCompare(String(a.sessionId), undefined, {
-                    numeric: true,
-                });
-            });
-        });
-        return list;
-    }
-
-    function entryIsStarred(entry) {
-        if (!entry) return false;
-        if (entry.serverSession) return !!Number(entry.serverSession.starred);
-        if (entry.session) return !!entry.session.starred;
         return false;
     }
 
@@ -3124,7 +2749,7 @@
             }
         });
         syncHistoryProjectAttentionIndicators();
-        syncHistorySubagentAttention();
+        historyPanel.syncHistorySubagentAttention();
         updateSessionTitleUnreadDot();
         try { scheduleChatActivityBroadcast(); } catch (_) {}
     }
@@ -3732,120 +3357,6 @@
                 },
             });
         }, true);
-    }
-
-    function historyEntryParentId(entry) {
-        if (!entry) return '';
-        const s = entry.serverSession || entry.session || {};
-        const pid = s.parent_session_id;
-        if (pid == null || pid === '') return '';
-        return String(pid);
-    }
-
-    function historyLookupNestedEntry(nested, sessionId) {
-        if (!nested || !nested.byId || sessionId == null || sessionId === '') return null;
-        const key = String(sessionId);
-        if (nested.byId.has(key)) return nested.byId.get(key);
-        const bare = typeof toAuthDbSessionId === 'function' ? toAuthDbSessionId(sessionId) : null;
-        if (bare != null && nested.byId.has(String(bare))) return nested.byId.get(String(bare));
-        for (const [id, entry] of nested.byId.entries()) {
-            if (typeof sessionIdsEqual === 'function' && sessionIdsEqual(id, sessionId)) return entry;
-            if (String(id) === key) return entry;
-        }
-        return null;
-    }
-
-    function nestHistoryEntries(entries) {
-        const list = Array.isArray(entries) ? entries.slice() : [];
-        const byId = new Map();
-        list.forEach((e) => {
-            const id = String(e && e.sessionId != null ? e.sessionId : '');
-            if (id) byId.set(id, e);
-        });
-        const childrenByParent = new Map();
-        const roots = [];
-        list.forEach((e) => {
-            const pid = historyEntryParentId(e);
-            if (pid && byId.has(pid)) {
-                if (!childrenByParent.has(pid)) childrenByParent.set(pid, []);
-                childrenByParent.get(pid).push(e);
-            } else {
-                roots.push(e);
-            }
-        });
-        return { roots: roots, childrenByParent: childrenByParent, byId: byId };
-    }
-
-    function historySessionAncestorIds(sessionId, nested) {
-        const ids = [];
-        let cur = sessionId;
-        const seen = new Set();
-        while (cur != null && cur !== '') {
-            const key = String(cur);
-            if (seen.has(key)) break;
-            seen.add(key);
-            const entry = historyLookupNestedEntry(nested, cur);
-            const pid = historyEntryParentId(entry);
-            if (!pid) break;
-            if (!historyLookupNestedEntry(nested, pid)) break;
-            ids.push(pid);
-            cur = pid;
-        }
-        return ids;
-    }
-
-    function isHistorySubagentGroupExpanded(parentId, nested, opts) {
-        opts = opts || {};
-        const pid = String(parentId || '');
-        if (!pid) return false;
-        if (opts.searchActive) return true;
-        const current = opts.currentSessionId;
-        if (current != null && current !== '') {
-            const ancestors = historySessionAncestorIds(current, nested);
-            for (let i = 0; i < ancestors.length; i++) {
-                if (ancestors[i] === pid) return true;
-                if (typeof sessionIdsEqual === 'function' && sessionIdsEqual(ancestors[i], pid)) return true;
-            }
-        }
-        const prefs = opts.prefs || {};
-        return prefs[pid] === 'expanded';
-    }
-
-    function visibleHistoryRoots(nested, visibleLimit, opts) {
-        const roots = (nested && Array.isArray(nested.roots)) ? nested.roots : [];
-        const limit = Math.max(0, Number(visibleLimit) || 0);
-        const visible = roots.slice(0, limit);
-        const current = opts && opts.currentSessionId;
-        if (current == null || current === '') return visible;
-        const ancestors = historySessionAncestorIds(current, nested);
-        const rootId = ancestors.length ? ancestors[ancestors.length - 1] : String(current);
-        const already = visible.some((e) => {
-            const id = e && e.sessionId;
-            if (id == null) return false;
-            if (String(id) === String(rootId)) return true;
-            return typeof sessionIdsEqual === 'function' && sessionIdsEqual(id, rootId);
-        });
-        if (already) return visible;
-        const missing = roots.find((e) => {
-            const id = e && e.sessionId;
-            if (id == null) return false;
-            if (String(id) === String(rootId)) return true;
-            return typeof sessionIdsEqual === 'function' && sessionIdsEqual(id, rootId);
-        });
-        return missing ? visible.concat([missing]) : visible;
-    }
-
-    function historySubagentNoun(count) {
-        const n = Math.max(0, Number(count) || 0);
-        return n === 1 ? 'sub-agent' : 'sub-agents';
-    }
-
-    function historySubagentToggleTitle(count, expanded, force) {
-        const n = Math.max(0, Number(count) || 0);
-        const noun = historySubagentNoun(n);
-        const amount = n ? (n + ' ' + noun) : noun;
-        if (force) return amount + ' (open because this chat is a sub-agent)';
-        return (expanded ? 'Hide ' : 'Show ') + amount;
     }
 
     // Sub-agent launcher rows + live in-progress badges: chat_subagent_launchers.js.
@@ -4775,7 +4286,7 @@
         historyAttentionIconHTML,
         openPaneEntriesForSession,
         historyOpenPaneBadgeHTML,
-        historySubagentToggleTitle,
+        historySubagentToggleTitle: CuttleChatHistoryView.historySubagentToggleTitle,
         formatHistoryLastMessageAge,
         resolveHistoryLastMessageMs,
         historyRunningIconHTML,
@@ -4810,9 +4321,6 @@
         createHistoryItemHTML: historyView.createHistoryItemHTML,
         createTerminalHistoryItemHTML: historyView.createTerminalHistoryItemHTML,
         createHistorySectionHeaderHTML: historyView.createHistorySectionHeaderHTML,
-        renderHistoryGroupBody,
-        paintHistoryEntries,
-        entryIsStarred,
         scheduleSlashChipCompactLabels,
         renderArchivedSection,
         rememberActiveHistorySessions,
@@ -4820,7 +4328,10 @@
         isArchivedSessionsLoaded: () => archivedSessionsLoaded,
         syncHistoryRunningIndicators,
         syncHistoryUnreadIndicators,
-        applyHistorySubagentExpandState,
+        sessionHasUnread,
+        sessionHasUnreadError,
+        sessionHasPausedFollowup,
+        sessionHasActiveFollowup,
         refreshLocalOpenPanes,
         // Row menu + modal orchestration capabilities.
         buildSessionMenuHTML,
@@ -7682,7 +7193,7 @@
             window.CuttleTooltips.hide();
         }
         // Don't keep "Show N more" reveals across open/close — each open starts fresh.
-        historyGroupVisibleCount.clear();
+        historyPanel.clearGroupReveals();
         const panel = getChatHistoryPanel();
         const overlay = document.getElementById('chatHistoryPanelOverlay');
         animateHistoryPanelSlide(panel);
@@ -8262,7 +7773,7 @@
                 _restorePendingAttachments: _restorePendingAttachments,
                 restoreComposerDraft: restoreComposerDraft,
                 markChatSessionRead: markChatSessionRead,
-                applyHistorySubagentExpandState: applyHistorySubagentExpandState,
+                applyHistorySubagentExpandState: () => historyPanel.applyHistorySubagentExpandState(),
                 syncHistoryUnreadIndicators: syncHistoryUnreadIndicators,
                 syncChatAttentionIndicators: syncChatAttentionIndicators,
                 setupChatHistoryLazyLoad: setupChatHistoryLazyLoad,
@@ -8313,7 +7824,7 @@
                 transcriptNav: transcriptNav,
                 releaseManualUnreadHoldIfLeaving: releaseManualUnreadHoldIfLeaving,
                 adoptFollowupQueue: adoptFollowupQueue,
-                applyHistorySubagentExpandState: applyHistorySubagentExpandState,
+                applyHistorySubagentExpandState: () => historyPanel.applyHistorySubagentExpandState(),
                 applySessionIdentity: applySessionIdentity,
                 setCurrentProject: function (v) { currentProject = v; },
                 setHubLiveStatusCache: function (v) { hubLiveStatusCache = v; },
@@ -10157,7 +9668,7 @@
                 + '</button>'
             );
         }
-        const subGroup = historySubagentGroupOwnedBy(sessionId);
+        const subGroup = historyPanel.historySubagentGroupOwnedBy(sessionId);
         if (subGroup && subGroup.getAttribute('data-force-expanded') !== '1') {
             const collapsed = subGroup.classList.contains('is-collapsed');
             const subLabel = collapsed ? 'Show sub-agents' : 'Hide sub-agents';
@@ -10811,7 +10322,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 icon.remove();
             }
         });
-        syncHistorySubagentAttention();
+        historyPanel.syncHistorySubagentAttention();
         updateSessionTitleRunningIcon();
         scheduleChatActivityBroadcast();
     }
@@ -11178,67 +10689,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         CuttleChatHistoryView.preserveScroll(historyContainer, () => {
             if (prev) prev.replaceWith(section);
             else historyContainer.appendChild(section);
-        });
-    }
-
-    function paintHistoryEntries(entries, renderEntry, opts) {
-        const historyContainer = document.getElementById('chatHistory');
-        if (!historyContainer) return;
-        const options = opts || {};
-        const showRefresh = options.showRefresh !== false;
-        if (!entries.length) {
-            const icon = options.emptyIcon || '💬';
-            const title = options.emptyTitle || 'No chats yet';
-            const text = options.emptyText || 'Start a new conversation';
-            CuttleChatHistoryView.paint(historyContainer, `
-                ${historyView.createHistorySectionHeaderHTML('Your chats')}
-                <div class="empty-state">
-                    <div class="empty-state-icon">${icon}</div>
-                    <div class="empty-state-title">${escapeHtml(title)}</div>
-                    <div class="empty-state-text">${escapeHtml(text)}</div>
-                </div>
-            `, renderArchivedSection);
-            return;
-        }
-        const groups = groupSessionsByProject(entries);
-        let html = '';
-        groups.forEach((group, groupIdx) => {
-            const expanded = isHistoryProjectSectionExpanded(group, groupIdx);
-            const unread = historyGroupHasUnread(group);
-            const unreadError = historyGroupHasUnreadError(group);
-            const queuedAny = historyGroupHasActiveFollowup(group);
-            const pausedAny = historyGroupHasPausedFollowup(group);
-            const queued = !unread && queuedAny;
-            const paused = !unread && !queued && pausedAny;
-            const sectionClass = [
-                expanded ? '' : ' is-collapsed',
-                unreadError ? ' has-unread-error' : '',
-                unread ? ' has-unread' : '',
-                queued ? ' has-queued' : '',
-                paused ? ' has-paused-queue' : '',
-            ].join('');
-            const safeKey = escapeHtml(String(group.project.key));
-            html += `<div class="history-section${sectionClass}" data-project-key="${safeKey}" data-has-error="${unreadError ? '1' : '0'}" data-has-unread="${unread ? '1' : '0'}" data-has-queued="${queuedAny ? '1' : '0'}" data-has-paused="${pausedAny ? '1' : '0'}">`;
-            html += historyView.createHistorySectionHeaderHTML(group.project.name, {
-                showRefresh: showRefresh && groupIdx === 0,
-                project: group.project,
-                collapsible: true,
-                collapsed: !expanded,
-                count: group.entries.length,
-                hasError: unreadError,
-                hasUnread: unread,
-                hasQueued: queued,
-                hasPaused: paused,
-            });
-            html += `<div class="history-section-body">${renderHistoryGroupBody(group, renderEntry)}</div>`;
-            html += '</div>';
-        });
-        CuttleChatHistoryView.paint(historyContainer, html, () => {
-            syncHistoryRunningIndicators();
-            syncHistoryUnreadIndicators();
-            applyHistorySubagentExpandState();
-            scheduleSlashChipCompactLabels(historyContainer);
-            renderArchivedSection();
         });
     }
 
@@ -14815,17 +14265,17 @@ function downloadTranscriptMarkdown(text, sessionId) {
     window.toggleChatHistoryPanel = toggleChatHistoryPanel;
     window.openChatHistoryPanel = openChatHistoryPanel;
     window.closeChatHistoryPanel = closeChatHistoryPanel;
-    window.toggleHistoryGroupExpand = revealMoreHistoryGroup; // back-compat alias
-    window.revealMoreHistoryGroup = revealMoreHistoryGroup;
-    window.collapseHistoryGroupReveal = collapseHistoryGroupReveal;
-    window.toggleHistoryProjectCollapse = toggleHistoryProjectCollapse;
-    window.toggleHistorySubagentGroup = toggleHistorySubagentGroup;
+    window.toggleHistoryGroupExpand = (event) => historyPanel.revealMore(event); // back-compat alias
+    window.revealMoreHistoryGroup = (event) => historyPanel.revealMore(event);
+    window.collapseHistoryGroupReveal = (event) => historyPanel.collapseReveal(event);
+    window.toggleHistoryProjectCollapse = (event) => historyPanel.toggleProjectCollapse(event);
+    window.toggleHistorySubagentGroup = (sessionId, event) => historyPanel.toggleSubagentGroup(sessionId, event);
     window.toggleHistoryProjectCollapseKey = function (event) {
         if (!event) return;
         const key = event.key || event.code;
         if (key !== 'Enter' && key !== ' ' && key !== 'Spacebar' && key !== 'Space') return;
         event.preventDefault();
-        toggleHistoryProjectCollapse(event);
+        historyPanel.toggleProjectCollapse(event);
     };
     window.newChatForProject = newChatForProject;
     window.toggleTheme = toggleTheme;
