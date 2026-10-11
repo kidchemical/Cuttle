@@ -230,3 +230,17 @@ def test_host_source_refuses_dirty_checkout(checkout, tmp_path):
     (client / 'file.txt').write_text('my work\n', encoding='utf-8')
     with pytest.raises(module.UpdateRefused, match='local changes'):
         module.update_checkout(client, source='host', bundle=str(bundle), branch='main')
+
+
+def test_check_only_ignores_upstream_ancestry(checkout, tmp_path):
+    """The lifecycle pre-stop recheck must not re-run the official ancestor check.
+
+    After a HOST pull the Client's HEAD is legitimately ahead of origin/<branch>
+    (host commits not pushed); refusing there skipped the restart.
+    """
+    module = load_checkout_helper()
+    client, _remote = checkout
+    (client / 'file.txt').write_text('host rev\n', encoding='utf-8')
+    git(client, 'commit', '-am', 'host rev ahead of upstream')
+    # Would be 'diverged' under the official merge preconditions.
+    module.update_checkout(client, check_only=True)  # must not raise

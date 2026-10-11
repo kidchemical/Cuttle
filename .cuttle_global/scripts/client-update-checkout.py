@@ -206,10 +206,15 @@ def update_checkout(
 ) -> None:
     require_clean(repo)
     git(repo, 'symbolic-ref', '-q', 'HEAD')  # Detached checkouts are never updated.
+    # --check-only is the lifecycle's pre-stop safety recheck: the real
+    # fetch/merge already ran, so only verify the tree is still clean and on a
+    # branch. It must NOT re-run merge preconditions — after a HOST pull, HEAD
+    # can legitimately be ahead of origin/<branch>, which the official ancestor
+    # check would reject (that refusal used to skip the restart).
+    if check_only:
+        return
 
     if source == 'host':
-        if check_only:
-            return  # Lifecycle recheck only; the bundle was already merged.
         want = (branch or '').strip()
         bundle_path = bundle
         if not bundle_path:
@@ -243,10 +248,9 @@ def update_checkout(
         _fast_forward(repo, target)
         return
 
-    upstream = git(repo, 'rev-parse', '--abbrev-ref', '@{u}').decode().strip()
-    if not check_only:
-        print('git fetch --all --prune', flush=True)
-        git(repo, 'fetch', '--all', '--prune')
+    upstream = git(repo, 'rev-parse', '--verify', '@{u}').decode().strip()
+    print('git fetch --all --prune', flush=True)
+    git(repo, 'fetch', '--all', '--prune')
     # Pin the fetched target so a concurrent fetch cannot change the merge.
     upstream = git(repo, 'rev-parse', '--verify', '@{u}^{commit}').decode().strip()
     try:
@@ -255,8 +259,6 @@ def update_checkout(
         raise UpdateRefused('local commits or diverged upstream; reconcile before updating') from None
     require_clean(repo)  # Work created during fetch must be refused too.
     _ignored_collision_guard(repo, upstream)
-    if check_only:
-        return
     print(f'git merge --ff-only --no-overwrite-ignore {upstream}', flush=True)
     git(repo, 'merge', '--ff-only', '--no-overwrite-ignore', upstream)
 
