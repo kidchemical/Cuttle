@@ -10828,8 +10828,21 @@ function downloadTranscriptMarkdown(text, sessionId) {
 
     async function processMessage(message, opts = {}) {
         const attachments = Array.isArray(opts.attachments) ? opts.attachments : [];
-        const controlLane = !!opts.controlLane || isImmediateControlLaneMessage(message);
-        const stickyCmd = getStickySlashCommandFromMessage(message);
+        // PREPARE stage — the pre-submit send decision record (control-lane
+        // classification, sticky/slash meta, pending typing badge) is owned
+        // by chat_generation.js; the page passes resolvers + applies effects.
+        const sendPlan = CuttleChatGeneration.prepareSend({
+            message,
+            controlLaneOpt: !!opts.controlLane,
+            isImmediateControl: isImmediateControlLaneMessage,
+            stickyOf: getStickySlashCommandFromMessage,
+            slashMetaOf: slashCommandMetaFromUserMessage,
+            pendingSlashOf: pendingSlashForTypingIndicator,
+            sessionKey: String(canonicalizeChatSessionId(session.current()) || ''),
+        });
+        const controlLane = sendPlan.controlLane;
+        const stickyCmd = sendPlan.stickyCmd;
+        const replySlash = sendPlan.replySlash;
         let responseData = null;
         // This turn's generation-lock token: end calls below release only
         // if no newer turn (or detach) has since claimed generation.
@@ -10857,18 +10870,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
         // Welcome composer is only for the first turn
         setWelcomeComposerEnabled(false);
 
-        const replySlash = slashCommandMetaFromUserMessage(message);
-
         // New turn owns the typing indicator — drop the previous turn's
         // sub-agent orbs first so they never bleed into a turn that uses none.
         // Live-status / stream syncs repopulate when this turn spawns sub-agents.
         try { subagentLaunchers.clearLive(); } catch (_) {}
         // Add typing indicator — pass slash meta so chip appears immediately
-        const pendingSlash = replySlash
-            ? pendingSlashForTypingIndicator(replySlash, stickyCmd)
-            : null;
-        turnBadgeBySession.set(String(canonicalizeChatSessionId(session.current()) || ''), pendingSlash);
-        addTypingIndicator(pendingSlash);
+        turnBadgeBySession.set(sendPlan.badgeKey, sendPlan.pendingSlash);
+        addTypingIndicator(sendPlan.pendingSlash);
 
         let skipFollowupDrain = false;
         let controlController = null;

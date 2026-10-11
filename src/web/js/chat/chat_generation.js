@@ -3,6 +3,8 @@
    Owner: the local generation busy-lock as ONE explicit state object
    { loading, localSessionId, seq } plus its transitions, the message-sync
    poll cadence decision, the detached-completion poll classification, the
+   send PREPARE decision (control-lane classification + sticky/slash meta +
+   pending typing badge, resolved together as one pure record), the
    session-open generation-flag decision, and the message-sync claim
    lifetime as one page-held state { inFlight, startedAt, seq } with a
    token claim/finish interface (D2b: preserves the page's claim
@@ -203,6 +205,49 @@
     }
 
     /**
+     * PREPARE stage: resolve a raw send into its pre-submit decision record.
+     * The control-lane classification gates the generation begin (a
+     * control-lane turn must not claim the busy lock), so it lives with the
+     * generation lifecycle; the sticky/slash meta and the pending typing
+     * badge are resolved in the same pass so the page owns no branch order.
+     * Pure: no DOM, no window, no fetch, no timers — every classifier is an
+     * injected capability that only resolves this message. Returns
+     * { controlLane, stickyCmd, replySlash, pendingSlash, badgeKey }; the
+     * page performs the effects (stop/generation begin, badge map, typing
+     * indicator, transport).
+     * input: {
+     *   message,
+     *   controlLaneOpt    — opts.controlLane (explicit caller request),
+     *   isImmediateControl — (message) -> bool (control-lane message),
+     *   stickyOf          — (message) -> sticky slash command | null,
+     *   slashMetaOf       — (message) -> slash meta | null,
+     *   pendingSlashOf    — (replySlash, stickyCmd) -> typing badge | null,
+     *   sessionKey        — current canonical session key (string | null),
+     * }.
+     */
+    function prepareSend(input) {
+        input = input || {};
+        const message = input.message;
+        const controlLane = !!input.controlLaneOpt
+            || !!(input.isImmediateControl && input.isImmediateControl(message));
+        const stickyCmd = input.stickyOf ? input.stickyOf(message) : null;
+        const replySlash = input.slashMetaOf ? input.slashMetaOf(message) : null;
+        // Pending badge is derived only when a slash meta exists (matches the
+        // page's `replySlash ? pendingSlashForTypingIndicator(...) : null`).
+        const pendingSlash = replySlash && input.pendingSlashOf
+            ? input.pendingSlashOf(replySlash, stickyCmd)
+            : null;
+        const sessionKey = input.sessionKey;
+        return {
+            controlLane: controlLane,
+            stickyCmd: stickyCmd,
+            replySlash: replySlash,
+            pendingSlash: pendingSlash,
+            badgeKey: sessionKey != null ? String(sessionKey) : '',
+        };
+    }
+
+    /**
      * Session-open generation flags. An opened chat defaults to idle until
      * the one-shot live-status confirms generating (stale flags used to
      * flash the title/history spinner). Returns { clearHubCache,
@@ -224,6 +269,7 @@
         isSyncCurrent: isSyncCurrent,
         finishSync: finishSync,
         currentToken: currentToken,
+        prepareSend: prepareSend,
         beginGeneration: beginGeneration,
         endGeneration: endGeneration,
         detachGeneration: detachGeneration,

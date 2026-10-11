@@ -177,6 +177,79 @@ const out = {};
   G.claimSync(st, 0);
   out.syncZeroStart = G.claimSync(st, 50000);
 }
+// ---------- PREPARE stage: send plan (prepareSend) ----------
+{
+  const calls = [];
+  let pendingSticky = null;
+  const plan = G.prepareSend({
+    message: 'MSG', controlLaneOpt: false,
+    isImmediateControl: (m) => { calls.push('imm:' + m); return false; },
+    stickyOf: (m) => { calls.push('sticky:' + m); return { prefix: '/cursor' }; },
+    slashMetaOf: (m) => { calls.push('slash:' + m); return { chips: [] }; },
+    pendingSlashOf: (r, s) => {
+      calls.push('pending');
+      pendingSticky = s && s.prefix;
+      return { chips: [{ label: 'X' }] };
+    },
+    sessionKey: 'CH-1',
+  });
+  out.planBasic = plan;
+  out.planCalls = calls;
+  out.planPendingSticky = pendingSticky;
+}
+{
+  const calls = [];
+  const p = G.prepareSend({
+    message: 'm', controlLaneOpt: true,
+    isImmediateControl: () => { calls.push('imm'); return false; },
+    stickyOf: () => null, slashMetaOf: () => null, pendingSlashOf: () => ({}),
+    sessionKey: 's',
+  });
+  out.planOpt = [p.controlLane, calls];
+}
+{
+  const p = G.prepareSend({
+    message: 'm', controlLaneOpt: false,
+    isImmediateControl: () => 1,
+    stickyOf: () => null, slashMetaOf: () => null, pendingSlashOf: () => ({}),
+    sessionKey: 's',
+  });
+  out.planImmediateCoerce = p.controlLane;
+}
+{
+  const calls = [];
+  const p = G.prepareSend({
+    message: 'm', controlLaneOpt: false, isImmediateControl: () => false,
+    stickyOf: () => null, slashMetaOf: () => null,
+    pendingSlashOf: () => { calls.push('pending'); return { chips: [{ label: 'SHOULD-NOT' }] }; },
+    sessionKey: 's',
+  });
+  out.planNoReplySlash = [p.pendingSlash, calls];
+}
+{
+  const seen = {};
+  const p = G.prepareSend({
+    message: 'm', controlLaneOpt: false, isImmediateControl: () => false,
+    stickyOf: () => ({ prefix: '/muse' }),
+    slashMetaOf: () => ({ chips: [{ label: '/muse' }] }),
+    pendingSlashOf: (r, s) => { seen.r = r; seen.s = s; return { chips: [{ label: 'Muse' }] }; },
+    sessionKey: 'keyA',
+  });
+  out.planResolved = {
+    sticky: p.stickyCmd, reply: p.replySlash, pending: p.pendingSlash,
+    badgeKey: p.badgeKey, pendingSticky: seen.s && seen.s.prefix,
+  };
+}
+{
+  const p = G.prepareSend({ message: 'm' });
+  out.planEmpty = [p.controlLane, p.stickyCmd, p.replySlash, p.pendingSlash, p.badgeKey];
+  const pn = G.prepareSend(null);
+  out.planNull = [pn.controlLane, pn.stickyCmd, pn.replySlash, pn.pendingSlash, pn.badgeKey];
+}
+{
+  const bk = (k) => G.prepareSend({ message: 'm', sessionKey: k }).badgeKey;
+  out.planBadge = [bk(null), bk(undefined), bk(''), bk(123), bk('CH-9')];
+}
 process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error('HARNESS-ERROR', e); process.exit(2); });
 """
@@ -314,6 +387,56 @@ def test_session_open_flags():
 
 
 @node_only
+def test_prepare_send_decision_record():
+    res = _run()
+    # ORACLE: control-lane OR (opt || immediate), sticky/slash resolved,
+    # pending badge built from both, session key normalized.
+    assert res["planBasic"] == {
+        "controlLane": False,
+        "stickyCmd": {"prefix": "/cursor"},
+        "replySlash": {"chips": []},
+        "pendingSlash": {"chips": [{"label": "X"}]},
+        "badgeKey": "CH-1",
+    }
+    # Resolvers consulted once each in prepare order; pending receives sticky.
+    assert res["planCalls"] == ["imm:MSG", "sticky:MSG", "slash:MSG", "pending"]
+    assert res["planPendingSticky"] == "/cursor"
+
+
+@node_only
+def test_prepare_send_control_lane_sources():
+    res = _run()
+    # ORACLE: explicit opts.controlLane short-circuits the OR true; the
+    # immediate predicate is not consulted (matches the page's `||`).
+    assert res["planOpt"] == [True, []]
+    # ORACLE: a truthy non-boolean immediate result is coerced to a boolean.
+    assert res["planImmediateCoerce"] is True
+
+
+@node_only
+def test_prepare_send_pending_badge_gated_on_reply_slash():
+    res = _run()
+    # ORACLE: no replySlash -> pendingSlash null AND the builder is not called.
+    assert res["planNoReplySlash"] == [None, []]
+
+
+@node_only
+def test_prepare_send_resolved_and_safe_defaults():
+    res = _run()
+    r = res["planResolved"]
+    assert r["sticky"] == {"prefix": "/muse"}
+    assert r["reply"] == {"chips": [{"label": "/muse"}]}
+    assert r["pending"] == {"chips": [{"label": "Muse"}]}
+    assert r["badgeKey"] == "keyA"
+    assert r["pendingSticky"] == "/muse"
+    # ORACLE: missing resolvers default false/null; missing sessionKey -> ''.
+    assert res["planEmpty"] == [False, None, None, None, ""]
+    assert res["planNull"] == [False, None, None, None, ""]
+    # ORACLE: session key normalized (null/undefined/'' collapse to '').
+    assert res["planBadge"] == ["", "", "", "123", "CH-9"]
+
+
+@node_only
 def test_chat_generation_module_parses():
     import os
     proc = subprocess.run(
@@ -328,6 +451,7 @@ def test_page_delegates_generation_to_owner():
     src = CHAT_PAGE_JS.read_text(encoding="utf-8")
     for call in [
         "CuttleChatGeneration.createGenerationState()",
+        "CuttleChatGeneration.prepareSend(",
         "CuttleChatGeneration.beginGeneration(",
         "CuttleChatGeneration.endGeneration(",
         "CuttleChatGeneration.detachGeneration(",
@@ -337,6 +461,15 @@ def test_page_delegates_generation_to_owner():
         "CuttleChatGeneration.classifyDetachedPoll(",
     ]:
         assert call in src, f"missing delegation {call}"
+    # PREPARE-stage decisions moved into the owner: the page no longer
+    # computes the control-lane OR, the pending typing badge branch, or the
+    # badge-key expression inline.
+    for gone in [
+        "const controlLane = !!opts.controlLane || isImmediateControlLaneMessage(message);",
+        "const pendingSlash = replySlash",
+        "turnBadgeBySession.set(String(canonicalizeChatSessionId(session.current()) || ''), pendingSlash);",
+    ]:
+        assert gone not in src, f"page still owns prepare decision: {gone}"
     # 3B step 3: the session-open flag decision moved with loadChatSession into
     # chat_session.js (CuttleChatSession.createLoader).
     session_src = CHAT_SESSION_JS.read_text(encoding="utf-8")
