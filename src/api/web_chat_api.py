@@ -97,7 +97,7 @@ except ImportError as e:
 
 # Import authentication
 try:
-    from api.auth_api import auth_bp
+    from api.auth_api import auth_bp, pairing_bp
     from api.auth_db import get_auth_db
     from api.auth_session import get_request_session_token
 except ImportError as e:
@@ -247,6 +247,10 @@ _require_session_actor = require_session_actor
 
 # Register authentication blueprint
 app.register_blueprint(auth_bp)
+try:
+    app.register_blueprint(pairing_bp)
+except Exception as _pairing_routes_err:
+    print(f"[PAIRING] Failed to register routes: {_pairing_routes_err}")
 
 from api.usage_live import usage_live_bp
 app.register_blueprint(usage_live_bp)
@@ -381,6 +385,13 @@ try:
     app.register_blueprint(router_editor_bp)
 except Exception as _router_editor_err:
     print(f"[ROUTER] Failed to register editor routes: {_router_editor_err}")
+
+# Supervised task HTTP transport (task policy and storage stay in the owner).
+try:
+    from api.agent_router.supervised.routes import supervised_bp
+    app.register_blueprint(supervised_bp)
+except Exception as _supervised_routes_err:
+    print(f"[SUPERVISED] Failed to register routes: {_supervised_routes_err}")
 
 # Chat activity push stream (transport in api.activity_stream)
 try:
@@ -5069,142 +5080,6 @@ def health_check():
     return jsonify(payload)
 
 
-@app.route('/api/supervised/tasks/<task_id>/control', methods=['POST'])
-def supervised_task_control(task_id):
-    """Typed, model-free controls for the Activity disclosure."""
-    try:
-        from api.agent_router.supervised.control import session_owns_task
-        from api.agent_router.supervised.delivery import public_indicator
-        from api.agent_router.supervised.orchestrator import cancel_task, user_followup
-        from api.agent_router.supervised.store import load_task
-
-        data = request.get_json(silent=True) or {}
-        action = str(data.get('action') or '').strip().lower()
-        task = load_task(task_id)
-        if not task:
-            return jsonify({'success': False, 'error': 'Task not found.'}), 404
-        token = get_request_session_token()
-        db = get_auth_db()
-        user = db.verify_auth_session(token) if token else None
-        if not user:
-            return jsonify({'success': False, 'error': 'Unauthorized.'}), 401
-        parent = str(task.parent_session_id or '')
-        bare = parent[len('db_session_'):] if parent.startswith('db_session_') else parent
-        try:
-            session_id = int(bare)
-        except (TypeError, ValueError):
-            return jsonify({'success': False, 'error': 'Task has no authenticated session.'}), 403
-        if not db.get_chat_session(session_id, user['id']):
-            return jsonify({'success': False, 'error': 'Task belongs to another session.'}), 403
-        if not session_owns_task(session_id, task):
-            return jsonify({'success': False, 'error': 'Task belongs to another session.'}), 403
-        control_id = str(data.get('control_request_id') or f"ui_{task_id}_{action}_{uuid.uuid4().hex[:10]}")
-        if action == 'status':
-            result = {'success': True, 'acknowledgement': 'Activity refreshed.'}
-        elif action == 'followup':
-            instruction = str(data.get('instruction') or '').strip()
-            if not instruction:
-                return jsonify({'success': False, 'error': 'Instruction is required.'}), 400
-            result = user_followup(session_id, instruction, control_request_id=control_id)
-            result['acknowledgement'] = 'Instruction added.'
-        elif action == 'cancel':
-            result = cancel_task(session_id, control_request_id=control_id)
-            result['acknowledgement'] = 'Task cancelled.'
-        else:
-            return jsonify({'success': False, 'error': 'Unknown control action.'}), 400
-        latest = load_task(task_id) or task
-        result['supervised_task'] = public_indicator(latest)
-        result['control_request_id'] = control_id
-        return jsonify(result)
-    except Exception as e:
-        print(f'[CHAT] supervised typed control failed: {e}', flush=True)
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/supervised/tasks/<task_id>/runs/<run_id>/raw', methods=['GET'])
-def supervised_task_raw_artifact(task_id, run_id):
-    """Session/task-scoped read-only viewer for durable worker raw output.
-
-    Validates ownership and confines reads to the supervised task runs directory.
-    """
-    tid = str(task_id or '').strip()
-    rid = str(run_id or '').strip()
-    if not tid or not rid:
-        return jsonify({'success': False, 'error': 'task_id and run_id required'}), 400
-    if '/' in tid or '\\' in tid or '..' in tid or '/' in rid or '\\' in rid or '..' in rid:
-        return jsonify({'success': False, 'error': 'invalid id'}), 400
-
-    session_token = get_request_session_token()
-    if not session_token:
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 401
-    try:
-        db = get_auth_db()
-        user = db.verify_auth_session(session_token)
-        if not user:
-            return jsonify({'success': False, 'error': 'Unauthorized'}), 401
-    except Exception as e:
-        return jsonify({'success': False, 'error': f'Unauthorized: {e}'}), 401
-
-    try:
-        from api.agent_router.supervised.store import load_task, store_dir
-        from api.agent_router.supervised.control import session_owns_task
-
-        task = load_task(tid)
-        if not task:
-            return jsonify({'success': False, 'error': 'Task not found'}), 404
-        parent = str(task.parent_session_id or '')
-        bare = parent[len('db_session_'):] if parent.startswith('db_session_') else parent
-        try:
-            db_sid = int(bare)
-        except (TypeError, ValueError):
-            db_sid = None
-        if db_sid is None or not db.get_chat_session(db_sid, user['id']):
-            return jsonify({'success': False, 'error': 'Forbidden'}), 403
-        if not session_owns_task(db_sid, task) and not session_owns_task(parent, task):
-            return jsonify({'success': False, 'error': 'Forbidden'}), 403
-
-        root = (store_dir() / tid / 'runs').resolve()
-        path = (root / f'{rid}.raw.txt').resolve()
-        try:
-            path.relative_to(root)
-        except ValueError:
-            return jsonify({'success': False, 'error': 'path rejected'}), 400
-        if not path.is_file():
-            return jsonify({'success': False, 'error': 'artifact not found'}), 404
-        size = path.stat().st_size
-        max_bytes = 2_000_000
-        data = path.read_bytes()[:max_bytes]
-        text = data.decode('utf-8', errors='replace')
-        as_download = (request.args.get('download') or '').strip() in ('1', 'true', 'yes')
-        if as_download or request.args.get('format') == 'text':
-            from flask import Response as FlaskResponse
-
-            return FlaskResponse(
-                text,
-                mimetype='text/plain; charset=utf-8',
-                headers={
-                    'Content-Disposition': (
-                        f'attachment; filename="{tid}_{rid}.raw.txt"'
-                        if as_download
-                        else 'inline'
-                    ),
-                    'X-Content-Type-Options': 'nosniff',
-                },
-            )
-        return jsonify({
-            'success': True,
-            'task_id': tid,
-            'run_id': rid,
-            'bytes': size,
-            'truncated': size > max_bytes,
-            'content': text,
-            'content_type': 'text/plain',
-        })
-    except Exception as e:
-        print(f'[CHAT] supervised raw artifact failed: {e}', flush=True)
-        return jsonify({'success': False, 'error': 'failed to read artifact'}), 500
-
-
 @app.route('/api/lan-ping', methods=['GET'])
 def api_lan_ping():
     """Minimal endpoint for phone connectivity test (no auth)."""
@@ -5527,64 +5402,6 @@ def doctor_endpoint():
 # ============================================================================
 # Pairing API (channel-level security: approve codes, list pending)
 # ============================================================================
-
-@app.route('/api/pairing/approve', methods=['POST'])
-@limiter.limit("5 per minute")
-@owner_required
-def pairing_approve():
-    """Approve a pairing code. Adds identity to allowlist."""
-    if not PAIRING_AVAILABLE:
-        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
-    try:
-        data = request.get_json() or {}
-        code = data.get('code', '').strip()
-        if not code:
-            return jsonify({'success': False, 'error': 'No code provided'}), 400
-        pm = get_pairing_manager()
-        ok, result = pm.approve(code)
-        if ok:
-            return jsonify({'success': True, 'approved': result})
-        return jsonify({'success': False, 'error': result}), 400
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/pairing/pending', methods=['GET'])
-@limiter.limit("5 per minute")
-@owner_required
-def pairing_pending():
-    """List pending pairing requests (for admin UI)."""
-    if not PAIRING_AVAILABLE:
-        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
-    try:
-        pm = get_pairing_manager()
-        return jsonify({'success': True, 'pending': pm.list_pending()})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/pairing/status', methods=['GET'])
-@owner_required
-def pairing_status():
-    """Get pairing/allowlist status for current channel (query: channel, identity)."""
-    if not PAIRING_AVAILABLE:
-        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
-    try:
-        channel = request.args.get('channel', 'webchat')
-        identity = request.args.get('identity', '')
-        settings = get_settings_manager()
-        channel_cfg = settings.get_channel_config(channel)
-        dm_policy = channel_cfg.get('dmPolicy', 'open')
-        allow_from = channel_cfg.get('allowFrom', ['*'])
-        pm = get_pairing_manager()
-        allowed = pm.is_allowed(channel, identity, dm_policy, allow_from)
-        return jsonify({
-            'success': True,
-            'channel': channel,
-            'identity': identity,
-            'allowed': allowed,
-            'dmPolicy': dm_policy,
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/muse/models', methods=['GET'])
 def api_muse_models():

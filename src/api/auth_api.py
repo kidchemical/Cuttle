@@ -15,9 +15,19 @@ from flask import Blueprint, request, jsonify, redirect, make_response
 from api.auth_db import get_auth_db
 from api.auth_session import get_request_session_token, wants_session_token_in_body
 from api.limiter import limiter as _auth_limiter
+from api.http_authz import owner_required
 
 # Create Flask blueprint for auth routes
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
+pairing_bp = Blueprint('user_pairing', __name__)
+
+PAIRING_AVAILABLE = False
+try:
+    from api.pairing_manager import get_pairing_manager
+    from managers.settings_manager import get_settings_manager
+    PAIRING_AVAILABLE = True
+except ImportError as _pairing_import_error:
+    print(f"Warning: Pairing modules not available: {_pairing_import_error}")
 
 _USERNAME_RE = re.compile(r'^[a-zA-Z0-9_]{3,32}$')
 
@@ -98,6 +108,67 @@ def _oauth_public_base() -> str:
 
 def _oauth_redirect_uri(provider: str) -> str:
     return f"{_oauth_public_base()}/api/auth/callback/{provider}"
+
+
+@pairing_bp.post('/api/pairing/approve')
+@_auth_limiter.limit("5 per minute")
+@owner_required
+def pairing_approve():
+    """Approve a pairing code. Adds identity to allowlist."""
+    if not PAIRING_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
+    try:
+        data = request.get_json() or {}
+        code = data.get('code', '').strip()
+        if not code:
+            return jsonify({'success': False, 'error': 'No code provided'}), 400
+        pm = get_pairing_manager()
+        ok, result = pm.approve(code)
+        if ok:
+            return jsonify({'success': True, 'approved': result})
+        return jsonify({'success': False, 'error': result}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@pairing_bp.get('/api/pairing/pending')
+@_auth_limiter.limit("5 per minute")
+@owner_required
+def pairing_pending():
+    """List pending pairing requests (for admin UI)."""
+    if not PAIRING_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
+    try:
+        pm = get_pairing_manager()
+        return jsonify({'success': True, 'pending': pm.list_pending()})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@pairing_bp.get('/api/pairing/status')
+@owner_required
+def pairing_status():
+    """Get pairing/allowlist status for current channel (query: channel, identity)."""
+    if not PAIRING_AVAILABLE:
+        return jsonify({'success': False, 'error': 'Pairing not available'}), 503
+    try:
+        channel = request.args.get('channel', 'webchat')
+        identity = request.args.get('identity', '')
+        settings = get_settings_manager()
+        channel_cfg = settings.get_channel_config(channel)
+        dm_policy = channel_cfg.get('dmPolicy', 'open')
+        allow_from = channel_cfg.get('allowFrom', ['*'])
+        pm = get_pairing_manager()
+        allowed = pm.is_allowed(channel, identity, dm_policy, allow_from)
+        return jsonify({
+            'success': True,
+            'channel': channel,
+            'identity': identity,
+            'allowed': allowed,
+            'dmPolicy': dm_policy,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # OAuth client env names per provider (read at request time so a key added
