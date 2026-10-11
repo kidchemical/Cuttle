@@ -12,15 +12,13 @@ posters, download, and seven-day staging retention apply.
 
 ## Agent recipe
 
-Register every batch you want to attach, after submitting its shards. Use the
-originating chat handle and an **absolute host-visible** frame directory:
+The concise register/reconcile recipe is owned by the global feature runbook
+[`render-results.md`](../../.cuttle_global/features/render_result_attachments/docs/render-results.md);
+this file owns the HTTP API and delivery semantics.
 
-```bash
-PYTHONPATH=src .venv/bin/python -m api.device_workers.render_results register \
-  --batch-id my-batch --session CH-000962 --output-dir /absolute/render/frames
-```
-
-HTTP alternative (owner session cookie and access to the destination chat):
+Register every batch you want to attach, after submitting its shards, using the
+originating chat handle and an **absolute host-visible** frame directory. HTTP
+alternative (owner session cookie and access to the destination chat):
 
 ```http
 POST /api/workers/jobs/batch/my-batch/attachment
@@ -46,11 +44,8 @@ no video attachment.
 Remote output must be copied/mounted into the host-visible directory. If files
 arrive after the worker completion report, explicitly reconcile after copying:
 
-```bash
-PYTHONPATH=src .venv/bin/python -m api.device_workers.render_results reconcile --batch-id my-batch
-```
-
-Or POST `{"session_id":962,"reconcile":true}` to the same endpoint. Existing
+Or POST `{"session_id":962,"reconcile":true}` to the same endpoint; the CLI
+`reconcile` (owned by the global runbook) does the same. Existing
 `batch-watch` writes also reconcile. Missing files and staging failures remain
 retryable; no background polling thread or automatic remote file transfer is
 introduced. In-progress thumbnail refresh is deferred.

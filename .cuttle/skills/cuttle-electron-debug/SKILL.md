@@ -33,7 +33,9 @@ and multi-pane chat SSE — browser will not reproduce those freezes.
 **Dev (picks up live `electron/main.js` + `preload.js`):**
 
 ```powershell
-Get-Process electron,Cuttle -ErrorAction SilentlyContinue | Stop-Process -Force
+# Stop only the dev Electron instance (electron.exe) you are about to relaunch.
+# Never kill a packaged Cuttle Host, the daemon, or Flask — killing the Host breaks delivery.
+Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Process -FilePath "/path/to/Cuttle/electron\node_modules\electron\dist\electron.exe" `
   -ArgumentList ".","--remote-debugging-port=9333" `
   -WorkingDirectory "/path/to/Cuttle/electron"

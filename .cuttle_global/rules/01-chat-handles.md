@@ -24,5 +24,5 @@ Cuttle linkifies it into a clickable chat-handle badge that opens that session.
 | `[CH-000405](vscode://file/…)` / `[CH-000405](https://…)` | Same — wrong chip / dead navigation |
 | `` `CH-000405` `` | Inline code skips linkify |
 
-`file://` / `vscode://` hyperlinks are only for **real file paths** (see AGENTS.md
-terminal hyperlink rule), never for `CH-` tokens.
+`file://` / `vscode://` hyperlinks are only for **real file paths**, never for
+`CH-` tokens.
