@@ -12517,29 +12517,30 @@ function downloadTranscriptMarkdown(text, sessionId) {
         }
         // SSE can stall on Electron/HTTPS while the agent keeps updating live-status.
         // Poll with short timeouts so typing text still moves and connections free up.
-        let lastStatus = '';
-        let stagnantTicks = 0;
+        // Cadence, the tick branch decision and the {lastStatus, stagnantTicks}
+        // bookkeeping are owned by chat_stream_transport.js; the page keeps the
+        // timer, the live-status fetch, DOM paint and the recovery effects.
+        const pollState = CuttleChatStreamTransport.createStatusPollState();
         streamStatusPollTimer = setInterval(async () => {
-            if (!isLoadingThisSession() || session.current() == null) {
+            const gate = CuttleChatStreamTransport.planStatusPollStart({
+                loadingThisSession: isLoadingThisSession(),
+                sessionId: session.current(),
+                backgrounded: pageIsBackgrounded(),
+            });
+            if (gate.stop) {
                 clearStreamStatusPoll();
                 return;
             }
-            if (pageIsBackgrounded()) return;
+            if (gate.skip) return;
             const live = await fetchChatLiveStatus(session.current());
-            if (!live) return;
-            if (live.status) {
-                if (live.status === lastStatus) stagnantTicks += 1;
-                else {
-                    stagnantTicks = 0;
-                    lastStatus = live.status;
-                }
-                updateTypingStatus(live.status);
-            }
-            try { subagentLaunchers.syncLive(live.subagents); } catch (_) {}
-            if (live.report_url) updateTypingIndicatorQueryLink(live.report_url);
+            const plan = CuttleChatStreamTransport.planStatusPollLive(
+                pollState, live, liveStatusLooksActive(live));
+            if (plan.skip) return;
+            if (plan.paintStatus != null) updateTypingStatus(plan.paintStatus);
+            try { subagentLaunchers.syncLive(plan.subagents); } catch (_) {}
+            if (plan.reportUrl) updateTypingIndicatorQueryLink(plan.reportUrl);
 
-            const stillGoing = liveStatusLooksActive(live);
-            if (!stillGoing) {
+            if (plan.recover) {
                 // Run finished server-side — pull the reply even if SSE/pending stalled.
                 clearStreamStatusPoll();
                 try {
@@ -12575,67 +12576,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
             }
             // Same tool status for a long time while still "active" — nudge pending
             // recovery in case the worker died without clearing live-status.
-            if (stagnantTicks >= 24) { // ~24 * 3.5s ≈ 84s
-                stagnantTicks = 0;
+            if (plan.resync) {
                 try {
                     await syncSessionMessagesFromServer();
                 } catch (_) {}
             }
-        }, 3500);
-    }
-    // Companion-HTTP target for an HTTPS pool stall (armConnectingWatchdog).
-    // Pure except for the injected getDesktopConfig: resolves to
-    // { probeUrl, destBase, httpPort } or null (fail closed — the caller
-    // shows a generic message instead of guessing an unrelated endpoint).
-    // Local paired mode requires matching host and HTTPS port. Explicit
-    // single targets never auto-downgrade. Only true legacy
-    // default-mode (exact https://127.0.0.1|localhost:8080 with no config
-    // available, e.g. plain browser) keeps the documented :8000 companion.
-    function poolStallSameHost(cfgHost, normHost, loopback127) {
-        const cfgNorm = String(cfgHost || '').trim().replace(/^\[|\]$/g, '').toLowerCase();
-        if (!cfgNorm) return false;
-        if (cfgNorm === normHost) return true;
-        return !!(loopback127 && (cfgNorm === '127.0.0.1' || cfgNorm === 'localhost'));
-    }
-    function poolStallTarget(host, httpPort) {
-        return {
-            probeUrl: `http://${host}:${httpPort}/api/status`,
-            destBase: `http://${host}:${httpPort}`,
-            httpPort,
-        };
-    }
-    async function poolStallHttpTarget({ origin, getDesktopConfig }) {
-        const m = /^https:\/\/(\[[^\]]+\]|[^/:]+):(\d+)$/i.exec(String(origin || ''));
-        if (!m) return null;
-        const host = m[1];
-        const httpsPort = Number(m[2]);
-        if (!Number.isSafeInteger(httpsPort) || httpsPort < 1 || httpsPort > 65535) return null;
-        const normHost = host.replace(/^\[|\]$/g, '').toLowerCase();
-        const loopback127 = normHost === '127.0.0.1' || normHost === 'localhost';
-        let cfg = null;
-        try {
-            cfg = typeof getDesktopConfig === 'function' ? await getDesktopConfig() : null;
-        } catch (_) {
-            cfg = null;
-        }
-        // Explicit connections never change protocol, including saved configs
-        // that contain companion metadata from an older desktop build.
-        const ep = cfg ? cfg.endpoint : null;
-        if (ep && ep.kind === 'single') return null;
-        // A local paired target knows both owner-resolved listeners.
-        if (cfg && Number(cfg.httpsPort) === httpsPort
-            && poolStallSameHost(cfg.host, normHost, loopback127)) {
-            const httpPort = Number(cfg.httpPort);
-            if (Number.isSafeInteger(httpPort) && httpPort >= 1 && httpPort <= 65535) {
-                return poolStallTarget(host, httpPort);
-            }
-            return null;
-        }
-        // Plain-browser legacy compatibility: no desktop config is available.
-        if (!cfg && loopback127 && httpsPort === 8080) {
-            return poolStallTarget('127.0.0.1', 8000);
-        }
-        return null;
+        }, CuttleChatStreamTransport.STATUS_POLL_MS);
     }
     function armConnectingWatchdog() {
         clearConnectingWatchdog();
@@ -12644,15 +12590,19 @@ function downloadTranscriptMarkdown(text, sessionId) {
             const el = document.getElementById('typing-status')
                 || document.querySelector('#typing-indicator .typing-status');
             if (!el) return;
-            const text = (el.textContent || '').trim();
-            if (text !== 'Connecting...' && text.indexOf('Still connecting') < 0) return;
+            // Label gate, live-status preemption, probe interpretation and
+            // pool-stall target resolution are owned by
+            // chat_stream_transport.js; the page keeps the timer, DOM reads,
+            // fetch, navigation and message paint.
+            if (!CuttleChatStreamTransport.watchdogWantsLive(el.textContent)) return;
 
             // Prefer live generation status over a health probe (SSE may be stalled).
             if (session.current() != null) {
                 const live = await fetchChatLiveStatus(session.current());
-                if (live && (live.active || live.generating) && live.status) {
-                    updateTypingStatus(live.status);
-                    if (live.report_url) updateTypingIndicatorQueryLink(live.report_url);
+                const livePlan = CuttleChatStreamTransport.planWatchdogAfterLive(live);
+                if (livePlan.kind === 'live') {
+                    updateTypingStatus(livePlan.status);
+                    if (livePlan.reportUrl) updateTypingIndicatorQueryLink(livePlan.reportUrl);
                     return;
                 }
             }
@@ -12662,16 +12612,17 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 const r = await fetchWithTimeout('/api/status', {
                     credentials: 'include',
                     cache: 'no-store',
-                }, 4000);
-                if (!document.getElementById('typing-indicator')) return;
+                }, CuttleChatStreamTransport.WATCHDOG_PROBE_MS);
                 const cur = document.getElementById('typing-status')
                     || document.querySelector('#typing-indicator .typing-status');
-                if (!cur || (cur.textContent || '').indexOf('Still connecting') < 0) return;
-                if (r.ok) {
-                    cur.textContent = 'Server is up — waiting for chat stream…';
-                } else {
-                    cur.textContent = `Server health HTTP ${r.status} — try refreshing or restart Flask`;
-                }
+                const probe = CuttleChatStreamTransport.planWatchdogProbe({
+                    ok: r.ok,
+                    status: r.status,
+                    hasIndicator: !!document.getElementById('typing-indicator'),
+                    stillConnecting: !!cur && (cur.textContent || '').indexOf('Still connecting') >= 0,
+                });
+                if (probe.abort) return;
+                cur.textContent = probe.message;
             } catch (_) {
                 if (!document.getElementById('typing-indicator')) return;
                 const cur = document.getElementById('typing-status')
@@ -12682,19 +12633,19 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     // known — poolStallHttpTarget never guesses an unrelated
                     // default for custom/explicit origins.
                     const inElectron = !!(window.electron && window.electron.isElectron);
-                    const stallTarget = await poolStallHttpTarget({
+                    const stallTarget = await CuttleChatStreamTransport.poolStallHttpTarget({
                         origin: window.location.origin || '',
                         getDesktopConfig: inElectron && window.electron.desktop && window.electron.desktop.getConfig
                             ? () => window.electron.desktop.getConfig()
                             : null,
                     });
                     if (stallTarget) {
-                        cur.textContent = `HTTPS pool stalled — switching to HTTP portal (:${stallTarget.httpPort})…`;
+                        cur.textContent = CuttleChatStreamTransport.poolStallSwitchMessage(stallTarget.httpPort);
                         try {
                             const probe = await fetchWithTimeout(stallTarget.probeUrl, {
                                 cache: 'no-store',
                                 mode: 'cors',
-                            }, 3000);
+                            }, CuttleChatStreamTransport.POOL_STALL_PROBE_MS);
                             if (probe && probe.ok) {
                                 const dest = stallTarget.destBase + (window.location.pathname || '/app_shell.html')
                                     + (window.location.search || '') + (window.location.hash || '');
@@ -12709,37 +12660,29 @@ function downloadTranscriptMarkdown(text, sessionId) {
                             }
                         } catch (_) { /* fall through */ }
                     }
-                    cur.textContent = inElectron
-                        ? 'Cannot reach Cuttle API — Electron connection pool stalled. Quit Cuttle.exe fully and reopen (or use the HTTP portal for your connected host).'
-                        : 'Cannot reach Cuttle API quickly — stream may be stalled. Try Stop, or open the HTTP portal for this host.';
+                    cur.textContent = CuttleChatStreamTransport.watchdogStallMessage(inElectron);
                 }
             }
-        }, 12000);
+        }, CuttleChatStreamTransport.WATCHDOG_MS);
     }
 
     function updateTypingStatus(statusText) {
-        const next = statusText || 'Connecting...';
-        chatVoice.onAgentStatus(next);
         const indicator = document.getElementById('typing-indicator');
         const el = indicator ? indicator.querySelector('.typing-status') : document.getElementById('typing-status');
-        if (el) {
-            if (el.textContent === next) {
-                if (next !== 'Connecting...' && next.indexOf('Still connecting') < 0) {
-                    clearConnectingWatchdog();
-                }
-                return;
-            }
-            clearConnectingWatchdog();
-            el.textContent = next;
+        const plan = CuttleChatStreamTransport.planTypingStatusUpdate({
+            statusText: statusText,
+            hasIndicator: !!indicator,
+            currentText: el ? el.textContent : null,
+        });
+        chatVoice.onAgentStatus(plan.text);
+        if (plan.paint && el) {
+            el.textContent = plan.text;
             el.style.display = 'block';
             el.style.visibility = 'visible';
             transcriptNav.autoScrollChatToBottom();
-        } else {
-            clearConnectingWatchdog();
         }
-        if (!statusText || statusText === 'Connecting...') {
-            armConnectingWatchdog();
-        }
+        if (plan.clearWatchdog) clearConnectingWatchdog();
+        if (plan.armWatchdog) armConnectingWatchdog();
     }
     
     function updateTypingIndicatorQueryLink(reportUrl) {

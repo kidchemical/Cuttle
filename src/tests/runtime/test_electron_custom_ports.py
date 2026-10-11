@@ -7,7 +7,7 @@ Attempt 1 (parent CH-001002 followup):
   probes ONLY that endpoint (never an unrelated default, never downgraded).
 - ``isCuttleSelfSignedHttpsUrl`` allows exactly the selected endpoint
   host + effective HTTPS port (no literal allowlist).
-- ``poolStallHttpTarget`` (chat_page.js) keeps the documented default-mode
+- ``poolStallHttpTarget`` (chat_stream_transport.js) keeps the documented default-mode
   :8080 -> :8000 legacy companion and resolves local paired targets from
   Electron config. Explicit single targets never redirect to HTTP.
 - Device-worker ``pick_base_urls`` infers :8000 only in documented
@@ -37,6 +37,7 @@ REPO = Path(__file__).resolve().parents[3]
 SRC_DIR = REPO / "src"
 MAIN_JS = REPO / "electron" / "main.js"
 CHAT_JS = SRC_DIR / "web" / "js" / "chat/chat_page.js"
+STREAM_TRANSPORT_JS = SRC_DIR / "web" / "js" / "chat/chat_stream_transport.js"
 SIDECAR = REPO / "electron" / "device-worker" / "cuttle_device_worker.py"
 
 node_only = pytest.mark.skipif(
@@ -111,22 +112,17 @@ POOL_FUNCS = ("poolStallSameHost", "poolStallTarget", "poolStallHttpTarget")
 
 
 def _extract_pool_helper() -> str:
-    lines = CHAT_JS.read_text(encoding="utf-8").splitlines(keepends=True)
-    found: dict[str, str] = {}
-    i = 0
-    while i < len(lines):
-        m = re.match(r"^    (async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(", lines[i])
-        if m and m.group(2) in POOL_FUNCS and m.group(2) not in found:
-            body, i = _extract_braced(lines, i)
-            dedented = "".join(
-                ln[4:] if ln.startswith("    ") else ln for ln in body.splitlines(keepends=True)
-            )
-            found[m.group(2)] = dedented
-        else:
-            i += 1
-    missing = [n for n in POOL_FUNCS if n not in found]
-    assert not missing, f"pool helpers missing in chat_page.js: {missing}"
-    return "\n".join(found[n] for n in POOL_FUNCS)
+    """Pool-stall target helpers now live in chat_stream_transport.js (4B);
+    the test drives the owner's public interface, not page source."""
+    text = STREAM_TRANSPORT_JS.read_text(encoding="utf-8")
+    missing = [n for n in POOL_FUNCS if (n + "(") not in text]
+    assert not missing, f"pool helpers missing in chat_stream_transport.js: {missing}"
+    return (
+        "const __streamTransport = require(%s);\n"
+        "const poolStallSameHost = __streamTransport.poolStallSameHost;\n"
+        "const poolStallTarget = __streamTransport.poolStallTarget;\n"
+        "const poolStallHttpTarget = __streamTransport.poolStallHttpTarget;\n"
+    ) % json.dumps(str(STREAM_TRANSPORT_JS))
 
 
 def _run_node(script: str) -> subprocess.CompletedProcess:
