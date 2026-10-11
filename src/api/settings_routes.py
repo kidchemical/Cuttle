@@ -936,3 +936,347 @@ def storage_operation(ident,operation):
         return jsonify(success=True,result=operate(ident,operation,(request.get_json(silent=True) or {}).get('confirm')))
     except ValueError as exc:
         return jsonify(error=str(exc)),400
+"""Settings provider credential routes."""
+from flask import Blueprint, jsonify, request
+from api.http_authz import owner_required
+from core.runtime_paths import env_file as _env_file
+import os
+
+provider_keys_bp = Blueprint("provider_keys", __name__)
+@provider_keys_bp.route('/api/test-api-key', methods=['POST'])
+@owner_required
+def test_api_key():
+    """Test an API key for validity"""
+    try:
+        data = request.get_json()
+        api_type = data.get('api_type')
+        api_key = (data.get('api_key') or '').strip()
+        # OpenRouter's management key is owned by api.openrouter_management
+        # (env then <home>/.env). Empty input tests the saved key and reports
+        # the live credit balance.
+        if api_type == 'openrouter':
+            from api import openrouter_management
+            result = openrouter_management.probe(api_key or None)
+            return jsonify({
+                'success': bool(result.get('success')),
+                'message': result.get('message') or 'OpenRouter test failed',
+            })
+
+        # Empty input tests the saved key (env, then <home>/.env).
+        saved_names = {
+            'openai': ('OPENAI_API_KEY', 'API_KEY'),
+            'anthropic': ('ANTHROPIC_API_KEY',),
+            'discord': ('DISCORD_BOT_TOKEN', 'DISCORD_TOKEN'),
+            'elevenlabs': ('ELEVENLABS_API_KEY',),
+            'google': ('GEMINI_API_KEY', 'GOOGLE_API_KEY'),
+        }
+        if not api_key and api_type in saved_names:
+            api_key = _read_env_credential(saved_names[api_type])
+            if not api_key:
+                return jsonify({
+                    'success': False,
+                    'message': 'No key saved. Paste a key to test it.'
+                }), 400
+
+        print(f"[API_TEST] Testing {api_type} key")
+
+        if not api_type or not api_key:
+            return jsonify({
+                'success': False,
+                'message': 'API type and key are required'
+            }), 400
+
+        if api_type == 'openai':
+            return test_openai_key(api_key)
+        elif api_type == 'anthropic':
+            return test_anthropic_key(api_key)
+        elif api_type == 'discord':
+            return test_discord_key(api_key)
+        elif api_type in ('elevenlabs', 'google'):
+            from api.tts_providers import check_key
+            ok, message = check_key(api_type, api_key)
+            return jsonify({'success': ok, 'message': message})
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'Unknown API type: {api_type}'
+            }), 400
+
+    except Exception as e:
+        print(f"[API_TEST] Error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+def test_openai_key(api_key):
+    """Authenticated metadata read through the provider adapter; no generation."""
+    from api.model_providers.service import check_key
+    ok, message = check_key("openai", api_key)
+    return jsonify({'success': ok, 'message': message})
+
+
+def test_anthropic_key(api_key):
+    from api.model_providers.service import check_key
+    ok, message = check_key("anthropic", api_key)
+    return jsonify({'success': ok, 'message': message})
+
+
+def test_discord_key(token):
+    """Test Discord bot token"""
+    try:
+        print("[DISCORD_TEST] Starting test")
+        import requests
+
+        # Validate token format first
+        if not token or len(token) < 50:
+            print("[DISCORD_TEST] Invalid format")
+            return jsonify({
+                'success': False,
+                'message': 'Invalid token format. Discord bot tokens should be longer'
+            })
+
+        # Test the token by making a request to Discord's API
+        headers = {
+            'Authorization': f'Bot {token}',
+            'Content-Type': 'application/json'
+        }
+
+        print(f"[DISCORD_TEST] Making API call to Discord...")
+        # Try to get bot information
+        response = requests.get(
+            'https://discord.com/api/v10/users/@me',
+            headers=headers,
+            timeout=10
+        )
+
+        print(f"[DISCORD_TEST] Response status: {response.status_code}")
+
+        if response.status_code == 200:
+            bot_data = response.json()
+            print(f"[DISCORD_TEST] Success! Bot: {bot_data.get('username', 'Unknown')}")
+            return jsonify({
+                'success': True,
+                'message': f'Valid Discord bot token (Bot: {bot_data.get("username", "Unknown")})'
+            })
+        elif response.status_code == 401:
+            print(f"[DISCORD_TEST] Auth failed")
+            return jsonify({
+                'success': False,
+                'message': 'Invalid Discord bot token'
+            })
+        else:
+            print(f"[DISCORD_TEST] HTTP error: {response.status_code}")
+            return jsonify({
+                'success': False,
+                'message': f'Discord API error: HTTP {response.status_code}'
+            })
+
+    except requests.exceptions.Timeout as e:
+        print(f"[DISCORD_TEST] Timeout: {e}")
+        return jsonify({
+            'success': False,
+            'message': 'Request timed out. Please check your connection'
+        })
+    except requests.exceptions.RequestException as e:
+        print(f"[DISCORD_TEST] Request error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Network error: {str(e)}'
+        })
+    except Exception as e:
+        print(f"[DISCORD_TEST] General error: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'Discord API error: {str(e)}'
+        })
+
+
+@provider_keys_bp.route('/api/save-api-key', methods=['POST'])
+@owner_required
+def save_api_key():
+    """Save an API key securely.
+
+    Only the named credential is modified; every other line of ``<home>/.env``
+    (comments, blanks, ``export`` prefixes, unrelated keys) is preserved.
+    ``DISCORD_BOT_TOKEN`` is the canonical settings key — saving a Discord
+    token also clears a legacy ``DISCORD_TOKEN`` line so a stale shadowed
+    value cannot win at runtime. Saved values are applied to
+    ``os.environ`` immediately so new requests pick them up without a
+    Flask restart.
+    """
+    try:
+        data = request.get_json() or {}
+        api_type = (data.get('api_type') or '').strip().lower()
+        api_key = (data.get('api_key') or '').strip()
+
+        _key_names = {
+            'openai': 'OPENAI_API_KEY',
+            'anthropic': 'ANTHROPIC_API_KEY',
+            'discord': 'DISCORD_BOT_TOKEN',
+            'elevenlabs': 'ELEVENLABS_API_KEY',
+            'google': 'GEMINI_API_KEY',
+            'openrouter': 'OPENROUTER_MANAGEMENT_KEY',
+        }
+        if api_type not in _key_names:
+            return jsonify({
+                'success': False,
+                'message': f'Unknown API type: {data.get("api_type")}'
+            }), 400
+        if not api_key:
+            return jsonify({
+                'success': False,
+                'message': 'API type and key are required'
+            }), 400
+        if '•' in api_key or '…' in api_key:
+            # Display hints are not credentials — refuse to store one.
+            return jsonify({
+                'success': False,
+                'message': 'That looks like a masked hint, not a credential. Type or paste the full key.'
+            }), 400
+
+        env_name = _key_names[api_type]
+        env_file = _env_file()
+
+        lines: list = []
+        if env_file.exists():
+            with open(env_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+
+        found = False
+        out_lines: list = []
+        for line in lines:
+            stripped = line.strip()
+            # Preserve comments, blanks, and non-assignment lines verbatim.
+            if not stripped or stripped.startswith('#') or '=' not in line:
+                out_lines.append(line if line.endswith('\n') else line + '\n')
+                continue
+            lhs, _, _rhs = line.partition('=')
+            lhs_name = lhs.strip()
+            # Drop `export ` prefix when comparing, preserve it on write.
+            bare = lhs_name[7:].strip() if lhs_name.startswith('export ') else lhs_name
+            if bare == env_name:
+                prefix = lhs[:len(lhs) - len(lhs_name)] + (
+                    lhs_name[:len(lhs_name) - len(bare)] if bare != lhs_name else ''
+                )
+                out_lines.append(f'{prefix}{env_name}={api_key}\n')
+                found = True
+            elif api_type == 'discord' and bare == 'DISCORD_TOKEN':
+                # Converge on the canonical settings key; a legacy line
+                # would otherwise shadow the saved value at runtime.
+                continue
+            else:
+                out_lines.append(line if line.endswith('\n') else line + '\n')
+        if not found:
+            out_lines.append(f'{env_name}={api_key}\n')
+
+        env_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(env_file, 'w', encoding='utf-8') as f:
+            f.writelines(out_lines)
+
+        # Apply immediately for new requests (no Flask restart needed).
+        os.environ[env_name] = api_key
+        if api_type == 'discord':
+            os.environ.pop('DISCORD_TOKEN', None)
+
+        return jsonify({
+            'success': True,
+            'message': f'{api_type} API key saved successfully',
+            'configured': {api_type: True},
+            'hint': {api_type: _mask_credential_for_display(api_key)},
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+def _mask_credential_for_display(value: str) -> str:
+    """Presence hint for a stored secret — never the secret itself."""
+    v = (value or '').strip()
+    if not v:
+        return ''
+    if len(v) < 12:
+        return '••••••••'
+    return f'{v[:4]}••••••••{v[-4:]}'
+
+
+def _read_env_credential(names) -> str:
+    """First non-empty value for one of ``names`` (env, then ``<home>/.env``)."""
+    if isinstance(names, str):
+        names = (names,)
+    for name in names:
+        v = (os.environ.get(name) or '').strip()
+        if v:
+            return v
+    try:
+        env_file = _env_file()
+        if env_file.exists():
+            with open(env_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith('#') or '=' not in line:
+                        continue
+                    lhs, _, rhs = line.partition('=')
+                    bare = lhs.strip()
+                    if bare.startswith('export '):
+                        bare = bare[7:].strip()
+                    if bare in names:
+                        v = rhs.strip().strip('"').strip("'")
+                        if v:
+                            return v
+    except OSError:
+        pass
+    return ''
+
+
+@provider_keys_bp.route('/api/load-api-keys')
+@owner_required
+def load_api_keys():
+    """Credential-presence indicators for the Settings UI.
+
+    Never returns full secrets — only masked hints plus ``configured``
+    flags. The browser cannot reconstruct a key from this response; to
+    change a credential, POST the new value to ``/api/save-api-key``.
+    """
+    try:
+        openai_val = _read_env_credential('OPENAI_API_KEY')
+        anthropic_val = _read_env_credential('ANTHROPIC_API_KEY')
+        # Runtime precedence accepts the legacy name; the settings UI
+        # converges saves onto DISCORD_BOT_TOKEN (see save_api_key).
+        discord_val = _read_env_credential(('DISCORD_BOT_TOKEN', 'DISCORD_TOKEN'))
+        elevenlabs_val = _read_env_credential('ELEVENLABS_API_KEY')
+        google_val = _read_env_credential(('GEMINI_API_KEY', 'GOOGLE_API_KEY'))
+        # Owned by api.openrouter_management (env then <home>/.env).
+        from api import openrouter_management
+        openrouter_val = openrouter_management.management_key()
+
+        hints = {
+            'openai': _mask_credential_for_display(openai_val),
+            'anthropic': _mask_credential_for_display(anthropic_val),
+            'discord': _mask_credential_for_display(discord_val),
+            'elevenlabs': _mask_credential_for_display(elevenlabs_val),
+            'google': _mask_credential_for_display(google_val),
+            'openrouter': _mask_credential_for_display(openrouter_val),
+        }
+        return jsonify({
+            'success': True,
+            'api_keys': hints,
+            'configured': {
+                'openai': bool(openai_val),
+                'anthropic': bool(anthropic_val),
+                'discord': bool(discord_val),
+                'elevenlabs': bool(elevenlabs_val),
+                'google': bool(google_val),
+                'openrouter': bool(openrouter_val),
+            },
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500

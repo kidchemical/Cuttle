@@ -135,7 +135,7 @@ def test_load_requires_owner(tmp_path, monkeypatch):
 def test_test_endpoint_uses_saved_key_when_input_empty(tmp_path, monkeypatch):
     from flask import jsonify
 
-    from api import web_chat_api as wca
+    from api import settings_routes
 
     client = _owner_client(tmp_path, monkeypatch)
     secret = "sk-saved-openai-secret-5678"
@@ -148,7 +148,7 @@ def test_test_endpoint_uses_saved_key_when_input_empty(tmp_path, monkeypatch):
         seen["key"] = key
         return jsonify({"success": True, "message": "ok"})
 
-    monkeypatch.setattr(wca, "test_openai_key", fake_test)
+    monkeypatch.setattr(settings_routes, "test_openai_key", fake_test)
     res = client.post("/api/test-api-key", json={"api_type": "openai", "api_key": ""})
     assert res.status_code == 200
     assert seen["key"] == secret
