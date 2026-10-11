@@ -697,6 +697,7 @@ const CANONICAL_RAIL_ITEM_ORDER = [
     'nav-achievements',
     'nav-agent-feed',
     'nav-gizmos',
+    'nav-test-lab',
     'nav-projects',
     'nav-apps',
 ];
@@ -710,9 +711,9 @@ const RAIL_LOCKED_IDS = new Set(['nav-apps']);
 // not page apps, but the Apps grid still lists them so they can be re-pinned.
 const HIDEABLE_FOOTER_IDS = new Set(['nav-workspace']);
 // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
+const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
 // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
-const RAIL_LAYOUT_VERSION = 9;
+const RAIL_LAYOUT_VERSION = 10;
 
 const DEFAULT_LAYOUT = {
     rail_items: CANONICAL_RAIL_ITEM_ORDER.filter(id => !DEFAULT_RAIL_HIDDEN.includes(id)),
@@ -1873,6 +1874,7 @@ const PAGE_TITLES = {
     '/apps_page.html': 'Apps',
     '/achievements_page.html': 'Achievements',
     '/gizmos_page.html': 'Gizmos',
+    '/test_lab_page.html': 'Test Lab',
     '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',
     '/query_log.html': 'Query log',
@@ -4274,12 +4276,14 @@ function migrateUILayout(saved) {
     const hidden = new Set(Array.isArray(saved.rail_hidden) ? saved.rail_hidden : []);
     // Existing v4 user pins remain intact; only the new App starts stashed.
     const version = Number(saved.layout_version) || 0;
-    const additions = version >= 8 ? ['nav-mesh']
+    const additions = version >= 9 ? ['nav-test-lab']
+        : version >= 8 ? ['nav-mesh', 'nav-test-lab']
         : version >= 7 ? ['nav-agent-feed'] : version >= 6 ? ['nav-gizmos', 'nav-agent-feed']
         : version >= 5 ? ['nav-projects', 'nav-gizmos', 'nav-agent-feed']
         : version >= 4 ? ['nav-achievements', 'nav-projects', 'nav-gizmos', 'nav-agent-feed']
         : DEFAULT_RAIL_HIDDEN;
     additions.forEach(id => hidden.add(id));
+    hidden.add('nav-test-lab');
     const known = new Set(CANONICAL_RAIL_ITEM_ORDER);
     layout.rail_hidden = Array.from(hidden).filter(id => known.has(id));
     layout.rail_items = (Array.isArray(saved.rail_items) ? saved.rail_items : CANONICAL_RAIL_ITEM_ORDER)

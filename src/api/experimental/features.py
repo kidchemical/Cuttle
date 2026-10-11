@@ -80,6 +80,12 @@ register_flag(FlagSpec(
     default=False, category="ui", risk="low", since="0.0.0", needs_restart=False, context_bundle=True,
 ))
 
+register_flag(FlagSpec(
+    id="test_lab", label="Test Lab",
+    description="Inspect recognized test suites in registered projects, run a selected suite on demand, and review recent results in Apps → Test Lab.",
+    default=False, category="ui", risk="medium", since="0.0.0", needs_restart=False,
+))
+
 # Achievements: default OFF. Experimental features are opt-in by design; a
 # user who does not know the system exists should never have it running.
 register_flag(
