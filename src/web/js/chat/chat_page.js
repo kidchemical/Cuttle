@@ -10900,51 +10900,51 @@ function downloadTranscriptMarkdown(text, sessionId) {
         try {
             await ensureAuthChatSession();
             // Send to API with project context (stream for status updates; JSON fallback if SSE fails)
-            const requestBody = {
+            // SUBMIT stage — the outbound request body, the origin session
+            // binding, and the transport policy (SSE-vs-JSON, control-lane
+            // JSON-only) are owned by chat_generation.js (planSubmit). The page
+            // gathers the values, applies the page-owned identity/project
+            // mutators, and owns the fetch/SSE transport.
+            const submitPlan = CuttleChatGeneration.planSubmit({
                 message: message,
-                session_id: authSessionIdForRequest(),
-                stream: true,
-            };
-            // Stable per-send id so a stream=false retry cannot mint a second
-            // chat when this first POST still has a null session_id (CH-000559).
-            requestBody.chat_request_id =
-                'ct_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+                sessionId: authSessionIdForRequest(),
+                currentSessionId: session.current(),
+                controlLane: controlLane,
+                stickyAgent: stickyAgentOverrideForRequest(message),
+                attachments: attachments.length
+                    ? CuttleChatAttachments.requestAttachmentPayload(attachments)
+                    : null,
+                controlRequestIdOpt: opts.controlRequestId,
+                // Stable per-send id so a stream=false retry cannot mint a
+                // second chat when this first POST still has a null session_id
+                // (CH-000559).
+                newChatRequestId: () => (
+                    'ct_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10)
+                ),
+                newControlRequestId: () => (
+                    (window.CuttleSupervised
+                        && window.CuttleSupervised.newControlRequestId
+                        && window.CuttleSupervised.newControlRequestId())
+                    || (`cr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`)
+                ),
+                canonicalize: canonicalizeChatSessionId,
+            });
+            const requestBody = submitPlan.body;
             // Pin this turn to the chat that sent it. Switching chats updates
             // currentSessionId; recovery/paint must keep using the origin id
             // or the reply lands in the newly opened transcript (phone bug).
-            boundSessionId = canonicalizeChatSessionId(
-                requestBody.session_id != null && requestBody.session_id !== ''
-                    ? requestBody.session_id
-                    : session.current()
-            );
-            const agentOverride = stickyAgentOverrideForRequest(message);
-            if (agentOverride) requestBody.sticky_agent = agentOverride;
+            boundSessionId = submitPlan.boundSessionId;
             // New-chat model/effort picks (dirty, no session yet) must travel
             // with this POST — adopt-time pin POSTs race the agent + badge.
             attachAgentIdentityToRequest(requestBody);
             if (controlLane) {
-                // Exactly-once control-lane idempotency key (server dedupes).
-                // Prefer a stable id for this turn; never regenerate on transport retry.
-                if (!opts.controlRequestId) {
-                    requestBody.control_request_id =
-                        (window.CuttleSupervised
-                            && window.CuttleSupervised.newControlRequestId
-                            && window.CuttleSupervised.newControlRequestId())
-                        || (`cr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`);
-                } else {
-                    requestBody.control_request_id = opts.controlRequestId;
-                }
-                inFlightControlRequestId = requestBody.control_request_id;
+                // Control-lane idempotency key is chosen by the owner.
+                inFlightControlRequestId = submitPlan.controlRequestId;
                 // Stamp the latest unmarked user bubble so sync can claim by control id.
                 const userEl = claimUnmarkedMessageEl('user', message);
                 if (userEl) {
-                    userEl.dataset.controlRequestId = requestBody.control_request_id;
+                    userEl.dataset.controlRequestId = submitPlan.controlRequestId;
                 }
-                // Control lane: JSON only — avoid SSE detach/retry double POST.
-                requestBody.stream = false;
-            }
-            if (attachments.length) {
-                requestBody.attachments = CuttleChatAttachments.requestAttachmentPayload(attachments);
             }
 
             // Include current project if available (path + id + name so /cursor
@@ -11147,10 +11147,16 @@ function downloadTranscriptMarkdown(text, sessionId) {
             try {
                 // Control-lane: force non-stream so we never fall through SSE detach
                 // into a second POST with the same control_request_id.
-                data = await fetchChatPayload(controlLane ? false : true);
+                data = await fetchChatPayload(submitPlan.firstTransportStream);
             } catch (streamErr) {
-                if (streamErr && streamErr.name === 'AbortError') throw streamErr;
-                if (controlLane) {
+                // SUBMIT fallback policy is owned by chat_generation.js
+                // (classifySubmitFailure); the page owns transport + recovery.
+                const submitFailure = CuttleChatGeneration.classifySubmitFailure({
+                    controlLane: controlLane,
+                    errorName: streamErr && streamErr.name,
+                });
+                if (submitFailure === 'abort') throw streamErr;
+                if (submitFailure === 'control-recover') {
                     // Do not transport-retry control commands — server may have
                     // already applied; recover from history / live status instead.
                     console.warn('[Cuttle Chat] Control-lane request failed; not retrying POST:', streamErr);
