@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 SHELL_JS = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "shell/app_shell.js"
+ELECTRON_JS = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "shell/shell_electron.js"
 SHELL_CSS = Path(__file__).resolve().parents[3] / "src" / "web" / "css" / "app_shell.css"
 SPACES_DIR = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "spaces"
 STATE_JS = SPACES_DIR / "spaces_state.js"
@@ -167,16 +168,19 @@ def test_groups_collapse_and_expand():
 
 def test_open_menu_pins_fullscreen_titlebar():
     src = SHELL_JS.read_text(encoding="utf-8")
+    electron = ELECTRON_JS.read_text(encoding="utf-8")
     assert "function isSpaceCtxOpen(" in src
-    # The 420ms auto-hide bails while any menu/submenu/bubble is on screen
-    # or a space tab is being renamed, and re-checks when the timer fires.
-    assert "isSpaceCtxOpen()) return true;" in src
-    assert "shell-space-rename" in src
-    assert src.count("if (isTitlebarPinned()) return;") >= 2
-    # Opening layers drops a hide timer a previous close just armed...
-    assert "cuttleTitlebarCancelHide();" in src
+    # The 420ms auto-hide lives in the Electron owner (shell_electron.js): it
+    # bails while any menu/submenu/bubble is on screen or a space tab is being
+    # renamed, and re-checks when the timer fires.
+    assert "isSpaceCtxOpen()) return true;" in electron
+    assert "shell-space-rename" in electron
+    assert electron.count("if (isTitlebarPinned()) return;") >= 2
+    # The page owns the space-menu wiring and delegates to the owner:
+    # opening layers drops a hide timer a previous close just armed...
+    assert "CuttleShellElectron.cancelTitlebarHide()" in src
     # ...and closing re-arms it when the pointer is away.
-    assert "cuttleTitlebarRescheduleHide();" in src
+    assert "CuttleShellElectron.rescheduleTitlebarHide()" in src
 
 
 def test_spaces_scripts_load_before_shell():

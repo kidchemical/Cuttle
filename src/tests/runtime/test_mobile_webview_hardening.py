@@ -10,6 +10,7 @@ REPO = Path(__file__).resolve().parents[3]
 MAIN = REPO / "apps" / "mobile" / "android" / "app" / "src" / "main" / "java" / "com" / "cuttle" / "mobile" / "MainActivity.java"
 NOTIFY = REPO / "apps" / "mobile" / "android" / "app" / "src" / "main" / "java" / "com" / "cuttle" / "mobile" / "notify" / "EventStreamService.java"
 SHELL_JS = REPO / "src" / "web" / "js" / "shell/app_shell.js"
+MOBILE_JS = REPO / "src" / "web" / "js" / "shell/shell_mobile.js"
 CHAT_JS = REPO / "src" / "web" / "js" / "chat/chat_page.js"
 ACTIVITY_JS = REPO / "src" / "web" / "js" / "chat/chat_activity.js"
 SESSION_JS = REPO / "src" / "web" / "js" / "chat/chat_session.js"
@@ -95,8 +96,11 @@ def test_shell_skips_cache_bust_on_mobile():
 
 def test_shell_mobile_frame_failsafe_waits_for_css_recovery():
     src = SHELL_JS.read_text(encoding="utf-8")
+    # isCuttleMobileShell now lives in the mobile owner (shell_mobile.js); the
+    # shell's frame spine still calls it and keeps the CSS-recovery failsafe.
     assert "isCuttleMobileShell() ? 7000" in src
     assert "TRANSITION_FAILSAFE_MS" in src
+    assert "function isCuttleMobileShell(" in MOBILE_JS.read_text(encoding="utf-8")
 
 
 def test_ui_boot_retries_failed_local_stylesheets():
@@ -145,7 +149,7 @@ def test_notification_open_skips_duplicate_navigate():
 
 
 def test_mobile_boot_delays_apk_check():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = MOBILE_JS.read_text(encoding="utf-8")
     assert "12000" in src
     assert "cuttleMobile?.checkUpdate" in src
 
@@ -261,10 +265,15 @@ def test_mobile_server_switch_lives_in_login_and_account():
     html = (REPO / "src" / "web" / "app_shell.html").read_text(encoding="utf-8")
     assert 'id="authServerRow"' in html
     assert 'id="logoutConfirmSwitchServer"' in html
-    shell = (REPO / "src" / "web" / "js" / "shell" / "app_shell.js").read_text(encoding="utf-8")
-    assert "cuttleOpenMobileServerSettings" in shell
-    assert "cuttleSyncMobileServerRows" in shell
-    assert "openSettings" in shell
+    # The mobile server-switch implementation lives in the mobile owner; the
+    # shell delegates its shared click handler to it.
+    mobile = MOBILE_JS.read_text(encoding="utf-8")
+    assert "cuttleOpenMobileServerSettings" in mobile
+    assert "cuttleSyncMobileServerRows" in mobile
+    assert "openSettings" in mobile
+    shell = SHELL_JS.read_text(encoding="utf-8")
+    assert "cuttleOpenMobileServerSettings()" in shell
+    assert "cuttleSyncMobileServerRows()" in shell
     auth = (REPO / "src" / "web" / "js" / "shared" / "auth.js").read_text(encoding="utf-8")
     assert "cuttleSyncMobileServerRows" in auth
 
