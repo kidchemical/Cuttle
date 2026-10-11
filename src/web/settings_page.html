@@ -9,8 +9,8 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261007hdr2">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261011deviceUpdate">
-    <link rel="stylesheet" href="css/searchable_select.css?v=20261009combo1">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261011settingsCompactControls">
+    <link rel="stylesheet" href="css/searchable_select.css?v=20261011closedComboFix2">
 <link rel="stylesheet" href="/css/storage_settings.css?v=20261007">
 </head>
 <body class="compact-shell-page" data-page="settings">
@@ -777,9 +777,9 @@
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
     <script src="/js/settings/settings_releases.js?v=20261011androidRow"></script>
     <script src="/js/settings/settings_storage.js?v=20261007"></script>
-    <script src="/js/shared/searchable_select.js?v=20261009combo1"></script>
-    <script src="/js/settings/settings_model_picker.js?v=20261009a"></script>
-    <script src="/js/settings/settings_background_helpers.js?v=20261009b"></script>
+    <script src="/js/shared/searchable_select.js?v=20261011closedComboFix2"></script>
+    <script src="/js/settings/settings_model_picker.js?v=20261011allModelOptions"></script>
+    <script src="/js/settings/settings_background_helpers.js?v=20261011allModelOptions"></script>
     <script src="/js/settings/settings_voice_providers.js?v=20261009b"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
@@ -1181,6 +1181,14 @@
             select.value = current || '';
         }
 
+        function enhanceModelSelect(select, label) {
+            if (!select || !window.CuttleSearchableSelect) return;
+            select.setAttribute('aria-label', label || 'Model');
+            window.CuttleSearchableSelect.enhance(select, {
+                className: 'cuttle-combo--model', label: label || 'Model',
+            });
+        }
+
         function agentConfigRow(labelText, control, title) {
             const row = document.createElement('label');
             row.className = 'agent-config-row';
@@ -1221,6 +1229,7 @@
             const subModel = document.createElement('select'); subModel.className = 'setting-input';
             const subEffort = document.createElement('select'); subEffort.className = 'setting-input';
             const subModelRow = agentConfigRow('Subagent model', subModel);
+            enhanceModelSelect(subModel, 'Subagent model');
             const subEffortRow = agentConfigRow('Subagent effort', subEffort);
             let chosenSub = { agent: cliSelect.value, model: subagent.model || '', effort: subagent.effort || '' };
             const selectedCli = () => catalog.find(a => a.id === chosenSub.agent);
@@ -1298,10 +1307,12 @@
                     const effort = levels.includes(state.effort) ? state.effort : '';
                     save({ model, effort });
                 });
-                wrap.appendChild(agentConfigRow(
+                const modelRow = agentConfigRow(
                     'Default model', modelSel,
                     'Used by new turns unless a chat pins its own model (/' + agent.id + ' model …)'
-                ));
+                );
+                enhanceModelSelect(modelSel, (agent.label || agent.id) + ' default model');
+                wrap.appendChild(modelRow);
             }
 
             if (agent.supports_effort) {

@@ -14,15 +14,7 @@
 }
 
 .cuttle-combo > select {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    border: 0;
-    opacity: 0;
-    overflow: hidden;
-    pointer-events: none;
+    display: none !important;
 }
 
 .cuttle-combo-trigger {
@@ -84,7 +76,15 @@
 }
 
 .cuttle-combo-panel[hidden] {
-    display: none;
+    display: none !important;
+}
+
+.cuttle-combo:not(.is-open) > .cuttle-combo-panel {
+    display: none !important;
+}
+
+.cuttle-combo.is-open > .cuttle-combo-panel {
+    display: block;
 }
 
 .cuttle-combo-search {

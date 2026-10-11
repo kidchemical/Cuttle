@@ -66,11 +66,9 @@
         trigger.className = 'cuttle-combo-trigger';
         trigger.setAttribute('aria-haspopup', 'listbox');
         trigger.setAttribute('aria-expanded', 'false');
-        // The native select keeps its own accessible name (callers/tests
-        // address it by label). Only name the trigger when the select is
-        // unlabeled, so the accessible name is not duplicated.
-        if (label && !selectLabel) trigger.setAttribute('aria-label', label);
-        else if (label) trigger.title = label;
+        // The native select is hidden after enhancement, so the visible
+        // trigger owns the accessible name.
+        if (label) trigger.setAttribute('aria-label', label);
         const valueEl = doc.createElement('span');
         valueEl.className = 'cuttle-combo-value';
         const caret = doc.createElement('span');

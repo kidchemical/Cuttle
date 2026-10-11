@@ -1114,6 +1114,12 @@ function wireEvents() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    const apiModel = $('#router-api-model');
+    const rageModel = $('#rage-model');
+    if (window.CuttleSearchableSelect) {
+        if (apiModel) window.CuttleSearchableSelect.enhance(apiModel, { className: 'cuttle-combo--model', label: 'Router model' });
+        if (rageModel) window.CuttleSearchableSelect.enhance(rageModel, { className: 'cuttle-combo--model', label: 'Investigator model' });
+    }
     wireEvents();
     wireRage();
     wirePreview();
