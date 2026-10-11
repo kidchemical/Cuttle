@@ -345,7 +345,7 @@ arguments or injected host interfaces):
 |---|---|---|
 | `chat_turn_guard.js` (`CuttleTurnGuard`) | turn/staleness generation tokens plus the paint gate (`canPaintHere`) and the SSE session-adopt gate (`shouldAdoptStreamSession`) (pure) | bump/capture call sites, session/paint snapshots |
 | `chat_stop_state.js` (`CuttleStopState`) | stop/cancel flags + abort classification (pure) | notices, transport abort, dispatch |
-| `chat_followup_queue.js` (`CuttleFollowupQueue`) | per-session queue state, revision/edit generation, take/reconcile and conflict rebase (pure) | drain timer, revisioned transport, durable outbox, edit UI |
+| `chat_followup_queue.js` (`CuttleFollowupQueue`) | per-session queue state, revision/edit generation, take/reconcile and conflict rebase (pure); `createController(host)` owns the follow-up execution + steering lifecycle (queue-state registry, edit state machine, enqueue/pause/resume/take/drain/steer transitions) — every effect injected by the page | drain timer handle, revisioned transport (PUT/take/steer fetch), durable outbox prefs, queue render + edit UI, session identity/turn gates |
 | `chat_mutations.js` (`CuttleChatMutations`) | captured session/resource/navigation lifetimes and serialized mutation chains | model/effort/project requests and guarded paint |
 | `chat_attention.js` (`CuttleChatAttention`) | revisioned server attention snapshots, optimistic reads/manual unread, durable retry intent (injected prefs/transport) | history/title/Spaces paint and read acknowledgments |
 | `shared/session_prefs.js` (`CuttleSessionPrefs`) | atomic per-session/per-field device preferences, read-only legacy fallback and tombstones (injected storage) | storage events, drafts and optimistic mutation records |

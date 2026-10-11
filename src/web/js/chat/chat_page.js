@@ -609,21 +609,59 @@
     let inFlightUserMessage = null;
 
     // Follow-up queue while a reply is generating. On idle, the whole queue is
-    // combined into one agent turn (not drained one-by-one).
-    // Follow-up queue contents + persistence/take flags, owned by
-    // chat_followup_queue.js (composes chat_activity.js item decisions).
-    // followupDrainTimer stays here: raw timer handle for the scheduler.
-    let followupQueue = CuttleFollowupQueue.createQueueState();
-    const followupQueues = CuttleFollowupQueue.createRegistry((key) => getSessionPrefs(key)?.[followupWriteField]);
-    function adoptFollowupQueue(sessionId, opts = {}) {
-        followupQueue = followupQueues.adopt(String(canonicalizeChatSessionId(sessionId) || 'new'), followupQueue, !!opts.transfer);
-        editingFollowupId = null;
-        if (opts.transfer && followupQueue.items.length && isAuthMode()) {
-            persistFollowupPut(toAuthDbSessionId(sessionId), followupQueue);
+    // combined into one agent turn (not drained one-by-one). Queue state, the
+    // edit state machine and the enqueue/pause/resume/take/drain/steer
+    // transitions are owned by chat_followup_queue.js (createController); the
+    // page supplies transport, persistence, DOM render and timers via the host.
+    // Built lazily so page constants declared later are initialized.
+    let _followupController = null;
+    function followupController() {
+        if (!_followupController) {
+            _followupController = CuttleFollowupQueue.createController({
+                activity: CuttleChatActivity,
+                clock: { now: () => Date.now(), rand: () => Math.random() },
+                sessionIdsEqual: sessionIdsEqual,
+                canonicalizeSessionId: (id) => canonicalizeChatSessionId(id),
+                toAuthDbSessionId: (id) => toAuthDbSessionId(id),
+                currentSession: () => session.current(),
+                isAuthMode: isAuthMode,
+                isSessionGenerating: isSessionGenerating,
+                healStaleGenerating: healStaleGeneratingState,
+                followupAuthSid: followupAuthSid,
+                getPrefs: (sid) => getSessionPrefs(sid),
+                setPrefs: (sid, patch) => updateSessionPrefs(sid, patch),
+                writeField: () => followupWriteField,
+                claimField: () => followupClaimField,
+                restoreQueue: (key) => getSessionPrefs(key)?.[followupWriteField],
+                serializeMutation: (key, fn) => sessionMutations.enqueue(key, fn),
+                putFollowups: (sid, body) => followupPutRequest(sid, body),
+                takeFollowups: (sid, body) => followupTakeRequest(sid, body),
+                steer: (sid, text) => followupSteerRequest(sid, text),
+                render: renderFollowupQueue,
+                patchLiveSession: patchLiveSessionFollowupQueue,
+                broadcastActivity: () => scheduleChatActivityBroadcast(),
+                showChatArea: showFollowupChatArea,
+                addUserMessage: (text, opts) => addMessageToUI(text, 'user', opts),
+                autoScroll: () => transcriptNav.autoScrollChatToBottom(true),
+                saveUserMessage: (text, opts) => saveChatSession(text, 'user', opts),
+                recordPromptHistory: recordPromptHistory,
+                processMessage: processMessage,
+                toast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+                steerLabel: (agent) => ({ codex: 'Codex', muse: 'Muse Code' })[agent],
+                setTimeout: (fn, ms) => setTimeout(fn, ms),
+                clearTimeout: (id) => clearTimeout(id),
+                formatWithAttachments: formatMessageWithAttachments,
+                stickyPrefixFor: (raw) => {
+                    const sticky = getStickySlashCommandFromMessage(raw);
+                    return sticky ? sticky.prefix : '';
+                },
+            });
         }
+        return _followupController;
     }
-
-    let followupDrainTimer = null;
+    function adoptFollowupQueue(sessionId, opts = {}) {
+        followupController().adopt(sessionId, opts);
+    }
     /** Uploaded file refs awaiting the next send: {filename, path, mime, size?} */
     let pendingAttachments = [];
     function _pendingKey(sid) { return `cuttle.pendingAttachments.${sid || 'anon'}`; }
@@ -1156,7 +1194,7 @@
             hasRemoteWait: !!document.getElementById('typing-indicator-remote'),
             sessionRunning: session.current() != null
                 && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current())),
-            queueLength: followupQueue.items.length,
+            queueLength: followupController().getState().items.length,
         });
         if (decision.kind === 'finish') {
             finishLocalStreamFromServerSync();
@@ -1912,11 +1950,11 @@
         return CuttleChatActivity.parseFollowupQueue(raw);
     }
 
-    /** Resolve followup_queue for a session (open chat uses live followupQueue.items). */
+    /** Resolve followup_queue for a session (open chat uses the live controller state). */
     function followupQueueForSession(sessionId, sessionObj) {
         if (sessionId == null || sessionId === '') return [];
         if (session.current() != null && sessionIdsEqual(session.current(), sessionId)) {
-            return followupQueue.items.slice();
+            return followupController().getState().items.slice();
         }
         let obj = sessionObj;
         if (!obj && isAuthMode()) {
@@ -7235,8 +7273,8 @@
                 },
                 getAuth: function () { return window.CuttleAuth; },
                 getNetDebug: function () { return window.CuttleNetDebug; },
-                getFollowupQueue: function () { return followupQueue; },
-                getEditingFollowupId: function () { return editingFollowupId; },
+                getFollowupQueue: function () { return followupController().getState(); },
+                getEditingFollowupId: function () { return followupController().getEditingId(); },
                 setHubLiveStatusCache: function (v) { hubLiveStatusCache = v; },
                 setLastSeenServerMessageId: function (v) { lastSeenServerMessageId = v; },
                 setDeferOpenChatGeneratingFromSessions: function (v) { deferOpenChatGeneratingFromSessions = v; },
@@ -8717,7 +8755,7 @@
             stopButton.style.display = 'none';
         }
         setWelcomeComposerEnabled(true);
-        if (followupQueue.items.length && !stopState.waitingSuppressed) {
+        if (followupController().getState().items.length && !stopState.waitingSuppressed) {
             scheduleFollowupDrain(80);
         }
     }
@@ -9847,7 +9885,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             && !currentStillRunning
             && !generation.loading
             && !stopState.waitingSuppressed
-            && followupQueue.items.length
+            && followupController().getState().items.length
         ) {
             scheduleFollowupDrain(80);
         }
@@ -10012,91 +10050,37 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
 
     // Message Handling
-    /** Id of the follow-up currently being edited in the queue panel (or null). */
-    let editingFollowupId = null;
-    /** Prior paused flag for the item under edit (restored on save/cancel). */
-    let editingFollowupWasPaused = false;
-
+    // Follow-up edit state + transitions are owned by the queue controller;
+    // these are the thin call sites the edit UI and keyboard handlers use.
     function followupEditableText(item) {
-        if (!item) return '';
-        if (item.rawMessage != null) return String(item.rawMessage);
-        return String(item.content || '');
+        return CuttleFollowupQueue.followupEditableText(item);
     }
 
-    function beginEditFollowup(id) {
-        if (!id || !followupQueue.items.some((x) => x.id === id)) return;
-        const item = followupQueue.items.find((x) => x.id === id);
-        if (!item) return;
-        editingFollowupId = id;
-        editingFollowupWasPaused = !!item.paused;
-        // Soft-pause so /followups/take cannot yank the message mid-edit.
-        if (!item.paused) {
-            CuttleFollowupQueue.setPaused(followupQueue, id, true);
-            persistFollowupPut();
-        }
-        clearTimeout(followupDrainTimer);
-        followupDrainTimer = null;
-        renderFollowupQueue();
-    }
+    function beginEditFollowup(id) { followupController().beginEdit(id); }
 
-    function finishEditFollowup(opts = {}) {
-        const resumeDrain = opts.resumeDrain !== false;
-        const id = editingFollowupId;
-        editingFollowupId = null;
-        if (id) {
-            const item = followupQueue.items.find((x) => x.id === id);
-            if (item) CuttleFollowupQueue.setPaused(followupQueue, id, editingFollowupWasPaused);
-        }
-        editingFollowupWasPaused = false;
-        renderFollowupQueue();
-        persistFollowupPut();
-        if (
-            resumeDrain
-            && followupQueue.items.some((x) => !x.paused)
-            && !isSessionGenerating()
-        ) {
-            scheduleFollowupDrain(180);
-        }
-    }
+    function finishEditFollowup(opts = {}) { followupController().finishEdit(opts); }
 
-    function cancelEditFollowup() {
-        finishEditFollowup({ resumeDrain: true });
-    }
+    function cancelEditFollowup() { followupController().cancelEdit(); }
 
-    function saveEditFollowup(id, nextText) {
-        if (!id) return;
-        const item = followupQueue.items.find((x) => x.id === id);
-        if (!item) return;
-        const text = String(nextText ?? '').trim();
-        if (!text && !(item.attachments && item.attachments.length)) {
-            // Empty with no attachments — drop it rather than keeping a blank send.
-            editingFollowupId = null;
-            editingFollowupWasPaused = false;
-            removeFollowup(id);
-            return;
-        }
-        item.rawMessage = text;
-        item.content = formatMessageWithAttachments(text, item.attachments || []);
-        finishEditFollowup({ resumeDrain: true });
-    }
+    function saveEditFollowup(id, nextText) { followupController().saveEdit(id, nextText); }
 
     function renderFollowupQueue() {
         const root = document.getElementById('followupQueue');
         if (!root) return;
-        patchLiveSessionFollowupQueue(session.current(), followupQueue.items);
-        if (!followupQueue.items.length) {
-            editingFollowupId = null;
+        const ctl = followupController();
+        ctl.pruneEditing();
+        const queueItems = ctl.getState().items;
+        const editingId = ctl.getEditingId();
+        patchLiveSessionFollowupQueue(session.current(), queueItems);
+        if (!queueItems.length) {
             root.hidden = true;
             root.innerHTML = '';
             syncHistoryUnreadIndicators();
             return;
         }
-        if (editingFollowupId && !followupQueue.items.some((x) => x.id === editingFollowupId)) {
-            editingFollowupId = null;
-        }
         root.hidden = false;
-        const items = followupQueue.items.map((item, idx) => {
-            const isEditing = item.id === editingFollowupId;
+        const itemsHtml = queueItems.map((item, idx) => {
+            const isEditing = item.id === editingId;
             if (isEditing) {
                 const editVal = escapeHtml(followupEditableText(item));
                 return `
@@ -10151,18 +10135,18 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 </div>
             `;
         }).join('');
-        const otherPaused = followupQueue.items.filter(
-            (x) => x.paused && x.id !== editingFollowupId
+        const otherPaused = queueItems.filter(
+            (x) => x.paused && x.id !== editingId
         ).length;
-        const titleBits = [`Queued · ${followupQueue.items.length}`];
-        if (editingFollowupId) titleBits.push('editing · send paused');
+        const titleBits = [`Queued · ${queueItems.length}`];
+        if (editingId) titleBits.push('editing · send paused');
         if (otherPaused) titleBits.push(`${otherPaused} paused`);
         root.innerHTML = `
             <div class="followup-queue-header">
                 <span class="followup-queue-title">${titleBits.join(' · ')}</span>
                 <button type="button" class="followup-queue-clear" id="followupQueueClear">Clear all</button>
             </div>
-            <div class="followup-queue-list">${items}</div>
+            <div class="followup-queue-list">${itemsHtml}</div>
         `;
         root.querySelector('#followupQueueClear')?.addEventListener('click', clearFollowupQueue);
         root.querySelectorAll('[data-remove-followup]').forEach((btn) => {
@@ -10259,11 +10243,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         return toAuthDbSessionId(session.current());
     }
 
-    // Owned by chat_activity.js — thin adapter.
-    function followupQueueFingerprint(items) {
-        return CuttleChatActivity.followupQueueFingerprint(items);
-    }
-
     function patchLiveSessionFollowupQueue(sessionId, followups) {
         if (sessionId == null) return;
         const s = findAuthServerSession(sessionId);
@@ -10277,103 +10256,29 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
 
     function applyServerFollowups(list, revision) {
-        // Don't clobber an in-progress take, unsynced edits, a queue edit,
-        // or an identical list (owned reconcile decision).
-        if (followupQueue.dirty && !followupQueue.takeInFlight) {
-            persistFollowupPut();
-            return;
-        }
-        const r = CuttleFollowupQueue.reconcileServerList(followupQueue, list,
-            { editingId: editingFollowupId, revision }, CuttleChatActivity);
-        if (!r.applied && r.reason !== 'same') return;
-        patchLiveSessionFollowupQueue(session.current(), followupQueue.items);
-        renderFollowupQueue();
-        if ((followupQueue.items.some((x) => !x.paused) || getSessionPrefs(session.current())?.[followupClaimField]) && !isSessionGenerating() && !editingFollowupId) {
-            scheduleFollowupDrain(250);
-        }
-        try { scheduleChatActivityBroadcast(); } catch (_) {}
+        followupController().applyServerList(list, revision);
     }
 
-    function rememberUnsyncedQueue(sid, state) {
-        updateSessionPrefs(sid, {[followupWriteField]: state.dirty ? {
-            items: state.items, base: state.base, revision: state.revision,
-        } : null});
+    // ---- follow-up transport (owned by the page) ----
+    async function followupPutRequest(sid, body) {
+        const response = await fetch('/api/auth/sessions/' + sid + '/followups', {
+            method: 'PUT', credentials: 'include', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await response.json().catch(() => ({}));
+        return { ok: response.ok, status: response.status, data };
     }
 
-    async function persistFollowupAppend(item) {
-        // Rebased revisioned PUT also handles appends. Keeping one mutation path
-        // means a failed append retains its intent and cannot be dropped by a GET.
-        return persistFollowupPut();
+    async function followupTakeRequest(sid, body) {
+        const response = await fetch('/api/auth/sessions/' + sid + '/followups/take', {
+            method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await response.json().catch(() => ({}));
+        return { ok: response.ok, status: response.status, data };
     }
 
-    async function persistFollowupPut(sid = followupAuthSid(), state = followupQueue) {
-        if (!sid) return true;
-        CuttleFollowupQueue.markDirty(state);
-        rememberUnsyncedQueue(sid, state);
-        if (state.write) return state.write;
-        const write = sessionMutations.enqueue(sid + ':followups', async () => {
-            for (let attempt = 0; attempt < 4; attempt++) {
-                const version = state.editVersion;
-                let desired = JSON.parse(JSON.stringify(state.items));
-                const base = JSON.parse(JSON.stringify(state.base));
-                const response = await fetch('/api/auth/sessions/' + sid + '/followups', {
-                    method: 'PUT', credentials: 'include', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({followups: desired, revision: state.revision}),
-                });
-                const data = await response.json();
-                if (response.status === 409 && data.conflict) {
-                    state.revision = data.revision;
-                    state.items = CuttleFollowupQueue.mergeEdits(base, state.items, data.followups);
-                    state.base = data.followups;
-                    rememberUnsyncedQueue(sid, state);
-                    continue;
-                }
-                if (!response.ok || !data.success) throw new Error(data.error || 'Queue sync failed');
-                state.revision = data.revision;
-                state.base = data.followups || desired;
-                CuttleFollowupQueue.markClean(state, version);
-                rememberUnsyncedQueue(sid, state);
-                patchLiveSessionFollowupQueue(sid, state.base);
-                if (!state.dirty) {
-                    state.items = state.base;
-                    if (followupQueue === state && sessionIdsEqual(session.current(), sid)) renderFollowupQueue();
-                    return true;
-                }
-            }
-            return false;
-        }).catch(() => false).finally(() => { state.write = null; });
-        state.write = write;
-        return write;
-    }
-
-    function enqueueFollowup(message, opts = {}) {
-        const item = CuttleFollowupQueue.enqueue(followupQueue, {
-            content: message,
-            attachments: opts.attachments,
-            rawMessage: opts.rawMessage,
-            paused: opts.paused,
-        }, { now: () => Date.now(), rand: () => Math.random() });
-        renderFollowupQueue();
-        persistFollowupAppend(item);
-        return item;
-    }
-
-    const STEER_AGENT_LABELS = { codex: 'Codex', muse: 'Muse Code' };
-    let steeringText = '';
-
-    /**
-     * Codex / Muse Code accept input while a turn runs — hand the follow-up to
-     * the live turn instead of queueing it. The server persists the user row;
-     * resolves false (caller queues) when nothing steerable is running.
-     */
-    async function trySteerRunningTurn(message, attachments) {
-        const sid = session.current();
-        const text = String(message || '').trim();
-        if (sid == null || sid === '' || !text) return false;
-        if (Array.isArray(attachments) && attachments.length) return false;
-        if (steeringText === text) return true;
-        steeringText = text;
-        let data = null;
+    async function followupSteerRequest(sid, text) {
         try {
             const resp = await fetch('/api/chat-steer', {
                 method: 'POST',
@@ -10381,164 +10286,39 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ session_id: sid, message: text }),
             });
-            data = await resp.json().catch(() => null);
+            return await resp.json().catch(() => null);
         } catch (_) {
-            data = null;
-        } finally {
-            steeringText = '';
+            return null;
         }
-        if (!data || !data.steered) return false;
-        if (sessionIdsEqual(session.current(), sid)) {
-            addMessageToUI(text, 'user', {
-                timestamp: Date.now(),
-                steered: true,
-                steered_agent: data.agent,
-            });
-            transcriptNav.autoScrollChatToBottom(true);
-            saveChatSession(text, 'user');
-        }
-        recordPromptHistory(text);
-        const label = STEER_AGENT_LABELS[data.agent] || data.agent || 'agent';
-        (window.showToast || function () {})(`Sent into the running ${label} turn.`, 'success');
-        return true;
     }
 
-    function toggleFollowupPaused(id) {
-        if (!id) return;
-        const current = followupQueue.items.find((x) => x.id === id);
-        if (!current) return;
-        const item = CuttleFollowupQueue.setPaused(followupQueue, id, !current.paused);
-        renderFollowupQueue();
-        persistFollowupPut();
-        if (!item.paused && !isSessionGenerating()) scheduleFollowupDrain(120);
-    }
-
-    function removeFollowup(id) {
-        if (!id) return;
-        if (editingFollowupId === id) {
-            editingFollowupId = null;
-            editingFollowupWasPaused = false;
-        }
-        CuttleFollowupQueue.removeItem(followupQueue, id);
-        renderFollowupQueue();
-        persistFollowupPut();
-    }
-
-    function clearFollowupQueue() {
-        editingFollowupId = null;
-        editingFollowupWasPaused = false;
-        CuttleFollowupQueue.clearAll(followupQueue);
-        renderFollowupQueue();
-        persistFollowupPut();
-    }
-
-    function scheduleFollowupDrain(delayMs = 120) {
-        if (editingFollowupId) return;
-        clearTimeout(followupDrainTimer);
-        followupDrainTimer = setTimeout(() => {
-            drainNextFollowup();
-        }, delayMs);
-    }
-
-    /**
-     * Merge every pending follow-up into one outbound turn so the agent sees
-     * the full queue at once (instead of N serial replies).
-     * Sticky slash prefix from the first item is kept on the combined message
-     * so /cursor · /claude routing still works.
-     */
-    // Owned by chat_activity.js — DOM/state gather, domain decides.
-    function combineFollowupBatch(items) {
-        return CuttleChatActivity.combineFollowupBatch(items, {
-            stickyPrefixFor: (raw) => {
-                const sticky = getStickySlashCommandFromMessage(raw);
-                return sticky ? sticky.prefix : '';
-            },
-            formatWithAttachments: formatMessageWithAttachments,
-        });
-    }
-
-    async function drainNextFollowup() {
-        // Wait until this chat is fully idle (no local stream, no remote run).
-        if (editingFollowupId) return;
-        healStaleGeneratingState();
-        if (isSessionGenerating()) return;
-        // Re-check after heal — edit may have started while we were waiting.
-        if (editingFollowupId) return;
-        const origin = session.current();
-        const state = followupQueue;
-        if (state.takeInFlight) return;
-        let batch = [];
-        const sid = followupAuthSid();
-        if (sid) {
-            if (state.dirty && !await persistFollowupPut()) return;
-            if (editingFollowupId || !sessionIdsEqual(session.current(), origin) || followupQueue !== state) return;
-            const claimId = getSessionPrefs(sid)?.[followupClaimField] || ('queue-' + Date.now() + '-' + Math.random().toString(36).slice(2));
-            updateSessionPrefs(sid, {[followupClaimField]: claimId});
-            const takeVersion = state.editVersion;
-            CuttleFollowupQueue.beginTake(state);
-            try {
-                const response = await fetch('/api/auth/sessions/' + sid + '/followups/take', {
-                    method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({revision: state.revision, claim_id: claimId}),
-                });
-                const data = await response.json();
-                if (response.status === 409) {
-                    updateSessionPrefs(sid, {[followupClaimField]: null});
-                    state.revision = data.revision;
-                    state.items = state.editVersion !== takeVersion
-                        ? CuttleFollowupQueue.mergeEdits(state.base, state.items, data.followups || [])
-                        : data.followups || [];
-                    state.base = data.followups || [];
-                    rememberUnsyncedQueue(sid, state);
-                    return;
-                }
-                if (!response.ok || !data.success) return;
-                const editedDuringTake = state.editVersion !== takeVersion;
-                const editedItems = state.items;
-                state.revision = data.revision;
-                state.items = data.remaining || [];
-                state.base = state.items.slice();
-                batch = data.followups || [];
-                if (editedDuringTake || editingFollowupId || !sessionIdsEqual(session.current(), origin) || followupQueue !== state) {
-                    // Restore to the captured chat when navigation or editing
-                    // races the claim; retain the write if the network fails.
-                    state.items = editedDuringTake ? editedItems : [...batch, ...state.items];
-                    state.editVersion++;
-                    state.dirty = true;
-                    rememberUnsyncedQueue(sid, state);
-                    updateSessionPrefs(sid, {[followupClaimField]: null});
-                    await persistFollowupPut(sid, state);
-                    return;
-                }
-                updateSessionPrefs(sid, {[followupClaimField]: null});
-            } catch (_) { return; }
-            finally { CuttleFollowupQueue.endTake(state); }
-        } else {
-            batch = CuttleFollowupQueue.resolveTake(state, editingFollowupId, null, CuttleChatActivity);
-        }
-        // Keep editing state if the edited item remained in the queue.
-        if (editingFollowupId && !followupQueue.items.some((x) => x.id === editingFollowupId)) {
-            editingFollowupId = null;
-            editingFollowupWasPaused = false;
-        }
-        renderFollowupQueue();
-        const combined = combineFollowupBatch(batch);
-        if (!combined) return;
-        const atts = combined.attachments || [];
-        const displayMessage = combined.displayMessage;
-        const message = combined.message;
+    function showFollowupChatArea() {
         const chatArea = document.getElementById('chatArea');
         if (chatArea && chatArea.style.display === 'none') {
             document.getElementById('welcomeScreen').style.display = 'none';
             chatArea.style.display = 'flex';
             if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
         }
-        addMessageToUI(displayMessage, 'user', { timestamp: Date.now(), attachments: atts });
-        transcriptNav.autoScrollChatToBottom(true);
-        saveChatSession(displayMessage, 'user', { attachments: atts });
-        recordPromptHistory(message);
-        await processMessage(message, { attachments: atts });
     }
+
+    // ---- thin call sites (caller contracts; decisions live in the controller) ----
+    function enqueueFollowup(message, opts = {}) {
+        return followupController().enqueue(message, opts);
+    }
+
+    async function trySteerRunningTurn(message, attachments) {
+        return followupController().steer(message, attachments);
+    }
+
+    function toggleFollowupPaused(id) { followupController().togglePaused(id); }
+
+    function removeFollowup(id) { followupController().remove(id); }
+
+    function clearFollowupQueue() { followupController().clear(); }
+
+    function scheduleFollowupDrain(delayMs = 120) { followupController().requestDrain(delayMs); }
+
+    async function drainNextFollowup() { return followupController().drain(); }
 
     async function requestServerCancelCurrentRun(opts = {}) {
         const sid = session.current();
@@ -10631,8 +10411,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const cancelJobs = (!inflight && watchIds.length > 0) || isProjectShellTurn(inflight);
         CuttleStopState.requestStop(stopState);
         inFlightUserMessage = null;
-        clearTimeout(followupDrainTimer);
-        followupDrainTimer = null;
+        followupController().cancelDrain();
         // Keep the stopped activity and durable notice immediately; cancellation
         // can take seconds, and its acknowledgment must not replace the notice.
         retainStoppedAgentBubble();
@@ -11578,7 +11357,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             message,
             normalizedMessage: normalizeMessageContentForMatch(message),
             inFlightMessage: normalizeMessageContentForMatch(inFlightUserMessage),
-            queuedMessages: followupQueue.items.map((x) => normalizeMessageContentForMatch(x.content)),
+            queuedMessages: followupController().getState().items.map((x) => normalizeMessageContentForMatch(x.content)),
         });
         if (plan.action === 'ignore-guard') {
             // Unreachable here (guard already returned above); kept so the

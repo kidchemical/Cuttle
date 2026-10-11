@@ -176,6 +176,10 @@ let messageSyncTimer = null;
 // queue contents live in the owned module state (Slice 9C)
 globalThis.CuttleFollowupQueue = require(process.env.MOD_FQ);
 const followupQueue = CuttleFollowupQueue.createQueueState();
+// 4D: the page delegates follow-up execution + drain timers to the controller.
+function followupController() {
+  return { cancelDrain() {}, getState() { return followupQueue; } };
+}
 let sendDispatchGuard = true;
 const chatVoice = { onGenerationStarted() {} };
 // ---- effect log + stubs for leaves outside stop-state ownership ----

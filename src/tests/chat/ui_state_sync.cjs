@@ -37,6 +37,42 @@ function context(host) {
 function run(host, code) { return vm.runInContext(code, host); }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+// The follow-up queue lifecycle is owned by CuttleFollowupQueue.createController;
+// the page supplies every effect as a host capability. Build one for a scenario.
+function buildQueueHost(o) {
+    o = o || {};
+    const prefs = o.prefs || {};
+    const mut = o.mut || T.create();
+    return {
+        activity: A,
+        clock: { now: () => Date.now(), rand: () => Math.random() },
+        sessionIdsEqual: A.sessionIdsEqual,
+        canonicalizeSessionId: x => A.canonicalizeChatSessionId(x),
+        toAuthDbSessionId: x => String(x),
+        currentSession: o.currentSession || (() => o.session),
+        isAuthMode: () => o.auth !== false,
+        isSessionGenerating: () => !!o.generating,
+        healStaleGenerating() {},
+        followupAuthSid: () => ('authSid' in o ? o.authSid : o.session),
+        getPrefs: sid => prefs[sid] || null,
+        setPrefs: (sid, p) => { prefs[sid] = { ...prefs[sid], ...p }; },
+        writeField: () => o.writeField || 'followupWrite',
+        claimField: () => o.claimField || 'followupClaim',
+        restoreQueue: () => null,
+        serializeMutation: (k, f) => mut.enqueue(k, f),
+        putFollowups: o.putFollowups || (async (sid, body) => (
+            { ok: true, status: 200, data: { success: true, revision: 1, followups: body.followups } })),
+        takeFollowups: o.takeFollowups || (async () => (
+            { ok: true, status: 200, data: { success: true, revision: 1, followups: [], remaining: [] } })),
+        steer: o.steer || (async () => null),
+        render() {}, patchLiveSession() {}, broadcastActivity() {},
+        showChatArea() {}, addUserMessage() {}, autoScroll() {}, saveUserMessage() {},
+        recordPromptHistory() {}, processMessage: async () => {}, toast() {}, steerLabel() {},
+        setTimeout: o.setTimeout || setTimeout, clearTimeout: o.clearTimeout || clearTimeout,
+        formatWithAttachments: t => t, stickyPrefixFor: () => '',
+    };
+}
+
 (async () => {
     // Interleaved cached frames cannot erase unrelated chats OR fields.
     const backing = storage(), one = P.create(backing), two = P.create(backing);
@@ -110,24 +146,24 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     queue.editVersion=2; queue.dirty=true; Q.markClean(queue,1); assert(queue.dirty);
 
     // A pending queue write owns A's state even after navigation, and failed writes stay dirty.
-    const stateA=Q.createQueueState(), stateB=Q.createQueueState();
-    stateA.items=[{id:'a',content:'A'}]; stateB.items=[{id:'b',content:'B'}];
-    let resolveQueue;
+    let resolveQueue, qcur='101';
     const queueResponse = new Promise(r=>resolveQueue=r);
-    const queueHost = context({currentSessionId:'101',followupQueue:stateA,CuttleFollowupQueue:Q,
-        sessionMutations:T.create(),followupAuthSid:()=> '101',updateSessionPrefs(){},
-        fetch:()=>queueResponse,patchLiveSessionFollowupQueue(){},renderFollowupQueue(){},
-        sessionIdsEqual:A.sessionIdsEqual});
-    run(queueHost, fn('rememberUnsyncedQueue')+'\n'+fn('persistFollowupPut'));
-    const write=run(queueHost,'persistFollowupPut()');
-    await tick(); queueHost.currentSessionId='202'; queueHost.followupQueue=stateB;
+    const queueHost = buildQueueHost({prefs:{}, currentSession:()=>qcur,
+        putFollowups:async()=>{const r=await queueResponse;const data=await r.json();
+            return {ok:r.ok,status:200,data};}});
+    const queueCtl = Q.createController(queueHost);
+    queueCtl.adopt('101');
+    const aState = queueCtl.getState();
+    aState.items=[{id:'a',content:'A'}]; aState.base=[{id:'a',content:'A'}];
+    const write = queueCtl.persist('101');
+    await tick(); qcur='202'; queueCtl.adopt('202');
     resolveQueue({ok:true,json:async()=>({success:true,revision:1,followups:[{id:'a',content:'A'}]})});
     await write;
-    assert.equal(stateB.items[0].id,'b'); assert(!stateA.dirty);
-    queueHost.currentSessionId='101'; queueHost.followupQueue=stateA;
-    queueHost.fetch=async()=>{throw Error('offline');};
-    assert.equal(await run(queueHost,'persistFollowupPut()'),false);
-    assert(stateA.dirty);
+    assert.equal(queueCtl.getState().items.length,0); assert(!aState.dirty);
+    qcur='101'; queueCtl.adopt('101');
+    queueHost.putFollowups = async()=>{throw Error('offline');};
+    assert.equal(await queueCtl.persist('101'),false);
+    assert(aState.dirty);
 
     // A late catalog read cannot undo a newer successful pin save.
     let resolveCatalog;
@@ -178,44 +214,44 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     assert.equal(composerHost.currentSessionId,'202');
 
     // A claim racing navigation is restored immediately to A, never sent from B.
-    let resolveTake, restoredPayload;
+    let resolveTake, restoredPayload, ccur='101';
     const taken = new Promise(r => resolveTake = r), claimedState = Q.createQueueState();
     claimedState.items=[{id:'claimed',content:'A queued'}]; claimedState.base=claimedState.items.slice();
-    const claimPrefs = P.create(storage());
-    const claimHost = context({currentSessionId:'101',followupQueue:claimedState,editingFollowupId:null,
-        CuttleFollowupQueue:Q,CuttleChatActivity:A,sessionMutations:T.create(),
-        healStaleGeneratingState(){},isSessionGenerating:()=>false,followupAuthSid:()=> '101',
-        getSessionPrefs:id=>claimPrefs.get(id),updateSessionPrefs:(id,p)=>claimPrefs.update(id,p),
-        sessionIdsEqual:A.sessionIdsEqual,patchLiveSessionFollowupQueue(){},renderFollowupQueue(){},
-        fetch:async(_url,options)=>{if(options.method==='POST')return taken;
-            restoredPayload=JSON.parse(options.body);return {ok:true,json:async()=>({success:true,revision:2,followups:restoredPayload.followups})};}});
-    run(claimHost,fn('rememberUnsyncedQueue')+'\n'+fn('persistFollowupPut')+'\n'+fn('drainNextFollowup'));
-    const claiming=run(claimHost,'drainNextFollowup()');
-    await tick(); claimHost.currentSessionId='202'; claimHost.followupQueue=Q.createQueueState();
+    const claimPrefs = {};
+    const claimHost = buildQueueHost({prefs:claimPrefs, currentSession:()=>ccur, session:'101',
+        putFollowups:async(_sid,body)=>{restoredPayload=body;
+            return {ok:true,status:200,data:{success:true,revision:2,followups:body.followups}};},
+        takeFollowups:async()=>{const r=await taken;const data=await r.json();
+            return {ok:r.ok,status:200,data};}});
+    const claimCtl = Q.createController(claimHost);
+    claimCtl.getState().items = claimedState.items; claimCtl.getState().base = claimedState.base;
+    const claiming = claimCtl.drain();
+    await tick(); ccur='202'; claimCtl.adopt('202');
     resolveTake({ok:true,json:async()=>({success:true,revision:1,remaining:[],followups:[{id:'claimed',content:'A queued'}]})});
     await claiming;
-    assert.equal(restoredPayload.followups[0].id,'claimed');assert.equal(claimHost.followupQueue.items.length,0);
-    assert.equal(claimPrefs.get('101')?.followupClaim || null,null);assert(!claimedState.dirty);
+    assert.equal(restoredPayload.followups[0].id,'claimed');assert.equal(claimCtl.getState().items.length,0);
+    assert.equal(claimPrefs['101']?.followupClaim || null,null);assert(!claimedState.dirty);
 
     // Empty identical snapshots still wake a saved lost-response claim after reload.
     let drains=0;
-    const emptyHost=context({followupQueue:Q.createQueueState(),currentSessionId:'101',editingFollowupId:null,
-        CuttleFollowupQueue:Q,CuttleChatActivity:A,getSessionPrefs:()=>({followupClaim:'lost-response'}),
-        patchLiveSessionFollowupQueue(){},renderFollowupQueue(){},isSessionGenerating:()=>false,
-        scheduleFollowupDrain:()=>drains++,scheduleChatActivityBroadcast(){}});
-    run(emptyHost,fn('applyServerFollowups'));run(emptyHost,'applyServerFollowups([],0)');
+    const emptyHost=buildQueueHost({prefs:{'101':{followupClaim:'lost-response'}}, session:'101',
+        setTimeout:()=>{drains++;return 0;}, clearTimeout:()=>{}});
+    const emptyCtl=Q.createController(emptyHost);
+    emptyCtl.applyServerList([],0);
     assert.equal(drains,1);
 
     // Prompts queued before the first server id belong to that turn, not the next draft.
     const draftQueue = Q.createQueueState(); draftQueue.items=[{id:'early',content:'queued before id'}];
     let persistedDraft;
-    const adoptHost = context({followupQueue:draftQueue,followupQueues:Q.createRegistry(()=>null),
-        editingFollowupId:null,canonicalizeChatSessionId:A.canonicalizeChatSessionId,
-        CuttleFollowupQueue:Q,getSessionPrefs:()=>null,isAuthMode:()=>true,toAuthDbSessionId:String,
-        persistFollowupPut:(sid,state)=>{persistedDraft={sid,state};}});
-    run(adoptHost,fn('adoptFollowupQueue'));run(adoptHost,'adoptFollowupQueue("101",{transfer:true})');
-    assert.equal(persistedDraft.sid,'101');assert.equal(persistedDraft.state.items[0].id,'early');
-    run(adoptHost,'adoptFollowupQueue(null)');assert.equal(adoptHost.followupQueue.items.length,0);
+    const adoptHost = buildQueueHost({session:'101',
+        putFollowups:async(sid,body)=>{persistedDraft={sid,body};
+            return {ok:true,status:200,data:{success:true,revision:1,followups:body.followups}};}});
+    const adoptCtl=Q.createController(adoptHost);
+    adoptCtl.getState().items=draftQueue.items;
+    adoptCtl.adopt('101',{transfer:true});
+    await tick();
+    assert.equal(persistedDraft.sid,'101');assert.equal(persistedDraft.body.followups[0].id,'early');
+    adoptCtl.adopt(null);assert.equal(adoptCtl.getState().items.length,0);
 
     // Passive clean snapshots cause zero migration writes, even on a large cold list.
     let migrationWrites=0;
@@ -224,17 +260,24 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
     assert.equal(migrationWrites,0);
 
     // Two views retain independent failed queue edits for the same server session.
-    const multiPrefs=P.create(storage()), leftState=Q.createQueueState(), rightState=Q.createQueueState();
+    const multiPrefs={}, leftState=Q.createQueueState(), rightState=Q.createQueueState();
     leftState.items=[{id:'left',content:'left edit'}];leftState.dirty=true;
     rightState.items=[{id:'right',content:'right edit'}];rightState.dirty=true;
-    const leftHost=context({followupWriteField:'followupWrite:left',state:leftState,
-        updateSessionPrefs:(sid,p)=>multiPrefs.update(sid,p)});
-    const rightHost=context({followupWriteField:'followupWrite:right',state:rightState,
-        updateSessionPrefs:(sid,p)=>multiPrefs.update(sid,p)});
-    run(leftHost,fn('rememberUnsyncedQueue'));run(rightHost,fn('rememberUnsyncedQueue'));
-    run(leftHost,'rememberUnsyncedQueue("101",state)');run(rightHost,'rememberUnsyncedQueue("101",state)');
-    leftState.dirty=false;run(leftHost,'rememberUnsyncedQueue("101",state)');
-    assert.equal(multiPrefs.get('101')['followupWrite:right'].items[0].id,'right');
+    const leftHost=buildQueueHost({session:'101',writeField:'followupWrite:left',prefs:multiPrefs,
+        putFollowups:async()=>{throw Error('offline');}});
+    const rightHost=buildQueueHost({session:'101',writeField:'followupWrite:right',prefs:multiPrefs,
+        putFollowups:async()=>{throw Error('offline');}});
+    const leftCtl=Q.createController(leftHost), rightCtl=Q.createController(rightHost);
+    leftCtl.getState().items=leftState.items; leftCtl.getState().dirty=true;
+    rightCtl.getState().items=rightState.items; rightCtl.getState().dirty=true;
+    await leftCtl.persist('101'); await rightCtl.persist('101');
+    assert.equal(multiPrefs['101']['followupWrite:left'].items[0].id,'left');
+    assert.equal(multiPrefs['101']['followupWrite:right'].items[0].id,'right');
+    // A successful left write clears only the left field.
+    leftHost.putFollowups=async()=>({ok:true,status:200,data:{success:true,revision:1,followups:leftCtl.getState().items}});
+    await leftCtl.persist('101');
+    assert.equal(multiPrefs['101']['followupWrite:left'] || null,null);
+    assert.equal(multiPrefs['101']['followupWrite:right'].items[0].id,'right');
 
     // Concurrent consumers share one snapshot request; only one publish occurs.
     let resolveLoad, loads=0, published=0;

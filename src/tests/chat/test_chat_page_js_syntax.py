@@ -84,6 +84,26 @@ def test_chat_page_html_loads_busted_script():
     assert 'src="/js/chat/chat_page.js?v=' in html
 
 
+def test_followup_execution_and_steering_moved_to_owner():
+    """4D moved follow-up execution + steering into chat_followup_queue.js
+    (CuttleFollowupQueue.createController); the page keeps thin call sites."""
+    text = CHAT_JS.read_text(encoding="utf-8")
+    owner = (CHAT_JS.parent / "chat_followup_queue.js").read_text(encoding="utf-8")
+    assert "function createController(host) {" in owner
+    assert "async function drain() {" in owner
+    assert "async function steer(message, attachments) {" in owner
+    assert "CuttleFollowupQueue.createController(" in text
+    assert "followupController().drain()" in text
+    assert "followupController().steer(message, attachments)" in text
+    # The page keeps no private queue/edit/timer state and no decision bodies.
+    assert "let followupQueue = CuttleFollowupQueue.createQueueState();" not in text
+    assert "let editingFollowupId = null;" not in text
+    assert "followupDrainTimer" not in text
+    assert "function persistFollowupPut(" not in text
+    assert "function rememberUnsyncedQueue(" not in text
+    assert "CuttleFollowupQueue.reconcileServerList(" not in text
+
+
 def test_git_push_menu_moved_to_owner():
     """3E pt2 moved the git push menu/action into git_push_report.js
     (CuttleGitPushReport.create); the page keeps thin call sites."""
