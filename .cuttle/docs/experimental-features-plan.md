@@ -7,9 +7,11 @@ Two connected subsystems:
 2. **Achievements** — the first consumer of that flag: a Steam-style unlock
    system with toast + sfx + confetti.
 
-Status: **implemented** (Python + client + Electron + tests). This file is the
-design record and the teardown checklist; it replaces the original plan's
-"decision requested" section with the decisions actually taken.
+Status: **shipped design record / history** (Python + client + Electron + tests).
+Operational guidance lives in
+[`experimental-features.md`](experimental-features.md); treat feature-specific
+details here as point-in-time. It replaces the original plan's "decision
+requested" section with the decisions actually taken.
 
 Decisions taken (owner calls, 2026-10-03):
 

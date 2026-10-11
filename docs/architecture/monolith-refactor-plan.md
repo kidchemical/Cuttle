@@ -1,5 +1,10 @@
 # Monolith refactor plan
 
+> **Status: largely executed / working plan.** Many Phase 6 route-family moves are
+> already extracted; current ownership is described in
+> [`repository-map.md`](repository-map.md) and `AGENTS.md`. Treat this as plan +
+> history, not a description of current state.
+
 Plan for moving the remaining domain logic out of `chat_page.js`,
 `app_shell.js` and `web_chat_api.py` into named owners. The refactor
 preserves behavior; it does not redesign anything. Measured inputs:

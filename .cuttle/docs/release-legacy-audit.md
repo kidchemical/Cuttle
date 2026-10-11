@@ -1,5 +1,8 @@
 # Release audit: legacy code disposition
 
+> **Status: historical audit evidence (point-in-time).** PR and revision references
+> are not current policy.
+
 This is the evidence for audit item 11. Cuttle has no tagged release to support.
 There is no older-client compatibility commitment. Saved data and live callers
 still have owners; removing an obsolete interface must not discard that data.

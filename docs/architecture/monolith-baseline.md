@@ -1,5 +1,9 @@
 # Monolith baseline (Phase 0)
 
+> **Historical snapshot (2026-10-09, source `62aca76`).** These are point-in-time
+> measurements, not current coverage. Current owners:
+> [`repository-map.md`](repository-map.md).
+
 Measured state of the three composition roots before the monolith refactor
 starts. Later phases compare against these numbers. The plan that uses them is
 [`monolith-refactor-plan.md`](monolith-refactor-plan.md).
