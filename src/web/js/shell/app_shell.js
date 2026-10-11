@@ -565,11 +565,26 @@ let cuttleTitlebarCancelHide = null;
     };
     const hideRestartModal = () => { if (restartModal) restartModal.hidden = true; };
     if (restartModal) {
-        restartModal.querySelector('[data-restart-now]')?.addEventListener('click', () => {
+        restartModal.querySelector('[data-restart-now]')?.addEventListener('click', async () => {
             hideRestartModal();
             if (api.desktop && typeof api.desktop.relaunchApp === 'function') {
                 api.desktop.relaunchApp();
-            } else {
+                return;
+            }
+            // Older Electron without the relaunch IPC: ask the mesh updater to
+            // restart (the pull is a no-op, but it stops/relaunches the client).
+            try {
+                await fetch('/api/workers/self-update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        target: meshUpdate.target,
+                        submitted_by: 'titlebar-restart',
+                        update_source: meshUpdate.channel || configuredUpdateSource(),
+                        no_daemon: !isClient,
+                    }),
+                });
+            } catch (_) {
                 window.location.reload();
             }
         });
