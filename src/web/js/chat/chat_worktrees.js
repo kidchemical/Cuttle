@@ -10,18 +10,22 @@
     'use strict';
 
     let enabled = null; // null = unknown, true/false after a probe
-    // uid -> branch, populated from every probe/list/create so other surfaces
-    // (history rows, message chips) can label a bound checkout without a fetch.
-    const branchByUid = {};
+    // Registry snapshots keep a checkout's path and branch under one identity.
+    const checkoutByUid = Object.create(null);
 
     function rememberWorktrees(items) {
         (items || []).forEach((w) => {
-            if (w && w.checkout_uid) branchByUid[String(w.checkout_uid)] = String(w.branch || '');
+            if (w && w.checkout_uid) checkoutByUid[String(w.checkout_uid)] = Object.assign({}, w);
         });
     }
 
     function branchForUid(uid) {
-        return branchByUid[String(uid || '')] || '';
+        const checkout = checkoutForUid(uid);
+        return checkout ? String(checkout.branch || '') : '';
+    }
+
+    function checkoutForUid(uid) {
+        return checkoutByUid[String(uid || '')] || null;
     }
 
     function slug(name) {
@@ -118,7 +122,7 @@
         }
     }
 
-    const api = { slug, defaultBranch, isEnabled, probe, list, create, remove, branchForUid };
+    const api = { slug, defaultBranch, isEnabled, probe, list, create, remove, branchForUid, checkoutForUid };
     const ns = (root.CuttleChatWorktrees = root.CuttleChatWorktrees || {});
     Object.assign(ns, api);
     if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -403,12 +403,16 @@
                         loadedMessages = windowChatHistoryMessages(data);
                         annotateMessageProjects(loadedMessages);
                         if (data.project_id != null || data.project_path || data.project_name) {
-                            setLastHydratedSessionProject({
+                            const projectSnapshot = {
                                 id: authSid,
                                 project_id: data.project_id,
                                 project_name: data.project_name,
                                 project_path: data.project_path,
-                            });
+                            };
+                            if (Object.prototype.hasOwnProperty.call(data, 'checkout_uid')) {
+                                projectSnapshot.checkout_uid = data.checkout_uid;
+                            }
+                            setLastHydratedSessionProject(projectSnapshot);
                         }
                         // Apply this session's project BEFORE the generating bubble is
                         // painted — otherwise the chip shows the previous chat's project

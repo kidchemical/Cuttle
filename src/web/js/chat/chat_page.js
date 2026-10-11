@@ -421,6 +421,14 @@
     // Branch shown on the segmented project chip (star | name | branch).
     // Cache + fetch live in chat_chip_config.js (branchFor / refreshBranch).
     function currentProjectBranch() {
+        if (currentCheckoutUid) {
+            const liveBranch = currentCheckoutPath && CuttleChipConfig.branchFor(currentCheckoutPath);
+            if (liveBranch) return liveBranch;
+            const branch = window.CuttleChatWorktrees
+                && window.CuttleChatWorktrees.branchForUid(currentCheckoutUid);
+            if (branch) return branch;
+            if (!currentCheckoutPath) return '';
+        }
         return CuttleChipConfig.branchFor(currentProjectPathKey());
     }
 
@@ -3934,7 +3942,7 @@
         opts = opts || {};
         if (!proj || !(proj.name || proj.path)) return '';
         const safe = escapeHtmlInline(proj.name || 'Project');
-        const pathBit = proj.path || proj.name || '';
+        const pathBit = (opts.composer && effectiveGitPath()) || proj.path || proj.name || '';
         const starred = isProjectStarred(proj);
         const showBranch = !!opts.composer || !!opts.header || !!opts.history;
         const worktreeChip = opts.worktree !== undefined
@@ -4379,7 +4387,11 @@
 
     // Probe the worktrees feature once (server 404s it when disabled) so the
     // composer modal can show the Local/Worktree selector when available.
-    try { if (window.CuttleChatWorktrees) window.CuttleChatWorktrees.probe(); } catch (_) {}
+    try {
+        if (window.CuttleChatWorktrees) {
+            window.CuttleChatWorktrees.probe().then(() => reconcileChatProject());
+        }
+    } catch (_) {}
 
     function applyStickyAgentCommand(entry) {
         const chip = {
@@ -6388,10 +6400,12 @@
         // Gather session inputs (chat-page owns all session IO); the priority
         // chain itself lives in chat_project.js (pure over explicit inputs).
         let serverProj = null;
+        let serverSession = null;
         let mergedPrefs = null;
         let stored = null;
         if (session.current()) {
-            serverProj = projectFieldsFromServerSession(findAuthServerSession(session.current()));
+            serverSession = findAuthServerSession(session.current());
+            serverProj = projectFieldsFromServerSession(serverSession);
             const prefs = getSessionPrefs(session.current());
             const barePrefs = getSessionPrefs(toAuthDbSessionId(session.current()));
             mergedPrefs = Object.assign({}, barePrefs || {}, prefs || {});
@@ -6414,18 +6428,18 @@
         const proj = decided.proj;
         const hadStored = decided.hadStored;
         currentProject = proj || null;
-        reportProjectToShell(effectiveGitPath());
         // Restore the chat's bound worktree checkout (server row, then prefs).
         // An unsaved new chat has no session row yet: keep the in-memory pick
         // instead of clearing it, or the chip snaps back to the primary branch.
         if (session.current()) {
-            const storedCheckout = (serverProj && serverProj.checkoutUid)
-                || (mergedPrefs && mergedPrefs.checkoutUid)
-                || (stored && stored.checkoutUid) || '';
-            currentCheckoutUid = String(storedCheckout || '').trim();
-            currentCheckoutPath = String((mergedPrefs && mergedPrefs.checkoutPath)
-                || (stored && stored.checkoutPath) || '').trim();
+            const checkout = CuttleChatProject.resolveCheckoutBinding({
+                serverSession, prefs: mergedPrefs, stored,
+                checkoutForUid: window.CuttleChatWorktrees && window.CuttleChatWorktrees.checkoutForUid,
+            });
+            currentCheckoutUid = checkout.uid;
+            currentCheckoutPath = checkout.path;
         }
+        reportProjectToShell(effectiveGitPath());
         // Stamp the default onto prefs so history grouping matches the cwd chip
         // (auth sessions do not store project_id on the server).
         if (session.current() && currentProject && !hadStored
