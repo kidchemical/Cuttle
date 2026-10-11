@@ -42,7 +42,11 @@ CEILINGS = {
     # -116 more (2026-10-11): Phase 6B slices 2-3 — launch-gate lane
     # (project-action/action-form) and shell-action-expansion lane moved to
     # api.chat_turn_workflow; route keeps request capture, busy SSE/409, jsonify.
-    "src/api/web_chat_api.py": 6101,
+    # -167 more (2026-10-11): Phase 6B slices 4-6 — /help text, router-config
+    # lane, and route/retry lane moved to api.chat_turn_workflow (help_response,
+    # classify_router_family, run_router_config_lane, build_route_retry_stream_turn,
+    # run_route_retry_sync_turn); route keeps capture, busy SSE/409, SSE framing, jsonify.
+    "src/api/web_chat_api.py": 5934,
 }
 NET_GROWTH_LIMIT = 150
 TRAILER = "Composition-Root-Growth:"

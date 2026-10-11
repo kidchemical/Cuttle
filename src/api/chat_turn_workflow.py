@@ -969,3 +969,323 @@ def run_shell_action_lane(
     except Exception as pc_err:
         print(f"[CHAT] project command expand failed: {pc_err}", flush=True)
     return None, message_content, False
+
+
+# ---------------------------------------------------------------------------
+# /help text lane (Phase 6B slice 4)
+# ---------------------------------------------------------------------------
+
+_HELP_TEXT = """**🦑 Cuttle Web Chat Commands**
+
+**Agent CLI commands:**
+• `/claude "prompt"` - Claude Code CLI
+• `/opencode "prompt"` - OpenCode CLI (`opencode run`, resumes per chat)
+• `/antigravity "prompt"` - Google Antigravity CLI (`agy`, auto-installs, resumes per chat)
+• `/cursor "prompt"` - Cursor Agent CLI (`agent -p`)
+• `/codex "prompt"` - OpenAI Codex CLI (`codex exec`, resumes per chat)
+• `/muse "prompt"` - Meta Muse Code CLI (`muse exec`, resumes per chat; native Windows / macOS / Linux)
+• `/muse model` - list Muse models; `/muse model muse-spark-1.3` pins one for this chat
+• `/muse effort` - list reasoning-effort levels; `/muse effort high` pins one for this chat
+• `/muse /usage` - Muse account + local session usage meters
+• `/codex /usage` - ChatGPT Codex plan windows (5-hour / weekly)
+• `/hermes /usage` - Hermes local insights (tokens, tools, models)
+• `/opencode /usage` - OpenCode local stats (cost, tools, models)
+• `/claude /usage` - Claude Code local session usage (tokens, models)
+• `/hermes "prompt"` - Hermes Agent using its configured provider
+• `/deepseek "prompt"` - DeepSeek Harness CLI (`dsh --profile headless`; Flash by default)
+
+**Agent router** (when no sticky agent is selected):
+• `/router status` - show mode, provider, default/escalation/fallbacks
+• `/router mode off|api|local|agent` - enable/disable routing brain
+• `/router evaluate <prompt>` - routing decision only (no agent run)
+• `/router evaluate batch [suite] --yes` - batch suite (routing brain only)
+• `/route <agent> <model> <prompt>` - one-task override
+• `/retry frontier` / `/retry fallback` - retry last failed routed turn
+
+**Flask restart** (daemon-owned; do not taskkill Flask yourself):
+• `/restart status` - daemon/Flask health + active tasks + pending restart
+• `/restart graceful` - restart only if idle
+• `/restart when-idle` - schedule after active work finishes
+• `/restart force --yes` - interrupt active work (requires confirmation)
+
+
+**Project commands** (from the chat project's ``.cuttle/commands/*.md``):
+• `/build`, `/deploy`, … — names come from each project
+• `/cmd <name>` — same, explicit form
+
+**Tips:**
+• Results show directly in chat; executions are logged in Query Reports"""
+
+
+def help_response(session_id: Any) -> Dict[str, Any]:
+    """``/help`` terminal body (moved verbatim from the ``/api/chat`` ingress).
+
+    Pure data: the route keeps request capture and ``jsonify``.
+    """
+    return {
+        'success': True,
+        'response': _HELP_TEXT,
+        'session_id': session_id,
+        'type': 'help',
+    }
+
+
+# ---------------------------------------------------------------------------
+# Router-config lane (Phase 6B slice 5) and route/retry lane (slice 6)
+# ---------------------------------------------------------------------------
+
+
+def classify_router_family(
+    message_content: str,
+    *,
+    data: Any,
+    session_id: Any,
+    resolve_project_path: Callable[[Any], Any],
+) -> Dict[str, Any]:
+    """Classify router-family commands (moved verbatim from the ingress).
+
+    Returns ``{router_cfg, route_or_retry, project_path, fallthrough_body}``.
+    ``fallthrough_body`` is set only for the recognized-but-unreturned
+    supervised control guard (terminal): the route jsonifies it and never
+    falls through to router/agent dispatch. Parse failures fall back to
+    all-false / ``project_path=None``, exactly as the inline block did.
+    """
+    router_cfg = False
+    route_or_retry = False
+    project_path = None
+    fallthrough_body = None
+    try:
+        from api.agent_router.commands import (
+            parse_retry_command,
+            parse_route_command,
+            parse_router_command,
+        )
+        from api.agent_router.supervised.commands import (
+            parse_coordinate_command,
+            parse_coordinator_command,
+        )
+        from api.agent_router.supervised.control import (
+            is_coordinate_control,
+            is_supervised_control_message,
+        )
+
+        project_path = resolve_project_path({
+            **(data or {}),
+            'session_id': (
+                session_id
+                if session_id is not None
+                else (data or {}).get('session_id')
+            ),
+        })
+        router_cfg = parse_router_command(message_content) is not None
+        route_or_retry = (
+            parse_route_command(message_content) is not None
+            or parse_retry_command(message_content) is not None
+        )
+        # Control lane already handled earlier; keep classification for safety.
+        # Fallthrough of recognized control commands is forbidden (double-apply).
+        if is_supervised_control_message(message_content):
+            return {
+                'router_cfg': router_cfg,
+                'route_or_retry': route_or_retry,
+                'project_path': project_path,
+                'fallthrough_body': {
+                    'success': True,
+                    'response': (
+                        '❌ Supervised control command was recognized but the early '
+                        'control lane did not return. Refusing fallthrough to prevent '
+                        'duplicate side effects.'
+                    ),
+                    'type': 'supervised_control_error',
+                    'control_lane': True,
+                    'control_handled': True,
+                    'session_id': session_id,
+                },
+            }
+        if parse_coordinator_command(message_content) is not None:
+            router_cfg = True
+        coord_args = parse_coordinate_command(message_content)
+        if coord_args is not None:
+            if is_coordinate_control(coord_args):
+                router_cfg = True
+            else:
+                route_or_retry = True
+        if is_supervised_control_message(message_content):
+            router_cfg = True
+            route_or_retry = False
+    except Exception as _ar_err:
+        print(f"[CHAT] agent router parse failed: {_ar_err}", flush=True)
+        router_cfg = False
+        route_or_retry = False
+        project_path = None
+    return {
+        'router_cfg': router_cfg,
+        'route_or_retry': route_or_retry,
+        'project_path': project_path,
+        'fallthrough_body': fallthrough_body,
+    }
+
+
+def run_router_config_lane(
+    message_content: str,
+    *,
+    session_id: Any,
+    project_path: Any,
+    auth_user: Any,
+    persist_user_turn: Callable[[Any], None],
+    get_auth_db: Callable[[], Any],
+) -> Dict[str, Any]:
+    """Router-config lane (``/router``, ``/coordinator``): handle + persist.
+
+    Moved verbatim from the ``/api/chat`` ingress. Returns a terminal body;
+    the route jsonifies.
+    """
+    try:
+        from api.agent_router.integration import handle_router_family_command
+        body = handle_router_family_command(
+            message_content,
+            session_id=session_id,
+            project_path=project_path,
+        ) or {}
+    except Exception as _ar_err:
+        body = {
+            'success': True,
+            'response': f'❌ **Agent router:** {_ar_err}',
+            'type': 'router_error',
+        }
+    body = dict(body)
+    body['session_id'] = session_id
+    if auth_user and session_id is not None:
+        try:
+            persist_user_turn(session_id)
+            get_auth_db().add_message(
+                session_id,
+                'assistant',
+                body.get('response') or '',
+                metadata={'origin': 'agent_router'},
+            )
+        except Exception as _pe:
+            print(f"[CHAT] persist router reply failed: {_pe}")
+    return body
+
+
+def build_route_retry_stream_turn(
+    message_content: str,
+    *,
+    session_id: Any,
+    data: Any,
+    project_path: Any,
+    wants_stream: bool,
+    auth_user: Any,
+    persist_user_turn: Callable[[Any], None],
+    make_saver: Callable[..., Any],
+    notify_mobile: Callable[[Any, Dict[str, Any]], None],
+) -> Tuple[Any, Any]:
+    """Build the route/retry stream turn (LANE 6 stream arm).
+
+    Returns ``(PreparedAgentTurn, StreamTurnIO)``; the route frames SSE
+    through its transport helper. Moved verbatim from the ingress.
+    """
+    from api.chat_coordinator import PreparedAgentTurn, StreamTurnIO
+
+    def _unreachable(*_a, **_k):
+        raise RuntimeError('unreachable arm in router stream lane')
+
+    def _run_router(status_queue=None):
+        from api.agent_router.integration import handle_router_family_command
+        return dict(handle_router_family_command(
+            message_content,
+            session_id=session_id,
+            project_path=project_path,
+            status_queue=status_queue,
+        ) or {})
+
+    io = StreamTurnIO(
+        run_harness=_unreachable,
+        run_router=_run_router,
+        persist_user=lambda: (persist_user_turn(session_id) if auth_user else None),
+        make_saver=lambda: make_saver(
+            session_id if auth_user else None, project_path=project_path
+        ),
+        notify_mobile=lambda _b: notify_mobile(session_id, _b),
+        format_shortcut=_unreachable,
+    )
+    prepared = PreparedAgentTurn(
+        message=message_content, session_id=session_id,
+        wants_stream=wants_stream,
+        request_data=data or {}, project_path=project_path or '',
+    )
+    return prepared, io
+
+
+def run_route_retry_sync_turn(
+    message_content: str,
+    *,
+    session_id: Any,
+    data: Any,
+    project_path: Any,
+    wants_stream: bool,
+    auth_user: Any,
+    persist_user_turn: Callable[[Any], None],
+    make_saver: Callable[..., Any],
+    delivery: Any,
+) -> Tuple[Optional[Dict[str, Any]], int]:
+    """Run the route/retry sync turn through the shared coordinator.
+
+    Returns ``(body, status)``; the route jsonifies. Moved verbatim from
+    the ingress (including the guarded-saver log policy).
+    """
+    from api.chat_coordinator import (
+        AgentSelection,
+        AgentTurnIO,
+        PreparedAgentTurn,
+        submit_agent_turn,
+    )
+
+    def _unreachable(*_a, **_k):
+        raise RuntimeError('unreachable arm in router sync lane')
+
+    def _guarded_saver():
+        saver = make_saver(session_id)
+        if saver is None:
+            return None
+
+        def _guarded(body):
+            try:
+                saver(body)
+            except Exception as _se:
+                print(f"[CHAT] router persist failed: {_se}")
+
+        return _guarded
+
+    def _run_router(status_queue=None):
+        from api.agent_router.integration import handle_router_family_command
+        return dict(handle_router_family_command(
+            message_content,
+            session_id=session_id,
+            project_path=project_path,
+            status_queue=status_queue,
+        ) or {})
+
+    io = AgentTurnIO(
+        run_harness=_unreachable,
+        run_router=_run_router,
+        persist_user=lambda: (persist_user_turn(session_id) if auth_user else None),
+        make_saver=_guarded_saver,
+        should_save=lambda _b: bool(auth_user and result_kept_for_history(_b)),
+        notify_mobile=None,
+        format_shortcut=_unreachable,
+    )
+    out = submit_agent_turn(
+        PreparedAgentTurn(
+            message=message_content, session_id=session_id,
+            wants_stream=wants_stream,
+            request_data=data or {}, project_path=project_path or '',
+        ),
+        io=io, delivery=delivery, claim=True,
+        selection=AgentSelection(kind='router_family'),
+    )
+    body = out.body
+    if isinstance(body, dict):
+        body.setdefault('session_id', session_id)
+    return body, out.status
