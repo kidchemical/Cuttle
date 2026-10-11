@@ -383,6 +383,12 @@ except Exception as _activity_err:
     print(f"[ACTIVITY] Failed to register routes: {_activity_err}")
 
 try:
+    from api.mobile_companion import mobile_companion_bp
+    app.register_blueprint(mobile_companion_bp)
+except Exception as _mobile_companion_err:
+    print(f"[MOBILE] Failed to register companion routes: {_mobile_companion_err}")
+
+try:
     from api.jev.watch import ensure_started as _jev_watch_start
 
     _jev_watch_start()
@@ -618,15 +624,6 @@ def emit_chat_status(session_id: str, message: str) -> None:
         is_cancelled=_chat_turn_cancelled,
         publish_live=lambda text: set_chat_live_status(session_id, text, active=True),
     )
-
-
-def _require_mobile_token(token: Optional[str]) -> bool:
-    """Validate the mobile companion shared token."""
-    try:
-        from api.mobile_companion import verify_mobile_token
-        return verify_mobile_token(token)
-    except Exception:
-        return False
 
 
 def _emit_chat_complete_mobile(session_id: str, result: dict) -> None:
@@ -1264,96 +1261,6 @@ def _with_muse_chat_context(prompt: str, chat_session_id=None) -> str:
     if not blocks:
         return prompt
     return "\n\n".join(blocks) + "\n\n---\n\n" + prompt
-
-
-@app.route('/api/mobile/events', methods=['GET'])
-def mobile_events_stream():
-    """SSE stream for the Capacitor mobile app (and Android companion). Query params: device_id, token"""
-    try:
-        device_id = (request.args.get('device_id') or '').strip()
-        token = (request.args.get('token') or '').strip()
-        if not device_id:
-            return jsonify({'success': False, 'error': 'device_id required'}), 400
-        if not _require_mobile_token(token):
-            return jsonify({'success': False, 'error': 'unauthorized'}), 401
-
-        from api.mobile_companion import register_device_queue, unregister_device_queue
-        q = register_device_queue(device_id)
-        print(f"[MOBILE] SSE connected device_id={device_id}", flush=True)
-
-        def generate():
-            yield f"data: {json.dumps({'type': 'status', 'message': 'connected', 'device_id': device_id})}\n\n"
-            last_keepalive = time.time()
-            try:
-                while True:
-                    try:
-                        ev = q.get(timeout=1.0)
-                    except Exception:
-                        if time.time() - last_keepalive > 10:
-                            yield ": keepalive\n\n"
-                            last_keepalive = time.time()
-                        continue
-                    yield f"data: {ev.to_sse_data()}\n\n"
-            finally:
-                try:
-                    unregister_device_queue(device_id)
-                except Exception:
-                    pass
-
-        return Response(
-            stream_with_context(generate()),
-            mimetype='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'X-Accel-Buffering': 'no',
-                'Connection': 'keep-alive'
-            }
-        )
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/mobile/poll', methods=['GET'])
-def mobile_events_poll():
-    """Short JSON long-poll for the Capacitor app. Query: device_id, token, timeout (1-25)."""
-    try:
-        device_id = (request.args.get('device_id') or '').strip()
-        token = (request.args.get('token') or '').strip()
-        if not device_id:
-            return jsonify({'success': False, 'error': 'device_id required'}), 400
-        if not _require_mobile_token(token):
-            return jsonify({'success': False, 'error': 'unauthorized'}), 401
-        try:
-            timeout_s = int(request.args.get('timeout') or 20)
-        except (TypeError, ValueError):
-            timeout_s = 20
-        timeout_s = max(0, min(25, timeout_s))
-        from api.mobile_companion import drain_events
-        wait = 0.05 if timeout_s <= 0 else float(timeout_s)
-        events = drain_events(device_id, timeout_s=wait)
-        return jsonify({'success': True, 'events': events})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/mobile/reply', methods=['POST'])
-def mobile_submit_reply():
-    """Reply endpoint for Android notification actions. Body: { token, interaction_id, answer }"""
-    try:
-        data = request.get_json() or {}
-        token = (data.get('token') or '').strip()
-        if not _require_mobile_token(token):
-            return jsonify({'success': False, 'error': 'unauthorized'}), 401
-        interaction_id = (data.get('interaction_id') or '').strip()
-        answer = (data.get('answer') or '').strip()
-        if not interaction_id or not answer:
-            return jsonify({'success': False, 'error': 'interaction_id and answer required'}), 400
-
-        from api.mobile_companion import submit_interaction_answer
-        ok = submit_interaction_answer(interaction_id, answer)
-        return jsonify({'success': ok})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 def _generate_chat_stream(process_fn, session_id_for_status, on_result=None, on_claimed=None):
