@@ -26,37 +26,33 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# path -> ceiling (lines). Baseline 2026-10-08 after the release-readiness
-# extractions: chat_page.js 23250, app_shell.js 8159, web_chat_api.py 7722.
+# path -> ceiling (lines). Phase 7 (2026-10-11) lowered each ceiling to the
+# post-monolith-refactor baseline measured on branch refactor/work. The three
+# composition roots now only compose owned modules (ARCHITECTURE_PRINCIPLES §2);
+# new domain logic belongs in an owner, never here.
+#
+# Pre-refactor baseline 2026-10-08 (release-readiness extractions):
+#   chat_page.js 23,250 / app_shell.js 8,159 / web_chat_api.py 7,722.
+# Phase 0 measured snapshot (62aca76): 23,052 / 8,089 / 7,741.
+# Post-refactor (Phase 7): 13,405 / 4,182 / 5,106.
 CEILINGS = {
-    # +100 (2026-10-10): worktree composer wiring + checkout-aware Pending
-    # changes/git path + history worktree badge — page-owned state/effects only.
-    # Decisions live in chat_project.js / chat_worktrees.js / chat_chip_config.js.
-    "src/web/js/chat/chat_page.js": 23420,
-    # +80 (2026-10-11): titlebar update spinner + update-channel chip and the
-    # deferred-restart modal merged from dev (Phase 1). Shell-owned DOM wiring;
-    # pure channel/role decisions live in shell/desktop_update_policy.js.
-    "src/web/js/shell/app_shell.js": 8280,
-    # -533 (2026-10-11): Phase 6B slice 1 — supervised control lane moved to
-    # api.chat_turn_workflow.run_supervised_control_lane; route keeps capture/SSE/jsonify.
-    # -116 more (2026-10-11): Phase 6B slices 2-3 — launch-gate lane
-    # (project-action/action-form) and shell-action-expansion lane moved to
-    # api.chat_turn_workflow; route keeps request capture, busy SSE/409, jsonify.
-    # -167 more (2026-10-11): Phase 6B slices 4-6 — /help text, router-config
-    # lane, and route/retry lane moved to api.chat_turn_workflow (help_response,
-    # classify_router_family, run_router_config_lane, build_route_retry_stream_turn,
-    # run_route_retry_sync_turn); route keeps capture, busy SSE/409, SSE framing, jsonify.
-    # -88 more (2026-10-11): Phase 6B slices 7-8 — harness lane and pipeline lane
-    # moved to api.chat_turn_workflow (harness_empty_prompt_body,
-    # build_harness_stream_turn, run_harness_sync_turn, build_pipeline_stream_turn,
-    # run_pipeline_sync_lane); route keeps capture, busy SSE/409, SSE framing, jsonify.
-    # -703 (2026-10-11): Phase 6C — per-provider model/effort palette HTTP moved to
-    # agents/<id>/routes.py blueprints (muse/hermes/codex/opencode, plus cursor
-    # /api/cursor-agent/models); route contract unchanged.
-    # -37 (2026-10-11): Phase 6D — dependency cleanup: dropped unused top-level
-    # imports (asyncio/ssl/datetime/PHASE_LLM/PHASE_TOOL/loopback_required) and the
-    # dead _live_status_ttl_seconds / _message_is_slash_remote_agent shims whose
-    # callers moved; no route or behavior change.
+    # Phase 7 (2026-10-11): 23,420 -> 13,405. chat_page.js is now the page
+    # orchestrator: media/lightbox (chat_media), TTS (chat_tts), transcript nav
+    # (chat_transcript_nav), launchers (chat_subagent_launchers), agent controls
+    # (chat_agent_controls), slash palette (chat_slash_palette), context gauge
+    # (chat_context_gauge), session lifecycle (chat_session), history panel
+    # (chat_history_panel), stream transport (chat_stream_transport) and the
+    # turn/recovery owners hold the moved domains; the page keeps call sites.
+    "src/web/js/chat/chat_page.js": 13405,
+    # Phase 7 (2026-10-11): 8,280 -> 4,182. app_shell.js now composes the pane
+    # lifecycle (shell_panes), Spaces UI (shell_spaces), rail/apps (shell_rail)
+    # and Electron chrome/mobile/SSH (shell_electron, shell_mobile) owners.
+    "src/web/js/shell/app_shell.js": 4182,
+    # Phase 7 (2026-10-11): 7,741 -> 5,106. web_chat_api.py is a composition
+    # root + transport boundary: route families moved to api.flask_restart,
+    # api.shared_media, api.mobile_companion, agent_router.supervised,
+    # agent_harness, agents/<id>/routes.py and settings/providers owners;
+    # chat_endpoint lanes moved to api.chat_turn_workflow / api.chat_coordinator.
     "src/api/web_chat_api.py": 5106,
 }
 NET_GROWTH_LIMIT = 150

@@ -107,11 +107,19 @@ Enforced by `src/tests/quality/test_architecture_boundaries.py` (no reverse impo
 into `web_chat_api` except the doctor probe and — narrow dev-composition
 exception — the spawned shadow child bootstrap `src/scripts/cuttle_shadow_app.py`
 (recorded in `REVERSE_IMPORT_ALLOWLIST`; parent-side `api.dev_instance` never
-imports the monolith); acyclic `src/api`; coordinator
-funnel + SSE pump proven at runtime; manifest schema).
+imports the monolith); acyclic `src/api`; per-owner route delegation
+`test_phase7_route_families_delegate_to_owners`; coordinator
+funnel + SSE pump proven at runtime; manifest schema),
+`src/tests/quality/test_composition_root_growth.py` (line ceilings lowered to
+the post-refactor baseline: `chat_page.js` 13,405 / `app_shell.js` 4,182 /
+`web_chat_api.py` 5,106) and `src/tests/quality/test_composition_root_delegation.py`
+(each frontend owner namespace + a thin composition-root call site).
 
 | Task | Owner (code) | Entry interface | Tests |
 |---|---|---|---|
+| New chat-page feature | `src/web/js/chat/chat_<domain>.js` owner (pure module + controller with explicit `host`/`deps`); `chat_page.js` only orchestrates | owner namespace (`Cuttle*`) + `create(host)` | owner suite + `test_composition_root_delegation.py` |
+| New shell feature | `src/web/js/shell/shell_<domain>.js` owner; `app_shell.js` composes | `CuttleShell*` namespace | `src/tests/shell/` + `test_composition_root_delegation.py` |
+| New backend route family | an `api.<owner>.routes` blueprint (never a new `@app.route` on `web_chat_api.py`) | blueprint `register_blueprint` | `test_architecture_boundaries.py` + route suite |
 | New settings route | `src/api/settings_routes.py` + `managers/settings_manager.py` (never `web_chat_api.py`) | HTTP route + `get_settings_manager()` | settings suites |
 | New Spaces feature | `src/web/js/spaces/*.js` (`CuttleSpaces.*`, pure logic, injected storage); shell owns singleton/DOM | `CuttleSpaces.*` namespace | spaces suites |
 | New slash command | client registry `src/web/js/chat/chat_slash.js` (`CuttleChatSlash.SLASH_COMMANDS`); project commands `src/api/project_commands.py`; sticky `src/api/starred_slash.py` | registry entry, not a new trigger | slash suites |
@@ -128,7 +136,11 @@ Direction rule: owned layers (`agent_harness`, `agent_router`,
 `chat_coordinator`, `chat_turn*`, `chat_delivery`, `discord_ops`, …) must
 never import `web_chat_api`. `web_chat_api.py` (routes/auth/SSE/lanes over
 owned services), `chat_page.js` (page orchestration over `CuttleChat*`
-slice modules), and `app_shell.js` (shell over `CuttleSpaces.*` + apps)
+slice modules: `chat_media`, `chat_tts`, `chat_session`, `chat_history_panel`,
+`chat_agent_controls`, `chat_slash_palette`, `chat_context_gauge`,
+`chat_stream_transport`, `chat_transcript_nav`, `chat_subagent_launchers`, …),
+and `app_shell.js` (shell over `shell_panes` / `shell_spaces` / `shell_rail` /
+`shell_electron` / `shell_mobile` + `CuttleSpaces.*` + apps)
 compose; they do not own domain decisions. Details:
 `docs/architecture/extension-boundaries.md`.
 

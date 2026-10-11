@@ -1,9 +1,11 @@
 # `web_chat_api.py` dependency map
 
 **Status:** living architecture reference. **Do not treat this file as a license to extract code.**
-**File:** `src/api/web_chat_api.py` (~7,800 lines; 99 `@app.route`
-decorators over 92 unique paths, counted from the AST at 2026-10-08,
-HEAD `44c3ca4`).
+**File:** `src/api/web_chat_api.py` (~5,100 lines; 53 `@app.route`
+decorators over 52 unique paths, counted from the AST at 2026-10-11,
+branch `refactor/work`). The monolith refactor (Phases 1–6) moved the
+chat page, shell and backend route families into owners; the ceiling gate
+`src/tests/quality/test_composition_root_growth.py` now pins 5,106 lines.
 **Audience:** agents and humans about to change Flask/chat/settings/workers.
 
 Cuttle’s Flask **app object** lives here. Many product surfaces already have their own modules; this file is still the **composition root** (blueprints, HTML, chat-turn HTTP).
@@ -68,7 +70,15 @@ is a logged, nonfatal `try/except`:
 | Claude Code palette pins (`/api/claude/models\|model\|effort`) | `api.agent_harness.agents.claude.routes` (`claude_bp`, url prefix `/api/claude`) | blueprint — owned by the Claude agent slice; catalog in `agents/claude/model_catalog.py` |
 | Provider palette pins (`/api/muse\|/api/hermes\|/api/codex\|/api/opencode/{models,model,effort}`) | `api.agent_harness.agents.<id>.routes` (`muse_bp`/`hermes_bp`/`codex_bp`/`opencode_bp`, matching url prefixes) | blueprints — one per agent slice; contract identical to Claude's |
 | Cursor Agent models (`/api/cursor-agent/models`) | `api.agent_harness.agents.cursor.routes` (`cursor_bp`, url prefix `/api/cursor-agent`) | blueprint — owned by the Cursor agent slice |
+| Router / agent-router options | `api.agent_router.routes` (`agent_router_bp`) | blueprint — `/api/router/*`, `/api/agent-router/options` |
 | Router editor | `api.agent_router.routes` (`router_editor_bp`, url prefix `/api/router`) | blueprint — decision-only tools |
+| Supervised task controls | `api.agent_router.supervised.routes` (`supervised_bp`) | blueprint — `/api/supervised/tasks/*` transport; logic in `supervised.orchestrator`/`store` |
+| Agent catalog / defaults / context | `api.agent_harness.routes` (`agent_harness_bp`) | blueprint — `/api/agents`, `/api/agent-defaults/*`, `/api/agent-context[/compact]` |
+| Provider API keys | `api.settings_routes` (`provider_keys_bp`) | blueprint — `/api/{test,save}-api-key`, `/api/load-api-keys`; owned with the settings/provider surface |
+| Flask restart | `api.flask_restart` (`flask_restart_bp`) | blueprint — `/api/flask/restart*` (daemon-mediated) |
+| Shared media staging | `api.shared_media` (`shared_media_bp`) | blueprint — `/api/shared-media/*` |
+| Mobile companion events | `api.mobile_companion` (`mobile_companion_bp`) | blueprint — `/api/mobile/*` |
+| User pairing | `api.auth_api` (`pairing_bp`) | blueprint — `/api/pairing/*` |
 | Activity stream | `api.activity_stream` (`activity_bp`, url prefix `/api`) | blueprint — chat activity push stream |
 | Tasks gizmos | `api.gizmos.tasks_routes.tasks_bp` | scoped routes under `/api/gizmos/tasks` |
 | Chat TTS | `api.chat_tts` | `register_*(app)` |
@@ -132,18 +142,16 @@ routes each).
 
 | Prefix / cluster | Prefer existing owner |
 |---|---|
-| `/api/router`, `/api/agent-router`, `/api/agents` | `api.agent_router` |
 | `/api/sessions`, `/api/clear-session` | overlap with `auth_api` sessions |
-| `/api/shared-media` | `api.shared_media` |
 | `/api/shell` | pane layout (root-owned; agent read via `python -m api.panes_cli`) |
 | `/api/chat` + steer/cancel/pending/live-status | `chat_turn*` / `chat_coordinator` / `chat_delivery` / `chat_run_registry` |
-| `/api/flask/restart*`, `/api/status`, `/api/health` | `flask_restart`; health is **not** the daemon liveness probe (`/api/status` is) |
+| `/api/status`, `/api/health` | daemon liveness is `/api/status`; health is **not** the liveness probe |
 | `/api/local-llm/status`, `/api/ollama-models` | user-managed local server status and model discovery for router/completion providers |
-| `/api/pairing` | user/DM pairing (not worker pairing) |
 | `/api/project-commands` | `api.project_commands` |
-| `/api/mobile`, `/api/supervised`, `/api/agent-context`, `/api/agent-defaults` | respective owners |
 | HTML shells (`/`, `/chat_page.html`, Jobs, Dashboards, …) | static; fine to keep in the composition root |
 | Static `/css` `/js` `/output` `/logs` `/sounds` | |
+
+Moved off the root into blueprints (Phases 6A/6C — do **not** re-add): `/api/router` + `/api/agent-router` (`agent_router_bp`), `/api/agents` + `/api/agent-defaults` + `/api/agent-context` (`agent_harness_bp`), `/api/{muse,hermes,codex,opencode}/{models,model,effort}` + `/api/cursor-agent/models` (`agents/<id>/routes.py`), `/api/flask/restart*` (`flask_restart_bp`), `/api/shared-media` (`shared_media_bp`), `/api/mobile` (`mobile_companion_bp`), `/api/supervised` (`supervised_bp`), `/api/pairing` (`pairing_bp`), `/api/{test,save}-api-key` + `/api/load-api-keys` (`provider_keys_bp`). Their absence is enforced structurally by `src/tests/quality/test_architecture_boundaries.py::test_phase7_route_families_delegate_to_owners`.
 
 Retired: the legacy `/api/start-*` / `/api/stop-*` process-control endpoints are fully removed — no routes and no stubs remain on the root. Do not revive them.
 
@@ -182,10 +190,14 @@ These seams are finished. Their absence from the Flask root is progress:
 3. **Action-form HTTP** — `api.action_form_routes` over `action_forms` / `project_actions`.
 4. **Live-status + status queues** — `api.chat_live_status` owns the store (root keeps a thin cancel-injecting wrapper); `api.chat_status` owns the legacy registry + `emit_status`, while turn-scoped `TurnStatusQueue` creation/drain/done-enqueue lives in `chat_turn_workflow.run_agent_stream_turn` (route only frames SSE).
 5. **Harness web command entries** — `api.agent_harness.runners` owns all `run_*_web_command`; the root keeps a thin `_run_harness_web_command` shim.
+6. **Route families (Phase 6A)** — router/agent-router (`agent_router_bp`), agent catalog/defaults/context (`agent_harness_bp`), provider API keys (`provider_keys_bp`), Flask restart (`flask_restart_bp`), shared media (`shared_media_bp`), mobile events (`mobile_companion_bp`), supervised controls (`supervised_bp`), user pairing (`pairing_bp`).
+7. **Provider model/effort HTTP (Phase 6C)** — `/api/{muse,hermes,codex,opencode}/{models,model,effort}` and `/api/cursor-agent/models` live in `api.agent_harness.agents.<id>.routes` (one blueprint per agent slice), matching the existing Claude `claude_bp`.
+8. **`chat_endpoint` lanes (Phase 6B)** — supervised control, launch gates, shell-action expansion, `/help`, router-config, route/retry, harness and pipeline lanes moved to `api.chat_turn_workflow`; the route keeps request capture, auth, busy SSE/409, SSE framing and `jsonify`.
+9. **Chat-turn owners (Phase 4)** — `api.chat_coordinator` (shared submit), `api.chat_turn_workflow` (lane orchestration), `api.chat_turn_persist` (savers), `api.chat_turn` (seam); the root composes them.
 
 What stays in the root until product work says otherwise: the Flask `app`,
 HTML/static shells, `/api/chat` + `process_message_with_bot` ingress, SSE
-pump framing, steer/cancel transport, restart/status/health, and the
+pump framing, steer/cancel transport, status/health, and the
 remaining grab-bag product HTTP above. Do not extract “a thousand lines”
 without a failing product reason and a dedicated PR series.
 

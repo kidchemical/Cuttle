@@ -369,6 +369,14 @@ arguments or injected host interfaces):
 | `chat_action_cards.js` (`CuttleChatActionCards`) | card-effects controller: `mountCards(root, host)` validates an explicit chat root plus required host capabilities (throws otherwise) and composes one instance per root; card mount/submission/dismissal, lock/progress DOM effects, watch/restart loops, choice storage, adoption and linked-restart recovery; one explicit lifetime record per mount (signal-bound listeners, abortable fetches, cancellable waits, token-guarded continuations), one root-scoped observer plus dispose/destroy lifecycle (moves within root preserved, removal equals explicit disposal, re-mount installs a fresh lifetime); restart scans scoped to the owning root, discord followup coalesced through one controller-owned in-flight write per logical followup with the storage ack recorded only after confirmed server persistence (coalescing holds within the controller lifetime only; cross-reload delivery stays ambiguous — no durable pre-request claim, server-side idempotency separately owned) | send lanes, history panel, composer, message transport, session/project/auth context (all arrive as explicit host capabilities incl. deferred storage triple; never page scope) |
 | `supervised_control.js` (`CuttleSupervised`) | supervised activity-card presentation model (pure phase/jump labels, activity state, disclosure/live-indicator/copy-strip markup, control-lane classification) plus `createController(host)`, one per chat root: canonical-bubble upsert + content decision, disclosure/typed-control wiring, control-lane dispatch, jump notification + ack store, off-screen task indicator and canonical-bubble observer — all state (jump ack, observer, last task, in-flight control/dispatch keys) owned here | thin delegating call sites, DOM/transport/session effects injected via host (`win`, `formatMessage`, `stripLegacyAgentChrome`, `activateEnhancements`, `currentSession`/`sessionIdsEqual`/`toAuthDbSessionId`, `fetch`, `toast`, `copyTextToClipboard`, `addUserMessage`, `autoScroll`, `processMessage`) |
 | `chat_usage_live.js` (`CuttleUsageLive`) | `render(text, format)` is pure; `createBroker(host)` owns coalesced fetch + refresh timers via `host`, but `start(format)` reads `root.document`/`window` directly (`MutationObserver`, scroll/visibility/resize listeners, `innerHTML` paint) and caches the broker on `host.__cuttleUsageLiveBroker` — the page does not own its scheduler | `usage_live_bp` API (`api.usage_live`) |
+| `chat_session.js` (`CuttleChatSession`) | the **only writer** of session identity (`open`/`adopt`/`create`; readers use `current()`/`navSeq()`), plus `createLifecycle`/`createLoader`/`createSessionBoot` (loadChatSession, createNewChat, bootRestoreSession, adoptChatSessionId, saveChatSession) — pure state machine + injected `host` | session-identity call sites, transport/paint, `_loadSessionSeq` navigation semantics via the owner |
+| `chat_history_panel.js` (`CuttleChatHistoryPanel`) over pure `chat_history_view.js` / `chat_history_archive.js` | persisted collapse/expand prefs, reveal counts, DOM toggles, grouped repaint, row/menu/rename/delete modals; pure grouping/nesting/search-rank algorithms and markup live in the view/archive modules | history DOM host, project grouping call sites, search/filter state |
+| `chat_agent_controls.js` (`CuttleChatAgentControls`) over pure `chat_agent_model.js` | model/effort palette loaders + builders, persistence/seed/gate decisions, label/repaint/badge enrichment, send-identity, capability and starred-default families for all six providers (Cursor, Muse, Hermes, OpenCode, Codex, Claude); pure decisions in `chat_agent_model` | palette integration call sites, composer chip rendering; `/api/<id>/{models,model,effort}` contract unchanged |
+| `chat_slash_palette.js` (`CuttleChatSlashPalette`) over pure `chat_slash.js` | slash-menu DOM, keyboard, filtering effects and lifecycle (applySlashSelectionInner, renderSlashMenu/Chips, dismiss state) | composer dispatch, sticky/slash chip send path |
+| `chat_context_gauge.js` (`CuttleChatContextGauge`) | context-gauge token counting, thresholds and bar paint | gauge mount call site, `_agentContextStatus` reads |
+| `chat_project.js` (`CuttleChatProject`) + `chat_worktrees.js` (`CuttleChatWorktrees`) + `chat_chip_config.js` (`CuttleChipConfig`) | chat project binding (cwd, pending changes, git push menu via `CuttleGitPushReport`), worktree badge, project/branch chip config | page project reconciliation + shell report; git push transport |
+| `chat_composer.js` / `chat_attachments.js` / `chat_prompt_history.js` | composer drafts + shared-agent selection, pending attachments, prompt history/enhance | composer DOM, send path, upload transport |
+| `chat_stream_transport.js` (`CuttleChatStreamTransport`) | pure status-poll pre/post gate, connecting-watchdog decisions, pool-stall target resolution, typing-status update (no DOM/fetch/timers); `chat_stream` stays the only SSE decoder | status-poll/watchdog timers, live-status fetch, DOM paint |
 
 `chat_usage.js` (`CuttleChatUsage`) owns pure per-turn usage normalization,
 cache convention interpretation and footer markup. The page delegates rendering;
@@ -417,14 +425,28 @@ permission workflow; Experimental owns only the rollout flag. No background
 push service is added. Runbook: `.cuttle/docs/completion-notifications.md`.
 
 **Spaces:** `src/web/js/spaces/` (`CuttleSpaces.*`: state, groups, order,
-activity, drop); the shell owns the singleton, DOM, frames, and
-persistence effects.
+activity, drop); the shell UI controller is `shell/shell_spaces.js`
+(`CuttleShellSpaces`) — tab strip, drag/drop, group menus; the shell owns the
+singleton, DOM, frames, and persistence effects.
+
+**Shell frontend ownership (Phase 5):** `app_shell.js` composes these owners
+(loaded before it):
+
+| Owner | Owns | Shell keeps |
+|---|---|---|
+| `shell/shell_panes.js` (`CuttleShellPanes`) | pane lifecycle: frame creation, navigation/back-stack, history, teardown, cross-pane hubs (5B) | pane maps (`columnState`, `paneSessionByColumn`), layout persistence |
+| `shell/shell_spaces.js` (`CuttleShellSpaces`) over `spaces/*` | Spaces tab-strip UI, drag/drop, group menus (5C) | singleton, frame fan-out, persistence |
+| `shell/shell_rail.js` (`CuttleShellRail`) | rail customization, apps list, edit mode, jobs/mesh chip split (5E) | `getAppsList` global delegate, pane-mount re-apply |
+| `shell/shell_electron.js` (`CuttleShellElectron`) | Electron titlebar chrome, zoom HUD + per-frame zoom binder (5F) | zoom postMessage forwarding, space-menu hide scheduling |
+| `shell/shell_mobile.js` | mobile-client detection, LAN APK update rail/modal, SSH approval modal (5F) | shared click handler, account-panel sync, frame-retry spine |
 
 **Pane tree (not yet separated):** `snapshotLayoutTree` serializes the
 layout from the live DOM while reading shell maps (`columnState`,
 `lastChatByColumn`, `pageWithPaneSession`); `flattenLayoutLeaves` is
 nearby in `app_shell.js`. There is no standalone pure pane-tree module —
-E1 kept this boundary after task-local review and real layout fences; E2 was skipped without a demonstrated extraction benefit.
+E1 kept this boundary after task-local review and real layout fences; E2 was skipped without a demonstrated extraction benefit. Pane *lifecycle*
+(5B) is owned by `shell/shell_panes.js`; the layout tree (5A) stays with the
+shell as recorded above.
 
 Streaming lifecycle fixes belong in the lifecycle/state owners plus
 page adapters/tests — not in unrelated page regions. Deferred, still

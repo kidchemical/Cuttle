@@ -492,6 +492,151 @@ def test_api_import_graph_acyclic():
     assert not cycles, f"module-level import cycles in src/api: {cycles}"
 
 
+# --------------------------------------------------------------------------
+# Phase 6/7 route-family owners: the Flask composition root delegates to these
+# modules. Two contracts, both structural (no route bodies re-sliced):
+#   1. No inline ``@app.route`` for a moved family remains on the monolith, and
+#      each owner defines its blueprint and is registered by the monolith.
+#   2. Every owner module is inside the scanned, acyclic ``src/api`` graph and
+#      never imports the monolith back (the direction rule, per owner).
+# --------------------------------------------------------------------------
+
+# (owner module rel path, blueprint attribute, forbidden inline route prefixes)
+PHASE7_ROUTE_OWNERS = (
+    ("src/api/flask_restart.py", "flask_restart_bp", ("/api/flask/restart",)),
+    ("src/api/shared_media.py", "shared_media_bp", ("/api/shared-media",)),
+    ("src/api/mobile_companion.py", "mobile_companion_bp", ("/api/mobile/",)),
+    (
+        "src/api/agent_router/supervised/routes.py",
+        "supervised_bp",
+        ("/api/supervised/",),
+    ),
+    (
+        "src/api/agent_router/routes.py",
+        "agent_router_bp",
+        ("/api/router", "/api/agent-router"),
+    ),
+    (
+        "src/api/agent_harness/routes.py",
+        "agent_harness_bp",
+        ("/api/agent-context", "/api/agents", "/api/agent-defaults"),
+    ),
+    (
+        "src/api/settings_routes.py",
+        "provider_keys_bp",
+        ("/api/test-api-key", "/api/save-api-key", "/api/load-api-keys"),
+    ),
+    (
+        "src/api/agent_harness/agents/muse/routes.py",
+        "muse_bp",
+        ("/api/muse",),
+    ),
+    (
+        "src/api/agent_harness/agents/hermes/routes.py",
+        "hermes_bp",
+        ("/api/hermes",),
+    ),
+    (
+        "src/api/agent_harness/agents/codex/routes.py",
+        "codex_bp",
+        ("/api/codex",),
+    ),
+    (
+        "src/api/agent_harness/agents/opencode/routes.py",
+        "opencode_bp",
+        ("/api/opencode",),
+    ),
+    (
+        "src/api/agent_harness/agents/cursor/routes.py",
+        "cursor_bp",
+        ("/api/cursor-agent",),
+    ),
+    ("src/api/auth_api.py", "pairing_bp", ("/api/pairing/",)),
+)
+
+# Non-route backend owners the refactor moved behavior into (Phase 4/6):
+# they must stay inside the acyclic scan and never import the monolith.
+PHASE7_BACKEND_OWNERS = (
+    "src/api/chat_coordinator.py",
+    "src/api/chat_turn.py",
+    "src/api/chat_turn_workflow.py",
+    "src/api/chat_turn_persist.py",
+    "src/api/chat_delivery.py",
+    "src/api/chat_live_status.py",
+    "src/api/chat_status.py",
+    "src/api/chat_run_registry.py",
+)
+
+
+def _inline_app_route_paths(tree: ast.AST) -> set:
+    """Literal paths passed to ``@app.route(...)`` in a module."""
+    paths = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for dec in node.decorator_list:
+            if (
+                isinstance(dec, ast.Call)
+                and isinstance(dec.func, ast.Attribute)
+                and dec.func.attr == "route"
+                and isinstance(dec.func.value, ast.Name)
+                and dec.func.value.id == "app"
+                and dec.args
+                and isinstance(dec.args[0], ast.Constant)
+                and isinstance(dec.args[0].value, str)
+            ):
+                paths.add(dec.args[0].value)
+    return paths
+
+
+def _matches_prefix(path: str, prefix: str) -> bool:
+    return path == prefix or path.startswith(prefix + "/")
+
+
+def test_phase7_route_families_delegate_to_owners():
+    """No moved route family stays inline; each owner defines + is registered."""
+    monolith = _parse_production(REPO_ROOT / "src/api/web_chat_api.py")
+    inline = _inline_app_route_paths(monolith)
+    monolith_src = (REPO_ROOT / "src/api/web_chat_api.py").read_text(
+        encoding="utf-8"
+    )
+    for rel, bp_attr, prefixes in PHASE7_ROUTE_OWNERS:
+        leftover = sorted(
+            p for p in inline if any(_matches_prefix(p, pre) for pre in prefixes)
+        )
+        assert not leftover, (
+            f"{rel} owns {prefixes} but the monolith still defines inline "
+            f"routes {leftover}; delegate to the {bp_attr} blueprint instead."
+        )
+        owner = _parse_production(REPO_ROOT / rel)
+        assert any(
+            isinstance(n, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == bp_attr
+                for t in n.targets
+            )
+            for n in ast.walk(owner)
+        ), f"{rel} must define blueprint {bp_attr}"
+        assert f"register_blueprint({bp_attr})" in monolith_src, (
+            f"monolith must register {bp_attr} from {rel}"
+        )
+
+
+def test_phase7_owner_modules_are_scanned_and_never_reverse_import():
+    """Each owner is in the acyclic graph and points away from the monolith."""
+    mods, _medges, _ = _scan_root(API_ROOT)
+    rels = [r for r, _bp, _pfx in PHASE7_ROUTE_OWNERS] + list(
+        PHASE7_BACKEND_OWNERS
+    )
+    for rel in rels:
+        module = rel[len("src/") : -len(".py")].replace("/", ".")
+        assert module in mods, f"{rel} is outside the acyclic scan"
+        tree = _parse_production(REPO_ROOT / rel)
+        assert not list(_web_chat_api_refs(tree)), (
+            f"{rel} must not import the monolith (direction rule)"
+        )
+
+
 def test_compat_entry_submits_through_coordinator(monkeypatch):
     """sessions_send-style entry reaches submit_agent_turn unclaimed (runtime)."""
     from api import web_chat_api as wca
