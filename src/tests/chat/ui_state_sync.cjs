@@ -5,6 +5,7 @@ const asset = name => require(path.join(root, 'src/web/js', name));
 const P = asset('shared/session_prefs.js'), T = asset('chat/chat_mutations.js');
 const A = asset('chat/chat_activity.js'), Q = asset('chat/chat_followup_queue.js');
 const Attention = asset('chat/chat_attention.js'), Broker = asset('shared/activity_broker.js');
+const CuttleChatSession = asset('chat/chat_session.js');
 const source = fs.readFileSync(path.join(root, 'src/web/js/chat/chat_page.js'), 'utf8');
 function fn(name) {
     const start = source.search(new RegExp('    (?:async )?function ' + name + '\\('));
@@ -17,7 +18,22 @@ function storage() {
     return {getItem:k=>data.get(k) || null, setItem:(k,v)=>data.set(k,v),
         get length(){return data.size;}, key:i=>[...data.keys()][i]};
 }
-function context(host) { return vm.createContext({followupWriteField:"followupWrite",followupClaimField:"followupClaim",...host, console:{warn(){}}}); }
+function context(host) {
+    // Session identity is owned by chat_session.js in production; the sliced
+    // page functions read session.current(). Bridge the host's plain
+    // `currentSessionId` variable onto the owner so host assignments keep
+    // working (and are seen by the page's accessor reads).
+    const session = CuttleChatSession.create();
+    if (host.currentSessionId != null) session.adopt(host.currentSessionId);
+    const sandbox = {followupWriteField:"followupWrite",followupClaimField:"followupClaim",...host, console:{warn(){}}};
+    Object.defineProperty(sandbox, 'currentSessionId', {
+        enumerable: true, configurable: true,
+        get() { return session.current(); },
+        set(v) { session.adopt(v); },
+    });
+    sandbox.session = session;
+    return vm.createContext(sandbox);
+}
 function run(host, code) { return vm.runInContext(code, host); }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 

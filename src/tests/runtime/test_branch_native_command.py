@@ -16,6 +16,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat" / "chat_slash.js"
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat" / "chat_page.js"
+GIT_PUSH_JS = REPO_ROOT / "src" / "web" / "js" / "git" / "git_push_report.js"
 WEB_API = REPO_ROOT / "src" / "api" / "web_chat_api.py"
 
 requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
@@ -160,4 +161,5 @@ def test_project_chip_is_segmented_with_branch():
     assert "slash-chip-seg--branch" in chip
     assert "currentProjectBranch()" in chip
     assert "currentProjectBranch" in src
-    assert "/api/git/repos?" in src
+    # 3E pt2: the repo-list fetch moved to the git push owner.
+    assert "/api/git/repos?" in GIT_PUSH_JS.read_text(encoding="utf-8")

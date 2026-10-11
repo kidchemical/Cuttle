@@ -15,11 +15,16 @@ from __future__ import annotations
 from pathlib import Path
 
 CHAT_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
+SESSION_JS = CHAT_JS.parent / "chat_session.js"
 MOD_GEN = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_generation.js"
 
 
 def _src() -> str:
     return CHAT_JS.read_text(encoding="utf-8")
+
+
+def _session_src() -> str:
+    return SESSION_JS.read_text(encoding="utf-8")
 
 
 def _fn_body(src: str, name: str) -> str:
@@ -68,9 +73,11 @@ def test_detach_keeps_left_chat_history_spinner():
 
 def test_load_session_clears_destination_spinner_until_live_status():
     """Opened chat defaults idle; stale runningSessionIds must not flash title."""
-    body = _fn_body(_src(), "async function loadChatSession")
+    # 3B step 3 moved loadChatSession into chat_session.js (CuttleChatSession
+    # .createLoader); the page keeps a thin call site. Assert against the owner.
+    body = _fn_body(_session_src(), "async function loadChatSession")
     assert "switchingAway" in body
-    assert "hubLiveStatusCache = null" in body
+    assert "setHubLiveStatusCache(null)" in body
     assert "setHistorySessionRunning(sessionId, false)" in body
     assert "fetchChatLiveStatus" in body
     # One-shot sessions apply is fine; must not bump the poll interval constant.
@@ -83,9 +90,9 @@ def test_sessions_generating_does_not_rearm_open_chat():
     assert "let deferOpenChatGeneratingFromSessions = false" in src
     body = _fn_body(src, "function applyGeneratingFlagsFromSessions")
     assert "deferOpenChatGeneratingFromSessions" in body
-    load = _fn_body(src, "async function loadChatSession")
-    assert "deferOpenChatGeneratingFromSessions = true" in load
-    assert "deferOpenChatGeneratingFromSessions = false" in load
+    load = _fn_body(_session_src(), "async function loadChatSession")
+    assert "setDeferOpenChatGeneratingFromSessions(true)" in load
+    assert "setDeferOpenChatGeneratingFromSessions(false)" in load
 
 
 def test_poll_intervals_unchanged():

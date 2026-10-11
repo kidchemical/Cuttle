@@ -23,6 +23,7 @@ node_only = pytest.mark.skipif(
 )
 
 CHAT_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
+SESSION_JS = CHAT_JS.parent / "chat_session.js"
 COMPOSER_JS = CHAT_JS.parent / "chat_composer.js"
 
 
@@ -239,8 +240,11 @@ def test_load_and_new_chat_force_restore_destination_draft():
     the textarea.
     """
     src = CHAT_JS.read_text(encoding="utf-8")
-    load_chunk = _fn_chunk(src, "async function loadChatSession", 25000)
-    create_chunk = _fn_chunk(src, "async function createNewChat", 4000)
+    # 3B step 3 moved loadChatSession, and step 4 moved createNewChat, into
+    # chat_session.js; assert the moved bodies on the owner, the splash path
+    # stays in the page.
+    load_chunk = _fn_chunk(SESSION_JS.read_text(encoding="utf-8"), "async function loadChatSession", 25000)
+    create_chunk = _fn_chunk(SESSION_JS.read_text(encoding="utf-8"), "async function createNewChat", 4000)
     splash_chunk = _fn_chunk(src, "function showWelcomeSplash", 1200)
 
     assert "restoreComposerDraft(" in load_chunk

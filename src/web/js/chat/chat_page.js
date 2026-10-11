@@ -347,8 +347,8 @@
     }
 
     function toggleCurrentChatStar(event) {
-        if (currentSessionId == null || currentSessionId === '') return;
-        return toggleStarChatSession(currentSessionId, event);
+        if (session.current() == null || session.current() === '') return;
+        return toggleStarChatSession(session.current(), event);
     }
 
     async function toggleCurrentChatStarFromMenu(event) {
@@ -368,7 +368,7 @@
         }
         if (sessionId == null || sessionId === '') return;
         markChatSessionUnread(sessionId, {manual: true});
-        if (currentSessionId != null && sessionIdsEqual(currentSessionId, sessionId)) {
+        if (session.current() != null && sessionIdsEqual(session.current(), sessionId)) {
             _manualUnreadHoldId = String(sessionId);
             // Title green dot until click/type; prefs flag survives leave → reopen.
             chatNeedsAck = true;
@@ -384,64 +384,39 @@
     }
 
     function markCurrentSessionUnreadFromMenu(event) {
-        if (currentSessionId == null || currentSessionId === '') return;
-        return markSessionUnreadManual(currentSessionId, event);
+        if (session.current() == null || session.current() === '') return;
+        return markSessionUnreadManual(session.current(), event);
     }
-
-    let _gitPushInFlight = false;
-    let _gitReposCache = { path: '', repos: [], at: 0 };
 
     function currentProjectPathKey() {
         // Git/branch scope: the bound worktree checkout, else the project path.
         return effectiveGitPath();
     }
 
-    /** Sync known repos for the current project (cache or pending-changes panel). */
-    function knownProjectGitRepos() {
-        const path = currentProjectPathKey();
-        if (!path) return null;
-        const now = Date.now();
-        if (
-            _gitReposCache.path === path
-            && (now - _gitReposCache.at) < 15000
-            && Array.isArray(_gitReposCache.repos)
-        ) {
-            return _gitReposCache.repos;
-        }
-        if (pendingChangesCtl && typeof pendingChangesCtl.getRepos === 'function') {
-            const fromPanel = pendingChangesCtl.getRepos() || [];
-            if (fromPanel.length) {
-                _gitReposCache = { path, repos: fromPanel, at: now };
-                return fromPanel;
+    // Git push menu + action owner: the menu HTML/mode, repo cache, multi-repo
+    // submenu, confirm modal and push transport live in git/git_push_report.js
+    // (CuttleGitPushReport). The page supplies project identity, the
+    // pending-changes repo snapshot and DOM/toast/close effects as explicit
+    // host capabilities; the inline-handler wiring below stays page-side.
+    const gitPush = CuttleGitPushReport.create({
+        getProjectPath: function () { return currentProjectPathKey(); },
+        getPendingRepos: function () {
+            if (pendingChangesCtl && typeof pendingChangesCtl.getRepos === 'function') {
+                return pendingChangesCtl.getRepos() || [];
             }
-        }
-        return null;
-    }
-
-    async function fetchProjectGitRepos(force) {
-        const path = currentProjectPathKey();
-        if (!path) return [];
-        if (!force) {
-            const known = knownProjectGitRepos();
-            if (known) return known;
-        }
-        try {
-            const qs = new URLSearchParams();
-            qs.set('path', path);
-            const resp = await fetch('/api/git/repos?' + qs.toString(), {
-                credentials: 'include',
-                cache: 'no-store',
-            });
-            const data = await resp.json().catch(() => null);
-            const repos = (data && data.success && Array.isArray(data.repos))
-                ? data.repos
-                : [];
-            _gitReposCache = { path, repos, at: Date.now() };
-            return repos;
-        } catch (_) {
-            return _gitReposCache.path === path ? (_gitReposCache.repos || []) : [];
-        }
-    }
+            return [];
+        },
+        getCurrentProject: function () { return currentProject; },
+        closeMenus: function () { closeAllSessionMenus(); },
+        escapeHtmlInline: escapeHtmlInline,
+        toast: function () {
+            const t = window.showToast;
+            if (typeof t === 'function') return t.apply(window, arguments);
+        },
+        closeToast: function (id) {
+            if (typeof window.closeCuttleToast === 'function') window.closeCuttleToast(id);
+        },
+    });
 
     // Branch shown on the segmented project chip (star | name | branch).
     // Cache + fetch live in chat_chip_config.js (branchFor / refreshBranch).
@@ -452,201 +427,6 @@
     /** Refresh the project chip branch (cached ~15s). Re-renders when it changes. */
     function refreshProjectBranch(force) {
         return CuttleChipConfig.refreshBranch(currentProjectPathKey(), renderProjectChips, force);
-    }
-
-    async function pushCurrentChatProject(event, repoRoot) {
-        if (event) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
-        closeAllSessionMenus();
-        const toast = window.showToast || function () {};
-        if (_gitPushInFlight) {
-            toast('Git push already in progress…', 'info');
-            return;
-        }
-        const path = currentProject && currentProject.path
-            ? String(currentProject.path)
-            : '';
-        const projectId = currentProject && currentProject.id != null
-            ? currentProject.id
-            : null;
-        if (!path && projectId == null) {
-            toast('No project selected', 'error');
-            return;
-        }
-
-        const repos = await fetchProjectGitRepos(true);
-        const wantRoot = repoRoot ? String(repoRoot).replace(/\\/g, '/').toLowerCase() : '';
-        let info = null;
-        if (wantRoot && Array.isArray(repos)) {
-            info = repos.find(function (r) {
-                const root = String((r && r.repo_root) || '').replace(/\\/g, '/').toLowerCase();
-                return root === wantRoot;
-            }) || null;
-        }
-        if (!info && Array.isArray(repos) && repos.length === 1) info = repos[0];
-        const projectName = (currentProject && currentProject.name)
-            ? String(currentProject.name)
-            : 'this project';
-        const repoName = (info && (info.repo || info.label))
-            ? String(info.repo || info.label)
-            : 'the remote';
-        const remoteName = (info && info.remote) ? String(info.remote) : 'origin';
-        const branchName = (info && info.branch) ? String(info.branch) : 'HEAD';
-        const confirmMsg = 'Are you sure you want to push '
-            + projectName
-            + ' to '
-            + repoName
-            + ' '
-            + remoteName
-            + ' '
-            + branchName
-            + '?';
-        const accepted = await confirmGitPushModal(confirmMsg);
-        if (!accepted) return;
-
-        _gitPushInFlight = true;
-        const name = projectName;
-        const repoLabel = repoRoot
-            ? String(repoRoot).replace(/\\/g, '/').split('/').filter(Boolean).pop()
-            : '';
-        const closePushProgress = function () {
-            try {
-                if (typeof window.closeCuttleToast === 'function') window.closeCuttleToast('git-push');
-            } catch (_) {}
-        };
-        toast('Pushing ' + (repoLabel || name) + '…', 'info', {
-            toastId: 'git-push',
-            sticky: true,
-            progress: true,
-            skipHistory: true
-        });
-        try {
-            const body = {};
-            if (path) body.path = path;
-            if (projectId != null) body.project_id = projectId;
-            if (repoRoot) body.repo_root = String(repoRoot);
-            const resp = await fetch('/api/git/push', {
-                method: 'POST',
-                credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            const data = await resp.json().catch(() => ({}));
-            if (!resp.ok || !data.success) {
-                if (data.push_report && window.CuttleGitPushReport) window.CuttleGitPushReport.show(data.push_report, {projectPath: path || data.repo_root, repoRoot: data.repo_root});
-                let err = String(
-                    (data && (data.error || data.message))
-                    || ('Git push failed (' + resp.status + ')')
-                ).trim();
-                err = err.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || err;
-                if (err.length > 220) err = err.slice(0, 217) + '…';
-                closePushProgress();
-                toast(err, 'error');
-                return;
-            }
-            const branch = data.branch ? String(data.branch) : '';
-            const remote = data.remote ? String(data.remote) : '';
-            const output = String(data.output || '');
-            let okMsg = data.message || 'Push successful';
-            if (/everything up-to-date/i.test(output)) {
-                okMsg = branch ? (branch + ' already up to date') : 'Already up to date';
-            } else if (branch && remote) {
-                okMsg = 'Pushed ' + branch + ' → ' + remote;
-            } else if (branch) {
-                okMsg = 'Pushed ' + branch;
-            }
-            // Single-repo projects don't need the repo prefix; the outcome
-            // reuses the progress toast id so it swaps in place (one toast,
-            // one history entry per push).
-            if (repoLabel && Array.isArray(repos) && repos.length > 1) okMsg = repoLabel + ': ' + okMsg;
-            closePushProgress();
-            toast(okMsg, 'success', { toastId: 'git-push' });
-        } catch (err) {
-            closePushProgress();
-            toast((err && err.message) || 'Git push failed', 'error');
-        } finally {
-            _gitPushInFlight = false;
-        }
-    }
-
-    /** Caret / submenu only when the project has more than one git repo. */
-    function gitPushIsMultiRepo(repos) {
-        return Array.isArray(repos) && repos.length > 1;
-    }
-
-    function applyGitPushMenuMode(wrap, multi) {
-        if (!wrap) return;
-        const trigger = wrap.querySelector('[data-git-push-trigger]');
-        if (!trigger) return;
-        let caret = trigger.querySelector('.chat-chrome-menu-caret');
-        if (multi) {
-            wrap.setAttribute('data-git-push-multi', '1');
-            trigger.setAttribute('aria-haspopup', 'true');
-            if (!caret) {
-                caret = document.createElement('span');
-                caret.className = 'chat-chrome-menu-caret';
-                caret.setAttribute('aria-hidden', 'true');
-                caret.textContent = '▸';
-                trigger.appendChild(caret);
-            }
-        } else {
-            wrap.removeAttribute('data-git-push-multi');
-            trigger.removeAttribute('aria-haspopup');
-            trigger.setAttribute('aria-expanded', 'false');
-            if (caret) caret.remove();
-            const submenu = wrap.querySelector('[data-git-push-submenu]');
-            if (submenu) {
-                submenu.innerHTML = '';
-                submenu.hidden = true;
-            }
-        }
-    }
-
-    function gitPushMenuHtml(icons) {
-        const known = knownProjectGitRepos();
-        const multi = gitPushIsMultiRepo(known);
-        return (
-            '<div class="chat-chrome-menu-item-wrap is-git-push" data-git-push-wrap="1"'
-            + (multi ? ' data-git-push-multi="1"' : '')
-            + '>'
-            + '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-            + ' title="Git push" aria-label="Git push"'
-            + (multi ? ' aria-haspopup="true" aria-expanded="false"' : '')
-            + ' data-git-push-trigger="1"'
-            + (_gitPushInFlight ? ' aria-disabled="true"' : '')
-            + '>'
-            + icons.gitPush
-            + '<span class="chat-chrome-menu-item-label">Git push</span>'
-            + (multi
-                ? '<span class="chat-chrome-menu-caret" aria-hidden="true">▸</span>'
-                : '')
-            + '</button>'
-            + '<div class="chat-chrome-menu-submenu" data-git-push-submenu="1" hidden role="menu"></div>'
-            + '</div>'
-        );
-    }
-
-    /** After menu HTML lands, refresh repo count and show/hide the caret. */
-    function refreshGitPushMenuMode(rootEl) {
-        const wraps = rootEl
-            ? rootEl.querySelectorAll('[data-git-push-wrap]')
-            : document.querySelectorAll('[data-git-push-wrap]');
-        if (!wraps.length) return;
-        const known = knownProjectGitRepos();
-        if (known) {
-            const multi = gitPushIsMultiRepo(known);
-            wraps.forEach((wrap) => applyGitPushMenuMode(wrap, multi));
-            return;
-        }
-        fetchProjectGitRepos(false).then((repos) => {
-            const multi = gitPushIsMultiRepo(repos);
-            wraps.forEach((wrap) => {
-                if (!wrap.isConnected) return;
-                applyGitPushMenuMode(wrap, multi);
-            });
-        }).catch(() => {});
     }
 
     function copyTextToClipboard(text) {
@@ -690,14 +470,18 @@
     }
 
     async function copyChatIdBadge() {
-        return copyChatSessionId(currentSessionId, null);
+        return copyChatSessionId(session.current(), null);
     }
 
     // State Management
-    let currentSessionId = null;
+    // Session identity and its navigation sequence are owned by
+    // chat_session.js (CuttleChatSession) — the only writer. Reads go through
+    // session.current(); every identity change goes through
+    // session.open/adopt/create. See chat_session.js.
+    const session = CuttleChatSession.create();
     if (window.CuttleChatVfx) {
         const vfxController = window.CuttleChatVfx.create({
-            getSessionId: () => currentSessionId,
+            getSessionId: () => session.current(),
             fetch: window.fetch.bind(window), now: Date.now,
             setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window),
             confetti: window.CuttleChatVfx.confetti,
@@ -747,7 +531,7 @@
 
     const chatWidgetsCtrl = (window.CuttleTaskGizmos && typeof window.CuttleTaskGizmos.create === 'function')
         ? window.CuttleTaskGizmos.create({
-            getSessionId: function () { return currentSessionId; },
+            getSessionId: function () { return session.current(); },
             getProjectPath: function () {
                 return (currentProject && currentProject.path) ? String(currentProject.path) : '';
             },
@@ -787,7 +571,13 @@
     // Message-sync claim lifetime, owned by CuttleChatGeneration (D2b):
     // one page-held state; claim, current-token test, and token-scoped
     // finish all go through the owner. Navigation fencing still uses the
-    // existing _loadSessionSeq captured per sync below.
+    // existing navigation sequence captured per sync below.
+    // 3C (message sync) KEPT page-side after the post-3B review: session
+    // identity is owned by chat_session.js and every sync decision already
+    // has an owner (cadence + claim/replacement in chat_generation.js,
+    // replay classification in chat_pending_result.js, windowing/page-meta
+    // in chat_messages.js). Only the timer handle + DOM reconciliation
+    // effects remain, which the page owns; see monolith-refactor-plan.md §3C.
     const messageSync = CuttleChatGeneration.createSyncState();
     // Stop/cancel lifecycle flags { userStopped, abortSuppressed,
     // waitingSuppressed }, owned by chat_stop_state.js. One instance;
@@ -839,14 +629,14 @@
     function _pendingKey(sid) { return `cuttle.pendingAttachments.${sid || 'anon'}`; }
     function _savePendingAttachments() {
         try {
-            if (!currentSessionId) return;
-            localStorage.setItem(_pendingKey(currentSessionId), JSON.stringify(pendingAttachments));
+            if (!session.current()) return;
+            localStorage.setItem(_pendingKey(session.current()), JSON.stringify(pendingAttachments));
         } catch {}
     }
     function _restorePendingAttachments() {
         try {
-            if (!currentSessionId) return;
-            const raw = localStorage.getItem(_pendingKey(currentSessionId));
+            if (!session.current()) return;
+            const raw = localStorage.getItem(_pendingKey(session.current()));
             if (raw) pendingAttachments = JSON.parse(raw) || [];
         } catch {}
         renderAttachmentChips();
@@ -918,7 +708,7 @@
     }
 
     function saveComposerDraft(sid, composerKey) {
-        const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
+        const keySid = sid != null && sid !== '' ? sid : (session.current() || 'new');
         saveComposerDraftControls(keySid, composerKey);
         try {
             // Owned by chat_composer.js — whitespace/empty + clip decision.
@@ -933,13 +723,13 @@
         } catch (_) {}
     }
     function clearComposerDraft(sid) {
-        const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
+        const keySid = sid != null && sid !== '' ? sid : (session.current() || 'new');
         try { localStorage.removeItem(_draftKey(keySid)); } catch (_) {}
         updateSessionPrefs(keySid === 'new' ? newComposerPrefsId : keySid, { composerDraft: null });
     }
     function restoreComposerDraft(sid, opts = {}) {
         const force = !!(opts && opts.force);
-        const keySid = sid != null && sid !== '' ? sid : (currentSessionId || 'new');
+        const keySid = sid != null && sid !== '' ? sid : (session.current() || 'new');
         restoreComposerDraftControls(keySid);
         composerDraftControlsReady = true;
         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
@@ -1019,8 +809,8 @@
     function isSessionGenerating() {
         if (isLoadingThisSession()) return true;
         if (document.getElementById('typing-indicator-remote')) return true;
-        if (currentSessionId == null) return false;
-        return [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId));
+        if (session.current() == null) return false;
+        return [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current()));
     }
 
     /** Welcome splash composer — processMessage disables it for first-turn-only. */
@@ -1364,8 +1154,8 @@
             hasTrackedTurn: !!inFlightUserMessage,
             replyOnScreen: turnAlreadyShowsAssistantReply(),
             hasRemoteWait: !!document.getElementById('typing-indicator-remote'),
-            sessionRunning: currentSessionId != null
-                && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId)),
+            sessionRunning: session.current() != null
+                && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current())),
             queueLength: followupQueue.items.length,
         });
         if (decision.kind === 'finish') {
@@ -1374,7 +1164,7 @@
         }
         if (decision.kind === 'clear-remote') {
             removeRemoteWaitingIndicator();
-            if (currentSessionId) setHistorySessionRunning(currentSessionId, false);
+            if (session.current()) setHistorySessionRunning(session.current(), false);
             const stopButton = document.getElementById('stopButton');
             if (stopButton) {
                 stopButton.disabled = true;
@@ -1467,7 +1257,7 @@
     }
 
     function clearPendingAttachments() {
-        const sid = currentSessionId;
+        const sid = session.current();
         pendingAttachments = [];
         if (sid) _clearPersistedPending(sid);
         renderAttachmentChips();
@@ -1510,7 +1300,7 @@
     function inferAttachmentsFromContent(content) {
         return CuttleChatAttachments.inferAttachmentsFromContent({
             content,
-            sessionId: currentSessionId,
+            sessionId: session.current(),
         });
     }
 
@@ -1576,7 +1366,7 @@
         const files = Array.from(fileList || []).filter(Boolean);
         if (!files.length) return;
         const form = new FormData();
-        form.append('session_id', authSessionIdForRequest() || currentSessionId || 'anon');
+        form.append('session_id', authSessionIdForRequest() || session.current() || 'anon');
         for (const f of files) form.append('files', f, f.name);
         const resp = await fetch('/api/upload', {
             method: 'POST',
@@ -1780,6 +1570,8 @@
 
     const sessionPrefsStore = CuttleSessionPrefs.create(localStorage);
     const sessionMutations = CuttleChatMutations.create();
+    // Server attention persistence + history/title DOM projection. The page
+    // injects its capabilities; the controller never reads page globals.
     const serverAttention = CuttleChatAttention.create({
         prefs: sessionPrefsStore,
         id: () => Date.now() + ':' + Math.random().toString(36).slice(2),
@@ -1792,6 +1584,30 @@
             return response.json();
         },
         changed: () => { syncHistoryUnreadIndicators(); scheduleChatActivityBroadcast(); },
+        // ---- history/title projection capabilities ----
+        doc: document,
+        escapeHtmlInline,
+        sessionIdsEqual,
+        openPaneSnapshot: () => localOpenPanes,
+        sessionObjFor: (sid) => {
+            if (isAuthMode()) return findAuthServerSession(sid);
+            try {
+                const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
+                return sessions[sid] || null;
+            } catch (_) {
+                return null;
+            }
+        },
+        attentionKindFor: (sid, sessionObj) => sessionHistoryAttentionKind(sid, sessionObj),
+        sessionShowsHistorySpinner: (sid) => sessionShowsHistorySpinner(sid),
+        syncSubagentAttention: () => historyPanel.syncHistorySubagentAttention(),
+        scheduleBroadcast: () => scheduleChatActivityBroadcast(),
+        currentSessionId: () => session.current(),
+        attentionPrefsFor,
+        attentionActive: () => chatAttentionActive(),
+        attentionIsError: () => chatAttentionIsError,
+        hasActiveFollowup: (sid) => sessionHasActiveFollowup(sid, null),
+        hasPausedFollowup: (sid) => sessionHasPausedFollowup(sid, null),
     });
 
     function attentionPrefsFor(sessionId, sessionObj) {
@@ -1913,7 +1729,7 @@
         }
         if (isAuthMode() && /^\d+$/.test(String(toAuthDbSessionId(sessionId)))) {
             // A hidden page or a response for a previous chat hasn't been viewed.
-            if (!sessionIdsEqual(currentSessionId, sessionId) || pageIsBackgrounded()) return;
+            if (!sessionIdsEqual(session.current(), sessionId) || pageIsBackgrounded()) return;
             const through = lastSeenServerMessageId;
             serverAttention.mark(toAuthDbSessionId(sessionId), {through_id: through});
         }
@@ -1929,7 +1745,7 @@
     function releaseManualUnreadHoldIfLeaving(nextSessionId) {
         _manualUnreadHoldId = CuttleChatActivity.releaseManualHold({
             holdId: _manualUnreadHoldId,
-            currentSessionId,
+            currentSessionId: session.current(),
             nextSessionId,
         });
     }
@@ -2034,49 +1850,10 @@
         syncChatAttentionIndicators();
     }
 
+    // Slice 3A commit 4: title-level unread dot projection now lives in the
+    // CuttleChatAttention controller (chat_attention.js); the page delegates.
     function updateSessionTitleUnreadDot() {
-        const unreadIcon = document.getElementById('chatSessionUnreadIcon');
-        const queuedIcon = document.getElementById('chatSessionQueuedIcon');
-        const pausedIcon = document.getElementById('chatSessionPausedIcon');
-        const wrap = document.getElementById('chatSessionTitle');
-        if (!unreadIcon && !queuedIcon && !pausedIcon) return;
-        const titleVisible = !!(wrap && !wrap.hidden);
-        const showInput = !!(titleVisible && currentSessionId != null && (attentionPrefsFor(currentSessionId) || {}).awaitingInput);
-        const inputIcon = document.getElementById('chatSessionInputIcon');
-        if (inputIcon) inputIcon.hidden = !showInput;
-        const showUnread = !!(titleVisible && !showInput && chatAttentionActive());
-        const showUnreadError = !!(showUnread && chatAttentionIsError);
-        // Queue dots only when unread is not already showing (green/red wins).
-        // Amber = active (unpaused) queue; yellow = paused (see CH-000439-14 legend).
-        const showQueued = !!(
-            titleVisible
-            && !showInput
-            && !showUnread
-            && currentSessionId != null
-            && sessionHasActiveFollowup(currentSessionId, null)
-        );
-        const showPaused = !!(
-            titleVisible
-            && !showInput
-            && !showUnread
-            && !showQueued
-            && currentSessionId != null
-            && sessionHasPausedFollowup(currentSessionId, null)
-        );
-        if (unreadIcon) {
-            unreadIcon.hidden = !showUnread;
-            unreadIcon.classList.toggle('is-error', showUnreadError);
-            unreadIcon.title = showUnreadError ? 'Unread error' : 'Unread';
-            unreadIcon.setAttribute('aria-label', showUnreadError ? 'Unread error' : 'Unread');
-        }
-        if (queuedIcon) queuedIcon.hidden = !showQueued;
-        if (pausedIcon) pausedIcon.hidden = !showPaused;
-        if (wrap) {
-            wrap.classList.toggle('has-unread', showUnread);
-            wrap.classList.toggle('has-unread-error', showUnreadError);
-            wrap.classList.toggle('has-queued', showQueued);
-            wrap.classList.toggle('has-paused-queue', showPaused);
-        }
+        return serverAttention.updateSessionTitleUnreadDot();
     }
 
     function updateSessionTitleRunningIcon() {
@@ -2086,8 +1863,8 @@
         const running = !!(
             wrap
             && !wrap.hidden
-            && currentSessionId != null
-            && sessionShowsHistorySpinner(currentSessionId)
+            && session.current() != null
+            && sessionShowsHistorySpinner(session.current())
         );
         icon.hidden = !running;
         if (wrap) wrap.classList.toggle('is-running', running);
@@ -2123,7 +1900,7 @@
     function sessionHasUnread(sessionId, sessionObj) {
         return CuttleChatActivity.sessionHasUnread({
             sessionId,
-            currentSessionId,
+            currentSessionId: session.current(),
             backgrounded: pageIsBackgrounded(),
             prefs: attentionPrefsFor(sessionId, sessionObj),
             sessionObj,
@@ -2138,7 +1915,7 @@
     /** Resolve followup_queue for a session (open chat uses live followupQueue.items). */
     function followupQueueForSession(sessionId, sessionObj) {
         if (sessionId == null || sessionId === '') return [];
-        if (currentSessionId != null && sessionIdsEqual(currentSessionId, sessionId)) {
+        if (session.current() != null && sessionIdsEqual(session.current(), sessionId)) {
             return followupQueue.items.slice();
         }
         let obj = sessionObj;
@@ -2181,7 +1958,7 @@
     function sessionHasUnreadError(sessionId, sessionObj) {
         return CuttleChatActivity.sessionHasUnreadError({
             sessionId,
-            currentSessionId,
+            currentSessionId: session.current(),
             backgrounded: pageIsBackgrounded(),
             prefs: attentionPrefsFor(sessionId, sessionObj),
             sessionObj,
@@ -2197,7 +1974,7 @@
     function sessionHistoryAttentionKind(sessionId, sessionObj) {
         return CuttleChatActivity.sessionHistoryAttentionKind({
             sessionId,
-            currentSessionId,
+            currentSessionId: session.current(),
             backgrounded: pageIsBackgrounded(),
             prefs: attentionPrefsFor(sessionId, sessionObj),
             sessionObj,
@@ -2302,47 +2079,6 @@
         return { key, id, name: name || 'Project', path };
     }
 
-    /** Initial chats shown per project; each "Show N more" adds another page. */
-    const HISTORY_GROUP_PREVIEW_LIMIT = 5;
-    const HISTORY_GROUP_PAGE_SIZE = 5;
-    /** projectKey → how many chats currently revealed (at least PREVIEW). */
-    const historyGroupVisibleCount = new Map();
-    const HISTORY_PROJECT_COLLAPSE_KEY = 'cuttle.historyProjectCollapse';
-
-    function readHistoryProjectCollapsePrefs() {
-        try {
-            const raw = localStorage.getItem(HISTORY_PROJECT_COLLAPSE_KEY);
-            const parsed = raw ? JSON.parse(raw) : {};
-            return parsed && typeof parsed === 'object' ? parsed : {};
-        } catch (_) {
-            return {};
-        }
-    }
-
-    function writeHistoryProjectCollapsePrefs(map) {
-        try {
-            localStorage.setItem(HISTORY_PROJECT_COLLAPSE_KEY, JSON.stringify(map || {}));
-        } catch (_) {}
-    }
-
-    const HISTORY_SUBAGENT_EXPAND_KEY = 'cuttle.historySubagentExpand';
-
-    function readHistorySubagentExpandPrefs() {
-        try {
-            const raw = localStorage.getItem(HISTORY_SUBAGENT_EXPAND_KEY);
-            const parsed = raw ? JSON.parse(raw) : {};
-            return parsed && typeof parsed === 'object' ? parsed : {};
-        } catch (_) {
-            return {};
-        }
-    }
-
-    function writeHistorySubagentExpandPrefs(map) {
-        try {
-            localStorage.setItem(HISTORY_SUBAGENT_EXPAND_KEY, JSON.stringify(map || {}));
-        } catch (_) {}
-    }
-
     function sessionHasStoredProject(sessionId, sessionObj) {
         if (projectFieldsFromServerSession(sessionObj || findAuthServerSession(sessionId))) {
             return true;
@@ -2357,386 +2093,6 @@
         ) {
             return true;
         }
-        return false;
-    }
-
-    function historyGroupEntrySessionObj(entry) {
-        if (!entry) return null;
-        return entry.session || entry.serverSession || null;
-    }
-
-    function historyGroupHasUnread(group) {
-        return !!(group && group.entries && group.entries.some((entry) => (
-            sessionHasUnread(entry.sessionId, historyGroupEntrySessionObj(entry))
-        )));
-    }
-
-    function historyGroupHasUnreadError(group) {
-        return !!(group && group.entries && group.entries.some((entry) => (
-            sessionHasUnreadError(entry.sessionId, historyGroupEntrySessionObj(entry))
-        )));
-    }
-
-    function historyGroupHasPausedFollowup(group) {
-        return !!(group && group.entries && group.entries.some((entry) => (
-            sessionHasPausedFollowup(entry.sessionId, historyGroupEntrySessionObj(entry))
-        )));
-    }
-
-    function historyGroupHasActiveFollowup(group) {
-        return !!(group && group.entries && group.entries.some((entry) => (
-            sessionHasActiveFollowup(entry.sessionId, historyGroupEntrySessionObj(entry))
-        )));
-    }
-
-    function historyGroupContainsCurrent(group) {
-        if (currentSessionId == null || !group || !group.entries) return false;
-        return group.entries.some((entry) => sessionIdsEqual(entry.sessionId, currentSessionId));
-    }
-
-    /** Default expand latest project (+ open/unread/queue); honor localStorage overrides. */
-    function isHistoryProjectSectionExpanded(group, groupIdx) {
-        if (!group || !group.project) return true;
-        const key = String(group.project.key);
-        const prefs = readHistoryProjectCollapsePrefs();
-        const pref = prefs[key];
-        if (pref === 'expanded') return true;
-        if (pref === 'collapsed') return false;
-        if (historyGroupContainsCurrent(group)) return true;
-        if (historyGroupHasUnread(group)) return true;
-        if (historyGroupHasActiveFollowup(group)) return true;
-        if (historyGroupHasPausedFollowup(group)) return true;
-        return groupIdx === 0;
-    }
-
-    function getHistoryGroupVisibleLimit(groupKey, total) {
-        const t = Math.max(0, Number(total) || 0);
-        const stored = historyGroupVisibleCount.get(String(groupKey));
-        if (stored == null || !isFinite(stored)) {
-            return Math.min(HISTORY_GROUP_PREVIEW_LIMIT, t);
-        }
-        return Math.min(Math.max(HISTORY_GROUP_PREVIEW_LIMIT, Math.floor(stored)), t);
-    }
-
-    function historyGroupToggleHTML(groupKey, total, visible) {
-        const safeKey = escapeHtml(String(groupKey));
-        if (total <= HISTORY_GROUP_PREVIEW_LIMIT) return '';
-        if (visible >= total) {
-            return `<button type="button" class="history-show-all-btn" data-group-key="${safeKey}" data-total="${total}" onclick="window.collapseHistoryGroupReveal(event)">Show less</button>`;
-        }
-        const step = Math.min(HISTORY_GROUP_PAGE_SIZE, total - visible);
-        const label = step === 1 ? 'Show 1 more' : `Show ${step} more`;
-        return `<button type="button" class="history-show-all-btn" data-group-key="${safeKey}" data-total="${total}" onclick="window.revealMoreHistoryGroup(event)">${escapeHtml(label)}</button>`;
-    }
-
-    function renderHistoryGroupBody(group, renderEntry) {
-        const key = group.project.key;
-        const nested = nestHistoryEntries(group.entries);
-        const total = nested.roots.length;
-        const visibleLimit = getHistoryGroupVisibleLimit(key, total);
-        const visible = visibleHistoryRoots(nested, visibleLimit, { currentSessionId: currentSessionId });
-        const searchActive = historySearchQueryActive();
-        const prefs = readHistorySubagentExpandPrefs();
-
-        function renderTree(entry) {
-            const pid = String(entry && entry.sessionId != null ? entry.sessionId : '');
-            const kids = nested.childrenByParent.get(pid) || [];
-            const expanded = kids.length
-                ? isHistorySubagentGroupExpanded(pid, nested, {
-                    searchActive: searchActive,
-                    currentSessionId: currentSessionId,
-                    prefs: prefs,
-                })
-                : false;
-            const force = !!(kids.length && currentSessionId != null
-                && historySessionAncestorIds(currentSessionId, nested).some((id) => sessionIdsEqual(id, pid)));
-            const itemHtml = renderEntry(entry, {
-                subagentChildCount: kids.length,
-                subagentExpanded: expanded,
-                subagentForceExpanded: force,
-            });
-            if (!kids.length) return itemHtml;
-            let html = '<div class="history-subagent-group'
-                + (expanded ? '' : ' is-collapsed')
-                + '" data-parent-session-id="' + escapeHtml(pid) + '"'
-                + (force ? ' data-force-expanded="1"' : '')
-                + '>';
-            html += itemHtml;
-            html += '<div class="history-subagent-children" id="history-subagents-'
-                + escapeHtml(pid) + '-kids" role="group">';
-            kids.forEach((child) => {
-                html += renderTree(child);
-            });
-            html += '</div></div>';
-            return html;
-        }
-
-        let html = '';
-        visible.forEach((entry) => {
-            html += renderTree(entry);
-        });
-        html += historyGroupToggleHTML(key, total, visibleLimit);
-        return html;
-    }
-
-    // Last applied history search (not only the input DOM). Android/Capacitor
-    // WebViews can race keyboard/IME with refreshes; the live query keeps the
-    // hard gate from falling through to a full project-list paint.
-    let historySearchLiveQuery = '';
-    // Last displayed search wave, reused only for explicit group reveal/collapse.
-    let repaintHistorySearch = null;
-
-    function repaintHistoryGroups() {
-        if (historySearchQueryActive() && repaintHistorySearch) repaintHistorySearch();
-        else reloadHistoryListKeepingSearch();
-    }
-
-    function historySearchQueryActive() {
-        if (historyFiltersActive()) return true;
-        if (String(historySearchLiveQuery || '').trim()) return true;
-        const searchInput = document.getElementById('searchInput');
-        if (searchInput && String(searchInput.value || '').trim()) return true;
-        return false;
-    }
-
-    function softRefreshHistorySearchIndicators() {
-        // Session cache may have been refreshed; do not repaint (would abort
-        // in-flight content search and flash the unfiltered list).
-        if (isAuthMode()) {
-            try {
-                const listed = ((window.CuttleAuth.getSessions && window.CuttleAuth.getSessions()) || []);
-                applyGeneratingFlagsFromSessions(listed);
-            } catch (_) {}
-        }
-        syncHistoryRunningIndicators();
-        syncHistoryUnreadIndicators();
-    }
-
-    function reloadHistoryListKeepingSearch() {
-        // Panel open/poll/title refresh / auth-changed must not wipe an active
-        // search. Re-running searchChats() aborts content fetch and flashes empty.
-        if (historySearchQueryActive()) {
-            softRefreshHistorySearchIndicators();
-            return;
-        }
-        loadChatHistory();
-    }
-
-    function entrySearchMatchRank(entry) {
-        // Lower sorts first: title matches above content-only matches.
-        const s = (entry && (entry.serverSession || entry.session)) || {};
-        const m = String((entry && entry.searchMatch) || s.match || '').toLowerCase();
-        if (m === 'title') return 0;
-        if (m === 'content') return 1;
-        return 2;
-    }
-
-    function revealMoreHistoryGroup(event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const btn = event && event.currentTarget;
-        const key = btn && btn.getAttribute('data-group-key');
-        if (!key) return;
-        const total = Math.max(0, Number(btn.getAttribute('data-total')) || 0);
-        const cur = getHistoryGroupVisibleLimit(key, total || Number.MAX_SAFE_INTEGER);
-        const next = Math.min(
-            total || (cur + HISTORY_GROUP_PAGE_SIZE),
-            cur + HISTORY_GROUP_PAGE_SIZE
-        );
-        historyGroupVisibleCount.set(String(key), next);
-        repaintHistoryGroups();
-    }
-
-    function collapseHistoryGroupReveal(event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const btn = event && event.currentTarget;
-        const key = btn && btn.getAttribute('data-group-key');
-        if (!key) return;
-        historyGroupVisibleCount.set(String(key), HISTORY_GROUP_PREVIEW_LIMIT);
-        repaintHistoryGroups();
-    }
-
-    function toggleHistoryProjectCollapse(event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const header = event && event.currentTarget;
-        if (!header) return;
-        // Action buttons stopPropagation themselves; belt-and-suspenders.
-        if (event && event.target && event.target.closest
-            && event.target.closest('.history-section-actions')) {
-            return;
-        }
-        const section = header.closest && header.closest('.history-section');
-        const key = (section && section.getAttribute('data-project-key'))
-            || header.getAttribute('data-project-key');
-        if (!key) return;
-        const prefs = readHistoryProjectCollapsePrefs();
-        const currentlyExpanded = !(section && section.classList.contains('is-collapsed'));
-        prefs[String(key)] = currentlyExpanded ? 'collapsed' : 'expanded';
-        writeHistoryProjectCollapsePrefs(prefs);
-        repaintHistoryGroups();
-    }
-
-    function historySubagentGroupOwnedBy(sessionId) {
-        if (sessionId == null || sessionId === '') return null;
-        const key = String(sessionId);
-        let group = document.querySelector(`.history-subagent-group[data-parent-session-id="${CSS.escape(key)}"]`);
-        if (group) return group;
-        const bare = toAuthDbSessionId(sessionId);
-        if (bare && String(bare) !== key) {
-            group = document.querySelector(`.history-subagent-group[data-parent-session-id="${CSS.escape(String(bare))}"]`);
-        }
-        return group;
-    }
-
-    function historySubagentGroupContainsCurrent(group) {
-        if (!group || currentSessionId == null) return false;
-        const kids = group.querySelectorAll('.history-subagent-children .chat-history-item');
-        for (let i = 0; i < kids.length; i++) {
-            if (sessionIdsEqual(kids[i].dataset.sessionId, currentSessionId)) return true;
-        }
-        return false;
-    }
-
-    function syncHistorySubagentAttention() {
-        document.querySelectorAll('.history-subagent-group').forEach((group) => {
-            const items = group.querySelectorAll('.history-subagent-children .chat-history-item');
-            let input = false;
-            let error = false;
-            let unread = false;
-            let queued = false;
-            let paused = false;
-            let running = false;
-            items.forEach((item) => {
-                if (item.classList.contains('has-input')) input = true;
-                if (item.classList.contains('has-unread-error')) error = true;
-                if (item.classList.contains('has-unread')) unread = true;
-                if (item.classList.contains('has-queued')) queued = true;
-                if (item.classList.contains('has-paused-queue')) paused = true;
-                if (item.classList.contains('is-running')) running = true;
-            });
-            const badge = group.querySelector(':scope > .chat-history-item .history-subagent-count-badge');
-            if (!badge) return;
-            badge.classList.toggle('has-input', input);
-            badge.classList.toggle('has-unread-error', error);
-            badge.classList.toggle('has-unread', !error && unread);
-            badge.classList.toggle('has-queued', !error && !unread && queued);
-            badge.classList.toggle('has-paused-queue', !error && !unread && !queued && paused);
-            badge.classList.toggle('is-running', running);
-        });
-    }
-
-    function applyHistorySubagentExpandState() {
-        const searchActive = historySearchQueryActive();
-        const prefs = readHistorySubagentExpandPrefs();
-        document.querySelectorAll('.history-subagent-group').forEach((group) => {
-            const pid = group.getAttribute('data-parent-session-id') || '';
-            const force = historySubagentGroupContainsCurrent(group);
-            const expanded = force || searchActive || prefs[pid] === 'expanded';
-            group.classList.toggle('is-collapsed', !expanded);
-            if (force) group.setAttribute('data-force-expanded', '1');
-            else group.removeAttribute('data-force-expanded');
-            const countEl = group.querySelector(':scope > .chat-history-item [data-child-count]');
-            const count = countEl ? (Number(countEl.getAttribute('data-child-count')) || 0) : 0;
-            const title = historySubagentToggleTitle(count, expanded, force);
-            group.querySelectorAll(':scope > .chat-history-item .history-subagent-toggle, :scope > .chat-history-item .history-subagent-count-badge').forEach((el) => {
-                el.title = title;
-                el.setAttribute('aria-label', title);
-                if (el.classList.contains('history-subagent-toggle')) {
-                    el.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-                }
-            });
-        });
-        syncHistorySubagentAttention();
-    }
-
-    function setHistorySubagentGroupExpanded(parentId, expanded) {
-        if (parentId == null || parentId === '') return;
-        const prefs = readHistorySubagentExpandPrefs();
-        prefs[String(parentId)] = expanded ? 'expanded' : 'collapsed';
-        writeHistorySubagentExpandPrefs(prefs);
-        applyHistorySubagentExpandState();
-    }
-
-    function toggleHistorySubagentGroup(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        closeHistoryItemMenu();
-        const group = historySubagentGroupOwnedBy(sessionId);
-        if (!group || group.getAttribute('data-force-expanded') === '1') return;
-        const expand = group.classList.contains('is-collapsed');
-        setHistorySubagentGroupExpanded(group.getAttribute('data-parent-session-id') || sessionId, expand);
-    }
-
-    function groupSessionsByProject(entries) {
-        const groups = new Map();
-        (entries || []).forEach((entry) => {
-            const origin = String(
-                (entry.serverSession && entry.serverSession.origin)
-                || (entry.session && entry.session.origin)
-                || ''
-            ).trim().toLowerCase();
-            const proj = (origin === 'discord_dm' || origin === 'discord_guild')
-                ? { key: '__discord__', id: null, name: 'Discord', path: '' }
-                // Prefer the entry's own row (server rows carry project
-                // fields): passing only entry.session (null for server
-                // entries) forced a full-list scan per chat — O(n²) paints.
-                : resolveSessionProjectInfo(entry.sessionId, historyGroupEntrySessionObj(entry));
-            if (!groups.has(proj.key)) {
-                groups.set(proj.key, { project: proj, entries: [], latest: 0 });
-            }
-            const g = groups.get(proj.key);
-            g.entries.push(entry);
-            const u = Number(entry.updated) || 0;
-            if (u > g.latest) g.latest = u;
-        });
-        const list = Array.from(groups.values());
-        // Most recently active project first; "No project" stays last.
-        list.sort((a, b) => {
-            if (a.project.key === '__none__') return 1;
-            if (b.project.key === '__none__') return -1;
-            const d = (b.latest || 0) - (a.latest || 0);
-            if (d !== 0) return d;
-            return String(a.project.name).localeCompare(String(b.project.name), undefined, {
-                sensitivity: 'base',
-            });
-        });
-        list.forEach((g) => {
-            g.entries.sort((a, b) => {
-                // Starred favorites float to the top of each project category.
-                const aStarred = entryIsStarred(a);
-                const bStarred = entryIsStarred(b);
-                if (aStarred && !bStarred) return -1;
-                if (bStarred && !aStarred) return 1;
-                // Search: title matches before content matches, even if content is newer.
-                const aMatch = entrySearchMatchRank(a);
-                const bMatch = entrySearchMatchRank(b);
-                if (aMatch !== bMatch) return aMatch - bMatch;
-                // Opening a chat must not move it: order by last message only.
-                const d = (b.updated || 0) - (a.updated || 0);
-                if (d !== 0) return d;
-                // Stable tie-break so equal timestamps don't reshuffle on refresh.
-                return String(b.sessionId).localeCompare(String(a.sessionId), undefined, {
-                    numeric: true,
-                });
-            });
-        });
-        return list;
-    }
-
-    function entryIsStarred(entry) {
-        if (!entry) return false;
-        if (entry.serverSession) return !!Number(entry.serverSession.starred);
-        if (entry.session) return !!entry.session.starred;
         return false;
     }
 
@@ -2790,8 +2146,8 @@
     /** True when the open transcript is this session (not a backgrounded turn). */
     function isViewingSession(sessionId) {
         return sessionId != null
-            && currentSessionId != null
-            && sessionIdsEqual(currentSessionId, sessionId);
+            && session.current() != null
+            && sessionIdsEqual(session.current(), sessionId);
     }
 
     /**
@@ -2868,7 +2224,7 @@
                         data = null;
                     }
                     if (cancelled) break;
-                    if (currentSessionId != null && sessionIdsEqual(currentSessionId, sid)) break;
+                    if (session.current() != null && sessionIdsEqual(session.current(), sid)) break;
 
                     // Owned by chat_generation.js — one poll-step decision;
                     // the page owns transport, sleeps, chirp, and flag paint.
@@ -2929,7 +2285,7 @@
         const now = Date.now();
         const plan = CuttleChatActivity.responseReadyPlan({
             sessionId: sid,
-            currentSessionId,
+            currentSessionId: session.current(),
             backgrounded: pageIsBackgrounded(),
             lastChirpAt: _chirpedReadyAtBySession[sid] || 0,
             nowMs: now,
@@ -2987,35 +2343,18 @@
         }
         syncHistoryUnreadIndicators();
         // Soft refresh titles/grouping without wiping search or filter chips.
-        reloadHistoryListKeepingSearch();
+        historyPanel.reloadKeepingSearch();
     }
 
-    function historyUnreadIconHTML(isError) {
-        const err = !!isError;
-        return `<span class="history-unread-icon${err ? ' is-error' : ''}" title="${err ? 'Unread error' : 'Unread'}" aria-label="${err ? 'Unread error' : 'Unread'}"></span>`;
-    }
-
-    function historyQueuedIconHTML() {
-        return `<span class="history-queued-icon" title="Queued prompt" aria-label="Queued prompt"></span>`;
-    }
-
-    function historyPausedIconHTML() {
-        return `<span class="history-paused-icon" title="Paused queue" aria-label="Paused queued prompt"></span>`;
-    }
-
-    function historyAttentionIconHTML(kind) {
-        if (kind === 'running') return historyRunningIconHTML();
-        if (kind === 'input') return '<span class="history-input-icon" title="Awaiting your input" aria-label="Awaiting your input"></span>';
-        if (kind === 'error') return historyUnreadIconHTML(true);
-        if (kind === 'unread') return historyUnreadIconHTML(false);
-        if (kind === 'queued') return historyQueuedIconHTML();
-        if (kind === 'paused') return historyPausedIconHTML();
-        return '';
-    }
+    // Slice 3A commit 4: the history attention icon markup, row/section/title
+    // projection and the open-pane badge now live in the CuttleChatAttention
+    // controller (chat_attention.js). The page keeps the pane-snapshot helpers
+    // (the `cuttle-open-panes` postMessage protocol stays here) and thin
+    // delegating wrappers so page call sites and injected deps are unchanged.
 
     function applyLocalOpenPanes(panes) {
         localOpenPanes = Array.isArray(panes) ? panes.filter((p) => p && p.sessionId) : [];
-        syncHistoryOpenPaneIndicators();
+        serverAttention.syncHistoryOpenPaneIndicators();
     }
 
     function snapshotLocalOpenPanes() {
@@ -3027,8 +2366,8 @@
             } catch (_) {}
             return localOpenPanes;
         }
-        if (currentSessionId != null && currentSessionId !== '') {
-            return [{ sessionId: String(currentSessionId), pane: 1, kind: 'chat', focused: true }];
+        if (session.current() != null && session.current() !== '') {
+            return [{ sessionId: String(session.current()), pane: 1, kind: 'chat', focused: true }];
         }
         return [];
     }
@@ -3047,200 +2386,8 @@
         return localOpenPanes.filter((p) => sessionIdsEqual(p.sessionId, sessionId));
     }
 
-    /** Unique split-pane numbers currently showing a chat/terminal in this window. */
-    function historyOpenPaneCount() {
-        return [...new Set(
-            (localOpenPanes || []).map((p) => Number(p.pane) || 0).filter((n) => n > 0)
-        )].length;
-    }
-
-    function historyOpenPaneBadgeHTML(sessionId) {
-        // A "1" badge is noise when there is only one pane.
-        if (historyOpenPaneCount() < 2) return '';
-        const hits = openPaneEntriesForSession(sessionId);
-        if (!hits.length) return '';
-        const panes = [...new Set(hits.map((p) => Number(p.pane) || 0).filter((n) => n > 0))].sort((a, b) => a - b);
-        if (!panes.length) return '';
-        const text = panes.join('+');
-        const title = panes.length === 1
-            ? ('Open in pane ' + panes[0] + ' (this window)')
-            : ('Open in panes ' + panes.join(', ') + ' (this window)');
-        return `<span class="history-open-pane-badge" title="${escapeHtmlInline(title)}" aria-label="${escapeHtmlInline(title)}">${escapeHtmlInline(text)}</span>`;
-    }
-
-    function syncHistoryOpenPaneIndicators() {
-        document.querySelectorAll('.chat-history-item').forEach((item) => {
-            const sid = item.dataset.sessionId;
-            const hits = openPaneEntriesForSession(sid);
-            item.classList.toggle('is-open-pane', hits.length > 0);
-            const actions = item.querySelector('.chat-actions');
-            let badge = item.querySelector('.history-open-pane-badge');
-            const html = historyOpenPaneBadgeHTML(sid);
-            if (!html) {
-                if (badge) badge.remove();
-                return;
-            }
-            if (!badge) {
-                const wrap = document.createElement('div');
-                wrap.innerHTML = html;
-                badge = wrap.firstElementChild;
-                if (actions) actions.insertBefore(badge, actions.firstChild);
-                else item.appendChild(badge);
-            } else {
-                const wrap = document.createElement('div');
-                wrap.innerHTML = html;
-                const next = wrap.firstElementChild;
-                if (next) {
-                    badge.title = next.title;
-                    badge.setAttribute('aria-label', next.getAttribute('aria-label') || '');
-                    badge.textContent = next.textContent;
-                }
-            }
-        });
-    }
-
-    /** Paint the single far-left status glyph for a history row. */
-    function syncHistoryLeftStatusIcon(item, kind) {
-        const wanted = kind === 'running' ? 'history-running-icon'
-            : kind === 'input' ? 'history-input-icon'
-            : (kind === 'unread' || kind === 'error') ? 'history-unread-icon'
-            : kind === 'queued' ? 'history-queued-icon'
-            : kind === 'paused' ? 'history-paused-icon'
-            : '';
-        const selector = ':scope > .history-running-icon, :scope > .history-unread-icon,'
-            + ' :scope > .history-queued-icon, :scope > .history-paused-icon,'
-            + ' :scope > .history-input-icon';
-        const current = item.querySelector(selector);
-        if (current && wanted && current.classList.contains(wanted)) {
-            if (wanted === 'history-unread-icon') current.classList.toggle('is-error', kind === 'error');
-            return;
-        }
-        if (current) current.remove();
-        if (!wanted) return;
-        item.insertAdjacentHTML('afterbegin', historyAttentionIconHTML(kind));
-    }
-
     function syncHistoryUnreadIndicators() {
-        document.querySelectorAll('.chat-history-item').forEach((item) => {
-            const sid = item.dataset.sessionId;
-            if (sid == null) return;
-            let sessionObj = null;
-            if (isAuthMode()) {
-                sessionObj = findAuthServerSession(sid);
-            } else {
-                try {
-                    const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                    sessionObj = sessions[sid] || null;
-                } catch (_) {}
-            }
-            // One status slot on the left: an active run wins over the attention
-            // dot so the spinner and unread markers never sit on two lines.
-            const running = sessionShowsHistorySpinner(sid);
-            const attention = running ? '' : sessionHistoryAttentionKind(sid, sessionObj);
-            const kind = running ? 'running' : attention;
-            item.classList.toggle('is-running', running);
-            item.classList.toggle('has-unread', attention === 'unread' || attention === 'error');
-            item.classList.toggle('has-unread-error', attention === 'error');
-            item.classList.toggle('has-queued', attention === 'queued');
-            item.classList.toggle('has-paused-queue', attention === 'paused');
-            item.classList.toggle('has-input', attention === 'input');
-            syncHistoryLeftStatusIcon(item, kind);
-            // Older markup parked the spinner in the meta line; clear it here.
-            const metaSpinner = item.querySelector('.history-item-meta .history-running-icon');
-            if (metaSpinner) metaSpinner.remove();
-        });
-        syncHistoryProjectAttentionIndicators();
-        syncHistorySubagentAttention();
-        updateSessionTitleUnreadDot();
-        try { scheduleChatActivityBroadcast(); } catch (_) {}
-    }
-
-    function syncHistoryProjectAttentionIndicators() {
-        document.querySelectorAll('.history-section[data-project-key]').forEach((section) => {
-            const items = section.querySelectorAll('.chat-history-item');
-            let hasInput = false;
-            let hasError = false;
-            let hasUnread = false;
-            let hasQueued = false;
-            let hasPaused = false;
-            items.forEach((item) => {
-                if (item.classList.contains('has-input')) hasInput = true;
-                if (item.classList.contains('has-unread-error')) hasError = true;
-                if (item.classList.contains('has-unread')) hasUnread = true;
-                if (item.classList.contains('has-queued')) hasQueued = true;
-                if (item.classList.contains('has-paused-queue')) hasPaused = true;
-            });
-            if (!items.length) {
-                hasError = section.getAttribute('data-has-error') === '1';
-                hasUnread = section.getAttribute('data-has-unread') === '1';
-                hasQueued = section.getAttribute('data-has-queued') === '1';
-                hasPaused = section.getAttribute('data-has-paused') === '1';
-            }
-            const showInput = hasInput;
-            const showError = !showInput && hasError;
-            const showUnread = !showInput && !showError && hasUnread;
-            const showQueued = !showInput && !showError && !showUnread && hasQueued;
-            const showPaused = !showInput && !showError && !showUnread && !showQueued && hasPaused;
-            section.classList.toggle('has-input', showInput);
-            section.classList.toggle('has-unread-error', showError);
-            section.classList.toggle('has-unread', showError || showUnread);
-            section.classList.toggle('has-queued', showQueued);
-            section.classList.toggle('has-paused-queue', showPaused);
-            const count = section.querySelector('.history-section-count');
-            if (count) {
-                count.classList.toggle('has-input', showInput);
-                count.classList.toggle('has-unread-error', showError);
-                count.classList.toggle('has-unread', showError || showUnread);
-                count.classList.toggle('has-queued', showQueued);
-                count.classList.toggle('has-paused-queue', showPaused);
-            }
-            let unreadDot = section.querySelector('.history-section-unread-dot');
-            let queuedDot = section.querySelector('.history-section-queued-dot');
-            let pausedDot = section.querySelector('.history-section-paused-dot');
-            const titleEl = section.querySelector('.history-section-title');
-            const removeDots = () => {
-                if (unreadDot) { unreadDot.remove(); unreadDot = null; }
-                if (queuedDot) { queuedDot.remove(); queuedDot = null; }
-                if (pausedDot) { pausedDot.remove(); pausedDot = null; }
-            };
-            if (showInput || showError || showUnread) {
-                if (queuedDot) queuedDot.remove();
-                if (pausedDot) pausedDot.remove();
-                if (!unreadDot && titleEl) {
-                    unreadDot = document.createElement('span');
-                    unreadDot.className = 'history-section-unread-dot';
-                    titleEl.insertBefore(unreadDot, titleEl.firstChild);
-                }
-                if (unreadDot) {
-                    unreadDot.classList.toggle('is-input', showInput);
-                    unreadDot.classList.toggle('is-error', showError);
-                    unreadDot.title = showInput ? 'Awaiting your input' : showError ? 'Unread error' : 'Unread';
-                    unreadDot.setAttribute('aria-label', showInput ? 'Awaiting your input' : showError ? 'Unread error' : 'Unread');
-                }
-            } else if (showQueued) {
-                if (unreadDot) unreadDot.remove();
-                if (pausedDot) pausedDot.remove();
-                if (!queuedDot && titleEl) {
-                    queuedDot = document.createElement('span');
-                    queuedDot.className = 'history-section-queued-dot';
-                    queuedDot.title = 'Queued prompt';
-                    queuedDot.setAttribute('aria-label', 'Queued prompt');
-                    titleEl.insertBefore(queuedDot, titleEl.firstChild);
-                }
-            } else if (showPaused) {
-                if (unreadDot) unreadDot.remove();
-                if (queuedDot) queuedDot.remove();
-                if (!pausedDot && titleEl) {
-                    pausedDot = document.createElement('span');
-                    pausedDot.className = 'history-section-paused-dot';
-                    pausedDot.title = 'Paused queue';
-                    pausedDot.setAttribute('aria-label', 'Paused queued prompt');
-                    titleEl.insertBefore(pausedDot, titleEl.firstChild);
-                }
-            } else {
-                removeDots();
-            }
-        });
+        return serverAttention.syncHistoryUnreadIndicators();
     }
 
 
@@ -3339,14 +2486,14 @@
     }
 
     function persistPromptHistoryForCurrentSession() {
-        if (!currentSessionId) return;
+        if (!session.current()) return;
         const map = readPromptHistoryMap();
-        map[currentSessionId] = promptHistoryState.list.slice();
+        map[session.current()] = promptHistoryState.list.slice();
         writePromptHistoryMap(map);
     }
 
     function recordPromptHistory(composedMessage) {
-        if (!currentSessionId) return;
+        if (!session.current()) return;
         if (CuttlePromptHistory.appendRecord(promptHistoryState, composedMessage)) {
             persistPromptHistoryForCurrentSession();
         }
@@ -3659,7 +2806,7 @@
                 history.replaceState(null, '', url.pathname + url.search + url.hash);
             } catch (_) {}
         }
-        if (sessionIdsEqual(currentSessionId, parsed.sessionId)) {
+        if (sessionIdsEqual(session.current(), parsed.sessionId)) {
             if (parsed.messageIndex) {
                 transcriptNav.consumePendingMessageJump();
             }
@@ -3758,120 +2905,6 @@
                 },
             });
         }, true);
-    }
-
-    function historyEntryParentId(entry) {
-        if (!entry) return '';
-        const s = entry.serverSession || entry.session || {};
-        const pid = s.parent_session_id;
-        if (pid == null || pid === '') return '';
-        return String(pid);
-    }
-
-    function historyLookupNestedEntry(nested, sessionId) {
-        if (!nested || !nested.byId || sessionId == null || sessionId === '') return null;
-        const key = String(sessionId);
-        if (nested.byId.has(key)) return nested.byId.get(key);
-        const bare = typeof toAuthDbSessionId === 'function' ? toAuthDbSessionId(sessionId) : null;
-        if (bare != null && nested.byId.has(String(bare))) return nested.byId.get(String(bare));
-        for (const [id, entry] of nested.byId.entries()) {
-            if (typeof sessionIdsEqual === 'function' && sessionIdsEqual(id, sessionId)) return entry;
-            if (String(id) === key) return entry;
-        }
-        return null;
-    }
-
-    function nestHistoryEntries(entries) {
-        const list = Array.isArray(entries) ? entries.slice() : [];
-        const byId = new Map();
-        list.forEach((e) => {
-            const id = String(e && e.sessionId != null ? e.sessionId : '');
-            if (id) byId.set(id, e);
-        });
-        const childrenByParent = new Map();
-        const roots = [];
-        list.forEach((e) => {
-            const pid = historyEntryParentId(e);
-            if (pid && byId.has(pid)) {
-                if (!childrenByParent.has(pid)) childrenByParent.set(pid, []);
-                childrenByParent.get(pid).push(e);
-            } else {
-                roots.push(e);
-            }
-        });
-        return { roots: roots, childrenByParent: childrenByParent, byId: byId };
-    }
-
-    function historySessionAncestorIds(sessionId, nested) {
-        const ids = [];
-        let cur = sessionId;
-        const seen = new Set();
-        while (cur != null && cur !== '') {
-            const key = String(cur);
-            if (seen.has(key)) break;
-            seen.add(key);
-            const entry = historyLookupNestedEntry(nested, cur);
-            const pid = historyEntryParentId(entry);
-            if (!pid) break;
-            if (!historyLookupNestedEntry(nested, pid)) break;
-            ids.push(pid);
-            cur = pid;
-        }
-        return ids;
-    }
-
-    function isHistorySubagentGroupExpanded(parentId, nested, opts) {
-        opts = opts || {};
-        const pid = String(parentId || '');
-        if (!pid) return false;
-        if (opts.searchActive) return true;
-        const current = opts.currentSessionId;
-        if (current != null && current !== '') {
-            const ancestors = historySessionAncestorIds(current, nested);
-            for (let i = 0; i < ancestors.length; i++) {
-                if (ancestors[i] === pid) return true;
-                if (typeof sessionIdsEqual === 'function' && sessionIdsEqual(ancestors[i], pid)) return true;
-            }
-        }
-        const prefs = opts.prefs || {};
-        return prefs[pid] === 'expanded';
-    }
-
-    function visibleHistoryRoots(nested, visibleLimit, opts) {
-        const roots = (nested && Array.isArray(nested.roots)) ? nested.roots : [];
-        const limit = Math.max(0, Number(visibleLimit) || 0);
-        const visible = roots.slice(0, limit);
-        const current = opts && opts.currentSessionId;
-        if (current == null || current === '') return visible;
-        const ancestors = historySessionAncestorIds(current, nested);
-        const rootId = ancestors.length ? ancestors[ancestors.length - 1] : String(current);
-        const already = visible.some((e) => {
-            const id = e && e.sessionId;
-            if (id == null) return false;
-            if (String(id) === String(rootId)) return true;
-            return typeof sessionIdsEqual === 'function' && sessionIdsEqual(id, rootId);
-        });
-        if (already) return visible;
-        const missing = roots.find((e) => {
-            const id = e && e.sessionId;
-            if (id == null) return false;
-            if (String(id) === String(rootId)) return true;
-            return typeof sessionIdsEqual === 'function' && sessionIdsEqual(id, rootId);
-        });
-        return missing ? visible.concat([missing]) : visible;
-    }
-
-    function historySubagentNoun(count) {
-        const n = Math.max(0, Number(count) || 0);
-        return n === 1 ? 'sub-agent' : 'sub-agents';
-    }
-
-    function historySubagentToggleTitle(count, expanded, force) {
-        const n = Math.max(0, Number(count) || 0);
-        const noun = historySubagentNoun(n);
-        const amount = n ? (n + ' ' + noun) : noun;
-        if (force) return amount + ' (open because this chat is a sub-agent)';
-        return (expanded ? 'Hide ' : 'Show ') + amount;
     }
 
     // Sub-agent launcher rows + live in-progress badges: chat_subagent_launchers.js.
@@ -4086,7 +3119,7 @@
                 const local = readStarredSlashPrefixes();
                 if (server.length) {
                     writeStarredSlashPrefixes(server, { localOnly: true });
-                    if (!currentSessionId && !getSessionPrefs(newComposerPrefsId)) applyStarredSlashChips();
+                    if (!session.current() && !getSessionPrefs(newComposerPrefsId)) applyStarredSlashChips();
                     else {
                         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
                         renderSlashChips('chat', document.getElementById('chatInput'));
@@ -4114,7 +3147,7 @@
         const next = wasStarred ? [] : [prefix];
         writeStarredSlashPrefixes(next);
         // On the welcome / new-chat composer, mirror the default immediately.
-        if (!currentSessionId) {
+        if (!session.current()) {
             applyStarredSlashChips();
         } else {
             // Keep session sticky chips; refresh so ★ on the badge updates.
@@ -4196,7 +3229,7 @@
                 const local = readStarredProject();
                 if (server && (server.path || server.id != null || server.name)) {
                     writeStarredProject(server, { localOnly: true });
-                    if (!currentSessionId) {
+                    if (!session.current()) {
                         reconcileChatProject();
                     } else {
                         renderProjectChips();
@@ -4235,7 +3268,7 @@
         const wasStarred = isProjectStarred(record);
         // Exclusive: star replaces any previous star; unstar clears.
         writeStarredProject(wasStarred ? null : record);
-        if (!currentSessionId) {
+        if (!session.current()) {
             // New / welcome chat: apply the new default immediately.
             if (!wasStarred) {
                 const live = findProjectById(record.id)
@@ -4278,7 +3311,7 @@
      */
     const agentControls = CuttleChatAgentControls.create({
         state: slashPaletteSupplement,
-        getSessionId: () => currentSessionId,
+        getSessionId: () => session.current(),
         getProjectPath: () => (currentProject && currentProject.path ? String(currentProject.path) : ''),
         hasActiveCursor: () => hasActiveCursorAgentChip(),
         hasActiveMuse: () => hasActiveMuseAgentChip(),
@@ -4289,8 +3322,8 @@
         hasCursorModelChip: () => slashCtx.chat.chips.concat(slashCtx.welcome.chips).some((c) => c.category === 'cursor-model'),
         beginFetch: (field) => beginSupplementFetch(field),
         isCurrentFetch: (field, gen) => isCurrentSupplementFetch(field, gen),
-        captureMutation: (sid, label) => sessionMutations.capture(sid, label, _loadSessionSeq),
-        isMutationCurrent: (tok) => sessionMutations.current(tok, currentSessionId, _loadSessionSeq),
+        captureMutation: (sid, label) => sessionMutations.capture(sid, label, session.navSeq()),
+        isMutationCurrent: (tok) => sessionMutations.current(tok, session.current(), session.navSeq()),
         sessionMutationFetch: (url, opts) => sessionMutationFetch(url, opts),
         renderSlashChips: () => {
             renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
@@ -4314,7 +3347,7 @@
 
     function cursorAgentSessionOptionsKey() {
         const path = currentProject && currentProject.path ? String(currentProject.path) : '';
-        const sid = currentSessionId != null ? String(currentSessionId) : '';
+        const sid = session.current() != null ? String(session.current()) : '';
         return path + '\x1f' + sid;
     }
 
@@ -4516,7 +3549,7 @@
      * values as fresh and only top up the models list.
      */
     function sessionMutationFetch(url, options) {
-        const sid = JSON.parse(options.body || '{}').session || currentSessionId;
+        const sid = JSON.parse(options.body || '{}').session || session.current();
         return sessionMutations.enqueue(String(sid) + ':' + url, () => fetch(url, options));
     }
 
@@ -4770,7 +3803,7 @@
         hasActiveCursorAgentChip,
         loadCursorAgentModelsForPalette,
         applySlashSelection,
-        saveDraft: () => saveComposerDraft(currentSessionId || 'new'),
+        saveDraft: () => saveComposerDraft(session.current() || 'new'),
         findProjectById,
         setChatProject,
         autoResizeTextarea,
@@ -4782,6 +3815,89 @@
         onCursorModelPick,
     });
     slashPalette.bind();
+
+    // History row/header markup lives in chat_history_view.js
+    // (CuttleChatHistoryView.createRenderers). The page binds its
+    // session/attention/project capabilities once and hands the renderers to
+    // the history panel controller and the full-list paint.
+    const historyView = CuttleChatHistoryView.createRenderers({
+        escapeHtml,
+        escapeHtmlInline,
+        currentSessionId: () => session.current(),
+        sessionIdsEqual,
+        sessionShowsHistorySpinner,
+        sessionHistoryAttentionKind,
+        resolveSessionProjectInfo,
+        projectChipHtml,
+        historyBranchFor,
+        chatTitleParts,
+        historyAttentionIconHTML: serverAttention.historyAttentionIconHTML,
+        openPaneEntriesForSession,
+        historyOpenPaneBadgeHTML: serverAttention.historyOpenPaneBadgeHTML,
+        historySubagentToggleTitle: CuttleChatHistoryView.historySubagentToggleTitle,
+        formatHistoryLastMessageAge,
+        resolveHistoryLastMessageMs,
+        historyRunningIconHTML,
+        formatChatDisplayId,
+    });
+
+    // History panel search/filter + row-menu/modal controller: query/debounce/
+    // abort state, the `/project` + `/agent` filter chips and slash palette,
+    // search-result paint, the active-search hard gate, and the row overflow
+    // menu + rename/delete modal lifecycle live in chat_history_panel.js
+    // (CuttleChatHistoryPanel). The page supplies row/header renderers, project
+    // resolution, session/attention capabilities and action effects.
+    const historyPanel = CuttleChatHistoryPanel.create({
+        win: window,
+        doc: document,
+        storage: localStorage,
+        fetch: (...args) => window.fetch(...args),
+        escapeHtml,
+        parseSessionTimestamp,
+        formatChatDisplayId,
+        resolveSessionProjectInfo,
+        getProjects: () => projects,
+        stickyTitleChipsForSession,
+        parseTitleSlashChips,
+        getSlashCommands: () => CuttleChatSlash.SLASH_COMMANDS,
+        isAuthMode,
+        getAuthSessions: () => ((window.CuttleAuth && window.CuttleAuth.getSessions && window.CuttleAuth.getSessions()) || []),
+        applyGeneratingFlagsFromSessions,
+        isChatSessionDeleted,
+        getTerminalHistoryEntries,
+        createAuthHistoryItemHTML: historyView.createAuthHistoryItemHTML,
+        createHistoryItemHTML: historyView.createHistoryItemHTML,
+        createTerminalHistoryItemHTML: historyView.createTerminalHistoryItemHTML,
+        createHistorySectionHeaderHTML: historyView.createHistorySectionHeaderHTML,
+        scheduleSlashChipCompactLabels,
+        renderArchivedSection,
+        rememberActiveHistorySessions,
+        refreshArchivedSessions,
+        isArchivedSessionsLoaded: () => archivedSessionsLoaded,
+        syncHistoryRunningIndicators,
+        syncHistoryUnreadIndicators,
+        sessionHasUnread,
+        sessionHasUnreadError,
+        sessionHasPausedFollowup,
+        sessionHasActiveFollowup,
+        refreshLocalOpenPanes,
+        // Row menu + modal orchestration capabilities.
+        buildSessionMenuHTML,
+        refreshGitPushMenuMode: gitPush.refreshMenuMode,
+        closeChatChromeMenu,
+        isTerminalSessionId,
+        getChatSessionDisplayTitle,
+        readTerminalSessionRegistry,
+        writeTerminalSessionRegistry,
+        fetchWithTimeout,
+        currentSessionId: () => session.current(),
+        sessionIdsEqual,
+        toAuthDbSessionId,
+        deleteChatSession,
+        persistRenamedTitle,
+        refreshChatHistoryList,
+        updateChatSessionTitle,
+    });
 
     const slashCtx = slashPalette.ctx;
 
@@ -4991,7 +4107,7 @@
         if (!row) return;
         const _idPrev = slashPaletteSupplement.sessionIdentity;
         const _idPath = (currentProject && currentProject.path) ? String(currentProject.path) : '';
-        const _idNextSid = String(currentSessionId != null ? currentSessionId : '');
+        const _idNextSid = String(session.current() != null ? session.current() : '');
         const _idNext = _idNextSid + '|' + _idPath; // (duplicate path suffix, inert) + '' + _idPath;
         if (_idPrev !== _idNext) {
             slashPaletteSupplement.sessionIdentity = _idNext;
@@ -5195,7 +4311,7 @@
                 renderSlashChips(key, textarea);
                 renderSlashChips(other, document.getElementById(other === 'chat' ? 'chatInput' : 'welcomeChatInput'));
                 persistStickySlashForCurrentSession(true);
-                saveComposerDraftControls(currentSessionId || 'new', key);
+                saveComposerDraftControls(session.current() || 'new', key);
                 if (textarea) {
                     try { textarea.focus({ preventScroll: true }); } catch (_) { textarea.focus(); }
                 }
@@ -5295,7 +4411,7 @@
     function applySlashSelection(textarea, key, idx) {
         slashPalette.applySelection(textarea, key, idx);
         try {
-            saveComposerDraft(currentSessionId || 'new', key);
+            saveComposerDraft(session.current() || 'new', key);
         } catch (_) {}
     }
     function syncSlashMenuFromInput(textarea) {
@@ -5425,7 +4541,7 @@
     }
 
     function persistStickySlashForCurrentSession(publishShared = false) {
-        const prefsId = currentSessionId || newComposerPrefsId;
+        const prefsId = session.current() || newComposerPrefsId;
         const chips = (slashCtx.chat.chips && slashCtx.chat.chips.length)
             ? slashCtx.chat.chips
             : (slashCtx.welcome.chips || []);
@@ -5449,14 +4565,14 @@
 
     function isStickyAgentCleared() {
         if (stickyAgentClearedPending) return true;
-        const prefs = currentSessionId ? getSessionPrefs(currentSessionId) : null;
+        const prefs = session.current() ? getSessionPrefs(session.current()) : null;
         return !!(prefs && prefs.stickyCleared);
     }
 
     function markStickyAgentCleared(cleared) {
         stickyAgentClearedPending = !!cleared;
-        if (currentSessionId) {
-            updateSessionPrefs(currentSessionId, { stickyCleared: !!cleared });
+        if (session.current()) {
+            updateSessionPrefs(session.current(), { stickyCleared: !!cleared });
         }
     }
 
@@ -5500,7 +4616,7 @@
         if (isLoadingThisSession() && !(liveStatus && liveStatus.active && liveStatus.slash_command)) return;
         const meta = CuttleChatAgentModel.turnSlashFromMessages(messages, liveStatus);
         if (meta !== undefined) {
-            turnBadgeBySession.set(String(canonicalizeChatSessionId(currentSessionId) || ''), meta);
+            turnBadgeBySession.set(String(canonicalizeChatSessionId(session.current()) || ''), meta);
         }
     }
 
@@ -5543,7 +4659,7 @@
         restoreSessionStickySlash(sessionId, []);
     }
 
-    function publishSharedComposerSelection(selection, sessionId = currentSessionId, retryId = null) {
+    function publishSharedComposerSelection(selection, sessionId = session.current(), retryId = null) {
         const sid = toAuthDbSessionId(sessionId);
         if (!isAuthMode() || !sid || !/^\d+$/.test(sid)) return;
         const key = String(canonicalizeChatSessionId(sessionId));
@@ -5597,8 +4713,8 @@
 
     function persistProjectForCurrentSession(opts) {
         opts = opts || {};
-        if (!currentSessionId) return;
-        const bare = toAuthDbSessionId(currentSessionId);
+        if (!session.current()) return;
+        const bare = toAuthDbSessionId(session.current());
         const payload = {
             projectId: currentProject ? currentProject.id : null,
             projectPath: currentProject ? currentProject.path : '',
@@ -5608,10 +4724,10 @@
         };
         // Keep hydrate/list caches aligned so a later reconcile cannot resurrect
         // the previous project (CH-000204: EP chip → Cuttle on send).
-        rememberSessionProject(currentSessionId, currentProject);
+        rememberSessionProject(session.current(), currentProject);
         // Write under both display and bare keys so reopen / history grouping stay in sync.
-        updateSessionPrefs(currentSessionId, payload);
-        if (bare && String(bare) !== String(currentSessionId)) {
+        updateSessionPrefs(session.current(), payload);
+        if (bare && String(bare) !== String(session.current())) {
             updateSessionPrefs(bare, payload);
         }
         if (opts.localOnly) return;
@@ -5960,13 +5076,13 @@
 
     /** True when sessionId refers to the currently open chat (live pins apply). */
     function isCurrentHistorySession(sessionId) {
-        if (sessionId == null || sessionId === '' || currentSessionId == null || currentSessionId === '') {
+        if (sessionId == null || sessionId === '' || session.current() == null || session.current() === '') {
             return false;
         }
-        if (String(sessionId) === String(currentSessionId)) return true;
+        if (String(sessionId) === String(session.current())) return true;
         try {
             const a = toAuthDbSessionId(sessionId);
-            const b = toAuthDbSessionId(currentSessionId);
+            const b = toAuthDbSessionId(session.current());
             return !!(a && b && String(a) === String(b));
         } catch (_) {
             return false;
@@ -6225,15 +5341,6 @@
         scheduleSlashChipCompactLabels(document.getElementById('chatHistory'));
     }
 
-    /** Meta line above the name: chips, badges, state dots. Empty → hidden by CSS. */
-    function historyItemMetaHTML(parts) {
-        const html = (parts || [])
-            .filter(Boolean)
-            .map((s) => String(s).trim())
-            .join('');
-        return '<div class="history-item-meta">' + html + '</div>';
-    }
-
     /** Meta line element, created on demand so live indicator updates have a home. */
     function historyItemMetaEl(item) {
         if (!item) return null;
@@ -6307,7 +5414,7 @@
 
     /** Frozen turn identity, also used when recreating typing UI after navigation. */
     function currentTypingSlashMeta() {
-        return turnBadgeBySession.get(String(canonicalizeChatSessionId(currentSessionId) || '')) || null;
+        return turnBadgeBySession.get(String(canonicalizeChatSessionId(session.current()) || '')) || null;
     }
 
     function syncPreferredModelFromResponse(data) {
@@ -6971,7 +6078,7 @@
                 LOG_ERR('loadProjects: failed to parse JSON:', parseErr);
                 projects = [];
                 reconcileChatProject();
-                reloadHistoryListKeepingSearch();
+                historyPanel.reloadKeepingSearch();
                 return;
             }
 
@@ -6986,12 +6093,12 @@
             // Resolve this chat's project (session-stored or Cuttle default) and show its chip.
             reconcileChatProject();
             // History grouping needs the project list for the Cuttle default fallback.
-            reloadHistoryListKeepingSearch();
+            historyPanel.reloadKeepingSearch();
         } catch (error) {
             LOG_ERR('loadProjects: fetch error:', error);
             projects = [];
             reconcileChatProject();
-            reloadHistoryListKeepingSearch();
+            historyPanel.reloadKeepingSearch();
         }
     }
     
@@ -7141,14 +6248,14 @@
         // A different project starts fresh (Local); the chip can rebind a worktree.
         if (prevProjectId !== nextProjectId) { currentCheckoutUid = ''; currentCheckoutPath = ''; }
         reportProjectToShell(effectiveGitPath());
-        if (currentSessionId) {
-            rememberSessionProject(currentSessionId, proj);
+        if (session.current()) {
+            rememberSessionProject(session.current(), proj);
             try {
                 const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                if (sessions[currentSessionId]) {
-                    sessions[currentSessionId].projectId = proj ? proj.id : null;
-                    sessions[currentSessionId].projectPath = proj ? proj.path : '';
-                    sessions[currentSessionId].projectName = proj ? proj.name : '';
+                if (sessions[session.current()]) {
+                    sessions[session.current()].projectId = proj ? proj.id : null;
+                    sessions[session.current()].projectPath = proj ? proj.path : '';
+                    sessions[session.current()].projectName = proj ? proj.name : '';
                     localStorage.setItem('chatSessions', JSON.stringify(sessions));
                 }
             } catch (_) {}
@@ -7174,13 +6281,13 @@
         const uid = checkout && checkout.checkout_uid ? String(checkout.checkout_uid) : '';
         currentCheckoutUid = uid;
         currentCheckoutPath = checkout && checkout.path ? String(checkout.path) : '';
-        if (currentSessionId) {
+        if (session.current()) {
             persistProjectForCurrentSession();
             try {
                 const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                if (sessions[currentSessionId]) {
-                    sessions[currentSessionId].checkoutUid = uid || null;
-                    sessions[currentSessionId].checkoutPath = currentCheckoutPath || null;
+                if (sessions[session.current()]) {
+                    sessions[session.current()].checkoutUid = uid || null;
+                    sessions[session.current()].checkoutPath = currentCheckoutPath || null;
                     localStorage.setItem('chatSessions', JSON.stringify(sessions));
                 }
             } catch (_) {}
@@ -7205,8 +6312,7 @@
 
     /** Git-facing path for this chat: the bound checkout, else the project. */
     function effectiveGitPath() {
-        return currentCheckoutPath
-            || (currentProject && currentProject.path ? String(currentProject.path) : '');
+        return CuttleChatProject.effectiveGitPath(currentCheckoutPath, currentProject);
     }
 
     function reportProjectToShell(projectPath) {
@@ -7231,13 +6337,10 @@
         pendingChangesCtl = window.CuttlePendingChangesPanel.create({
             getProject: function () {
                 // Pending changes / git target the bound checkout when present.
-                if (!currentProject) return null;
-                return Object.assign({}, currentProject, {
-                    path: effectiveGitPath(),
-                    worktree: currentCheckoutUid ? (currentProjectBranch() || true) : '',
-                });
+                return CuttleChatProject.pendingChangesProject(
+                    currentProject, effectiveGitPath(), currentProjectBranch(), currentCheckoutUid);
             },
-            getSessionId: function () { return currentSessionId; },
+            getSessionId: function () { return session.current(); },
             getPrompts: function () {
                 try {
                     if (typeof getComposerPromptHistory === 'function') {
@@ -7287,21 +6390,21 @@
         let serverProj = null;
         let mergedPrefs = null;
         let stored = null;
-        if (currentSessionId) {
-            serverProj = projectFieldsFromServerSession(findAuthServerSession(currentSessionId));
-            const prefs = getSessionPrefs(currentSessionId);
-            const barePrefs = getSessionPrefs(toAuthDbSessionId(currentSessionId));
+        if (session.current()) {
+            serverProj = projectFieldsFromServerSession(findAuthServerSession(session.current()));
+            const prefs = getSessionPrefs(session.current());
+            const barePrefs = getSessionPrefs(toAuthDbSessionId(session.current()));
             mergedPrefs = Object.assign({}, barePrefs || {}, prefs || {});
             try {
                 const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                stored = sessions[currentSessionId] || null;
+                stored = sessions[session.current()] || null;
             } catch (_) {
                 stored = null;
             }
         }
         const decided = CuttleChatProject.resolveChatProject({
             projects,
-            currentSessionId,
+            currentSessionId: session.current(),
             currentProject,
             serverFields: serverProj,
             prefs: mergedPrefs,
@@ -7315,7 +6418,7 @@
         // Restore the chat's bound worktree checkout (server row, then prefs).
         // An unsaved new chat has no session row yet: keep the in-memory pick
         // instead of clearing it, or the chip snaps back to the primary branch.
-        if (currentSessionId) {
+        if (session.current()) {
             const storedCheckout = (serverProj && serverProj.checkoutUid)
                 || (mergedPrefs && mergedPrefs.checkoutUid)
                 || (stored && stored.checkoutUid) || '';
@@ -7325,13 +6428,13 @@
         }
         // Stamp the default onto prefs so history grouping matches the cwd chip
         // (auth sessions do not store project_id on the server).
-        if (currentSessionId && currentProject && !hadStored
-            && !sessionHasStoredProject(currentSessionId, null)
-            && authSessionListHas(currentSessionId)
-            && !projectFieldsFromServerSession(findAuthServerSession(currentSessionId))) {
+        if (session.current() && currentProject && !hadStored
+            && !sessionHasStoredProject(session.current(), null)
+            && authSessionListHas(session.current())
+            && !projectFieldsFromServerSession(findAuthServerSession(session.current()))) {
             persistProjectForCurrentSession();
-        } else if (currentSessionId && currentProject && hadStored) {
-            const prefs = getSessionPrefs(currentSessionId);
+        } else if (session.current() && currentProject && hadStored) {
+            const prefs = getSessionPrefs(session.current());
             const prefsStale = !prefs
                 || (currentProject.id != null && String(prefs.projectId) !== String(currentProject.id))
                 || (currentProject.path && String(prefs.projectPath || '') !== String(currentProject.path));
@@ -7347,7 +6450,7 @@
     /** Project to send with /api/chat — always prefers a real filesystem path. */
     function resolveOutboundProject() {
         const keepWelcomePick =
-            !currentSessionId
+            !session.current()
             && currentProject
             && (currentProject.path || currentProject.id != null || currentProject.name);
         // Don't re-read empty session storage on first send — that overwrites
@@ -7359,7 +6462,7 @@
         // Stale localStorage often keeps name "Escape Purgatory" with path Cuttle.
         const rebound = CuttleChatProject.rebindProjectToRegistry(currentProject, projects);
         currentProject = rebound.proj;
-        if (rebound.changed && currentSessionId) persistProjectForCurrentSession();
+        if (rebound.changed && session.current()) persistProjectForCurrentSession();
         return currentProject;
     }
 
@@ -7480,9 +6583,9 @@
     /** Write a system notice into chat_messages so it survives refresh / devices. */
     function durablePersistSystemMessage(el, message, opts) {
         opts = opts || {};
-        if (!el || !isAuthMode() || currentSessionId == null) return;
+        if (!el || !isAuthMode() || session.current() == null) return;
         if (el.dataset.persistInFlight === '1' || el.dataset.messageId) return;
-        const bare = toAuthDbSessionId(currentSessionId);
+        const bare = toAuthDbSessionId(session.current());
         if (!bare || !/^\d+$/.test(String(bare))) return;
         el.dataset.persistInFlight = '1';
         const body = {
@@ -7560,8 +6663,8 @@
     }
 
     function isHistoryPanelUiBusy() {
-        if (isHistoryDeleteModalOpen()) return true;
-        if (isHistoryRenameModalOpen()) return true;
+        if (historyPanel.isDeleteModalOpen()) return true;
+        if (historyPanel.isRenameModalOpen()) return true;
         if (isHistoryItemMenuOpen()) return true;
         // Full list rebuilds destroy the ⋮ button mid-click and close the menu.
         return !!document.querySelector(
@@ -7627,14 +6730,14 @@
     }
 
     function closeChatHistoryPanel() {
-        closeHistoryItemMenu();
-        closeHistoryDeleteModal();
-        closeHistoryRenameModal();
+        historyPanel.closeMenu();
+        historyPanel.closeDeleteModal();
+        historyPanel.closeRenameModal();
         if (window.CuttleTooltips && typeof window.CuttleTooltips.hide === 'function') {
             window.CuttleTooltips.hide();
         }
         // Don't keep "Show N more" reveals across open/close — each open starts fresh.
-        historyGroupVisibleCount.clear();
+        historyPanel.clearGroupReveals();
         const panel = getChatHistoryPanel();
         const overlay = document.getElementById('chatHistoryPanelOverlay');
         animateHistoryPanelSlide(panel);
@@ -7657,18 +6760,18 @@
     document.addEventListener('keydown', function (e) {
         if (e.key !== 'Escape') return;
         const menu = document.getElementById('historyItemOverflowMenu');
-        if (isHistoryDeleteModalOpen()) {
-            closeHistoryDeleteModal();
+        if (historyPanel.isDeleteModalOpen()) {
+            historyPanel.closeDeleteModal();
             e.preventDefault();
             return;
         }
-        if (isHistoryRenameModalOpen()) {
-            closeHistoryRenameModal();
+        if (historyPanel.isRenameModalOpen()) {
+            historyPanel.closeRenameModal();
             e.preventDefault();
             return;
         }
         if (menu && !menu.hidden) {
-            closeHistoryItemMenu();
+            historyPanel.closeMenu();
             e.preventDefault();
             return;
         }
@@ -7719,80 +6822,12 @@
     function authSessionIdForRequest() {
         // chat_page's currentSessionId is authoritative while on this page
         // (null = new chat / welcome — never fall back to auth's "latest").
-        return currentSessionId;
+        return session.current();
     }
 
     async function ensureAuthChatSession() {
         // Sessions are created on first message by /api/chat — never pre-create empties.
-        return currentSessionId;
-    }
-
-    function createHistorySectionHeaderHTML(title, opts) {
-        const showRefresh = !(opts && opts.showRefresh === false);
-        const project = opts && opts.project;
-        const collapsible = !!(opts && opts.collapsible && project && project.key);
-        const expanded = !(opts && opts.collapsed);
-        const count = Number(opts && opts.count) || 0;
-        const hasError = !!(opts && opts.hasError);
-        const hasUnread = !!(opts && opts.hasUnread) || hasError;
-        const hasQueued = !!(opts && opts.hasQueued);
-        const hasPaused = !!(opts && opts.hasPaused);
-        const refreshBtn = showRefresh
-            ? `<button type="button" class="history-refresh-btn" id="chatHistoryRefreshBtn" onclick="window.refreshChatHistoryList(event)" title="Refresh chats" aria-label="Refresh chat list">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="23 4 23 10 17 10"/>
-                        <polyline points="1 20 1 14 7 14"/>
-                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-                    </svg>
-                </button>`
-            : '';
-        const newChatBtn = (project && project.key !== '__none__' && project.key !== '__discord__')
-            ? `<button type="button" class="history-new-chat-btn"
-                    data-project-id="${escapeHtml(project.id != null ? String(project.id) : '')}"
-                    data-project-name="${escapeHtml(project.name || '')}"
-                    data-project-path="${escapeHtml(project.path || '')}"
-                    onclick="window.newChatForProject(event)"
-                    title="New chat in ${escapeHtml(project.name || 'this project')}"
-                    aria-label="New chat in ${escapeHtml(project.name || 'this project')}">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
-                        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                    </svg>
-                </button>`
-            : '';
-        const chevron = collapsible
-            ? `<span class="history-section-chevron" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="6 9 12 15 18 9"/>
-                    </svg>
-               </span>`
-            : '';
-        const countClass = hasError
-            ? ' has-unread has-unread-error'
-            : (hasUnread
-                ? ' has-unread'
-                : (hasQueued ? ' has-queued' : (!hasUnread && hasPaused ? ' has-paused-queue' : '')));
-        const countHtml = collapsible && count > 0
-            ? `<span class="history-section-count${countClass}" title="${count} chat${count === 1 ? '' : 's'}">${count}</span>`
-            : '';
-        const attentionDot = hasError
-            ? `<span class="history-section-unread-dot is-error" title="Unread error" aria-label="Unread error"></span>`
-            : (hasUnread
-                ? `<span class="history-section-unread-dot" title="Unread" aria-label="Unread"></span>`
-                : (hasQueued
-                    ? `<span class="history-section-queued-dot" title="Queued prompt" aria-label="Queued prompt"></span>`
-                    : (hasPaused
-                        ? `<span class="history-section-paused-dot" title="Paused queue" aria-label="Paused queued prompt"></span>`
-                        : '')));
-        const headerAttrs = collapsible
-            ? ` role="button" tabindex="0" data-project-key="${escapeHtml(String(project.key))}" aria-expanded="${expanded ? 'true' : 'false'}" onclick="window.toggleHistoryProjectCollapse(event)" onkeydown="window.toggleHistoryProjectCollapseKey(event)"`
-            : '';
-        return `
-            <div class="history-section-header${collapsible ? ' is-collapsible' : ''}"${headerAttrs}>
-                ${chevron}
-                <div class="history-section-title">${attentionDot}${escapeHtml(title)}${countHtml}</div>
-                <div class="history-section-actions" onclick="event.stopPropagation()">${newChatBtn}${refreshBtn}</div>
-            </div>
-        `;
+        return session.current();
     }
 
     /** "+" on a project heading: fresh chat already scoped to that project. */
@@ -7840,17 +6875,17 @@
             return Promise.resolve(loadChatSessions()).then(function () {
                 // Prefer re-applying search/filters — a full list paint races with
                 // typing (open refresh, generating poll, title refresh timers).
-                reloadHistoryListKeepingSearch();
-                if (currentSessionId) updateChatSessionTitle(currentSessionId);
+                historyPanel.reloadKeepingSearch();
+                if (session.current()) updateChatSessionTitle(session.current());
                 done();
             }).catch(function () {
-                reloadHistoryListKeepingSearch();
-                if (currentSessionId) updateChatSessionTitle(currentSessionId);
+                historyPanel.reloadKeepingSearch();
+                if (session.current()) updateChatSessionTitle(session.current());
                 done();
             });
         }
-        reloadHistoryListKeepingSearch();
-        if (currentSessionId) updateChatSessionTitle(currentSessionId);
+        historyPanel.reloadKeepingSearch();
+        if (session.current()) updateChatSessionTitle(session.current());
         done();
         return Promise.resolve();
     }
@@ -7883,66 +6918,10 @@
         } catch (_) {}
     }
 
+    // createNewChat is owned by chat_session.js (CuttleChatSession.createSessionBoot).
+    // The page builds the capability host lazily and keeps this thin call site.
     async function createNewChat() {
-        if (currentSessionId != null) saveComposerDraft(currentSessionId);
-        applyStarredSlashChips();
-        chatRestoreAbandoned = true;
-        clearChatRestoreVeil();
-        localStorage.setItem('autoResumeSession', 'false');
-
-        // Detach prior chat's local stream UI first — otherwise welcome stays
-        // disabled (processMessage) and/or isLoading parks the first send.
-        detachLocalGenerationForNavigation();
-
-        const chatMessages = document.getElementById('chatMessages');
-        if (chatMessages) {
-            chatMessages.innerHTML = '';
-        }
-        // Drop prior session's lazy-history offset — otherwise new-chat numbers
-        // keep starting at older_visible_count+1 from the chat we left.
-        resetChatHistoryWindow();
-        transcriptNav.resetNav();
-
-        document.getElementById('welcomeScreen').style.display = 'flex';
-        document.getElementById('chatArea').style.display = 'none';
-
-        document.querySelectorAll('.chat-history-item').forEach(item => {
-            item.classList.remove('active');
-        });
-
-        // Drop the previous chat id before reconcile. Otherwise the welcome
-        // screen inherits that session's project, then the first send (still
-        // unsaved) snaps to the Cuttle default.
-        releaseManualUnreadHoldIfLeaving(null);
-        currentSessionId = null;
-        adoptFollowupQueue(currentSessionId);
-        applyHistorySubagentExpandState();
-        applySessionIdentity(null);
-        currentProject = null;
-        hubLiveStatusCache = null;
-        reconcileChatProject();
-        // Prior chat's Tasks strip must not stick on welcome / new chat.
-        refreshChatWidgets();
-        closeChatHistoryPanel();
-
-        // Don't persist an empty session — wait until the user sends a message.
-        updateChatIdBadge(null);
-        loadPromptHistoryForSession(null);
-        localStorage.removeItem('lastChatSessionId');
-        if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
-            window.CuttleAuth.setCurrentChatSession(null);
-        }
-        stopMessageSync({ resetCursor: true });
-        clearFollowupQueue();
-        CuttleStopState.clearWaitingSuppression(stopState);
-        syncChatUrl(null);
-        reportSessionToShell(null);
-        restoreWelcomeStickySlash();
-        restoreComposerDraft('new', { force: true });
-        if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
-        resetChatAttentionState();
-        focusWelcomeComposer();
-        console.log('New chat ready (not saved until first message)');
+        return sessionBoot().createNewChat();
     }
     
     async function sendWelcomeMessage() {
@@ -8045,8 +7024,6 @@
     // ── Deep-link restore (?chat=) ─────────────────────────────
     // chat_page.html raises data-chat-restoring and kicks off the transcript
     // fetch before this file even parses; everything below consumes that.
-    const CHAT_RESTORE_TIMEOUT_MS = 10000;
-    let chatRestoreAbandoned = false;
 
     function clearChatRestoreVeil() {
         try { document.documentElement.removeAttribute('data-chat-restoring'); } catch (_) {}
@@ -8077,8 +7054,8 @@
         resetChatHistoryWindow();
         transcriptNav.resetNav();
         releaseManualUnreadHoldIfLeaving(null);
-        currentSessionId = null;
-        adoptFollowupQueue(currentSessionId);
+        session.create(null);
+        adoptFollowupQueue(session.current());
         applySessionIdentity(null);
         updateChatIdBadge(null);
         if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
@@ -8114,425 +7091,18 @@
         });
     }
 
-    /**
-     * Open the chat named by ?chat= as soon as *either* signal lands: the
-     * prefetched transcript (a 200 means the cookie is good, so we don't wait on
-     * auth.js) or auth settling. Neither within 10s → show the new-chat splash.
-     */
+    // bootRestoreSession is owned by chat_session.js (CuttleChatSession.createSessionBoot).
+    // The page builds the capability host lazily and keeps this thin call site.
     async function bootRestoreSession(sessionParam) {
-        // Never leave a spinner up, whatever happens below.
-        setTimeout(clearChatRestoreVeil, CHAT_RESTORE_TIMEOUT_MS + 2000);
-        const prefetch = takeChatTranscriptPrefetch(sessionParam);
-        let prefetchData = null;
-        const prefetchReady = prefetch
-            ? prefetch.then((data) => {
-                if (data && data.success) {
-                    prefetchData = data;
-                    return 'prefetch';
-                }
-                return null;
-            }).catch(() => null)
-            : null;
-        const authReady = waitForAuthReady(CHAT_RESTORE_TIMEOUT_MS)
-            .then((ok) => (ok ? 'auth' : null));
-
-        const winner = await firstTruthy([prefetchReady, authReady], CHAT_RESTORE_TIMEOUT_MS);
-        if (chatRestoreAbandoned) return;
-
-        if (winner) {
-            try {
-                await loadChatSession(sessionParam, {
-                    assumeAuth: winner === 'prefetch',
-                    prefetched: prefetchData,
-                    prefetchPromise: prefetch,
-                });
-            } finally {
-                clearChatRestoreVeil();
-            }
-            return;
-        }
-
-        // Anonymous chats live in localStorage and need no auth at all.
-        try {
-            const local = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-            if (local && local[sessionParam]) {
-                await loadChatSession(sessionParam);
-                return;
-            }
-        } catch (_) {}
-
-        chatRestoreAbandoned = true;
-        showWelcomeSplash();
-        if (typeof window.showToast === 'function') {
-            window.showToast('Chat took too long to load — starting a new chat.', 'warning');
-        }
+        return sessionBoot().bootRestoreSession(sessionParam);
     }
 
-    let _loadSessionSeq = 0;
-
+    // loadChatSession is owned by chat_session.js (CuttleChatSession.createLoader).
+    // The page builds the capability host lazily and keeps this thin call site.
     async function loadChatSession(sessionId, opts = {}) {
-        // Persist unsent text from the chat we're leaving (survives refresh).
-        if (currentSessionId != null && !sessionIdsEqual(currentSessionId, sessionId)) {
-            saveComposerDraft(currentSessionId);
-        } else if (currentSessionId == null) {
-            saveComposerDraft('new');
-        }
-        clearAllSlashChips();
-        CuttleStopState.clearWaitingSuppression(stopState);
-        sessionId = canonicalizeChatSessionId(sessionId);
-        const loadSeq = ++_loadSessionSeq;
-        // Close immediately on tap — don't wait for message fetch (felt stuck open on mobile).
-        closeChatHistoryPanel();
-
-        // Leaving a different chat's local stream — detach UI so this session
-        // isn't treated as generating (false follow-up queue).
-        if (
-            generation.loading
-            && (
-                generation.localSessionId == null
-                || !sessionIdsEqual(generation.localSessionId, sessionId)
-            )
-        ) {
-            detachLocalGenerationForNavigation();
-        }
-
-        // assumeAuth: the boot prefetch already got a 200 from the auth-only
-        // messages endpoint, so the cookie is valid even if auth.js hasn't emitted yet.
-        if (isAuthMode() || opts.assumeAuth) {
-            // Invalidate the per-session model cache before updating currentSessionId so
-            // any render or send that follows picks up the correct model for the new session.
-            if (currentSessionId !== sessionId) {
-                agentControls.invalidateProviderCacheForSessionSwitch();
-            }
-            releaseManualUnreadHoldIfLeaving(sessionId);
-            const prevSessionId = currentSessionId;
-            const switchingAway = prevSessionId != null
-                && !sessionIdsEqual(prevSessionId, sessionId);
-            // Opening this chat — stop any background completion poll for it.
-            cancelDetachedSessionCompletionWatch(sessionId);
-            currentSessionId = sessionId;
-            adoptFollowupQueue(currentSessionId);
-            // Opened chat defaults to idle until the one-shot live-status (below)
-            // confirms generating. Stale runningSessionIds / hub cache from a
-            // prior visit used to flash the purple title + history spinner for
-            // a few seconds while waiting on the shell heartbeat poll.
-            // Owned by chat_generation.js — an opened chat defaults to idle
-            // until the one-shot live-status confirms generating.
-            const openFlags = CuttleChatGeneration.decideSessionOpen({ switchingAway });
-            if (openFlags.clearHubCache) hubLiveStatusCache = null;
-            if (openFlags.deferGenerating) deferOpenChatGeneratingFromSessions = true;
-            if (openFlags.markIdle) setHistorySessionRunning(sessionId, false);
-            if (switchingAway) {
-                // Form-awaiting is DOM-derived; cleared messages must not keep
-                // the old chat's pending-form spinner on this title.
-                _mutateSessionIdSet(formAwaitingSessionIds, sessionId, false);
-            }
-            updateChatIdBadge(sessionId);
-            if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
-                window.CuttleAuth.setCurrentChatSession(sessionId);
-            }
-            loadPromptHistoryForSession(String(sessionId));
-            localStorage.setItem('lastChatSessionId', String(sessionId));
-            localStorage.setItem('autoResumeSession', 'true');
-            syncChatUrl(sessionId);
-            refreshChatWidgets();
-            // Prefs-only sticky restore BEFORE shell live-status can paint the
-            // working bubble (phone hub race). Transcript inference runs again
-            // after /messages below.
-            restoreSessionStickySlash(sessionId, []);
-            reportSessionToShell(sessionId, { preferFocus: true });
-            const loadT0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-            // Capture before markChatSessionRead so the title unread can survive open.
-            const openNeedsAck = sessionPrefsHasUnreadFlag(sessionId);
-            resetChatAttentionState({
-                needsAck: openNeedsAck,
-                isError: openNeedsAck && sessionPrefsUnreadIsError(sessionId),
-            });
-            // Don't block transcript load on refreshing the full session list —
-            // under a busy connection pool that await made reopen feel like 10–60s.
-            const sessionsRefresh = (window.CuttleAuth && typeof window.CuttleAuth.loadChatSessions === 'function')
-                ? Promise.resolve(window.CuttleAuth.loadChatSessions()).catch(() => {})
-                : Promise.resolve();
-
-            document.getElementById('welcomeScreen').style.display = 'none';
-            document.getElementById('chatArea').style.display = 'flex';
-            if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
-
-            const chatMessages = document.getElementById('chatMessages');
-            chatMessages.innerHTML = '';
-            lastSeenServerMessageId = 0;
-            resetChatHistoryWindow();
-            removeRemoteWaitingIndicator();
-            stopMessageSync();
-            // Drop a prior chat's hydrate so findAuthServerSession cannot briefly
-            // resolve the wrong project while this session's /messages is in flight.
-            if (
-                lastHydratedSessionProject
-                && !sessionIdsEqual(lastHydratedSessionProject.id, sessionId)
-            ) {
-                lastHydratedSessionProject = null;
-            }
-
-            const authSid = toAuthDbSessionId(sessionId);
-            let loadedMessages = [];
-            try {
-                // Boot deep-links already have this transcript in flight (started in
-                // chat_page.html) — reuse it instead of paying for a second round trip.
-                let data = opts.prefetched || null;
-                if (!data && opts.prefetchPromise) {
-                    try { data = await opts.prefetchPromise; } catch (_) { data = null; }
-                }
-                if (!data) {
-                    const prefetch = takeChatTranscriptPrefetch(sessionId);
-                    if (prefetch) data = await prefetch;
-                }
-                if (!data) {
-                    const response = await fetchWithTimeout(
-                        sessionMessagesUrl(authSid, { limit: CHAT_HISTORY_PAGE_SIZE }),
-                        { credentials: 'include', cache: 'no-store' },
-                        12000
-                    );
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}`);
-                    }
-                    data = await response.json();
-                }
-                // A newer loadChatSession started while we were fetching — drop this result.
-                if (loadSeq !== _loadSessionSeq) return;
-                if (data.success && Array.isArray(data.messages)) {
-                    loadedMessages = windowChatHistoryMessages(data);
-                    annotateMessageProjects(loadedMessages);
-                    if (data.project_id != null || data.project_path || data.project_name) {
-                        lastHydratedSessionProject = {
-                            id: authSid,
-                            project_id: data.project_id,
-                            project_name: data.project_name,
-                            project_path: data.project_path,
-                        };
-                    }
-                    // Apply this session's project BEFORE the generating bubble is
-                    // painted — otherwise the chip shows the previous chat's project
-                    // (common on phone when switching projects mid-run).
-                    reconcileChatProject();
-                    // Early refreshChatWidgets() above often still had the prior
-                    // chip path; re-fetch now that project matches this session.
-                    refreshChatWidgets();
-                    // Hydrate preferred model from transcript before painting so
-                    // collapse/composer don't flash "Cursor - Auto" while the
-                    // models API is still in flight.
-                    const fromHistory = preferredModelFromMessages(loadedMessages);
-                    if (fromHistory) {
-                        slashPaletteSupplement.preferredModel = fromHistory;
-                    }
-                    // Same for Muse: the messages payload carries the session
-                    // pins, so badges paint correctly on the first pass with
-                    // no /api/muse/* round trip (and no heal flicker).
-                    hydrateAgentSelectionFromSessionData(data, sessionId);
-                    applySessionIdentity(data);
-                    // Title from the same payload — don't wait for the session
-                    // list (history panel) or the delayed title-refresh timers.
-                    if (data.session_name) {
-                        rememberChatSessionTitle(sessionId, data.session_name);
-                        updateChatSessionTitle(sessionId);
-                    }
-                    beginSuppressChatAttention();
-                    try {
-                        // skipScroll/skipNav: bulk paint must not schedule bottom
-                        // autoScroll rAFs that race a pending CH-…-N message jump.
-                        loadedMessages.forEach(msg => {
-                            appendServerMessageToUI(msg, {
-                                announce: false,
-                                skipScroll: true,
-                                skipNav: true,
-                            });
-                        });
-                    } finally {
-                        endSuppressChatAttention();
-                    }
-                    transcriptNav.updateMessageNav();
-                    // Server follow-ups travel with /messages — apply on open so a
-                    // stuck queue (e.g. CH-000441) drains without waiting for sync.
-                    applyServerFollowups(data.followups, data.followup_revision);
-                    acceptSessionAttention(sessionId, data.attention);
-                    // Transcript is on screen — drop the restore veil before the
-                    // live-status round trip, which nobody needs to wait behind.
-                    clearChatRestoreVeil();
-                    reconcileCuttleButtonLocks(loadedMessages);
-                    // Sticky agent BEFORE remote-waiting paint — otherwise
-                    // currentTypingSlashMeta() sees empty/other-chat chips and
-                    // the working bubble reopens without the agent badge.
-                    restoreSessionStickySlash(sessionId, loadedMessages);
-                    const liveStatus = await fetchChatLiveStatus(sessionId);
-                    if (loadSeq !== _loadSessionSeq) return;
-                    deferOpenChatGeneratingFromSessions = false;
-                    updateRemoteWaitingFromMessages(loadedMessages, liveStatus);
-                    healStaleGeneratingState();
-                    if (
-                        followupQueue.items.some((x) => !x.paused)
-                        && !isSessionGenerating()
-                        && !editingFollowupId
-                    ) {
-                        scheduleFollowupDrain(120);
-                    }
-                    refreshTypingIndicatorHeaderBadges();
-                }
-            } catch (e) {
-                if (loadSeq !== _loadSessionSeq) return;
-                deferOpenChatGeneratingFromSessions = false;
-                console.error('Failed to load auth session messages:', e);
-            }
-
-            clearChatRestoreVeil();
-            if (loadSeq !== _loadSessionSeq) return;
-
-            try { await sessionsRefresh; } catch (_) {}
-            if (loadSeq !== _loadSessionSeq) return;
-            // One-shot generating flags for *other* chats (history rows). The open
-            // chat stays idle until fetchChatLiveStatus above confirms — do not
-            // wait for HISTORY_GENERATING_POLL_MS / shell heartbeat.
-            try {
-                const list = (window.CuttleAuth && window.CuttleAuth.getSessions
-                    && window.CuttleAuth.getSessions()) || [];
-                if (list.length) applyGeneratingFlagsFromSessions(list);
-            } catch (_) {}
-            // Session list may have landed after the early chrome paint — refresh
-            // the open-chat title now that getSessions() is populated.
-            updateChatSessionTitle(sessionId);
-            reconcileChatProject();
-
-            // Idempotent re-apply (also covers the messages-load failure path
-            // where the early restore above never ran). Composer chips must
-            // match this session even when there is no generating bubble.
-            restoreSessionStickySlash(sessionId, loadedMessages);
-            _restorePendingAttachments();
-            restoreComposerDraft(sessionId, { force: true });
-
-            // Proactively fetch the per-session model preference so the composer chip
-            // and typing indicator show the correct model before the palette is opened.
-            agentControls.loadCursorAgentModelsForPalette(true);
-            agentControls.loadMuseModelsForPalette(true);
-
-            markChatSessionRead(sessionId);
-            document.querySelectorAll('.chat-history-item').forEach(item => {
-                item.classList.toggle('active', sessionIdsEqual(item.dataset.sessionId, sessionId));
-            });
-            applyHistorySubagentExpandState();
-            syncHistoryUnreadIndicators();
-            syncChatAttentionIndicators();
-            transcriptNav.settleAfterLoad();
-            setupChatHistoryLazyLoad();
-            // Re-apply after messages/sessions settle (server project beats stale empty local path).
-            reconcileChatProject();
-            startMessageSync();
-            try {
-                const ms = Math.round(
-                    ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - loadT0
-                );
-                window.CuttleNetDebug && window.CuttleNetDebug.event(
-                    'chat-load',
-                    'session=' + sessionId + ' msgs=' + loadedMessages.length + ' ' + ms + 'ms'
-                );
-            } catch (_) {}
-            return;
-        }
-
-        // Load messages for this session from localStorage
-        const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-        const session = sessions[sessionId];
-        
-        if (!session) {
-            console.error('Session not found:', sessionId);
-            closeChatHistoryPanel();
-            clearChatRestoreVeil();
-            return;
-        }
-        
-        releaseManualUnreadHoldIfLeaving(sessionId);
-        const prevSessionId = currentSessionId;
-        const switchingAway = prevSessionId != null
-            && !sessionIdsEqual(prevSessionId, sessionId);
-        currentSessionId = sessionId;
-        adoptFollowupQueue(currentSessionId);
-        if (switchingAway) {
-            hubLiveStatusCache = null;
-            setHistorySessionRunning(sessionId, false);
-            _mutateSessionIdSet(formAwaitingSessionIds, sessionId, false);
-        }
-        updateChatIdBadge(sessionId);
-        loadPromptHistoryForSession(sessionId);
-        _restorePendingAttachments();
-        restoreComposerDraft(sessionId, { force: true });
-        localStorage.setItem('lastChatSessionId', sessionId);
-        syncChatUrl(sessionId);
-        reportSessionToShell(sessionId, { preferFocus: true });
-        refreshChatWidgets();
-        const openNeedsAck = sessionPrefsHasUnreadFlag(sessionId);
-        resetChatAttentionState({
-            needsAck: openNeedsAck,
-            isError: openNeedsAck && sessionPrefsUnreadIsError(sessionId),
-        });
-        
-        // Re-enable auto-resume since user explicitly loaded this session
-        localStorage.setItem('autoResumeSession', 'true');
-        
-        // Show chat area
-        clearChatRestoreVeil();
-        document.getElementById('welcomeScreen').style.display = 'none';
-        document.getElementById('chatArea').style.display = 'flex';
-        if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
-        
-        // Load messages
-        const chatMessages = document.getElementById('chatMessages');
-        chatMessages.innerHTML = '';
-        
-        if (session.messages && session.messages.length > 0) {
-            beginSuppressChatAttention();
-            try {
-                session.messages.forEach(msg => {
-                    if (msg.role === 'assistant' && consumeCancelledAgentReply(msg.content, { announce: false })) return;
-                    const reportUrl = msg.report_url || (
-                        msg.query_id ? `/query_log.html?id=${msg.query_id}` : null
-                    );
-                    addMessageToUI(msg.content, msg.role, {
-                        report_url: reportUrl,
-                        query_id: msg.query_id,
-                        timestamp: msg.timestamp,
-                        slash_command: msg.slash_command,
-                        slash_command_failed: msg.slash_command_failed,
-                        attachments: msg.attachments,
-                        routing_badge: msg.routing_badge || undefined,
-                        usage: normalizeUsagePayload(msg.usage) || undefined,
-                        skipScroll: true,
-                        skipNav: true,
-                    });
-                });
-            } finally {
-                endSuppressChatAttention();
-            }
-            transcriptNav.updateMessageNav();
-            reconcileCuttleButtonLocks(session.messages);
-        }
-        
-        // Update active state in sidebar
-        document.querySelectorAll('.chat-history-item').forEach(item => {
-            item.classList.remove('active');
-            if (item.dataset.sessionId === sessionId) {
-                item.classList.add('active');
-            }
-        });
-        applyHistorySubagentExpandState();
-
-        // Restore the project (cwd) this conversation was using
-        reconcileChatProject();
-        restoreSessionStickySlash(sessionId, session.messages);
-        markChatSessionRead(sessionId);
-        syncHistoryUnreadIndicators();
-        syncChatAttentionIndicators();
-        
-        // Scroll to bottom (or deep-linked message) - default stays pinned to bottom
-        transcriptNav.settleAfterLoad();
+        return sessionLoader().loadChatSession(sessionId, opts);
     }
-    
+
     // The server auto-names sessions (fallback + background LLM title) shortly
     // after each assistant reply; re-pull the list so the sidebar picks it up.
     // OpenAI titles are usually ready in ~1s; later ticks catch slower local models.
@@ -8574,7 +7144,7 @@
 
     async function applyHubLiveStatusPayload(live, sessionId) {
         if (!live || sessionId == null) return;
-        if (currentSessionId == null || !sessionIdsEqual(currentSessionId, sessionId)) return;
+        if (session.current() == null || !sessionIdsEqual(session.current(), sessionId)) return;
         hubLiveStatusCache = { sessionId: String(sessionId), live, at: Date.now() };
         shellHubSeen = true;
         // Batch live-status is the Electron strip's revision pulse — forward it.
@@ -8609,7 +7179,7 @@
             } catch (_) {}
             await syncSessionMessagesFromServer();
             if (isLoadingThisSession() && !stopState.userStopped) {
-                const recovered = await recoverChatResultFromServer(currentSessionId);
+                const recovered = await recoverChatResultFromServer(session.current());
                 if (recovered && String(recovered.response || '').trim()) {
                     if (consumeCancelledAgentReply(recovered.response)) {
                         finishLocalStreamFromServerSync();
@@ -8621,7 +7191,7 @@
                             routing_badge: recovered.routing_badge || undefined,
                             usage: normalizeUsagePayload(recovered.usage) || undefined,
                         });
-                        notifyAssistantResponseReady(currentSessionId, { fromSync: true });
+                        notifyAssistantResponseReady(session.current(), { fromSync: true });
                         finishLocalStreamFromServerSync();
                     } else {
                         finishLocalStreamFromServerSync();
@@ -8642,67 +7212,199 @@
         }
     }
 
+    // Session lifecycle writers (adopt/save) are owned by chat_session.js
+    // (CuttleChatSession.createLifecycle). The host is built lazily on first
+    // use so page constants declared later in this IIFE are initialized; the
+    // page keeps only these thin call sites.
+    let _sessionLifecycle = null;
+    function sessionLifecycle() {
+        if (!_sessionLifecycle) {
+            _sessionLifecycle = CuttleChatSession.createLifecycle(session, {
+                canonicalizeChatSessionId: canonicalizeChatSessionId,
+                sessionIdsEqual: sessionIdsEqual,
+                toAuthDbSessionId: toAuthDbSessionId,
+                isAuthMode: isAuthMode,
+                migratePromptHistorySession: migratePromptHistorySession,
+                migrateSessionPrefs: migrateSessionPrefs,
+                migrateComposerDraft: migrateComposerDraft,
+                migrateLocalChatSession: migrateLocalChatSession,
+                turnBadgeBySession: turnBadgeBySession,
+                getCompletionNotifications: () => window.CuttleCompletionNotifications,
+                generation: generation,
+                getCompletionNotificationPendingId: () => completionNotificationPendingId,
+                releaseManualUnreadHoldIfLeaving: releaseManualUnreadHoldIfLeaving,
+                adoptFollowupQueue: adoptFollowupQueue,
+                updateChatIdBadge: updateChatIdBadge,
+                storage: localStorage,
+                getAuth: () => window.CuttleAuth,
+                syncChatUrl: syncChatUrl,
+                reportSessionToShell: reportSessionToShell,
+                clearSessionPrefs: clearSessionPrefs,
+                newComposerPrefsId: newComposerPrefsId,
+                persistProjectForCurrentSession: persistProjectForCurrentSession,
+                persistStickySlashForCurrentSession: persistStickySlashForCurrentSession,
+                flushDirtyAgentSelectionsOnAdopt: () => agentControls.flushDirtyAgentSelectionsOnAdopt(),
+                rebindGeneration: (g, sid) => CuttleChatGeneration.rebindGeneration(g, sid),
+                setHistorySessionRunning: setHistorySessionRunning,
+                refreshChatHistoryList: refreshChatHistoryList,
+                scheduleHistoryTitleRefresh: scheduleHistoryTitleRefresh,
+                startMessageSync: startMessageSync,
+                generateLocalChatId: generateLocalChatId,
+                getCurrentProject: () => currentProject,
+                normalizeAttachmentList: normalizeAttachmentList,
+                reloadHistoryListKeepingSearch: () => historyPanel.reloadKeepingSearch(),
+            });
+        }
+        return _sessionLifecycle;
+    }
+
+    // loadChatSession host (CuttleChatSession.createLoader). The page supplies
+    // every capability the loader needs plus the mutable page state it advances.
+    // Built lazily on first load so page constants declared later are initialized.
+    let _sessionLoader = null;
+    function sessionLoader() {
+        if (!_sessionLoader) {
+            _sessionLoader = CuttleChatSession.createLoader(session, {
+                sessionIdsEqual: sessionIdsEqual,
+                saveComposerDraft: saveComposerDraft,
+                clearAllSlashChips: clearAllSlashChips,
+                canonicalizeChatSessionId: canonicalizeChatSessionId,
+                closeChatHistoryPanel: closeChatHistoryPanel,
+                detachLocalGenerationForNavigation: detachLocalGenerationForNavigation,
+                isAuthMode: isAuthMode,
+                releaseManualUnreadHoldIfLeaving: releaseManualUnreadHoldIfLeaving,
+                cancelDetachedSessionCompletionWatch: cancelDetachedSessionCompletionWatch,
+                adoptFollowupQueue: adoptFollowupQueue,
+                setHistorySessionRunning: setHistorySessionRunning,
+                updateChatIdBadge: updateChatIdBadge,
+                loadPromptHistoryForSession: loadPromptHistoryForSession,
+                syncChatUrl: syncChatUrl,
+                refreshChatWidgets: refreshChatWidgets,
+                restoreSessionStickySlash: restoreSessionStickySlash,
+                reportSessionToShell: reportSessionToShell,
+                sessionPrefsHasUnreadFlag: sessionPrefsHasUnreadFlag,
+                resetChatAttentionState: resetChatAttentionState,
+                sessionPrefsUnreadIsError: sessionPrefsUnreadIsError,
+                resetChatHistoryWindow: resetChatHistoryWindow,
+                removeRemoteWaitingIndicator: removeRemoteWaitingIndicator,
+                stopMessageSync: stopMessageSync,
+                toAuthDbSessionId: toAuthDbSessionId,
+                takeChatTranscriptPrefetch: takeChatTranscriptPrefetch,
+                fetchWithTimeout: fetchWithTimeout,
+                sessionMessagesUrl: sessionMessagesUrl,
+                windowChatHistoryMessages: windowChatHistoryMessages,
+                annotateMessageProjects: annotateMessageProjects,
+                reconcileChatProject: reconcileChatProject,
+                preferredModelFromMessages: preferredModelFromMessages,
+                hydrateAgentSelectionFromSessionData: hydrateAgentSelectionFromSessionData,
+                applySessionIdentity: applySessionIdentity,
+                rememberChatSessionTitle: rememberChatSessionTitle,
+                updateChatSessionTitle: updateChatSessionTitle,
+                beginSuppressChatAttention: beginSuppressChatAttention,
+                appendServerMessageToUI: appendServerMessageToUI,
+                endSuppressChatAttention: endSuppressChatAttention,
+                applyServerFollowups: applyServerFollowups,
+                acceptSessionAttention: acceptSessionAttention,
+                clearChatRestoreVeil: clearChatRestoreVeil,
+                reconcileCuttleButtonLocks: reconcileCuttleButtonLocks,
+                fetchChatLiveStatus: fetchChatLiveStatus,
+                updateRemoteWaitingFromMessages: updateRemoteWaitingFromMessages,
+                healStaleGeneratingState: healStaleGeneratingState,
+                isSessionGenerating: isSessionGenerating,
+                scheduleFollowupDrain: scheduleFollowupDrain,
+                refreshTypingIndicatorHeaderBadges: refreshTypingIndicatorHeaderBadges,
+                applyGeneratingFlagsFromSessions: applyGeneratingFlagsFromSessions,
+                _restorePendingAttachments: _restorePendingAttachments,
+                restoreComposerDraft: restoreComposerDraft,
+                markChatSessionRead: markChatSessionRead,
+                applyHistorySubagentExpandState: () => historyPanel.applyHistorySubagentExpandState(),
+                syncHistoryUnreadIndicators: syncHistoryUnreadIndicators,
+                syncChatAttentionIndicators: syncChatAttentionIndicators,
+                setupChatHistoryLazyLoad: setupChatHistoryLazyLoad,
+                startMessageSync: startMessageSync,
+                consumeCancelledAgentReply: consumeCancelledAgentReply,
+                addMessageToUI: addMessageToUI,
+                normalizeUsagePayload: normalizeUsagePayload,
+                _mutateSessionIdSet: _mutateSessionIdSet,
+                CHAT_HISTORY_PAGE_SIZE: CHAT_HISTORY_PAGE_SIZE,
+                stopState: stopState,
+                transcriptNav: transcriptNav,
+                agentControls: agentControls,
+                formAwaitingSessionIds: formAwaitingSessionIds,
+                slashPaletteSupplement: slashPaletteSupplement,
+                generation: generation,
+                storage: localStorage,
+                pinChatLayout: function () {
+                    if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
+                },
+                getAuth: function () { return window.CuttleAuth; },
+                getNetDebug: function () { return window.CuttleNetDebug; },
+                getFollowupQueue: function () { return followupQueue; },
+                getEditingFollowupId: function () { return editingFollowupId; },
+                setHubLiveStatusCache: function (v) { hubLiveStatusCache = v; },
+                setLastSeenServerMessageId: function (v) { lastSeenServerMessageId = v; },
+                setDeferOpenChatGeneratingFromSessions: function (v) { deferOpenChatGeneratingFromSessions = v; },
+                getLastHydratedSessionProject: function () { return lastHydratedSessionProject; },
+                setLastHydratedSessionProject: function (v) { lastHydratedSessionProject = v; },
+            });
+        }
+        return _sessionLoader;
+    }
+
+    // createNewChat / bootRestoreSession host (CuttleChatSession.createSessionBoot).
+    // The page supplies every capability these paths need plus the mutable page
+    // state they advance. Built lazily on first use so page constants declared
+    // later in this IIFE are initialized.
+    let _sessionBoot = null;
+    function sessionBoot() {
+        if (!_sessionBoot) {
+            _sessionBoot = CuttleChatSession.createSessionBoot(session, {
+                saveComposerDraft: saveComposerDraft,
+                applyStarredSlashChips: applyStarredSlashChips,
+                clearChatRestoreVeil: clearChatRestoreVeil,
+                storage: localStorage,
+                detachLocalGenerationForNavigation: detachLocalGenerationForNavigation,
+                resetChatHistoryWindow: resetChatHistoryWindow,
+                transcriptNav: transcriptNav,
+                releaseManualUnreadHoldIfLeaving: releaseManualUnreadHoldIfLeaving,
+                adoptFollowupQueue: adoptFollowupQueue,
+                applyHistorySubagentExpandState: () => historyPanel.applyHistorySubagentExpandState(),
+                applySessionIdentity: applySessionIdentity,
+                setCurrentProject: function (v) { currentProject = v; },
+                setHubLiveStatusCache: function (v) { hubLiveStatusCache = v; },
+                reconcileChatProject: reconcileChatProject,
+                refreshChatWidgets: refreshChatWidgets,
+                closeChatHistoryPanel: closeChatHistoryPanel,
+                updateChatIdBadge: updateChatIdBadge,
+                loadPromptHistoryForSession: loadPromptHistoryForSession,
+                getAuth: function () { return window.CuttleAuth; },
+                stopMessageSync: stopMessageSync,
+                clearFollowupQueue: clearFollowupQueue,
+                stopState: stopState,
+                syncChatUrl: syncChatUrl,
+                reportSessionToShell: reportSessionToShell,
+                restoreWelcomeStickySlash: restoreWelcomeStickySlash,
+                restoreComposerDraft: restoreComposerDraft,
+                pinChatLayout: function () {
+                    if (typeof window.__cuttlePinChatLayout === 'function') window.__cuttlePinChatLayout();
+                },
+                resetChatAttentionState: resetChatAttentionState,
+                focusWelcomeComposer: focusWelcomeComposer,
+                takeChatTranscriptPrefetch: takeChatTranscriptPrefetch,
+                waitForAuthReady: waitForAuthReady,
+                firstTruthy: firstTruthy,
+                loadChatSession: loadChatSession,
+                showWelcomeSplash: showWelcomeSplash,
+                showToast: function (message, type) {
+                    if (typeof window.showToast === 'function') window.showToast(message, type);
+                },
+            });
+        }
+        return _sessionBoot;
+    }
+
     function adoptChatSessionId(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        sessionId = canonicalizeChatSessionId(sessionId);
-        const prev = currentSessionId;
-        if (prev && !sessionIdsEqual(sessionId, prev)) {
-            const prevBare = toAuthDbSessionId(prev);
-            const nextBare = toAuthDbSessionId(sessionId);
-            // Already bound to a Cuttle chat. Do not jump to a different numeric
-            // id — that painted this turn under another session's chrome (phone
-            // notification / CH- vs numeric remap / agent CLI session_id).
-            if (
-                prevBare && nextBare
-                && /^\d+$/.test(prevBare) && /^\d+$/.test(nextBare)
-                && prevBare !== nextBare
-            ) {
-                return;
-            }
-            migratePromptHistorySession(prev, sessionId);
-            migrateSessionPrefs(prev, sessionId);
-            migrateComposerDraft(prev, sessionId);
-            if (!isAuthMode()) migrateLocalChatSession(prev, sessionId);
-        }
-        const previousBadgeKey = String(canonicalizeChatSessionId(prev) || '');
-        if (previousBadgeKey !== String(sessionId) && turnBadgeBySession.has(previousBadgeKey)) {
-            turnBadgeBySession.set(String(sessionId), turnBadgeBySession.get(previousBadgeKey));
-            turnBadgeBySession.delete(previousBadgeKey);
-        }
-        const wasNew = currentSessionId == null || !sessionIdsEqual(currentSessionId, sessionId);
-        if (window.CuttleCompletionNotifications && generation.loading) {
-            window.CuttleCompletionNotifications.broker().adopt(prev || completionNotificationPendingId, sessionId);
-        }
-        releaseManualUnreadHoldIfLeaving(sessionId);
-        currentSessionId = sessionId;
-        adoptFollowupQueue(currentSessionId, {transfer: prev == null || !/^\d+$/.test(String(toAuthDbSessionId(prev)))});
-        updateChatIdBadge(sessionId);
-        localStorage.setItem('lastChatSessionId', String(sessionId));
-        if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
-            window.CuttleAuth.setCurrentChatSession(sessionId);
-        }
-        syncChatUrl(sessionId);
-        reportSessionToShell(sessionId);
-        if (prev == null) clearSessionPrefs(newComposerPrefsId);
-        // Persist project / sticky agent chosen before the server assigned an id.
-        persistProjectForCurrentSession();
-        persistStickySlashForCurrentSession(wasNew);
-        // Persist a Muse model/effort picked while the chat had no id yet. Only
-        // dirty picks persist here — persisting the in-memory default would
-        // clobber the stored pin (e.g. Contributor reset to plain Spark 1.3).
-        agentControls.flushDirtyAgentSelectionsOnAdopt();
-        // Owned by chat_generation.js — rebind the local lock to the newly
-        // bound session while loading; idle means no lock to move.
-        const rebound = CuttleChatGeneration.rebindGeneration(generation, sessionId);
-        if (rebound) {
-            if (rebound.prev) setHistorySessionRunning(rebound.prev, false);
-            setHistorySessionRunning(rebound.sessionId, true);
-        }
-        if (wasNew) {
-            refreshChatHistoryList();
-            scheduleHistoryTitleRefresh();
-            startMessageSync();
-        }
+        return sessionLifecycle().adoptChatSessionId(sessionId);
     }
 
     // Owned by chat_generation.js — thin adapter: cadence decision lives
@@ -8814,7 +7516,7 @@
      * bubble the user was looking at stays put.
      */
     async function loadOlderChatMessages() {
-        if (!isAuthMode() || currentSessionId == null) return false;
+        if (!isAuthMode() || session.current() == null) return false;
         if (!chatHistoryHasMore || chatHistoryLoadingOlder) return false;
 
         const box = document.getElementById('chatMessages');
@@ -8841,9 +7543,9 @@
                     chatHistoryHasMore = false;
                     return false;
                 }
-                const authSid = toAuthDbSessionId(currentSessionId);
+                const authSid = toAuthDbSessionId(session.current());
                 if (!authSid) return false;
-                const sessionAtStart = String(currentSessionId);
+                const sessionAtStart = String(session.current());
                 const resp = await fetchWithTimeout(
                     sessionMessagesUrl(authSid, {
                         limit: CHAT_HISTORY_PAGE_SIZE,
@@ -8854,7 +7556,7 @@
                 );
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const data = await resp.json();
-                if (String(currentSessionId) !== sessionAtStart) return false;
+                if (String(session.current()) !== sessionAtStart) return false;
                 if (!data.success || !Array.isArray(data.messages)) {
                     chatHistoryHasMore = false;
                     return false;
@@ -8925,7 +7627,7 @@
         if (!box || _chatHistoryLazyScrollWired) return;
         _chatHistoryLazyScrollWired = true;
         box.addEventListener('scroll', () => {
-            if (!isAuthMode() || currentSessionId == null) return;
+            if (!isAuthMode() || session.current() == null) return;
             if (!chatHistoryHasMore || chatHistoryLoadingOlder) return;
             if (transcriptNav.isScrollPinHeld()) return;
             if (box.scrollTop > 72) return;
@@ -8934,7 +7636,7 @@
     }
 
     function scheduleNextMessageSync() {
-        if (!isAuthMode() || currentSessionId == null) return;
+        if (!isAuthMode() || session.current() == null) return;
         if (messageSyncTimer) {
             clearTimeout(messageSyncTimer);
             messageSyncTimer = null;
@@ -8944,7 +7646,7 @@
             try {
                 await syncSessionMessagesFromServer();
             } finally {
-                if (isAuthMode() && currentSessionId != null) {
+                if (isAuthMode() && session.current() != null) {
                     scheduleNextMessageSync();
                 }
             }
@@ -8952,7 +7654,7 @@
     }
 
     function startMessageSync() {
-        if (!isAuthMode() || currentSessionId == null) return;
+        if (!isAuthMode() || session.current() == null) return;
         if (messageSyncTimer) return;
         scheduleNextMessageSync();
     }
@@ -9318,11 +8020,11 @@
         if (!CS || !task || !task.task_id) return;
         if (
             task.parent_session_id != null
-            && currentSessionId != null
-            && String(task.parent_session_id) !== String(currentSessionId)
-            && String(task.parent_session_id) !== String(toAuthDbSessionId(currentSessionId))
+            && session.current() != null
+            && String(task.parent_session_id) !== String(session.current())
+            && String(task.parent_session_id) !== String(toAuthDbSessionId(session.current()))
         ) {
-            const bare = String(currentSessionId).replace(/^db_session_/, '');
+            const bare = String(session.current()).replace(/^db_session_/, '');
             if (String(task.parent_session_id) !== bare) return;
         }
         const state = CS.activityStateFromTask(task);
@@ -9502,7 +8204,7 @@
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action, ...params, session_id: currentSessionId }),
+                body: JSON.stringify({ action, ...params, session_id: session.current() }),
             });
             const body = await response.json();
             if (!response.ok || body.success === false) throw new Error(body.error || `HTTP ${response.status}`);
@@ -9564,8 +8266,8 @@
         if (!el) return;
         if (
             sessionId != null
-            && currentSessionId != null
-            && !sessionIdsEqual(sessionId, currentSessionId)
+            && session.current() != null
+            && !sessionIdsEqual(sessionId, session.current())
         ) {
             return;
         }
@@ -9619,18 +8321,18 @@
         rememberTurnBadge(messages, liveStatus);
         refreshTypingIndicatorHeaderBadges();
         noteWidgetsRevision(liveStatus);
-        updateSupervisedTaskIndicator(liveStatus, currentSessionId);
+        updateSupervisedTaskIndicator(liveStatus, session.current());
         // Local stream owns this chat's turn — keep/restore the typing bubble
         // (it is wiped when switching chats or after a hard refresh race).
         if (
             generation.loading
             && generation.localSessionId != null
-            && currentSessionId != null
-            && sessionIdsEqual(generation.localSessionId, currentSessionId)
+            && session.current() != null
+            && sessionIdsEqual(generation.localSessionId, session.current())
         ) {
             const statusLabel = (liveStatus && liveStatus.status) || undefined;
             ensureLocalTypingIndicator(statusLabel);
-            setHistorySessionRunning(currentSessionId, true);
+            setHistorySessionRunning(session.current(), true);
             try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             return;
         }
@@ -9638,8 +8340,8 @@
         if (generation.loading) {
             removeRemoteWaitingIndicator();
             const liveActiveOther = remoteLiveStatusLooksActive(liveStatus);
-            if (currentSessionId && liveActiveOther) {
-                setHistorySessionRunning(currentSessionId, true);
+            if (session.current() && liveActiveOther) {
+                setHistorySessionRunning(session.current(), true);
                 const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
                 addRemoteWaitingIndicator(statusLabel);
                 updateRemoteWaitingStatus(statusLabel, liveStatus && liveStatus.report_url);
@@ -9658,7 +8360,7 @@
             || transcriptEndsWithGenerationStop(messages)
         ) {
             removeRemoteWaitingIndicator();
-            if (currentSessionId) setHistorySessionRunning(currentSessionId, false);
+            if (session.current()) setHistorySessionRunning(session.current(), false);
             return;
         }
         // live-status is fetched in parallel with messages; a reply can already be
@@ -9669,12 +8371,12 @@
             && !turnAlreadyShowsAssistantReply();
         const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
         const wasGeneratingUi = !!document.getElementById('typing-indicator-remote')
-            || (currentSessionId != null
-                && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId)));
+            || (session.current() != null
+                && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current())));
         // Only show remote waiting when the server says a run is still active —
         // not merely because the last stored message is from the user (e.g. after Stop).
-        if (currentSessionId) {
-            setHistorySessionRunning(currentSessionId, liveActive);
+        if (session.current()) {
+            setHistorySessionRunning(session.current(), liveActive);
         }
         if (liveActive) {
             addRemoteWaitingIndicator(statusLabel);
@@ -9848,7 +8550,7 @@
                     // processMessage(text, { controlLane: true }).
                     sendControlCommand: (text) => processMessage(String(text), { controlLane: true }),
                     context: () => ({
-                        sessionId: currentSessionId,
+                        sessionId: session.current(),
                         projectPath: (currentProject && currentProject.path)
                             ? String(currentProject.path)
                             : undefined,
@@ -10185,7 +8887,7 @@
     }
 
     async function syncSessionMessagesFromServer() {
-        if (!isAuthMode() || currentSessionId == null) return;
+        if (!isAuthMode() || session.current() == null) return;
         // Background / minimized: skip churn; visibilitychange triggers a sync on return.
         if (pageIsBackgrounded()) return;
         const chatArea = document.getElementById('chatArea');
@@ -10204,20 +8906,20 @@
         if (!syncClaim) return;
 
         const syncSeq = syncClaim.token;
-        const sessionAtStart = String(currentSessionId);
+        const sessionAtStart = String(session.current());
         // Capture the existing navigation sequence for A->B->A fencing
         // (no second generation).
-        const navAtStart = _loadSessionSeq;
+        const navAtStart = session.navSeq();
         // True only while this request is still the current one: it owns
         // the claim, no navigation happened since, and the session still
         // matches. Required before ANY body-derived effect, including the
         // malformed active-status branch below.
         const syncStillCurrent = () =>
             CuttleChatGeneration.isSyncCurrent(messageSync, syncSeq)
-            && _loadSessionSeq === navAtStart
-            && String(currentSessionId) === sessionAtStart;
+            && session.navSeq() === navAtStart
+            && String(session.current()) === sessionAtStart;
         try {
-            const authSid = toAuthDbSessionId(currentSessionId);
+            const authSid = toAuthDbSessionId(session.current());
             let msgResp;
             let liveStatus = null;
             const useHubStatus = inAppShell && shellHubSeen;
@@ -10227,14 +8929,14 @@
                     { credentials: 'include', cache: 'no-store' },
                     8000
                 );
-                if (useHubStatus) liveStatus = getCachedHubLiveStatus(currentSessionId);
+                if (useHubStatus) liveStatus = getCachedHubLiveStatus(session.current());
             } else {
                 const pair = await Promise.all([
                     fetchWithTimeout(sessionMessagesUrl(authSid, { limit: CHAT_HISTORY_PAGE_SIZE }), {
                         credentials: 'include',
                         cache: 'no-store',
                     }, 8000),
-                    fetchChatLiveStatus(currentSessionId),
+                    fetchChatLiveStatus(session.current()),
                 ]);
                 msgResp = pair[0];
                 liveStatus = pair[1];
@@ -10251,13 +8953,13 @@
             }
             if (!syncStillCurrent()) return;
             applyServerFollowups(data.followups, data.followup_revision);
-            acceptSessionAttention(currentSessionId, data.attention);
+            acceptSessionAttention(session.current(), data.attention);
             // Keep badges truthful on incremental syncs too (same seeding as open).
-            hydrateAgentSelectionFromSessionData(data, currentSessionId);
+            hydrateAgentSelectionFromSessionData(data, session.current());
             applySessionIdentity(data);
             if (data.session_name) {
-                rememberChatSessionTitle(currentSessionId, data.session_name);
-                updateChatSessionTitle(currentSessionId);
+                rememberChatSessionTitle(session.current(), data.session_name);
+                updateChatSessionTitle(session.current());
             }
 
             let appendedAssistant = false;
@@ -10404,7 +9106,7 @@
                         || lastAsst.querySelector('.slash-command-chip--error')
                     )
                 );
-                notifyAssistantResponseReady(currentSessionId, {
+                notifyAssistantResponseReady(session.current(), {
                     fromSync: true,
                     isError: errFromUi,
                 });
@@ -10428,81 +9130,15 @@
         }
     }
 
+    // Owned by chat_session.js (CuttleChatSession.createLifecycle) — thin adapter.
     function saveChatSession(message, role, opts = {}) {
-        // Authenticated chats are persisted server-side in /api/chat
-        if (isAuthMode()) {
-            if (currentSessionId != null) {
-                localStorage.setItem('lastChatSessionId', String(currentSessionId));
-            }
-            localStorage.setItem('autoResumeSession', 'true');
-            if (role === 'assistant') scheduleHistoryTitleRefresh();
-            return;
-        }
-
-        if (!currentSessionId) {
-            // Create new session (CH-XXXXXX for anonymous local chats)
-            clearSessionPrefs(newComposerPrefsId);
-            currentSessionId = generateLocalChatId();
-            adoptFollowupQueue(currentSessionId);
-            localStorage.setItem('lastChatSessionId', currentSessionId);
-            updateChatIdBadge(currentSessionId);
-        }
-        
-        const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-        
-        if (!sessions[currentSessionId]) {
-            sessions[currentSessionId] = {
-                id: currentSessionId,
-                title: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
-                created: Date.now(),
-                updated: Date.now(),
-                messages: [],
-                projectId: currentProject ? currentProject.id : null,
-                projectPath: currentProject ? currentProject.path : '',
-                projectName: currentProject ? currentProject.name : '',
-            };
-        }
-        
-        const msg = { content: message, role: role, timestamp: Date.now() };
-        if (opts.query_id) msg.query_id = opts.query_id;
-        if (opts.report_url) msg.report_url = opts.report_url;
-        if (opts.slash_command) msg.slash_command = opts.slash_command;
-        if (opts.slash_command_failed) msg.slash_command_failed = true;
-        if (opts.usage) msg.usage = opts.usage;
-        if (opts.routing_badge) msg.routing_badge = opts.routing_badge;
-        const atts = normalizeAttachmentList(opts.attachments);
-        if (atts.length) msg.attachments = atts;
-        sessions[currentSessionId].messages.push(msg);
-        
-        sessions[currentSessionId].updated = Date.now();
-        
-        localStorage.setItem('chatSessions', JSON.stringify(sessions));
-        
-        // Re-enable auto-resume since user is actively chatting
-        localStorage.setItem('autoResumeSession', 'true');
-        
-        // Reload chat history to update sidebar (keep active search/filters)
-        reloadHistoryListKeepingSearch();
+        return sessionLifecycle().saveChatSession(message, role, opts);
     }
 
+    // Owned by chat_history_view.js (CuttleChatHistoryView.historyActionIcons) —
+    // thin alias so the shared chrome menu builder keeps a page-local name.
     function _historyActionIcons() {
-        return {
-            // Match in-chat chrome hamburger (3 lines), not a vertical kebab.
-            hamburger: '<span class="chat-chrome-hamburger" aria-hidden="true"><span></span><span></span><span></span></span>',
-            copy: '<svg class="chat-id-badge-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="18" cy="5" r="3" stroke="currentColor" stroke-width="2"/><circle cx="6" cy="12" r="3" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="19" r="3" stroke="currentColor" stroke-width="2"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><svg class="chat-id-badge-check" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M20 6 9 17l-5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-            pencil: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>',
-            trash: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
-            download: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
-            archive: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><line x1="10" y1="12" x2="14" y2="12"/></svg>',
-            unarchive: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><polyline points="12 12 12 16"/><polyline points="9.5 13.5 12 11 14.5 13.5"/></svg>',
-            starOutline: '<svg class="chat-star-menu-icon chat-star-menu-icon--outline" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.8 6.7 19.6l1-5.8-4.2-4.1 5.9-.9L12 3.5z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
-            starFilled: '<svg class="chat-star-menu-icon chat-star-menu-icon--filled" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.8 6.7 19.6l1-5.8-4.2-4.1 5.9-.9L12 3.5z"/></svg>',
-            unread: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="5" fill="currentColor" opacity="0.9"/><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.6" opacity="0.45"/></svg>',
-            gitPush: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 19V5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 12l7-7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-            terminal: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><polyline points="4 17 10 11 4 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="19" x2="20" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-            voice: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-            subagents: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="2.2" stroke="currentColor" stroke-width="2"/><circle cx="6" cy="18" r="2.2" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="12" r="2.2" stroke="currentColor" stroke-width="2"/><path d="M8.3 7.2c2.1 2 2.1 7.6 0 9.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8.4 12H15.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-        };
+        return CuttleChatHistoryView.historyActionIcons();
     }
 
     /** True until /api/terminal/status says otherwise — shared by both overflow menus. */
@@ -10576,7 +9212,7 @@
                 + '</button>'
             );
         }
-        const subGroup = historySubagentGroupOwnedBy(sessionId);
+        const subGroup = historyPanel.historySubagentGroupOwnedBy(sessionId);
         if (subGroup && subGroup.getAttribute('data-force-expanded') !== '1') {
             const collapsed = subGroup.classList.contains('is-collapsed');
             const subLabel = collapsed ? 'Show sub-agents' : 'Hide sub-agents';
@@ -10589,7 +9225,7 @@
                 + '</button>'
             );
         }
-        parts.push(gitPushMenuHtml(icons));
+        parts.push(gitPush.menuHtml(icons));
         if (_terminalMenuAvailable) {
             parts.push(
                 '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
@@ -10636,7 +9272,7 @@
     }
 
     function closeAllSessionMenus() {
-        closeHistoryItemMenu();
+        historyPanel.closeMenu();
         closeChatChromeMenu();
     }
 
@@ -10761,121 +9397,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         }
     }
 
-    function historyStarredIconHTML() {
-        return '<span class="history-starred-icon" title="Starred" aria-label="Starred">★</span>';
-    }
-
-    function createHistoryDeleteActionsHTML(sessionId, opts) {
-        const icons = _historyActionIcons();
-        const includeRename = !!(opts && opts.includeRename);
-        const lastMs = Number(opts && opts.lastMessageMs) || 0;
-        const sid = String(sessionId).replace(/'/g, "\\'");
-        const timeHtml = lastMs > 0
-            ? `<time class="chat-time" datetime="${new Date(lastMs).toISOString()}" data-ts="${lastMs}" title="${escapeHtmlInline(new Date(lastMs).toLocaleString())}">${escapeHtmlInline(formatHistoryLastMessageAge(lastMs))}</time>`
-            : '';
-        const openHtml = historyOpenPaneBadgeHTML(sessionId);
-        return `
-            <div class="chat-actions" data-include-rename="${includeRename ? '1' : '0'}">
-                ${openHtml}
-                ${timeHtml}
-                <button type="button" class="chat-action-button chat-menu-btn"
-                    onclick="window.chatPageToggleHistoryMenu('${sid}', event)"
-                    title="Chat actions"
-                    aria-label="Chat actions"
-                    aria-haspopup="menu"
-                    aria-expanded="false">
-                    ${icons.hamburger}
-                </button>
-            </div>
-        `;
-    }
-
-    function historyItemEl(sessionId, event) {
-        const fromEvent = event && event.currentTarget && typeof event.currentTarget.closest === 'function'
-            ? event.currentTarget.closest('.chat-history-item')
-            : null;
-        if (fromEvent) return fromEvent;
-        if (sessionId == null || sessionId === '') return null;
-        return document.querySelector(`.chat-history-item[data-session-id="${CSS.escape(String(sessionId))}"]`);
-    }
-
-    function historyItemOverflowMenuEl() {
-        let el = document.getElementById('historyItemOverflowMenu');
-        if (el) {
-            el.className = 'history-item-menu chat-chrome-menu-dropdown';
-            return el;
-        }
-        el = document.createElement('div');
-        el.id = 'historyItemOverflowMenu';
-        // Reuse in-chat chrome dropdown skin; history-item-menu only pins fixed coords.
-        el.className = 'history-item-menu chat-chrome-menu-dropdown';
-        el.setAttribute('role', 'menu');
-        el.hidden = true;
-        document.body.appendChild(el);
-        return el;
-    }
-
-    function closeHistoryItemMenu() {
-        document.querySelectorAll('.chat-history-item.menu-open').forEach((item) => {
-            item.classList.remove('menu-open');
-            const btn = item.querySelector('.chat-menu-btn');
-            if (btn) btn.setAttribute('aria-expanded', 'false');
-        });
-        const menu = document.getElementById('historyItemOverflowMenu');
-        if (menu) {
-            menu.hidden = true;
-            menu.innerHTML = '';
-        }
-    }
-
-    function positionHistoryItemMenu(btn, menu) {
-        if (!btn || !menu) return;
-        const rect = btn.getBoundingClientRect();
-        const menuW = menu.offsetWidth || 160;
-        const menuH = menu.offsetHeight || 120;
-        let top = rect.bottom + 4;
-        let left = rect.right - menuW;
-        if (left < 8) left = 8;
-        if (left + menuW > window.innerWidth - 8) {
-            left = Math.max(8, window.innerWidth - menuW - 8);
-        }
-        if (top + menuH > window.innerHeight - 8) {
-            top = Math.max(8, rect.top - menuH - 4);
-        }
-        menu.style.top = top + 'px';
-        menu.style.left = left + 'px';
-    }
-
-    function toggleHistoryItemMenu(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const item = historyItemEl(sessionId, event);
-        if (!item) return;
-        const alreadyOpen = item.classList.contains('menu-open');
-        closeHistoryItemMenu();
-        if (alreadyOpen) return;
-
-        closeHistoryDeleteModal();
-        closeHistoryRenameModal();
-        closeChatChromeMenu();
-        item.classList.add('menu-open');
-        const btn = item.querySelector('.chat-menu-btn');
-        if (btn) btn.setAttribute('aria-expanded', 'true');
-
-        const actions = item.querySelector('.chat-actions');
-        const includeRename = !!(actions && actions.getAttribute('data-include-rename') === '1');
-        const menu = historyItemOverflowMenuEl();
-        menu.innerHTML = buildSessionMenuHTML(sessionId, {
-            includeRename,
-            includeDelete: true,
-        });
-        menu.hidden = false;
-        positionHistoryItemMenu(btn, menu);
-        refreshGitPushMenuMode(menu);
-    }
-
     async function toggleStarChatSession(sessionId, event) {
         if (event) {
             event.stopPropagation();
@@ -10892,8 +9413,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             if (!map[id]) return;
             map[id].starred = next;
             writeTerminalSessionRegistry(map);
-            reloadHistoryListKeepingSearch();
-            if (sessionIdsEqual(sessionId, currentSessionId)) updateChatSessionStarButton(currentSessionId);
+            historyPanel.reloadKeepingSearch();
+            if (sessionIdsEqual(sessionId, session.current())) updateChatSessionStarButton(session.current());
             return;
         }
 
@@ -10922,8 +9443,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 console.warn('[Cuttle Chat] Star toggle error:', err);
                 return;
             }
-            reloadHistoryListKeepingSearch();
-            if (sessionIdsEqual(sessionId, currentSessionId)) updateChatSessionStarButton(currentSessionId);
+            historyPanel.reloadKeepingSearch();
+            if (sessionIdsEqual(sessionId, session.current())) updateChatSessionStarButton(session.current());
             return;
         }
 
@@ -10937,8 +9458,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             console.warn('[Cuttle Chat] Local star toggle failed:', err);
             return;
         }
-        reloadHistoryListKeepingSearch();
-        if (sessionIdsEqual(sessionId, currentSessionId)) updateChatSessionStarButton(currentSessionId);
+        historyPanel.reloadKeepingSearch();
+        if (sessionIdsEqual(sessionId, session.current())) updateChatSessionStarButton(session.current());
     }
 
     // Sessions this tab deleted. A /api/auth/sessions fetch that was already in
@@ -11018,180 +9539,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         await refreshArchivedSessions();
     }
 
-    let pendingDeleteSessionId = null;
-
-    function historyDeleteModalEl() {
-        return document.getElementById('historyDeleteModal');
-    }
-
-    let _gitPushConfirmResolve = null;
-
-    function gitPushConfirmModalEl() {
-        return document.getElementById('gitPushConfirmModal');
-    }
-
-    function closeGitPushConfirmModal(accepted) {
-        const modal = gitPushConfirmModalEl();
-        if (modal) modal.hidden = true;
-        const fn = _gitPushConfirmResolve;
-        _gitPushConfirmResolve = null;
-        if (typeof fn === 'function') fn(!!accepted);
-    }
-
-    function confirmGitPushModal(message) {
-        return new Promise(function (resolve) {
-            const modal = gitPushConfirmModalEl();
-            if (!modal) {
-                resolve(false);
-                return;
-            }
-            if (typeof _gitPushConfirmResolve === 'function') {
-                _gitPushConfirmResolve(false);
-            }
-            _gitPushConfirmResolve = resolve;
-            const subtitle = document.getElementById('gitPushConfirmSubtitle');
-            if (subtitle) subtitle.textContent = String(message || 'Are you sure you want to push?');
-            modal.hidden = false;
-            const cancel = document.getElementById('gitPushConfirmCancel');
-            if (cancel) cancel.focus();
-        });
-    }
-
-    function setupGitPushConfirmModal() {
-        const modal = gitPushConfirmModalEl();
-        if (!modal || modal.dataset.bound === '1') return;
-        modal.dataset.bound = '1';
-        const cancelBtn = document.getElementById('gitPushConfirmCancel');
-        const acceptBtn = document.getElementById('gitPushConfirmAccept');
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', function (e) {
-                e.stopPropagation();
-                closeGitPushConfirmModal(false);
-            });
-        }
-        if (acceptBtn) {
-            acceptBtn.addEventListener('click', function (e) {
-                e.stopPropagation();
-                closeGitPushConfirmModal(true);
-            });
-        }
-        modal.addEventListener('click', function (e) {
-            e.stopPropagation();
-            if (e.target === modal) closeGitPushConfirmModal(false);
-        });
-        document.addEventListener('keydown', function (e) {
-            if (e.key !== 'Escape') return;
-            if (!modal || modal.hidden) return;
-            e.preventDefault();
-            closeGitPushConfirmModal(false);
-        });
-    }
-
-    function isHistoryDeleteModalOpen() {
-        const modal = historyDeleteModalEl();
-        return !!(modal && !modal.hidden);
-    }
-
-    function closeHistoryDeleteModal() {
-        pendingDeleteSessionId = null;
-        const modal = historyDeleteModalEl();
-        if (modal) modal.hidden = true;
-        const confirmBtn = document.getElementById('historyDeleteConfirm');
-        if (confirmBtn) {
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = 'Delete';
-        }
-    }
-
-    function historyDeleteLabel(item, sessionId) {
-        const titleEl = item && item.querySelector('.chat-title');
-        const title = titleEl ? String(titleEl.textContent || '').trim() : '';
-        if (title) return title;
-        if (sessionId != null && sessionId !== '') {
-            const fallback = String(getChatSessionDisplayTitle(sessionId) || '').trim();
-            if (fallback) return fallback;
-        }
-        return 'this chat';
-    }
-
-    function openHistoryDeleteModal(sessionId, item) {
-        const modal = historyDeleteModalEl();
-        if (!modal) return;
-        pendingDeleteSessionId = sessionId;
-        const isTerminal = !!(item && item.getAttribute('data-kind') === 'terminal')
-            || isTerminalSessionId(sessionId);
-        const heading = document.getElementById('historyDeleteTitle');
-        const subtitle = document.getElementById('historyDeleteSubtitle');
-        if (heading) heading.textContent = isTerminal ? 'Delete terminal?' : 'Delete chat?';
-        if (subtitle) {
-            subtitle.textContent = '"' + historyDeleteLabel(item, sessionId) + '" will be removed. This cannot be undone.';
-        }
-        modal.hidden = false;
-        const cancel = document.getElementById('historyDeleteCancel');
-        if (cancel) cancel.focus();
-    }
-
-    function setupHistoryDeleteModal() {
-        const modal = historyDeleteModalEl();
-        if (!modal || modal.dataset.bound === '1') return;
-        modal.dataset.bound = '1';
-        const cancelBtn = document.getElementById('historyDeleteCancel');
-        const confirmBtn = document.getElementById('historyDeleteConfirm');
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                closeHistoryDeleteModal();
-            });
-        }
-        if (confirmBtn) {
-            confirmBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                confirmDeleteChatSession(pendingDeleteSessionId, e);
-            });
-        }
-        modal.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (e.target === modal) closeHistoryDeleteModal();
-        });
-    }
-
-    function requestDeleteChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        closeAllSessionMenus();
-        const item = historyItemEl(sessionId, event);
-        openHistoryDeleteModal(sessionId, item);
-    }
-
-    function cancelDeleteChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        closeHistoryDeleteModal();
-    }
-
-    async function confirmDeleteChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const sid = (sessionId != null && sessionId !== '') ? sessionId : pendingDeleteSessionId;
-        if (sid == null || sid === '') return;
-        const confirmBtn = document.getElementById('historyDeleteConfirm');
-        if (confirmBtn) {
-            confirmBtn.disabled = true;
-            confirmBtn.textContent = 'Deleting…';
-        }
-        try {
-            await deleteChatSession(sid);
-        } finally {
-            closeHistoryDeleteModal();
-        }
-    }
-
     async function deleteChatSession(sessionId) {
         if (isTerminalSessionId(sessionId)) {
             removeTerminalSessionFromStorage(sessionId);
@@ -11204,12 +9551,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     }, '*');
                 }
             } catch (_) {}
-            loadChatHistory();
+            historyPanel.load();
             return;
         }
 
         // If this chat is actively generating, abort the local stream immediately.
-        if (sessionIdsEqual(currentSessionId, sessionId) && generation.loading) {
+        if (sessionIdsEqual(session.current(), sessionId) && generation.loading) {
             try {
                 if (activeRequestController) activeRequestController.abort();
             } catch (_) {}
@@ -11247,7 +9594,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 return;
             }
 
-            if (sessionIdsEqual(currentSessionId, sessionId)) {
+            if (sessionIdsEqual(session.current(), sessionId)) {
                 await createNewChat();
             }
             clearSessionPrefs(sessionId);
@@ -11266,359 +9613,21 @@ function downloadTranscriptMarkdown(text, sessionId) {
         writePromptHistoryMap(phMap);
         clearSessionPrefs(sessionId);
 
-        if (currentSessionId === sessionId) {
+        if (session.current() === sessionId) {
             createNewChat();
         }
 
-        reloadHistoryListKeepingSearch();
+        historyPanel.reloadKeepingSearch();
     }
     
-    let pendingRenameSessionId = null;
-    let pendingRenameKind = 'chat'; // chat | terminal | local
-    let renameEditMode = false;
-    let renameSuggestGen = 0;
-    let renameSuggestInFlight = false;
-    let renameAvoidTitles = [];
 
-    function historyRenameModalEl() {
-        return document.getElementById('historyRenameModal');
-    }
-
-    function isHistoryRenameModalOpen() {
-        const modal = historyRenameModalEl();
-        return !!(modal && !modal.hidden);
-    }
-
-    function setHistoryRenameStatus(msg, isError) {
-        const status = document.getElementById('historyRenameStatus');
-        if (!status) return;
-        if (!msg) {
-            status.hidden = true;
-            status.textContent = '';
-            status.classList.remove('is-error');
-            return;
-        }
-        status.hidden = false;
-        status.textContent = msg;
-        status.classList.toggle('is-error', !!isError);
-    }
-
-    function descriptiveRenameTitle(fullTitle) {
-        const parsed = parseTitleSlashChips(String(fullTitle || ''));
-        const body = String(parsed.body || '').trim();
-        if (body) return body;
-        // Title was only slash chips — leave the editable field empty.
-        if (parsed.chips && parsed.chips.length) return '';
-        return String(fullTitle || '').trim();
-    }
-
-    function rememberRenameAvoid(title) {
-        const t = descriptiveRenameTitle(title);
-        if (!t) return;
-        const key = t.toLowerCase();
-        if (renameAvoidTitles.some((x) => String(x).toLowerCase() === key)) return;
-        renameAvoidTitles.push(t);
-        if (renameAvoidTitles.length > 12) renameAvoidTitles = renameAvoidTitles.slice(-12);
-    }
-
-    function syncHistoryRenamePreviewFromInput() {
-        const input = document.getElementById('historyRenameInput');
-        const preview = document.getElementById('historyRenamePreview');
-        if (!preview) return;
-        preview.textContent = input ? String(input.value || '') : '';
-    }
-
-    function setHistoryRenameSuggesting(loading) {
-        const loadingEl = document.getElementById('historyRenameLoading');
-        const preview = document.getElementById('historyRenamePreview');
-        const previewWrap = document.getElementById('historyRenamePreviewWrap');
-        const input = document.getElementById('historyRenameInput');
-        const editBtn = document.getElementById('historyRenameEdit');
-        if (loading) {
-            renameEditMode = false;
-            if (previewWrap) previewWrap.hidden = false;
-            if (loadingEl) loadingEl.hidden = false;
-            if (preview) preview.hidden = true;
-            if (input) input.hidden = true;
-            if (editBtn) {
-                editBtn.hidden = true;
-                editBtn.classList.remove('is-editing');
-                const pencil = editBtn.querySelector('.history-rename-edit-pencil');
-                const check = editBtn.querySelector('.history-rename-edit-check');
-                if (pencil) pencil.hidden = false;
-                if (check) check.hidden = true;
-            }
-            return;
-        }
-        if (loadingEl) loadingEl.hidden = true;
-        applyHistoryRenameEditMode(renameEditMode);
-    }
-
-    function applyHistoryRenameEditMode(editing) {
-        renameEditMode = !!editing;
-        const previewWrap = document.getElementById('historyRenamePreviewWrap');
-        const preview = document.getElementById('historyRenamePreview');
-        const loadingEl = document.getElementById('historyRenameLoading');
-        const input = document.getElementById('historyRenameInput');
-        const editBtn = document.getElementById('historyRenameEdit');
-        const hasText = !!(input && String(input.value || '').trim());
-        if (loadingEl) loadingEl.hidden = true;
-        if (renameEditMode) {
-            if (previewWrap) previewWrap.hidden = true;
-            if (preview) preview.hidden = true;
-            if (input) {
-                input.hidden = false;
-                try { input.focus({ preventScroll: true }); } catch (_) { try { input.focus(); } catch (__) {} }
-                try { input.select(); } catch (_) {}
-            }
-        } else {
-            syncHistoryRenamePreviewFromInput();
-            if (previewWrap) previewWrap.hidden = false;
-            if (preview) preview.hidden = false;
-            if (input) input.hidden = true;
-        }
-        if (editBtn) {
-            editBtn.hidden = !hasText && !renameEditMode;
-            editBtn.classList.toggle('is-editing', renameEditMode);
-            editBtn.title = renameEditMode ? 'Done editing' : 'Edit name';
-            editBtn.setAttribute('aria-label', renameEditMode ? 'Done editing' : 'Edit chat name');
-            const pencil = editBtn.querySelector('.history-rename-edit-pencil');
-            const check = editBtn.querySelector('.history-rename-edit-check');
-            if (pencil) pencil.hidden = renameEditMode;
-            if (check) check.hidden = !renameEditMode;
-        }
-    }
-
-    function closeHistoryRenameModal() {
-        pendingRenameSessionId = null;
-        pendingRenameKind = 'chat';
-        renameEditMode = false;
-        renameSuggestGen += 1;
-        renameSuggestInFlight = false;
-        renameAvoidTitles = [];
-        const modal = historyRenameModalEl();
-        if (modal) modal.hidden = true;
-        const saveBtn = document.getElementById('historyRenameSave');
-        if (saveBtn) {
-            saveBtn.disabled = false;
-            saveBtn.textContent = 'Save';
-        }
-        const resuggestBtn = document.getElementById('historyRenameResuggest');
-        if (resuggestBtn) resuggestBtn.disabled = false;
-        setHistoryRenameStatus('', false);
-        const input = document.getElementById('historyRenameInput');
-        if (input) input.value = '';
-        const preview = document.getElementById('historyRenamePreview');
-        if (preview) preview.textContent = '';
-    }
-
-    function resolveRenameCurrentTitle(sessionId, kind) {
-        if (kind === 'terminal') {
-            const map = readTerminalSessionRegistry();
-            const session = map[String(sessionId)];
-            return (session && (session.title || session.shell)) || 'Terminal';
-        }
-        if (kind === 'local') {
-            try {
-                const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-                const session = sessions[sessionId] || sessions[String(sessionId)];
-                if (session && session.title) return String(session.title);
-            } catch (_) {}
-        }
-        return getChatSessionDisplayTitle(sessionId) || 'Chat';
-    }
-
-    async function suggestHistoryRenameTitle(opts) {
-        const force = !!(opts && opts.force);
-        const input = document.getElementById('historyRenameInput');
-        const saveBtn = document.getElementById('historyRenameSave');
-        const resuggestBtn = document.getElementById('historyRenameResuggest');
-        const sessionId = pendingRenameSessionId;
-        if (sessionId == null || sessionId === '') return null;
-
-        if (!force && input && String(input.value || '').trim() && pendingRenameKind !== 'chat') {
-            applyHistoryRenameEditMode(false);
-            return String(input.value).trim();
-        }
-
-        const canSuggest = pendingRenameKind === 'chat' && isAuthMode() && toAuthDbSessionId(sessionId) != null;
-        if (!canSuggest) {
-            const current = descriptiveRenameTitle(resolveRenameCurrentTitle(sessionId, pendingRenameKind));
-            if (input) input.value = current;
-            setHistoryRenameSuggesting(false);
-            applyHistoryRenameEditMode(false);
-            setHistoryRenameStatus('Pencil to edit', false);
-            return current;
-        }
-
-        const gen = ++renameSuggestGen;
-        renameSuggestInFlight = true;
-        if (saveBtn) saveBtn.disabled = true;
-        if (resuggestBtn) resuggestBtn.disabled = true;
-        setHistoryRenameSuggesting(true);
-        setHistoryRenameStatus('', false);
-        try {
-            const authSid = toAuthDbSessionId(sessionId);
-            const body = {};
-            if (force && renameAvoidTitles.length) {
-                body.avoid = renameAvoidTitles.slice();
-            } else if (input && String(input.value || '').trim()) {
-                // First open still may want to avoid the currently shown name on re-open.
-                rememberRenameAvoid(input.value);
-            }
-            const resp = await fetchWithTimeout(
-                `/api/auth/sessions/${encodeURIComponent(authSid)}/suggest-title`,
-                {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                },
-                90000
-            );
-            if (gen !== renameSuggestGen) return null;
-            const data = await resp.json().catch(() => ({}));
-            if (!resp.ok || !data.success) {
-                throw new Error((data && data.error) || ('HTTP ' + resp.status));
-            }
-            const title = descriptiveRenameTitle(
-                String(data.title || '').trim()
-                || resolveRenameCurrentTitle(sessionId, pendingRenameKind)
-            );
-            if (input) input.value = title;
-            rememberRenameAvoid(title);
-            setHistoryRenameSuggesting(false);
-            applyHistoryRenameEditMode(false);
-            const src = data.source === 'llm'
-                ? 'Suggested'
-                : (data.source === 'fallback' ? 'From first message' : 'Current title');
-            setHistoryRenameStatus(src + ' — pencil to edit', false);
-            return title;
-        } catch (err) {
-            if (gen !== renameSuggestGen) return null;
-            const fallback = descriptiveRenameTitle(resolveRenameCurrentTitle(sessionId, pendingRenameKind));
-            if (input) input.value = fallback;
-            setHistoryRenameSuggesting(false);
-            applyHistoryRenameEditMode(true);
-            setHistoryRenameStatus(
-                'Could not auto-suggest — edit manually (' + ((err && err.message) || 'error') + ')',
-                true
-            );
-            return fallback;
-        } finally {
-            if (gen === renameSuggestGen) {
-                renameSuggestInFlight = false;
-                if (saveBtn) saveBtn.disabled = false;
-                if (resuggestBtn) resuggestBtn.disabled = false;
-            }
-        }
-    }
-
-    function openHistoryRenameModal(sessionId, item) {
-        const modal = historyRenameModalEl();
-        if (!modal) return;
-        closeHistoryDeleteModal();
-        pendingRenameSessionId = sessionId;
-        renameAvoidTitles = [];
-        const isTerminal = !!(item && item.getAttribute('data-kind') === 'terminal')
-            || isTerminalSessionId(sessionId);
-        if (isTerminal) {
-            pendingRenameKind = 'terminal';
-        } else if (isAuthMode() && toAuthDbSessionId(sessionId) != null) {
-            pendingRenameKind = 'chat';
-        } else {
-            pendingRenameKind = 'local';
-        }
-
-        const heading = document.getElementById('historyRenameTitle');
-        if (heading) {
-            heading.textContent = pendingRenameKind === 'terminal' ? 'Rename terminal' : 'Rename chat';
-        }
-        const resuggestBtn = document.getElementById('historyRenameResuggest');
-        if (resuggestBtn) {
-            resuggestBtn.hidden = pendingRenameKind !== 'chat';
-        }
-
-        const currentFull = resolveRenameCurrentTitle(sessionId, pendingRenameKind);
-        const current = descriptiveRenameTitle(currentFull);
-        rememberRenameAvoid(current);
-        const input = document.getElementById('historyRenameInput');
-        if (input) input.value = current;
-
-        modal.hidden = false;
-        if (pendingRenameKind === 'chat') {
-            setHistoryRenameSuggesting(true);
-            suggestHistoryRenameTitle({ force: true });
-        } else {
-            setHistoryRenameSuggesting(false);
-            applyHistoryRenameEditMode(false);
-            setHistoryRenameStatus('Pencil to edit', false);
-        }
-    }
-
-    function setupHistoryRenameModal() {
-        const modal = historyRenameModalEl();
-        if (!modal || modal.dataset.bound === '1') return;
-        modal.dataset.bound = '1';
-        const cancelBtn = document.getElementById('historyRenameCancel');
-        const saveBtn = document.getElementById('historyRenameSave');
-        const resuggestBtn = document.getElementById('historyRenameResuggest');
-        const editBtn = document.getElementById('historyRenameEdit');
-        const input = document.getElementById('historyRenameInput');
-
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                closeHistoryRenameModal();
-            });
-        }
-        if (saveBtn) {
-            saveBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                confirmRenameChatSession(pendingRenameSessionId, e);
-            });
-        }
-        if (resuggestBtn) {
-            resuggestBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                suggestHistoryRenameTitle({ force: true });
-            });
-        }
-        if (editBtn) {
-            editBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (renameSuggestInFlight) return;
-                applyHistoryRenameEditMode(!renameEditMode);
-            });
-        }
-        if (input) {
-            input.addEventListener('input', () => {
-                if (renameEditMode) return;
-                syncHistoryRenamePreviewFromInput();
-            });
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (renameEditMode) {
-                        applyHistoryRenameEditMode(false);
-                    } else {
-                        confirmRenameChatSession(pendingRenameSessionId, e);
-                    }
-                }
-            });
-        }
-        modal.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (e.target === modal) closeHistoryRenameModal();
-        });
-    }
-
-    async function persistRenamedTitle(sessionId, newTitle) {
+    // Rename persistence effect (panel owns the modal; the page owns the API and
+    // the terminal shell postMessage contract). `renameKind` comes from the panel.
+    async function persistRenamedTitle(sessionId, newTitle, renameKind) {
         const title = String(newTitle || '').trim();
         if (!title) return false;
 
-        if (isTerminalSessionId(sessionId) || pendingRenameKind === 'terminal') {
+        if (isTerminalSessionId(sessionId) || renameKind === 'terminal') {
             const map = readTerminalSessionRegistry();
             const session = map[String(sessionId)];
             if (!session) return false;
@@ -11675,58 +9684,10 @@ function downloadTranscriptMarkdown(text, sessionId) {
         return true;
     }
 
-    async function confirmRenameChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        const sid = (sessionId != null && sessionId !== '') ? sessionId : pendingRenameSessionId;
-        if (sid == null || sid === '') return;
-        const input = document.getElementById('historyRenameInput');
-        const newTitle = descriptiveRenameTitle(input ? String(input.value || '').trim() : '');
-        if (!newTitle) {
-            setHistoryRenameStatus('Enter a name (agent badges stay separate)', true);
-            applyHistoryRenameEditMode(true);
-            return;
-        }
-        const saveBtn = document.getElementById('historyRenameSave');
-        if (saveBtn) {
-            saveBtn.disabled = true;
-            saveBtn.textContent = 'Saving…';
-        }
-        try {
-            const ok = await persistRenamedTitle(sid, newTitle);
-            if (!ok) {
-                setHistoryRenameStatus('Could not rename this chat', true);
-                return;
-            }
-            closeHistoryRenameModal();
-            // refreshChatHistoryList already re-applies search/filters when active.
-            await refreshChatHistoryList();
-            if (currentSessionId != null && sessionIdsEqual(currentSessionId, sid)) {
-                updateChatSessionTitle(sid);
-            }
-        } catch (err) {
-            setHistoryRenameStatus((err && err.message) || 'Rename failed', true);
-        } finally {
-            if (saveBtn) {
-                saveBtn.disabled = false;
-                saveBtn.textContent = 'Save';
-            }
-        }
-    }
-
-    function renameChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-        }
-        closeAllSessionMenus();
-        const item = historyItemEl(sessionId, event);
-        openHistoryRenameModal(sessionId, item);
-    }
-
+    // Owned by chat_attention.js (CuttleChatAttention); the controller owns the
+    // status-slot icon markup. Kept as a page adapter for existing call sites.
     function historyRunningIconHTML() {
-        return `<span class="history-running-icon" title="Generating…" aria-label="Generating"></span>`;
+        return serverAttention.historyRunningIconHTML();
     }
 
     function sessionShowsHistorySpinner(sessionId) {
@@ -11780,11 +9741,11 @@ function downloadTranscriptMarkdown(text, sessionId) {
             }
         });
         next.forEach((id) => formAwaitingSessionIds.add(id));
-        if (currentSessionId != null && !serverAttention.get(toAuthDbSessionId(currentSessionId))) {
+        if (session.current() != null && !serverAttention.get(toAuthDbSessionId(session.current()))) {
             const awaitingInput = actionCardsController().awaitingInputSessionIds()
-                .some(sid => sessionIdsEqual(sid, currentSessionId));
-            if (!!(attentionPrefsFor(currentSessionId) || {}).awaitingInput !== awaitingInput) {
-                updateSessionPrefs(currentSessionId, { awaitingInput });
+                .some(sid => sessionIdsEqual(sid, session.current()));
+            if (!!(attentionPrefsFor(session.current()) || {}).awaitingInput !== awaitingInput) {
+                updateSessionPrefs(session.current(), { awaitingInput });
             }
         }
         syncHistoryUnreadIndicators();
@@ -11797,7 +9758,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     // own end calls can prove they still own the lock.
     function beginLocalGeneration() {
         const begun = CuttleChatGeneration.beginGeneration(generation, {
-            currentSessionId: currentSessionId,
+            currentSessionId: session.current(),
             requestSessionId: authSessionIdForRequest(),
         });
         CuttleStopState.clearAbortSuppression(stopState);
@@ -11847,7 +9808,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     // Snapshot decisions owned by chat_activity.js — page gathers, domain decides.
     function collectChatActivitySnapshot() {
         return CuttleChatActivity.collectFrameSnapshot({
-            currentSessionId,
+            currentSessionId: session.current(),
             localSessionId: generation.localSessionId,
             awaitingIds: [...formAwaitingSessionIds],
             canonicalize: canonicalizeChatSessionId,
@@ -11943,13 +9904,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
 
     function applyGeneratingFlagsFromSessions(serverSessions) {
-        const currentWasRunning = currentSessionId != null
-            && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId));
+        const currentWasRunning = session.current() != null
+            && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current()));
         // Only executing work in the open chat may supplement server execution.
         // Entries left behind by another chat must yield to an idle snapshot.
         const localPending = new Set();
         actionCardsController().processingSessionIds().forEach(sid => {
-            if (sessionIdsEqual(sid, currentSessionId)) localPending.add(String(canonicalizeChatSessionId(sid)));
+            if (sessionIdsEqual(sid, session.current())) localPending.add(String(canonicalizeChatSessionId(sid)));
         });
         const still = new Set();
         (serverSessions || []).forEach((s) => {
@@ -11965,8 +9926,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             // open chat prefer live-status but allow a sessions fallback when
             // live-status was null (unfocused hub miss) and we didn't just switch.
             if (
-                currentSessionId != null
-                && sessionIdsEqual(s.id, currentSessionId)
+                session.current() != null
+                && sessionIdsEqual(s.id, session.current())
             ) {
                 if (s.awaiting_action) {
                     still.add(String(canonicalizeChatSessionId(s.id)));
@@ -12021,8 +9982,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             // the open chat — live-status owns that window.
             if (
                 deferOpenChatGeneratingFromSessions
-                && currentSessionId != null
-                && sessionIdsEqual(id, currentSessionId)
+                && session.current() != null
+                && sessionIdsEqual(id, session.current())
             ) {
                 return;
             }
@@ -12030,8 +9991,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 setHistorySessionRunning(id, false);
             }
         });
-        const currentStillRunning = currentSessionId != null
-            && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId));
+        const currentStillRunning = session.current() != null
+            && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, session.current()));
         if (
             currentWasRunning
             && !currentStillRunning
@@ -12122,8 +10083,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             archivedChatSessions = [];
             archivedSessionsLoaded = true;
             renderArchivedSection();
-            if (typeof currentSessionId !== 'undefined' && currentSessionId != null && currentSessionId !== '')
-                updateChatSessionTitle(currentSessionId);
+            if (session.current() != null && session.current() !== '')
+                updateChatSessionTitle(session.current());
             return;
         }
         try {
@@ -12149,8 +10110,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
         renderArchivedSection();
         // Archived marks arrive after the title renders on page load (and
         // change on archive toggle) — re-sync the title-bar badge.
-        if (typeof currentSessionId !== 'undefined' && currentSessionId != null && currentSessionId !== '')
-            updateChatSessionTitle(currentSessionId);
+        if (session.current() != null && session.current() !== '')
+            updateChatSessionTitle(session.current());
     }
 
     function renderArchivedSection() {
@@ -12177,7 +10138,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const count = visible.length;
         let itemsHtml = '';
         visible.forEach((s) => {
-            itemsHtml += createAuthHistoryItemHTML(s, {});
+            itemsHtml += historyView.createAuthHistoryItemHTML(s, {});
         });
         // Header template + section class live in CuttleChatHistoryArchive;
         // the page keeps container/row-DOM wiring (it owns the row renderer
@@ -12201,1056 +10162,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         });
     }
 
-    function paintHistoryEntries(entries, renderEntry, opts) {
-        const historyContainer = document.getElementById('chatHistory');
-        if (!historyContainer) return;
-        const options = opts || {};
-        const showRefresh = options.showRefresh !== false;
-        if (!entries.length) {
-            const icon = options.emptyIcon || '💬';
-            const title = options.emptyTitle || 'No chats yet';
-            const text = options.emptyText || 'Start a new conversation';
-            CuttleChatHistoryView.paint(historyContainer, `
-                ${createHistorySectionHeaderHTML('Your chats')}
-                <div class="empty-state">
-                    <div class="empty-state-icon">${icon}</div>
-                    <div class="empty-state-title">${escapeHtml(title)}</div>
-                    <div class="empty-state-text">${escapeHtml(text)}</div>
-                </div>
-            `, renderArchivedSection);
-            return;
-        }
-        const groups = groupSessionsByProject(entries);
-        let html = '';
-        groups.forEach((group, groupIdx) => {
-            const expanded = isHistoryProjectSectionExpanded(group, groupIdx);
-            const unread = historyGroupHasUnread(group);
-            const unreadError = historyGroupHasUnreadError(group);
-            const queuedAny = historyGroupHasActiveFollowup(group);
-            const pausedAny = historyGroupHasPausedFollowup(group);
-            const queued = !unread && queuedAny;
-            const paused = !unread && !queued && pausedAny;
-            const sectionClass = [
-                expanded ? '' : ' is-collapsed',
-                unreadError ? ' has-unread-error' : '',
-                unread ? ' has-unread' : '',
-                queued ? ' has-queued' : '',
-                paused ? ' has-paused-queue' : '',
-            ].join('');
-            const safeKey = escapeHtml(String(group.project.key));
-            html += `<div class="history-section${sectionClass}" data-project-key="${safeKey}" data-has-error="${unreadError ? '1' : '0'}" data-has-unread="${unread ? '1' : '0'}" data-has-queued="${queuedAny ? '1' : '0'}" data-has-paused="${pausedAny ? '1' : '0'}">`;
-            html += createHistorySectionHeaderHTML(group.project.name, {
-                showRefresh: showRefresh && groupIdx === 0,
-                project: group.project,
-                collapsible: true,
-                collapsed: !expanded,
-                count: group.entries.length,
-                hasError: unreadError,
-                hasUnread: unread,
-                hasQueued: queued,
-                hasPaused: paused,
-            });
-            html += `<div class="history-section-body">${renderHistoryGroupBody(group, renderEntry)}</div>`;
-            html += '</div>';
-        });
-        CuttleChatHistoryView.paint(historyContainer, html, () => {
-            syncHistoryRunningIndicators();
-            syncHistoryUnreadIndicators();
-            applyHistorySubagentExpandState();
-            scheduleSlashChipCompactLabels(historyContainer);
-            renderArchivedSection();
-        });
-    }
-
-    function loadChatHistory() {
-        // Hard gate: accidental full-list paints (auth-changed, loadProjects, poll)
-        // must not wipe an active search or filter chips.
-        if (historySearchQueryActive()) {
-            softRefreshHistorySearchIndicators();
-            return;
-        }
-        closeHistoryItemMenu();
-        refreshLocalOpenPanes();
-        const historyContainer = document.getElementById('chatHistory');
-        if (!historyContainer) return;
-
-        const terminalEntries = getTerminalHistoryEntries();
-
-        if (isAuthMode()) {
-            const serverSessions = ((window.CuttleAuth.getSessions && window.CuttleAuth.getSessions()) || [])
-                .filter((s) => !isChatSessionDeleted(s && s.id));
-            if (!serverSessions.length && !terminalEntries.length) {
-                paintHistoryEntries([], null, {});
-                return;
-            }
-            applyGeneratingFlagsFromSessions(serverSessions);
-            // Record the main-list ids before the Archived fetch resolves so
-            // an unfiltered (?archived=-unaware) response can't duplicate it.
-            rememberActiveHistorySessions(serverSessions);
-            // First paint kicks off the Archived section fetch (cached after).
-            if (!archivedSessionsLoaded) refreshArchivedSessions();
-            const entries = serverSessions.map((s) => ({
-                sessionId: s.id,
-                session: null,
-                // Sort by last message only — last_activity can bump on non-message
-                // touches and reshuffle the sidebar without a new turn.
-                updated: parseSessionTimestamp(s.last_message_time)
-                    || parseSessionTimestamp(s.last_activity),
-                serverSession: s,
-            })).concat(terminalEntries);
-            paintHistoryEntries(entries, (entry, itemOpts) => {
-                if (entry.isTerminal) return createTerminalHistoryItemHTML(entry.session);
-                return createAuthHistoryItemHTML(entry.serverSession, itemOpts);
-            });
-            return;
-        }
-
-        const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-        const sessionArray = Object.values(sessions);
-        const entries = sessionArray.map((session) => ({
-            sessionId: session.id,
-            session,
-            updated: Number(session.updated) || 0,
-        })).concat(terminalEntries);
-
-        paintHistoryEntries(entries, (entry) => {
-            if (entry.isTerminal) return createTerminalHistoryItemHTML(entry.session);
-            return createHistoryItemHTML(entry.session);
-        });
-    }
-
-    function createAuthHistoryItemHTML(s, extraOpts) {
-        const sid = s.id;
-        const title = s.session_name || (`Chat ${sid}`);
-        const active = sessionIdsEqual(currentSessionId, sid) ? ' active' : '';
-        const running = sessionShowsHistorySpinner(sid);
-        const runningClass = running ? ' is-running' : '';
-        const attention = sessionHistoryAttentionKind(sid, s);
-        const unreadClass = attention === 'input' ? ' has-input' : (attention === 'unread' || attention === 'error') ? ' has-unread' : '';
-        const errorClass = attention === 'error' ? ' has-unread-error' : '';
-        const queuedClass = attention === 'queued' ? ' has-queued' : '';
-        const pausedClass = attention === 'paused' ? ' has-paused-queue' : '';
-        const starred = !!Number(s.starred);
-        const starredClass = starred ? ' is-starred' : '';
-        const statusKind = running ? 'running' : attention;
-        const starredIcon = starred ? historyStarredIconHTML() : '';
-        const count = Number(s.message_count) || 0;
-        const origin = String(s.origin || '').trim().toLowerCase();
-        const parentId = s.parent_session_id != null ? String(s.parent_session_id) : '';
-        const itemOpts = extraOpts || {};
-        const childCount = Math.max(0, Number(itemOpts.subagentChildCount) || 0);
-        const subExpanded = !!itemOpts.subagentExpanded;
-        const subForce = !!itemOpts.subagentForceExpanded;
-        const subagentClass = (origin === 'subagent' || parentId) ? ' is-subagent' : '';
-        const hasSubagentsClass = childCount > 0 ? ' has-subagents' : '';
-        const discordName = String(s.discord_username || '').trim();
-        const participants = Array.isArray(s.discord_participants) ? s.discord_participants : [];
-        const participantNames = participants
-            .map((p) => String((p && (p.discord_username || p.discord_user_id)) || '').trim())
-            .filter(Boolean);
-        const isDiscordOrigin = origin === 'discord_dm' || origin === 'discord_guild';
-        const discordTip = participantNames.length
-            ? ('Discord · ' + participantNames.join(', '))
-            : (discordName ? ('Discord · ' + discordName) : 'Discord');
-        const discordBadge = (isDiscordOrigin || participantNames.length)
-            ? `<span class="history-kind-badge" title="${escapeHtml(discordTip)}">Discord</span>`
-            : '';
-        const subagentBadge = (origin === 'subagent' || parentId)
-            ? `<span class="history-kind-badge history-subagent-badge" title="Sub-agent of ${escapeHtml(parentId ? ('CH-' + String(parentId).padStart(6, '0')) : 'parent chat')}">Subagent</span>`
-            : '';
-        const projInfo = resolveSessionProjectInfo(sid, s);
-        const projectChip = projInfo
-            ? projectChipHtml(projInfo, {
-                history: true,
-                worktree: !!String(s.checkout_uid || '').trim(),
-                branch: historyBranchFor(s),
-            })
-            : '';
-        const badge = count > 0
-            ? `<span class="history-msg-badge" title="${count} message${count === 1 ? '' : 's'}" aria-label="${count} messages">
-                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                <span class="history-msg-count">${count}</span>
-               </span>`
-            : '';
-        const subToggleTitle = historySubagentToggleTitle(childCount, subExpanded, subForce);
-        const subCountBadge = childCount > 0
-            ? `<button type="button" class="history-subagent-count-badge" data-child-count="${childCount}" title="${escapeHtml(subToggleTitle)}" aria-label="${escapeHtml(subToggleTitle)}" onclick="window.toggleHistorySubagentGroup('${sid}', event)">
-                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8.4 7.2c2.2 2 2.2 7.6 0 9.6"/><path d="M8.5 12H15.5"/></svg>
-                <span class="history-msg-count">${childCount}</span>
-               </button>`
-            : '';
-        const subToggle = childCount > 0
-            ? `<button type="button" class="history-subagent-toggle" data-child-count="${childCount}" aria-expanded="${subExpanded ? 'true' : 'false'}" aria-controls="history-subagents-${escapeHtml(String(sid))}-kids" title="${escapeHtml(subToggleTitle)}" aria-label="${escapeHtml(subToggleTitle)}" onclick="window.toggleHistorySubagentGroup('${sid}', event)">
-                <span class="history-subagent-chevron" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="6 9 12 15 18 9"/>
-                    </svg>
-                </span>
-               </button>`
-            : '';
-        const parts = chatTitleParts(title, sid);
-        const openClass = openPaneEntriesForSession(sid).length ? ' is-open-pane' : '';
-        const snippet = String(s.search_snippet || s.snippet || '').trim();
-        const isContentMatch = String(s.match || '').toLowerCase() === 'content';
-        const snippetText = snippet || (isContentMatch ? 'Matched in message body' : '');
-        const snippetHtml = snippetText
-            ? `<div class="history-search-snippet${isContentMatch ? ' is-content-match' : ''}">${escapeHtml(snippetText)}</div>`
-            : '';
-        const contentBadge = isContentMatch
-            ? `<span class="history-kind-badge history-match-badge" title="Matched in message body">In messages</span>`
-            : '';
-        return `<div class="chat-history-item${active}${runningClass}${unreadClass}${errorClass}${queuedClass}${pausedClass}${starredClass}${openClass}${subagentClass}${hasSubagentsClass}" data-session-id="${sid}" data-parent-session-id="${escapeHtml(parentId)}" data-search-match="${isContentMatch ? 'content' : 'title'}" data-chat-title="${escapeHtml(title).replace(/"/g, '&quot;')}" onclick="window.chatPageLoadSession('${sid}')">
-            ${historyAttentionIconHTML(statusKind)}
-            ${subToggle}
-            <div class="history-item-body">
-                ${historyItemMetaHTML([projectChip, parts.chipsHtml, discordBadge, subagentBadge, contentBadge, subCountBadge, badge, starredIcon])}
-                <div class="chat-title">${parts.titleHtml}</div>
-                ${snippetHtml}
-            </div>
-            ${createHistoryDeleteActionsHTML(sid, { includeRename: true, starred, lastMessageMs: resolveHistoryLastMessageMs(s) })}
-        </div>`;
-    }
-    
-    function createHistoryItemHTML(session) {
-        const isActive = currentSessionId === session.id;
-        const running = sessionShowsHistorySpinner(session.id);
-        const attention = sessionHistoryAttentionKind(session.id, session);
-        const starred = !!session.starred;
-        const parts = chatTitleParts(session.title, session.id);
-        const openClass = openPaneEntriesForSession(session.id).length ? ' is-open-pane' : '';
-        const isContentMatch = String(session.match || '').toLowerCase() === 'content';
-        const contentBadge = isContentMatch
-            ? '<span class="history-kind-badge history-match-badge" title="Matched in message body">In messages</span>'
-            : '';
-        const snippet = String(session.search_snippet || session.snippet || '').trim();
-        const snippetText = snippet || (isContentMatch ? 'Matched in message body' : '');
-        const snippetHtml = snippetText
-            ? `<div class="history-search-snippet${isContentMatch ? ' is-content-match' : ''}">${escapeHtml(snippetText)}</div>`
-            : '';
-        const projInfo = resolveSessionProjectInfo(session.id, session);
-        const projectChip = projInfo
-            ? projectChipHtml(projInfo, {
-                history: true,
-                worktree: !!String(session.checkout_uid || '').trim(),
-                branch: historyBranchFor(session),
-            })
-            : '';
-        const meta = historyItemMetaHTML([
-            '<span class="chat-icon">💬</span>',
-            projectChip,
-            parts.chipsHtml,
-            contentBadge,
-            starred ? historyStarredIconHTML() : '',
-        ]);
-        const statusKind = running ? 'running' : attention;
-        const unreadClass = attention === 'input' ? ' has-input' : (attention === 'unread' || attention === 'error') ? ' has-unread' : '';
-        const errorClass = attention === 'error' ? ' has-unread-error' : '';
-        const queuedClass = attention === 'queued' ? ' has-queued' : '';
-        const pausedClass = attention === 'paused' ? ' has-paused-queue' : '';
-        return `
-            <div class="chat-history-item ${isActive ? 'active' : ''}${running ? ' is-running' : ''}${unreadClass}${errorClass}${queuedClass}${pausedClass}${starred ? ' is-starred' : ''}${openClass}" 
-                 data-session-id="${session.id}"
-                 data-search-match="${isContentMatch ? 'content' : 'title'}"
-                 data-chat-title="${escapeHtml(String(session.title || '')).replace(/"/g, '&quot;')}"
-                 onclick="window.chatPageLoadSession('${session.id}')">
-                ${historyAttentionIconHTML(statusKind)}
-                <div class="history-item-body">
-                    ${meta}
-                    <div class="chat-title">${parts.titleHtml}</div>
-                    ${snippetHtml}
-                </div>
-                ${createHistoryDeleteActionsHTML(session.id, { includeRename: true, starred, lastMessageMs: resolveHistoryLastMessageMs(session) })}
-            </div>
-        `;
-    }
-
-    function createTerminalHistoryItemHTML(session) {
-        const sid = String(session.id).replace(/'/g, "\\'");
-        const displayId = formatChatDisplayId(session.id) || '';
-        const title = session.title || session.shell || 'Terminal';
-        const starred = !!session.starred;
-        const openClass = openPaneEntriesForSession(session.id).length ? ' is-open-pane' : '';
-        const meta = historyItemMetaHTML([
-            '<span class="chat-icon" aria-hidden="true">⌨️</span>',
-            '<span class="history-kind-badge" title="Terminal session">Terminal</span>',
-            displayId
-                ? `<span class="history-chat-handle" title="${escapeHtml(displayId)}">${escapeHtml(displayId)}</span>`
-                : '',
-            starred ? historyStarredIconHTML() : '',
-        ]);
-        return `
-            <div class="chat-history-item is-terminal${starred ? ' is-starred' : ''}${openClass}"
-                 data-session-id="${escapeHtml(String(session.id))}"
-                 data-kind="terminal"
-                 onclick="window.chatPageOpenTerminalSession('${sid}')">
-                <div class="history-item-body">
-                    ${meta}
-                    <div class="chat-title">${escapeHtml(title)}</div>
-                </div>
-                ${createHistoryDeleteActionsHTML(session.id, { includeRename: true, starred, lastMessageMs: resolveHistoryLastMessageMs(session) })}
-            </div>
-        `;
-    }
-    
-    let historySearchSeq = 0;
-    let historySearchTimer = null;
-    let historySearchAbort = null;
-
-    /** Active history filters from the Search slash palette (AND across kinds, OR within). */
-    const historySearchFilters = {
-        projects: [], // { key, name, path }
-        agents: [],   // { key, id, label, prefix }
-    };
-    let historySlashPaletteItems = [];
-    let historySlashPaletteIndex = 0;
-
-    function historyFiltersActive() {
-        return historySearchFilters.projects.length > 0
-            || historySearchFilters.agents.length > 0;
-    }
-
-    function normalizeHistoryFilterKey(kind, value) {
-        return String(kind || '') + ':' + String(value || '').trim().toLowerCase();
-    }
-
-    function sessionProjectFields(session) {
-        const s = session || {};
-        let name = String(s.project_name || s.projectName || '').trim();
-        let path = String(s.project_path || s.projectPath || '').trim();
-        if (!name && !path && s.id != null) {
-            try {
-                const info = resolveSessionProjectInfo(s.id, s);
-                if (info && info.key !== '__none__') {
-                    name = String(info.name || '').trim();
-                    path = String(info.path || '').trim();
-                    // Avoid inventing the default Cuttle project badge for chats
-                    // that truly have no project when listing filters/matching.
-                    if (info.name === 'No project') {
-                        name = '';
-                        path = '';
-                    }
-                }
-            } catch (_) {}
-        }
-        return { name, path };
-    }
-
-    function sessionMatchesProjectFilter(session, filter) {
-        if (!filter) return true;
-        const fields = sessionProjectFields(session);
-        const name = fields.name.toLowerCase();
-        const path = fields.path.toLowerCase().replace(/\\/g, '/');
-        const wantName = String(filter.name || '').trim().toLowerCase();
-        const wantPath = String(filter.path || '').trim().toLowerCase().replace(/\\/g, '/');
-        if (wantPath && path && (path === wantPath || path.includes(wantPath) || wantPath.includes(path))) {
-            return true;
-        }
-        if (wantName && name && (name === wantName || name.includes(wantName))) return true;
-        if (wantName && path && path.includes(wantName)) return true;
-        return false;
-    }
-
-    function sessionAgentHaystack(session) {
-        const s = session || {};
-        const bits = [
-            s.session_name,
-            s.title,
-            s.id,
-        ];
-        stickyTitleChipsForSession(s.id).forEach((c) => {
-            bits.push(c.prefix, c.label, c.meta);
-        });
-        try {
-            const parsed = parseTitleSlashChips(s.session_name || s.title || '');
-            (parsed.chips || []).forEach((c) => bits.push(c.prefix, c.label, c.meta));
-        } catch (_) {}
-        return bits.join(' ').toLowerCase();
-    }
-
-    function sessionMatchesAgentFilter(session, filter) {
-        if (!filter) return true;
-        const hay = sessionAgentHaystack(session);
-        const prefix = String(filter.prefix || '').trim().toLowerCase();
-        const id = String(filter.id || '').trim().toLowerCase();
-        if (prefix && hay.includes(prefix.trim())) return true;
-        if (id && (hay.includes('/' + id) || hay.includes(id))) return true;
-        return false;
-    }
-
-    function sessionMatchesHistoryFilters(session) {
-        if (historySearchFilters.projects.length) {
-            const ok = historySearchFilters.projects.some((p) => sessionMatchesProjectFilter(session, p));
-            if (!ok) return false;
-        }
-        if (historySearchFilters.agents.length) {
-            const ok = historySearchFilters.agents.some((a) => sessionMatchesAgentFilter(session, a));
-            if (!ok) return false;
-        }
-        return true;
-    }
-
-    function historySessionHaystack(session) {
-        const s = session || {};
-        const participants = Array.isArray(s.discord_participants) ? s.discord_participants : [];
-        const participantBits = participants.map((p) => (
-            (p && (p.discord_username || p.discord_user_id)) || ''
-        ));
-        const proj = sessionProjectFields(s);
-        return [
-            s.session_name,
-            s.title,
-            s.id,
-            formatChatDisplayId(s.id),
-            s.discord_username,
-            s.project_name,
-            proj.name,
-            proj.path,
-            s.origin,
-            ...participantBits,
-        ].join(' ').toLowerCase();
-    }
-
-    function localSessionMatchesSearch(session, searchTerm) {
-        if (!sessionMatchesHistoryFilters(session)) return false;
-        if (!searchTerm) return true;
-        if (historySessionHaystack(session).includes(searchTerm)) return true;
-        const messages = session && session.messages;
-        if (!Array.isArray(messages)) return false;
-        return messages.some((msg) => String((msg && msg.content) || '').toLowerCase().includes(searchTerm));
-    }
-
-    function collectHistoryFilterProjects() {
-        const byKey = new Map();
-        const add = (name, path) => {
-            const n = String(name || '').trim();
-            const p = String(path || '').trim();
-            if (!n && !p) return;
-            const label = n || p.split(/[\\/]/).filter(Boolean).pop() || p;
-            const key = normalizeHistoryFilterKey('project', p || n);
-            if (byKey.has(key)) return;
-            byKey.set(key, { key, name: label, path: p });
-        };
-        (projects || []).forEach((p) => add(p.name || p.project_name, p.path || p.project_path));
-        try {
-            const listed = ((window.CuttleAuth && window.CuttleAuth.getSessions && window.CuttleAuth.getSessions()) || []);
-            listed.forEach((s) => add(s.project_name, s.project_path));
-        } catch (_) {}
-        return Array.from(byKey.values()).sort((a, b) => a.name.localeCompare(b.name));
-    }
-
-    function collectHistoryFilterAgents() {
-        return CuttleChatSlash.SLASH_COMMANDS
-            .filter((c) => c && c.stickySession)
-            .map((c) => {
-                const prefix = String(c.prefix || '').trim();
-                const id = prefix.replace(/^\/+/, '').split(/\s/)[0].toLowerCase();
-                return {
-                    key: normalizeHistoryFilterKey('agent', id),
-                    id,
-                    label: c.label || id,
-                    prefix,
-                };
-            })
-            .filter((a, i, arr) => a.id && arr.findIndex((x) => x.id === a.id) === i);
-    }
-
-    function renderHistoryFilterChips() {
-        const el = document.getElementById('historySearchFilterChips');
-        if (!el) return;
-        const chips = [];
-        historySearchFilters.projects.forEach((p) => {
-            chips.push({
-                kind: 'project',
-                key: p.key,
-                label: '📁 ' + (p.name || 'Project'),
-                title: p.path || p.name,
-            });
-        });
-        historySearchFilters.agents.forEach((a) => {
-            chips.push({
-                kind: 'agent',
-                key: a.key,
-                label: (a.prefix || ('/' + a.id)).trim(),
-                title: a.label || a.id,
-            });
-        });
-        if (!chips.length) {
-            el.hidden = true;
-            el.innerHTML = '';
-            return;
-        }
-        el.hidden = false;
-        el.innerHTML = chips.map((c) => (
-            '<span class="history-filter-chip" data-kind="' + escapeHtml(c.kind) + '" data-key="' + escapeHtml(c.key) + '" title="' + escapeHtml(c.title || c.label) + '">' +
-            '<span class="history-filter-chip-label">' + escapeHtml(c.label) + '</span>' +
-            '<button type="button" class="history-filter-chip-remove" data-history-filter-remove="' + escapeHtml(c.key) + '" aria-label="Remove filter">×</button>' +
-            '</span>'
-        )).join('');
-        el.querySelectorAll('[data-history-filter-remove]').forEach((btn) => {
-            btn.addEventListener('click', (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                removeHistorySearchFilter(btn.getAttribute('data-history-filter-remove'));
-            });
-        });
-    }
-
-    function removeHistorySearchFilter(key) {
-        const k = String(key || '');
-        historySearchFilters.projects = historySearchFilters.projects.filter((p) => p.key !== k);
-        historySearchFilters.agents = historySearchFilters.agents.filter((a) => a.key !== k);
-        renderHistoryFilterChips();
-        searchChats();
-    }
-
-    function addHistoryProjectFilter(proj) {
-        if (!proj) return;
-        const key = proj.key || normalizeHistoryFilterKey('project', proj.path || proj.name);
-        if (historySearchFilters.projects.some((p) => p.key === key)) return;
-        historySearchFilters.projects.push({
-            key,
-            name: proj.name || '',
-            path: proj.path || '',
-        });
-        renderHistoryFilterChips();
-    }
-
-    function addHistoryAgentFilter(agent) {
-        if (!agent) return;
-        const key = agent.key || normalizeHistoryFilterKey('agent', agent.id);
-        if (historySearchFilters.agents.some((a) => a.key === key)) return;
-        historySearchFilters.agents.push({
-            key,
-            id: agent.id,
-            label: agent.label || agent.id,
-            prefix: agent.prefix || ('/' + agent.id + ' '),
-        });
-        renderHistoryFilterChips();
-    }
-
-    function parseHistorySlashDraft(raw) {
-        const text = String(raw || '');
-        const m = text.match(/(?:^|\s)(\/[^\n]*)$/);
-        if (!m) return null;
-        const token = m[1];
-        const start = text.length - token.length;
-        return { token, start, before: text.slice(0, start) };
-    }
-
-    /** True when project name/path matches a slash query like "esc" → Escape Purgatory. */
-    function historyProjectMatchesQuery(proj, query) {
-        const q = String(query || '').trim().toLowerCase();
-        if (!q) return true;
-        const name = String((proj && proj.name) || '').toLowerCase();
-        const path = String((proj && proj.path) || '').toLowerCase().replace(/\\/g, '/');
-        const hay = (name + ' ' + path).trim();
-        if (!hay) return false;
-        if (hay.includes(q)) return true;
-        // Word / path-segment prefixes: "esc" → "escape", "ep" → no unless present
-        const parts = hay.split(/[^a-z0-9]+/).filter(Boolean);
-        if (parts.some((w) => w.startsWith(q))) return true;
-        // Compact acronym-ish: "ep" from "Escape Purgatory"
-        if (q.length >= 2) {
-            const initials = parts.map((w) => w[0]).join('');
-            if (initials.startsWith(q) || initials.includes(q)) return true;
-        }
-        return false;
-    }
-
-    function historyAgentMatchesQuery(agent, query) {
-        const q = String(query || '').trim().toLowerCase();
-        if (!q) return true;
-        const id = String((agent && agent.id) || '').toLowerCase();
-        const label = String((agent && agent.label) || '').toLowerCase();
-        const prefix = String((agent && agent.prefix) || '').toLowerCase();
-        if (id.startsWith(q) || id.includes(q)) return true;
-        if (label.includes(q)) return true;
-        if (prefix.includes(q)) return true;
-        return false;
-    }
-
-    function pushHistoryProjectPaletteItems(items, needle) {
-        collectHistoryFilterProjects().forEach((p) => {
-            if (!historyProjectMatchesQuery(p, needle)) return;
-            items.push({
-                kind: 'project',
-                id: p.key,
-                prefix: '/project',
-                label: p.name + (p.path ? ' — ' + p.path : ''),
-                apply: () => addHistoryProjectFilter(p),
-            });
-        });
-    }
-
-    function pushHistoryAgentPaletteItems(items, needle) {
-        collectHistoryFilterAgents().forEach((a) => {
-            if (!historyAgentMatchesQuery(a, needle)) return;
-            items.push({
-                kind: 'agent',
-                id: a.key,
-                prefix: (a.prefix || ('/' + a.id)).trim(),
-                label: a.label,
-                apply: () => addHistoryAgentFilter(a),
-            });
-        });
-    }
-
-    function buildHistorySlashPaletteItems(token) {
-        const t = String(token || '').trim().toLowerCase();
-        const items = [];
-        const q = t.replace(/^\/+/, '');
-
-        const projectCmd = /^(?:project|p|cd)(?:\s+(.*))?$/i.exec(q);
-        const agentCmd = /^agent(?:\s+(.*))?$/i.exec(q);
-        const isRoot = t === '/' || q === '';
-
-        if (isRoot || /^(?:p|pr|pro|proj|project|cd)$/i.test(q)) {
-            items.push({
-                kind: 'hint',
-                id: 'hint-project',
-                prefix: '/project',
-                label: 'Filter by project…',
-                apply: null,
-            });
-        }
-        if (isRoot || /^(?:a|ag|age|agen|agent)$/i.test(q)) {
-            items.push({
-                kind: 'hint',
-                id: 'hint-agent',
-                prefix: '/agent',
-                label: 'Filter by agent…',
-                apply: null,
-            });
-        }
-
-        if (isRoot) {
-            pushHistoryProjectPaletteItems(items, '');
-            pushHistoryAgentPaletteItems(items, '');
-        } else if (projectCmd) {
-            // /project, /p esc, /cd Escape…
-            pushHistoryProjectPaletteItems(items, String(projectCmd[1] || '').trim());
-        } else if (agentCmd) {
-            pushHistoryAgentPaletteItems(items, String(agentCmd[1] || '').trim());
-        } else {
-            // Bare query: /esc → Escape Purgatory, /cur → Cursor, etc.
-            pushHistoryProjectPaletteItems(items, q);
-            pushHistoryAgentPaletteItems(items, q);
-        }
-
-        // Dedupe by id
-        const seen = new Set();
-        return items.filter((it) => {
-            const k = it.kind + ':' + it.id;
-            if (seen.has(k)) return false;
-            seen.add(k);
-            return true;
-        }).slice(0, 40);
-    }
-
-    function hideHistorySlashPalette() {
-        const el = document.getElementById('historySearchSlashPalette');
-        if (el) {
-            el.hidden = true;
-            el.innerHTML = '';
-        }
-        historySlashPaletteItems = [];
-        historySlashPaletteIndex = 0;
-    }
-
-    function paintHistorySlashPalette(items) {
-        const el = document.getElementById('historySearchSlashPalette');
-        if (!el) return;
-        historySlashPaletteItems = items || [];
-        if (!historySlashPaletteItems.length) {
-            el.hidden = false;
-            el.innerHTML = '<div class="history-slash-palette-empty">No matching filters. Try /project or /agent</div>';
-            return;
-        }
-        if (historySlashPaletteIndex >= historySlashPaletteItems.length) {
-            historySlashPaletteIndex = 0;
-        }
-        let html = '';
-        let lastKind = '';
-        historySlashPaletteItems.forEach((it, idx) => {
-            if (it.kind !== lastKind && (it.kind === 'project' || it.kind === 'agent')) {
-                html += '<div class="history-slash-palette-section">' + escapeHtml(it.kind === 'project' ? 'Projects' : 'Agents') + '</div>';
-                lastKind = it.kind;
-            } else if (it.kind === 'hint' && lastKind !== 'hint') {
-                html += '<div class="history-slash-palette-section">Filters</div>';
-                lastKind = 'hint';
-            }
-            html += (
-                '<button type="button" class="history-slash-palette-item' + (idx === historySlashPaletteIndex ? ' is-active' : '') + '" data-history-slash-idx="' + idx + '" role="option" aria-selected="' + (idx === historySlashPaletteIndex ? 'true' : 'false') + '">' +
-                '<span class="hslp-prefix">' + escapeHtml(it.prefix || '') + '</span>' +
-                '<span class="hslp-label">' + escapeHtml(it.label || '') + '</span>' +
-                '</button>'
-            );
-        });
-        el.hidden = false;
-        el.innerHTML = html;
-        el.querySelectorAll('[data-history-slash-idx]').forEach((btn) => {
-            btn.addEventListener('mousedown', (ev) => {
-                ev.preventDefault();
-                const idx = Number(btn.getAttribute('data-history-slash-idx'));
-                applyHistorySlashPaletteItem(idx);
-            });
-        });
-    }
-
-    function applyHistorySlashPaletteItem(idx) {
-        const item = historySlashPaletteItems[idx];
-        const input = document.getElementById('searchInput');
-        if (!item || !input) return;
-        const draft = parseHistorySlashDraft(input.value);
-        if (item.kind === 'hint') {
-            input.value = (draft ? draft.before : '') + item.prefix + ' ';
-            hideHistorySlashPalette();
-            onHistorySearchInput({ target: input });
-            input.focus();
-            return;
-        }
-        if (typeof item.apply === 'function') item.apply();
-        input.value = draft ? draft.before.replace(/\s+$/, '') : '';
-        hideHistorySlashPalette();
-        searchChats();
-        input.focus();
-    }
-
-    function onHistorySearchInput() {
-        const input = document.getElementById('searchInput');
-        const raw = (input && input.value) || '';
-        const draft = parseHistorySlashDraft(raw);
-        if (draft && draft.token.startsWith('/')) {
-            const items = buildHistorySlashPaletteItems(draft.token);
-            paintHistorySlashPalette(items);
-            // While composing a slash filter, still apply text-before + active chips.
-            searchChats({ slashDraft: draft });
-            return;
-        }
-        hideHistorySlashPalette();
-        searchChats();
-    }
-
-    function clearHistorySearch() {
-        const input = document.getElementById('searchInput');
-        if (!input) return;
-        input.value = '';
-        hideHistorySlashPalette();
-        searchChats();
-        input.focus({ preventScroll: true });
-    }
-
-    function onHistorySearchKeydown(ev) {
-        const el = document.getElementById('historySearchSlashPalette');
-        const open = el && !el.hidden && historySlashPaletteItems.length;
-        if (!open) {
-            if (ev.key === 'Escape' && historyFiltersActive()) {
-                // keep chips; just blur handled elsewhere
-            }
-            return;
-        }
-        if (ev.key === 'ArrowDown') {
-            ev.preventDefault();
-            historySlashPaletteIndex = (historySlashPaletteIndex + 1) % historySlashPaletteItems.length;
-            paintHistorySlashPalette(historySlashPaletteItems);
-            return;
-        }
-        if (ev.key === 'ArrowUp') {
-            ev.preventDefault();
-            historySlashPaletteIndex = (historySlashPaletteIndex - 1 + historySlashPaletteItems.length) % historySlashPaletteItems.length;
-            paintHistorySlashPalette(historySlashPaletteItems);
-            return;
-        }
-        if (ev.key === 'Enter') {
-            ev.preventDefault();
-            applyHistorySlashPaletteItem(historySlashPaletteIndex);
-            return;
-        }
-        if (ev.key === 'Escape') {
-            ev.preventDefault();
-            hideHistorySlashPalette();
-            const input = document.getElementById('searchInput');
-            const draft = parseHistorySlashDraft(input && input.value);
-            if (input && draft) {
-                input.value = draft.before.replace(/\s+$/, '');
-                searchChats();
-            }
-        }
-    }
-
-    function filterTerminalHistory(searchTerm) {
-        return getTerminalHistoryEntries().filter((entry) => {
-            const s = entry.session || {};
-            // Terminals rarely have project/agent; hide when project/agent filters are on.
-            if (historyFiltersActive()) return false;
-            const hay = [
-                s.title,
-                s.shell,
-                s.id,
-                formatChatDisplayId(s.id),
-                'terminal',
-            ].join(' ').toLowerCase();
-            return !searchTerm || hay.includes(searchTerm);
-        });
-    }
-
-    function paintSearchResults(sessions, terminalEntries, renderSession, emptyOpts) {
-        const historyContainer = document.getElementById('chatHistory');
-        if (!historyContainer) return;
-        repaintHistorySearch = () => paintSearchResults(sessions, terminalEntries, renderSession, emptyOpts);
-        const options = Object.assign({ showRefresh: false }, emptyOpts || {});
-
-        const toEntry = (session) => {
-            const isServer = session.session_name != null || session.message_count != null;
-            const match = String(session.match || '').toLowerCase();
-            return {
-                sessionId: session.id,
-                session: isServer ? null : session,
-                updated: parseSessionTimestamp(session.last_message_time)
-                    || parseSessionTimestamp(session.last_activity)
-                    || Number(session.updated)
-                    || 0,
-                serverSession: isServer ? session : null,
-                searchMatch: match === 'content' ? 'content' : (match === 'title' ? 'title' : ''),
-            };
-        };
-
-        const titleSessions = [];
-        const contentSessions = [];
-        (sessions || []).forEach((session) => {
-            if (String(session.match || '').toLowerCase() === 'content') contentSessions.push(session);
-            else titleSessions.push(session);
-        });
-
-        const titleEntries = titleSessions.map(toEntry);
-        const contentEntries = contentSessions.map(toEntry);
-        const termEntries = terminalEntries || [];
-        const all = titleEntries.concat(contentEntries).concat(termEntries);
-
-        if (!all.length) {
-            const icon = options.emptyIcon || '🔍';
-            const title = options.emptyTitle || 'No results found';
-            const text = options.emptyText || 'Try a different search term';
-            CuttleChatHistoryView.paint(historyContainer, `
-                ${createHistorySectionHeaderHTML('Search')}
-                <div class="empty-state">
-                    <div class="empty-state-icon">${icon}</div>
-                    <div class="empty-state-title">${escapeHtml(title)}</div>
-                    <div class="empty-state-text">${escapeHtml(text)}</div>
-                </div>
-            `);
-            return;
-        }
-
-        const renderEntry = (entry, itemOpts) => {
-            if (entry.isTerminal) return createTerminalHistoryItemHTML(entry.session);
-            if (entry.serverSession) return renderSession(entry.serverSession, itemOpts);
-            return renderSession(entry.session, itemOpts);
-        };
-
-        // Search uses match-kind sections (not project/recency groups) so a late
-        // content-search wave cannot bury title hits under unrelated recent chats.
-        let html = '';
-        const paintTier = (key, label, entries) => {
-            if (!entries.length) return;
-            const group = {
-                project: { key, id: null, name: label, path: '' },
-                entries: entries.slice().sort((a, b) => {
-                    const aStarred = entryIsStarred(a);
-                    const bStarred = entryIsStarred(b);
-                    if (aStarred && !bStarred) return -1;
-                    if (bStarred && !aStarred) return 1;
-                    const d = (b.updated || 0) - (a.updated || 0);
-                    if (d !== 0) return d;
-                    return String(b.sessionId).localeCompare(String(a.sessionId), undefined, {
-                        numeric: true,
-                    });
-                }),
-                latest: 0,
-            };
-            html += `<div class="history-section history-search-tier" data-search-tier="${escapeHtml(key)}" data-project-key="${escapeHtml(key)}">`;
-            html += createHistorySectionHeaderHTML(label, {
-                showRefresh: false,
-                project: group.project,
-                collapsible: false,
-                collapsed: false,
-                count: group.entries.length,
-            });
-            html += `<div class="history-section-body">${renderHistoryGroupBody(group, renderEntry)}</div>`;
-            html += '</div>';
-        };
-
-        paintTier('__search_titles__', 'Matching titles', titleEntries.concat(termEntries));
-        paintTier('__search_content__', 'In messages', contentEntries);
-
-        CuttleChatHistoryView.paint(historyContainer, html, () => {
-            syncHistoryRunningIndicators();
-            syncHistoryUnreadIndicators();
-            applyHistorySubagentExpandState();
-            scheduleSlashChipCompactLabels(historyContainer);
-            renderArchivedSection();
-        });
-    }
-
-    function searchChats(opts) {
-        closeHistoryItemMenu();
-        opts = opts || {};
-        const rawFull = (document.getElementById('searchInput') && document.getElementById('searchInput').value) || '';
-        const clear = document.getElementById('historySearchClear');
-        if (clear) clear.hidden = !rawFull;
-        repaintHistorySearch = null;
-        const draft = opts.slashDraft || parseHistorySlashDraft(rawFull);
-        const composingSlash = !!(draft && String(draft.token || '').startsWith('/'));
-        const rawForText = draft ? draft.before : rawFull;
-        const searchTerm = String(rawForText || '').trim().toLowerCase();
-        const filtersOn = historyFiltersActive();
-
-        if (historySearchTimer) {
-            clearTimeout(historySearchTimer);
-            historySearchTimer = null;
-        }
-        if (historySearchAbort) {
-            try { historySearchAbort.abort(); } catch (_) {}
-            historySearchAbort = null;
-        }
-        if (!searchTerm && !filtersOn) {
-            historySearchSeq += 1;
-            historySearchLiveQuery = '';
-            // Keep the slash filter palette open while the user is composing /project|/agent.
-            if (!composingSlash) hideHistorySlashPalette();
-            loadChatHistory();
-            return;
-        }
-
-        historySearchLiveQuery = searchTerm || '__filters__';
-        const seq = ++historySearchSeq;
-        const terminalEntries = filterTerminalHistory(searchTerm);
-
-        if (isAuthMode()) {
-            const listed = ((window.CuttleAuth.getSessions && window.CuttleAuth.getSessions()) || [])
-                .filter((s) => !isChatSessionDeleted(s && s.id))
-                .filter((s) => sessionMatchesHistoryFilters(s));
-            const titleHits = listed
-                .filter((s) => !searchTerm || historySessionHaystack(s).includes(searchTerm))
-                .map((s) => Object.assign({}, s, { match: 'title' }));
-            paintSearchResults(
-                titleHits,
-                terminalEntries,
-                createAuthHistoryItemHTML,
-                titleHits.length || terminalEntries.length
-                    ? null
-                    : {
-                        emptyIcon: '🔍',
-                        emptyTitle: searchTerm ? 'Searching messages…' : 'No matching chats',
-                        emptyText: searchTerm ? 'Looking through chat contents' : 'Try another /project or /agent filter',
-                    },
-            );
-
-            if (!searchTerm) return;
-
-            historySearchTimer = setTimeout(() => {
-                if (seq !== historySearchSeq) return;
-                const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-                historySearchAbort = controller;
-                const url = `/api/auth/sessions/search?q=${encodeURIComponent(String(rawForText || '').trim())}`;
-                fetch(url, {
-                    credentials: 'include',
-                    cache: 'no-store',
-                    signal: controller ? controller.signal : undefined,
-                }).then((res) => (res.ok ? res.json() : null)).then((data) => {
-                    if (seq !== historySearchSeq) return;
-                    if (!data || !data.success || !Array.isArray(data.sessions)) {
-                        if (!titleHits.length && !terminalEntries.length) {
-                            paintSearchResults([], [], (s) => createAuthHistoryItemHTML(s), {
-                                emptyIcon: '🔍',
-                                emptyTitle: 'No results found',
-                                emptyText: 'Try a different search term',
-                            });
-                        }
-                        return;
-                    }
-                    const byId = new Map();
-                    titleHits.forEach((s) => byId.set(String(s.id), s));
-                    data.sessions.forEach((s) => {
-                        if (isChatSessionDeleted(s && s.id)) return;
-                        if (!sessionMatchesHistoryFilters(s)) return;
-                        const key = String(s.id);
-                        const existing = byId.get(key);
-                        const matchKind = String(s.match || '').toLowerCase() === 'title' ? 'title' : 'content';
-                        if (!existing) {
-                            byId.set(key, Object.assign({}, s, { match: matchKind }));
-                            return;
-                        }
-                        // Keep title rank; attach snippet from content hit if present.
-                        if (matchKind === 'title') existing.match = 'title';
-                        if (s.snippet && !existing.snippet) existing.snippet = s.snippet;
-                        if (s.search_snippet && !existing.search_snippet) {
-                            existing.search_snippet = s.search_snippet;
-                        }
-                    });
-                    // Title matches first, then content; recency within each tier.
-                    const merged = Array.from(byId.values()).sort((a, b) => {
-                        const am = String(a.match || '') === 'title' ? 0 : 1;
-                        const bm = String(b.match || '') === 'title' ? 0 : 1;
-                        if (am !== bm) return am - bm;
-                        const at = parseSessionTimestamp(a.last_message_time)
-                            || parseSessionTimestamp(a.last_activity)
-                            || 0;
-                        const bt = parseSessionTimestamp(b.last_message_time)
-                            || parseSessionTimestamp(b.last_activity)
-                            || 0;
-                        return bt - at;
-                    });
-                    paintSearchResults(
-                        merged,
-                        terminalEntries,
-                        createAuthHistoryItemHTML,
-                        {
-                            emptyIcon: '🔍',
-                            emptyTitle: 'No results found',
-                            emptyText: 'Try a different search term',
-                        },
-                    );
-                }).catch((err) => {
-                    if (err && err.name === 'AbortError') return;
-                    if (seq !== historySearchSeq) return;
-                    if (!titleHits.length && !terminalEntries.length) {
-                        paintSearchResults([], [], (s) => createAuthHistoryItemHTML(s), {
-                            emptyIcon: '🔍',
-                            emptyTitle: 'No results found',
-                            emptyText: 'Try a different search term',
-                        });
-                    }
-                });
-            }, 280);
-            return;
-        }
-
-        const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-        const filtered = Object.values(sessions)
-            .filter((session) => localSessionMatchesSearch(session, searchTerm))
-            .map((session) => {
-                const titleHit = !searchTerm || historySessionHaystack(session).includes(searchTerm);
-                return Object.assign({}, session, { match: titleHit ? 'title' : 'content' });
-            })
-            .sort((a, b) => {
-                const am = a.match === 'title' ? 0 : 1;
-                const bm = b.match === 'title' ? 0 : 1;
-                if (am !== bm) return am - bm;
-                return (Number(b.updated) || 0) - (Number(a.updated) || 0);
-            });
-        paintSearchResults(
-            filtered,
-            terminalEntries,
-            (s) => createHistoryItemHTML(s),
-            {
-                emptyIcon: '🔍',
-                emptyTitle: 'No results found',
-                emptyText: 'Try a different search term or /project /agent filter',
-            },
-        );
-    }
-    
     // Message Handling
     /** Id of the follow-up currently being edited in the queue panel (or null). */
     let editingFollowupId = null;
@@ -13323,7 +10234,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     function renderFollowupQueue() {
         const root = document.getElementById('followupQueue');
         if (!root) return;
-        patchLiveSessionFollowupQueue(currentSessionId, followupQueue.items);
+        patchLiveSessionFollowupQueue(session.current(), followupQueue.items);
         if (!followupQueue.items.length) {
             editingFollowupId = null;
             root.hidden = true;
@@ -13357,7 +10268,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             const parsed = parseStoredSlashCommandMessage(raw);
             let preview;
             if (parsed && parsed.chips.length) {
-                const chips = normalizeAgentSlashChips(parsed.chips, currentSessionId);
+                const chips = normalizeAgentSlashChips(parsed.chips, session.current());
                 const chipsHtml = chips
                     .map((c) => slashCommandChipHistoryHtml(c.label, c.meta, c.category))
                     .join('');
@@ -13495,8 +10406,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
 
     function followupAuthSid() {
-        if (!isAuthMode() || currentSessionId == null) return null;
-        return toAuthDbSessionId(currentSessionId);
+        if (!isAuthMode() || session.current() == null) return null;
+        return toAuthDbSessionId(session.current());
     }
 
     // Owned by chat_activity.js — thin adapter.
@@ -13526,9 +10437,9 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const r = CuttleFollowupQueue.reconcileServerList(followupQueue, list,
             { editingId: editingFollowupId, revision }, CuttleChatActivity);
         if (!r.applied && r.reason !== 'same') return;
-        patchLiveSessionFollowupQueue(currentSessionId, followupQueue.items);
+        patchLiveSessionFollowupQueue(session.current(), followupQueue.items);
         renderFollowupQueue();
-        if ((followupQueue.items.some((x) => !x.paused) || getSessionPrefs(currentSessionId)?.[followupClaimField]) && !isSessionGenerating() && !editingFollowupId) {
+        if ((followupQueue.items.some((x) => !x.paused) || getSessionPrefs(session.current())?.[followupClaimField]) && !isSessionGenerating() && !editingFollowupId) {
             scheduleFollowupDrain(250);
         }
         try { scheduleChatActivityBroadcast(); } catch (_) {}
@@ -13576,7 +10487,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 patchLiveSessionFollowupQueue(sid, state.base);
                 if (!state.dirty) {
                     state.items = state.base;
-                    if (followupQueue === state && sessionIdsEqual(currentSessionId, sid)) renderFollowupQueue();
+                    if (followupQueue === state && sessionIdsEqual(session.current(), sid)) renderFollowupQueue();
                     return true;
                 }
             }
@@ -13607,7 +10518,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
      * resolves false (caller queues) when nothing steerable is running.
      */
     async function trySteerRunningTurn(message, attachments) {
-        const sid = currentSessionId;
+        const sid = session.current();
         const text = String(message || '').trim();
         if (sid == null || sid === '' || !text) return false;
         if (Array.isArray(attachments) && attachments.length) return false;
@@ -13628,7 +10539,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             steeringText = '';
         }
         if (!data || !data.steered) return false;
-        if (sessionIdsEqual(currentSessionId, sid)) {
+        if (sessionIdsEqual(session.current(), sid)) {
             addMessageToUI(text, 'user', {
                 timestamp: Date.now(),
                 steered: true,
@@ -13704,14 +10615,14 @@ function downloadTranscriptMarkdown(text, sessionId) {
         if (isSessionGenerating()) return;
         // Re-check after heal — edit may have started while we were waiting.
         if (editingFollowupId) return;
-        const origin = currentSessionId;
+        const origin = session.current();
         const state = followupQueue;
         if (state.takeInFlight) return;
         let batch = [];
         const sid = followupAuthSid();
         if (sid) {
             if (state.dirty && !await persistFollowupPut()) return;
-            if (editingFollowupId || !sessionIdsEqual(currentSessionId, origin) || followupQueue !== state) return;
+            if (editingFollowupId || !sessionIdsEqual(session.current(), origin) || followupQueue !== state) return;
             const claimId = getSessionPrefs(sid)?.[followupClaimField] || ('queue-' + Date.now() + '-' + Math.random().toString(36).slice(2));
             updateSessionPrefs(sid, {[followupClaimField]: claimId});
             const takeVersion = state.editVersion;
@@ -13739,7 +10650,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 state.items = data.remaining || [];
                 state.base = state.items.slice();
                 batch = data.followups || [];
-                if (editedDuringTake || editingFollowupId || !sessionIdsEqual(currentSessionId, origin) || followupQueue !== state) {
+                if (editedDuringTake || editingFollowupId || !sessionIdsEqual(session.current(), origin) || followupQueue !== state) {
                     // Restore to the captured chat when navigation or editing
                     // races the claim; retain the write if the network fails.
                     state.items = editedDuringTake ? editedItems : [...batch, ...state.items];
@@ -13781,7 +10692,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
 
     async function requestServerCancelCurrentRun(opts = {}) {
-        const sid = currentSessionId;
+        const sid = session.current();
         if (sid == null || sid === '') return null;
         const body = { session_id: sid };
         if (opts.cancelJobs) body.cancel_jobs = true;
@@ -13865,7 +10776,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const announce = opts.announce !== false;
         const inflight = inFlightUserMessage;
         if (typeof window !== 'undefined' && window.CuttleCompletionNotifications) {
-            window.CuttleCompletionNotifications.broker().cancel(currentSessionId || completionNotificationPendingId).catch(() => {});
+            window.CuttleCompletionNotifications.broker().cancel(session.current() || completionNotificationPendingId).catch(() => {});
         }
         const watchIds = runningWatchJobIds();
         const cancelJobs = (!inflight && watchIds.length > 0) || isProjectShellTurn(inflight);
@@ -13890,7 +10801,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         removeRemoteWaitingIndicator();
         // Force: Stop owns the turn outright (the re-send claims a new token).
         endLocalGeneration();
-        if (currentSessionId) setHistorySessionRunning(currentSessionId, false);
+        if (session.current()) setHistorySessionRunning(session.current(), false);
         activeRequestController = null;
         const chatInput = document.getElementById('chatInput');
         const sendButton = document.getElementById('sendButton');
@@ -13927,7 +10838,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const prevInFlight = inFlightUserMessage;
         const prevController = activeRequestController;
         if (!controlLane) {
-            if (window.CuttleCompletionNotifications) window.CuttleCompletionNotifications.broker().begin(currentSessionId || completionNotificationPendingId);
+            if (window.CuttleCompletionNotifications) window.CuttleCompletionNotifications.broker().begin(session.current() || completionNotificationPendingId);
             CuttleStopState.beginSend(stopState);
             inFlightUserMessage = message;
             turnGenToken = beginLocalGeneration();
@@ -13956,13 +10867,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const pendingSlash = replySlash
             ? pendingSlashForTypingIndicator(replySlash, stickyCmd)
             : null;
-        turnBadgeBySession.set(String(canonicalizeChatSessionId(currentSessionId) || ''), pendingSlash);
+        turnBadgeBySession.set(String(canonicalizeChatSessionId(session.current()) || ''), pendingSlash);
         addTypingIndicator(pendingSlash);
 
         let skipFollowupDrain = false;
         let controlController = null;
         // Declared outside try so catch/finally can still gate paints after a switch.
-        let boundSessionId = canonicalizeChatSessionId(currentSessionId);
+        let boundSessionId = canonicalizeChatSessionId(session.current());
         // Snapshot nav generation at send time. New Chat / history switch bumps
         // turnGeneration; zombie status/adopt must not touch the new UI.
         const turnNavGen = CuttleTurnGuard.capture(turnGeneration);
@@ -13975,7 +10886,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         // the freshness/binding truth table lives in CuttleTurnGuard.
         const canPaintTurnHere = () => CuttleTurnGuard.canPaintHere(turnNavGen, turnSessionId(), {
             gen: turnGeneration.gen,
-            currentSessionId,
+            currentSessionId: session.current(),
             isViewing: (id) => isViewingSession(id),
         });
         try {
@@ -13996,7 +10907,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             boundSessionId = canonicalizeChatSessionId(
                 requestBody.session_id != null && requestBody.session_id !== ''
                     ? requestBody.session_id
-                    : currentSessionId
+                    : session.current()
             );
             const agentOverride = stickyAgentOverrideForRequest(message);
             if (agentOverride) requestBody.sticky_agent = agentOverride;
@@ -14113,8 +11024,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
                                         if (
                                             !CuttleTurnGuard.isStale(turnNavGen, turnGeneration)
                                             && (
-                                                currentSessionId == null
-                                                || sessionIdsEqual(currentSessionId, sid)
+                                                session.current() == null
+                                                || sessionIdsEqual(session.current(), sid)
                                                 || (boundSessionId != null && isViewingSession(boundSessionId))
                                             )
                                         ) {
@@ -14374,8 +11285,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     // If we are somehow still on that session's pane (id drift /
                     // focus race), chirp alone left an empty transcript until refresh.
                     if (
-                        currentSessionId != null
-                        && sessionIdsEqual(currentSessionId, readySid)
+                        session.current() != null
+                        && sessionIdsEqual(session.current(), readySid)
                         && openTranscriptMissingThisTurnReply()
                         && readyBody
                     ) {
@@ -14427,7 +11338,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 });
                 startMessageSync();
                 // Re-attach waiting UI for the still-running first prompt.
-                const sid = currentSessionId != null ? currentSessionId : data.session_id;
+                const sid = session.current() != null ? session.current() : data.session_id;
                 Promise.resolve(fetchChatLiveStatus(sid)).then((live) => {
                     updateRemoteWaitingFromMessages([], live || {
                         active: true,
@@ -14447,7 +11358,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 // attach the real reply when the worker finishes.
                 if (data.session_id) adoptChatSessionId(data.session_id);
                 startMessageSync();
-                const sid = currentSessionId != null ? currentSessionId : data.session_id;
+                const sid = session.current() != null ? session.current() : data.session_id;
                 Promise.resolve(fetchChatLiveStatus(sid)).then((live) => {
                     if (liveStatusLooksActive(live) || (live && live.generating)) {
                         updateRemoteWaitingFromMessages([], live);
@@ -14569,7 +11480,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         }
                         if (data.session_id) adoptChatSessionId(data.session_id);
                         removeRemoteWaitingIndicator();
-                        notifyAssistantResponseReady(currentSessionId || generation.localSessionId, {
+                        notifyAssistantResponseReady(session.current() || generation.localSessionId, {
                             isError: !!assistantFailed,
                         });
                         startMessageSync();
@@ -14622,7 +11533,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 // Reply is on screen — drop any remote-waiting UI a parallel
                 // sync may have armed from a stale live-status snapshot.
                 removeRemoteWaitingIndicator();
-                notifyAssistantResponseReady(currentSessionId || generation.localSessionId, {
+                notifyAssistantResponseReady(session.current() || generation.localSessionId, {
                     isError: !!assistantFailed,
                 });
                 startMessageSync();
@@ -14655,7 +11566,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     if (data.session_id) {
                         adoptChatSessionId(data.session_id);
                     }
-                    notifyAssistantResponseReady(currentSessionId || generation.localSessionId, {
+                    notifyAssistantResponseReady(session.current() || generation.localSessionId, {
                         isError: true,
                     });
                     startMessageSync();
@@ -14699,7 +11610,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         slash_command_failed: !!stickyCmd,
                     });
                     notifyAssistantResponseReady(
-                        currentSessionId || generation.localSessionId || turnSessionId(),
+                        session.current() || generation.localSessionId || turnSessionId(),
                         { isError: true }
                     );
                 } else {
@@ -14774,7 +11685,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const clearComposer = () => {
             if (overrideText != null) return;
             input.value = '';
-            clearComposerDraft(currentSessionId);
+            clearComposerDraft(session.current());
         };
 
         if (!isSendableComposerMessage(message, attachments)) {
@@ -15356,7 +12267,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         escapeHtml,
         normalizeUsage: normalizeUsagePayload,
         getSlashCtx: () => slashCtx,
-        getSessionId: () => currentSessionId,
+        getSessionId: () => session.current(),
         getProjectPath: () => (currentProject && currentProject.path) ? String(currentProject.path) : '',
         toast: (message, variant) => (window.showToast || function () {})(message, variant),
     });
@@ -15368,7 +12279,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         storage: localStorage,
         escapeHtmlInline,
         recordSelector: CHAT_RECORD_SELECTOR,
-        currentSessionId: () => currentSessionId,
+        currentSessionId: () => session.current(),
         formatChatDisplayId,
         olderVisibleCount: () => chatHistoryOlderVisibleCount,
         hasOlderMessages: () => chatHistoryHasMore,
@@ -15579,7 +12490,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         // App shell batches live-status for all panes — don't open a per-pane
         // poll that competes for the shared HTTPS connection pool.
         if (inAppShell) {
-            reportSessionToShell(currentSessionId);
+            reportSessionToShell(session.current());
             return;
         }
         // SSE can stall on Electron/HTTPS while the agent keeps updating live-status.
@@ -15587,12 +12498,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
         let lastStatus = '';
         let stagnantTicks = 0;
         streamStatusPollTimer = setInterval(async () => {
-            if (!isLoadingThisSession() || currentSessionId == null) {
+            if (!isLoadingThisSession() || session.current() == null) {
                 clearStreamStatusPoll();
                 return;
             }
             if (pageIsBackgrounded()) return;
-            const live = await fetchChatLiveStatus(currentSessionId);
+            const live = await fetchChatLiveStatus(session.current());
             if (!live) return;
             if (live.status) {
                 if (live.status === lastStatus) stagnantTicks += 1;
@@ -15612,12 +12523,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 try {
                     window.CuttleNetDebug && window.CuttleNetDebug.event(
                         'status-poll-idle',
-                        'recovering session=' + currentSessionId
+                        'recovering session=' + session.current()
                     );
                 } catch (_) {}
                 await syncSessionMessagesFromServer();
                 if (isLoadingThisSession()) {
-                    const recovered = await recoverChatResultFromServer(currentSessionId);
+                    const recovered = await recoverChatResultFromServer(session.current());
                     if (recovered && String(recovered.response || '').trim()) {
                         if (consumeCancelledAgentReply(recovered.response)) {
                             finishLocalStreamFromServerSync();
@@ -15629,7 +12540,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                                 routing_badge: recovered.routing_badge || undefined,
                                 usage: normalizeUsagePayload(recovered.usage) || undefined,
                             });
-                            notifyAssistantResponseReady(currentSessionId, { fromSync: true });
+                            notifyAssistantResponseReady(session.current(), { fromSync: true });
                             finishLocalStreamFromServerSync();
                         } else {
                             finishLocalStreamFromServerSync();
@@ -15715,8 +12626,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             if (text !== 'Connecting...' && text.indexOf('Still connecting') < 0) return;
 
             // Prefer live generation status over a health probe (SSE may be stalled).
-            if (currentSessionId != null) {
-                const live = await fetchChatLiveStatus(currentSessionId);
+            if (session.current() != null) {
+                const live = await fetchChatLiveStatus(session.current());
                 if (live && (live.active || live.generating) && live.status) {
                     updateTypingStatus(live.status);
                     if (live.report_url) updateTypingIndicatorQueryLink(live.report_url);
@@ -16008,8 +12919,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             if (!spec.project_path && currentProject && currentProject.path) {
                 spec.project_path = String(currentProject.path);
             }
-            if (!spec.session_id && currentSessionId != null && currentSessionId !== '') {
-                spec.session_id = String(currentSessionId);
+            if (!spec.session_id && session.current() != null && session.current() !== '') {
+                spec.session_id = String(session.current());
             }
             // Do not bake a huge inline. token into data-fallback — data-spec is
             // enough; tokenForCard rebuilds from data-spec when the pending id is gone.
@@ -16467,19 +13378,19 @@ function downloadTranscriptMarkdown(text, sessionId) {
             if (typeof loadProjects === 'function') {
                 loadProjects();
             } else {
-                reloadHistoryListKeepingSearch();
+                historyPanel.reloadKeepingSearch();
             }
             const urlParams = new URLSearchParams(window.location.search);
             const wanted = urlParams.get('chat') || urlParams.get('session');
             if (!wanted || !isAuthMode()) return;
             // The restore already gave up and handed the user a new chat — don't
             // yank them into the old one when auth finally settles.
-            if (chatRestoreAbandoned) return;
+            if (sessionBoot().isRestoreAbandoned()) return;
             // Only settle the deep link before a chat is open. Auth refreshes
             // fire repeatedly; once the user is reading a chat, re-reading the
             // URL could yank them into a different one mid-click.
-            if (currentSessionId != null) {
-                if (String(currentSessionId) === String(wanted) && !messageSyncTimer) {
+            if (session.current() != null) {
+                if (String(session.current()) === String(wanted) && !messageSyncTimer) {
                     startMessageSync();
                 }
                 return;
@@ -16513,7 +13424,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         }
 
         // Load chat history from localStorage
-        loadChatHistory();
+        historyPanel.load();
         
         // Landing on Chat always shows the welcome splash unless a session is
         // requested via ?chat= (or legacy ?session=). History / New Chat manage the rest.
@@ -16582,7 +13493,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 CuttlePromptHistory.resetBrowse(promptHistoryState);
                 syncSlashMenuFromInput(welcomeInput);
                 // Frame removal need not fire unload; save before a fast space switch.
-                saveComposerDraft(currentSessionId || 'new');
+                saveComposerDraft(session.current() || 'new');
             });
             wireComposerEmoticons(welcomeInput);
             LOG('DOMContentLoaded: welcome input keydown listener attached');
@@ -16596,7 +13507,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 CuttlePromptHistory.resetBrowse(promptHistoryState);
                 syncSlashMenuFromInput(chatInput);
                 // Frame removal need not fire unload; save before a fast space switch.
-                saveComposerDraft(currentSessionId || 'new');
+                saveComposerDraft(session.current() || 'new');
             });
             wireComposerEmoticons(chatInput);
             chatInput.style.height = 'auto';
@@ -16607,7 +13518,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
 
         // Flush drafts on refresh / Electron restart / pane unload.
         const flushComposerDraft = () => {
-            try { saveComposerDraft(currentSessionId || 'new'); } catch (_) {}
+            try { saveComposerDraft(session.current() || 'new'); } catch (_) {}
         };
         window.addEventListener('pagehide', flushComposerDraft);
         window.addEventListener('beforeunload', flushComposerDraft);
@@ -16683,9 +13594,9 @@ function downloadTranscriptMarkdown(text, sessionId) {
             const t = e.target;
             if (t.closest?.('#historyItemOverflowMenu')) return;
             if (t.closest?.('.chat-menu-btn')) return;
-            closeHistoryItemMenu();
+            historyPanel.closeMenu();
         }, true);
-        window.addEventListener('resize', closeHistoryItemMenu);
+        window.addEventListener('resize', function () { historyPanel.closeMenu(); });
         window.addEventListener('resize', () => scheduleSlashChipCompactLabels(document));
         if (typeof ResizeObserver === 'function') {
             try {
@@ -16702,11 +13613,10 @@ function downloadTranscriptMarkdown(text, sessionId) {
         }
         const historyScroll = document.getElementById('chatHistory');
         if (historyScroll) {
-            historyScroll.addEventListener('scroll', closeHistoryItemMenu, { passive: true });
+            historyScroll.addEventListener('scroll', function () { historyPanel.closeMenu(); }, { passive: true });
         }
-        setupHistoryDeleteModal();
-        setupGitPushConfirmModal();
-        setupHistoryRenameModal();
+        historyPanel.setupModals();
+        gitPush.setupConfirmModal();
 
         // Cross-device: refresh open session when tab becomes visible / focused
         const syncIfVisible = function () {
@@ -16718,8 +13628,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             }
             // After sleep / Flask restart, stale running flags can trap follow-ups.
             healStaleGeneratingState();
-            if (currentSessionId != null) {
-                markChatSessionRead(currentSessionId);
+            if (session.current() != null) {
+                markChatSessionRead(session.current());
                 syncHistoryUnreadIndicators();
             }
             syncSessionMessagesFromServer();
@@ -16748,7 +13658,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     const changed = next !== shellPaneFocused;
                     shellPaneFocused = next;
                     if (messageSyncTimer) scheduleNextMessageSync();
-                    if (changed && shellPaneFocused && currentSessionId != null) {
+                    if (changed && shellPaneFocused && session.current() != null) {
                         syncSessionMessagesFromServer();
                     }
                     // Hidden panes stop usage-live polling while away; rescan
@@ -16762,8 +13672,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 }
                 if (e.data.type === 'cuttle-live-status') {
                     const sid = e.data.sessionId;
-                    if (sid == null || currentSessionId == null) return;
-                    if (!sessionIdsEqual(sid, currentSessionId)) return;
+                    if (sid == null || session.current() == null) return;
+                    if (!sessionIdsEqual(sid, session.current())) return;
                     applyHubLiveStatusPayload(e.data.status || null, sid);
                     return;
                 }
@@ -16792,7 +13702,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             document.addEventListener('pointerdown', function () {
                 notifyShellPaneActivity();
             }, true);
-            if (currentSessionId != null) reportSessionToShell(currentSessionId);
+            if (session.current() != null) reportSessionToShell(session.current());
             // Ask shell to re-broadcast focus (in case we loaded after click).
             try {
                 window.parent.postMessage({ type: 'cuttle-pane-activity' }, '*');
@@ -16825,17 +13735,17 @@ function downloadTranscriptMarkdown(text, sessionId) {
     window.toggleChatHistoryPanel = toggleChatHistoryPanel;
     window.openChatHistoryPanel = openChatHistoryPanel;
     window.closeChatHistoryPanel = closeChatHistoryPanel;
-    window.toggleHistoryGroupExpand = revealMoreHistoryGroup; // back-compat alias
-    window.revealMoreHistoryGroup = revealMoreHistoryGroup;
-    window.collapseHistoryGroupReveal = collapseHistoryGroupReveal;
-    window.toggleHistoryProjectCollapse = toggleHistoryProjectCollapse;
-    window.toggleHistorySubagentGroup = toggleHistorySubagentGroup;
+    window.toggleHistoryGroupExpand = (event) => historyPanel.revealMore(event); // back-compat alias
+    window.revealMoreHistoryGroup = (event) => historyPanel.revealMore(event);
+    window.collapseHistoryGroupReveal = (event) => historyPanel.collapseReveal(event);
+    window.toggleHistoryProjectCollapse = (event) => historyPanel.toggleProjectCollapse(event);
+    window.toggleHistorySubagentGroup = (sessionId, event) => historyPanel.toggleSubagentGroup(sessionId, event);
     window.toggleHistoryProjectCollapseKey = function (event) {
         if (!event) return;
         const key = event.key || event.code;
         if (key !== 'Enter' && key !== ' ' && key !== 'Spacebar' && key !== 'Space') return;
         event.preventDefault();
-        toggleHistoryProjectCollapse(event);
+        historyPanel.toggleProjectCollapse(event);
     };
     window.newChatForProject = newChatForProject;
     window.toggleTheme = toggleTheme;
@@ -16854,11 +13764,11 @@ function downloadTranscriptMarkdown(text, sessionId) {
     window.chatPageToggleArchiveSession = toggleArchiveChatSession;
     window.chatPageToggleArchiveSection = toggleArchiveSection;
     window.chatPageToggleArchiveSectionKey = toggleArchiveSectionKey;
-    window.chatPageRequestDeleteSession = requestDeleteChatSession;
-    window.chatPageCancelDeleteSession = cancelDeleteChatSession;
-    window.chatPageConfirmDeleteSession = confirmDeleteChatSession;
+    window.chatPageRequestDeleteSession = (sessionId, event) => historyPanel.requestDelete(sessionId, event);
+    window.chatPageCancelDeleteSession = (sessionId, event) => historyPanel.cancelDelete(sessionId, event);
+    window.chatPageConfirmDeleteSession = (sessionId, event) => historyPanel.confirmDelete(sessionId, event);
     window.chatPageDeleteSession = deleteChatSession;
-    window.chatPageRenameSession = renameChatSession;
+    window.chatPageRenameSession = (sessionId, event) => historyPanel.renameSession(sessionId, event);
     window.chatPageToggleStarSession = toggleStarChatSession;
     window.chatPageToggleCurrentStar = toggleCurrentChatStar;
     window.chatPageToggleCurrentStarFromMenu = toggleCurrentChatStarFromMenu;
@@ -16866,98 +13776,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     window.chatPageMarkCurrentUnreadFromMenu = markCurrentSessionUnreadFromMenu;
 
     window.chatPageExportSession = exportChatSession;
-    window.chatPageGitPush = pushCurrentChatProject;
-
-    async function openGitPushSubmenu(triggerBtn) {
-        const wrap = triggerBtn && triggerBtn.closest
-            ? triggerBtn.closest('[data-git-push-wrap]')
-            : null;
-        if (!wrap) return;
-        const submenu = wrap.querySelector('[data-git-push-submenu]');
-        if (!submenu) {
-            pushCurrentChatProject();
-            return;
-        }
-
-        const pushFromRepos = (repos) => {
-            applyGitPushMenuMode(wrap, gitPushIsMultiRepo(repos));
-            if (!repos.length) {
-                pushCurrentChatProject();
-                return true;
-            }
-            if (repos.length === 1) {
-                pushCurrentChatProject(null, repos[0].repo_root);
-                return true;
-            }
-            return false;
-        };
-
-        // Single-repo (or none): push immediately — no caret / submenu flash.
-        const known = knownProjectGitRepos();
-        if (known && !gitPushIsMultiRepo(known)) {
-            pushFromRepos(known);
-            return;
-        }
-
-        const opening = submenu.hidden;
-        document.querySelectorAll('[data-git-push-submenu]').forEach((el) => {
-            if (el !== submenu) el.hidden = true;
-        });
-        document.querySelectorAll('[data-git-push-trigger]').forEach((el) => {
-            el.setAttribute('aria-expanded', 'false');
-        });
-        if (!opening) {
-            submenu.hidden = true;
-            triggerBtn.setAttribute('aria-expanded', 'false');
-            return;
-        }
-
-        if (known && gitPushIsMultiRepo(known)) {
-            applyGitPushMenuMode(wrap, true);
-            triggerBtn.setAttribute('aria-expanded', 'true');
-            submenu.innerHTML = known.map((r) => {
-                const root = String(r.repo_root || '');
-                const label = escapeHtmlInline(String(r.label || root));
-                const branch = r.branch ? (' · ' + escapeHtmlInline(String(r.branch))) : '';
-                const enc = encodeURIComponent(root);
-                return (
-                    '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-                    + ' data-git-push-repo="' + enc + '"'
-                    + ' title="' + label + '">'
-                    + '<span class="chat-chrome-menu-item-label">' + label + branch + '</span>'
-                    + '</button>'
-                );
-            }).join('');
-            submenu.hidden = false;
-            return;
-        }
-
-        submenu.innerHTML = '<div class="chat-chrome-menu-item is-muted">Loading repos…</div>';
-        submenu.hidden = false;
-        triggerBtn.setAttribute('aria-expanded', 'true');
-        const repos = await fetchProjectGitRepos(true);
-        if (!submenu.isConnected) return;
-        if (pushFromRepos(repos)) {
-            submenu.innerHTML = '';
-            submenu.hidden = true;
-            triggerBtn.setAttribute('aria-expanded', 'false');
-            return;
-        }
-        applyGitPushMenuMode(wrap, true);
-        submenu.innerHTML = repos.map((r) => {
-            const root = String(r.repo_root || '');
-            const label = escapeHtmlInline(String(r.label || root));
-            const branch = r.branch ? (' · ' + escapeHtmlInline(String(r.branch))) : '';
-            const enc = encodeURIComponent(root);
-            return (
-                '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-                + ' data-git-push-repo="' + enc + '"'
-                + ' title="' + label + '">'
-                + '<span class="chat-chrome-menu-item-label">' + label + branch + '</span>'
-                + '</button>'
-            );
-        }).join('');
-    }
+    window.chatPageGitPush = (event, repoRoot) => gitPush.push(event, repoRoot);
 
     document.addEventListener('click', function (e) {
         const t = e.target;
@@ -16972,22 +13791,22 @@ function downloadTranscriptMarkdown(text, sessionId) {
             } catch (_) {
                 root = repoBtn.getAttribute('data-git-push-repo') || '';
             }
-            pushCurrentChatProject(e, root || null);
+            gitPush.push(e, root || null);
             return;
         }
         const trigger = t.closest('[data-git-push-trigger]');
         if (trigger) {
             e.preventDefault();
             e.stopPropagation();
-            openGitPushSubmenu(trigger);
+            gitPush.openSubmenu(trigger);
         }
     }, true);
 
-    window.chatPageToggleHistoryMenu = toggleHistoryItemMenu;
-    window.searchChats = searchChats;
-    window.onHistorySearchInput = onHistorySearchInput;
-    window.clearHistorySearch = clearHistorySearch;
-    window.onHistorySearchKeydown = onHistorySearchKeydown;
+    window.chatPageToggleHistoryMenu = (sessionId, event) => historyPanel.toggleMenu(sessionId, event);
+    window.searchChats = (opts) => historyPanel.search(opts);
+    window.onHistorySearchInput = (ev) => historyPanel.onInput(ev);
+    window.clearHistorySearch = () => historyPanel.clear();
+    window.onHistorySearchKeydown = (ev) => historyPanel.onKeydown(ev);
     window.refreshChatHistoryList = refreshChatHistoryList;
     window.sendMessage = sendMessage;
     window.handleInputKeyDown = handleInputKeyDown;
@@ -17016,7 +13835,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     window.chatPageTurnFeedback = async function(btn) {
         const qid = btn && btn.getAttribute('data-query-id');
         const value = btn && btn.getAttribute('data-feedback');
-        if (!qid || !value || currentSessionId == null) return;
+        if (!qid || !value || session.current() == null) return;
         const group = btn.closest('.message-footer-icons');
         const buttons = group ? Array.from(group.querySelectorAll('.message-feedback-btn')) : [btn];
         const active = buttons.find((b) => b.classList.contains('is-on'));
@@ -17033,7 +13852,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: currentSessionId, query_id: qid, feedback: next }),
+                body: JSON.stringify({ session_id: session.current(), query_id: qid, feedback: next }),
             });
             const data = await resp.json().catch(() => ({}));
             if (!resp.ok || !data.success) throw new Error((data && data.error) || ('HTTP ' + resp.status));
@@ -17160,13 +13979,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
     function fillChatChromeMenu() {
         const dropdown = document.getElementById('chatChromeMenuDropdown');
         if (!dropdown) return;
-        const sid = currentSessionId;
+        const sid = session.current();
         const hasSession = sid != null && sid !== '';
         dropdown.innerHTML = buildSessionMenuHTML(hasSession ? sid : null, {
             includeRename: hasSession,
             includeDelete: hasSession,
         });
-        refreshGitPushMenuMode(dropdown);
+        gitPush.refreshMenuMode(dropdown);
     }
 
     function toggleChatChromeMenu(forceOpen) {
@@ -17175,7 +13994,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         if (!btn || !dropdown) return;
         const open = forceOpen == null ? dropdown.hidden : !!forceOpen;
         if (open) {
-            closeHistoryItemMenu();
+            historyPanel.closeMenu();
             fillChatChromeMenu();
         }
         dropdown.hidden = !open;

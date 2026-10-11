@@ -19,13 +19,19 @@ ACTIVITY_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_ac
 FLEET_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_subagent_fleet.js"
 LAUNCHERS_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_subagent_launchers.js"
 MEDIA_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_media.js"
+VIEW_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_history_view.js"
+PANEL_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_history_panel.js"
 CHAT_CSS = Path(__file__).resolve().parents[2] / "web" / "css" / "chat_page.css"
-_HELPERS = (
+# Page-owned id/handle adapters (still sliced from chat_page.js).
+_PAGE_HELPERS = (
     "toAuthDbSessionId",
     "sessionIdsEqual",
     "formatChatDisplayId",
     "escapeHtmlInline",
     "parseChatHandleToken",
+)
+# History nesting algorithms now live in chat_history_view.js (Slice 3A commit 3).
+_VIEW_HELPERS = (
     "historyEntryParentId",
     "historyLookupNestedEntry",
     "nestHistoryEntries",
@@ -130,8 +136,10 @@ console.log('ok');
 
 @node_only
 def test_subagent_ui_helpers():
-    src = CHAT_JS.read_text(encoding="utf-8")
-    blob = "\n".join(_extract_function(src, name) for name in _HELPERS)
+    page_src = CHAT_JS.read_text(encoding="utf-8")
+    view_src = VIEW_JS.read_text(encoding="utf-8")
+    blob = "\n".join(_extract_function(page_src, name) for name in _PAGE_HELPERS)
+    blob += "\n" + "\n".join(_extract_function(view_src, name) for name in _VIEW_HELPERS)
     # Phase 3 Slice 4: the id helpers are thin adapters over chat_activity.js;
     # requiring the module resolves the CuttleChatActivity global they call.
     driver = "require(%s);\n" % json.dumps(str(ACTIVITY_JS)) + (_DRIVER % blob)
@@ -263,6 +271,8 @@ def test_subagent_fleet_cards_clip_to_card():
 def test_subagent_markup_present():
     js = CHAT_JS.read_text(encoding="utf-8")
     controls_js = (CHAT_JS.parent / "chat_agent_controls.js").read_text(encoding="utf-8")
+    view_js = VIEW_JS.read_text(encoding="utf-8")
+    panel_js = PANEL_JS.read_text(encoding="utf-8")
     css = CHAT_CSS.read_text(encoding="utf-8")
     fleet_js = FLEET_JS.read_text(encoding="utf-8")
     launchers_js = LAUNCHERS_JS.read_text(encoding="utf-8")
@@ -283,8 +293,11 @@ def test_subagent_markup_present():
     assert "is-parent-speaker" in js
     assert "applySessionIdentity" in js
     assert "toggleHistorySubagentGroup" in js
-    assert "history-subagent-group" in js
-    assert "history-subagent-toggle" in js
+    # Nested-tree markup/expansion moved to the view + panel owners (3A commit 3);
+    # the page keeps the window forwarder and the menu "Show sub-agents" item.
+    assert "history-subagent-group" in view_js
+    assert "history-subagent-group" in panel_js
+    assert "history-subagent-toggle" in view_js
     assert "Show sub-agents" in js
     assert ".subagent-launchers" in css
     assert ".history-subagent-group.is-collapsed" in css

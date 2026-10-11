@@ -74,9 +74,14 @@ def test_unread_error_is_red():
 
 def test_notify_passes_error_flag():
     src = CHAT_JS.read_text(encoding="utf-8")
+    # Slice 3A commit 4 moved the history/title DOM projection into the
+    # CuttleChatAttention controller (chat_attention.js); the page keeps the
+    # notify orchestration and delegates the projection/repaint.
     notify = src.split("function notifyAssistantResponseReady(", 1)[1].split(
-        "\n    function historyUnreadIconHTML", 1
+        "\n    function applyLocalOpenPanes", 1
     )[0]
     assert "opts.isError" in notify
     assert "markChatSessionUnread(sid, { isError })" in notify
     assert "noteFinalizedAssistantAttention({ isError })" in notify
+    # Projection refresh is delegated to the attention controller.
+    assert "syncHistoryUnreadIndicators();" in notify

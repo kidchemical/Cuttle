@@ -20,6 +20,7 @@ node_only = pytest.mark.skipif(
 
 CHAT_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat/chat_page.js"
 CHAT_HTML = Path(__file__).resolve().parents[2] / "web" / "chat_page.html"
+GIT_PUSH_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "git/git_push_report.js"
 
 
 @node_only
@@ -41,21 +42,68 @@ def test_history_action_icons_function_present():
     """Guard the exact deletion that broke parse: header must precede its body."""
     text = CHAT_JS.read_text(encoding="utf-8")
     assert "function _historyActionIcons() {" in text
-    # Anchor on saveChatSession's keep-search call (the edit that ate the header).
-    marker = (
-        "// Reload chat history to update sidebar (keep active search/filters)\n"
-        "        reloadHistoryListKeepingSearch();\n"
-        "    }\n"
-    )
-    idx = text.find(marker)
-    assert idx >= 0, "saveChatSession keep-search reload marker missing"
-    after = text[idx + len(marker) : idx + len(marker) + 120]
-    assert after.lstrip().startswith("function _historyActionIcons() {"), (
-        "orphaned _historyActionIcons body — function header missing after "
-        "saveChatSession (browser SyntaxError: Unexpected identifier 'let')"
-    )
+
+
+def test_save_chat_session_keep_search_moved_to_owner():
+    """3B step 2 moved saveChatSession (and its keep-search reload anchor) into
+    chat_session.js; the page keeps a delegating call site."""
+    text = CHAT_JS.read_text(encoding="utf-8")
+    owner = (CHAT_JS.parent / "chat_session.js").read_text(encoding="utf-8")
+    assert "// Reload chat history to update sidebar (keep active search/filters)" in owner
+    assert "h.reloadHistoryListKeepingSearch();" in owner
+    assert "return sessionLifecycle().saveChatSession(message, role, opts);" in text
+
+
+def test_load_chat_session_moved_to_owner():
+    """3B step 3 moved loadChatSession into chat_session.js (CuttleChatSession
+    .createLoader); the page keeps a thin delegating call site."""
+    text = CHAT_JS.read_text(encoding="utf-8")
+    owner = (CHAT_JS.parent / "chat_session.js").read_text(encoding="utf-8")
+    assert "function createLoader(session, host) {" in owner
+    assert "async function loadChatSession(sessionId, opts = {})" in owner
+    assert "return { loadChatSession: loadChatSession };" in owner
+    assert "createLoader: createLoader" in owner
+    assert "return sessionLoader().loadChatSession(sessionId, opts);" in text
+
+
+def test_create_new_chat_and_boot_restore_moved_to_owner():
+    """3B step 4 moved createNewChat and bootRestoreSession into chat_session.js
+    (CuttleChatSession.createSessionBoot); the page keeps thin call sites."""
+    text = CHAT_JS.read_text(encoding="utf-8")
+    owner = (CHAT_JS.parent / "chat_session.js").read_text(encoding="utf-8")
+    assert "function createSessionBoot(session, host) {" in owner
+    assert "async function createNewChat()" in owner
+    assert "async function bootRestoreSession(sessionParam)" in owner
+    assert "createSessionBoot: createSessionBoot" in owner
+    assert "return sessionBoot().createNewChat();" in text
+    assert "return sessionBoot().bootRestoreSession(sessionParam);" in text
 
 
 def test_chat_page_html_loads_busted_script():
     html = CHAT_HTML.read_text(encoding="utf-8")
     assert 'src="/js/chat/chat_page.js?v=' in html
+
+
+def test_git_push_menu_moved_to_owner():
+    """3E pt2 moved the git push menu/action into git_push_report.js
+    (CuttleGitPushReport.create); the page keeps thin call sites."""
+    text = CHAT_JS.read_text(encoding="utf-8")
+    owner = GIT_PUSH_JS.read_text(encoding="utf-8")
+    assert "function create(host) {" in owner
+    assert "function menuHtml(icons) {" in owner
+    assert "function openSubmenu(triggerBtn) {" in owner
+    assert "function setupConfirmModal() {" in owner
+    assert "const gitPush = CuttleGitPushReport.create({" in text
+    assert "gitPush.menuHtml(icons)" in text
+    assert "refreshGitPushMenuMode: gitPush.refreshMenuMode," in text
+    assert "gitPush.openSubmenu(trigger)" in text
+    assert "gitPush.push(e, root || null)" in text
+    assert "gitPush.setupConfirmModal();" in text
+    assert "gitPush.refreshMenuMode(dropdown);" in text
+    # The old page-side implementations are gone (one owner, no duplicates).
+    assert "function gitPushMenuHtml(" not in text
+    assert "function applyGitPushMenuMode(" not in text
+    assert "function refreshGitPushMenuMode(" not in text
+    assert "function pushCurrentChatProject(" not in text
+    assert "function openGitPushSubmenu(" not in text
+    assert "function setupGitPushConfirmModal(" not in text
