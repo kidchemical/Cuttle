@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import time
+
+import pytest
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -551,7 +553,7 @@ def _park_state(page):
                 parked: document.querySelectorAll(
                     '.split-column.pane-collapsed').length,
                 colWidth: col ? col.offsetWidth : -1,
-                railVisible: !!(rail && rail.offsetWidth > 0),
+                railVisible: !!(rail && getComputedStyle(rail).visibility !== 'hidden'),
                 mainWidth: main ? main.offsetWidth : -1,
                 frameAlive: !!(frame && frame.contentDocument),
                 expandHandle: !!document.querySelector(
@@ -577,15 +579,15 @@ def _saved_leaf_collapsed(page, leaf_id):
     return found["collapsed"]
 
 
-def test_collapsed_pane_parks_to_blade_and_restores(browser, static_server):
-    """Parking (not closing) a pane: blade stays, divider restores it."""
+def test_collapsed_pane_parks_to_strip_and_restores(browser, static_server):
+    """Parking keeps a thin strip and a live frame; the divider restores it."""
     world = ShellWorld()
     context, page, errors, blocked = _open(
         browser, static_server, world, seed=V2_NESTED)
     try:
         _load_shell(page, static_server)
         _pump_until(page, lambda: _col_count(page) == 3, 20000, "3 panes")
-        # Park L1 through the same entry the sub-100px drag release uses.
+        # Park L1 through the same entry the sub-threshold drag release uses.
         # Tag its live iframe first: parking must not touch the frame.
         page.evaluate(
             "() => { const col = document.querySelector("
@@ -596,11 +598,11 @@ def test_collapsed_pane_parks_to_blade_and_restores(browser, static_server):
                     20000, "L1 parked")
         state = _park_state(page)
         assert state["leaves"] == 3, state       # parked, not closed
-        assert state["railVisible"], state       # blade toolbar stays put
+        assert not state["railVisible"], state   # strip replaces the blade
         assert state["mainWidth"] == 0, state    # content hidden in place
         assert state["frameAlive"], state        # live iframe untouched
         assert state["expandHandle"], state      # divider restore affordance
-        assert 48 <= state["colWidth"] <= 64, state  # blade width only
+        assert 24 <= state["colWidth"] <= 32, state  # slim strip
         assert _saved_leaf_collapsed(page, "L1") is True
         # Parked-left divider chevron points where the pane grows (right).
         chevron = page.locator(
@@ -730,7 +732,7 @@ def test_expand_divider_drag_sets_restored_width(browser, static_server):
         _park_leaf(page, "L1")
         _pump_until(page, lambda: _park_state(page)["parked"] == 1,
                     20000, "L1 parked")
-        # A real drag follows the pointer (blade 56px + 250px of drag).
+        # A real drag follows the pointer (strip 28px + 250px of drag).
         _drag_expand_handle(page, 250)
         _pump_until(page, lambda: _park_state(page)["parked"] == 0,
                     20000, "L1 restored by drag")
@@ -746,7 +748,7 @@ def test_expand_divider_drag_sets_restored_width(browser, static_server):
         assert _park_state(page)["parked"] == 1
         assert abs(_leaf_width(page, "L1") - before) <= 20, before
         # Pushing past the threshold reopens mid-drag at the pointer width.
-        _drag_expand_handle(page, 160)
+        _drag_expand_handle(page, 190)
         _pump_until(page, lambda: _park_state(page)["parked"] == 0,
                     20000, "L1 restored by push-through")
         pushed = _leaf_width(page, "L1")
@@ -756,13 +758,13 @@ def test_expand_divider_drag_sets_restored_width(browser, static_server):
             "'.pane-will-collapse, "
             ".split-resize-handle.will-collapse').length")
         assert crumbs == 0, crumbs
-        # A blade icon on the parked pane unparks it too.
+        # The collapsed strip restores its own pane too.
         _park_leaf(page, "L1")
         _pump_until(page, lambda: _park_state(page)["parked"] == 1,
                     20000, "L1 parked once more")
         page.locator(
             ".split-column[data-leaf-id='L1'] "
-            ".rail-item[data-page]").first.click()
+            ".pane-collapse-bar").click()
         _pump_until(page, lambda: _park_state(page)["parked"] == 0,
                     20000, "L1 restored by blade icon")
         assert _leaf_width(page, "L1") > 300, _leaf_width(page, "L1")
@@ -911,5 +913,242 @@ def test_vertical_park_collapses_to_restore_bar(browser, static_server):
         assert tall > 100, tall
         _assert_blocked_api_free(blocked)
         assert errors == [], errors
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("nth,dx,edge,direction", [
+    (1, -300, "trailing", "right"),
+    (0, 300, "leading", "left"),
+])
+def test_collapse_keeps_restore_on_dragged_edge(
+        browser, static_server, nth, dx, edge, direction):
+    world = ShellWorld()
+    context, page, errors, blocked = _open(
+        browser, static_server, world, seed=V3H_ROOT3)
+    try:
+        _load_shell(page, static_server)
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "3 panes")
+        # Collapse B against A or C through its corresponding edge.
+        _drag_root_handle(page, nth, dx)
+        _pump_until(page, lambda: _abc_state(page)["B"]["parked"], 20000,
+                    "B parked by drag")
+        handles = page.locator("#splitContainer > .split-resize-handle")
+        assert handles.nth(1 - nth).get_attribute("data-expand") is None
+        assert handles.nth(nth).get_attribute("data-expand-dir") == direction
+        saved = json.loads(page.evaluate(f"localStorage.getItem('{LAYOUT_KEY}')"))
+        assert saved["root"]["children"][1]["restoreEdge"] == edge
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_function("typeof window.snapshotLayoutTree === 'function'")
+        assert handles.nth(nth).get_attribute("data-expand-dir") == direction
+        handles.nth(1 - nth).click()
+        assert _abc_state(page)["B"]["parked"]
+        handles.nth(nth).click()
+        assert not _abc_state(page)["B"]["parked"]
+        assert errors == [], errors
+        _assert_blocked_api_free(blocked)
+    finally:
+        context.close()
+
+
+def test_collapsed_strips_show_live_chat_status(browser, static_server):
+    world = ShellWorld()
+    context, page, errors, blocked = _open(
+        browser, static_server, world, seed=V2_NESTED)
+    try:
+        _load_shell(page, static_server)
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "3 panes")
+        for leaf_id, sid in [("L1", "41"), ("L3", "43")]:
+            page.evaluate("""({id, sid}) => {
+                const col = document.querySelector('[data-leaf-id="' + id + '"]');
+                window.registerPaneChatSession(col.querySelector("iframe").contentWindow, sid);
+            }""", {"id": leaf_id, "sid": sid})
+            _park_leaf(page, leaf_id)
+        for kind in ["running", "unread", "input", "error", "queued", "paused", ""]:
+            page.evaluate("""kind => {
+                CuttleSpaces.noteServerSnapshot(['41', '43'].map(id => ({
+                    id, running: kind === 'running',
+                    attention: {revision: Date.now(), awaitingInput: kind === 'input',
+                                hasUnread: kind === 'unread' || kind === 'error',
+                                unreadIsError: kind === 'error'},
+                    queue: kind === 'queued' || kind === 'paused' ? kind : ''
+                })), Date.now() + 10000);
+                shellSpaces.syncActivityTabs();
+            }""", kind)
+            for leaf_id in ["L1", "L3"]:
+                dot = page.locator(f'[data-leaf-id="{leaf_id}"] > .pane-collapse-bar .shell-space-activity')
+                assert dot.is_visible() == bool(kind)
+                if kind:
+                    assert "is-" + kind in dot.get_attribute("class")
+        assert page.locator('[data-leaf-id="L1"] > .pane-collapse-bar').evaluate(
+            "el => getComputedStyle(el).writingMode") == "vertical-rl"
+        assert page.locator('[data-leaf-id="L3"] > .pane-collapse-bar').evaluate(
+            "el => getComputedStyle(el).writingMode") == "horizontal-tb"
+        page.locator('[data-leaf-id="L1"] > .pane-collapse-bar').click()
+        assert _park_state(page)["parked"] == 1
+        assert _vpark_state(page, "L3")["parked"]
+        assert errors == [], errors
+        _assert_blocked_api_free(blocked)
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("case", ["horizontal", "vertical", "nested", "parked-neighbor"])
+def test_divider_double_click_equalizes_only_adjacent_panes(
+        browser, static_server, case):
+    seed = json.loads(json.dumps(V2_NESTED if case == "nested" else V3H_ROOT3))
+    if case != "nested":
+        seed["root"]["children"][0]["flex"] = "3 1 0%"
+        seed["root"]["children"][2]["flex"] = "2 1 0%"
+        if case == "vertical":
+            seed["root"]["orientation"] = seed["orientation"] = "vertical"
+    world = ShellWorld()
+    context, page, errors, blocked = _open(browser, static_server, world, seed=seed)
+    try:
+        _load_shell(page, static_server)
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "3 panes")
+        if case == "parked-neighbor":
+            _park_leaf(page, "C")
+            page.evaluate("""() => {
+                const group = document.getElementById('splitContainer');
+                applySplitRatioFlex(getGroupChildNodes(group), [3, 1, 1], 'horizontal', group);
+            }""")
+        vertical = case in ("vertical", "nested")
+        ids = ["L2", "L3", "L1"] if case == "nested" else ["A", "B", "C"]
+        selector = (".split-group[data-group-id='G2']" if case == "nested"
+                    else "#splitContainer") + " > .split-resize-handle"
+
+        def sizes():
+            return page.evaluate("""({ids, vertical}) => ids.map(id => {
+                const col = document.querySelector('[data-leaf-id="' + id + '"]');
+                return vertical ? col.offsetHeight : col.offsetWidth;
+            })""", {"ids": ids, "vertical": vertical})
+
+        before = sizes()
+        assert before[0] > before[1] + 50, before
+        page.evaluate("""() => document.querySelectorAll('iframe').forEach(
+            frame => frame.dataset.equalizeProbe = 'live')""")
+        # A single click keeps sizes and the divider's DOM identity intact.
+        divider = page.locator(selector).first
+        divider.click()
+        after_click = sizes()
+        assert all(abs(a - b) <= 2 for a, b in zip(before, after_click)), (before, after_click)
+        divider.dblclick()
+        after = sizes()
+        assert abs(after[0] - after[1]) <= 1, after
+        assert abs(after[0] + after[1] - before[0] - before[1]) <= 2, (before, after)
+        assert abs(after[2] - before[2]) <= 2, (before, after)
+        assert page.locator('iframe[data-equalize-probe="live"]').count() == 3
+        if case == "parked-neighbor":
+            assert _abc_state(page)["C"]["parked"]
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_function("typeof window.snapshotLayoutTree === 'function'")
+        restored = sizes()
+        assert abs(restored[0] - restored[1]) <= 1, restored
+        assert abs(restored[2] - before[2]) <= 2, (before, restored)
+        assert errors == [], errors
+        _assert_blocked_api_free(blocked)
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
+def test_swapped_collapsed_pane_tracks_title_loaded_after_frame_load(
+        browser, static_server, orientation):
+    seed = json.loads(json.dumps(V3H_ROOT3 if orientation == "horizontal" else V2_NESTED))
+    ids = ["A", "B", "C"] if orientation == "horizontal" else ["L1", "L2", "L3"]
+    for i, leaf in enumerate(
+            seed["root"]["children"] if orientation == "horizontal"
+            else [seed["root"]["children"][0], *seed["root"]["children"][1]["children"]]):
+        leaf["page"] = "/chat_page.html?chat=" + str(41 + i)
+    world = ShellWorld()
+    context, page, errors, blocked = _open(browser, static_server, world, seed=seed)
+    # Chat titles arrive asynchronously after iframe load in production.
+    context.route(f"{static_server}/chat_page.html**", lambda route: route.fulfill(
+        content_type="text/html",
+        body="""<!doctype html><span id="chatSessionTitleText">Chat</span>
+        <script>addEventListener('message', e => {
+            if (e.data.type === 'test-chat-title')
+                document.getElementById('chatSessionTitleText').textContent = e.data.title;
+        });</script>"""))
+    try:
+        _load_shell(page, static_server)
+        page.wait_for_function("""() => [...document.querySelectorAll('.shell-main iframe')]
+            .filter(f => f.contentDocument?.getElementById('chatSessionTitleText')).length === 3""")
+        _park_leaf(page, ids[2])
+        # Grab the real grip and drop onto the collapsed slot.
+        grip = page.locator(f'[data-leaf-id="{ids[0]}"] .rail-pane-grip').bounding_box()
+        target = page.locator(f'[data-leaf-id="{ids[2]}"]').bounding_box()
+        assert grip and target
+        page.mouse.move(grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2)
+        page.mouse.down()
+        page.mouse.move(target["x"] + target["width"] / 2,
+                        target["y"] + target["height"] / 2, steps=12)
+        page.mouse.up()
+        collapsed = page.locator(f'.pane-collapsed[data-leaf-id="{ids[0]}"]')
+        collapsed.wait_for()
+        page.wait_for_function("""id => {
+            const col = document.querySelector('.pane-collapsed[data-leaf-id="' + id + '"]');
+            return col?.querySelector('iframe')?.contentDocument?.getElementById('chatSessionTitleText');
+        }""", arg=ids[0])
+        assert collapsed.locator('.pane-collapse-title').inner_text() == "Chat"
+        # No activity event or polling is needed for the late title or a rename.
+        for name in ["Swapped chat title", "Renamed after swap"]:
+            collapsed.evaluate("""(col, name) => col.querySelector('iframe').contentWindow
+                .postMessage({type:'test-chat-title', title:name}, '*')""", name)
+            page.wait_for_function("""({id, name}) => {
+                const col = document.querySelector('.pane-collapsed[data-leaf-id="' + id + '"]');
+                return col?.querySelector('.pane-collapse-title')?.textContent === name
+                    && col.dataset.parkedTitle === name;
+            }""", arg={"id": ids[0], "name": name})
+            assert name in collapsed.locator('.pane-collapse-bar').get_attribute('aria-label')
+        assert errors == [], errors
+        _assert_blocked_api_free(blocked)
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("orientation", ["upright", "horizontal"])
+def test_collapsed_strip_close_button_position_and_close(
+        browser, static_server, orientation):
+    seed = V3H_ROOT3 if orientation == "upright" else V2_NESTED
+    leaf_id = "B" if orientation == "upright" else "L3"
+    world = ShellWorld()
+    context, page, errors, blocked = _open(browser, static_server, world, seed=seed)
+    try:
+        _load_shell(page, static_server)
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "3 panes")
+        _park_leaf(page, leaf_id)
+        col = page.locator(f'[data-leaf-id="{leaf_id}"]')
+        close = col.locator(':scope > .pane-collapse-close')
+        bar = col.locator(':scope > .pane-collapse-bar')
+        close_box, bar_box, col_box = close.bounding_box(), bar.bounding_box(), col.bounding_box()
+        assert close_box and bar_box and col_box
+        assert "Close " in close.get_attribute("aria-label")
+        if orientation == "upright":
+            assert abs(close_box["y"] - col_box["y"]) <= 1
+            assert close_box["y"] + close_box["height"] <= bar_box["y"] + 1
+        else:
+            assert abs(close_box["x"] + close_box["width"] - col_box["x"] - col_box["width"]) <= 1
+            assert bar_box["x"] + bar_box["width"] <= close_box["x"] + 1
+        # Closing never routes through the strip's expand action.
+        page.evaluate("""() => {
+            window.closeExpandCalls = 0;
+            const original = window.setPaneCollapsed;
+            window.setPaneCollapsed = function(...args) {
+                if (args[1] === false) window.closeExpandCalls++;
+                return original(...args);
+            };
+        }""")
+        close.click()
+        _pump_until(page, lambda: _col_count(page) == 2, 20000, "closed collapsed pane")
+        assert page.evaluate("window.closeExpandCalls") == 0
+        assert not col.is_visible()
+        assert leaf_id not in _saved_flex(page)
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_function("typeof window.snapshotLayoutTree === 'function'")
+        assert _col_count(page) == 2
+        assert errors == [], errors
+        _assert_blocked_api_free(blocked)
     finally:
         context.close()

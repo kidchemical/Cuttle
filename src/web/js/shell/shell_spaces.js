@@ -749,6 +749,7 @@
 
         /** Patch tab dots in place (no re-render — preserves dblclick rename). */
         function syncSpaceActivityTabs() {
+            host.syncCollapsedPanes?.();
             const tabs = doc.querySelectorAll('.shell-space-tab');
             if (!tabs.length) return;
             pruneSpaceActivitySources();

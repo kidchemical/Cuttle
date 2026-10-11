@@ -6,7 +6,7 @@ Source contracts (no browser needed):
   on the history panel (the 768px sheet-docking flip used to replay as a
   visible sweep on every iframe resize: pane drag, + button, rotate).
 - `app_shell.js` parks a horizontally dragged pane released below
-  SPLIT_COLLAPSE_PX via setPaneCollapsed — blade toolbar stays, live
+  SPLIT_COLLAPSE_PX via setPaneCollapsed — a slim strip stays, live
   iframe untouched (never closeSplitColumn). The touching divider becomes
   a click-to-restore affordance; fluid panes share the budget around
   pinned panes; the collapsed flag persists in the layout tree.
@@ -85,23 +85,22 @@ def test_sub_threshold_drag_parks_pane_in_place():
     assert "'0 0 auto'" in js
     # Dividers never unpark upfront: drags pin parked panes (only pushing
     # one past the threshold reopens it mid-drag); a pure click restores
-    # exactly one pane (right neighbor first); mid-drag reopens floor
+    # exactly the pane indicated by its arrow; mid-drag reopens floor
     # at 200px. Parked panes never preview or re-park.
     assert "maxDelta" in js
     assert "unparkedMidDrag" in js
     assert "floorRestoredPanes" in js
     assert "SPLIT_COLLAPSE_PX" in js
-    assert "cols[rightPos], cols[leftPos]" in js
+    assert "handleEl.dataset.expandDir" in js
     assert "!isPaneCollapsedEl(cols[lastShrinking])" in js
-    # One restore divider per parked pane (leading edge, trailing fallback
-    # for first panes); the neighbor side stays a pure resizer that
+    # Restore follows the dragged edge (legacy layouts use leading); the neighbor side stays a pure resizer that
     # neither restores on click nor reopens mid-drag.
     assert "isLeadingEdge" in js
     assert "isTrailingFallback" in js
     assert "canExpand" in js
     # Freed space lands on the nearest fluid pane past pinned ones.
     assert "giveTo" in js
-    # Blade icons unpark their pane before navigating.
+    # Navigation unparks a pane before changing its page.
     assert "isPaneCollapsedEl(column)) setPaneCollapsed(column, false)" in js
     assert "dataset.expand" in js
     assert "pane-will-collapse" in js
@@ -130,9 +129,9 @@ def test_vertical_stacks_park_to_a_restore_bar():
     js = SHELL_JS.read_text(encoding="utf-8")
     # No orientation refusal left in the collapse path.
     assert "if (vertical || shrinkingPos" not in js
-    assert "verticalHost" in js
+    assert "paneController.refreshCollapsedPane" in js
     # The whole parked pane is the restore affordance there.
-    assert ".split-vertical > .split-column.pane-collapsed" in js
+    assert ".split-column.pane-collapsed" in js
     # The bar carries the live chat name, else the page title.
     assert "function parkedPaneTitle" in js
     assert "function refreshParkedPaneTitle" in js
@@ -141,7 +140,8 @@ def test_vertical_stacks_park_to_a_restore_bar():
     css = SHELL_CSS.read_text(encoding="utf-8")
     assert ".split-vertical > .split-column.pane-collapsed" in css
     assert "height: 28px" in css
-    assert "attr(data-parked-title)" in css
+    assert ".pane-collapse-title" in css
+    assert "writing-mode: vertical-rl" in css
     # The bar reads as the blade: same background as the rail toolbar.
     assert "background: var(--rail-bg" in css
     assert "data-expand-dir='down']::after" in css

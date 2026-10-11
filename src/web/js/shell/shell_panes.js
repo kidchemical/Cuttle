@@ -24,6 +24,7 @@
         const pendingFrameReveals = new Map();
         const frameRevealTokens = new Map();
         const frameLoadListeners = new Map();
+        const frameTitleObservers = new Map();
         const shellBackStack = [];
         let applyingShellHistory = false;
 
@@ -119,12 +120,29 @@
             const controller = new AbortController();
             frame.dataset.shellLoadBound = '1';
             frameLoadListeners.set(frame, controller);
-            frame.addEventListener('load', listener, { signal: controller.signal });
+            frame.addEventListener('load', function () {
+                listener.apply(this, arguments);
+                frameTitleObservers.get(frame)?.disconnect();
+                frameTitleObservers.delete(frame);
+                try {
+                    const title = frame.contentDocument?.getElementById('chatSessionTitleText');
+                    if (!title || !window.MutationObserver) return;
+                    const observer = new window.MutationObserver(() => {
+                        const col = frame.closest('.split-column');
+                        const idx = parseInt(col?.dataset.column, 10);
+                        if (col && getLiveFrame(idx) === frame) host.refreshParkedPaneTitle?.(col);
+                    });
+                    observer.observe(title, { childList: true, characterData: true, subtree: true });
+                    frameTitleObservers.set(frame, observer);
+                } catch (_) { /* Cross-origin pages have no chat-title observer. */ }
+            }, { signal: controller.signal });
         }
         function cleanupFrame(frame) {
             const controller = frameLoadListeners.get(frame);
             if (controller) controller.abort();
             frameLoadListeners.delete(frame);
+            frameTitleObservers.get(frame)?.disconnect();
+            frameTitleObservers.delete(frame);
             cancelOwnedReveal(frame);
         }
         function remapRevealColumns(map) {
@@ -528,6 +546,54 @@
             } catch (_) {} finally { liveStatusHubInFlight = false; }
         }
 
+        // Collapsed chrome shares the Spaces activity owner and its poll/push updates.
+        function refreshCollapsedPane(col, title) {
+            let bar = col.querySelector(':scope > .pane-collapse-bar');
+            if (!bar) {
+                bar = document.createElement('button');
+                bar.type = 'button';
+                bar.className = 'pane-collapse-bar';
+                bar.innerHTML = '<span class="shell-space-activity" hidden></span>'
+                    + '<span class="pane-collapse-title"></span><span class="pane-collapse-arrow" aria-hidden="true">↔</span>';
+                const close = document.createElement('button');
+                close.type = 'button';
+                close.className = 'pane-collapse-close';
+                close.textContent = '×';
+                close.addEventListener('click', e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    host.closePane(col);
+                });
+                col.append(bar, close);
+            }
+            bar.querySelector('.pane-collapse-title').textContent = title;
+            bar.setAttribute('aria-label', 'Expand ' + title);
+            bar.title = 'Expand ' + title;
+            const close = col.querySelector(':scope > .pane-collapse-close');
+            close.title = 'Close ' + title;
+            close.setAttribute('aria-label', 'Close ' + title);
+            const vertical = col.parentElement?.classList.contains('split-vertical');
+            bar.querySelector('.pane-collapse-arrow').textContent = vertical ? '↕' : '↔';
+            const sid = sessionForColumn(parseInt(col.dataset.column, 10));
+            const activity = host.spacesActivity;
+            const kind = activity && sid
+                ? activity.selectSpaceActivity([sid], activity.lookupSessionActivity, false, new Set()) : '';
+            const dot = bar.querySelector('.shell-space-activity');
+            dot.className = 'shell-space-activity' + (kind ? ' is-' + kind : '');
+            dot.hidden = !kind;
+            const label = activity?.LABEL[kind] || '';
+            dot.setAttribute('aria-label', label);
+            bar.setAttribute('aria-label', 'Expand ' + title + (label ? ' · ' + label : ''));
+        }
+        function syncCollapsedPanes() {
+            getSplitColumns().forEach(col => {
+                if (col.classList.contains('pane-collapsed')) {
+                    if (host.refreshParkedPaneTitle) host.refreshParkedPaneTitle(col);
+                    else refreshCollapsedPane(col, col.dataset.parkedTitle || 'Pane');
+                }
+            });
+        }
+
         function clearPaneColumn(idx) { paneSessionByColumn.delete(idx); paneProjectByColumn.delete(idx); }
         function sessionForColumn(idx) { return paneSessionByColumn.get(idx); }
         function sessionForColumnExists(idx) { return paneSessionByColumn.has(idx); }
@@ -564,7 +630,7 @@
             if (Number.isFinite(idx)) setFocusedColumn(idx);
         }, true);
         window.getOpenPaneSessions = getOpenPaneSessions;
-        return { setFocusedColumn, focusedColumnIndex: () => focusedColumnIdx, broadcastUsageLiveWake,
+        return { refreshCollapsedPane, syncCollapsedPanes, setFocusedColumn, focusedColumnIndex: () => focusedColumnIdx, broadcastUsageLiveWake,
             createContentFrame, replaceFrameInPlace, replaceFrame, parkShellIframes, discardSplitSubtree,
             applyUiAnimationPrefs, armFrameReveal: armOwnedReveal, cancelPendingReveal: cancelOwnedReveal,
             finishFrameTransitionFor, clearRevealColumn, remapRevealColumns, swapRevealColumns,
