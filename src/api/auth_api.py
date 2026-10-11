@@ -1207,6 +1207,8 @@ def get_session_messages(session_id):
         limit = request.args.get('limit', type=int)
         before_id = request.args.get('before_id', type=int)
         after_id = request.args.get('after_id', type=int)
+        want_usage_summary = request.args.get('usage_summary') == '1'
+        include_subagents_usage = request.args.get('include_subagents') == '1'
         if limit is not None:
             limit = max(1, min(int(limit), 200))
 
@@ -1332,9 +1334,16 @@ def get_session_messages(session_id):
             pass
 
         followup_state = db.get_followup_state(session_id, user['id']) or {'followups': [], 'revision': 0}
+        usage_summary = None
+        if want_usage_summary:
+            usage_session_ids = [session_id]
+            if include_subagents_usage:
+                usage_session_ids.extend(db.descendant_session_ids(session_id, user['id']))
+            usage_summary = db.get_assistant_usage_metadata(usage_session_ids)
         return jsonify({
             'success': True,
             'messages': messages,
+            'usage_summary': usage_summary,
             'has_more': has_more,
             'older_visible_count': older_visible_count,
             # Title for the open-chat chrome — seed on first paint so refresh

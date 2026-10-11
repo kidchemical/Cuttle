@@ -111,6 +111,18 @@
                         <button class="control-button btn-start" onclick="showWelcomeOnNextStartup()">Show welcome on next startup</button>
                     </div>
                 </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Show total token and cost estimates for chat sessions</strong><button type="button" class="cuttle-info" data-tooltip="Show summed token usage and estimated cost below the chat composer." aria-label="About session usage estimates">i</button>
+                        <div class="setting-description">Displays totals for input, cached input, output, and estimated cost in each chat.</div>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch" id="sessionUsageEstimateToggle" onclick="toggleSessionUsageEstimate(event)">
+                            <input type="checkbox" id="sessionUsageEstimateEnabled" style="display:none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
             </div>
 
             <div class="settings-group">
@@ -2279,6 +2291,16 @@
             }
         }
 
+        function toggleSessionUsageEstimate(event) {
+            if (event) event.preventDefault();
+            const checkbox = document.getElementById('sessionUsageEstimateEnabled');
+            const toggle = document.getElementById('sessionUsageEstimateToggle');
+            if (!checkbox) return;
+            checkbox.checked = !checkbox.checked;
+            if (toggle) toggle.classList.toggle('active', checkbox.checked);
+            localStorage.setItem('cuttleShowSessionUsageEstimate', checkbox.checked ? 'true' : 'false');
+        }
+
         function showNotification(message, variant) {
             if (window.showToast) window.showToast(message, variant || 'info');
             else alert(message);
@@ -2634,9 +2656,14 @@
             const agentName = localStorage.getItem('agentName') || 'Cuttle';
             const notificationsEnabled = localStorage.getItem('notificationsEnabled') !== 'false';
             const responseChirpEnabled = localStorage.getItem('responseChirpEnabled') !== 'false';
+            const sessionUsageEstimateEnabled = localStorage.getItem('cuttleShowSessionUsageEstimate') === 'true';
             
             document.getElementById('agentName').value = agentName;
             document.getElementById('notificationsEnabled').checked = notificationsEnabled;
+            const usageEstimateCb = document.getElementById('sessionUsageEstimateEnabled');
+            if (usageEstimateCb) usageEstimateCb.checked = sessionUsageEstimateEnabled;
+            const usageEstimateToggle = document.getElementById('sessionUsageEstimateToggle');
+            if (usageEstimateToggle) usageEstimateToggle.classList.toggle('active', sessionUsageEstimateEnabled);
             const chirpCb = document.getElementById('responseChirpEnabled');
             if (chirpCb) chirpCb.checked = responseChirpEnabled;
             loadVideoBackgroundEnabledToggle();

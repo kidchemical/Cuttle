@@ -1498,6 +1498,32 @@ class AuthDatabase:
         conn.close()
         return found
 
+    def get_assistant_usage_metadata(self, session_ids: List[int]) -> List[Dict]:
+        """Return persisted usage metadata for assistant messages in these chats."""
+        ids = list(dict.fromkeys(int(value) for value in (session_ids or []) if value is not None))
+        if not ids:
+            return []
+        conn = self._get_connection()
+        try:
+            placeholders = ",".join("?" for _ in ids)
+            rows = conn.execute(
+                f"SELECT metadata FROM chat_messages WHERE role = 'assistant' "
+                f"AND chat_session_id IN ({placeholders}) AND metadata IS NOT NULL",
+                ids,
+            ).fetchall()
+            result = []
+            for row in rows:
+                try:
+                    metadata = json.loads(row['metadata'] or '{}')
+                except (TypeError, ValueError):
+                    continue
+                usage = metadata.get('usage') if isinstance(metadata, dict) else None
+                if isinstance(usage, dict):
+                    result.append({'usage': usage, 'metadata': metadata})
+            return result
+        finally:
+            conn.close()
+
     def set_session_archived(self, session_id: int, user_id: int, archived: bool) -> bool:
         """Archive / unarchive a chat session and all its nested sub-agent chats.
 

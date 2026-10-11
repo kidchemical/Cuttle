@@ -492,6 +492,7 @@ body {
 
 .chat-session-title-text {
     display: block;
+    flex: 1 1 auto;
     min-width: 0;
     max-width: 100%;
     overflow: hidden;
@@ -505,6 +506,15 @@ body {
     text-shadow:
         0 0 6px rgba(0, 0, 0, 0.55),
         0 1px 2px rgba(0, 0, 0, 0.65);
+}
+
+/* The shared history spinner is positioned over the history row's left slot.
+   In the chat title all status indicators share a flex row, so restore it to
+   normal flow to keep it beside unread / queued indicators. */
+.chat-session-title .history-running-icon {
+    position: relative;
+    inset: auto;
+    margin: 0;
 }
 
 html.light-mode .chat-session-title,
@@ -4288,6 +4298,32 @@ pre.has-code-copy:hover .code-copy-btn,
     background: transparent;
     flex-shrink: 0;
 }
+
+.chat-session-usage {
+    max-width: 820px;
+    margin: 7px auto 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.4;
+    text-align: center;
+}
+
+.chat-session-usage[hidden] { display: none; }
+.chat-session-usage-totals { min-width: 0; }
+.chat-session-usage-subagents {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.chat-session-usage-subagents input { margin: 0; accent-color: var(--accent-color); }
 
 .input-wrapper {
     max-width: 820px;

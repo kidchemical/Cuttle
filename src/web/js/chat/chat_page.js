@@ -7353,6 +7353,7 @@
                 takeChatTranscriptPrefetch: takeChatTranscriptPrefetch,
                 fetchWithTimeout: fetchWithTimeout,
                 sessionMessagesUrl: sessionMessagesUrl,
+                updateSessionUsageSummary: updateSessionUsageSummary,
                 windowChatHistoryMessages: windowChatHistoryMessages,
                 annotateMessageProjects: annotateMessageProjects,
                 reconcileChatProject: reconcileChatProject,
@@ -7495,8 +7496,73 @@
         if (opts.limit != null) params.set('limit', String(opts.limit));
         if (opts.beforeId != null) params.set('before_id', String(opts.beforeId));
         if (opts.afterId != null) params.set('after_id', String(opts.afterId));
+        if (localStorage.getItem('cuttleShowSessionUsageEstimate') === 'true') {
+            params.set('usage_summary', '1');
+            params.set('include_subagents', localStorage.getItem('cuttleSessionUsageIncludeSubagents') === 'true' ? '1' : '0');
+        }
         const q = params.toString();
         return `/api/auth/sessions/${encodeURIComponent(authSid)}/messages${q ? `?${q}` : ''}`;
+    }
+
+    function updateSessionUsageSummary(entries) {
+        const panel = document.getElementById('chatSessionUsage');
+        const totals = document.getElementById('chatSessionUsageTotals');
+        const include = document.getElementById('chatSessionUsageSubagents');
+        if (!panel || !totals) return;
+        const enabled = localStorage.getItem('cuttleShowSessionUsageEstimate') === 'true';
+        panel.hidden = !enabled;
+        if (include) include.checked = localStorage.getItem('cuttleSessionUsageIncludeSubagents') === 'true';
+        if (!enabled) return;
+        const list = Array.isArray(entries) ? entries : [];
+        const normalized = list.map((entry) => CuttleChatUsage.normalize(entry && entry.usage, entry && entry.metadata)).filter(Boolean);
+        const sum = CuttleChatUsage.sum(normalized);
+        if (!sum) {
+            totals.textContent = 'No token usage recorded for this session';
+            return;
+        }
+        const input = sum.cache_inclusive === true
+            ? Math.max(0, sum.prompt_tokens - sum.cache_read_tokens - sum.cache_write_tokens)
+            : sum.prompt_tokens;
+        const cached = sum.cache_read_tokens + sum.cache_write_tokens;
+        const pieces = [
+            `Input ${CuttleChatUsage.formatTokenCount(input)}`,
+            `Cached input ${CuttleChatUsage.formatTokenCount(cached)}`,
+            `Output ${CuttleChatUsage.formatTokenCount(sum.completion_tokens)}`,
+        ];
+        const cost = CuttleChatUsage.formatUsageCostUsd(sum.cost, sum.cost_estimated);
+        pieces.push(cost ? `Est. cost ${cost}` : 'Est. cost unavailable');
+        totals.textContent = pieces.join(' · ');
+    }
+
+    async function refreshSessionUsageSummary() {
+        const id = session.current();
+        if (id == null || id === '' || localStorage.getItem('cuttleShowSessionUsageEstimate') !== 'true') {
+            updateSessionUsageSummary([]);
+            return;
+        }
+        try {
+            const response = await fetchWithTimeout(
+                sessionMessagesUrl(toAuthDbSessionId(id), { limit: 1 }),
+                { credentials: 'include', cache: 'no-store' }, 12000
+            );
+            if (!response.ok) return;
+            const data = await response.json();
+            if (String(session.current()) === String(id)) updateSessionUsageSummary(data.usage_summary);
+        } catch (_) {}
+    }
+
+    const sessionUsageIncludeSubagents = document.getElementById('chatSessionUsageSubagents');
+    if (sessionUsageIncludeSubagents) {
+        sessionUsageIncludeSubagents.checked = localStorage.getItem('cuttleSessionUsageIncludeSubagents') === 'true';
+        sessionUsageIncludeSubagents.addEventListener('change', () => {
+            localStorage.setItem('cuttleSessionUsageIncludeSubagents', sessionUsageIncludeSubagents.checked ? 'true' : 'false');
+            refreshSessionUsageSummary();
+        });
+    }
+    if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('storage', (event) => {
+            if (event && event.key === 'cuttleShowSessionUsageEstimate') refreshSessionUsageSummary();
+        });
     }
 
     function resetChatHistoryWindow() {
@@ -9013,6 +9079,7 @@
                 return;
             }
             if (!syncStillCurrent()) return;
+            updateSessionUsageSummary(data.usage_summary);
             applyServerFollowups(data.followups, data.followup_revision);
             acceptSessionAttention(session.current(), data.attention);
             // Keep badges truthful on incremental syncs too (same seeding as open).

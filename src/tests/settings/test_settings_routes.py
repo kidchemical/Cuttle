@@ -129,7 +129,7 @@ def test_settings_owner_write_round_trip(tmp_path, monkeypatch):
 
 
 def test_agent_adapters_round_trip(tmp_path, monkeypatch):
-    """Steer switches and the drop-in opt-in persist; env overrides are reported."""
+    """Adapter controls and per-parent subagent defaults round-trip."""
     isolated = _isolated_settings(monkeypatch, tmp_path)
     monkeypatch.delenv("CUTTLE_AGENT_STEER", raising=False)
     monkeypatch.delenv("CUTTLE_ALLOW_PROJECT_ADAPTERS", raising=False)
@@ -153,6 +153,22 @@ def test_agent_adapters_round_trip(tmp_path, monkeypatch):
     assert body["allow_project_adapters"] is True
     assert isolated.get_setting("agent_steer") == {"claude": False}
     assert isolated.get_setting("agent_harness") == {"allow_project_adapters": True}
+
+    subagent_pref = {
+        "cursor": {
+            "agent": "opencode",
+            "model": "openrouter/z-ai/glm-5.3-flash",
+            "effort": "high",
+        }
+    }
+    res = ctx["client"].post(
+        "/api/settings/agent-adapters",
+        json={"subagents": subagent_pref},
+        environ_base=LAN,
+    )
+    assert res.status_code == 200, res.get_json()
+    assert res.get_json()["subagents"] == subagent_pref
+    assert isolated.get_setting("agent_subagent_defaults") == subagent_pref
 
     from api.agent_harness.steer import steer_enabled
 

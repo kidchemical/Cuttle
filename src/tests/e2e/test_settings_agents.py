@@ -7,7 +7,13 @@ from .test_shared_diff_modal import browser, static_server, apply_request_guard,
 
 AGENTS = [
     {"id": "alpha", "label": "Alpha Agent", "slash": "/alpha", "prefix": "/alpha ",
-     "sticky": True, "available": True, "ready": True, "icon": "✦"},
+     "sticky": True, "available": True, "ready": True, "icon": "✦",
+     "supports_model_pin": True, "supports_effort": True,
+     "models": ["alpha-model"], "efforts": ["low", "high"]},
+    {"id": "opencode", "label": "OpenCode", "slash": "/opencode", "prefix": "/opencode ",
+     "sticky": True, "available": True, "ready": True,
+     "supports_model_pin": True, "supports_effort": True,
+     "models": ["openrouter/model"], "efforts": ["low", "high"]},
     {"id": "missing", "label": "A very long drop-in agent label that must wrap on a phone",
      "slash": "/missing", "prefix": "/missing ", "sticky": True,
      "available": False, "ready": False, "install_hint": "Install this tool yourself."},
@@ -23,13 +29,17 @@ class AgentWorld(IsolatedAPI):
         self.saves = []
         self.fail_save = False
         self.fail_load = False
+        self.subagents = {}
 
     def handle(self, route):
         path = urlparse(route.request.url).path
         if path == "/api/agents":
             data = {"success": True, "agents": AGENTS, "roots": []}
         elif path == "/api/settings/agent-adapters":
-            data = {"success": True, "defaults": {}, "steer": {}}
+            if route.request.method == "POST":
+                body = json.loads(route.request.post_data)
+                self.subagents.update(body.get("subagents", {}))
+            data = {"success": True, "defaults": {}, "steer": {}, "subagents": self.subagents}
         elif path == "/api/settings/starred-slash":
             if route.request.method == "POST":
                 body = json.loads(route.request.post_data)
@@ -115,6 +125,31 @@ def test_rows_keyboard_reload_and_phone_layout(browser, static_server):
         page.close()
 
 
+def test_subagent_model_and_effort_only_show_for_non_native_choice(browser, static_server):
+    world = AgentWorld()
+    page = open_settings(browser, static_server, world)
+    try:
+        card = page.locator('.agent-card[data-agent-id="opencode"]')
+        card.locator('.agent-card-head').click()
+        model_row = card.locator('.agent-config-row').filter(has_text='Subagent model')
+        effort_row = card.locator('.agent-config-row').filter(has_text='Subagent effort')
+        expect(card.locator('.agent-config-row').filter(has_text='Default model').first).to_be_visible()
+        expect(card.locator('.agent-config-row').filter(has_text='Default effort').first).to_be_visible()
+        expect(model_row).to_be_hidden()
+        expect(effort_row).to_be_hidden()
+
+        with page.expect_response(lambda response: response.url.endswith('/api/settings/agent-adapters')
+                                  and response.request.method == 'POST') as saved:
+            card.locator('.agent-config-row').filter(has_text='Default subagent').locator('select').select_option('alpha')
+        expect(model_row).to_be_visible()
+        expect(effort_row).to_be_visible()
+        assert json.loads(saved.value.request.post_data)['subagents'] == {
+            'opencode': {'agent':'alpha','model':'','effort':''}
+        }
+    finally:
+        page.close()
+
+
 def test_removed_default_is_not_assigned_to_another_agent(browser, static_server):
     world = AgentWorld()
     world.prefixes = ["/removed "]
@@ -128,9 +163,9 @@ def test_removed_default_is_not_assigned_to_another_agent(browser, static_server
 
 
 def test_dropin_declarations_render_as_text_on_phone(browser, static_server, monkeypatch):
-    monkeypatch.setitem(AGENTS[1], 'source', 'project')
-    monkeypatch.setitem(AGENTS[1], 'permissions', {'filesystem':'workspace','network':'outbound','subprocess':True})
-    monkeypatch.setitem(AGENTS[1], 'provenance', {'verified':True,'source_url':'https://example.com/source',
+    monkeypatch.setitem(AGENTS[2], 'source', 'project')
+    monkeypatch.setitem(AGENTS[2], 'permissions', {'filesystem':'workspace','network':'outbound','subprocess':True})
+    monkeypatch.setitem(AGENTS[2], 'provenance', {'verified':True,'source_url':'https://example.com/source',
         'revision':'<img src=x onerror=alert(1)>'})
     page = open_settings(browser, static_server, AgentWorld(), width=390)
     try:

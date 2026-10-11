@@ -246,6 +246,7 @@
                 sessionPrefsUnreadIsError, resetChatHistoryWindow,
                 removeRemoteWaitingIndicator, stopMessageSync, toAuthDbSessionId,
                 takeChatTranscriptPrefetch, fetchWithTimeout, sessionMessagesUrl,
+                updateSessionUsageSummary,
                 windowChatHistoryMessages, annotateMessageProjects,
                 reconcileChatProject, preferredModelFromMessages,
                 hydrateAgentSelectionFromSessionData, applySessionIdentity,
@@ -400,6 +401,7 @@
                     // A newer loadChatSession started while we were fetching — drop this result.
                     if (loadSeq !== session.navSeq()) return;
                     if (data.success && Array.isArray(data.messages)) {
+                        if (updateSessionUsageSummary) updateSessionUsageSummary(data.usage_summary);
                         loadedMessages = windowChatHistoryMessages(data);
                         annotateMessageProjects(loadedMessages);
                         if (data.project_id != null || data.project_path || data.project_name) {
