@@ -38,6 +38,22 @@ def test_preserves_native_configuration_and_runtime():
     assert source['anthropic_api_key'] == 'host-key'
 
 
+def test_stale_working_directory_hints_are_dropped():
+    """A stale parent PWD/OLDPWD must never leak to a guest CLI.
+
+    Regression for the worktree split-brain: the daemon inherited a PWD that
+    did not match its cwd, and the guest CLI trusted it over getcwd(), editing
+    the primary checkout instead of the bound worktree.
+    """
+    source = {'PWD': '/home/stale/checkout', 'OLDPWD': '/home/older',
+              'PATH': '/bin', 'HOME': '/native/home'}
+    env = agent_cli_env(source)
+    assert 'PWD' not in env and 'OLDPWD' not in env
+    # The mapping passed in is never mutated.
+    assert source['PWD'] == '/home/stale/checkout'
+    assert env['PATH'] == '/bin' and env['HOME'] == '/native/home'
+
+
 def test_bundled_catalog_does_not_request_host_api_credentials():
     from pathlib import Path
     import yaml
