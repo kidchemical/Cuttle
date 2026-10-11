@@ -154,16 +154,19 @@ def test_subagent_model_and_effort_only_show_for_non_native_choice(browser, stat
 
 @pytest.mark.parametrize('width', [1280, 390])
 def test_agent_dropdown_panel_is_anchored_to_clicked_control(browser, static_server, width):
-    page = open_settings(browser, static_server, AgentWorld(), width=width)
+    world = AgentWorld()
+    world.subagents = {'opencode': {'agent': 'opencode', 'model': 'openrouter/model', 'effort': 'high'}}
+    page = open_settings(browser, static_server, world, width=width)
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
     try:
         card = page.locator('.agent-card[data-agent-id="opencode"]')
         card.locator('.agent-card-head').click()
-        for label in ['Default model', 'Default effort', 'Default subagent', 'Default model']:
+        for label in ['Default model', 'Default effort', 'Default subagent', 'Subagent model', 'Subagent effort']:
             select = card.locator('.agent-config-row').filter(has_text=label).locator('select')
             trigger = select.locator('xpath=..').locator('.cuttle-combo-trigger')
             trigger.evaluate("element => element.scrollIntoView({block: 'center'})")
+            before = card.bounding_box()
             trigger.click()
             panel = page.locator('.cuttle-combo-popup')
             expect(panel).to_have_count(1)
@@ -172,16 +175,23 @@ def test_agent_dropdown_panel_is_anchored_to_clicked_control(browser, static_ser
             const panel = document.querySelector('.cuttle-combo-popup');
             const trigger = select.__cuttleSearchable.trigger;
             const pr = panel.getBoundingClientRect(), tr = trigger.getBoundingClientRect();
+            const ps = getComputedStyle(panel), ts = getComputedStyle(trigger);
             return {parentIsBody: panel.parentElement === document.body, top: pr.top, bottom: pr.bottom,
                 triggerTop: tr.top, triggerBottom: tr.bottom,
                 left: pr.left, triggerLeft: tr.left,
+                panelCorner: ps.borderTopLeftRadius, triggerCorner: ts.borderBottomLeftRadius,
+                panelBorder: ps.borderTopColor, triggerBorder: ts.borderBottomColor,
                 ownList: panel.querySelector('.cuttle-combo-list').id === trigger.getAttribute('aria-controls')};
             }""", select.element_handle())
             assert geometry['parentIsBody']
             assert geometry['ownList']
             assert abs(geometry['left'] - geometry['triggerLeft']) < 2
-            assert abs(geometry['top'] - geometry['triggerBottom'] - 6) < 2, geometry
-            if label == 'Default model':
+            # The panel and trigger share an edge, with no detached gap.
+            assert abs(geometry['top'] - geometry['triggerBottom'] + 1) < 1, geometry
+            assert geometry['panelCorner'] == geometry['triggerCorner'] == '0px'
+            assert geometry['panelBorder'] == geometry['triggerBorder']
+            assert card.bounding_box() == before
+            if label in ['Default model', 'Subagent model']:
                 expect(panel).to_contain_text('openrouter/model')
             page.keyboard.press('Escape')
             expect(panel).to_have_count(0)

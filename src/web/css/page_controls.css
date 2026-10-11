@@ -74,7 +74,7 @@ body.compact-shell-page :is(button, input, textarea, a):focus-visible {
     outline: 2px solid var(--accent-color);
     outline-offset: 2px;
 }
-body.compact-shell-page :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden']):not([type='file']),
+body.compact-shell-page :is(input:where(:not(.cuttle-combo-search):not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden']):not([type='file'])),
     textarea, select, .cuttle-combo--page .cuttle-combo-trigger) {
     box-sizing: border-box;
     height: var(--control-height);
@@ -116,22 +116,17 @@ body.compact-shell-page .cuttle-combo--page.is-open .cuttle-combo-caret { transf
 /* Portaled to the body/open dialog and promoted to the top layer: never
    consumes row space or gets cut off by scrollable cards/dialogs. */
 body.compact-shell-page .cuttle-combo-popup {
-    position: fixed;
-    inset: auto;
-    z-index: 10000;
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-    max-width: calc(100vw - 16px);
     border: 1px solid var(--border-color);
     border-radius: var(--control-radius);
     background: var(--control-surface);
     color: var(--text-primary);
-    box-shadow: 0 8px 24px #0003;
     overflow: hidden;
     /* Menus need an opaque surface even when the theme's cards are translucent. */
     background: rgb(from var(--control-surface) r g b / 1);
 }
+body.compact-shell-page .cuttle-combo-popup[data-combo-placement] { border-color: var(--accent-color); }
+body.compact-shell-page .cuttle-combo-popup[data-combo-placement='below'] { border-top-left-radius: 0; border-top-right-radius: 0; }
+body.compact-shell-page .cuttle-combo-popup[data-combo-placement='above'] { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 body.compact-shell-page .cuttle-combo-popup .cuttle-combo-search {
     width: 100%;
     height: 38px;

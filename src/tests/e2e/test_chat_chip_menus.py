@@ -8,6 +8,8 @@ dropdowns. Uses the shared isolated API from `test_shared_diff_modal`.
 from __future__ import annotations
 
 import json
+import pytest
+from playwright.sync_api import expect
 
 from .test_shared_diff_modal import (  # noqa: F401
     IsolatedAPI,
@@ -20,6 +22,44 @@ from .test_shared_diff_modal import (  # noqa: F401
 PROJECT_CHIP = "#chatSlashChipsRow .slash-command-chip--project"
 AGENT_CHIP = "#chatSlashChipsRow .slash-command-chip[data-chip-index]"
 MODAL = "#chipConfigModal"
+
+
+@pytest.mark.parametrize('width', [390, 1280])
+def test_chip_dropdowns_overlay_their_own_control_without_moving_modal(surface, width):
+    page, _api, errors = surface('chat_page.html')
+    page.set_viewport_size({'width': width, 'height': 900})
+    page.add_style_tag(content='*, *::before, *::after { transition: none !important; animation: none !important; }')
+    _route_branches(page)
+    _route_opencode_models(page, 150)
+    _add_agent_chip(page, 'opencode')
+    for chip, ids in [(PROJECT_CHIP, ['chipConfigProject', 'chipConfigBranch']),
+                      (AGENT_CHIP, ['chipConfigAgent', 'chipConfigModel', 'chipConfigEffort'])]:
+        page.locator(chip).first.click()
+        modal = page.locator(MODAL + ' .chip-config-modal')
+        expect(modal).to_be_visible()
+        for select_id in ids:
+            trigger = page.locator('.cuttle-combo[data-for="' + select_id + '"] .cuttle-combo-trigger')
+            expect(trigger).to_be_enabled()
+            before = modal.bounding_box()
+            button = trigger.bounding_box()
+            trigger.click()
+            popup = page.locator('.cuttle-combo-popup')
+            expect(popup).to_be_visible()
+            assert popup.evaluate("el => getComputedStyle(el).position") == 'fixed'
+            assert popup.evaluate("el => el.matches(':popover-open')")
+            assert modal.bounding_box() == before
+            menu = popup.bounding_box()
+            assert abs(menu['y'] - button['y'] - button['height'] + 1) < 1
+            assert abs(menu['x'] - button['x']) < 2
+            page.screenshot(path=f'temp/dropdown-chip-{select_id}-{width}.png')
+            page.keyboard.press('Escape')
+            expect(popup).to_have_count(0)
+            expect(modal).to_be_visible()
+        # Closing the modal with a menu open must also remove its overlay.
+        trigger.click()
+        page.locator('#chipConfigClose').click()
+        expect(page.locator('.cuttle-combo-popup')).to_have_count(0)
+    assert not errors, errors
 
 
 def _route_branches(page):
@@ -170,11 +210,12 @@ def test_agent_modal_combobox_search_filters_and_picks(surface):
     page.locator(MODAL).wait_for(state="visible")
     combo = page.locator('.cuttle-combo[data-for="chipConfigAgent"]')
     combo.locator(".cuttle-combo-trigger").click()
-    search = combo.locator(".cuttle-combo-search")
+    popup = page.locator('.cuttle-combo-popup')
+    search = popup.locator(".cuttle-combo-search")
     search.wait_for(state="visible")
     search.fill("mus")
     page.wait_for_timeout(50)
-    options = combo.locator(".cuttle-combo-option")
+    options = popup.locator(".cuttle-combo-option")
     texts = options.all_inner_texts()
     assert any("Muse" in t for t in texts), texts
     assert all("Cursor" not in t for t in texts), texts
@@ -199,14 +240,15 @@ def test_project_modal_combobox_search_filters_branches(surface):
     )
     combo = page.locator('.cuttle-combo[data-for="chipConfigBranch"]')
     combo.locator(".cuttle-combo-trigger").click()
-    search = combo.locator(".cuttle-combo-search")
+    popup = page.locator('.cuttle-combo-popup')
+    search = popup.locator(".cuttle-combo-search")
     search.wait_for(state="visible")
     search.fill("dev")
     page.wait_for_timeout(50)
-    texts = combo.locator(".cuttle-combo-option").all_inner_texts()
+    texts = popup.locator(".cuttle-combo-option").all_inner_texts()
     assert any("dev" in t for t in texts), texts
     assert all("main" not in t for t in texts), texts
-    combo.locator(".cuttle-combo-option").first.click()
+    popup.locator(".cuttle-combo-option").first.click()
     page.wait_for_timeout(150)
     posts = [r for r in api.requests if r[0] == "/api/git/branch"]
     assert posts, "expected a POST /api/git/branch"
@@ -227,14 +269,15 @@ def test_model_combobox_lazy_loads_with_infinite_scroll(surface):
     )
     combo = page.locator('.cuttle-combo[data-for="chipConfigModel"]')
     combo.locator(".cuttle-combo-trigger").click()
-    options = combo.locator(".cuttle-combo-option")
+    popup = page.locator('.cuttle-combo-popup')
+    options = popup.locator(".cuttle-combo-option")
     page.wait_for_timeout(50)
     first_batch = options.count()
     # Only the first page is rendered, not the whole 150-row catalog.
     assert 0 < first_batch <= 60, first_batch
     assert first_batch < 150
     # Scrolling to the bottom appends the next page.
-    combo.locator(".cuttle-combo-list").evaluate("el => { el.scrollTop = el.scrollHeight; }")
+    popup.locator(".cuttle-combo-list").evaluate("el => { el.scrollTop = el.scrollHeight; }")
     page.wait_for_timeout(120)
     assert options.count() > first_batch
     assert not errors, errors

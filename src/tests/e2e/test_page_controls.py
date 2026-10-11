@@ -29,7 +29,7 @@ def test_floating_menu_handles_dialogs_keyboard_paging_and_removed_triggers(brow
         trigger = select.locator('..').locator('.cuttle-combo-trigger')
         trigger.click()
         menu = page.locator('.cuttle-combo-popup')
-        assert menu.bounding_box()['y'] + menu.bounding_box()['height'] <= trigger.bounding_box()['y']
+        assert abs(menu.bounding_box()['y'] + menu.bounding_box()['height'] - trigger.bounding_box()['y'] - 1) < 1
         assert menu.evaluate("el => el.matches(':popover-open')")
         menu.locator('[data-value="1"]').click(force=True)
         expect(select).to_have_value('0')

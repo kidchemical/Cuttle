@@ -225,10 +225,15 @@
             const upwards = below < 180 && above > below;
             const available = Math.max(60, upwards ? above : below);
             const panelHeight = Math.min(280, available);
+            // Join the trigger and panel at the same border. A six-pixel gap
+            // lines the panel up with the next row in compact settings forms.
+            const placement = upwards ? 'above' : 'below';
+            wrap.dataset.comboPlacement = placement;
+            panel.dataset.comboPlacement = placement;
             panel.style.width = Math.min(Math.max(rect.width, 180), width - 16) + 'px';
             panel.style.left = Math.max(left + 8, Math.min(rect.left, left + width - parseFloat(panel.style.width) - 8)) + 'px';
             panel.style.setProperty('--combo-list-height', Math.max(24, panelHeight - (searchable ? 42 : 0) - 10) + 'px');
-            panel.style.top = (upwards ? Math.max(top + 8, rect.top - panel.offsetHeight - 6) : rect.bottom + 6) + 'px';
+            panel.style.top = (upwards ? Math.max(top + 8, rect.top - panel.getBoundingClientRect().height + 1) : rect.bottom - 1) + 'px';
         }
 
         function onScroll(event) {
@@ -238,6 +243,7 @@
 
         function close() {
             wrap.classList.remove('is-open');
+            delete wrap.dataset.comboPlacement;
             panel.hidden = true;
             trigger.setAttribute('aria-expanded', 'false');
             trigger.removeAttribute('aria-activedescendant');
@@ -247,8 +253,12 @@
                 if (attachmentObserver) { attachmentObserver.disconnect(); attachmentObserver = null; }
                 if (panel.hidePopover) { try { panel.hidePopover(); } catch (_) {} }
                 panel.classList.remove('cuttle-combo-popup');
+                delete panel.dataset.comboPlacement;
                 panel.removeAttribute('popover');
-                wrap.insertBefore(panel, select);
+                // A change handler may rebuild the modal and destroy this
+                // control before choose() finishes closing its old menu.
+                if (select.parentNode === wrap) wrap.insertBefore(panel, select);
+                else panel.remove();
                 root.removeEventListener('resize', positionPanel);
                 doc.removeEventListener('scroll', onScroll, true);
                 if (root.visualViewport) {
@@ -404,7 +414,7 @@
         if (typeof root.MutationObserver === 'function') {
             observer = new root.MutationObserver(() => {
                 sync();
-                if (wrap.classList.contains('is-open')) rebuild();
+                if (wrap.classList.contains('is-open')) { rebuild(); positionPanel(); }
             });
             observer.observe(select, {
                 childList: true,

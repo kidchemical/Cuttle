@@ -193,6 +193,7 @@
                 const labelEl = field ? field.querySelector('.chip-config-field-label') : null;
                 root.CuttleSearchableSelect.enhance(sel, {
                     label: labelEl ? labelEl.textContent : '',
+                    floating: true,
                 });
             });
         }
@@ -240,7 +241,10 @@
             if (!modalEl) return;
             modalEl.classList.remove('active');
             const fields = modalEl.querySelector('#chipConfigFields');
-            if (fields) fields.innerHTML = '';
+            if (fields) {
+                fields.querySelectorAll('select').forEach(sel => sel.__cuttleSearchable?.destroy());
+                fields.innerHTML = '';
+            }
             // A project/worktree change may have moved the branch — refresh the chip.
             if (typeof h.refreshBranch === 'function') {
                 try { h.refreshBranch(); } catch (_) {}
@@ -252,6 +256,7 @@
             el.querySelector('#chipConfigTitle').textContent = title;
             el.querySelector('#chipConfigSubtitle').textContent = subtitle || '';
             const host_ = el.querySelector('#chipConfigFields');
+            host_.querySelectorAll('select').forEach(sel => sel.__cuttleSearchable?.destroy());
             host_.innerHTML = fieldsHtml;
             host_.querySelectorAll('.chip-config-select').forEach((sel) => {
                 sel._chipConfigSig = sel.innerHTML;
