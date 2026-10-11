@@ -792,6 +792,12 @@
     // one page-held state; claim, current-token test, and token-scoped
     // finish all go through the owner. Navigation fencing still uses the
     // existing navigation sequence captured per sync below.
+    // 3C (message sync) KEPT page-side after the post-3B review: session
+    // identity is owned by chat_session.js and every sync decision already
+    // has an owner (cadence + claim/replacement in chat_generation.js,
+    // replay classification in chat_pending_result.js, windowing/page-meta
+    // in chat_messages.js). Only the timer handle + DOM reconciliation
+    // effects remain, which the page owns; see monolith-refactor-plan.md §3C.
     const messageSync = CuttleChatGeneration.createSyncState();
     // Stop/cancel lifecycle flags { userStopped, abortSuppressed,
     // waitingSuppressed }, owned by chat_stop_state.js. One instance;
@@ -6525,8 +6531,7 @@
 
     /** Git-facing path for this chat: the bound checkout, else the project. */
     function effectiveGitPath() {
-        return currentCheckoutPath
-            || (currentProject && currentProject.path ? String(currentProject.path) : '');
+        return CuttleChatProject.effectiveGitPath(currentCheckoutPath, currentProject);
     }
 
     function reportProjectToShell(projectPath) {
@@ -6551,11 +6556,8 @@
         pendingChangesCtl = window.CuttlePendingChangesPanel.create({
             getProject: function () {
                 // Pending changes / git target the bound checkout when present.
-                if (!currentProject) return null;
-                return Object.assign({}, currentProject, {
-                    path: effectiveGitPath(),
-                    worktree: currentCheckoutUid ? (currentProjectBranch() || true) : '',
-                });
+                return CuttleChatProject.pendingChangesProject(
+                    currentProject, effectiveGitPath(), currentProjectBranch(), currentCheckoutUid);
             },
             getSessionId: function () { return session.current(); },
             getPrompts: function () {

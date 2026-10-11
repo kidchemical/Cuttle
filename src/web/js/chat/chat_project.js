@@ -1,10 +1,11 @@
 /* ================================================================
    Cuttle Chat — project context domain (chat_project.js)
    Owner: project-context subsystem. Pure project resolution, mapping,
-   and outbound decisions: no document, no window, no localStorage, no
+   git-facing cwd selection, pending-changes snapshot, and outbound
+   decisions: no document, no window, no localStorage, no
    fetch here (all inputs are explicit arguments). Loaded before
    chat_page.js; the chat page owns the singletons (`projects`,
-   `currentProject`, `currentSessionId`), session/prefs/server IO, DOM,
+   `currentProject`, `currentSessionId`, `currentCheckout*`), session/prefs/server IO, DOM,
    persistence writes, and orchestration, and calls into
    `CuttleChatProject.*`.
 
@@ -342,6 +343,31 @@
         return proj && proj.path ? String(proj.path) : '';
     }
 
+    /**
+     * Git-facing cwd for a chat: the bound worktree checkout when present,
+     * else the project path. Pure over explicit inputs — the chat page owns
+     * `currentCheckoutPath` / `currentProject` and passes them in.
+     */
+    function effectiveGitPath(checkoutPath, currentProject) {
+        const checkout = String(checkoutPath || '');
+        if (checkout) return checkout;
+        return (currentProject && currentProject.path) ? String(currentProject.path) : '';
+    }
+
+    /**
+     * Snapshot handed to the pending-changes panel / git viewers: the bound
+     * project with its git-facing path and an optional worktree label
+     * (`true` when the checkout has no known branch). Returns null when no
+     * project is bound. Pure.
+     */
+    function pendingChangesProject(currentProject, gitPath, branch, checkoutUid) {
+        if (!currentProject) return null;
+        return Object.assign({}, currentProject, {
+            path: String(gitPath || ''),
+            worktree: checkoutUid ? (branch || true) : '',
+        });
+    }
+
     const api = {
         normalizeProjectPath,
         findProjectById,
@@ -357,6 +383,8 @@
         rebindProjectToRegistry,
         applyOutboundProjectToRequest,
         currentProjectPathKey,
+        effectiveGitPath,
+        pendingChangesProject,
     };
 
     const ns = (root.CuttleChatProject = root.CuttleChatProject || {});

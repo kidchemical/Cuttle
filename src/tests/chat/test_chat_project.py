@@ -76,6 +76,16 @@ out.msgChip = P.projectFromMessageOpts(
   { slash_command: { chips: [{ meta: 'cwd E:/Projects/DemoGame' }] } }, projects, null);
 out.msgLive = P.projectFromMessageOpts({ live: true }, projects, EP);
 out.msgNone = P.projectFromMessageOpts({}, projects, null);
+// cwd / pending-changes resolution (Phase 3 slice 3E)
+out.gitPathCheckoutWins = P.effectiveGitPath('/worktrees/branch', EP);
+out.gitPathProjectOnly = P.effectiveGitPath('', EP);
+out.gitPathNone = P.effectiveGitPath('', null);
+out.pendingNoProject = P.pendingChangesProject(null, '/p', 'main', 'uid-1');
+out.pendingLocal = P.pendingChangesProject(EP, 'E:\\\\Projects\\\\DemoGame', '', '');
+out.pendingWorktreeBranch = P.pendingChangesProject(EP, '/worktrees/b', 'main', 'uid-1');
+out.pendingWorktreeNoBranch = P.pendingChangesProject(EP, '/worktrees/b', '', 'uid-1');
+out.pendingKeepsExtraFields = P.pendingChangesProject(
+  Object.assign({}, EP, { type: 'local', starred: true }), 'E:\\\\Projects\\\\DemoGame', '', '');
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -153,6 +163,37 @@ def test_message_opts_mapping():
     assert res["msgChip"]["id"] == 7
     assert res["msgLive"] == EP_OUT
     assert res["msgNone"] is None
+
+
+@node_only
+def test_effective_git_path_resolution():
+    """Git-facing cwd: bound checkout wins; else the project path; else ''."""
+    res = _run()
+    assert res["gitPathCheckoutWins"] == "/worktrees/branch"
+    assert res["gitPathProjectOnly"] == "E:\\Projects\\DemoGame"
+    assert res["gitPathNone"] == ""
+
+
+@node_only
+def test_pending_changes_project_snapshot():
+    """Snapshot handed to the pending-changes panel / git viewers."""
+    res = _run()
+    assert res["pendingNoProject"] is None
+    assert res["pendingLocal"] == {
+        "id": 7, "name": "Escape Purgatory",
+        "path": "E:\\Projects\\DemoGame", "worktree": "",
+    }
+    assert res["pendingWorktreeBranch"] == {
+        "id": 7, "name": "Escape Purgatory",
+        "path": "/worktrees/b", "worktree": "main",
+    }
+    # Bound checkout with no known branch labels the worktree with `true`.
+    assert res["pendingWorktreeNoBranch"]["worktree"] is True
+    # Extra registry fields on the project are preserved.
+    assert res["pendingKeepsExtraFields"]["type"] == "local"
+    assert res["pendingKeepsExtraFields"]["starred"] is True
+    assert res["pendingKeepsExtraFields"]["path"] == "E:\\Projects\\DemoGame"
+    assert res["pendingKeepsExtraFields"]["worktree"] == ""
 
 
 @node_only

@@ -314,6 +314,24 @@ owner, with no parallel model-selection implementations.
   reconciliation goes to `chat_messages.js`.
 - **Verify:** e2e `test_chat_sync_lifetime.py`, `test_chat_stream_reader.py`,
   `test_chat_message_pagination.py`.
+- **Decision (post-3B review): KEPT page-side.** The precondition is not
+  met. 3B made `chat_session.js` the sole owner of `currentSessionId` (no
+  page-side writer remains in `chat_page.js`); the timer reads through
+  `session.current()`/`session.navSeq()`, so it is a consumer of session
+  identity, not a tie. Every decision 3C would move already has an owner:
+  cadence + claim/replacement/release in `chat_generation.js`
+  (`decideSyncDelayMs`, `claimSync`/`isSyncCurrent`/`finishSync`),
+  per-message replay classification in
+  `chat_pending_result.classifyServerMessage`, windowing/page-meta in
+  `chat_messages.js` (pure), and pagination in `api.auth_db`. What remains
+  is the timer handle and DOM reconciliation (message query/stamp/append,
+  older-page prepend + scroll preservation) — effects the page owns as
+  composition root and `repository-map.md` records as page-side. Routing
+  them into the pure `chat_messages.js` would break its no-DOM contract and
+  need a ~40-property host bag (contra ARCHITECTURE_PRINCIPLES §8). Coupling
+  stays high (baseline out 61 / in 44) and `e2e/test_chat_sync_lifetime.py`
+  fences A→B→A and the 20 s claim replacement; no ownership benefit
+  justifies the risk. Page comment records the same at the sync state block.
 
 **3D — Cross-pane identity.**
 - One owner on each side (the page's `CuttleChatSession`, the shell's pane
