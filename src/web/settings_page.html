@@ -9,8 +9,8 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261007hdr2">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261011deviceUpdate">
-    <link rel="stylesheet" href="css/searchable_select.css?v=20261009combo1">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261011settingsCompactControls">
+    <link rel="stylesheet" href="css/searchable_select.css?v=20261011closedComboFix2">
 <link rel="stylesheet" href="/css/storage_settings.css?v=20261007">
 </head>
 <body class="compact-shell-page" data-page="settings">
@@ -57,8 +57,7 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Check for updates automatically</strong><button type="button" class="cuttle-info" data-tooltip="Check for a newer published Cuttle release when this Updates section opens. This never installs or restarts anything." aria-label="About Check for updates automatically">i</button>
-                        <div class="setting-description">Checks published releases automatically and enables first-launch release notes. You can always check manually.</div>
+                        <strong>Check for updates automatically</strong><button type="button" class="cuttle-info" data-tooltip="Check for a newer published Cuttle release when this Updates section opens and enable first-launch release notes. This never installs or restarts anything; you can always check manually." aria-label="About Check for updates automatically">i</button>
                     </div>
                     <div class="setting-control">
                         <label class="toggle-switch active" data-release-auto-toggle>
@@ -69,8 +68,7 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Device update source</strong><button type="button" class="cuttle-info" data-tooltip="HOST follows the Cuttle mesh this device is paired to (its working tree, no git push needed). OFFICIAL follows the upstream GitHub repo / published release. Applies to this device's Update button." aria-label="About Device update source">i</button>
-                        <div class="setting-description">Which channel this device updates from. <strong>HOST</strong> = the Cuttle mesh you're connected to; <strong>OFFICIAL</strong> = GitHub.</div>
+                        <strong>Device update source</strong><button type="button" class="cuttle-info" data-tooltip="Choose which channel this device updates from. HOST follows the Cuttle mesh this device is paired to (its working tree, no git push needed). OFFICIAL follows the upstream GitHub repo / published release. Applies to this device's Update button." aria-label="About Device update source">i</button>
                     </div>
                     <div class="setting-control">
                         <select class="setting-input" data-update-source>
@@ -81,8 +79,7 @@
                 </div>
                 <div class="setting-item setting-item--stack">
                     <div class="setting-label">
-                        <strong>Update this device</strong><button type="button" class="cuttle-info" data-tooltip="Pull the selected channel and restart Cuttle on THIS device. Unlike “Check for updates” (published GitHub releases), this actually updates the running install." aria-label="About Update this device">i</button>
-                        <div class="setting-description">Applies the selected source to this device now — git pull + restart. The titlebar Update button does the same.</div>
+                        <strong>Update this device</strong><button type="button" class="cuttle-info" data-tooltip="Pull the selected channel and restart Cuttle on THIS device. Unlike Check for updates (published GitHub releases), this actually updates the running install. The titlebar Update button does the same." aria-label="About Update this device">i</button>
                     </div>
                     <div class="setting-control setting-control--stack">
                         <div class="device-update-status" data-device-update-status role="status" aria-live="polite" hidden></div>
@@ -91,8 +88,7 @@
                 </div>
                 <div class="setting-item setting-item--stack">
                     <div class="setting-label">
-                        <strong>Phone app (Android / Capacitor)</strong><button type="button" class="cuttle-info" data-tooltip="The phone app updates itself from an APK this host serves at /api/mobile/android — it is not a mesh worker and does not use the device Update button. This shows the served APK and can rebuild it." aria-label="About Phone app">i</button>
-                        <div class="setting-description">APK served to the phone app. The phone shows its own “Update available” prompt. Rebuild re-runs Gradle <code>assembleDebug</code> on this host.</div>
+                        <strong>Phone app (Android / Capacitor)</strong><button type="button" class="cuttle-info" data-tooltip="The phone app updates itself from an APK this host serves at /api/mobile/android — it is not a mesh worker and does not use the device Update button. This shows the served APK and can rebuild it by re-running Gradle assembleDebug on this host." aria-label="About Phone app">i</button>
                     </div>
                     <div class="setting-control setting-control--stack">
                         <div class="device-update-status" data-android-status role="status" aria-live="polite" hidden></div>
@@ -113,12 +109,22 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Show total token and cost estimates for chat sessions</strong><button type="button" class="cuttle-info" data-tooltip="Show summed token usage and estimated cost below the chat composer." aria-label="About session usage estimates">i</button>
-                        <div class="setting-description">Displays totals for input, cached input, output, and estimated cost in each chat.</div>
+                        <strong>Show total token and cost estimates for chat sessions</strong><button type="button" class="cuttle-info" data-tooltip="Show summed input, cached input, and output tokens plus estimated cost below the chat composer in each chat." aria-label="About session usage estimates">i</button>
                     </div>
                     <div class="setting-control">
                         <label class="toggle-switch" id="sessionUsageEstimateToggle" onclick="toggleSessionUsageEstimate(event)">
                             <input type="checkbox" id="sessionUsageEstimateEnabled" style="display:none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-item" id="sessionUsageSubagentsSetting" hidden>
+                    <div class="setting-label">
+                        <strong>Include subagents</strong><button type="button" class="cuttle-info" data-tooltip="Include token usage and estimated cost from attached subagent sessions in each chat's totals." aria-label="About including subagents in usage estimates">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch" id="sessionUsageSubagentsToggle" onclick="toggleSessionUsageSubagents(event)">
+                            <input type="checkbox" id="sessionUsageSubagentsEnabled" style="display:none;">
                             <span class="slider"></span>
                         </label>
                     </div>
@@ -329,8 +335,7 @@
                 <h3 class="settings-title"><span class="emoji">⏱️</span> Timeouts <span class="settings-scope" data-scope="server" title="Stored in this server's settings; applies to every chat it runs.">This server</span><button type="button" class="cuttle-info" data-tooltip="How long an agent turn may run, and how long Cuttle waits for a subagent round before cancelling its unfinished work. Raise these for long coding tasks." aria-label="About Timeouts">i</button></h3>
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Agent run limit</strong>
-                        <div class="setting-description">Maximum seconds for one agent turn before Cuttle stops the harness. Streaming CLIs treat this as an idle budget, so a productive turn keeps going.</div>
+                        <strong>Agent run limit</strong><button type="button" class="cuttle-info" data-tooltip="Maximum seconds for one agent turn before Cuttle stops the harness. Streaming CLIs treat this as an idle budget, so a productive turn keeps going." aria-label="About Agent run limit">i</button>
                     </div>
                     <div class="setting-control">
                         <input type="number" id="agentRunTimeoutSeconds" class="setting-input" min="60" max="86400" step="60" inputmode="numeric" aria-label="Agent run limit in seconds">
@@ -339,8 +344,7 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Subagent supervision limit</strong>
-                        <div class="setting-description">How long a <code>--wait</code> subagent round may run before Cuttle cancels the work that has not finished.</div>
+                        <strong>Subagent supervision limit</strong><button type="button" class="cuttle-info" data-tooltip="How long a --wait subagent round may run before Cuttle cancels the work that has not finished." aria-label="About Subagent supervision limit">i</button>
                     </div>
                     <div class="setting-control">
                         <input type="number" id="subagentWaitTimeoutSeconds" class="setting-input" min="60" max="86400" step="60" inputmode="numeric" aria-label="Subagent supervision limit in seconds">
@@ -404,12 +408,8 @@
 
             <section class="settings-panel" id="panel-experimental" role="tabpanel" aria-labelledby="tab-experimental" tabindex="0" hidden>
             <div class="settings-intro">Try new features. Their tools live in Apps or the relevant settings tab.</div>
-            <details class="settings-disclosure">
-                <summary>About experiments</summary>
-                <p>Features may change. Each switch shows its current state. Set <code>CUTTLE_EXPERIMENTAL=0</code> in Cuttle's <code>.env</code> (<code>~/.local/share/cuttle</code> or <code>%LOCALAPPDATA%\Cuttle</code>) to force all experiments off.</p>
-            </details>
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🧪</span> Features <span class="settings-scope" data-scope="server" title="Stored in settings.json — these apply to every device and client that talks to this Cuttle.">All devices</span></h3>
+                <h3 class="settings-title"><span class="emoji">🧪</span> Features <span class="settings-scope" data-scope="server" title="Stored in settings.json — these apply to every device and client that talks to this Cuttle.">All devices</span><button type="button" class="cuttle-info" data-tooltip="Experimental features may change. Each switch shows its current state. Set CUTTLE_EXPERIMENTAL=0 in Cuttle's .env (~/.local/share/cuttle or %LOCALAPPDATA%\\Cuttle) to force all experiments off." aria-label="About experiments">i</button></h3>
                 <div id="experimentalFlagList" class="experimental-flag-list">
                     <div class="provider-status">Loading experimental features…</div>
                 </div>
@@ -777,9 +777,9 @@
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
     <script src="/js/settings/settings_releases.js?v=20261011androidRow"></script>
     <script src="/js/settings/settings_storage.js?v=20261007"></script>
-    <script src="/js/shared/searchable_select.js?v=20261009combo1"></script>
-    <script src="/js/settings/settings_model_picker.js?v=20261009a"></script>
-    <script src="/js/settings/settings_background_helpers.js?v=20261009b"></script>
+    <script src="/js/shared/searchable_select.js?v=20261011closedComboFix2"></script>
+    <script src="/js/settings/settings_model_picker.js?v=20261011allModelOptions"></script>
+    <script src="/js/settings/settings_background_helpers.js?v=20261011allModelOptions"></script>
     <script src="/js/settings/settings_voice_providers.js?v=20261009b"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
@@ -1181,6 +1181,14 @@
             select.value = current || '';
         }
 
+        function enhanceModelSelect(select, label) {
+            if (!select || !window.CuttleSearchableSelect) return;
+            select.setAttribute('aria-label', label || 'Model');
+            window.CuttleSearchableSelect.enhance(select, {
+                className: 'cuttle-combo--model', label: label || 'Model',
+            });
+        }
+
         function agentConfigRow(labelText, control, title) {
             const row = document.createElement('label');
             row.className = 'agent-config-row';
@@ -1221,6 +1229,7 @@
             const subModel = document.createElement('select'); subModel.className = 'setting-input';
             const subEffort = document.createElement('select'); subEffort.className = 'setting-input';
             const subModelRow = agentConfigRow('Subagent model', subModel);
+            enhanceModelSelect(subModel, 'Subagent model');
             const subEffortRow = agentConfigRow('Subagent effort', subEffort);
             let chosenSub = { agent: cliSelect.value, model: subagent.model || '', effort: subagent.effort || '' };
             const selectedCli = () => catalog.find(a => a.id === chosenSub.agent);
@@ -1298,10 +1307,12 @@
                     const effort = levels.includes(state.effort) ? state.effort : '';
                     save({ model, effort });
                 });
-                wrap.appendChild(agentConfigRow(
+                const modelRow = agentConfigRow(
                     'Default model', modelSel,
                     'Used by new turns unless a chat pins its own model (/' + agent.id + ' model …)'
-                ));
+                );
+                enhanceModelSelect(modelSel, (agent.label || agent.id) + ' default model');
+                wrap.appendChild(modelRow);
             }
 
             if (agent.supports_effort) {
@@ -1956,13 +1967,16 @@
             const id = escapeHtml(flag.id);
             const label = escapeHtml(flag.label);
             const riskClass = flag.risk === 'high' ? ' setting-item--risk' : '';
+            const help = [
+                flag.description,
+                flag.needs_restart ? 'Takes effect after a Flask restart.' : '',
+                flag.default ? 'On by default; turning this off hides it completely.' : '',
+            ].filter(Boolean).join(' ');
             return ''
                 + '<div class="setting-item' + riskClass + '" data-experimental-flag="' + id + '">'
                 + '  <div class="setting-label">'
                 + '    <strong>' + label + '</strong>'
-                + (flag.description ? '<button type="button" class="cuttle-info" data-tooltip="' + escapeHtml(flag.description) + '" aria-label="About ' + label + '">i</button>' : '')
-                + (flag.needs_restart ? '<div class="setting-description">🔁 Takes effect after a Flask restart.</div>' : '')
-                + (flag.default ? '<div class="setting-description">On by default — turning this off hides it completely.</div>' : '')
+                + (help ? '<button type="button" class="cuttle-info" data-tooltip="' + escapeHtml(help) + '" aria-label="About ' + label + '">i</button>' : '')
                 + '  </div>'
                 + '  <div class="setting-control">'
                 + '    <label class="toggle-switch' + (flag.enabled ? ' active' : '') + '" id="expFlagToggle-' + id + '" onclick="toggleExperimentalFlag(event, \'' + id + '\')">'
@@ -2299,6 +2313,18 @@
             checkbox.checked = !checkbox.checked;
             if (toggle) toggle.classList.toggle('active', checkbox.checked);
             localStorage.setItem('cuttleShowSessionUsageEstimate', checkbox.checked ? 'true' : 'false');
+            const subagentsSetting = document.getElementById('sessionUsageSubagentsSetting');
+            if (subagentsSetting) subagentsSetting.hidden = !checkbox.checked;
+        }
+
+        function toggleSessionUsageSubagents(event) {
+            if (event) event.preventDefault();
+            const checkbox = document.getElementById('sessionUsageSubagentsEnabled');
+            const toggle = document.getElementById('sessionUsageSubagentsToggle');
+            if (!checkbox) return;
+            checkbox.checked = !checkbox.checked;
+            if (toggle) toggle.classList.toggle('active', checkbox.checked);
+            localStorage.setItem('cuttleSessionUsageIncludeSubagents', checkbox.checked ? 'true' : 'false');
         }
 
         function showNotification(message, variant) {
@@ -2657,6 +2683,7 @@
             const notificationsEnabled = localStorage.getItem('notificationsEnabled') !== 'false';
             const responseChirpEnabled = localStorage.getItem('responseChirpEnabled') !== 'false';
             const sessionUsageEstimateEnabled = localStorage.getItem('cuttleShowSessionUsageEstimate') === 'true';
+            const sessionUsageSubagentsEnabled = localStorage.getItem('cuttleSessionUsageIncludeSubagents') === 'true';
             
             document.getElementById('agentName').value = agentName;
             document.getElementById('notificationsEnabled').checked = notificationsEnabled;
@@ -2664,6 +2691,12 @@
             if (usageEstimateCb) usageEstimateCb.checked = sessionUsageEstimateEnabled;
             const usageEstimateToggle = document.getElementById('sessionUsageEstimateToggle');
             if (usageEstimateToggle) usageEstimateToggle.classList.toggle('active', sessionUsageEstimateEnabled);
+            const usageSubagentsSetting = document.getElementById('sessionUsageSubagentsSetting');
+            if (usageSubagentsSetting) usageSubagentsSetting.hidden = !sessionUsageEstimateEnabled;
+            const usageSubagentsCb = document.getElementById('sessionUsageSubagentsEnabled');
+            if (usageSubagentsCb) usageSubagentsCb.checked = sessionUsageSubagentsEnabled;
+            const usageSubagentsToggle = document.getElementById('sessionUsageSubagentsToggle');
+            if (usageSubagentsToggle) usageSubagentsToggle.classList.toggle('active', sessionUsageSubagentsEnabled);
             const chirpCb = document.getElementById('responseChirpEnabled');
             if (chirpCb) chirpCb.checked = responseChirpEnabled;
             loadVideoBackgroundEnabledToggle();

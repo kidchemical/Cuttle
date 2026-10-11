@@ -1,0 +1,70 @@
+"""Characterization fences for the shell's pane lifetime contracts."""
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[3]
+SHELL = REPO / "src" / "web" / "js" / "shell"
+
+
+def test_navigation_preserves_page_url_and_history_contracts():
+    source = (SHELL / "app_shell.js").read_text(encoding="utf-8")
+    assert "function navigate(colIdx, page, opts)" in source
+    assert "pushShellBackEntry(state.page)" in source
+    assert "syncShellChatUrl(cid, { mode: histMode, page: page })" in source
+    assert "function applyShellHistoryState(page)" in source
+    assert "navigate(0, page, { history: 'none' })" in source
+
+
+def test_frame_lifetime_contracts_are_characterized():
+    source = (SHELL / "app_shell.js").read_text(encoding="utf-8")
+    assert "function replaceFrameInPlace(colIdx, page)" in source
+    assert "if (getSplitColumns().length > 1)" in source
+    assert "type: 'cuttle-pause-streams'" in source
+    assert "type: 'cuttle-pane-teardown'" in source
+    assert "frame.srcdoc = '<!doctype html><title></title>'" in source
+    assert "frameEl.dataset.shellLoadBound = '1'" in source
+    assert "e.data?.type === 'cuttle-page-ready'" in source
+
+
+def test_cross_pane_message_contracts_are_characterized():
+    source = (SHELL / "shell_panes.js").read_text(encoding="utf-8")
+    source += (SHELL / "app_shell.js").read_text(encoding="utf-8")
+    for message_type in (
+        "cuttle-live-status",
+        "cuttle-pending-changes-data",
+        "cuttle-open-panes",
+        "cuttle-pane-focus",
+        "cuttle-open-panes-request",
+    ):
+        assert message_type in source
+    assert "window.getOpenPaneSessions = getOpenPaneSessions" in source
+
+
+def test_pane_hubs_keep_session_scope_and_fan_out():
+    import shutil
+    import subprocess
+
+    if not shutil.which("node"):
+        return
+    source = (SHELL / "shell_panes.js").read_text(encoding="utf-8")
+    script = "global.window = {};\n" + source + r'''
+const assert = require('node:assert/strict');
+const frames = new Map([[0, { messages: [], contentWindow: { messages: [], postMessage(m) { this.messages.push(m); } } }]]);
+const columns = [{ dataset: { column: '0' } }];
+const win = { location: { origin: 'https://cuttle.test' } };
+const doc = { hidden: false, addEventListener() {}, querySelectorAll() { return []; } };
+const api = window.CuttleShellPanes.create({
+  win, doc, fetch: async () => ({ ok: true, json: async () => ({ success: true, statuses: { '42': { running: true } } }) }),
+  setTimeout: (fn) => { fn(); return 1; }, clearTimeout() {}, URL, URLSearchParams, AbortController,
+  getSplitColumns: () => columns, getLiveFrame: (i) => frames.get(i),
+  findColumnIndexForSource: () => 0, columnState: new Map([[0, { page: '/chat_page.html' }]]),
+  chatSurfaceKind: () => 'chat', broadcastToFrames: (m) => { frames.get(0).contentWindow.postMessage(m); },
+  isChatPageFrame: () => true,
+});
+api.registerPaneChatSession(frames.get(0).contentWindow, '42');
+assert.deepEqual(api.getOpenPaneSessions(), [{ sessionId: '42', pane: 1, column: 0, kind: 'chat', focused: true }]);
+api.setFocusedColumn(0);
+setTimeout(() => {
+  assert.ok(frames.get(0).contentWindow.messages.some((m) => m.type === 'cuttle-live-status' && m.sessionId === '42'));
+}, 0);
+'''
+    subprocess.run(["node", "-e", script], check=True)

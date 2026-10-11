@@ -35,6 +35,7 @@ const CANONICAL_RAIL_ITEM_ORDER = [
     'nav-achievements',
     'nav-agent-feed',
     'nav-gizmos',
+    'nav-test-lab',
     'nav-projects',
     'nav-apps',
 ];
@@ -48,9 +49,9 @@ const RAIL_LOCKED_IDS = new Set(['nav-apps']);
 // not page apps, but the Apps grid still lists them so they can be re-pinned.
 const HIDEABLE_FOOTER_IDS = new Set(['nav-workspace']);
 // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
+const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
 // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
-const RAIL_LAYOUT_VERSION = 9;
+const RAIL_LAYOUT_VERSION = 10;
 
 const DEFAULT_LAYOUT = {
     rail_items: CANONICAL_RAIL_ITEM_ORDER.filter(id => !DEFAULT_RAIL_HIDDEN.includes(id)),
@@ -526,267 +527,17 @@ function findColumnIndexForSource(source) {
     return 0;
 }
 
-// ── Split-pane live-status hub ─────────────────────────────────
-// Chromium shares ~6 HTTP/1.1 connections per origin across all chat iframes.
-// Per-pane live-status + message sync used to starve sibling panes (one updates,
-// refresh flips which one works). Shell owns one batch poll and fans out.
-let focusedColumnIdx = 0;
-const paneSessionByColumn = new Map(); // colIdx -> sessionId string
-/** Live-status is driven by the shell heartbeat (no dedicated interval). */
-let liveStatusHubArmed = false;
-let liveStatusHubInFlight = false;
-
-/** colIdx -> project path for pending-changes hub (dedupe by path across panes). */
-const paneProjectByColumn = new Map();
-let pendingChangesHubTimer = null;
-let pendingChangesPathInFlight = new Map(); // normalized path -> Promise
-
-const PENDING_CHANGES_VISIBLE_MS = 12000;
-const PENDING_CHANGES_HIDDEN_MS = 45000;
-
-function normalizeShellProjectPath(p) {
-    return String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-}
-
-function setFocusedColumn(idx) {
-    if (!Number.isFinite(idx) || idx < 0) return;
-    if (focusedColumnIdx === idx) return;
-    focusedColumnIdx = idx;
-    broadcastPaneFocus();
-}
-
-/** Nudge visible usage-live reports to rescan after a tab/space change.
- * Hidden frames stopped polling while away and nothing inside them fires
- * on the return transition; the chat frame's own rescan is idempotent. */
-function broadcastUsageLiveWake() {
-    document.querySelectorAll('.split-column .shell-main iframe').forEach((frame) => {
-        if (!isChatPageFrame(frame) || !frame.contentWindow) return;
-        try {
-            const live = frame.contentWindow.CuttleUsageLive;
-            if (live && typeof live.wake === 'function') {
-                live.wake();
-                return;
-            }
-        } catch (_) {}
-        try {
-            frame.contentWindow.postMessage({ type: 'cuttle-usage-live-wake' }, '*');
-        } catch (_) {}
-    });
-}
-
-function broadcastPaneFocus() {
-    document.querySelectorAll('.split-column').forEach((col) => {
-        const idx = parseInt(col.dataset.column, 10);
-        const frame = getLiveFrame(idx);
-        if (!frame || !frame.contentWindow) return;
-        try {
-            frame.contentWindow.postMessage({
-                type: 'cuttle-pane-focus',
-                focused: idx === focusedColumnIdx,
-                column: idx,
-            }, '*');
-        } catch (_) {}
-    });
-}
-
-function registerPaneChatSession(source, sessionId) {
-    const colIdx = findColumnIndexForSource(source);
-    if (sessionId == null || sessionId === '') {
-        paneSessionByColumn.delete(colIdx);
-    } else {
-        paneSessionByColumn.set(colIdx, String(sessionId));
-    }
-    ensureLiveStatusHub();
-    scheduleBroadcastOpenPanes();
-}
-
-/**
- * Chats/terminals actually showing in THIS window's split columns.
- * Local to this renderer (Electron/browser instance) — not the Flask
- * last-writer /api/shell/panes snapshot used by agents.
- */
-function getOpenPaneSessions() {
-    const cols = getSplitColumns();
-    const out = [];
-    cols.forEach((col, visualIdx) => {
-        const idx = parseInt(col.dataset.column, 10);
-        const state = columnState.get(idx);
-        const page = (state && state.page) || '';
-        let kind = null;
-        let sid = null;
-        try {
-            const url = new URL(page || '/chat_page.html', window.location.origin);
-            kind = chatSurfaceKind(url.pathname);
-            sid = url.searchParams.get('chat') || url.searchParams.get('session');
-        } catch (_) {}
-        const live = paneSessionByColumn.get(idx);
-        // Chat iframes report live session ids; don't let a stale chat id
-        // override a terminal (or other) surface in the same column.
-        if (kind === 'chat' && live) sid = live;
-        if (!kind || !sid) return;
-        out.push({
-            sessionId: String(sid),
-            pane: visualIdx + 1,
-            column: idx,
-            kind,
-            focused: idx === focusedColumnIdx,
-        });
-    });
-    return out;
-}
-
-function broadcastOpenPanes() {
-    const panes = getOpenPaneSessions();
-    broadcastToFrames({ type: 'cuttle-open-panes', panes });
-}
-
-let _openPanesBroadcastTimer = null;
-function scheduleBroadcastOpenPanes() {
-    if (_openPanesBroadcastTimer) return;
-    _openPanesBroadcastTimer = setTimeout(() => {
-        _openPanesBroadcastTimer = null;
-        try { broadcastOpenPanes(); } catch (_) {}
-    }, 40);
-}
-
-window.getOpenPaneSessions = getOpenPaneSessions;
-
-function ensureLiveStatusHub() {
-    if (liveStatusHubArmed) return;
-    liveStatusHubArmed = true;
-    // Immediate sample; cadence continues via runShellHeartbeat.
-    pollLiveStatusHub();
-}
-
-function registerPaneProject(source, projectPath) {
-    const colIdx = findColumnIndexForSource(source);
-    if (!Number.isFinite(colIdx) || colIdx < 0) return;
-    const path = projectPath != null && String(projectPath).trim()
-        ? String(projectPath).trim()
-        : '';
-    if (!path) {
-        paneProjectByColumn.delete(colIdx);
-    } else {
-        paneProjectByColumn.set(colIdx, path);
-        ensurePendingChangesHub();
-        // Fresh registration — sample this path once (deduped if already in flight).
-        refreshPendingChangesPath(path);
-    }
-}
-
-function uniquePaneProjectPaths() {
-    return [...new Set(
-        [...paneProjectByColumn.values()].filter((p) => p && String(p).trim())
-    )];
-}
-
-async function refreshPendingChangesPath(projectPath) {
-    const path = String(projectPath || '').trim();
-    if (!path) return;
-    const key = normalizeShellProjectPath(path);
-    if (pendingChangesPathInFlight.has(key)) {
-        return pendingChangesPathInFlight.get(key);
-    }
-    const work = (async () => {
-        try {
-            const qs = new URLSearchParams();
-            qs.set('path', path);
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 20000);
-            let data = null;
-            try {
-                const r = await fetch(
-                    '/api/git/pending-changes?' + qs.toString(),
-                    { credentials: 'include', cache: 'no-store', signal: controller.signal }
-                );
-                data = await r.json().catch(() => null);
-            } finally {
-                clearTimeout(timeout);
-            }
-            if (!data) return;
-            broadcastToFrames({
-                type: 'cuttle-pending-changes-data',
-                path,
-                data,
-            });
-        } catch (_) {
-        } finally {
-            pendingChangesPathInFlight.delete(key);
-        }
-    })();
-    pendingChangesPathInFlight.set(key, work);
-    return work;
-}
-
-async function pollPendingChangesHub() {
-    const paths = uniquePaneProjectPaths();
-    if (!paths.length) return;
-    await Promise.all(paths.map((p) => refreshPendingChangesPath(p)));
-}
-
-function pendingChangesHubDelayMs() {
-    return document.hidden ? PENDING_CHANGES_HIDDEN_MS : PENDING_CHANGES_VISIBLE_MS;
-}
-
-function schedulePendingChangesHub(immediate) {
-    if (pendingChangesHubTimer) {
-        clearTimeout(pendingChangesHubTimer);
-        pendingChangesHubTimer = null;
-    }
-    if (!uniquePaneProjectPaths().length) return;
-    const delay = immediate ? 0 : pendingChangesHubDelayMs();
-    pendingChangesHubTimer = setTimeout(async () => {
-        pendingChangesHubTimer = null;
-        try {
-            await pollPendingChangesHub();
-        } finally {
-            schedulePendingChangesHub(false);
-        }
-    }, delay);
-}
-
-function ensurePendingChangesHub() {
-    if (pendingChangesHubTimer) return;
-    schedulePendingChangesHub(true);
-}
-
-async function pollLiveStatusHub() {
-    if (liveStatusHubInFlight) return;
-    const ids = [...new Set([...paneSessionByColumn.values()].filter(Boolean))];
-    if (!ids.length) return;
-    liveStatusHubInFlight = true;
-    try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        let data = null;
-        try {
-            const r = await fetch(
-                '/api/chat-live-status-batch?session_ids=' + encodeURIComponent(ids.join(',')),
-                { credentials: 'include', cache: 'no-store', signal: controller.signal }
-            );
-            if (r.ok) data = await r.json();
-        } finally {
-            clearTimeout(timeout);
-        }
-        if (!data || !data.success || !data.statuses) return;
-        paneSessionByColumn.forEach((sid, colIdx) => {
-            const frame = getLiveFrame(colIdx);
-            if (!frame || !frame.contentWindow) return;
-            const status = data.statuses[String(sid)] || null;
-            try {
-                frame.contentWindow.postMessage({
-                    type: 'cuttle-live-status',
-                    sessionId: sid,
-                    status,
-                    focused: colIdx === focusedColumnIdx,
-                }, '*');
-            } catch (_) {}
-        });
-    } catch (_) {
-    } finally {
-        liveStatusHubInFlight = false;
-    }
-}
+// Pane hubs and focus state have one pane-lifetime owner.
+let paneController = null;
+function setFocusedColumn(idx) { paneController?.setFocusedColumn(idx); }
+function broadcastPaneFocus() { paneController?.broadcastFocus(); }
+function broadcastUsageLiveWake() { paneController?.broadcastUsageLiveWake(); }
+function registerPaneChatSession(source, sessionId) { paneController?.registerPaneChatSession(source, sessionId); }
+function getOpenPaneSessions() { return paneController ? paneController.getOpenPaneSessions() : []; }
+function registerPaneProject(source, projectPath) { paneController?.registerPaneProject(source, projectPath); }
+function refreshPendingChangesPath(path) { return paneController?.refreshPendingChangesPath(path); }
+function schedulePendingChangesHub(immediate) { paneController?.schedulePendingChangesHub(immediate); }
+function pollLiveStatusHub() { return paneController?.pollLiveStatusHub(); }
 
 document.addEventListener('pointerdown', (e) => {
     const col = e.target && e.target.closest ? e.target.closest('.split-column') : null;
@@ -904,7 +655,7 @@ function currentShellPage() {
         if (cid) return shellPageFromChatId(cid);
     } catch (_) {}
     try {
-        const live = paneSessionByColumn.get(0);
+        const live = paneController?.sessionForColumn(0);
         if (live) return shellPageFromChatId(live);
     } catch (_) {}
     return '/chat_page.html?new=1';
@@ -1155,7 +906,7 @@ window.addEventListener('message', function(e) {
     } else if (e.data.type === 'cuttle-pending-changes-refresh') {
         const path = e.data.path || '';
         if (path) refreshPendingChangesPath(path);
-        else schedulePendingChangesHub(true);
+        else paneController?.schedulePendingChangesHub(true);
     } else if (e.data.type === 'cuttle-pending-changes-changed') {
         // Commit/ignore/local refresh in one pane → one fetch (or fan-out payload)
         // for every sibling on the same project path.
@@ -1215,6 +966,7 @@ const PAGE_TITLES = {
     '/apps_page.html': 'Apps',
     '/achievements_page.html': 'Achievements',
     '/gizmos_page.html': 'Gizmos',
+    '/test_lab_page.html': 'Test Lab',
     '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',
     '/query_log.html': 'Query log',
@@ -1307,7 +1059,7 @@ function isChatPageFrame(frame) {
 
 function dispatchFocusedChatFind(action) {
     if (!action) return;
-    const focused = focusedColumnIdx;
+    const focused = paneController ? paneController.focusedColumnIndex() : 0;
     document.querySelectorAll('.split-column').forEach((col) => {
         const idx = parseInt(col.dataset.column, 10);
         const frame = getLiveFrame(idx);
@@ -1500,6 +1252,12 @@ function broadcastToFrames(message, skipWindow) {
         } catch (_) {}
     });
 }
+
+paneController = CuttleShellPanes.create({
+    win: window, doc: document, fetch, setTimeout, clearTimeout, URL, URLSearchParams,
+    AbortController, getSplitColumns, getLiveFrame, findColumnIndexForSource,
+    columnState, chatSurfaceKind, broadcastToFrames, isChatPageFrame,
+});
 
 applyUiAnimationPrefs();
 
@@ -1849,10 +1607,9 @@ function closeSplitColumn(colIdxOrEl) {
 
     frameRevealTokens.delete(colIdx);
     columnState.delete(colIdx);
-    paneSessionByColumn.delete(colIdx);
-    paneProjectByColumn.delete(colIdx);
+    paneController?.clearPaneColumn(colIdx);
     lastChatByColumn.delete(colIdx);
-    if (focusedColumnIdx === colIdx) focusedColumnIdx = 0;
+    if (paneController?.focusedColumnIndex() === colIdx) paneController.setFocusedColumnDirect(0);
 
     // Safe teardown — do not probe live iframe contentWindows (Chrome freeze).
     discardSplitSubtree(col);
@@ -2402,8 +2159,7 @@ function splitLeafColumn(targetCol, orientation, initialPage) {
     discardSplitSubtree(targetCol);
 
     columnState.delete(targetIdx);
-    paneSessionByColumn.delete(targetIdx);
-    paneProjectByColumn.delete(targetIdx);
+    paneController?.clearPaneColumn(targetIdx);
     frameRevealTokens.delete(targetIdx);
     lastChatByColumn.delete(targetIdx);
 
@@ -3018,10 +2774,9 @@ function removeExtraSplitColumnsNow() {
         const idx = parseInt(col.dataset.column, 10);
         frameRevealTokens.delete(idx);
         columnState.delete(idx);
-        paneSessionByColumn.delete(idx);
-        paneProjectByColumn.delete(idx);
+        paneController?.clearPaneColumn(idx);
         lastChatByColumn.delete(idx);
-        if (focusedColumnIdx === idx) focusedColumnIdx = 0;
+        if (paneController?.focusedColumnIndex() === idx) paneController.setFocusedColumnDirect(0);
         const parent = getLeafParentGroup(col);
         const prevSib = col.previousElementSibling;
         const nextSib = col.nextElementSibling;
@@ -3381,12 +3136,14 @@ function migrateUILayout(saved) {
     const hidden = new Set(Array.isArray(saved.rail_hidden) ? saved.rail_hidden : []);
     // Existing v4 user pins remain intact; only the new App starts stashed.
     const version = Number(saved.layout_version) || 0;
-    const additions = version >= 8 ? ['nav-mesh']
+    const additions = version >= 9 ? ['nav-test-lab']
+        : version >= 8 ? ['nav-mesh', 'nav-test-lab']
         : version >= 7 ? ['nav-agent-feed'] : version >= 6 ? ['nav-gizmos', 'nav-agent-feed']
         : version >= 5 ? ['nav-projects', 'nav-gizmos', 'nav-agent-feed']
         : version >= 4 ? ['nav-achievements', 'nav-projects', 'nav-gizmos', 'nav-agent-feed']
         : DEFAULT_RAIL_HIDDEN;
     additions.forEach(id => hidden.add(id));
+    hidden.add('nav-test-lab');
     const known = new Set(CANONICAL_RAIL_ITEM_ORDER);
     layout.rail_hidden = Array.from(hidden).filter(id => known.has(id));
     layout.rail_items = (Array.isArray(saved.rail_items) ? saved.rail_items : CANONICAL_RAIL_ITEM_ORDER)
@@ -3883,8 +3640,7 @@ function navigate(colIdx, page, opts) {
         pushShellBackEntry(state.page);
     }
     setState(colIdx, page);
-    paneSessionByColumn.delete(colIdx);
-    paneProjectByColumn.delete(colIdx);
+    paneController?.clearPaneColumn(colIdx);
 
     if (colIdx === 0) {
         sessionStorage.setItem(STORAGE_PAGE, page);
@@ -5721,7 +5477,7 @@ function exchangeCarriedPaneWithLive(load, srcId, targetCol) {
     persistSpacesState();
     persistLastChatHandles();
     persistSplitLayout();
-    focusedColumnIdx = idxT;
+    paneController?.setFocusedColumnDirect(idxT);
     broadcastPaneFocus();
     if (typeof window.showToast === 'function') {
         window.showToast('Swapped panes with ' + (src.name || 'space'), 'success');
@@ -6187,7 +5943,6 @@ function remumberSplitColumns() {
     const cols = getSplitColumns();
     const oldToNew = new Map();
     const nextState = new Map();
-    const nextSessions = new Map();
     const nextTokens = new Map();
     const nextChatHandles = new Map();
     const claimedOldIdx = new Set();
@@ -6203,7 +5958,6 @@ function remumberSplitColumns() {
             claimedOldIdx.add(oldIdx);
             oldToNew.set(oldIdx, newIdx);
             if (columnState.has(oldIdx)) nextState.set(newIdx, columnState.get(oldIdx));
-            if (paneSessionByColumn.has(oldIdx)) nextSessions.set(newIdx, paneSessionByColumn.get(oldIdx));
             if (frameRevealTokens.has(oldIdx)) nextTokens.set(newIdx, frameRevealTokens.get(oldIdx));
             if (lastChatByColumn.has(oldIdx)) {
                 nextChatHandles.set(newIdx, { ...lastChatByColumn.get(oldIdx) });
@@ -6215,8 +5969,7 @@ function remumberSplitColumns() {
 
     columnState.clear();
     nextState.forEach((v, k) => columnState.set(k, v));
-    paneSessionByColumn.clear();
-    nextSessions.forEach((v, k) => paneSessionByColumn.set(k, v));
+    paneController.remapColumns(oldToNew);
     frameRevealTokens.clear();
     nextTokens.forEach((v, k) => frameRevealTokens.set(k, v));
     // Keep in-flight frame reveals valid after index remap (avoids forever spinner).
@@ -6244,12 +5997,6 @@ function remumberSplitColumns() {
             || frames[frames.length - 1]
             || null;
         if (live0) live0.id = 'contentFrame';
-    }
-
-    if (oldToNew.has(focusedColumnIdx)) {
-        focusedColumnIdx = oldToNew.get(focusedColumnIdx);
-    } else {
-        focusedColumnIdx = 0;
     }
 
     syncSplitColumnLogos();
@@ -6317,7 +6064,7 @@ function reorderSplitColumn(fromCol, targetCol, _before) {
 
     swapMapKeys(columnState, idxA, idxB);
     swapMapKeys(lastChatByColumn, idxA, idxB);
-    swapMapKeys(paneSessionByColumn, idxA, idxB);
+    paneController.swapSessionColumns(idxA, idxB);
     swapMapKeys(frameRevealTokens, idxA, idxB);
 
     // Slots keep their indices; contents trade. Re-apply explicit pages after the map swap.
@@ -6336,8 +6083,7 @@ function reorderSplitColumn(fromCol, targetCol, _before) {
     const frameB = replaceFrame(idxB, pageA);
     if (frameB) attachFrameLoadListener(idxB, frameB);
 
-    if (focusedColumnIdx === idxA) focusedColumnIdx = idxB;
-    else if (focusedColumnIdx === idxB) focusedColumnIdx = idxA;
+    paneController.swapColumns(idxA, idxB);
 
     persistLastChatHandles();
     persistSplitLayout();
@@ -6909,8 +6655,8 @@ async function runShellHeartbeat() {
         if (typeof window.__cuttleShellPollWorkers === 'function') {
             tasks.push(Promise.resolve(window.__cuttleShellPollWorkers()));
         }
-        if (paneSessionByColumn.size > 0) {
-            tasks.push(pollLiveStatusHub());
+        if (paneController?.hasSessions()) {
+            tasks.push(paneController?.pollLiveStatusHub());
         }
         tasks.push(refreshSpaceActivityFromServer());
         await Promise.all(tasks);
@@ -6941,7 +6687,7 @@ document.addEventListener('visibilitychange', () => {
     applyShellBackgroundPaused(document.hidden);
     // Immediate beat on focus so badges/toasts catch up after a long hide.
     scheduleShellHeartbeat(true);
-    schedulePendingChangesHub(true);
+    paneController?.schedulePendingChangesHub(true);
 });
 scheduleShellHeartbeat(true);
 

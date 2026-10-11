@@ -702,6 +702,20 @@ body.compact-shell-page .control-button {
     max-width: 100%;
     box-sizing: border-box;
 }
+body.compact-shell-page .settings-panel select.setting-input,
+body.compact-shell-page .settings-panel .cuttle-combo-trigger {
+    height: 34px;
+    min-height: 34px;
+    box-sizing: border-box;
+}
+body.compact-shell-page .settings-panel .control-button {
+    height: 34px;
+    min-height: 34px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.84rem;
+    line-height: 1.2;
+}
 body.compact-shell-page .setting-control input.setting-input {
     min-width: 0;
 }
@@ -821,19 +835,64 @@ body.compact-shell-page button.cuttle-info {
 .background-executor { padding: 12px; margin: 8px 0; border: 1px solid var(--border-color, #555); border-radius: 8px; }
 .background-executor .provider-picker { margin-bottom: 8px; }
 .background-executor input[type="number"] { width: 125px; }
-.background-helper-dropdown .cuttle-combo-list {
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-}
-.background-helper-dropdown .cuttle-combo-list::-webkit-scrollbar {
-    display: none;
-}
-
 /* Shared searchable select (js/shared/searchable_select.js) in Settings. */
 .setting-control--column > .cuttle-combo,
 .setting-item .cuttle-combo {
     width: 100%;
     max-width: 100%;
+}
+
+/* In Settings, searchable triggers should look like the native setting inputs.
+   Keep the shared chip-modal skin unchanged everywhere else. */
+.settings-panel .cuttle-combo-trigger {
+    min-height: 34px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    background-color: var(--bg-secondary);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+.settings-panel .cuttle-combo-trigger:focus-visible {
+    border-color: var(--accent-color);
+    box-shadow: none;
+}
+.settings-panel .cuttle-combo-panel {
+    border-color: var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+}
+.settings-panel .cuttle-combo-search {
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+.settings-panel .cuttle-combo-option {
+    padding: 8px 12px;
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+.settings-panel .cuttle-combo-option:hover,
+.settings-panel .cuttle-combo-option.is-active {
+    background: var(--panel-hover);
+}
+.settings-panel .cuttle-combo-option.is-selected {
+    color: var(--accent-color);
+}
+.settings-panel .cuttle-combo-empty {
+    color: var(--text-secondary);
+}
+
+.agent-config-row > .cuttle-combo {
+    flex: 0 1 60%;
+    min-width: 0;
+}
+.agent-config-row .cuttle-combo-trigger {
+    min-height: 34px;
+    padding: 3px 6px;
+    font-size: 0.74rem;
 }
 
 .provider-picker .cuttle-combo {
