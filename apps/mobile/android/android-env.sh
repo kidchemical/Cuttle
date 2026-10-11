@@ -9,6 +9,7 @@
 #   cd apps/mobile/android && ./gradlew assembleDebug
 
 CUTTLE_HOME_DIR="${CUTTLE_HOME:-$HOME/.local/share/cuttle}"
+export CUTTLE_HOME="$CUTTLE_HOME_DIR"   # build.gradle resolves secrets/ from this
 CUTTLE_ANDROID_TOOLS="${CUTTLE_ANDROID_TOOLS:-$CUTTLE_HOME_DIR/toolchains/android}"
 export JAVA_HOME="${JAVA_HOME:-$CUTTLE_ANDROID_TOOLS/jdk}"
 export ANDROID_HOME="${ANDROID_HOME:-$CUTTLE_ANDROID_TOOLS/sdk}"
