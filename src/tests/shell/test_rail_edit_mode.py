@@ -128,7 +128,7 @@ assert.ok(rails.every((r) => !r.classList.contains('rail-editing')));
 assert.equal(scrim.hidden, true);
 assert.equal(hidePickerCalls, 2);
 """
-    subprocess.run(["node", "-"], input=script, text=True, check=True)
+    subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
 
 
 def test_edit_mode_jiggle_css_present():

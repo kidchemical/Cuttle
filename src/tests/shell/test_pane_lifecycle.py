@@ -60,7 +60,7 @@ const count = calls.length;
 api.navigate(0, '/settings_page.html');
 assert.equal(calls.length, count, 'same-page navigation is a no-op');
 '''
-    subprocess.run(["node", "-"], input=script, text=True, check=True)
+    subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
 
 
 def test_frame_lifetime_contracts_are_characterized():
@@ -128,4 +128,4 @@ setTimeout(() => {
   assert.ok(frames.get(0).contentWindow.messages.some((m) => m.type === 'cuttle-live-status' && m.sessionId === '42'));
 }, 0);
 '''
-    subprocess.run(["node", "-"], input=script, text=True, check=True)
+    subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
