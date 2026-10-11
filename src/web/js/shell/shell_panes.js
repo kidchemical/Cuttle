@@ -645,5 +645,20 @@
             setFocusedColumnDirect, sessionForColumn, sessionForColumnExists, swapSessionColumns };
     }
 
-    root.CuttleShellPanes = { create };
+    /** Pane-layout decision (pure): equalize two adjacent panes to their shared
+     *  average. Returns a new array; invalid indices are a no-op. The caller
+     *  owns measurement + apply. */
+    function equalizeAdjacentSizes(sizes, leftPos, rightPos) {
+        if (!Array.isArray(sizes)
+            || !Number.isInteger(leftPos) || !Number.isInteger(rightPos)
+            || leftPos < 0 || rightPos < 0
+            || leftPos >= sizes.length || rightPos >= sizes.length) {
+            return sizes;
+        }
+        const out = sizes.slice();
+        out[leftPos] = out[rightPos] = (Number(sizes[leftPos]) + Number(sizes[rightPos])) / 2;
+        return out;
+    }
+
+    root.CuttleShellPanes = { create, equalizeAdjacentSizes };
 })(window);

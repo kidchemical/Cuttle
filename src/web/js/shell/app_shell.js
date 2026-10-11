@@ -3932,8 +3932,9 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
         if (!cols[leftPos] || !cols[rightPos] || isPaneCollapsedEl(cols[leftPos]) || isPaneCollapsedEl(cols[rightPos])) return;
         e.preventDefault();
         const ori = getGroupOrientation(groupEl);
-        const sizes = cols.map(c => measureSplitMain(c, ori));
-        sizes[leftPos] = sizes[rightPos] = (sizes[leftPos] + sizes[rightPos]) / 2;
+        // The equalize decision lives in the pane owner; the page measures + applies.
+        const sizes = CuttleShellPanes.equalizeAdjacentSizes(
+            cols.map(c => measureSplitMain(c, ori)), leftPos, rightPos);
         applySplitRatioFlex(cols, sizes, ori, groupEl);
         persistSplitLayout();
     });
