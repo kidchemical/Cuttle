@@ -12432,7 +12432,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             ${historyAttentionIconHTML(attention)}
             ${subToggle}
             <div class="history-item-body">
-                ${historyItemMetaHTML([parts.chipsHtml, projectChip, discordBadge, subagentBadge, contentBadge, subCountBadge, badge, starredIcon, runningIcon])}
+                ${historyItemMetaHTML([projectChip, parts.chipsHtml, discordBadge, subagentBadge, contentBadge, subCountBadge, badge, starredIcon, runningIcon])}
                 <div class="chat-title">${parts.titleHtml}</div>
                 ${snippetHtml}
             </div>
@@ -12466,8 +12466,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             : '';
         const meta = historyItemMetaHTML([
             '<span class="chat-icon">💬</span>',
-            parts.chipsHtml,
             projectChip,
+            parts.chipsHtml,
             contentBadge,
             starred ? historyStarredIconHTML() : '',
             running ? historyRunningIconHTML() : '',
