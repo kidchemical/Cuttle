@@ -957,6 +957,18 @@ def submit_self_update(
     # Deliver all three files as one contract. Missing/empty Host files refuse
     # submission rather than falling back to an old Client lifecycle script.
     scripts_dir = Path(__file__).resolve().parents[3] / ".cuttle_global" / "scripts"
+    # This Host's pinned TLS SPKI, embedded into the delivered helper so the
+    # Client can reach us over HTTPS even when its own config has no pin. The
+    # pin is public (a cert fingerprint), not a secret.
+    host_pin = ""
+    try:
+        from api.tls_cert import current_fingerprint
+
+        host_pin = str((current_fingerprint() or {}).get("spki_sha256") or "")
+    except Exception:
+        host_pin = ""
+    if host_pin:
+        params["host_spki"] = host_pin
     for name, key in (
         ("client-self-update.ps1", "script_text"),
         ("client-self-update.sh", "script_text_posix"),
@@ -965,6 +977,8 @@ def submit_self_update(
         text = (scripts_dir / name).read_text(encoding="utf-8")
         if not text.strip():
             raise RuntimeError(f"self-update delivery file is empty: {name}")
+        if name == "client-update-checkout.py" and host_pin:
+            text = text.replace('EMBEDDED_HOST_SPKI = ""', f'EMBEDDED_HOST_SPKI = {host_pin!r}')
         params[key] = text
     params["script_name"] = "client-self-update.ps1"
     params["script_name_posix"] = "client-self-update.sh"

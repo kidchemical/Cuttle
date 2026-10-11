@@ -26,6 +26,13 @@ class UpdateRefused(RuntimeError):
     pass
 
 
+# The Host substitutes its pinned TLS SPKI here when it delivers this helper, so
+# the Client can reach the Host over HTTPS even when its own config has no pin
+# (the pin is public — the Host's cert fingerprint — and travels over the
+# already-trusted job channel). Empty on the checkout copy; set by submit.
+EMBEDDED_HOST_SPKI = ""
+
+
 def git(repo: Path, *args: str) -> bytes:
     result = subprocess.run(['git', '-C', str(repo), *args], capture_output=True, timeout=180)
     if result.returncode:
@@ -67,20 +74,43 @@ def _fast_forward(repo: Path, target: bytes) -> None:
 
 
 def _read_desktop_config() -> dict:
-    """The Client's Electron desktop-config (host + pinned TLS identity)."""
+    """The Client's Electron desktop-config (host + pinned TLS identity).
+
+    Electron sets ``userData`` to ``~/.config/cuttle-desktop-{client,host}`` on
+    every platform (electron/main.js), while the daemon/sidecar use
+    ``%LOCALAPPDATA%\\cuttle-desktop``. Check both so the paired host, httpsPort
+    and TLS pins are found wherever the app wrote them.
+    """
+    home = Path.home()
+    xdg = os.environ.get('XDG_CONFIG_HOME') or str(home / '.config')
     cands = []
-    base = os.environ.get('LOCALAPPDATA') or os.environ.get('APPDATA')
-    if base:
-        cands.append(Path(base) / 'cuttle-desktop' / 'desktop-config.json')
-    xdg = os.environ.get('XDG_CONFIG_HOME') or str(Path.home() / '.config')
-    cands.append(Path(xdg) / 'cuttle-desktop' / 'desktop-config.json')
+    for base in (os.environ.get('LOCALAPPDATA'), os.environ.get('APPDATA')):
+        if base:
+            cands.append(Path(base) / 'cuttle-desktop' / 'desktop-config.json')
+    for name in ('cuttle-desktop-client', 'cuttle-desktop-host', 'cuttle-desktop'):
+        cands.append(Path(xdg) / name / 'desktop-config.json')
+    primary = {}
+    merged_pins = {}
     for path in cands:
         try:
-            if path.is_file():
-                return json.loads(path.read_text(encoding='utf-8')) or {}
+            if not path.is_file():
+                continue
+            data = json.loads(path.read_text(encoding='utf-8')) or {}
+            if not isinstance(data, dict):
+                continue
+            pins = data.get('tlsPins')
+            if isinstance(pins, dict):
+                merged_pins.update(pins)
+            if not str(primary.get('host') or '').strip() and str(data.get('host') or '').strip():
+                primary = data
+            elif not primary and data:
+                primary = data
         except Exception:
             continue
-    return {}
+    out = dict(primary)
+    if merged_pins:
+        out['tlsPins'] = {**merged_pins, **(out.get('tlsPins') or {})}
+    return out
 
 
 def _download_host_bundle(repo: Path, host_base: str, spki: str) -> 'tuple[str, str]':
@@ -137,7 +167,7 @@ def update_checkout(
                 raise UpdateRefused('host source: no paired host in desktop-config.json')
             port = int(cfg.get('httpsPort') or 0) or 0
             base = f'https://{host_name}:{port}' if port else f'https://{host_name}'
-            pin = spki
+            pin = spki or EMBEDDED_HOST_SPKI
             if not pin:
                 try:
                     from api.tls_cert import desktop_pin
