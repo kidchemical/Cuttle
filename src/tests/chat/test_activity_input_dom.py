@@ -44,6 +44,7 @@ def test_input_card_submit_and_remove_update_title_history_and_space():
         const sessionHasActiveFollowup = () => false; const sessionHasPausedFollowup = () => false;
         const chatAttentionActive = () => false; const chatAttentionIsError = false;
         const isAuthMode = () => true; const findAuthServerSession = () => null;
+        const sessionShowsHistorySpinner = () => false;
         const sessionHistoryAttentionKind = sid => CuttleChatActivity.sessionHistoryAttentionKind({prefs: getSessionPrefs(sid)});
         const syncHistorySubagentAttention = () => {};
         const scheduleChatActivityBroadcast = () => {};
@@ -64,6 +65,7 @@ def test_input_card_submit_and_remove_update_title_history_and_space():
         ''')
         for name in ['historyUnreadIconHTML', 'historyQueuedIconHTML', 'historyPausedIconHTML',
                      'historyAttentionIconHTML', 'updateSessionTitleUnreadDot',
+                     'syncHistoryLeftStatusIcon',
                      'syncHistoryProjectAttentionIndicators', 'syncHistoryUnreadIndicators', 'syncHistoryFormAwaitingFromDom']:
             page.add_script_tag(content=_function(name))
         page.evaluate('syncHistoryFormAwaitingFromDom()')

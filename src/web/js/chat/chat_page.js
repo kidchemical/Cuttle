@@ -3004,6 +3004,7 @@
     }
 
     function historyAttentionIconHTML(kind) {
+        if (kind === 'running') return historyRunningIconHTML();
         if (kind === 'input') return '<span class="history-input-icon" title="Awaiting your input" aria-label="Awaiting your input"></span>';
         if (kind === 'error') return historyUnreadIconHTML(true);
         if (kind === 'unread') return historyUnreadIconHTML(false);
@@ -3098,6 +3099,27 @@
         });
     }
 
+    /** Paint the single far-left status glyph for a history row. */
+    function syncHistoryLeftStatusIcon(item, kind) {
+        const wanted = kind === 'running' ? 'history-running-icon'
+            : kind === 'input' ? 'history-input-icon'
+            : (kind === 'unread' || kind === 'error') ? 'history-unread-icon'
+            : kind === 'queued' ? 'history-queued-icon'
+            : kind === 'paused' ? 'history-paused-icon'
+            : '';
+        const selector = ':scope > .history-running-icon, :scope > .history-unread-icon,'
+            + ' :scope > .history-queued-icon, :scope > .history-paused-icon,'
+            + ' :scope > .history-input-icon';
+        const current = item.querySelector(selector);
+        if (current && wanted && current.classList.contains(wanted)) {
+            if (wanted === 'history-unread-icon') current.classList.toggle('is-error', kind === 'error');
+            return;
+        }
+        if (current) current.remove();
+        if (!wanted) return;
+        item.insertAdjacentHTML('afterbegin', historyAttentionIconHTML(kind));
+    }
+
     function syncHistoryUnreadIndicators() {
         document.querySelectorAll('.chat-history-item').forEach((item) => {
             const sid = item.dataset.sessionId;
@@ -3111,59 +3133,21 @@
                     sessionObj = sessions[sid] || null;
                 } catch (_) {}
             }
-            const kind = sessionHistoryAttentionKind(sid, sessionObj);
-            item.classList.toggle('has-unread', kind === 'unread' || kind === 'error');
-            item.classList.toggle('has-unread-error', kind === 'error');
-            item.classList.toggle('has-queued', kind === 'queued');
-            item.classList.toggle('has-paused-queue', kind === 'paused');
-            let inputIcon = item.querySelector('.history-input-icon');
-            if (kind !== 'input' && inputIcon) { inputIcon.remove(); inputIcon = null; }
-            item.classList.toggle('has-input', kind === 'input');
-            let unreadIcon = item.querySelector('.history-unread-icon');
-            let queuedIcon = item.querySelector('.history-queued-icon');
-            let pausedIcon = item.querySelector('.history-paused-icon');
-            const clearAll = () => {
-                if (unreadIcon) { unreadIcon.remove(); unreadIcon = null; }
-                if (queuedIcon) { queuedIcon.remove(); queuedIcon = null; }
-                if (pausedIcon) { pausedIcon.remove(); pausedIcon = null; }
-            };
-            if (kind === 'input') {
-                clearAll();
-                if (!inputIcon) item.insertAdjacentHTML('afterbegin', historyAttentionIconHTML('input'));
-            } else if (kind === 'error' || kind === 'unread') {
-                if (queuedIcon) queuedIcon.remove();
-                if (pausedIcon) pausedIcon.remove();
-                if (!unreadIcon) {
-                    unreadIcon = document.createElement('span');
-                    unreadIcon.className = 'history-unread-icon';
-                    item.insertBefore(unreadIcon, item.firstChild);
-                }
-                unreadIcon.classList.toggle('is-error', kind === 'error');
-                unreadIcon.title = kind === 'error' ? 'Unread error' : 'Unread';
-                unreadIcon.setAttribute('aria-label', kind === 'error' ? 'Unread error' : 'Unread');
-            } else if (kind === 'queued') {
-                if (unreadIcon) unreadIcon.remove();
-                if (pausedIcon) pausedIcon.remove();
-                if (!queuedIcon) {
-                    queuedIcon = document.createElement('span');
-                    queuedIcon.className = 'history-queued-icon';
-                    queuedIcon.title = 'Queued prompt';
-                    queuedIcon.setAttribute('aria-label', 'Queued prompt');
-                    item.insertBefore(queuedIcon, item.firstChild);
-                }
-            } else if (kind === 'paused') {
-                if (unreadIcon) unreadIcon.remove();
-                if (queuedIcon) queuedIcon.remove();
-                if (!pausedIcon) {
-                    pausedIcon = document.createElement('span');
-                    pausedIcon.className = 'history-paused-icon';
-                    pausedIcon.title = 'Paused queue';
-                    pausedIcon.setAttribute('aria-label', 'Paused queued prompt');
-                    item.insertBefore(pausedIcon, item.firstChild);
-                }
-            } else {
-                clearAll();
-            }
+            // One status slot on the left: an active run wins over the attention
+            // dot so the spinner and unread markers never sit on two lines.
+            const running = sessionShowsHistorySpinner(sid);
+            const attention = running ? '' : sessionHistoryAttentionKind(sid, sessionObj);
+            const kind = running ? 'running' : attention;
+            item.classList.toggle('is-running', running);
+            item.classList.toggle('has-unread', attention === 'unread' || attention === 'error');
+            item.classList.toggle('has-unread-error', attention === 'error');
+            item.classList.toggle('has-queued', attention === 'queued');
+            item.classList.toggle('has-paused-queue', attention === 'paused');
+            item.classList.toggle('has-input', attention === 'input');
+            syncHistoryLeftStatusIcon(item, kind);
+            // Older markup parked the spinner in the meta line; clear it here.
+            const metaSpinner = item.querySelector('.history-item-meta .history-running-icon');
+            if (metaSpinner) metaSpinner.remove();
         });
         syncHistoryProjectAttentionIndicators();
         syncHistorySubagentAttention();
@@ -11778,11 +11762,14 @@ function downloadTranscriptMarkdown(text, sessionId) {
         return actionCardsController().awaitingSessionId(card);
     }
 
-    /** Keep history spinners in sync with pending action forms (restart / watch). */
+    /** Keep history spinners in sync with action forms that are actually executing.
+     *
+     * A form merely waiting for the user (unlocked question, a Flask-restart
+     * card still "Checking restart status…") is not work: the blue input dot
+     * owns it. Only a submitted/adopted restart or a running watch spins. */
     function syncHistoryFormAwaitingFromDom() {
         const next = new Set();
-        document.querySelectorAll('.cuttle-action-form.is-pending').forEach((card) => {
-            const sid = formAwaitingSessionIdFromCard(card);
+        actionCardsController().processingSessionIds().forEach((sid) => {
             if (sid == null || sid === '') return;
             next.add(String(canonicalizeChatSessionId(sid)));
         });
@@ -11843,26 +11830,11 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
 
     function syncHistoryRunningIndicators() {
-        document.querySelectorAll('.chat-history-item').forEach(item => {
-            const sid = item.dataset.sessionId;
-            const running = sessionShowsHistorySpinner(sid);
-            item.classList.toggle('is-running', running);
-            let icon = item.querySelector('.history-running-icon');
-            if (running && !icon) {
-                icon = document.createElement('span');
-                icon.className = 'history-running-icon';
-                icon.title = 'Active…';
-                icon.setAttribute('aria-label', 'Active');
-                const meta = historyItemMetaEl(item);
-                if (meta) meta.appendChild(icon);
-                else item.appendChild(icon);
-            } else if (!running && icon) {
-                icon.remove();
-            }
-        });
-        syncHistorySubagentAttention();
+        // The running spinner shares the far-left status slot with the unread /
+        // input / queue dots; syncHistoryUnreadIndicators owns that slot and the
+        // is-running class. Only the title icon is running-specific.
+        syncHistoryUnreadIndicators();
         updateSessionTitleRunningIcon();
-        scheduleChatActivityBroadcast();
     }
 
     /** Space tabs (app shell) mirror these dots. Push only the chats this
@@ -11973,11 +11945,10 @@ function downloadTranscriptMarkdown(text, sessionId) {
     function applyGeneratingFlagsFromSessions(serverSessions) {
         const currentWasRunning = currentSessionId != null
             && [...runningSessionIds].some((rid) => sessionIdsEqual(rid, currentSessionId));
-        // Only mounted work in the open chat may supplement server execution.
+        // Only executing work in the open chat may supplement server execution.
         // Entries left behind by another chat must yield to an idle snapshot.
         const localPending = new Set();
-        document.querySelectorAll('.cuttle-action-form.is-pending').forEach(card => {
-            const sid = formAwaitingSessionIdFromCard(card);
+        actionCardsController().processingSessionIds().forEach(sid => {
             if (sessionIdsEqual(sid, currentSessionId)) localPending.add(String(canonicalizeChatSessionId(sid)));
         });
         const still = new Set();
@@ -12361,7 +12332,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         const pausedClass = attention === 'paused' ? ' has-paused-queue' : '';
         const starred = !!Number(s.starred);
         const starredClass = starred ? ' is-starred' : '';
-        const runningIcon = running ? historyRunningIconHTML() : '';
+        const statusKind = running ? 'running' : attention;
         const starredIcon = starred ? historyStarredIconHTML() : '';
         const count = Number(s.message_count) || 0;
         const origin = String(s.origin || '').trim().toLowerCase();
@@ -12429,10 +12400,10 @@ function downloadTranscriptMarkdown(text, sessionId) {
             ? `<span class="history-kind-badge history-match-badge" title="Matched in message body">In messages</span>`
             : '';
         return `<div class="chat-history-item${active}${runningClass}${unreadClass}${errorClass}${queuedClass}${pausedClass}${starredClass}${openClass}${subagentClass}${hasSubagentsClass}" data-session-id="${sid}" data-parent-session-id="${escapeHtml(parentId)}" data-search-match="${isContentMatch ? 'content' : 'title'}" data-chat-title="${escapeHtml(title).replace(/"/g, '&quot;')}" onclick="window.chatPageLoadSession('${sid}')">
-            ${historyAttentionIconHTML(attention)}
+            ${historyAttentionIconHTML(statusKind)}
             ${subToggle}
             <div class="history-item-body">
-                ${historyItemMetaHTML([projectChip, parts.chipsHtml, discordBadge, subagentBadge, contentBadge, subCountBadge, badge, starredIcon, runningIcon])}
+                ${historyItemMetaHTML([projectChip, parts.chipsHtml, discordBadge, subagentBadge, contentBadge, subCountBadge, badge, starredIcon])}
                 <div class="chat-title">${parts.titleHtml}</div>
                 ${snippetHtml}
             </div>
@@ -12470,8 +12441,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
             parts.chipsHtml,
             contentBadge,
             starred ? historyStarredIconHTML() : '',
-            running ? historyRunningIconHTML() : '',
         ]);
+        const statusKind = running ? 'running' : attention;
         const unreadClass = attention === 'input' ? ' has-input' : (attention === 'unread' || attention === 'error') ? ' has-unread' : '';
         const errorClass = attention === 'error' ? ' has-unread-error' : '';
         const queuedClass = attention === 'queued' ? ' has-queued' : '';
@@ -12482,7 +12453,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                  data-search-match="${isContentMatch ? 'content' : 'title'}"
                  data-chat-title="${escapeHtml(String(session.title || '')).replace(/"/g, '&quot;')}"
                  onclick="window.chatPageLoadSession('${session.id}')">
-                ${historyAttentionIconHTML(attention)}
+                ${historyAttentionIconHTML(statusKind)}
                 <div class="history-item-body">
                     ${meta}
                     <div class="chat-title">${parts.titleHtml}</div>

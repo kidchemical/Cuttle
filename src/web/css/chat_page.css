@@ -1526,6 +1526,10 @@ body.light-mode .chat-session-title-text {
 }
 
 .history-running-icon {
+    position: absolute;
+    left: 4px;
+    top: 50%;
+    margin-top: -5px;
     flex-shrink: 0;
     width: 10px;
     height: 10px;
