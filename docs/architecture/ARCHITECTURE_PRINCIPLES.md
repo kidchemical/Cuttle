@@ -12,6 +12,23 @@ Do not duplicate business rules across pages, routes, adapters, helpers, or comp
 
 If logic already has an owner, call that owner instead of reimplementing it.
 
+**One owner per lifetime.** Group code by the lifetime of the state it manages
+— turn, session, pane, space, process — and let that owner hold both the
+decisions *and* the effects for that lifetime: a **pure module** for stateless
+transforms (`chat_slash`, `chat_messages`), a **controller** with an explicit
+`host`/`deps` object for DOM, transport, timers, and audio (`chat_action_cards`,
+`chat_media`). Effects are not "left in the page"; they move with their
+lifetime's owner. The composition root then only gathers inputs, calls owners,
+and applies results.
+
+Two failure modes to steer by, not by line count:
+
+- A controller that needs a very wide `host` bag is a signal the lifetime is
+  too broad or two lifetimes are tangled — split the lifetime rather than widen
+  the bag.
+- One-module-per-function fragmentation makes a change hard to navigate; prefer
+  a small number of cohesive modules per lifetime.
+
 ## 2. Composition roots compose; they do not own domains
 
 Large entry files such as the web API, chat page, and shell may coordinate other components.
