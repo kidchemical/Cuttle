@@ -16,7 +16,9 @@ node_only = pytest.mark.skipif(
 )
 
 REPO = Path(__file__).resolve().parents[3]
-SHELL_SRC = REPO / "src/web/js/shell/app_shell.js"
+# 5E: the rail/apps-list owner is shell_rail.js; app_shell keeps the call site
+# and the global getAppsList delegate.
+SHELL_SRC = REPO / "src/web/js/shell/shell_rail.js"
 APPS_SRC = REPO / "src/web/js/shell/apps_page.js"
 
 
@@ -318,14 +320,15 @@ def test_workspace_is_unpinnable_footer_utility():
     """Workspace is the one hideable footer utility; the shell persists it."""
     shell = SHELL_SRC.read_text(encoding="utf-8")
     assert "const HIDEABLE_FOOTER_IDS = new Set(['nav-workspace']);" in shell
-    for fn in ("function hideRailItem(id)", "function showRailItem(id)"):
-        body = shell[shell.index(fn):]
-        body = body[:body.index("\n}")]
+    for fn, nxt in (
+        ("function hideRailItem(id)", "function showRailItem(id)"),
+        ("function showRailItem(id)", "function openRailAddPicker"),
+    ):
+        body = shell[shell.index(fn):shell.index(nxt)]
         assert "HIDEABLE_FOOTER_IDS.has(id)" in body
     assert "rail_footer_hidden" in shell
     # Hold-to-edit: footer hideable utilities get a remove badge like rail apps.
-    chrome = shell[shell.index("function ensureRailEditChrome"):]
-    chrome = chrome[:chrome.index("\n}\n")]
+    chrome = shell[shell.index("function ensureRailEditChrome"):shell.index("function hideRailItem")]
     assert ".rail-footer .rail-item[data-id]" in chrome
     assert "rail-item-removable" in chrome
     css = (REPO / "src/web/css/app_shell.css").read_text(encoding="utf-8")

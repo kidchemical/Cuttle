@@ -23,724 +23,6 @@ const splitContainer = document.getElementById('splitContainer');
     }
 })();
 
-// Hooks the fullscreen titlebar auto-hide exposes (set inside
-// initElectronTitlebar). Space menus/bubbles pin the titlebar while open and
-// re-arm the hide timer after they close.
-let cuttleTitlebarRescheduleHide = null;
-let cuttleTitlebarCancelHide = null;
-
-// ── Electron frameless window chrome ───────────────────────────
-(function initElectronTitlebar() {
-    const api = window.electron;
-    if (!api?.isElectron || !api.windowControls) return;
-
-    document.body.classList.add('is-electron');
-    const titlebar = document.getElementById('shellTitlebar');
-    if (titlebar) titlebar.hidden = false;
-
-    const reloadBtn = document.getElementById('shellWinReload');
-    const fullscreenBtn = document.getElementById('shellWinFullscreen');
-    const minBtn = document.getElementById('shellWinMin');
-    const maxBtn = document.getElementById('shellWinMax');
-    const closeBtn = document.getElementById('shellWinClose');
-    const drag = document.getElementById('shellTitlebarDrag');
-    const updateBtn = document.getElementById('shellWinUpdate');
-    const updateChip = document.getElementById('shellWinUpdateChip');
-    const hostBtn = document.getElementById('shellTitlebarHost');
-    const workersBtn = document.getElementById('shellTitlebarWorkers');
-
-    const setMaximizedUi = (maximized) => {
-        document.body.classList.toggle('maximized', !!maximized);
-        if (maxBtn) {
-            maxBtn.title = maximized ? 'Restore' : 'Maximize';
-            maxBtn.setAttribute('aria-label', maximized ? 'Restore' : 'Maximize');
-        }
-    };
-
-    const setFullscreenUi = (fullscreen) => {
-        document.body.classList.toggle('fullscreen', !!fullscreen);
-        if (fullscreenBtn) {
-            fullscreenBtn.title = fullscreen ? 'Exit full screen' : 'Full screen';
-            fullscreenBtn.setAttribute('aria-label', fullscreen ? 'Exit full screen' : 'Full screen');
-        }
-    };
-
-    reloadBtn?.addEventListener('click', () => {
-        // Do NOT mutate iframe src before reload — that loads every chat twice
-        // (once for _cb= navigation, again when the shell document reloads) and
-        // is what made titlebar refresh feel 10–60s with two panes.
-        // Cache bust happens via main-process clearCache + withCacheBust on restore.
-        if (typeof api.windowControls.reload === 'function') {
-            api.windowControls.reload();
-            // If main-process reload never fires (wedged clearCache on old builds),
-            // force a document reload as a safety net.
-            setTimeout(() => {
-                try {
-                    if (!document.hidden) window.location.reload();
-                } catch (_) { /* ignore */ }
-            }, 4000);
-        } else {
-            console.warn('[shell] windowControls.reload missing — using location.reload');
-            window.location.reload();
-        }
-    });
-    fullscreenBtn?.addEventListener('click', () => {
-        if (typeof api.windowControls.toggleFullscreen === 'function') api.windowControls.toggleFullscreen();
-        else console.warn('[shell] windowControls.toggleFullscreen missing — rebuild Electron asar');
-    });
-    minBtn?.addEventListener('click', () => api.windowControls.minimize());
-    maxBtn?.addEventListener('click', () => api.windowControls.maximize());
-    closeBtn?.addEventListener('click', () => api.windowControls.close());
-    drag?.addEventListener('dblclick', () => api.windowControls.maximize());
-
-    api.windowControls.isMaximized().then(setMaximizedUi).catch(() => {});
-    api.windowControls.onMaximizedChange(setMaximizedUi);
-
-    const applyTitleVersion = (version) => {
-        const ver = String(version || '').trim();
-        if (!ver || !titlebar) return;
-        const label = titlebar.querySelector('.shell-titlebar-label');
-        if (!label) return;
-        label.dataset.versioned = '1';
-        label.textContent = `Cuttle ${ver}`;
-    };
-
-    const applyHostChip = (cfg) => {
-        if (!hostBtn) return;
-        const role = typeof cuttleDesktopRole === 'function'
-            ? cuttleDesktopRole(cfg)
-            : (cfg && cfg.clientMode ? 'client' : 'host');
-        const isClient = role === 'client';
-        hostBtn.hidden = false;
-        hostBtn.dataset.role = role;
-        hostBtn.textContent = isClient ? 'Client' : 'Host';
-        hostBtn.title = isClient
-            ? (`Connected to ${cfg && cfg.host ? cfg.host : 'remote Cuttle'} — click to change host`)
-            : 'This PC is running the Cuttle daemon — click to connect to another host';
-        if (cfg && cfg.packageVersion) applyTitleVersion(cfg.packageVersion);
-    };
-    let desktopCfg = { clientMode: false, host: '127.0.0.1' };
-    applyHostChip(desktopCfg);
-    // Two update channels share one titlebar button:
-    //  - asar: packaged Client shell hash vs host /api/desktop/electron
-    //  - mesh: this machine's cuttle_version vs host_cuttle_version (8s workers poll)
-    let asarUpdateAvailable = false;
-    let meshUpdate = { available: false, target: '', localVersion: '', hostVersion: '', localRev: '', hostRev: '' };
-
-    const isRemoteClient = () => {
-        if (typeof cuttleIsRemoteDesktopClient === 'function') {
-            return !!cuttleIsRemoteDesktopClient(desktopCfg);
-        }
-        return !!(desktopCfg && desktopCfg.clientMode);
-    };
-
-    // Configured update channel for this device: 'host' (follow the paired
-    // Host) or 'official' (follow upstream / release). A thin Client defaults
-    // to its Host; a local install defaults to upstream.
-    const configuredUpdateSource = () => {
-        const s = String((desktopCfg && desktopCfg.updateSource) || '').toLowerCase();
-        if (s === 'host' || s === 'official') return s;
-        return isRemoteClient() ? 'host' : 'official';
-    };
-
-    const refreshUpdateBtn = () => {
-        if (!updateBtn) return;
-        const asarOn = asarUpdateAvailable && isRemoteClient();
-        const meshOn = !!meshUpdate.available;
-        // Mesh (git) wins over asar when both are offered — same as click handler.
-        const preferMesh = meshOn;
-        const on = asarOn || meshOn;
-        updateBtn.hidden = !on;
-        updateBtn.classList.toggle('is-mesh-update', preferMesh);
-        updateBtn.classList.toggle('is-asar-update', asarOn && !preferMesh);
-        if (!on) {
-            updateBtn.classList.remove('is-busy');
-            if (updateChip) { updateChip.hidden = true; updateChip.textContent = ''; }
-            return;
-        }
-        updateBtn.classList.remove('is-busy');
-        const label = updateBtn.querySelector('.shell-win-update-label');
-        if (label) label.textContent = 'Update';
-        // Channel chip: always show which channel the (single) button updates.
-        const decision = (typeof cuttleUpdateChannels === 'function')
-            ? cuttleUpdateChannels({
-                configuredSource: configuredUpdateSource(),
-                host: { available: meshOn },
-                official: { available: false },
-            })
-            : null;
-        const activeChannel = decision && decision.buttons[0] ? decision.buttons[0].source : '';
-        meshUpdate.channel = activeChannel;
-        if (updateChip) {
-            if (activeChannel) {
-                updateChip.hidden = false;
-                updateChip.textContent = activeChannel === 'host' ? 'HOST' : 'OFFICIAL';
-                updateChip.dataset.source = activeChannel;
-            } else {
-                updateChip.hidden = true;
-                updateChip.textContent = '';
-            }
-        }
-        if (preferMesh) {
-            const local = meshUpdate.localVersion || '?';
-            const host = meshUpdate.hostVersion || '?';
-            if (meshUpdate.wrongBranch) {
-                updateBtn.title = `Wrong branch — on ${meshUpdate.branch || '?'}, host is on ${meshUpdate.hostBranch || '?'}. `
-                    + 'Update cannot fast-forward across branches; switch this device to the host branch.';
-                updateBtn.setAttribute('aria-label', `Wrong branch: ${meshUpdate.branch || '?'} vs host ${meshUpdate.hostBranch || '?'}`);
-            } else {
-                updateBtn.title = `Update available — ${local} → ${host} (git pull + restart)`;
-                updateBtn.setAttribute('aria-label', `Update Cuttle from ${local} to ${host}`);
-            }
-        } else {
-            updateBtn.title = 'Update Cuttle desktop shell (download from host)';
-            updateBtn.setAttribute('aria-label', 'Update Cuttle desktop shell');
-        }
-    };
-
-    const applyAsarUpdateBtn = (payload) => {
-        asarUpdateAvailable = !!(payload && payload.available);
-        refreshUpdateBtn();
-    };
-    // Tell Jobs iframe who "you" are (iframe has no preload).
-    const postViewerIdentity = (cfg) => {
-        try {
-            if (!cfg) return;
-            const payload = {
-                type: 'cuttle-viewer-identity',
-                workerId: String(cfg.workerId || '').trim().toLowerCase(),
-                clientMode: !!cfg.clientMode,
-                hostname: String(cfg.hostname || '').trim().toLowerCase(),
-            };
-            document.querySelectorAll('iframe').forEach((fr) => {
-                try { fr.contentWindow?.postMessage(payload, '*'); } catch (_) {}
-            });
-        } catch (_) {}
-    };
-    window.addEventListener('message', (ev) => {
-        if (ev?.data?.type === 'cuttle-viewer-identity-request') {
-            postViewerIdentity(desktopCfg);
-        }
-    });
-    // Re-broadcast when a framed page finishes loading (Jobs has no preload).
-    // No periodic rebroadcast — pages that miss the ready event can send
-    // cuttle-viewer-identity-request (handled above).
-    document.addEventListener('cuttle-page-ready', () => postViewerIdentity(desktopCfg));
-
-    Promise.all([
-        api.desktop?.getConfig?.().catch(() => null),
-        api.desktop?.updateStatus?.().catch(() => null),
-        // Host Electron may be an older process (daemon tray / long-lived shell)
-        // without packageVersion in IPC — fall back to Flask's desktop manifest.
-        fetch('/api/desktop/electron', { cache: 'no-store' })
-            .then((r) => (r.ok ? r.json() : null))
-            .catch(() => null),
-    ]).then(([cfg, status, desktopManifest]) => {
-        desktopCfg = cfg || desktopCfg;
-        applyHostChip(desktopCfg);
-        const fromCfg = desktopCfg && desktopCfg.packageVersion;
-        const fromApi = desktopManifest && desktopManifest.packageVersion;
-        // Packaged Host Cuttle.exe bakes a stale package.json into app.asar.
-        // Titlebar must prefer Flask's live checkout version on Host; Client
-        // still prefers its local shell version (update button compares hashes).
-        const isClient = !!(desktopCfg && desktopCfg.clientMode);
-        applyTitleVersion(isClient ? (fromCfg || fromApi) : (fromApi || fromCfg));
-        applyAsarUpdateBtn(status);
-        // Seed identity for Jobs iframe (no preload there) — fixes Client "you" = host.
-        try {
-            if (desktopCfg) {
-                sessionStorage.setItem('cuttle_client_mode', desktopCfg.clientMode ? '1' : '0');
-                sessionStorage.setItem(
-                    'cuttle_viewer_worker_id',
-                    String(desktopCfg.workerId || '').trim().toLowerCase()
-                );
-                if (desktopCfg.hostname) {
-                    sessionStorage.setItem(
-                        'cuttle_viewer_hostname',
-                        String(desktopCfg.hostname || '').trim().toLowerCase()
-                    );
-                }
-                postViewerIdentity(desktopCfg);
-            }
-        } catch (_) {}
-    });
-    api.desktop?.onUpdateAvailable?.(applyAsarUpdateBtn);
-    hostBtn?.addEventListener('click', () => {
-        if (typeof api.desktop?.showConnect === 'function') api.desktop.showConnect();
-    });
-
-    const applyWorkersChip = (onlineRemote, totalRemote) => {
-        if (!workersBtn) return;
-        const n = Math.max(0, Number(onlineRemote) || 0);
-        workersBtn.dataset.count = String(n);
-        if (n <= 0) {
-            workersBtn.hidden = true;
-            return;
-        }
-        workersBtn.hidden = false;
-        workersBtn.textContent = n === 1 ? '1 worker' : `${n} workers`;
-        const total = Math.max(n, Number(totalRemote) || 0);
-        workersBtn.title = total > n
-            ? `${n} other device${n === 1 ? '' : 's'} online (${total} registered) — open Jobs → Devices`
-            : `${n} other device worker${n === 1 ? '' : 's'} online — open Jobs → Devices`;
-    };
-
-    const applyMeshUpdateFromWorkers = (data) => {
-        const hostVer = String((data && data.host_cuttle_version) || '').trim();
-        const hostRev = String((data && data.host_git_rev) || '').trim();
-        const hostBranch = String((data && data.host_git_branch) || '').trim();
-        const list = Array.isArray(data && data.workers) ? data.workers : [];
-        const isClient = !!(desktopCfg && desktopCfg.clientMode);
-        // Never fall back to host self_worker_id on a Client — that compared
-        // Host→Host and hid the Update button even when the laptop was behind.
-        let myId = String((desktopCfg && desktopCfg.workerId) || '').trim().toLowerCase();
-        try {
-            if (!myId) {
-                myId = String(sessionStorage.getItem('cuttle_viewer_worker_id') || '')
-                    .trim()
-                    .toLowerCase();
-            }
-        } catch (_) {}
-        if (!isClient && !myId) {
-            myId = String((data && data.self_worker_id) || '').trim().toLowerCase();
-        }
-        const myHost = String((desktopCfg && desktopCfg.hostname) || '').trim().toLowerCase();
-        let me = myId
-            ? list.find((w) => String(w && w.worker_id || '').trim().toLowerCase() === myId)
-            : null;
-        if (!me && myHost) {
-            me = list.find((w) => {
-                if (!w || w.is_self) return false;
-                return String(w.hostname || '').trim().toLowerCase() === myHost;
-            }) || null;
-        }
-        if (!me && isClient) {
-            // Last resort: sole non-self online worker (typical 1-laptop mesh).
-            const remotes = list.filter((w) => w && !w.is_self && w.online);
-            if (remotes.length === 1) me = remotes[0];
-        }
-        const myVer = String(
-            (me && (me.cuttle_version || (me.meta && me.meta.cuttle_version)))
-            || (desktopCfg && desktopCfg.packageVersion)
-            || ''
-        ).trim();
-        const myRev = String(
-            (me && (me.cuttle_git_rev || (me.meta && me.meta.cuttle_git_rev)))
-            || ''
-        ).trim();
-        const revsDiffer = (a, b) => {
-            const left = String(a || '').trim().toLowerCase();
-            const right = String(b || '').trim().toLowerCase();
-            if (!left || !right) return false;
-            const shorter = left.length <= right.length ? left : right;
-            const longer = left.length <= right.length ? right : left;
-            if (shorter.length < 7) return left !== right;
-            return !longer.startsWith(shorter);
-        };
-        const verBehind = !!(hostVer && myVer && hostVer !== myVer);
-        const gitBehind = revsDiffer(hostRev, myRev);
-        // Prefer server flag when this worker row is present.
-        const flagged = !!(me && me.needs_update);
-        const available = flagged || verBehind || gitBehind;
-        const target = String(
-            (me && me.worker_id)
-            || myId
-            || ''
-        ).trim().toLowerCase();
-        // When package versions match (common until bump), surface git revs so
-        // the toast is not a confusing "0.2.18 → 0.2.18".
-        const versionLabel = (ver, rev) => {
-            const v = String(ver || '').trim();
-            const r = String(rev || '').trim();
-            if (v && r) return `${v} (${r.slice(0, 7)})`;
-            return v || r || '?';
-        };
-        meshUpdate = {
-            available: available && !!target,
-            target,
-            localVersion: versionLabel(myVer, myRev),
-            hostVersion: versionLabel(hostVer, hostRev),
-            localRev: myRev,
-            hostRev,
-            samePackageVersion: !!(myVer && hostVer && myVer === hostVer),
-            wrongBranch: !!(me && me.wrong_branch),
-            branch: String((me && me.git_branch) || '').trim(),
-            hostBranch,
-        };
-        refreshUpdateBtn();
-    };
-
-    const refreshWorkersChip = async () => {
-        if (!workersBtn && !updateBtn) return;
-        try {
-            const r = await fetch('/api/workers', { cache: 'no-store' });
-            if (!r.ok) {
-                applyWorkersChip(0, 0);
-                meshUpdate = { available: false, target: '', localVersion: '', hostVersion: '', localRev: '', hostRev: '' };
-                refreshUpdateBtn();
-                return;
-            }
-            const data = await r.json();
-            if (!data || data.enabled === false) {
-                applyWorkersChip(0, 0);
-                meshUpdate = { available: false, target: '', localVersion: '', hostVersion: '', localRev: '', hostRev: '' };
-                refreshUpdateBtn();
-                return;
-            }
-            applyMeshUpdateFromWorkers(data);
-            // Titlebar badge = other machines only (this Host's local worker is not "extra capacity")
-            if (typeof data.online_remote === 'number') {
-                const list = Array.isArray(data.workers) ? data.workers : [];
-                const remoteTotal = list.filter((w) => w && !w.is_self).length;
-                applyWorkersChip(data.online_remote, remoteTotal);
-                return;
-            }
-            const selfId = data.self_worker_id || '';
-            const list = Array.isArray(data.workers) ? data.workers : [];
-            const remote = list.filter((w) => w && !w.is_self && w.worker_id !== selfId);
-            const online = remote.filter((w) => w.online).length;
-            applyWorkersChip(online, remote.length);
-        } catch (_) {
-            applyWorkersChip(0, 0);
-            meshUpdate = { available: false, target: '', localVersion: '', hostVersion: '', localRev: '', hostRev: '' };
-            refreshUpdateBtn();
-        }
-    };
-
-    workersBtn?.addEventListener('click', () => {
-        try { localStorage.setItem('jobsPageTab', 'devices'); } catch (_) {}
-        if (typeof navigate === 'function') navigate(0, '/jobs_page.html');
-        else window.location.href = '/jobs_page.html';
-    });
-
-    // Polled by the shell heartbeat (not a separate setInterval).
-    window.__cuttleShellPollWorkers = refreshWorkersChip;
-    refreshWorkersChip();
-
-    updateBtn?.addEventListener('click', async () => {
-        const label = updateBtn.querySelector('.shell-win-update-label');
-        const asarOn = asarUpdateAvailable && isRemoteClient();
-        const meshOn = !!meshUpdate.available && !!meshUpdate.target;
-        // Prefer mesh (git pull + relaunch) when the Client is behind on the
-        // repo. ASAR-only replaces the packaged shell and used to win the
-        // click even when the real intent was mesh — then quit without pull.
-        if (!meshOn && asarOn && typeof api.desktop?.applyUpdate === 'function') {
-            updateBtn.classList.add('is-busy');
-            if (label) label.textContent = 'Updating…';
-            try {
-                const result = await api.desktop.applyUpdate();
-                if (!result || !result.ok) {
-                    updateBtn.classList.remove('is-busy');
-                    if (label) label.textContent = 'Update';
-                    if (window.showToast) window.showToast(result?.error || 'Desktop update failed', 'error');
-                }
-            } catch (err) {
-                updateBtn.classList.remove('is-busy');
-                if (label) label.textContent = 'Update';
-                if (window.showToast) window.showToast(err.message || String(err), 'error');
-            }
-            return;
-        }
-
-        if (!meshOn) return;
-        updateBtn.classList.add('is-busy');
-        if (label) label.textContent = 'Updating…';
-        const isClient = !!(desktopCfg && desktopCfg.clientMode);
-        try {
-            const r = await fetch('/api/workers/self-update', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    target: meshUpdate.target,
-                    submitted_by: 'titlebar',
-                    // Channel: follow the paired Host's working tree, or upstream.
-                    update_source: meshUpdate.channel || configuredUpdateSource(),
-                    // A titlebar click is interactive: pull now, but ask before
-                    // restarting (programmatic host→worker updates still auto-restart).
-                    defer_restart: true,
-                    // Host Electron refresh should not kill cuttle_daemon.
-                    no_daemon: !isClient,
-                }),
-            });
-            const data = await r.json().catch(() => ({}));
-            if (!r.ok || !data.success) {
-                throw new Error(data.error || (`HTTP ${r.status}`));
-            }
-            const jobId = String(
-                (data.job && (data.job.id || data.job.job_id))
-                || data.job_id
-                || ''
-            ).trim();
-            if (label) label.textContent = 'Pulling…';
-            if (window.showToast) {
-                window.showToast(
-                    `Updating ${meshUpdate.target} (${meshUpdate.localVersion} → ${meshUpdate.hostVersion})…`,
-                    'info'
-                );
-            }
-            // Wait for stash+pull to finish so dirty-tree / ff failures are not silent.
-            let final = data.job || null;
-            if (jobId) {
-                const deadline = Date.now() + 180000;
-                while (Date.now() < deadline) {
-                    await new Promise((res) => setTimeout(res, 1500));
-                    try {
-                        const sr = await fetch(`/api/workers/jobs/${encodeURIComponent(jobId)}`, {
-                            cache: 'no-store',
-                        });
-                        const sj = await sr.json().catch(() => ({}));
-                        final = (sj && (sj.job || sj)) || final;
-                        const st = String((final && final.status) || '').toLowerCase();
-                        if (st === 'succeeded' || st === 'failed' || st === 'cancelled') break;
-                        if (label && st === 'running') label.textContent = 'Pulling…';
-                    } catch (_) { /* keep waiting */ }
-                }
-            }
-            const st = String((final && final.status) || '').toLowerCase();
-            if (st === 'failed' || st === 'cancelled') {
-                const err = String(
-                    (final && (final.error || (final.result && final.result.error)))
-                    || 'Self-update failed'
-                );
-                throw new Error(err);
-            }
-            if (st && st !== 'succeeded') {
-                throw new Error(`Self-update timed out (status=${st || 'unknown'})`);
-            }
-            if (label) label.textContent = 'Restarting…';
-            // Job success only means the updater was scheduled. Confirm the
-            // worker actually advanced (or toast a clear failure).
-            const beforeVer = String(meshUpdate.localVersion || '');
-            const expectHost = String(meshUpdate.hostVersion || '');
-            let advanced = false;
-            const verifyDeadline = Date.now() + 90000;
-            while (Date.now() < verifyDeadline) {
-                await new Promise((res) => setTimeout(res, 2500));
-                try {
-                    await refreshWorkersChip();
-                } catch (_) {}
-                const nowVer = String(meshUpdate.localVersion || '');
-                const stillNeeds = !!meshUpdate.available;
-                if (nowVer && nowVer !== beforeVer) {
-                    advanced = true;
-                    break;
-                }
-                // Host/client versions match and Update cleared.
-                if (!stillNeeds && expectHost && nowVer && nowVer === expectHost) {
-                    advanced = true;
-                    break;
-                }
-                if (!stillNeeds && nowVer && beforeVer && nowVer !== beforeVer) {
-                    advanced = true;
-                    break;
-                }
-            }
-            if (!advanced) {
-                throw new Error(
-                    'Update scheduled but this device is still on '
-                    + (meshUpdate.localVersion || beforeVer || '?')
-                    + '. Check Desktop\\cuttle-self-update-last.log on that machine.'
-                );
-            }
-            // The checkout is current — ask before restarting (titlebar clicks
-            // defer the restart; see defer_restart above).
-            updateBtn.classList.remove('is-busy');
-            if (label) label.textContent = 'Update';
-            refreshUpdateBtn();
-            showRestartModal(meshUpdate.localVersion || expectHost);
-        } catch (err) {
-            updateBtn.classList.remove('is-busy');
-            if (label) label.textContent = 'Update';
-            if (window.showToast) window.showToast(err.message || String(err), 'error');
-        }
-    });
-
-    // "Update ready" modal: restart the app now, or keep working.
-    const restartModal = document.getElementById('cuttleRestartModal');
-    const showRestartModal = (version) => {
-        if (!restartModal) return;
-        const v = restartModal.querySelector('[data-restart-version]');
-        if (v) v.textContent = String(version || 'the latest');
-        restartModal.hidden = false;
-    };
-    const hideRestartModal = () => { if (restartModal) restartModal.hidden = true; };
-    if (restartModal) {
-        restartModal.querySelector('[data-restart-now]')?.addEventListener('click', async () => {
-            hideRestartModal();
-            if (api.desktop && typeof api.desktop.relaunchApp === 'function') {
-                api.desktop.relaunchApp();
-                return;
-            }
-            // Older Electron without the relaunch IPC: ask the mesh updater to
-            // restart (the pull is a no-op, but it stops/relaunches the client).
-            try {
-                await fetch('/api/workers/self-update', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        target: meshUpdate.target,
-                        submitted_by: 'titlebar-restart',
-                        update_source: meshUpdate.channel || configuredUpdateSource(),
-                        no_daemon: !isClient,
-                    }),
-                });
-            } catch (_) {
-                window.location.reload();
-            }
-        });
-        restartModal.querySelector('[data-restart-later]')?.addEventListener('click', hideRestartModal);
-    }
-
-    // Fullscreen: titlebar overlays and auto-hides; a top-edge hotzone reveals it.
-    // Iframes swallow mousemove, so a dedicated strip is required.
-    let hideTimer = null;
-    let revealTimer = null;
-    const HOTZONE_PX = 10;
-    // Hover intent: a cursor skimming the top edge (e.g. reaching for the
-    // blade toolbar) should not pop the bar over it.
-    const REVEAL_DELAY_MS = 180;
-    const HIDE_DELAY_MS = 150;
-    let hotzone = document.getElementById('shellTitlebarHotzone');
-    if (!hotzone) {
-        hotzone = document.createElement('div');
-        hotzone.id = 'shellTitlebarHotzone';
-        hotzone.className = 'shell-titlebar-hotzone';
-        hotzone.setAttribute('aria-hidden', 'true');
-        titlebar.insertAdjacentElement('afterend', hotzone);
-    }
-
-    const cancelPendingReveal = () => {
-        if (revealTimer) {
-            clearTimeout(revealTimer);
-            revealTimer = null;
-        }
-    };
-    const revealTitlebar = () => {
-        cancelPendingReveal();
-        if (hideTimer) {
-            clearTimeout(hideTimer);
-            hideTimer = null;
-        }
-        titlebar.classList.add('is-revealed');
-    };
-    // An open space menu/bubble, or a space tab mid-rename, pins the titlebar.
-    const isTitlebarPinned = () => {
-        if (typeof isSpaceCtxOpen === 'function' && isSpaceCtxOpen()) return true;
-        const active = document.activeElement;
-        return !!(active && active.classList.contains('shell-space-rename') && titlebar.contains(active));
-    };
-    const scheduleHideTitlebar = () => {
-        if (hideTimer) clearTimeout(hideTimer);
-        hideTimer = null;
-        if (isTitlebarPinned()) return;
-        hideTimer = setTimeout(() => {
-            hideTimer = null;
-            // Re-check: a rename can start inside the delay (menu → Rename).
-            if (isTitlebarPinned()) return;
-            titlebar.classList.remove('is-revealed');
-        }, HIDE_DELAY_MS);
-    };
-    cuttleTitlebarRescheduleHide = () => {
-        if (!document.body.classList.contains('fullscreen')) return;
-        if (titlebar.matches(':hover')) return;
-        scheduleHideTitlebar();
-    };
-    cuttleTitlebarCancelHide = () => {
-        if (hideTimer) {
-            clearTimeout(hideTimer);
-            hideTimer = null;
-        }
-    };
-
-    const onFullscreenChange = (fullscreen) => {
-        setFullscreenUi(fullscreen);
-        if (!fullscreen) {
-            cancelPendingReveal();
-            if (hideTimer) {
-                clearTimeout(hideTimer);
-                hideTimer = null;
-            }
-            titlebar.classList.remove('is-revealed');
-        }
-    };
-    api.windowControls.isFullscreen?.().then(onFullscreenChange).catch(() => {});
-    api.windowControls.onFullscreenChange?.(onFullscreenChange);
-    if (typeof wireElectronChatFind === 'function') wireElectronChatFind(api);
-
-    hotzone.addEventListener('pointerenter', () => {
-        if (titlebar.classList.contains('is-revealed')) {
-            revealTitlebar();
-            return;
-        }
-        cancelPendingReveal();
-        revealTimer = setTimeout(revealTitlebar, REVEAL_DELAY_MS);
-    });
-    hotzone.addEventListener('pointerleave', cancelPendingReveal);
-    titlebar.addEventListener('pointerenter', revealTitlebar);
-    titlebar.addEventListener('pointerleave', (e) => {
-        if (!document.body.classList.contains('fullscreen')) return;
-        const y = e.clientY;
-        if (y <= HOTZONE_PX) return;
-        scheduleHideTitlebar();
-    });
-})();
-
-// ── Default UI layout order (used when no saved layout) ─────────
-// Must list every `.rail-item[data-id]` in the main rail, in canonical order (matches app_shell.html).
-const CANONICAL_RAIL_ITEM_ORDER = [
-    'nav-chat',
-    'nav-editor',
-    'nav-git',
-    'nav-jobs',
-    'nav-mesh',
-    'nav-dashboards',
-    'nav-achievements',
-    'nav-agent-feed',
-    'nav-gizmos',
-    'nav-test-lab',
-    'nav-projects',
-    'nav-apps',
-];
-// 'nav-tools' and 'nav-automation' (Home Automation) are retired. Saved layouts
-// referencing retired rail entries are filtered out during restore.
-// Footer may only contain these (do not put page nav buttons here — breaks reorder on load).
-const CANONICAL_RAIL_FOOTER_ORDER = ['nav-account', 'nav-notifications', 'nav-workspace', 'nav-settings', 'panelToggle'];
-// The Apps launcher is the way back to every stashed app, so it can never be removed.
-const RAIL_LOCKED_IDS = new Set(['nav-apps']);
-// Footer utilities that the user may hide (unpin) from the blade bar. They are
-// not page apps, but the Apps grid still lists them so they can be re-pinned.
-const HIDEABLE_FOOTER_IDS = new Set(['nav-workspace']);
-// Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
-// Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
-const RAIL_LAYOUT_VERSION = 10;
-
-const DEFAULT_LAYOUT = {
-    rail_items: CANONICAL_RAIL_ITEM_ORDER.filter(id => !DEFAULT_RAIL_HIDDEN.includes(id)),
-    rail_footer: CANONICAL_RAIL_FOOTER_ORDER.slice(),
-    rail_hidden: DEFAULT_RAIL_HIDDEN.slice(),
-    rail_footer_hidden: [],
-    layout_version: RAIL_LAYOUT_VERSION,
-};
-
-// Experiment availability does not change the user's saved pin preferences.
-// Declared early: restoreSplitLayout() (below) mounts panes via
-// mountNewLeafFrame(), which re-applies feed visibility per new pane.
-let agentFeedEnabled = false;
-/** Shared rail layout for every blade (not per-bar). */
-let lastUILayout = {
-    rail_items: DEFAULT_LAYOUT.rail_items.slice(),
-    rail_footer: CANONICAL_RAIL_FOOTER_ORDER.slice(),
-    rail_hidden: DEFAULT_RAIL_HIDDEN.slice(),
-    rail_footer_hidden: [],
-    layout_version: RAIL_LAYOUT_VERSION,
-};
-let railEditing = false;
-let railSuppressClick = false;
-let railCustomizeGlobalsReady = false;
-const RAIL_HOLD_MS = 500;
-const RAIL_HOLD_MOVE_PX = 8;
-
 // ── Restore rail & active page from session ──────────────────
 const STORAGE_PAGE = 'shell_page';
 const STORAGE_RAIL = 'shell_rail_collapsed';
@@ -1082,8 +364,8 @@ function persistSplitLayout() {
             }).catch(() => {});
         } catch (_) {}
         scheduleBroadcastOpenPanes();
-        try { syncSpaceActivityTabs(); } catch (_) {}
-        try { scheduleSpaceActivityPoll(false); } catch (_) {}
+        try { shellSpaces.syncActivityTabs(); } catch (_) {}
+        try { shellSpaces.schedulePoll(false); } catch (_) {}
     } catch (_) {}
 }
 
@@ -1185,267 +467,17 @@ function findColumnIndexForSource(source) {
     return 0;
 }
 
-// ── Split-pane live-status hub ─────────────────────────────────
-// Chromium shares ~6 HTTP/1.1 connections per origin across all chat iframes.
-// Per-pane live-status + message sync used to starve sibling panes (one updates,
-// refresh flips which one works). Shell owns one batch poll and fans out.
-let focusedColumnIdx = 0;
-const paneSessionByColumn = new Map(); // colIdx -> sessionId string
-/** Live-status is driven by the shell heartbeat (no dedicated interval). */
-let liveStatusHubArmed = false;
-let liveStatusHubInFlight = false;
-
-/** colIdx -> project path for pending-changes hub (dedupe by path across panes). */
-const paneProjectByColumn = new Map();
-let pendingChangesHubTimer = null;
-let pendingChangesPathInFlight = new Map(); // normalized path -> Promise
-
-const PENDING_CHANGES_VISIBLE_MS = 12000;
-const PENDING_CHANGES_HIDDEN_MS = 45000;
-
-function normalizeShellProjectPath(p) {
-    return String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-}
-
-function setFocusedColumn(idx) {
-    if (!Number.isFinite(idx) || idx < 0) return;
-    if (focusedColumnIdx === idx) return;
-    focusedColumnIdx = idx;
-    broadcastPaneFocus();
-}
-
-/** Nudge visible usage-live reports to rescan after a tab/space change.
- * Hidden frames stopped polling while away and nothing inside them fires
- * on the return transition; the chat frame's own rescan is idempotent. */
-function broadcastUsageLiveWake() {
-    document.querySelectorAll('.split-column .shell-main iframe').forEach((frame) => {
-        if (!isChatPageFrame(frame) || !frame.contentWindow) return;
-        try {
-            const live = frame.contentWindow.CuttleUsageLive;
-            if (live && typeof live.wake === 'function') {
-                live.wake();
-                return;
-            }
-        } catch (_) {}
-        try {
-            frame.contentWindow.postMessage({ type: 'cuttle-usage-live-wake' }, '*');
-        } catch (_) {}
-    });
-}
-
-function broadcastPaneFocus() {
-    document.querySelectorAll('.split-column').forEach((col) => {
-        const idx = parseInt(col.dataset.column, 10);
-        const frame = getLiveFrame(idx);
-        if (!frame || !frame.contentWindow) return;
-        try {
-            frame.contentWindow.postMessage({
-                type: 'cuttle-pane-focus',
-                focused: idx === focusedColumnIdx,
-                column: idx,
-            }, '*');
-        } catch (_) {}
-    });
-}
-
-function registerPaneChatSession(source, sessionId) {
-    const colIdx = findColumnIndexForSource(source);
-    if (sessionId == null || sessionId === '') {
-        paneSessionByColumn.delete(colIdx);
-    } else {
-        paneSessionByColumn.set(colIdx, String(sessionId));
-    }
-    ensureLiveStatusHub();
-    scheduleBroadcastOpenPanes();
-}
-
-/**
- * Chats/terminals actually showing in THIS window's split columns.
- * Local to this renderer (Electron/browser instance) — not the Flask
- * last-writer /api/shell/panes snapshot used by agents.
- */
-function getOpenPaneSessions() {
-    const cols = getSplitColumns();
-    const out = [];
-    cols.forEach((col, visualIdx) => {
-        const idx = parseInt(col.dataset.column, 10);
-        const state = columnState.get(idx);
-        const page = (state && state.page) || '';
-        let kind = null;
-        let sid = null;
-        try {
-            const url = new URL(page || '/chat_page.html', window.location.origin);
-            kind = chatSurfaceKind(url.pathname);
-            sid = url.searchParams.get('chat') || url.searchParams.get('session');
-        } catch (_) {}
-        const live = paneSessionByColumn.get(idx);
-        // Chat iframes report live session ids; don't let a stale chat id
-        // override a terminal (or other) surface in the same column.
-        if (kind === 'chat' && live) sid = live;
-        if (!kind || !sid) return;
-        out.push({
-            sessionId: String(sid),
-            pane: visualIdx + 1,
-            column: idx,
-            kind,
-            focused: idx === focusedColumnIdx,
-        });
-    });
-    return out;
-}
-
-function broadcastOpenPanes() {
-    const panes = getOpenPaneSessions();
-    broadcastToFrames({ type: 'cuttle-open-panes', panes });
-}
-
-let _openPanesBroadcastTimer = null;
-function scheduleBroadcastOpenPanes() {
-    if (_openPanesBroadcastTimer) return;
-    _openPanesBroadcastTimer = setTimeout(() => {
-        _openPanesBroadcastTimer = null;
-        try { broadcastOpenPanes(); } catch (_) {}
-    }, 40);
-}
-
-window.getOpenPaneSessions = getOpenPaneSessions;
-
-function ensureLiveStatusHub() {
-    if (liveStatusHubArmed) return;
-    liveStatusHubArmed = true;
-    // Immediate sample; cadence continues via runShellHeartbeat.
-    pollLiveStatusHub();
-}
-
-function registerPaneProject(source, projectPath) {
-    const colIdx = findColumnIndexForSource(source);
-    if (!Number.isFinite(colIdx) || colIdx < 0) return;
-    const path = projectPath != null && String(projectPath).trim()
-        ? String(projectPath).trim()
-        : '';
-    if (!path) {
-        paneProjectByColumn.delete(colIdx);
-    } else {
-        paneProjectByColumn.set(colIdx, path);
-        ensurePendingChangesHub();
-        // Fresh registration — sample this path once (deduped if already in flight).
-        refreshPendingChangesPath(path);
-    }
-}
-
-function uniquePaneProjectPaths() {
-    return [...new Set(
-        [...paneProjectByColumn.values()].filter((p) => p && String(p).trim())
-    )];
-}
-
-async function refreshPendingChangesPath(projectPath) {
-    const path = String(projectPath || '').trim();
-    if (!path) return;
-    const key = normalizeShellProjectPath(path);
-    if (pendingChangesPathInFlight.has(key)) {
-        return pendingChangesPathInFlight.get(key);
-    }
-    const work = (async () => {
-        try {
-            const qs = new URLSearchParams();
-            qs.set('path', path);
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 20000);
-            let data = null;
-            try {
-                const r = await fetch(
-                    '/api/git/pending-changes?' + qs.toString(),
-                    { credentials: 'include', cache: 'no-store', signal: controller.signal }
-                );
-                data = await r.json().catch(() => null);
-            } finally {
-                clearTimeout(timeout);
-            }
-            if (!data) return;
-            broadcastToFrames({
-                type: 'cuttle-pending-changes-data',
-                path,
-                data,
-            });
-        } catch (_) {
-        } finally {
-            pendingChangesPathInFlight.delete(key);
-        }
-    })();
-    pendingChangesPathInFlight.set(key, work);
-    return work;
-}
-
-async function pollPendingChangesHub() {
-    const paths = uniquePaneProjectPaths();
-    if (!paths.length) return;
-    await Promise.all(paths.map((p) => refreshPendingChangesPath(p)));
-}
-
-function pendingChangesHubDelayMs() {
-    return document.hidden ? PENDING_CHANGES_HIDDEN_MS : PENDING_CHANGES_VISIBLE_MS;
-}
-
-function schedulePendingChangesHub(immediate) {
-    if (pendingChangesHubTimer) {
-        clearTimeout(pendingChangesHubTimer);
-        pendingChangesHubTimer = null;
-    }
-    if (!uniquePaneProjectPaths().length) return;
-    const delay = immediate ? 0 : pendingChangesHubDelayMs();
-    pendingChangesHubTimer = setTimeout(async () => {
-        pendingChangesHubTimer = null;
-        try {
-            await pollPendingChangesHub();
-        } finally {
-            schedulePendingChangesHub(false);
-        }
-    }, delay);
-}
-
-function ensurePendingChangesHub() {
-    if (pendingChangesHubTimer) return;
-    schedulePendingChangesHub(true);
-}
-
-async function pollLiveStatusHub() {
-    if (liveStatusHubInFlight) return;
-    const ids = [...new Set([...paneSessionByColumn.values()].filter(Boolean))];
-    if (!ids.length) return;
-    liveStatusHubInFlight = true;
-    try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        let data = null;
-        try {
-            const r = await fetch(
-                '/api/chat-live-status-batch?session_ids=' + encodeURIComponent(ids.join(',')),
-                { credentials: 'include', cache: 'no-store', signal: controller.signal }
-            );
-            if (r.ok) data = await r.json();
-        } finally {
-            clearTimeout(timeout);
-        }
-        if (!data || !data.success || !data.statuses) return;
-        paneSessionByColumn.forEach((sid, colIdx) => {
-            const frame = getLiveFrame(colIdx);
-            if (!frame || !frame.contentWindow) return;
-            const status = data.statuses[String(sid)] || null;
-            try {
-                frame.contentWindow.postMessage({
-                    type: 'cuttle-live-status',
-                    sessionId: sid,
-                    status,
-                    focused: colIdx === focusedColumnIdx,
-                }, '*');
-            } catch (_) {}
-        });
-    } catch (_) {
-    } finally {
-        liveStatusHubInFlight = false;
-    }
-}
+// Pane hubs and focus state have one pane-lifetime owner.
+let paneController = null;
+function setFocusedColumn(idx) { paneController?.setFocusedColumn(idx); }
+function broadcastPaneFocus() { paneController?.broadcastFocus(); }
+function broadcastUsageLiveWake() { paneController?.broadcastUsageLiveWake(); }
+function registerPaneChatSession(source, sessionId) { paneController?.registerPaneChatSession(source, sessionId); }
+function getOpenPaneSessions() { return paneController ? paneController.getOpenPaneSessions() : []; }
+function registerPaneProject(source, projectPath) { paneController?.registerPaneProject(source, projectPath); }
+function refreshPendingChangesPath(path) { return paneController?.refreshPendingChangesPath(path); }
+function schedulePendingChangesHub(immediate) { paneController?.schedulePendingChangesHub(immediate); }
+function pollLiveStatusHub() { return paneController?.pollLiveStatusHub(); }
 
 document.addEventListener('pointerdown', (e) => {
     const col = e.target && e.target.closest ? e.target.closest('.split-column') : null;
@@ -1509,134 +541,14 @@ currentPage = canonicalizeShellPage(currentPage);
 sessionStorage.setItem(STORAGE_PAGE, currentPage);
 rememberChatHandleFromPage(0, currentPage);
 
-/** Keep the address-bar ?chat= in sync with the active chat session.
- * Mobile system-back uses shellBackStack (not WebView history) so back never
- * falls through to minimize/setup. */
-let shellApplyingHistory = false;
-const shellBackStack = [];
-const SHELL_BACK_STACK_MAX = 40;
-
-function shellPageFromChatId(chatId) {
-    if (chatId) {
-        return '/chat_page.html?chat=' + encodeURIComponent(String(chatId));
-    }
-    // ?new=1 prevents withRememberedChat from resurrecting the last session.
-    return '/chat_page.html?new=1';
-}
-
-function shellPagesEqual(a, b) {
-    try {
-        const ua = new URL(a || '/chat_page.html', window.location.origin);
-        const ub = new URL(b || '/chat_page.html', window.location.origin);
-        const norm = (u) => {
-            u.searchParams.delete('_v');
-            u.searchParams.delete('_cb');
-            const chat = u.searchParams.get('chat') || u.searchParams.get('session') || '';
-            const isNew = u.searchParams.has('new');
-            return u.pathname + '|c=' + chat + '|n=' + (isNew ? '1' : '0');
-        };
-        return norm(ua) === norm(ub);
-    } catch (_) {
-        return String(a || '') === String(b || '');
-    }
-}
-
-function isShellNewChatPage(page) {
-    try {
-        const u = new URL(page || '/chat_page.html', window.location.origin);
-        if (u.pathname !== '/chat_page.html') return false;
-        if (u.searchParams.get('chat') || u.searchParams.get('session')) return false;
-        return true;
-    } catch (_) {
-        return false;
-    }
-}
-
-function currentShellPage() {
-    try {
-        const st = typeof getState === 'function' ? getState(0) : null;
-        if (st && st.page) return st.page;
-    } catch (_) {}
-    try {
-        const cid = new URL(window.location.href).searchParams.get('chat')
-            || new URL(window.location.href).searchParams.get('session');
-        if (cid) return shellPageFromChatId(cid);
-    } catch (_) {}
-    try {
-        const live = paneSessionByColumn.get(0);
-        if (live) return shellPageFromChatId(live);
-    } catch (_) {}
-    return '/chat_page.html?new=1';
-}
-
-function pushShellBackEntry(fromPage) {
-    if (shellApplyingHistory || !fromPage) return;
-    if (isShellNewChatPage(fromPage) && shellBackStack.length === 0) return;
-    const top = shellBackStack.length ? shellBackStack[shellBackStack.length - 1] : null;
-    if (top && shellPagesEqual(top, fromPage)) return;
-    shellBackStack.push(fromPage);
-    while (shellBackStack.length > SHELL_BACK_STACK_MAX) shellBackStack.shift();
-}
-
-function recordShellHistory(page, chatId, mode) {
-    if (shellApplyingHistory || mode === 'none') return;
-    try {
-        const url = new URL(window.location.href);
-        if (chatId) {
-            url.searchParams.set('chat', String(chatId));
-            url.searchParams.delete('session');
-        } else {
-            url.searchParams.delete('chat');
-            url.searchParams.delete('session');
-        }
-        const next = url.pathname + url.search + url.hash;
-        const state = {
-            cuttleShell: 1,
-            page: page || shellPageFromChatId(chatId),
-            chatId: chatId ? String(chatId) : null,
-        };
-        const cur = window.location.pathname + window.location.search + window.location.hash;
-        // Address bar only — back navigation is owned by shellBackStack.
-        if (next !== cur || mode === 'replace' || mode === 'push') {
-            history.replaceState(state, '', next);
-        }
-    } catch (_) {}
-}
-
-function syncShellChatUrl(chatId, opts) {
-    const mode = (opts && opts.mode) || 'replace';
-    let page = opts && opts.page;
-    if (!page) {
-        try {
-            const st = typeof getState === 'function' ? getState(0) : null;
-            page = (st && st.page) || shellPageFromChatId(chatId);
-            if (chatId) {
-                const u = new URL(page, window.location.origin);
-                if (u.pathname === '/chat_page.html' || u.pathname === '/terminal_page.html') {
-                    u.searchParams.set('chat', String(chatId));
-                    u.searchParams.delete('session');
-                    u.searchParams.delete('new');
-                    page = u.pathname + u.search + u.hash;
-                }
-            }
-        } catch (_) {
-            page = shellPageFromChatId(chatId);
-        }
-    }
-    recordShellHistory(page, chatId || null, mode);
-}
-
-function applyShellHistoryState(page) {
-    if (!page) page = '/chat_page.html?new=1';
-    shellApplyingHistory = true;
-    try {
-        if (typeof navigate === 'function') {
-            navigate(0, page, { history: 'none' });
-        }
-    } finally {
-        shellApplyingHistory = false;
-    }
-}
+/** Compatibility calls into the pane-owned URL and history state machine. */
+function shellPageFromChatId(chatId) { return paneController.shellPageFromChatId(chatId); }
+function shellPagesEqual(a, b) { return paneController.shellPagesEqual(a, b); }
+function isShellNewChatPage(page) { return paneController.isShellNewChatPage(page); }
+function currentShellPage() { return paneController.currentShellPage(); }
+function pushShellBackEntry(page) { return paneController.pushShellBackEntry(page); }
+function syncShellChatUrl(chatId, opts) { return paneController.syncShellChatUrl(chatId, opts); }
+function applyShellHistoryState(page) { return paneController.applyShellHistoryState(page); }
 
 /**
  * Android system back → previous chat/page, then new chat, then stay put.
@@ -1656,11 +568,7 @@ window.__cuttleHandleBack = function () {
         }
     } catch (_) {}
 
-    if (shellBackStack.length > 0) {
-        const prev = shellBackStack.pop();
-        applyShellHistoryState(prev);
-        return true;
-    }
+    if (paneController.popShellBack()) return true;
 
     const page = currentShellPage();
     if (!isShellNewChatPage(page)) {
@@ -1749,7 +657,7 @@ window.addEventListener('message', function(e) {
                 // Null means the pane is on a fresh unsaved chat — forget the old
                 // handle so returning to Chat doesn't resurrect it.
                 rememberChatHandle(colIdx, 'chat', e.data.chatId || null);
-                if (colIdx === 0 && !shellApplyingHistory && !shellPagesEqual(cur, next)) {
+                if (colIdx === 0 && !paneController.isApplyingHistory() && !shellPagesEqual(cur, next)) {
                     pushShellBackEntry(cur);
                 }
                 setState(colIdx, next);
@@ -1763,7 +671,7 @@ window.addEventListener('message', function(e) {
                     ? '/terminal_page.html?chat=' + encodeURIComponent(String(e.data.chatId))
                     : '/terminal_page.html';
                 rememberChatHandle(colIdx, 'terminal', e.data.chatId || null);
-                if (colIdx === 0 && !shellApplyingHistory && !shellPagesEqual(cur, next)) {
+                if (colIdx === 0 && !paneController.isApplyingHistory() && !shellPagesEqual(cur, next)) {
                     pushShellBackEntry(cur);
                 }
                 setState(colIdx, next);
@@ -1814,7 +722,7 @@ window.addEventListener('message', function(e) {
     } else if (e.data.type === 'cuttle-pending-changes-refresh') {
         const path = e.data.path || '';
         if (path) refreshPendingChangesPath(path);
-        else schedulePendingChangesHub(true);
+        else paneController?.schedulePendingChangesHub(true);
     } else if (e.data.type === 'cuttle-pending-changes-changed') {
         // Commit/ignore/local refresh in one pane → one fetch (or fan-out payload)
         // for every sibling on the same project path.
@@ -1840,14 +748,15 @@ window.addEventListener('message', function(e) {
         // frame's previous snapshot; the server poll stays authoritative.
         try {
             if (e.source) {
-                CuttleSpaces.notePushSnapshot(
+                shellSpaces.notePush(
                     e.source,
                     Array.isArray(e.data.sessions) ? e.data.sessions : [],
                     Array.isArray(e.data.owned) ? e.data.owned : null
                 );
+            } else {
+                shellSpaces.refreshLocalState();
+                shellSpaces.syncActivityTabs();
             }
-            refreshSpaceActivityLocalState();
-            syncSpaceActivityTabs();
         } catch (_) {}
     } else if (
         e.data.type === 'cuttle-terminal-delete'
@@ -1967,7 +876,7 @@ function isChatPageFrame(frame) {
 
 function dispatchFocusedChatFind(action) {
     if (!action) return;
-    const focused = focusedColumnIdx;
+    const focused = paneController ? paneController.focusedColumnIndex() : 0;
     document.querySelectorAll('.split-column').forEach((col) => {
         const idx = parseInt(col.dataset.column, 10);
         const frame = getLiveFrame(idx);
@@ -1982,195 +891,6 @@ function dispatchFocusedChatFind(action) {
     });
 }
 
-function wireElectronChatFind(api) {
-    if (!api?.isElectron) return;
-    if (document.documentElement.dataset.chatFindWired === '1') return;
-    document.documentElement.dataset.chatFindWired = '1';
-    if (typeof api.chatFind?.onShortcut === 'function') {
-        api.chatFind.onShortcut((payload) => {
-            dispatchFocusedChatFind(payload && payload.action);
-        });
-    }
-    document.addEventListener('keydown', (e) => {
-        const helper = window.CuttleChatFind;
-        const action = helper && typeof helper.actionFromDomEvent === 'function'
-            ? helper.actionFromDomEvent(e)
-            : null;
-        if (!action) return;
-        e.preventDefault();
-        e.stopPropagation();
-        dispatchFocusedChatFind(action);
-    }, true);
-}
-
-// ── Page transitions ──────────────────────────────────────────
-// Hold the incoming iframe at opacity 0 until ui_boot posts cuttle-page-ready
-// (theme + wallpaper settled, first paint done). That masks FOUC. Optional fade
-// is controlled by cuttleUiAnimations / cuttleUiTransitionMs. The previous
-// frame stays visible underneath until the new one reveals.
-const SPINNER_DELAY_MS = 90;
-const TRANSITION_FAILSAFE_MS = 2500;
-const DEFAULT_TRANSITION_MS = 220;
-const ANIM_KEY = 'cuttleUiAnimations';
-const ANIM_MS_KEY = 'cuttleUiTransitionMs';
-
-const pendingFrameReveals = new WeakMap();
-const frameRevealTokens = new Map();
-
-function uiAnimationsEnabled() {
-    try {
-        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
-    } catch (_) {}
-    try {
-        return localStorage.getItem(ANIM_KEY) !== '0';
-    } catch (_) {
-        return true;
-    }
-}
-
-function uiTransitionMs() {
-    try {
-        const n = parseInt(localStorage.getItem(ANIM_MS_KEY), 10);
-        if (isNaN(n)) return DEFAULT_TRANSITION_MS;
-        return Math.max(0, Math.min(1000, n));
-    } catch (_) {
-        return DEFAULT_TRANSITION_MS;
-    }
-}
-
-function applyUiAnimationPrefs() {
-    document.documentElement.style.setProperty('--cuttle-transition-ms', uiTransitionMs() + 'ms');
-    document.documentElement.classList.toggle('cuttle-anim', uiAnimationsEnabled());
-}
-
-function ensurePageLoader(mainEl) {
-    let loader = mainEl.querySelector('.shell-page-loader');
-    if (!loader) {
-        loader = document.createElement('div');
-        loader.className = 'shell-page-loader';
-        loader.setAttribute('aria-hidden', 'true');
-        loader.innerHTML =
-            '<div class="shell-page-loader-veil"></div>' +
-            '<div class="shell-page-spinner" aria-hidden="true"></div>';
-        mainEl.appendChild(loader);
-    }
-    return loader;
-}
-
-function setPageLoaderVisible(mainEl, visible, opts) {
-    const loader = ensurePageLoader(mainEl);
-    const spinning = !!(opts && opts.spinning);
-    loader.classList.toggle('visible', !!visible);
-    loader.classList.toggle('spinning', !!visible && spinning);
-    if (visible) {
-        loader.setAttribute('aria-busy', 'true');
-        loader.removeAttribute('aria-hidden');
-    } else {
-        loader.removeAttribute('aria-busy');
-        loader.setAttribute('aria-hidden', 'true');
-    }
-}
-
-function cancelPendingReveal(frameEl) {
-    const entry = pendingFrameReveals.get(frameEl);
-    if (!entry) return;
-    if (entry.timer) clearTimeout(entry.timer);
-    if (entry.spinnerTimer) clearTimeout(entry.spinnerTimer);
-    pendingFrameReveals.delete(frameEl);
-}
-
-function revealFrame(frameEl) {
-    const entry = pendingFrameReveals.get(frameEl);
-    if (!entry) return;
-    // Remumber may move data-column while a reveal is pending — resolve live index
-    // from the frame's column so we don't cancel and leave a forever spinner.
-    const colEl = frameEl.closest?.('.split-column');
-    const liveIdx = colEl && !isSplitDiscardedEl(colEl)
-        ? parseInt(colEl.dataset.column, 10)
-        : NaN;
-    const idx = Number.isFinite(liveIdx) ? liveIdx : entry.colIdx;
-    if (entry.token !== frameRevealTokens.get(idx)) {
-        cancelPendingReveal(frameEl);
-        return;
-    }
-    entry.colIdx = idx;
-    cancelPendingReveal(frameEl);
-
-    const { mainEl, oldFrames } = entry;
-    const anim = uiAnimationsEnabled();
-    const ms = anim ? uiTransitionMs() : 0;
-
-    frameEl.classList.remove('shell-frame-pending');
-    frameEl.style.transition = ms > 0 ? `opacity ${ms}ms ease` : 'none';
-
-    requestAnimationFrame(() => {
-        frameEl.style.opacity = '1';
-        frameEl.style.pointerEvents = '';
-    });
-
-    setPageLoaderVisible(mainEl, false);
-
-    (oldFrames || []).forEach((old) => {
-        if (!old || old === frameEl || !old.parentNode) return;
-        old.classList.add('shell-frame-outgoing');
-        old.style.pointerEvents = 'none';
-        const removeOld = () => {
-            try { old.remove(); } catch (_) {}
-        };
-        if (ms > 0) {
-            old.style.transition = `opacity ${ms}ms ease`;
-            requestAnimationFrame(() => { old.style.opacity = '0'; });
-            setTimeout(removeOld, ms + 40);
-        } else {
-            removeOld();
-        }
-    });
-}
-
-/** Reveal the frame whose document just told us it painted. */
-function finishFrameTransitionFor(sourceWindow) {
-    if (!sourceWindow) return;
-    document.querySelectorAll('.shell-main iframe').forEach((frame) => {
-        try {
-            if (frame.contentWindow === sourceWindow) revealFrame(frame);
-        } catch (_) {}
-    });
-}
-
-function armFrameReveal(colIdx, frameEl, mainEl, oldFrames) {
-    applyUiAnimationPrefs();
-    const token = (frameRevealTokens.get(colIdx) || 0) + 1;
-    frameRevealTokens.set(colIdx, token);
-
-    (oldFrames || []).forEach((f) => cancelPendingReveal(f));
-
-    // Always hide until ready — even with animations off — so theme/wallpaper FOUC never shows.
-    frameEl.classList.add('shell-frame-pending');
-    frameEl.style.opacity = '0';
-    frameEl.style.pointerEvents = 'none';
-    frameEl.style.transition = 'none';
-    frameEl.style.background = 'transparent';
-
-    // Soft veil immediately; spinner only if the page takes a beat.
-    setPageLoaderVisible(mainEl, true, { spinning: false });
-    const spinnerTimer = setTimeout(
-        () => setPageLoaderVisible(mainEl, true, { spinning: true }),
-        SPINNER_DELAY_MS
-    );
-    // Phones may retry dropped CSS for a few seconds before cuttle-page-ready;
-    // don't unveil an unstyled iframe mid-recovery.
-    const failsafeMs = isCuttleMobileShell() ? 7000 : TRANSITION_FAILSAFE_MS;
-    const timer = setTimeout(() => revealFrame(frameEl), failsafeMs);
-
-    pendingFrameReveals.set(frameEl, {
-        colIdx,
-        mainEl,
-        oldFrames: oldFrames || [],
-        token,
-        timer,
-        spinnerTimer
-    });
-}
 
 function broadcastToFrames(message, skipWindow) {
     document.querySelectorAll('.shell-main iframe').forEach((frame) => {
@@ -2181,228 +901,55 @@ function broadcastToFrames(message, skipWindow) {
     });
 }
 
+// ── Rail customization / apps list (owner: shell_rail.js) ──────
+// The rail layout lifetime (canonical order, pinned/hidden persistence,
+// hold-to-edit mode, apps broadcast, Agent Feed availability) lives in
+// CuttleShellRail; app_shell wires it and keeps the pane-mount re-apply calls.
+const rail = CuttleShellRail.create({
+    win: window, doc: document, getColumnEl, broadcastToFrames,
+});
+// Capability for shell_mobile.js's APK-update rail button: it is created by the
+// mobile owner but must not fire while the shell is editing the rail or
+// suppressing a post-drag click. The rail owner holds that state; the owner asks.
+window.cuttleRailInteractionLocked = () => rail.interactionLocked();
+// Apps page asks the shell for the current rail apps by bare global name.
+function getAppsList() { return rail.getAppsList(); }
+
+paneController = CuttleShellPanes.create({
+    win: window, doc: document, fetch, setTimeout, clearTimeout, URL, URLSearchParams,
+    AbortController, getSplitColumns, getLiveFrame, findColumnIndexForSource,
+    columnState, chatSurfaceKind, broadcastToFrames, isChatPageFrame,
+    getColumnEl, getSplitColumnCount: () => getSplitColumns().length,
+    pauseAllShellPaneStreams, pauseShellFrameStreams,
+    stampComposerDraftScope: (frame, idx) => stampComposerDraftScope(frame, idx),
+    withCacheBust: (page) => withCacheBust(page),
+    attachFrameLoadListener: (idx, frame) => attachFrameLoadListener(idx, frame),
+    localStorage, isSplitDiscardedEl, isCuttleMobileShell,
+    withRememberedChat, rememberChatHandleFromPage, getState,
+    setState, storagePageKey: STORAGE_PAGE,
+    updateColumnUI, persistSplitLayout, sessionStorage,
+    desktopCfg: CuttleShellElectron.getDesktopConfig(),
+    forgetChatHandle: () => rememberChatHandle(0, 'chat', null),
+});
+
+function applyUiAnimationPrefs() { paneController.applyUiAnimationPrefs(); }
+function armFrameReveal(...args) { return paneController.armFrameReveal(...args); }
+function cancelPendingReveal(frame) { return paneController.cancelPendingReveal(frame); }
+function finishFrameTransitionFor(source) { return paneController.finishFrameTransitionFor(source); }
+
 applyUiAnimationPrefs();
 
-// ── Inject Ctrl+wheel / Ctrl+/- zoom hooks into iframe panes ─
-function injectElectronZoomHandler(frameEl) {
-    try {
-        const doc = frameEl.contentDocument || frameEl.contentWindow?.document;
-        if (!doc || doc.documentElement?.dataset?.cuttleZoomBound === '1') return;
-        doc.documentElement.dataset.cuttleZoomBound = '1';
-        const hasElectronZoom = !!(window.electron?.zoomIn);
-        doc.addEventListener('wheel', function (e) {
-            if (!(e.ctrlKey || e.metaKey)) return;
-            if (hasElectronZoom) {
-                e.preventDefault();
-                e.stopPropagation();
-                window.parent.postMessage({
-                    type: 'electron-zoom',
-                    deltaY: e.deltaY,
-                    deltaMode: e.deltaMode,
-                }, '*');
-                return;
-            }
-            window.parent.postMessage({ type: 'browser-zoom-hint' }, '*');
-        }, { capture: true, passive: false });
-        doc.addEventListener('keydown', function (e) {
-            if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-            const key = String(e.key || '');
-            let action = null;
-            if (key === '+' || key === '=' || key === 'Add') action = 'in';
-            else if (key === '-' || key === '_' || key === 'Subtract') action = 'out';
-            else if (key === '0') action = 'reset';
-            if (!action) return;
-            if (hasElectronZoom) {
-                e.preventDefault();
-                e.stopPropagation();
-                window.parent.postMessage({ type: 'electron-zoom-key', action }, '*');
-                return;
-            }
-            window.parent.postMessage({ type: 'browser-zoom-hint' }, '*');
-        }, true);
-    } catch (_) {}
-}
-
-/** Transient upper-right zoom percentage chip. */
-let _zoomHudHideTimer = null;
-let _zoomWheelAccum = 0;
-let _zoomWheelDir = 0; // -1 zoom in (wheel up), +1 zoom out
-let _zoomWheelIdleTimer = null;
-let _zoomLastStepAt = 0;
-
-/** Chromium-ish: one zoom step per ~100px of wheel delta (pixel mode). */
-const ZOOM_WHEEL_THRESHOLD = 100;
-/** Ignore opposite-direction jitter while actively zooming one way. */
-const ZOOM_DIR_LOCK_MS = 280;
-/** Cap how fast steps can fire (trackpads spam wheel events). */
-const ZOOM_MIN_STEP_MS = 55;
-
-function approxBrowserZoomPercent() {
-    try {
-        if (window.visualViewport && Number.isFinite(window.visualViewport.scale) && window.visualViewport.scale > 0) {
-            const vv = Math.round(window.visualViewport.scale * 100);
-            if (vv !== 100) return vv;
-        }
-    } catch (_) {}
-    try {
-        if (window.outerWidth > 0 && window.innerWidth > 0) {
-            const ratio = window.outerWidth / window.innerWidth;
-            if (ratio > 0.4 && ratio < 4) return Math.round(ratio * 100);
-        }
-    } catch (_) {}
-    return 100;
-}
-
-function readZoomPercent() {
-    try {
-        if (typeof window.electron?.getZoomPercent === 'function') {
-            const n = Number(window.electron.getZoomPercent());
-            if (Number.isFinite(n) && n > 0) return Math.round(n);
-        }
-    } catch (_) {}
-    return approxBrowserZoomPercent();
-}
-
-function showZoomHud(percent) {
-    const el = document.getElementById('shellZoomHud');
-    if (!el) return;
-    const pct = Number.isFinite(Number(percent)) ? Math.round(Number(percent)) : readZoomPercent();
-    el.textContent = pct + '%';
-    el.hidden = false;
-    void el.offsetWidth;
-    el.classList.add('is-visible');
-    if (_zoomHudHideTimer) clearTimeout(_zoomHudHideTimer);
-    _zoomHudHideTimer = setTimeout(() => {
-        el.classList.remove('is-visible');
-        _zoomHudHideTimer = setTimeout(() => {
-            if (!el.classList.contains('is-visible')) el.hidden = true;
-            _zoomHudHideTimer = null;
-        }, 240);
-    }, 1400);
-}
-
-function applyZoomAction(action) {
-    if (!window.electron) return;
-    let pct = null;
-    try {
-        if (action === 'in' && typeof window.electron.zoomIn === 'function') {
-            pct = window.electron.zoomIn();
-        } else if (action === 'out' && typeof window.electron.zoomOut === 'function') {
-            pct = window.electron.zoomOut();
-        } else if (action === 'reset' && typeof window.electron.resetZoom === 'function') {
-            pct = window.electron.resetZoom();
-        }
-    } catch (_) {}
-    showZoomHud(pct != null ? pct : readZoomPercent());
-}
-
-/**
- * Normalize wheel delta to roughly "CSS pixels" so line/page modes don't
- * overshoot, then accumulate with direction lock before taking a step.
- */
-function handleElectronZoomWheel(deltaY, deltaMode) {
-    if (!window.electron?.zoomIn) return;
-    let dy = Number(deltaY) || 0;
-    if (!dy) return;
-    // 0 = pixel, 1 = line, 2 = page
-    if (deltaMode === 1) dy *= 16;
-    else if (deltaMode === 2) dy *= 100;
-
-    const now = Date.now();
-    // Wheel up (negative) → zoom in. Positive → zoom out.
-    const sign = dy < 0 ? -1 : 1;
-
-    if (_zoomWheelDir && sign !== _zoomWheelDir && (now - _zoomLastStepAt) < ZOOM_DIR_LOCK_MS) {
-        // Trackpads often emit a few opposite-sign samples mid-gesture — ignore.
-        return;
-    }
-    if (sign !== _zoomWheelDir) {
-        _zoomWheelAccum = 0;
-        _zoomWheelDir = sign;
-    }
-
-    _zoomWheelAccum += Math.abs(dy);
-    if (_zoomWheelIdleTimer) clearTimeout(_zoomWheelIdleTimer);
-    _zoomWheelIdleTimer = setTimeout(() => {
-        _zoomWheelAccum = 0;
-        _zoomWheelDir = 0;
-        _zoomWheelIdleTimer = null;
-    }, ZOOM_DIR_LOCK_MS);
-
-    if (_zoomWheelAccum < ZOOM_WHEEL_THRESHOLD) return;
-    if ((now - _zoomLastStepAt) < ZOOM_MIN_STEP_MS) return;
-
-    _zoomWheelAccum = 0;
-    _zoomLastStepAt = now;
-    applyZoomAction(sign < 0 ? 'in' : 'out');
-}
-
-function setupShellZoomHud() {
-    if (document.documentElement.dataset.cuttleZoomHud === '1') return;
-    document.documentElement.dataset.cuttleZoomHud = '1';
-
-    document.addEventListener('wheel', (e) => {
-        if (!(e.ctrlKey || e.metaKey)) return;
-        if (!window.electron?.zoomIn) {
-            requestAnimationFrame(() => showZoomHud(readZoomPercent()));
-            return;
-        }
-        e.preventDefault();
-        handleElectronZoomWheel(e.deltaY, e.deltaMode);
-    }, { capture: true, passive: false });
-
-    document.addEventListener('keydown', (e) => {
-        if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-        const key = String(e.key || '');
-        let action = null;
-        if (key === '+' || key === '=' || key === 'Add') action = 'in';
-        else if (key === '-' || key === '_' || key === 'Subtract') action = 'out';
-        else if (key === '0') action = 'reset';
-        if (!action) return;
-        if (!window.electron?.zoomIn) {
-            requestAnimationFrame(() => showZoomHud(readZoomPercent()));
-            setTimeout(() => showZoomHud(readZoomPercent()), 50);
-            return;
-        }
-        e.preventDefault();
-        e.stopPropagation();
-        // Prefer main-process shortcut IPC (blocks Chromium's built-in zoom).
-        // Fall back to direct apply if preload hasn't been restarted yet.
-        if (typeof window.electron?.onZoomShortcut !== 'function') {
-            const now = Date.now();
-            if (action !== 'reset' && e.repeat && (now - _zoomLastStepAt) < ZOOM_MIN_STEP_MS) return;
-            _zoomLastStepAt = now;
-            _zoomWheelAccum = 0;
-            applyZoomAction(action);
-        }
-    }, true);
-
-    if (typeof window.electron?.onZoomShortcut === 'function') {
-        window.electron.onZoomShortcut((payload) => {
-            const action = payload && payload.action;
-            if (!action) return;
-            const now = Date.now();
-            if (action !== 'reset' && (now - _zoomLastStepAt) < ZOOM_MIN_STEP_MS) return;
-            _zoomLastStepAt = now;
-            _zoomWheelAccum = 0;
-            applyZoomAction(action);
-        });
-    }
-}
-
-setupShellZoomHud();
 
 // ── Attach load-sync listener to a frame element ─────────────
 function attachFrameLoadListener(colIdx, frameEl) {
     if (!frameEl || frameEl.dataset.shellLoadBound === '1') return;
-    frameEl.dataset.shellLoadBound = '1';
-    frameEl.addEventListener('load', function () {
+    paneController.attachFrameLoadListener(frameEl, function () {
         try {
             const href = frameEl.contentWindow?.location?.href;
             // Ignore about:blank — Chromium may fire load for it before the real page loads.
             // Resetting state here would desync the UI. Only sync when we have a real URL.
             if (!href || href === 'about:blank') return;
-            injectElectronZoomHandler(frameEl);
+            CuttleShellElectron.injectElectronZoomHandler(frameEl);
             try {
                 if (typeof window.bindRailModKeysForFrame === 'function') {
                     window.bindRailModKeysForFrame(frameEl);
@@ -2468,16 +1015,48 @@ function attachFrameLoadListener(colIdx, frameEl) {
     });
 }
 
-function isCuttleMobileShell() {
-    try {
-        if (window.isCuttleMobile || window.cuttleMobile?.isNative) return true;
-    } catch (_) {}
-    return /\bCuttleMobile\//.test(navigator.userAgent || '');
-}
-
 // Establish the space identity before mounting the first chat frame.
-const spacesState = readSpacesState();
-persistSpacesState();
+// Spaces tab strip UI lives in the CuttleShellSpaces owner (shell_spaces.js);
+// app_shell supplies the pane/layout effects it composes.
+const shellSpaces = CuttleShellSpaces.create({
+    win: window,
+    doc: document,
+    storage: localStorage,
+    escapeHtml,
+    getOpenPaneSessions,
+    flattenLayoutLeaves,
+    chatSurfaceKind,
+    broadcastToFrames,
+    broadcastUsageLiveWake,
+    updateUnreadBadge: updateChatUnreadBadge,
+    getAuthUserId: () => (shellAuthUser ? shellAuthUser.id : null),
+    isRestoring: () => _restoringLayout,
+    snapshotLayout: () => snapshotLayoutTree(splitContainer),
+    applySpaceRoot: (root) => applyWorkspaceColumns(null, null, root, { forceNavigate: true }),
+    defaultSpaceRoot: () => getBuiltinDefaultWorkspace().root,
+    persistLastChatHandles,
+    clearLastChatColumn: (idx) => lastChatByColumn.delete(idx),
+    // Pane/layout capabilities for the cross-space pane-drag effects.
+    getSplitContainer: () => splitContainer,
+    getSplitColumns,
+    closeSplitColumn,
+    getColumnEl,
+    getState,
+    setState,
+    updateColumnUI,
+    replaceFrame,
+    attachFrameLoadListener,
+    pageWithPaneSession,
+    canonicalizeShellPage,
+    persistSplitLayout,
+    lastChatByColumn,
+    newLeafId,
+    newGroupId,
+    normalizeSplitOrientation,
+    setFocusedColumnDirect: (idx) => paneController?.setFocusedColumnDirect(idx),
+    broadcastPaneFocus,
+});
+const spacesState = shellSpaces.state;
 
 function stampComposerDraftScope(frame, colIdx) {
     if (!frame) return;
@@ -2555,79 +1134,11 @@ function pauseAllShellPaneStreams() {
  * wedges before paint.
  */
 function replaceFrameInPlace(colIdx, page) {
-    const col = getColumnEl(colIdx);
-    if (!col) return null;
-    const mainEl = col.querySelector('.shell-main');
-    if (!mainEl) return null;
-
-    pauseAllShellPaneStreams();
-
-    let frame = getLiveFrame(colIdx);
-    if (!frame) {
-        frame = document.createElement('iframe');
-        frame.frameBorder = '0';
-        frame.allowFullscreen = true;
-        frame.allow = 'clipboard-read; clipboard-write';
-        frame.setAttribute('aria-label', 'Cuttle Content');
-        if (colIdx === 0) {
-            frame.id = 'contentFrame';
-            frame.name = 'contentFrame';
-        }
-        mainEl.appendChild(frame);
-        attachFrameLoadListener(colIdx, frame);
-    }
-
-    // Drop any leftover stacked frames from older replaceFrame crossfades.
-    Array.from(mainEl.querySelectorAll('iframe')).forEach((f) => {
-        if (f === frame) return;
-        try { f.remove(); } catch (_) {}
-    });
-
-    armFrameReveal(colIdx, frame, mainEl, []);
-    stampComposerDraftScope(frame, colIdx);
-    const target = withCacheBust(page);
-    // Let pause-streams close EventSources before the navigation request.
-    setTimeout(() => {
-        try { frame.src = target; } catch (_) {}
-    }, 0);
-    return frame;
+    return paneController.replaceFrameInPlace(colIdx, page);
 }
 
 function replaceFrame(colIdx, page) {
-    // Split view: never tear down / recreate the content iframe.
-    if (getSplitColumns().length > 1) {
-        return replaceFrameInPlace(colIdx, page);
-    }
-
-    const col = getColumnEl(colIdx);
-    if (!col) return null;
-    const mainEl = col.querySelector('.shell-main');
-    if (!mainEl) return null;
-
-    const oldFrames = Array.from(mainEl.querySelectorAll('iframe')).filter(
-        (f) => !f.classList.contains('shell-frame-outgoing')
-    );
-    oldFrames.forEach(pauseShellFrameStreams);
-
-    const newFrame = document.createElement('iframe');
-    newFrame.frameBorder = '0';
-    newFrame.allowFullscreen = true;
-    newFrame.allow = 'clipboard-read; clipboard-write';
-    newFrame.setAttribute('aria-label', 'Cuttle Content');
-    if (colIdx === 0) {
-        oldFrames.forEach((f) => {
-            f.removeAttribute('id');
-            f.removeAttribute('name');
-        });
-        newFrame.id = 'contentFrame';
-        newFrame.name = 'contentFrame';
-    }
-
-    armFrameReveal(colIdx, newFrame, mainEl, oldFrames);
-    mainEl.appendChild(newFrame);
-    stampComposerDraftScope(newFrame, colIdx);
-    newFrame.src = withCacheBust(page);
-    return newFrame;
+    return paneController.replaceFrame(colIdx, page);
 }
 
 // ── Apply initial state (column 0) ──────────────────────────────
@@ -2659,68 +1170,11 @@ if (col0) {
 }
 
 function parkShellIframes(root) {
-    if (!root) return;
-    // Pause first; avoid about:blank (wedges live chat EventSources on Electron).
-    Array.from(root.querySelectorAll('iframe')).forEach((frame) => {
-        try { cancelPendingReveal(frame); } catch (_) {}
-        try { pauseShellFrameStreams(frame); } catch (_) {}
-        try {
-            // Guard: contentWindow access during load can freeze Chromium.
-            if (frame.contentDocument !== null) {
-                frame.contentWindow?.postMessage({ type: 'cuttle-pane-teardown' }, '*');
-            }
-        } catch (_) {}
-        try {
-            frame.style.display = 'none';
-            frame.style.pointerEvents = 'none';
-        } catch (_) {}
-        const doomed = frame;
-        setTimeout(() => {
-            try { doomed.remove(); } catch (_) {}
-        }, 0);
-    });
+    return paneController.parkShellIframes(root);
 }
 
-/**
- * Tear down a subtree without probing live iframe contentWindows and without
- * destroying a loaded chat document (sync or deferred remove freezes Chromium).
- * Marks the node + descendant panes/groups discarded (excluded from layout
- * counts) and soft-neutralizes iframes via srcdoc. Nodes stay hidden in the DOM.
- */
 function discardSplitSubtree(root) {
-    if (!root || root.dataset?.splitDiscarded === '1') return;
-    try {
-        root.dataset.splitDiscarded = '1';
-        root.style.display = 'none';
-        root.style.pointerEvents = 'none';
-        root.setAttribute('aria-hidden', 'true');
-        // Scrub indices so querySelector/getColumnEl never hits stale stubs.
-        if (root.classList?.contains('split-column')) {
-            root.dataset.column = `discarded-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        }
-        root.querySelectorAll('.split-column, .split-group').forEach((el) => {
-            el.dataset.splitDiscarded = '1';
-            el.style.pointerEvents = 'none';
-            if (el.classList.contains('split-column')) {
-                el.dataset.column = `discarded-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-            }
-        });
-    } catch (_) {}
-    try {
-        root.querySelectorAll('iframe').forEach((frame) => {
-            try { cancelPendingReveal(frame); } catch (_) {}
-            try {
-                frame.style.display = 'none';
-                frame.style.pointerEvents = 'none';
-                frame.setAttribute('aria-hidden', 'true');
-            } catch (_) {}
-            try {
-                // Soft unload — do not frame.remove() / root.remove() (Chrome freeze).
-                frame.removeAttribute('src');
-                frame.srcdoc = '<!doctype html><title></title>';
-            } catch (_) {}
-        });
-    } catch (_) {}
+    return paneController.discardSplitSubtree(root);
 }
 
 // ── Close a leaf pane (never the last remaining leaf) ───────────
@@ -2742,12 +1196,11 @@ function closeSplitColumn(colIdxOrEl) {
     if (prevSib?.classList?.contains('split-resize-handle')) prevSib.remove();
     else if (nextSib?.classList?.contains('split-resize-handle')) nextSib.remove();
 
-    frameRevealTokens.delete(colIdx);
+    paneController.clearRevealColumn(colIdx);
     columnState.delete(colIdx);
-    paneSessionByColumn.delete(colIdx);
-    paneProjectByColumn.delete(colIdx);
+    paneController?.clearPaneColumn(colIdx);
     lastChatByColumn.delete(colIdx);
-    if (focusedColumnIdx === colIdx) focusedColumnIdx = 0;
+    if (paneController?.focusedColumnIndex() === colIdx) paneController.setFocusedColumnDirect(0);
 
     // Safe teardown — do not probe live iframe contentWindows (Chrome freeze).
     discardSplitSubtree(col);
@@ -2850,8 +1303,8 @@ function collapseSplitGroupIfNeeded(groupEl) {
                 setState(provisionalIdx, page);
                 mountNewLeafFrame(provisionalIdx, built.frame, built.mainEl, page);
                 setupColumnListeners(provisionalIdx, built.clone);
-                setupLayoutDragDrop(built.clone);
-                applyLayoutToColumn(built.clone, lastUILayout);
+                rail.setupLayoutDragDrop(built.clone);
+                rail.applyLayoutToColumn(built.clone);
             } else {
                 discardSplitSubtree(groupEl);
             }
@@ -3046,11 +1499,9 @@ function createSplitLeafColumn(page, leafId) {
     if (mainEl) {
         // Ensure main is empty before attaching a fresh frame.
         while (mainEl.firstChild) mainEl.removeChild(mainEl.firstChild);
-        frame = document.createElement('iframe');
-        frame.frameBorder = '0';
-        frame.allowFullscreen = true;
-        frame.allow = 'clipboard-read; clipboard-write';
-        frame.setAttribute('aria-label', 'Cuttle Content');
+        frame = paneController.createContentFrame(
+            parseInt(clone.dataset.column, 10)
+        );
         mainEl.appendChild(frame);
     }
     ensurePaneDropOverlay(clone);
@@ -3070,7 +1521,7 @@ function mountNewLeafFrame(newIdx, frame, mainEl, page) {
     // Fresh panes clone the boot-time rail template, which bakes in the
     // pre-flag `display:none` on nav-agent-feed. Re-apply the live flag so a
     // new split matches column 0 instead of losing the icon.
-    applyAgentFeedAvailability();
+    rail.applyAgentFeedAvailability();
 }
 
 /**
@@ -3133,8 +1584,8 @@ function appendRootHorizontalPane(initialPage) {
         persistLastChatHandles();
         mountNewLeafFrame(newIdx, built.frame, built.mainEl, page);
         setupColumnListeners(newIdx, built.clone);
-        setupLayoutDragDrop(built.clone);
-        applyLayoutToColumn(built.clone, lastUILayout);
+        rail.setupLayoutDragDrop(built.clone);
+        rail.applyLayoutToColumn(built.clone);
     };
 
     // Vertical multi-pane root → [existing stack | new] without destroying nesting.
@@ -3187,8 +1638,8 @@ function appendRootVerticalPane(initialPage) {
         persistLastChatHandles();
         mountNewLeafFrame(newIdx, built.frame, built.mainEl, page);
         setupColumnListeners(newIdx, built.clone);
-        setupLayoutDragDrop(built.clone);
-        applyLayoutToColumn(built.clone, lastUILayout);
+        rail.setupLayoutDragDrop(built.clone);
+        rail.applyLayoutToColumn(built.clone);
         return newIdx;
     };
 
@@ -3263,8 +1714,8 @@ function splitLeafColumn(targetCol, orientation, initialPage) {
         persistLastChatHandles();
         mountNewLeafFrame(newIdx, frame, mainEl, page);
         setupColumnListeners(newIdx, clone);
-        setupLayoutDragDrop(clone);
-        applyLayoutToColumn(clone, lastUILayout);
+        rail.setupLayoutDragDrop(clone);
+        rail.applyLayoutToColumn(clone);
         if (!_restoringLayout) equalizeGroupChildren(parent);
         else rebuildGroupResizeHandles(parent);
         persistSplitLayout();
@@ -3297,9 +1748,8 @@ function splitLeafColumn(targetCol, orientation, initialPage) {
     discardSplitSubtree(targetCol);
 
     columnState.delete(targetIdx);
-    paneSessionByColumn.delete(targetIdx);
-    paneProjectByColumn.delete(targetIdx);
-    frameRevealTokens.delete(targetIdx);
+    paneController?.clearPaneColumn(targetIdx);
+    paneController.clearRevealColumn(targetIdx);
     lastChatByColumn.delete(targetIdx);
 
     builtA.clone.style.flex = '1 1 0%';
@@ -3322,10 +1772,10 @@ function splitLeafColumn(targetCol, orientation, initialPage) {
     mountNewLeafFrame(idxB, builtB.frame, builtB.mainEl, builtB.page);
     setupColumnListeners(idxA, builtA.clone);
     setupColumnListeners(idxB, builtB.clone);
-    setupLayoutDragDrop(builtA.clone);
-    setupLayoutDragDrop(builtB.clone);
-    applyLayoutToColumn(builtA.clone, lastUILayout);
-    applyLayoutToColumn(builtB.clone, lastUILayout);
+    rail.setupLayoutDragDrop(builtA.clone);
+    rail.setupLayoutDragDrop(builtB.clone);
+    rail.applyLayoutToColumn(builtA.clone);
+    rail.applyLayoutToColumn(builtB.clone);
 
     if (!_restoringLayout) {
         applySplitRatioFlex(getGroupChildNodes(group), [1, 1], want, group);
@@ -3367,8 +1817,8 @@ function addSplitColumn(initialPage, opts) {
         if (initialPage) rememberChatHandleFromPage(newIdx, initialPage);
         mountNewLeafFrame(newIdx, frame, mainEl, page);
         setupColumnListeners(newIdx, clone);
-        setupLayoutDragDrop(clone);
-        applyLayoutToColumn(clone, lastUILayout);
+        rail.setupLayoutDragDrop(clone);
+        rail.applyLayoutToColumn(clone);
         return;
     }
     splitLeafColumn(target, want, initialPage);
@@ -3746,8 +2196,8 @@ function mountLayoutTree(node, parentEl, opts) {
             rememberHandlesFromWorkspaceEntry(newIdx, node);
             mountNewLeafFrame(newIdx, built.frame, built.mainEl, pageFromLayoutLeaf(node));
             setupColumnListeners(newIdx, col);
-            setupLayoutDragDrop(col);
-            applyLayoutToColumn(col, lastUILayout);
+            rail.setupLayoutDragDrop(col);
+            rail.applyLayoutToColumn(col);
         }
         if (col && node.flex) col.style.flex = node.flex;
         if (col && node.collapsed) setPaneCollapsed(col, true, { quiet: true });
@@ -3911,12 +2361,11 @@ function removeExtraSplitColumnsNow() {
         const col = extras[extras.length - 1];
         removed += 1;
         const idx = parseInt(col.dataset.column, 10);
-        frameRevealTokens.delete(idx);
+        paneController.clearRevealColumn(idx);
         columnState.delete(idx);
-        paneSessionByColumn.delete(idx);
-        paneProjectByColumn.delete(idx);
+        paneController?.clearPaneColumn(idx);
         lastChatByColumn.delete(idx);
-        if (focusedColumnIdx === idx) focusedColumnIdx = 0;
+        if (paneController?.focusedColumnIndex() === idx) paneController.setFocusedColumnDirect(0);
         const parent = getLeafParentGroup(col);
         const prevSib = col.previousElementSibling;
         const nextSib = col.nextElementSibling;
@@ -3976,7 +2425,7 @@ function setupColumnListeners(colIdx, colEl) {
 
     const { column, toggle } = els;
     ensureRailPaneGrip(column);
-    ensureRailEditScrim(column);
+    rail.ensureRailEditScrim(column);
     observeRailHeight(column);
     bindRailLogoModifierKeys();
 
@@ -4031,7 +2480,7 @@ function setupColumnListeners(colIdx, colEl) {
     // Rail nav (a blade icon also unparks its pane, like the divider).
     column.querySelectorAll('.rail-item[data-page]').forEach(btn => {
         btn.addEventListener('click', (e) => {
-            if (railEditing || railSuppressClick) return;
+            if (rail.interactionLocked()) return;
             if (e.target.closest('.rail-item-remove')) return;
             const idx = parseInt(column.dataset.column, 10);
             if (isPaneCollapsedEl(column)) setPaneCollapsed(column, false);
@@ -4041,30 +2490,30 @@ function setupColumnListeners(colIdx, colEl) {
 
     // Notifications rail button (opens popover, does not navigate)
     column.querySelector('[data-id="nav-notifications"]')?.addEventListener('click', () => {
-        if (railEditing || railSuppressClick) return;
+        if (rail.interactionLocked()) return;
         toggleNotificationsPopover();
     });
 
     column.querySelector('[data-id="nav-workspace"]')?.addEventListener('click', () => {
-        if (railEditing || railSuppressClick) return;
+        if (rail.interactionLocked()) return;
         toggleWorkspacePopover();
     });
 
     // Account rail button (sign in / sign out, does not navigate)
     column.querySelector('[data-id="nav-account"]')?.addEventListener('click', () => {
-        if (railEditing || railSuppressClick) return;
+        if (rail.interactionLocked()) return;
         const idx = parseInt(column.dataset.column, 10);
         handleAccountClick(idx);
     });
 
     // Sidebar toggle: collapse/expand the left blade (icon rail).
     toggle?.addEventListener('click', () => {
-        if (railEditing || railSuppressClick) return;
+        if (rail.interactionLocked()) return;
         const idx = parseInt(column.dataset.column, 10);
         const state = getState(idx);
         applyRailCollapsed(idx, !state.railCollapsed);
     });
-    setupRailCustomize(column);
+    rail.setupRailCustomize(column);
     setupPaneReorder(column);
 
     column.querySelector('.rail-expand-tab')?.addEventListener('click', () => {
@@ -4086,643 +2535,10 @@ updateSplitContainerChrome();
 syncSplitColumnLogos();
 syncSplitColumnLogos();
 
-// ── UI Layout: load, apply, save, drag-and-drop ─────────────────
-function getLayoutFromDOM(colEl) {
-    const col = colEl || getColumnEl(0);
-    if (!col) {
-        return {
-            rail_items: CANONICAL_RAIL_ITEM_ORDER.slice(),
-            rail_footer: CANONICAL_RAIL_FOOTER_ORDER.slice(),
-            rail_hidden: [],
-        };
-    }
-    const rail = col.querySelector('.rail-items');
-    const footer = col.querySelector('.rail-footer');
-    const stash = col.querySelector('.rail-stash');
-    const hidden = Array.from(stash?.querySelectorAll('.rail-item[data-id]') || [])
-        .map(e => e.dataset.id)
-        .filter(id => CANONICAL_RAIL_ITEM_ORDER.includes(id));
-    return {
-        rail_items: Array.from(rail?.querySelectorAll('.rail-item[data-id]') || [])
-            .map(e => e.dataset.id)
-            .filter(id => CANONICAL_RAIL_ITEM_ORDER.includes(id)),
-        rail_hidden: hidden,
-        rail_footer: Array.from(footer?.querySelectorAll('.rail-item[data-id], .rail-panel-toggle[data-id]') || []).map(e => e.dataset.id),
-        rail_footer_hidden: Array.from(footer?.querySelectorAll('.rail-item[data-id]') || [])
-            .filter(e => HIDEABLE_FOOTER_IDS.has(e.dataset.id) && e.hidden)
-            .map(e => e.dataset.id),
-    };
-}
-
-function insertAtCanonicalSlot(result, id, canonical) {
-    const canonIdx = canonical.indexOf(id);
-    let insertAt = result.length;
-    for (let i = 0; i < result.length; i++) {
-        const ri = canonical.indexOf(result[i]);
-        if (ri === -1) continue;
-        if (ri > canonIdx) {
-            insertAt = i;
-            break;
-        }
-    }
-    result.splice(insertAt, 0, id);
-}
-
-/**
- * Merge saved rail order with DOM: ids missing from older settings are inserted at their
- * canonical slot. Stray or retired ids are ignored here.
- */
-function normalizeRailItemOrder(savedIds, colEl) {
-    const known = new Set(CANONICAL_RAIL_ITEM_ORDER);
-    const rail = colEl?.querySelector?.('.rail-items');
-    const stash = colEl?.querySelector?.('.rail-stash');
-    const domIds = [
-        ...Array.from(rail?.querySelectorAll('.rail-item[data-id]') || []),
-        ...Array.from(stash?.querySelectorAll('.rail-item[data-id]') || []),
-    ].map(e => e.dataset.id).filter(id => known.has(id));
-    const canonInDom = CANONICAL_RAIL_ITEM_ORDER.filter(id => domIds.includes(id));
-    if (!Array.isArray(savedIds) || savedIds.length === 0) return canonInDom;
-    const validSaved = savedIds.filter(id => known.has(id) && canonInDom.includes(id));
-    const missing = canonInDom.filter(id => !validSaved.includes(id));
-    const result = validSaved.slice();
-    for (const mid of missing) insertAtCanonicalSlot(result, mid, CANONICAL_RAIL_ITEM_ORDER);
-    return result;
-}
-
-/**
- * Visible page icons. If `rail_hidden` is present (even empty), respect add/remove.
- * Legacy saves without that key keep the old "re-insert missing icons" behavior.
- */
-function resolveVisibleRailIds(layout, colEl) {
-    if (!Array.isArray(layout?.rail_hidden)) {
-        return normalizeRailItemOrder(layout?.rail_items, colEl);
-    }
-    const hidden = new Set(layout.rail_hidden.filter(
-        id => CANONICAL_RAIL_ITEM_ORDER.includes(id) && !RAIL_LOCKED_IDS.has(id),
-    ));
-    const saved = Array.isArray(layout.rail_items)
-        ? layout.rail_items.filter(id => CANONICAL_RAIL_ITEM_ORDER.includes(id) && !hidden.has(id))
-        : [];
-    const present = new Set([...saved, ...hidden]);
-    const result = saved.slice();
-    for (const id of CANONICAL_RAIL_ITEM_ORDER) {
-        if (present.has(id)) continue;
-        insertAtCanonicalSlot(result, id, CANONICAL_RAIL_ITEM_ORDER);
-    }
-    return result;
-}
-
-/** Footer: account, notifications, workspace, settings, panel toggle (not page nav). */
-function normalizeRailFooterOrder(savedIds) {
-    const allowed = new Set(CANONICAL_RAIL_FOOTER_ORDER);
-    const base = Array.isArray(savedIds) ? savedIds.filter(id => allowed.has(id)) : [];
-    for (const id of CANONICAL_RAIL_FOOTER_ORDER) {
-        if (base.includes(id)) continue;
-        insertAtCanonicalSlot(base, id, CANONICAL_RAIL_FOOTER_ORDER);
-    }
-    return base;
-}
-
-function applyLayoutToColumn(colEl, layout) {
-    if (!colEl || !layout) return;
-    ensureRailEditChrome(colEl);
-    const rail = colEl.querySelector('.rail-items');
-    const footer = colEl.querySelector('.rail-footer');
-    const stash = colEl.querySelector('.rail-stash');
-    const addSlot = colEl.querySelector('.rail-add-slot');
-    const byId = new Map();
-    colEl.querySelectorAll('.rail-item[data-id], .rail-panel-toggle[data-id]').forEach(el => {
-        if (el.dataset.id) byId.set(el.dataset.id, el);
-    });
-
-    const visible = resolveVisibleRailIds(layout, colEl);
-    visible.forEach(id => {
-        const el = byId.get(id);
-        if (el && rail) rail.appendChild(el);
-    });
-    CANONICAL_RAIL_ITEM_ORDER.forEach(id => {
-        if (visible.includes(id)) return;
-        const el = byId.get(id);
-        if (el && stash) stash.appendChild(el);
-    });
-    if (addSlot && rail) rail.appendChild(addSlot);
-
-    const footerOrder = normalizeRailFooterOrder(layout.rail_footer);
-    const footerHidden = new Set(
-        (Array.isArray(layout?.rail_footer_hidden) ? layout.rail_footer_hidden : [])
-            .filter(id => HIDEABLE_FOOTER_IDS.has(id)),
-    );
-    footerOrder.forEach(id => {
-        const el = byId.get(id);
-        if (el && footer) {
-            footer.appendChild(el);
-            if (el.classList.contains('rail-item')) el.hidden = footerHidden.has(id);
-        }
-    });
-}
-
-function applyLayoutToAllColumns(layout) {
-    document.querySelectorAll('.split-column').forEach(col => applyLayoutToColumn(col, layout));
-    applyAgentFeedAvailability();
-    if (typeof window.ensureCuttleMobileApkUpdateUi === 'function') {
-        window.ensureCuttleMobileApkUpdateUi();
-    }
-}
-
-function commitUILayout(layout) {
-    lastUILayout = {
-        rail_items: Array.isArray(layout?.rail_items) ? layout.rail_items.slice() : CANONICAL_RAIL_ITEM_ORDER.slice(),
-        rail_footer: Array.isArray(layout?.rail_footer) ? layout.rail_footer.slice() : CANONICAL_RAIL_FOOTER_ORDER.slice(),
-        rail_hidden: Array.isArray(layout?.rail_hidden) ? layout.rail_hidden.slice() : [],
-        rail_footer_hidden: Array.isArray(layout?.rail_footer_hidden) ? layout.rail_footer_hidden.slice() : [],
-        layout_version: RAIL_LAYOUT_VERSION,
-    };
-    applyLayoutToAllColumns(lastUILayout);
-    cacheUILayout(lastUILayout);
-    broadcastAppsList();
-    fetch('/api/settings/ui-layout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(lastUILayout)
-    }).catch(() => {});
-}
-
-const STORAGE_UI_LAYOUT = 'shell_ui_layout';
-
-function cacheUILayout(layout) {
-    try { localStorage.setItem(STORAGE_UI_LAYOUT, JSON.stringify(layout)); } catch (_) {}
-}
-
-function readCachedUILayout() {
-    try {
-        const raw = JSON.parse(localStorage.getItem(STORAGE_UI_LAYOUT) || 'null');
-        return raw && typeof raw === 'object' ? raw : null;
-    } catch (_) {
-        return null;
-    }
-}
-
-/**
- * Saved layouts from before the Apps page get the new default-hidden apps
- * stashed once; later user pins survive because the version is then current.
- */
-function migrateUILayout(saved) {
-    const layout = { ...DEFAULT_LAYOUT, ...saved };
-    if (!Array.isArray(saved.rail_hidden)) delete layout.rail_hidden;
-    layout.rail_footer_hidden = Array.isArray(saved.rail_footer_hidden)
-        ? saved.rail_footer_hidden.filter(id => HIDEABLE_FOOTER_IDS.has(id))
-        : [];
-    if ((Number(saved.layout_version) || 0) >= RAIL_LAYOUT_VERSION) return { layout, changed: false };
-    const hidden = new Set(Array.isArray(saved.rail_hidden) ? saved.rail_hidden : []);
-    // Existing v4 user pins remain intact; only the new App starts stashed.
-    const version = Number(saved.layout_version) || 0;
-    const additions = version >= 9 ? ['nav-test-lab']
-        : version >= 8 ? ['nav-mesh', 'nav-test-lab']
-        : version >= 7 ? ['nav-agent-feed'] : version >= 6 ? ['nav-gizmos', 'nav-agent-feed']
-        : version >= 5 ? ['nav-projects', 'nav-gizmos', 'nav-agent-feed']
-        : version >= 4 ? ['nav-achievements', 'nav-projects', 'nav-gizmos', 'nav-agent-feed']
-        : DEFAULT_RAIL_HIDDEN;
-    additions.forEach(id => hidden.add(id));
-    hidden.add('nav-test-lab');
-    const known = new Set(CANONICAL_RAIL_ITEM_ORDER);
-    layout.rail_hidden = Array.from(hidden).filter(id => known.has(id));
-    layout.rail_items = (Array.isArray(saved.rail_items) ? saved.rail_items : CANONICAL_RAIL_ITEM_ORDER)
-        .filter(id => known.has(id) && !hidden.has(id));
-    layout.layout_version = RAIL_LAYOUT_VERSION;
-    return { layout, changed: true };
-}
-
-// `agentFeedEnabled` is declared near lastUILayout (above) so pane mounts
-// during restore can re-apply feed visibility without hitting TDZ.
-function applyAgentFeedAvailability() {
-    document.querySelectorAll('[data-id="nav-agent-feed"]').forEach(el => {
-        el.style.setProperty('display', agentFeedEnabled ? '' : 'none', 'important');
-    });
-}
-async function refreshAgentFeedAvailability() {
-    try {
-        const response = await fetch('/api/experimental/flags', {credentials:'include', cache:'no-store'});
-        if (!response.ok) return;
-        const data = await response.json();
-        agentFeedEnabled = !data.kill_switch && data.flags.some(flag => flag.id === 'agent_feed' && flag.enabled);
-    } catch (_) { agentFeedEnabled = false; }
-    applyAgentFeedAvailability();
-    broadcastAppsList();
-}
-window.addEventListener('focus', refreshAgentFeedAvailability);
-window.addEventListener('message', e => {
-    if (e.origin === location.origin && e.data?.type === 'cuttle-experimental-flags-changed') refreshAgentFeedAvailability();
-});
-refreshAgentFeedAvailability();
-
-// ── Cuttle web apps (Apps page ↔ blade bar) ─────────────────────
-// Footer utilities live outside the pinnable rail order but belong in the
-// Apps grid too. panelToggle is view chrome (collapse sidebar), not an app.
-const RAIL_FOOTER_APP_IDS = ['nav-account', 'nav-notifications', 'nav-workspace', 'nav-settings'];
-/** Every page app on the rail or in the stash, alphabetical like an app drawer. */
-function getAppsList() {
-    const col = getColumnEl(0);
-    if (!col) return [];
-    const apps = [];
-    CANONICAL_RAIL_ITEM_ORDER.forEach(id => {
-        if (RAIL_LOCKED_IDS.has(id) || (id === 'nav-agent-feed' && !agentFeedEnabled)) return;
-        const el = col.querySelector(`.rail-items .rail-item[data-id="${id}"], .rail-stash .rail-item[data-id="${id}"]`);
-        if (!el || !el.dataset.page) return;
-        apps.push({
-            id,
-            label: el.dataset.tooltip || id.replace(/^nav-/, ''),
-            page: el.dataset.page,
-            icon: el.querySelector('svg')?.outerHTML || '',
-            pinned: !!el.closest('.rail-items'),
-        });
-    });
-    RAIL_FOOTER_APP_IDS.forEach(id => {
-        const el = col.querySelector(`.rail-footer .rail-item[data-id="${id}"]`);
-        if (!el) return;
-        // The Account button renders the user's profile photo (or initials)
-        // inside .rail-account-avatar, not as an <svg> — forward that so the
-        // Apps grid tile shows the same picture as the rail.
-        let iconHtml = '';
-        if (id === 'nav-account') {
-            const avatar = el.querySelector('.rail-account-avatar');
-            iconHtml = (avatar && avatar.innerHTML) || el.querySelector('svg')?.outerHTML || '';
-        } else {
-            iconHtml = el.querySelector('svg')?.outerHTML || '';
-        }
-        const entry = {
-            id,
-            label: el.dataset.tooltip || id.replace(/^nav-/, ''),
-            icon: iconHtml,
-            pinned: !el.hidden,
-            pinnable: HIDEABLE_FOOTER_IDS.has(id),
-        };
-        if (el.dataset.page) entry.page = el.dataset.page;
-        else entry.action = id;
-        apps.push(entry);
-    });
-    apps.sort((a, b) => a.label.localeCompare(b.label));
-    return apps;
-}
-
-function broadcastAppsList() {
-    broadcastToFrames({ type: 'cuttle-apps', apps: getAppsList() });
-}
-
-window.addEventListener('message', (e) => {
-    const d = e.data;
-    if (!d || typeof d !== 'object') return;
-    if (d.type === 'cuttle-apps-request') {
-        try { e.source?.postMessage({ type: 'cuttle-apps', apps: getAppsList() }, '*'); } catch (_) {}
-    } else if (d.type === 'cuttle-apps-pin' && typeof d.id === 'string') {
-        if (d.pinned) showRailItem(d.id);
-        else hideRailItem(d.id);
-    } else if (d.type === 'cuttle-chat-unread-request') {
-        try { e.source?.postMessage({ type: 'cuttle-chat-unread', count: chatUnreadCount() }, '*'); } catch (_) {}
-    } else if (d.type === 'cuttle-rail-action' && typeof d.id === 'string') {
-        // Apps-grid tiles for footer utilities (Account, Notifications,
-        // Workspace) carry no page. Activate the rail button so the same
-        // popover/modal handlers run. Allowlisted to footer app ids only.
-        if (!RAIL_FOOTER_APP_IDS.includes(d.id)) return;
-        getColumnEl(0)?.querySelector(`.rail-footer .rail-item[data-id="${d.id}"]`)?.click();
-    }
-});
-
-function saveUILayout(fromCol) {
-    commitUILayout(getLayoutFromDOM(fromCol || getColumnEl(0)));
-}
-
-function hideRailAddPicker() {
-    const picker = document.getElementById('railAddPicker');
-    if (picker) picker.hidden = true;
-}
-
-function setRailEditing(on) {
-    railEditing = !!on;
-    document.querySelectorAll('.icon-rail').forEach(r => r.classList.toggle('rail-editing', railEditing));
-    document.querySelectorAll('.rail-edit-scrim').forEach(s => { s.hidden = !railEditing; });
-    if (!railEditing) hideRailAddPicker();
-}
-
-/**
- * Transparent tap catcher over page content while the rail is in edit mode.
- * Taps inside the content iframe never reach the shell document, so without
- * this there is no tap-outside-to-exit on most of the screen. Tapping the
- * scrim (or Done) leaves edit mode; the tap itself is swallowed.
- */
-function ensureRailEditScrim(colEl) {
-    const main = colEl?.querySelector?.('.shell-main');
-    if (!main || main.querySelector('.rail-edit-scrim')) return;
-    const scrim = document.createElement('div');
-    scrim.className = 'rail-edit-scrim';
-    scrim.hidden = !railEditing;
-    const done = document.createElement('button');
-    done.type = 'button';
-    done.className = 'rail-edit-done';
-    done.textContent = 'Done';
-    done.setAttribute('aria-label', 'Done editing sidebar');
-    done.addEventListener('click', (e) => {
-        e.stopPropagation();
-        setRailEditing(false);
-    });
-    scrim.appendChild(done);
-    scrim.addEventListener('pointerdown', (e) => {
-        if (e.target !== scrim) return;
-        setRailEditing(false);
-    });
-    main.appendChild(scrim);
-}
-
-function ensureRailEditChrome(colEl) {
-    const rail = colEl?.querySelector?.('.rail-items');
-    if (!rail) return;
-    let stash = colEl.querySelector('.rail-stash');
-    if (!stash) {
-        stash = document.createElement('div');
-        stash.className = 'rail-stash';
-        stash.hidden = true;
-        rail.insertAdjacentElement('afterend', stash);
-    }
-    let addSlot = rail.querySelector('.rail-add-slot');
-    if (!addSlot) {
-        addSlot = document.createElement('button');
-        addSlot.type = 'button';
-        addSlot.className = 'rail-add-slot';
-        addSlot.dataset.tooltip = 'Add page';
-        addSlot.setAttribute('aria-label', 'Add page to sidebar');
-        addSlot.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
-        rail.appendChild(addSlot);
-    }
-    colEl.querySelectorAll('.rail-items .rail-item[data-id], .rail-stash .rail-item[data-id], .rail-footer .rail-item[data-id]').forEach(btn => {
-        const id = btn.dataset.id;
-        const isFooter = !!btn.closest('.rail-footer');
-        const removable = isFooter
-            ? HIDEABLE_FOOTER_IDS.has(id)
-            : (CANONICAL_RAIL_ITEM_ORDER.includes(id) && !RAIL_LOCKED_IDS.has(id));
-        if (!removable) return;
-        if (btn.querySelector('.rail-item-remove')) return;
-        if (isFooter) btn.classList.add('rail-item-removable');
-        const rm = document.createElement('span');
-        rm.className = 'rail-item-remove';
-        rm.setAttribute('role', 'button');
-        rm.setAttribute('aria-label', 'Remove from sidebar');
-        rm.textContent = '×';
-        btn.appendChild(rm);
-    });
-}
-
-function hideRailItem(id) {
-    if (HIDEABLE_FOOTER_IDS.has(id)) {
-        const layout = getLayoutFromDOM(getColumnEl(0));
-        if (!layout.rail_footer_hidden.includes(id)) layout.rail_footer_hidden.push(id);
-        commitUILayout(layout);
-        return;
-    }
-    if (!CANONICAL_RAIL_ITEM_ORDER.includes(id) || RAIL_LOCKED_IDS.has(id)) return;
-    const layout = getLayoutFromDOM(getColumnEl(0));
-    layout.rail_items = layout.rail_items.filter(x => x !== id);
-    if (!layout.rail_hidden.includes(id)) layout.rail_hidden.push(id);
-    commitUILayout(layout);
-}
-
-function showRailItem(id) {
-    if (HIDEABLE_FOOTER_IDS.has(id)) {
-        const layout = getLayoutFromDOM(getColumnEl(0));
-        layout.rail_footer_hidden = layout.rail_footer_hidden.filter(x => x !== id);
-        commitUILayout(layout);
-        return;
-    }
-    if (!CANONICAL_RAIL_ITEM_ORDER.includes(id)) return;
-    const layout = getLayoutFromDOM(getColumnEl(0));
-    layout.rail_hidden = layout.rail_hidden.filter(x => x !== id);
-    if (!layout.rail_items.includes(id)) {
-        const appsIdx = layout.rail_items.indexOf('nav-apps');
-        if (appsIdx >= 0) layout.rail_items.splice(appsIdx, 0, id);
-        else layout.rail_items.push(id);
-    }
-    commitUILayout(layout);
-}
-
-function openRailAddPicker(anchor) {
-    const picker = document.getElementById('railAddPicker');
-    const list = picker?.querySelector('.rail-add-picker-list');
-    if (!picker || !list) return;
-    const layout = getLayoutFromDOM(getColumnEl(0));
-    const hiddenIds = (layout.rail_hidden || []).filter(id => CANONICAL_RAIL_ITEM_ORDER.includes(id) && (id !== 'nav-agent-feed' || agentFeedEnabled));
-    list.innerHTML = '';
-    if (!hiddenIds.length) {
-        const empty = document.createElement('div');
-        empty.className = 'rail-add-picker-empty';
-        empty.textContent = 'All pages are on the bar';
-        list.appendChild(empty);
-    } else {
-        const sourceCol = getColumnEl(0);
-        hiddenIds.forEach(id => {
-            const src = sourceCol?.querySelector(`.rail-stash .rail-item[data-id="${id}"]`);
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'rail-add-picker-item';
-            btn.setAttribute('role', 'menuitem');
-            const icon = src?.querySelector('svg')?.cloneNode(true);
-            if (icon) btn.appendChild(icon);
-            const label = document.createElement('span');
-            label.textContent = src?.dataset?.tooltip || id.replace(/^nav-/, '');
-            btn.appendChild(label);
-            btn.addEventListener('click', () => {
-                showRailItem(id);
-                hideRailAddPicker();
-            });
-            list.appendChild(btn);
-        });
-    }
-    picker.hidden = false;
-    const rect = anchor.getBoundingClientRect();
-    const pad = 8;
-    let left = rect.right + 10;
-    let top = rect.top;
-    picker.style.left = '0px';
-    picker.style.top = '0px';
-    const pw = picker.offsetWidth || 180;
-    const ph = picker.offsetHeight || 120;
-    if (left + pw > window.innerWidth - pad) left = Math.max(pad, rect.left - pw - 10);
-    if (top + ph > window.innerHeight - pad) top = Math.max(pad, window.innerHeight - ph - pad);
-    picker.style.left = `${Math.round(left)}px`;
-    picker.style.top = `${Math.round(top)}px`;
-}
-
-function ensureRailCustomizeGlobals() {
-    if (railCustomizeGlobalsReady) return;
-    railCustomizeGlobalsReady = true;
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') setRailEditing(false);
-    });
-    document.addEventListener('pointerdown', (e) => {
-        if (!railEditing) return;
-        if (e.target.closest('.icon-rail, .rail-add-picker')) return;
-        setRailEditing(false);
-    });
-    document.addEventListener('click', (e) => {
-        if (!railSuppressClick) return;
-        e.preventDefault();
-        e.stopPropagation();
-        railSuppressClick = false;
-    }, true);
-}
-
-function setupRailCustomize(colEl) {
-    if (!colEl) return;
-    ensureRailEditChrome(colEl);
-    ensureRailCustomizeGlobals();
-    const nav = colEl.querySelector('.icon-rail');
-    if (!nav || nav.dataset.railCustomize === '1') return;
-    nav.dataset.railCustomize = '1';
-
-    let holdTimer = null;
-    let holdStart = null;
-
-    const clearHold = () => {
-        if (holdTimer) {
-            clearTimeout(holdTimer);
-            holdTimer = null;
-        }
-        holdStart = null;
-    };
-
-    nav.addEventListener('pointerdown', (e) => {
-        if (e.target.closest('.rail-item-remove')) {
-            e.stopPropagation();
-            return;
-        }
-        if (e.button != null && e.button !== 0) return;
-        if (e.target.closest('.rail-add-slot, .rail-logo')) return;
-        const item = e.target.closest('.rail-item[data-id]');
-        if (!item || !nav.contains(item)) return;
-        holdStart = { x: e.clientX, y: e.clientY };
-        holdTimer = setTimeout(() => {
-            holdTimer = null;
-            setRailEditing(true);
-            railSuppressClick = true;
-        }, RAIL_HOLD_MS);
-    });
-
-    nav.addEventListener('pointermove', (e) => {
-        if (!holdStart) return;
-        const dx = e.clientX - holdStart.x;
-        const dy = e.clientY - holdStart.y;
-        if ((dx * dx) + (dy * dy) > (RAIL_HOLD_MOVE_PX * RAIL_HOLD_MOVE_PX)) clearHold();
-    });
-
-    nav.addEventListener('pointerup', clearHold);
-    nav.addEventListener('pointercancel', clearHold);
-    nav.addEventListener('dragstart', clearHold, true);
-
-    nav.addEventListener('click', (e) => {
-        const rm = e.target.closest('.rail-item-remove');
-        if (rm) {
-            e.preventDefault();
-            e.stopPropagation();
-            const item = rm.closest('.rail-item[data-id]');
-            if (item) hideRailItem(item.dataset.id);
-            return;
-        }
-        const add = e.target.closest('.rail-add-slot');
-        if (add) {
-            e.preventDefault();
-            e.stopPropagation();
-            openRailAddPicker(add);
-        }
-    });
-}
-
-function setupLayoutDragDrop(colEl) {
-    if (!colEl) return;
-    let draggedEl = null;
-
-    const dragStart = (e) => {
-        if (!e.target.closest('[draggable="true"]')) return;
-        draggedEl = e.target.closest('[draggable="true"]');
-        draggedEl.classList.add('dragging');
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', draggedEl.dataset.id || draggedEl.id || '');
-        e.dataTransfer.setData('cuttle/source', (e.target.closest('[data-droppable]') || {}).dataset?.droppable || '');
-    };
-
-    const dragEnd = () => {
-        if (draggedEl) draggedEl.classList.remove('dragging');
-        draggedEl = null;
-        colEl.querySelectorAll('[data-droppable].drop-target').forEach(z => z.classList.remove('drop-target'));
-    };
-
-    const dragOver = (e) => {
-        const dz = e.target.closest('[data-droppable]');
-        if (!dz) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        colEl.querySelectorAll('[data-droppable].drop-target').forEach(z => z.classList.remove('drop-target'));
-        dz.classList.add('drop-target');
-    };
-
-    const drop = (e) => {
-        e.preventDefault();
-        const dz = e.target.closest('[data-droppable]');
-        if (!dz || !draggedEl) return;
-        const selector = '.rail-item[data-id], .rail-panel-toggle[data-id]';
-        let target = e.target.closest(selector);
-        if (target === draggedEl) target = null;
-        if (target) {
-            const rect = target.getBoundingClientRect();
-            const midY = rect.top + rect.height / 2;
-            if (e.clientY < midY) dz.insertBefore(draggedEl, target);
-            else dz.insertBefore(draggedEl, target.nextSibling);
-        } else {
-            dz.appendChild(draggedEl);
-        }
-        dz.classList.remove('drop-target');
-        saveUILayout(colEl);
-    };
-
-    const dragLeave = (e) => {
-        const left = e.target.closest('[data-droppable]');
-        if (left && !left.contains(e.relatedTarget)) left.classList.remove('drop-target');
-    };
-
-    colEl.addEventListener('dragstart', dragStart, true);
-    colEl.addEventListener('dragend', dragEnd, true);
-    colEl.addEventListener('dragover', dragOver, true);
-    colEl.addEventListener('dragleave', dragLeave, true);
-    colEl.addEventListener('drop', drop, true);
-}
-
-// Paint the last known layout now so stashed apps don't flash on the rail
-// while the server copy loads.
-{
-    const cached = readCachedUILayout();
-    lastUILayout = cached ? migrateUILayout(cached).layout : { ...DEFAULT_LAYOUT };
-    applyLayoutToAllColumns(lastUILayout);
-}
-
-// Load saved layout on init — apply to every blade so splits stay in sync.
-fetch('/api/settings/ui-layout', { cache: 'no-store' })
-    .then(r => r.ok ? r.json() : null)
-    .then(data => {
-        const saved = data?.ui_layout;
-        if (saved && Object.keys(saved).length > 0) {
-            const { layout, changed } = migrateUILayout(saved);
-            if (changed) {
-                commitUILayout(layout);
-                return;
-            }
-            lastUILayout = layout;
-        } else {
-            lastUILayout = { ...DEFAULT_LAYOUT };
-        }
-        applyLayoutToAllColumns(lastUILayout);
-        cacheUILayout(lastUILayout);
-        broadcastAppsList();
-    })
-    .catch(() => {})
-    .finally(() => {
-        setupLayoutDragDrop(getColumnEl(0));
-    });
+// ── Rail customization / apps list (owner: shell_rail.js) ───────
+// The rail layout lifetime moved to shell_rail.js; app_shell only runs its
+// init (persisted layout load + agent-feed/apps message wiring).
+rail.setup();
 
 function basePagePath(p) {
     if (!p) return '';
@@ -4749,65 +2565,7 @@ function navigateFromSource(source, page) {
     navigate(findColumnIndexForSource(source), page);
 }
 
-function navigate(colIdx, page, opts) {
-    page = withRememberedChat(colIdx, page);
-    // Jobs mesh UI — bust cache + pass viewer identity (Jobs iframe has no preload).
-    try {
-        const u = new URL(page, window.location.origin);
-        if (u.pathname === '/jobs_page.html') {
-            if (!u.searchParams.has('_v')) {
-                u.searchParams.set('_v', String(Date.now()));
-            }
-            try {
-                const wid = String(
-                    (desktopCfg && desktopCfg.workerId) ||
-                    sessionStorage.getItem('cuttle_viewer_worker_id') ||
-                    ''
-                ).trim().toLowerCase();
-                const clientMode = !!(desktopCfg && desktopCfg.clientMode) ||
-                    sessionStorage.getItem('cuttle_client_mode') === '1';
-                if (wid && !u.searchParams.has('me')) u.searchParams.set('me', wid);
-                if (clientMode && !u.searchParams.has('client')) u.searchParams.set('client', '1');
-            } catch (_) {}
-            page = u.pathname + u.search + u.hash;
-        }
-    } catch (_) {}
-    rememberChatHandleFromPage(colIdx, page);
-    const state = getState(colIdx);
-    if (state.page === page && !(opts && opts.force)) return;
-    console.log('[App Shell] Navigating to:', page);
-    if (colIdx === 0 && !shellApplyingHistory && !(opts && opts.history === 'none')) {
-        pushShellBackEntry(state.page);
-    }
-    setState(colIdx, page);
-    paneSessionByColumn.delete(colIdx);
-    paneProjectByColumn.delete(colIdx);
-
-    if (colIdx === 0) {
-        sessionStorage.setItem(STORAGE_PAGE, page);
-        // Top-level ?chat= for chat + terminal deep-links (refresh must keep the handle).
-        try {
-            const pageUrl = new URL(page, window.location.origin);
-            const isChatSurface = pageUrl.pathname === '/chat_page.html'
-                || pageUrl.pathname === '/terminal_page.html';
-            const cid = isChatSurface
-                ? (pageUrl.searchParams.get('chat') || pageUrl.searchParams.get('session'))
-                : null;
-            const histMode = (opts && opts.history)
-                || (shellApplyingHistory ? 'none' : 'replace');
-            syncShellChatUrl(cid, { mode: histMode, page: page });
-        } catch (_) {}
-    }
-    updateColumnUI(colIdx, page);
-    persistSplitLayout();
-
-    const newFrame = opts && opts.force
-        ? replaceFrameInPlace(colIdx, page)
-        : replaceFrame(colIdx, page);
-    if (newFrame) {
-        attachFrameLoadListener(colIdx, newFrame);
-    }
-}
+function navigate(colIdx, page, opts) { return paneController.navigate(colIdx, page, opts); }
 
 // ── Account button (rail footer) ────────────────────────────────
 const ACCOUNT_PLACEHOLDER_SVG =
@@ -4870,7 +2628,7 @@ function setShellAuthUser(user) {
     renderAccountButtons();
     // The Account Apps-grid tile carries the profile photo — rebroadcast so
     // an open Apps page swaps the placeholder for the picture on sign in/out.
-    broadcastAppsList();
+    rail.broadcastAppsList();
 }
 
 async function refreshShellAuth() {
@@ -4918,47 +2676,6 @@ async function handleAccountClick(_colIdx) {
         return;
     }
     openLogoutConfirmModal();
-}
-
-/* Phone (Capacitor) client: no floating Server button — switching servers
-   lives in the login modal and the account popup, next to log out. */
-function cuttleIsMobileClient() {
-    try {
-        if (window.isCuttleMobile || window.cuttleMobile?.isNative) return true;
-    } catch (_) {}
-    return /\bCuttleMobile\/[\d.]+\b/.test(navigator.userAgent || '');
-}
-
-function cuttleOpenMobileServerSettings() {
-    try {
-        if (window.cuttleMobile?.openSettings) {
-            window.cuttleMobile.openSettings();
-            return;
-        }
-    } catch (_) {}
-    try {
-        if (window.CuttleShellNative?.openSettings) {
-            window.CuttleShellNative.openSettings();
-            return;
-        }
-    } catch (_) {}
-    window.location.href = 'https://localhost/index.html?setup=1';
-}
-
-function cuttleSyncMobileServerRows() {
-    const show = cuttleIsMobileClient();
-    let origin = '';
-    try {
-        origin = window.location.origin || '';
-    } catch (_) {}
-    const row = document.getElementById('authServerRow');
-    if (row) {
-        row.hidden = !show;
-        const label = document.getElementById('authServerOrigin');
-        if (label && origin) label.textContent = origin;
-    }
-    const sw = document.getElementById('logoutConfirmSwitchServer');
-    if (sw) sw.hidden = !show;
 }
 
 document.addEventListener('click', (e) => {
@@ -5123,7 +2840,7 @@ function updateNotificationsBadge() {
 /** Chats with replies awaiting attention (unread/error dots), minus visible panes. */
 function chatUnreadCount() {
     try {
-        return CuttleSpaces.countUnreadSessions(visibleActiveSpaceChatIds());
+        return CuttleSpaces.countUnreadSessions(shellSpaces.visibleActiveChatIds());
     } catch (_) {
         return 0;
     }
@@ -5439,1408 +3156,11 @@ async function deleteWorkspace(id) {
     });
 })();
 
-// ── Space groups (Chrome-style tab groups) ─────────────
-// A group is a named, colored bucket of spaces. Tabs keep working exactly as
-// before; members render under a group pill and share the group color.
-// ── Space groups (Chrome-style tab groups) ─────────────
-// A group is a named, colored bucket of spaces. Tabs keep working exactly as
-// before; members render under a group pill and share the group color.
-// Domain logic lives in spaces_groups.js (pure state transitions on
-// spacesState); the wrappers below bind the singleton and own the
-// persist + re-render tail. Palette + ids live in spaces_state.js.
-function spaceGroupById(gid) {
-    return CuttleSpaces.getGroupById(spacesState, gid);
-}
-
-function ensureSpaceGroupsArray() {
-    return CuttleSpaces.ensureGroupsArray(spacesState);
-}
-
-/** Drop groups with no member tabs (runs after ungroup/close/delete). */
-function pruneEmptySpaceGroups() {
-    if (CuttleSpaces.pruneEmptyGroups(spacesState)) persistSpacesState();
-}
-
-function setSpaceGroup(spaceId, gid) {
-    if (!CuttleSpaces.setGroup(spacesState, spaceId, gid)) return false;
-    pruneEmptySpaceGroups();
-    persistSpacesState();
-    renderSpaceTabs();
-    return true;
-}
-
-function createSpaceGroupForSpace(spaceId) {
-    const group = CuttleSpaces.createGroupForSpace(spacesState, spaceId);
-    if (!group) return null;
-    persistSpacesState();
-    renderSpaceTabs();
-    return group;
-}
-
-function removeSpaceFromGroup(spaceId) {
-    if (!CuttleSpaces.removeFromGroup(spacesState, spaceId)) return false;
-    pruneEmptySpaceGroups();
-    persistSpacesState();
-    renderSpaceTabs();
-    return true;
-}
-
-function renameSpaceGroup(gid, name) {
-    if (!CuttleSpaces.renameGroup(spacesState, gid, name)) return;
-    persistSpacesState();
-}
-
-function setSpaceGroupColor(gid, hex) {
-    if (!CuttleSpaces.setGroupColor(spacesState, gid, hex)) return false;
-    persistSpacesState();
-    renderSpaceTabs();
-    return true;
-}
-
-function setSpaceColor(spaceId, hex) {
-    if (!CuttleSpaces.setSpaceColor(spacesState, spaceId, hex)) return false;
-    persistSpacesState();
-    renderSpaceTabs();
-    return true;
-}
-
-/** Ungroup: dissolve the group, member spaces survive as plain tabs. */
-function dissolveSpaceGroup(gid) {
-    if (!CuttleSpaces.dissolveGroup(spacesState, gid)) return false;
-    persistSpacesState();
-    renderSpaceTabs();
-    return true;
-}
-
-/** Collapse/expand a group. Never hides the active tab. */
-function toggleSpaceGroupCollapsed(gid) {
-    const res = CuttleSpaces.toggleGroupCollapsed(spacesState, gid, spacesState.active);
-    if (!res.ok) {
-        if (res.reason === 'hides-active' && typeof window.showToast === 'function') {
-            window.showToast('Active space is in this group', 'info');
-        }
-        return false;
-    }
-    persistSpacesState();
-    renderSpaceTabs();
-    return true;
-}
-
-/** Delete group: dissolve it and close its member spaces (at least one space survives). */
-function deleteSpaceGroupWithSpaces(gid) {
-    const members = CuttleSpaces.planGroupDelete(spacesState, gid);
-    if (!members) return false;
-    persistSpacesState();
-    renderSpaceTabs();
-    // Close non-active members first so the active space is the last one standing.
-    members.sort((a, b) => (a === spacesState.active ? 1 : 0) - (b === spacesState.active ? 1 : 0));
-    members.forEach((id) => closeSpace(id));
-    pruneEmptySpaceGroups();
-    return true;
-}
-
-function spaceGroupPillHtml(group) {
-    const color = CuttleSpaces.sanitizeColor(group.color) || CuttleSpaces.DEFAULT_COLOR;
-    const name = escapeHtml(group.name || '');
-    const collapsed = !!group.collapsed;
-    const members = spacesState.spaces.filter((s) => s && s.groupId === group.id).length;
-    const title = (group.name ? 'Group: ' + name : 'Group')
-        + ' — click to ' + (collapsed ? 'expand' : 'collapse') + ', right-click to edit';
-    return '<button type="button" class="shell-space-group' + (collapsed ? ' is-collapsed' : '') + '"'
-        + ' data-group-id="' + escapeHtml(group.id) + '"'
-        + ' style="--space-accent:' + color + '"'
-        + ' title="' + title + '">'
-        + '<span class="shell-space-group-dot" aria-hidden="true"></span>'
-        + (group.name ? '<span class="shell-space-group-name">' + name + '</span>' : '')
-        + (collapsed ? '<span class="shell-space-group-count">' + members + '</span>' : '')
-        + '</button>';
-}
-
-// ── Spaces (titlebar tabs — each holds its own split layout) ────
-// Per-device, like STORAGE_LAYOUT. The active space's layout *is* the live
-// STORAGE_LAYOUT; `root` is only authoritative for inactive spaces.
-// Singleton storage binding lives here (shell orchestration); validation,
-// ids, names, and transitions live in spaces_state.js.
-const STORAGE_SPACES = 'shell_spaces_v1';
-
-function readSpacesState() {
-    try {
-        return CuttleSpaces.loadSpacesState(
-            typeof localStorage !== 'undefined' ? localStorage : null
-        );
-    } catch (_) {
-        return CuttleSpaces.createDefaultState();
-    }
-}
-
-function persistSpacesState() {
-    CuttleSpaces.saveSpacesState(
-        typeof localStorage !== 'undefined' ? localStorage : null,
-        spacesState
-    );
-}
-
-function switchSpace(id) {
-    if (_restoringLayout || id === spacesState.active) return;
-    const target = spacesState.spaces.find((s) => s.id === id);
-    if (!target) return;
-    const targetGroup = target.groupId ? spaceGroupById(target.groupId) : null;
-    if (targetGroup && targetGroup.collapsed) {
-        targetGroup.collapsed = false;
-        persistSpacesState();
-        renderSpaceTabs();
-    }
-    const current = spacesState.spaces.find((s) => s.id === spacesState.active);
-    if (current) current.root = snapshotLayoutTree(splitContainer);
-    spacesState.active = id;
-    persistSpacesState();
-    // navigate() re-attaches column 0's remembered chat — without this a blank
-    // pane in the target space would reopen the previous space's chat.
-    lastChatByColumn.delete(0);
-    persistLastChatHandles();
-    // Even identical URLs belong to different spaces and must restore that
-    // space's composer. Reuse the frame element through the navigation path.
-    applyWorkspaceColumns(null, null, target.root || getBuiltinDefaultWorkspace().root, { forceNavigate: true });
-    hideOutgoingSpaceFrames();
-    // Already-loaded frames that just became visible need a rescan now;
-    // navigating frames get theirs on cuttle-page-ready.
-    broadcastUsageLiveWake();
-    syncActiveSpaceTab();
-    syncSpaceActivityTabs();
-    scheduleSpaceActivityPoll(true);
-}
-
-/** A reused pane crossfades from its old iframe once the new page paints —
- *  right for page nav, but on a space switch the old space must vanish now. */
-function hideOutgoingSpaceFrames() {
-    document.querySelectorAll('.split-column .shell-main').forEach((mainEl) => {
-        const frames = Array.from(mainEl.querySelectorAll('iframe'));
-        if (!frames.some((f) => f.classList.contains('shell-frame-pending'))) return;
-        frames.forEach((f) => {
-            if (f.classList.contains('shell-frame-pending')) return;
-            f.style.transition = 'none';
-            f.style.opacity = '0';
-            f.style.visibility = 'hidden';
-            f.style.pointerEvents = 'none';
-        });
-    });
-}
-
-function addSpace() {
-    const space = CuttleSpaces.addSpaceToState(spacesState);
-    renderSpaceTabs();
-    switchSpace(space.id);
-    startSpaceRename(space.id);
-}
-
-function closeSpace(id) {
-    const plan = CuttleSpaces.planSpaceClose(spacesState, id);
-    if (!plan.ok) return;
-    if (plan.switchTo) {
-        switchSpace(plan.switchTo);
-        if (spacesState.active === id) return;
-    }
-    CuttleSpaces.commitSpaceClose(spacesState, id);
-    pruneEmptySpaceGroups();
-    persistSpacesState();
-    renderSpaceTabs();
-    scheduleSpaceActivityPoll(true);
-}
-
-function renameSpace(id, name) {
-    if (!CuttleSpaces.renameSpaceInState(spacesState, id, name)) return;
-    persistSpacesState();
-}
-
-function startSpaceRename(id) {
-    const tab = document.querySelector('.shell-space-tab[data-space-id="' + CSS.escape(id) + '"]');
-    const nameEl = tab && tab.querySelector('.shell-space-name');
-    const space = spacesState.spaces.find((s) => s.id === id);
-    if (!nameEl || !space) return;
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'shell-space-rename';
-    input.maxLength = 60;
-    input.value = space.name;
-    input.setAttribute('aria-label', 'Space name');
-    let done = false;
-    const finish = (commit) => {
-        if (done) return;
-        done = true;
-        if (commit) renameSpace(id, input.value);
-        renderSpaceTabs();
-        // The rename pinned the fullscreen titlebar; re-arm its auto-hide.
-        if (typeof cuttleTitlebarRescheduleHide === 'function') {
-            try { cuttleTitlebarRescheduleHide(); } catch (_) {}
-        }
-    };
-    input.addEventListener('keydown', (e) => {
-        e.stopPropagation();
-        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
-        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
-    });
-    input.addEventListener('blur', () => finish(true));
-    ['click', 'dblclick', 'mousedown'].forEach((evt) => {
-        input.addEventListener(evt, (e) => e.stopPropagation());
-    });
-    nameEl.replaceWith(input);
-    input.focus();
-    input.select();
-}
-
-function renderSpaceTabs() {
-    const host = document.getElementById('shellSpacesTabs');
-    if (!host) return;
-    host.dataset.count = String(spacesState.spaces.length);
-    // Grouped runs render inside a shared sleeve so the group reads as one
-    // container; a pill opens every run (members may be split by dragging).
-    let html = '';
-    let openGroup = null;
-    const closeSleeve = () => { if (openGroup) { html += '</span>'; openGroup = null; } };
-    spacesState.spaces.forEach((s) => {
-        const group = s.groupId ? spaceGroupById(s.groupId) : null;
-        const gid = group ? group.id : null;
-        if (gid !== openGroup) {
-            closeSleeve();
-            if (group) {
-                const color = CuttleSpaces.sanitizeColor(group.color) || CuttleSpaces.DEFAULT_COLOR;
-                openGroup = gid;
-                html += '<span class="shell-space-group-sleeve'
-                    + (group.collapsed ? ' is-collapsed' : '') + '" role="presentation"'
-                    + ' data-group-id="' + escapeHtml(gid) + '"'
-                    + ' style="--space-accent:' + color + '">';
-                html += spaceGroupPillHtml(group);
-            }
-        }
-        if (group && group.collapsed) return; // hidden until the pill expands it
-        const accent = group
-            ? (CuttleSpaces.sanitizeColor(group.color) || CuttleSpaces.DEFAULT_COLOR)
-            : CuttleSpaces.sanitizeColor(s.color);
-        const active = s.id === spacesState.active;
-        const name = escapeHtml(s.name).replace(/"/g, '&quot;');
-        html += '<div class="shell-space-tab' + (active ? ' is-active' : '') + (accent ? ' has-accent' : '') + '" role="tab" tabindex="0"'
-            + ' aria-selected="' + (active ? 'true' : 'false') + '"'
-            + ' data-space-id="' + escapeHtml(s.id) + '"'
-            + (group ? ' data-group-id="' + escapeHtml(group.id) + '"' : '')
-            + (accent ? ' style="--space-accent:' + accent + '"' : '')
-            + ' title="' + name + ' — drag to reorder, double-click to rename">'
-            + '<span class="shell-space-activity" aria-hidden="true" hidden></span>'
-            + '<span class="shell-space-name">' + name + '</span>'
-            + '<button type="button" class="shell-space-close" tabindex="-1" aria-label="Close space ' + name + '">×</button>'
-            + '</div>';
-    });
-    closeSleeve();
-    host.innerHTML = html;
-    syncActiveSpaceTab();
-    syncSpaceActivityTabs();
-    syncCrossSpaceGripVisibility();
-}
-
-/** Toggle the active tab in place — re-rendering would eat the second click of a dblclick. */
-function syncActiveSpaceTab() {
-    document.querySelectorAll('.shell-space-tab').forEach((tab) => {
-        const active = tab.dataset.spaceId === spacesState.active;
-        tab.classList.toggle('is-active', active);
-        tab.setAttribute('aria-selected', active ? 'true' : 'false');
-        if (active) tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    });
-}
-
-// ── Spaces activity (one indicator per tab) ─────────────────────
-// Same states as chat history/title dots: input (blue), running (spinner),
-// error (red), unread (green), queued/active (orange), paused (yellow).
-// A space shows the highest-priority state across its chats:
-// input > running > error > unread > queued > paused > none.
-// Aggregation + snapshot map live in spaces_activity.js; the poll transport
-// and DOM patching below stay in the shell.
-let spaceActivityPollInFlight = false;
-let spaceActivityLastPollAt = 0;
-let spaceActivitySig = '';
-
-function lookupSpaceSessionActivity(sid) {
-    return CuttleSpaces.lookupSessionActivity(sid);
-}
-
-/** Forget snapshots from chat frames that were replaced or closed. */
-function pruneSpaceActivitySources() {
-    const live = new Set();
-    document.querySelectorAll('iframe').forEach((fr) => {
-        try { if (fr.contentWindow) live.add(fr.contentWindow); } catch (_) {}
-    });
-    CuttleSpaces.pruneSources((win) => live.has(win));
-}
-
-/** Chat session ids belonging to a space. Active space reads live panes;
- *  inactive spaces parse their stored layout tree. Terminals have no dots. */
-function spaceChatIds(space) {
-    if (!space) return [];
-    if (space.id === spacesState.active) {
-        try {
-            return getOpenPaneSessions()
-                .filter((p) => p && p.kind === 'chat' && p.sessionId)
-                .map((p) => String(p.sessionId));
-        } catch (_) {
-            return [];
-        }
-    }
-    const ids = [];
-    try {
-        flattenLayoutLeaves(space.root || null).forEach((leaf) => {
-            if (!leaf) return;
-            try {
-                const url = new URL(leaf.page || '/chat_page.html', window.location.origin);
-                // Terminals have no activity dots — only chat surfaces count.
-                if (chatSurfaceKind(url.pathname) !== 'chat') return;
-                const handle = url.searchParams.get('chat') || url.searchParams.get('session')
-                    || leaf.chat || null;
-                if (handle) ids.push(String(handle));
-            } catch (_) {}
-        });
-    } catch (_) {}
-    return [...new Set(ids)];
-}
-
-/** Currently visible chat ids — unread there is already seen, so it never
- *  raises the active tab (running / queued dots still do). */
-function visibleActiveSpaceChatIds() {
-    try {
-        return new Set(
-            getOpenPaneSessions()
-                .filter((p) => p && p.kind === 'chat' && p.sessionId)
-                .map((p) => String(p.sessionId))
-        );
-    } catch (_) {
-        return new Set();
-    }
-}
-
-function spaceActivityFor(space) {
-    const ids = spaceChatIds(space);
-    if (!ids.length) return '';
-    const isActive = space.id === spacesState.active;
-    const visible = isActive ? visibleActiveSpaceChatIds() : new Set();
-    return CuttleSpaces.selectSpaceActivity(ids, lookupSpaceSessionActivity, isActive, visible);
-}
-
-/** Patch tab dots in place (no re-render — preserves dblclick rename). */
-function syncSpaceActivityTabs() {
-    const tabs = document.querySelectorAll('.shell-space-tab');
-    if (!tabs.length) return;
-    pruneSpaceActivitySources();
-    const sigParts = [];
-    tabs.forEach((tab) => {
-        const space = spacesState.spaces.find((s) => s.id === tab.dataset.spaceId);
-        const kind = space ? spaceActivityFor(space) : '';
-        sigParts.push(tab.dataset.spaceId + ':' + kind);
-        let dot = tab.querySelector('.shell-space-activity');
-        if (!dot) {
-            dot = document.createElement('span');
-            dot.className = 'shell-space-activity';
-            dot.setAttribute('aria-hidden', 'true');
-            tab.insertBefore(dot, tab.firstChild);
-        }
-        const prev = dot.dataset.kind || '';
-        if (prev !== kind || dot.hidden === !!kind) {
-            dot.dataset.kind = kind;
-            dot.className = 'shell-space-activity' + (kind ? ' is-' + kind : '');
-            if (kind) {
-                dot.hidden = false;
-                const label = CuttleSpaces.LABEL[kind] || kind;
-                dot.title = label;
-                dot.setAttribute('aria-label', label);
-            } else {
-                dot.hidden = true;
-                dot.removeAttribute('title');
-                dot.removeAttribute('aria-label');
-            }
-            const spaceName = space ? space.name : '';
-            tab.title = spaceName + ' — drag to reorder, double-click to rename'
-                + (kind ? ' · ' + (CuttleSpaces.LABEL[kind] || kind) : '');
-        }
-    });
-    spaceActivitySig = sigParts.join('|');
-    updateChatUnreadBadge();
-}
-
-function allSpaceChatIds() {
-    const out = new Set();
-    try {
-        spacesState.spaces.forEach((space) => {
-            spaceChatIds(space).forEach((id) => out.add(String(id)));
-        });
-    } catch (_) {}
-    // Live panes may know fresher ids than the stored tree right after nav.
-    try {
-        getOpenPaneSessions().forEach((p) => {
-            if (p && p.kind === 'chat' && p.sessionId) out.add(String(p.sessionId));
-        });
-    } catch (_) {}
-    return [...out].filter(Boolean).slice(0, 60);
-}
-
-const shellSessionPrefs = CuttleSessionPrefs.create(localStorage);
-
-function readChatPrefsMap() {
-    return shellSessionPrefs.map();
-}
-
-
-function readLocalChatSessions() {
-    try {
-        return JSON.parse(localStorage.getItem('chatSessions') || '{}') || {};
-    } catch (_) {
-        return {};
-    }
-}
-
-/** Unread flags + local-mode queues are same-origin localStorage. */
-function refreshSpaceActivityLocalState() {
-    try { CuttleSpaces.setUnreadPrefs(readChatPrefsMap()); } catch (_) {}
-    try {
-        const local = readLocalChatSessions();
-        const queues = {};
-        Object.keys(local || {}).forEach((sid) => {
-            const obj = local[sid];
-            if (!obj || typeof obj !== 'object') return;
-            queues[sid] = obj.followup_queue != null ? obj.followup_queue : obj.followups;
-        });
-        CuttleSpaces.setLocalQueues(queues);
-    } catch (_) {}
-}
-
-/** A chat in a background space finished with no frame watching it — flag
- *  it unread (same prefs row the history panel reads) so its tab goes green.
- *  Returns the bare ids that were newly marked (already-unread/visible chats
- *  are skipped) so callers can raise a notification for exactly those. */
-function markFinishedBackgroundChatsUnread(finished) {
-    if (!finished || !finished.length) return [];
-    const visible = new Set([...visibleActiveSpaceChatIds()].map((s) => CuttleSpaces.bareSid(s)));
-    const targets = finished.filter((bare) => bare && !visible.has(bare));
-    if (!targets.length) return [];
-    const marked = [];
-    try {
-        const prefs = readChatPrefsMap();
-        targets.forEach((bare) => {
-            const key = Object.keys(prefs).find((k) => CuttleSpaces.bareSid(k) === bare) || bare;
-            const row = prefs[key] && typeof prefs[key] === 'object' ? prefs[key] : {};
-            if (row.hasUnread) return;
-            prefs[key] = Object.assign({}, row, { hasUnread: true, unreadIsError: false });
-            marked.push(bare);
-        });
-        if (marked.length) marked.forEach(bare => shellSessionPrefs.update(bare, prefs[bare] || {}));
-    } catch (_) {}
-    return marked;
-}
-
-/** Human-readable label for a bare chat id (CH-000123 for numeric ids). */
-function formatBareChatLabel(bare) {
-    const raw = String(bare == null ? '' : bare);
-    if (/^\d+$/.test(raw)) return 'CH-' + String(parseInt(raw, 10)).padStart(6, '0');
-    return raw || 'chat';
-}
-
-/**
- * A background chat finished (server saw running → idle). Mark it unread and
- * raise a "Reply ready" notification in Cuttle's notification panel so chat
- * completions no-frame-was-watching still surface. Idempotent per completion
- * (the transition fires once), and skipped entirely when server-attention rows
- * are present (those already carry hasUnread from the server).
- */
-function reconcileFinishedBackgroundChats(finished, sessions) {
-    if (!finished || !finished.length) return;
-    const titleByBare = new Map();
-    (Array.isArray(sessions) ? sessions : []).forEach((s) => {
-        if (s && s.id != null && s.title) titleByBare.set(CuttleSpaces.bareSid(s.id), String(s.title));
-    });
-    let marked = [];
-    try {
-        marked = markFinishedBackgroundChatsUnread(finished);
-    } catch (_) {}
-    if (marked.length) refreshSpaceActivityLocalState();
-    marked.forEach((bare) => {
-        const label = titleByBare.get(bare) || formatBareChatLabel(bare);
-        try {
-            (window.showToast || function () {})('Reply ready — ' + label,
-                'success', { unread: true, sessionId: bare, kind: 'chat-response' });
-        } catch (_) {}
-    });
-}
-
-async function fetchSpaceSessionsList() {
-    try { return await window.cuttleActivityBroker.sessions(); } catch (_) { return null; }
-}
-
-async function loadActivitySessions() {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
-    try {
-        const r = await fetch('/api/auth/sessions', {
-            cache: 'no-store', credentials: 'same-origin', signal: controller.signal,
-        });
-        if (!r.ok) return null;
-        const data = await r.json().catch(() => null);
-        return data && data.success && Array.isArray(data.sessions) ? data.sessions : null;
-    } catch (_) {
-        return null;
-    } finally {
-        clearTimeout(timeout);
-    }
-}
-
-/** Not authenticated — live-status knows only `generating`. */
-async function fetchSpaceLiveStatusRows(ids) {
-    const rows = [];
-    for (let i = 0; i < ids.length; i += 12) {
-        const chunk = ids.slice(i, i + 12);
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 5000);
-        try {
-            const r = await fetch(
-                '/api/chat-live-status-batch?session_ids=' + encodeURIComponent(chunk.join(',')),
-                { credentials: 'include', cache: 'no-store', signal: controller.signal }
-            );
-            if (!r.ok) continue;
-            const data = await r.json().catch(() => null);
-            if (!data || !data.success) continue;
-            const statuses = data.statuses || {};
-            chunk.forEach((sid) => {
-                const st = statuses[String(sid)] || statuses[CuttleSpaces.bareSid(sid)] || null;
-                rows.push({ id: sid, running: !!(st && st.generating), queue: null });
-            });
-        } catch (_) {
-        } finally {
-            clearTimeout(timeout);
-        }
-    }
-    return rows;
-}
-
-/** Server truth for every chat in every space (inactive spaces have no
- *  live frame). Frame pushes add immediacy between polls. */
-async function refreshSpaceActivityFromServer() {
-    if (spaceActivityPollInFlight) return;
-    refreshSpaceActivityLocalState();
-    const ids = allSpaceChatIds();
-    if (!ids.length) {
-        syncSpaceActivityTabs();
-        return;
-    }
-    spaceActivityPollInFlight = true;
-    const startedAt = Date.now();
-    try {
-        let rows = null;
-        const sessions = await fetchSpaceSessionsList();
-        if (sessions) {
-            const byBare = new Map();
-            sessions.forEach((s) => {
-                if (s && s.id != null) byBare.set(CuttleSpaces.bareSid(s.id), s);
-            });
-            rows = [];
-            ids.forEach((sid) => {
-                const s = byBare.get(CuttleSpaces.bareSid(sid));
-                if (!s) return;
-                rows.push({
-                    id: sid,
-                    running: !!(s.generating || s.awaiting_action),
-                    attention: s.attention,
-                    queue: CuttleSpaces.followupKind(parseSpaceFollowupQueue(
-                        s.followup_queue != null ? s.followup_queue : s.followups)),
-                });
-            });
-        } else {
-            rows = await fetchSpaceLiveStatusRows(ids);
-        }
-        const finished = CuttleSpaces.noteServerSnapshot(rows, startedAt);
-        if (!rows.some(row => row.attention)) reconcileFinishedBackgroundChats(finished, sessions);
-        refreshSpaceActivityLocalState();
-    } finally {
-        spaceActivityPollInFlight = false;
-        spaceActivityLastPollAt = Date.now();
-        syncSpaceActivityTabs();
-    }
-}
-
-/** followup_queue arrives as an array or a JSON string. */
-function parseSpaceFollowupQueue(raw) {
-    if (Array.isArray(raw)) return raw;
-    if (typeof raw === 'string' && raw.trim()) {
-        try {
-            const parsed = JSON.parse(raw);
-            return Array.isArray(parsed) ? parsed : [];
-        } catch (_) {
-            return [];
-        }
-    }
-    return [];
-}
-
-const activityBroker = CuttleActivityBroker.create({
-    scope: () => shellAuthUser ? shellAuthUser.id : null,
-    now: () => Date.now(), setTimeout: (fn, ms) => window.setTimeout(fn, ms),
-    clearTimeout: id => window.clearTimeout(id),
-    load: async () => {
-        const rows = await loadActivitySessions();
-        if (!rows) throw new Error('Session snapshot unavailable');
-        return rows;
-    },
-    publish: sessions => {
-        broadcastToFrames({type: 'cuttle-sessions-snapshot', sessions});
-        const rows = sessions.map(s => ({id: s.id,
-            running: !!(s.generating || s.awaiting_action), attention: s.attention,
-            queue: CuttleSpaces.followupKind(parseSpaceFollowupQueue(s.followup_queue))}));
-        const finished = CuttleSpaces.noteServerSnapshot(rows, Date.now());
-        if (!rows.some(r => r.attention)) reconcileFinishedBackgroundChats(finished, sessions);
-        syncSpaceActivityTabs();
-    },
-    openStream: wake => {
-        if (typeof EventSource === 'undefined') return null;
-        const stream = new EventSource('/api/activity/stream');
-        stream.addEventListener('activity', wake);
-        stream.onopen = wake;
-        return stream;
-    },
-});
-window.cuttleActivityBroker = activityBroker;
-activityBroker.start();
-window.addEventListener('pagehide', () => activityBroker.dispose());
-
-function scheduleSpaceActivityPoll(immediate) {
-    const since = Date.now() - spaceActivityLastPollAt;
-    if (!immediate && since < 8000) {
-        refreshSpaceActivityLocalState();
-        syncSpaceActivityTabs();
-        return;
-    }
-    if (immediate) window.cuttleActivityBroker.refresh();
-    refreshSpaceActivityFromServer();
-}
-
-// ── Space tab right-click menu + group editor bubble ────
-let spaceCtxEls = [];
-let spaceCtxDismiss = null;
-
-/** True while a space menu, submenu, or group bubble is on screen. */
-function isSpaceCtxOpen() {
-    return spaceCtxEls.length > 0;
-}
-
-function closeSpaceCtxLayers() {
-    if (spaceCtxDismiss) {
-        try { spaceCtxDismiss(); } catch (_) {}
-        spaceCtxDismiss = null;
-    }
-    spaceCtxEls.forEach((el) => { try { el.remove(); } catch (_) {} });
-    spaceCtxEls = [];
-    // The open layers pinned the fullscreen titlebar; re-arm its auto-hide now
-    // that they are gone (no-op unless fullscreen and the pointer is away).
-    if (typeof cuttleTitlebarRescheduleHide === 'function') {
-        try { cuttleTitlebarRescheduleHide(); } catch (_) {}
-    }
-}
-
-function trackSpaceCtxDismiss() {
-    if (spaceCtxDismiss) {
-        try { spaceCtxDismiss(); } catch (_) {}
-        spaceCtxDismiss = null;
-    }
-    // Layers opening pin the titlebar: drop any hide another close just armed.
-    if (typeof cuttleTitlebarCancelHide === 'function') {
-        try { cuttleTitlebarCancelHide(); } catch (_) {}
-    }
-    const onDown = (e) => {
-        if (e.target && e.target.closest && e.target.closest('.shell-space-ctx, .shell-group-bubble')) return;
-        closeSpaceCtxLayers();
-    };
-    const onKey = (e) => {
-        if (e.key === 'Escape') { e.stopPropagation(); closeSpaceCtxLayers(); }
-    };
-    const onHide = () => closeSpaceCtxLayers();
-    document.addEventListener('pointerdown', onDown, true);
-    document.addEventListener('keydown', onKey, true);
-    window.addEventListener('scroll', onHide, true);
-    window.addEventListener('resize', onHide);
-    window.addEventListener('blur', onHide);
-    spaceCtxDismiss = () => {
-        document.removeEventListener('pointerdown', onDown, true);
-        document.removeEventListener('keydown', onKey, true);
-        window.removeEventListener('scroll', onHide, true);
-        window.removeEventListener('resize', onHide);
-        window.removeEventListener('blur', onHide);
-    };
-}
-
-/** Append a fixed panel, measure it, then clamp it inside the viewport. */
-function placeFixedPanel(el, x, y) {
-    el.style.left = '0px';
-    el.style.top = '0px';
-    document.body.appendChild(el);
-    spaceCtxEls.push(el);
-    const rect = el.getBoundingClientRect();
-    const pad = 8;
-    let nx = Number(x) || 0;
-    let ny = Number(y) || 0;
-    if (nx + rect.width + pad > window.innerWidth) nx = Math.max(pad, window.innerWidth - rect.width - pad);
-    if (ny + rect.height + pad > window.innerHeight) ny = Math.max(pad, window.innerHeight - rect.height - pad);
-    el.style.left = Math.max(pad, nx) + 'px';
-    el.style.top = Math.max(pad, ny) + 'px';
-    return el;
-}
-
-function spaceCtxSwatchesHtml(selected) {
-    return '<div class="shell-ctx-swatches" role="group" aria-label="Colors">'
-        + CuttleSpaces.COLORS.map((c) => (
-            '<button type="button" class="shell-ctx-swatch' + (selected === c.hex ? ' is-selected' : '') + '"'
-            + ' data-color="' + c.hex + '"'
-            + ' style="--swatch:' + c.hex + '"'
-            + ' title="' + c.name + '" aria-label="' + c.name + '"></button>'
-        )).join('')
-        + '</div>';
-}
-
-function openSpaceTabMenu(x, y, spaceId) {
-    const space = spacesState.spaces.find((s) => s && s.id === spaceId);
-    if (!space) return;
-    closeSpaceCtxLayers();
-    trackSpaceCtxDismiss();
-    const menu = document.createElement('div');
-    menu.className = 'shell-space-ctx';
-    menu.setAttribute('role', 'menu');
-    menu.setAttribute('aria-label', 'Space options');
-    let html = '<button type="button" class="shell-space-ctx-item" role="menuitem" data-ctx-act="rename"><span>Rename</span></button>'
-        + '<button type="button" class="shell-space-ctx-item has-sub" role="menuitem" data-ctx-act="color" aria-haspopup="menu"><span>Set color</span></button>'
-        + '<button type="button" class="shell-space-ctx-item has-sub" role="menuitem" data-ctx-act="group" aria-haspopup="menu"><span>Add to group</span></button>';
-    if (space.groupId && spaceGroupById(space.groupId)) {
-        html += '<div class="shell-space-ctx-sep" aria-hidden="true"></div>'
-            + '<button type="button" class="shell-space-ctx-item" role="menuitem" data-ctx-act="remove-group"><span>Remove from group</span></button>';
-    }
-    menu.innerHTML = html;
-    placeFixedPanel(menu, x, y);
-
-    let openSub = null;
-    let subFor = null;
-    const closeOpenSub = () => {
-        if (openSub) {
-            try { openSub.remove(); } catch (_) {}
-            spaceCtxEls = spaceCtxEls.filter((el) => el !== openSub);
-            openSub = null;
-        }
-        subFor = null;
-        menu.querySelectorAll('.is-open').forEach((b) => b.classList.remove('is-open'));
-    };
-    const openSubFor = (btn, build) => {
-        if (subFor === btn && openSub) {
-            closeOpenSub();
-            return;
-        }
-        closeOpenSub();
-        subFor = btn;
-        btn.classList.add('is-open');
-        const sub = build();
-        const r = btn.getBoundingClientRect();
-        placeFixedPanel(sub, r.right - 2, r.top - 4);
-        openSub = sub;
-    };
-    const buildColorSub = () => {
-        const sub = document.createElement('div');
-        sub.className = 'shell-space-ctx shell-space-ctx-sub';
-        sub.setAttribute('role', 'menu');
-        sub.setAttribute('aria-label', 'Space color');
-        sub.innerHTML = spaceCtxSwatchesHtml(space.color || null)
-            + '<button type="button" class="shell-space-ctx-item" role="menuitem" data-color="">'
-            + '<span>None</span></button>';
-        sub.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-color]');
-            if (!btn || !sub.isConnected) return;
-            e.preventDefault();
-            e.stopPropagation();
-            const hex = btn.dataset.color || '';
-            const id = spaceId;
-            closeSpaceCtxLayers();
-            setSpaceColor(id, hex || null);
-        });
-        return sub;
-    };
-    const buildGroupSub = () => {
-        const sub = document.createElement('div');
-        sub.className = 'shell-space-ctx shell-space-ctx-sub';
-        sub.setAttribute('role', 'menu');
-        sub.setAttribute('aria-label', 'Add to group');
-        const groups = ensureSpaceGroupsArray();
-        let h = '<button type="button" class="shell-space-ctx-item" role="menuitem" data-new-group>'
-            + '<span>New group</span></button>';
-        if (groups.length) h += '<div class="shell-space-ctx-sep" aria-hidden="true"></div>';
-        groups.forEach((g) => {
-            if (!g) return;
-            const color = CuttleSpaces.sanitizeColor(g.color) || CuttleSpaces.DEFAULT_COLOR;
-            h += '<button type="button" class="shell-space-ctx-item" role="menuitem" data-gid="' + escapeHtml(g.id) + '">'
-                + '<span class="shell-ctx-dot" style="--swatch:' + color + '" aria-hidden="true"></span>'
-                + '<span class="shell-ctx-label">' + (escapeHtml(g.name) || 'Unnamed group') + '</span>'
-                + (space.groupId === g.id ? '<span class="shell-ctx-check" aria-hidden="true">✓</span>' : '')
-                + '</button>';
-        });
-        sub.innerHTML = h;
-        sub.addEventListener('click', (e) => {
-            const id = spaceId;
-            if (e.target.closest('[data-new-group]')) {
-                e.preventDefault();
-                e.stopPropagation();
-                closeSpaceCtxLayers();
-                const group = createSpaceGroupForSpace(id);
-                if (group) openSpaceGroupBubbleFor(group.id, id, true);
-                return;
-            }
-            const btn = e.target.closest('[data-gid]');
-            if (!btn || !sub.isConnected) return;
-            e.preventDefault();
-            e.stopPropagation();
-            closeSpaceCtxLayers();
-            setSpaceGroup(id, btn.dataset.gid || null);
-        });
-        return sub;
-    };
-
-    menu.querySelectorAll('[data-ctx-act]').forEach((btn) => {
-        btn.addEventListener('pointerenter', () => {
-            const act = btn.dataset.ctxAct;
-            if (act === 'color') openSubFor(btn, buildColorSub);
-            else if (act === 'group') openSubFor(btn, buildGroupSub);
-            else closeOpenSub();
-        });
-        btn.addEventListener('click', (e) => {
-            const act = btn.dataset.ctxAct;
-            const id = spaceId;
-            if (act === 'color') { e.stopPropagation(); openSubFor(btn, buildColorSub); return; }
-            if (act === 'group') { e.stopPropagation(); openSubFor(btn, buildGroupSub); return; }
-            e.preventDefault();
-            e.stopPropagation();
-            closeSpaceCtxLayers();
-            if (act === 'rename') startSpaceRename(id);
-            else if (act === 'remove-group') removeSpaceFromGroup(id);
-        });
-    });
-}
-
-/** Chrome-style group editor: name field, color palette, Ungroup / Delete group. */
-function openSpaceGroupBubbleFor(gid, anchorSpaceId, focusName) {
-    const group = spaceGroupById(gid);
-    if (!group) return;
-    closeSpaceCtxLayers();
-    trackSpaceCtxDismiss();
-    const bubble = document.createElement('div');
-    bubble.className = 'shell-group-bubble';
-    bubble.setAttribute('role', 'dialog');
-    bubble.setAttribute('aria-label', 'Edit group');
-    bubble.innerHTML = '<input type="text" class="shell-group-name" maxlength="40"'
-        + ' placeholder="Name group" aria-label="Group name"'
-        + ' value="' + escapeHtml(group.name || '').replace(/"/g, '&quot;') + '">'
-        + spaceCtxSwatchesHtml(group.color)
-        + '<div class="shell-group-actions">'
-        + '<button type="button" class="shell-group-btn" data-group-act="ungroup">Ungroup</button>'
-        + '<button type="button" class="shell-group-btn shell-group-btn-danger" data-group-act="delete">Delete group</button>'
-        + '</div>';
-    renderSpaceTabs();
-    const pill = document.querySelector('.shell-space-group[data-group-id="' + CSS.escape(gid) + '"]');
-    if (pill) pill.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    const anchor = pill
-        || (anchorSpaceId && document.querySelector('.shell-space-tab[data-space-id="' + CSS.escape(anchorSpaceId) + '"]'));
-    const r = anchor ? anchor.getBoundingClientRect() : { left: 8, bottom: 40 };
-    placeFixedPanel(bubble, r.left, (r.bottom || 40) + 6);
-
-    const input = bubble.querySelector('.shell-group-name');
-    if (focusName && input) {
-        input.focus();
-        input.select();
-    }
-    input.addEventListener('input', () => {
-        renameSpaceGroup(gid, input.value);
-        renderSpaceTabs(); // pill text follows live; the bubble keeps focus
-    });
-    input.addEventListener('keydown', (e) => {
-        e.stopPropagation();
-        if (e.key === 'Enter') { e.preventDefault(); closeSpaceCtxLayers(); }
-        else if (e.key === 'Escape') { e.preventDefault(); closeSpaceCtxLayers(); }
-    });
-    ['click', 'dblclick', 'mousedown', 'contextmenu'].forEach((evt) => {
-        input.addEventListener(evt, (e) => e.stopPropagation());
-    });
-    let deleteArmed = false;
-    bubble.addEventListener('click', (e) => {
-        const swatch = e.target.closest('[data-color]');
-        if (swatch) {
-            e.stopPropagation();
-            setSpaceGroupColor(gid, swatch.dataset.color || null);
-            bubble.querySelectorAll('.shell-ctx-swatch').forEach((el) => {
-                el.classList.toggle('is-selected', el.dataset.color === spaceGroupById(gid).color);
-            });
-            return;
-        }
-        const btn = e.target.closest('[data-group-act]');
-        if (!btn) return;
-        e.preventDefault();
-        e.stopPropagation();
-        if (btn.dataset.groupAct === 'ungroup') {
-            closeSpaceCtxLayers();
-            dissolveSpaceGroup(gid);
-            return;
-        }
-        if (btn.dataset.groupAct === 'delete') {
-            if (!deleteArmed) {
-                deleteArmed = true;
-                btn.classList.add('is-armed');
-                btn.textContent = 'Click again to confirm';
-                return;
-            }
-            closeSpaceCtxLayers();
-            deleteSpaceGroupWithSpaces(gid);
-        }
-    });
-}
-
-function setupSpaceTabMenus(host) {
-    if (!host || host.dataset.spaceMenus === '1') return;
-    host.dataset.spaceMenus = '1';
-    host.addEventListener('click', (e) => {
-        const pill = e.target.closest('.shell-space-group');
-        if (pill && pill.dataset.groupId) {
-            e.stopPropagation();
-            toggleSpaceGroupCollapsed(pill.dataset.groupId);
-        }
-    });
-    host.addEventListener('dblclick', (e) => {
-        // Pills must not bubble to the titlebar maximize gesture.
-        if (e.target.closest('.shell-space-group')) e.stopPropagation();
-    });
-    host.addEventListener('contextmenu', (e) => {
-        const pill = e.target.closest('.shell-space-group');
-        if (pill && pill.dataset.groupId) {
-            e.preventDefault();
-            e.stopPropagation();
-            openSpaceGroupBubbleFor(pill.dataset.groupId, null, false);
-            return;
-        }
-        const tab = e.target.closest('.shell-space-tab');
-        if (!tab || !tab.dataset.spaceId) return;
-        e.preventDefault();
-        e.stopPropagation();
-        openSpaceTabMenu(e.clientX, e.clientY, tab.dataset.spaceId);
-    });
-}
-
-(function setupSpaces() {
-    const host = document.getElementById('shellSpacesTabs');
-    if (!host) return;
-    persistSpacesState();
-    renderSpaceTabs();
-
-    const tabId = (e) => e.target.closest('.shell-space-tab')?.dataset.spaceId || '';
-    host.addEventListener('click', (e) => {
-        const id = tabId(e);
-        if (!id) return;
-        if (e.target.closest('.shell-space-close')) {
-            e.stopPropagation();
-            closeSpace(id);
-            return;
-        }
-        switchSpace(id);
-    });
-    // Titlebar double-click maximizes the window; renaming must not bubble there.
-    host.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        const id = tabId(e);
-        if (id && !e.target.closest('.shell-space-close')) startSpaceRename(id);
-    });
-    host.addEventListener('auxclick', (e) => {
-        const id = tabId(e);
-        if (id && e.button === 1) {
-            e.preventDefault();
-            closeSpace(id);
-        }
-    });
-    host.addEventListener('keydown', (e) => {
-        const id = tabId(e);
-        if (!id) return;
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchSpace(id); }
-        else if (e.key === 'F2') { e.preventDefault(); startSpaceRename(id); }
-    });
-    const addBtn = document.getElementById('shellSpacesAdd');
-    addBtn?.addEventListener('click', () => addSpace());
-    addBtn?.addEventListener('dblclick', (e) => e.stopPropagation());
-    setupSpaceTabDrag(host);
-    setupSpaceTabMenus(host);
-    // Chat iframes write unread prefs + followups to the same localStorage —
-    // refresh dots without waiting for the next heartbeat.
-    window.addEventListener('storage', (e) => {
-        if (!e || !e.key) return;
-        if (CuttleSessionPrefs.isKey(e.key)) shellSessionPrefs.invalidate();
-        if (CuttleSessionPrefs.isKey(e.key) || e.key === 'chatSessions') {
-            scheduleSpaceActivityPoll(false);
-        }
-    });
-    scheduleSpaceActivityPoll(true);
-})();
-
-/**
- * Commit a tab-strip drop. Only visible tabs take part in the DOM order —
- * members of collapsed groups are hidden, so they keep their slots: the
- * dragged tab anchors after its left visible neighbor (or at the front).
- * The old all-or-nothing reorder silently dropped every commit while any
- * group was collapsed.
- */
-function spaceById(id) {
-    return CuttleSpaces.getSpaceById(spacesState, id);
-}
-
-// ── Cross-space pane drag (grip → space tab) ───────────────
-// Quick release over a space tab moves the dragged viewport to the far right
-// of that space (new horizontal split, placed at end). Holding over a tab for
-// PANE_SPACE_HOVER_MS instead switches to that space so the still-held grip
-// can be dropped on the exact pane to swap with.
-const PANE_SPACE_HOVER_MS = 1000;
-
-/** Space-tab element under a viewport point (titlebar hit-test during pane drags). */
-function spaceTabAtPoint(x, y) {
-    const tabs = document.querySelectorAll('.shell-space-tab');
-    for (const tab of tabs) {
-        const r = tab.getBoundingClientRect();
-        if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return tab;
-    }
-    return null;
-}
-
-function blankLayoutLeafNode() {
-    return { type: 'leaf', id: newLeafId(), page: '/chat_page.html', flex: '' };
-}
-
-/** Append a leaf copy as a far-right horizontal split; wraps when needed. */
-function appendLayoutLeafToEnd(root, leaf) {
-    const node = {
-        type: 'leaf',
-        id: (leaf && leaf.id) || newLeafId(),
-        page: (leaf && leaf.page) || '/chat_page.html',
-        flex: '',
-    };
-    if (leaf && leaf.chat) node.chat = String(leaf.chat);
-    if (leaf && leaf.terminal) node.terminal = String(leaf.terminal);
-    if (!root || typeof root !== 'object') {
-        return {
-            type: 'group', id: newGroupId(), orientation: 'horizontal', flex: '',
-            children: [blankLayoutLeafNode(), node],
-        };
-    }
-    if (root.type === 'group' && normalizeSplitOrientation(root.orientation) === 'horizontal'
-        && Array.isArray(root.children)) {
-        root.children.push(node);
-        return root;
-    }
-    return {
-        type: 'group', id: newGroupId(), orientation: 'horizontal', flex: '',
-        children: [root, node],
-    };
-}
-
-/** Depth-first leaf lookup by stored leaf id. */
-function findLayoutLeafNode(root, leafId) {
-    if (!root || typeof root !== 'object' || !leafId) return null;
-    if (root.type === 'leaf') return root.id === leafId ? root : null;
-    if (root.type === 'group' && Array.isArray(root.children)) {
-        for (const ch of root.children) {
-            const hit = findLayoutLeafNode(ch, leafId);
-            if (hit) return hit;
-        }
-    }
-    return null;
-}
-
-/** Remove a leaf by id, collapsing single-child groups. Returns { root, removed }. */
-function removeLayoutLeafNode(root, leafId) {
-    if (!root || typeof root !== 'object' || !leafId) return { root, removed: null };
-    if (root.type === 'leaf') {
-        return root.id === leafId ? { root: null, removed: root } : { root, removed: null };
-    }
-    if (root.type !== 'group' || !Array.isArray(root.children)) return { root, removed: null };
-    let removed = null;
-    const kept = [];
-    for (const ch of root.children) {
-        if (removed) { kept.push(ch); continue; }
-        if (ch && ch.type === 'leaf' && ch.id === leafId) { removed = ch; continue; }
-        const res = removeLayoutLeafNode(ch, leafId);
-        if (res.removed) removed = res.removed;
-        if (res.root) kept.push(res.root);
-    }
-    if (!removed) return { root, removed: null };
-    if (kept.length === 0) return { root: null, removed };
-    if (kept.length === 1) return { root: kept[0], removed };
-    root.children = kept;
-    return { root, removed };
-}
-
-/** Point a live pane at stored leaf content (page + chat/terminal handles). */
-function applyStoredLeafToLivePane(colIdx, leaf) {
-    if (!Number.isFinite(colIdx) || !leaf) return false;
-    const col = getColumnEl(colIdx);
-    if (!col) return false;
-    const entry = {};
-    if (leaf.chat) entry.chat = String(leaf.chat);
-    if (leaf.terminal) entry.terminal = String(leaf.terminal);
-    lastChatByColumn.delete(colIdx);
-    if (Object.keys(entry).length) lastChatByColumn.set(colIdx, entry);
-    const page = pageWithPaneSession(colIdx, canonicalizeShellPage(leaf.page || '/chat_page.html'));
-    setState(colIdx, page);
-    updateColumnUI(colIdx, page);
-    const frame = replaceFrame(colIdx, page);
-    if (frame) attachFrameLoadListener(colIdx, frame);
-    return true;
-}
-
-/** Quick drop: move the dragged viewport to the far right of another space. */
-function moveDraggedPaneToSpace(load, colEl, targetSpaceId) {
-    if (!load || !targetSpaceId || targetSpaceId === spacesState.active) return false;
-    const target = spaceById(targetSpaceId);
-    if (!target) return false;
-    target.root = appendLayoutLeafToEnd(target.root, load);
-    persistSpacesState();
-    renderSpaceTabs();
-    const live = getSplitColumns();
-    if (live.length >= 2 && colEl && colEl.isConnected) {
-        closeSplitColumn(colEl);
-    } else if (colEl && colEl.isConnected) {
-        // Sole viewport moved away — leave a fresh chat behind, never an empty space.
-        const idx = parseInt(colEl.dataset.column, 10);
-        if (Number.isFinite(idx)) {
-            lastChatByColumn.delete(idx);
-            applyStoredLeafToLivePane(idx, blankLayoutLeafNode());
-            persistLastChatHandles();
-            persistSplitLayout();
-        }
-    }
-    if (typeof window.showToast === 'function') {
-        window.showToast('Moved pane to ' + (target.name || 'space'), 'success');
-    }
-    return true;
-}
-
-/** Chained drop while carrying: relocate the payload between stored spaces. */
-function moveCarriedPaneToSpace(load, srcId, targetSpaceId) {
-    if (!load || !targetSpaceId || targetSpaceId === spacesState.active) return false;
-    const dst = spaceById(targetSpaceId);
-    if (!dst || targetSpaceId === srcId) return false;
-    const src = spaceById(srcId);
-    if (src && src.root) {
-        const res = removeLayoutLeafNode(src.root, load.id);
-        if (res.removed) src.root = res.root || blankLayoutLeafNode();
-    }
-    dst.root = appendLayoutLeafToEnd(dst.root, load);
-    persistSpacesState();
-    renderSpaceTabs();
-    if (typeof window.showToast === 'function') {
-        window.showToast('Moved pane to ' + (dst.name || 'space'), 'success');
-    }
-    return true;
-}
-
-/** Drop on a live pane while carrying: swap the payload with that pane's content. */
-function exchangeCarriedPaneWithLive(load, srcId, targetCol) {
-    const src = spaceById(srcId);
-    if (!src || !load || !targetCol || !targetCol.isConnected) return false;
-    const idxT = parseInt(targetCol.dataset.column, 10);
-    if (!Number.isFinite(idxT)) return false;
-    const stateT = { ...getState(idxT) };
-    const oldPage = pageWithPaneSession(idxT, canonicalizeShellPage(stateT.page || '/chat_page.html'));
-    const oldHandles = { ...(lastChatByColumn.get(idxT) || {}) };
-    if (!applyStoredLeafToLivePane(idxT, load)) return false;
-    const slot = findLayoutLeafNode(src.root, load.id);
-    if (slot) {
-        slot.page = oldPage;
-        delete slot.chat;
-        delete slot.terminal;
-        if (oldHandles.chat) slot.chat = String(oldHandles.chat);
-        if (oldHandles.terminal) slot.terminal = String(oldHandles.terminal);
-    }
-    persistSpacesState();
-    persistLastChatHandles();
-    persistSplitLayout();
-    focusedColumnIdx = idxT;
-    broadcastPaneFocus();
-    if (typeof window.showToast === 'function') {
-        window.showToast('Swapped panes with ' + (src.name || 'space'), 'success');
-    }
-    return true;
-}
-
-/** Show the grip for cross-space drags even when this space has a single pane. */
-function syncCrossSpaceGripVisibility() {
-    if (!splitContainer) return;
-    splitContainer.classList.toggle('has-cross-space', spacesState.spaces.length >= 2);
-}
-
-/** Measure the tab strip for the canonical drop computation (DOM read only). */
-function measureSpaceDropLanes(host, draggedId) {
-    const lanes = [];
-    const tabRects = {};
-    const sleeveRects = {};
-    host.querySelectorAll('.shell-space-tab, .shell-space-group-sleeve').forEach((el) => {
-        if (el.classList.contains('shell-space-tab')) {
-            const id = el.dataset.spaceId;
-            if (!id || id === draggedId) return;
-            const r = el.getBoundingClientRect();
-            lanes.push({ t: 'tab', id });
-            tabRects[id] = { left: r.left, width: r.width };
-        } else if (el.dataset.groupId) {
-            const r = el.getBoundingClientRect();
-            lanes.push({ t: 'sleeve', gid: el.dataset.groupId });
-            sleeveRects[el.dataset.groupId] = { left: r.left, width: r.width };
-        }
-    });
-    return { lanes, tabRects, sleeveRects };
-}
-
-/** One canonical drop target for preview AND commit (spaces_drop.js). */
-function computeSpaceDropTarget(host, draggedId, x) {
-    const visibleIds = Array.from(host.querySelectorAll('.shell-space-tab')).map((t) => t.dataset.spaceId);
-    const m = measureSpaceDropLanes(host, draggedId);
-    return CuttleSpaces.computeDropTarget({
-        spaces: spacesState.spaces,
-        groups: spacesState.groups,
-        visibleIds,
-        draggedId,
-        lanes: m.lanes,
-        tabRects: m.tabRects,
-        sleeveRects: m.sleeveRects,
-        x,
-    });
-}
-
-/** Position the dragged tab element per the canonical preview directive. */
-function placeDraggedSpaceTab(host, tab, target) {
-    const place = (target && !target.noop && target.place) || { end: true };
-    const tabElFor = (id) => {
-        try {
-            return host.querySelector('.shell-space-tab[data-space-id="' + CSS.escape(id) + '"]');
-        } catch (_) { return null; }
-    };
-    const sleeveElFor = (gid) => {
-        try {
-            return host.querySelector('.shell-space-group-sleeve[data-group-id="' + CSS.escape(gid) + '"]');
-        } catch (_) { return null; }
-    };
-    if (place.park) {
-        const sleeve = sleeveElFor(place.park);
-        if (sleeve && (tab.parentElement !== sleeve || tab.nextElementSibling !== null)) {
-            sleeve.appendChild(tab);
-        }
-    } else if (place.beforeTab) {
-        const ref = tabElFor(place.beforeTab);
-        if (ref && tab.nextElementSibling !== ref) ref.parentElement.insertBefore(tab, ref);
-    } else if (place.beforeSleeve) {
-        const ref = sleeveElFor(place.beforeSleeve);
-        if (ref && tab.nextElementSibling !== ref) host.insertBefore(tab, ref);
-    } else if (host.lastElementChild !== tab) {
-        host.appendChild(tab);
-    }
-}
-
-/** Drag a tab sideways to reorder; it follows the pointer while siblings reflow around it. */
-function setupSpaceTabDrag(host) {
-    const THRESHOLD = 4;
-    let drag = null;
-    let suppressClick = false;
-
-    const finish = (commit, dropX) => {
-        if (!drag) return;
-        const { tab, active, pointerId } = drag;
-        drag = null;
-        if (!active) return;
-        tab.classList.remove('is-dragging');
-        tab.style.transform = '';
-        host.classList.remove('is-reordering');
-        document.body.classList.remove('is-reordering-spaces');
-        if (tab.hasPointerCapture(pointerId)) tab.releasePointerCapture(pointerId);
-        if (commit) {
-            // Commit consumes the same canonical target the preview showed:
-            // no re-derivation from DOM order, no separate neighbor pass.
-            const target = computeSpaceDropTarget(host, tab.dataset.spaceId, dropX);
-            if (!target.noop) {
-                const res = CuttleSpaces.applyDropTarget(spacesState, target, tab.dataset.spaceId);
-                if (res.orderChanged || res.groupChanged || res.pruned) persistSpacesState();
-            }
-        }
-        renderSpaceTabs();
-        // The pointerup still produces a click on the tab; don't treat the drop as a switch.
-        suppressClick = true;
-        setTimeout(() => { suppressClick = false; }, 0);
-    };
-
-    host.addEventListener('pointerdown', (e) => {
-        if (e.button !== 0 || spacesState.spaces.length < 2) return;
-        const tab = e.target.closest('.shell-space-tab');
-        if (!tab || e.target.closest('.shell-space-close, .shell-space-rename')) return;
-        drag = { tab, pointerId: e.pointerId, startX: e.clientX, originLeft: tab.getBoundingClientRect().left, tx: 0, active: false };
-    });
-
-    // Move/up/cancel ride on window (capture): the strip is small and the page
-    // below is all iframes, which swallow events aimed at the strip. While a
-    // drag is active, content iframes also lose hit-testing (see
-    // body.is-reordering-spaces) so a release over page content still lands.
-    window.addEventListener('pointermove', (e) => {
-        if (!drag || e.pointerId !== drag.pointerId) return;
-        // A press whose release was missed (off-window pointerup) must never
-        // start a button-less reorder on the next hover — cancel it instead.
-        if (e.buttons === 0) { finish(false); return; }
-        const { tab } = drag;
-        if (!drag.active) {
-            if (Math.abs(e.clientX - drag.startX) < THRESHOLD) return;
-            drag.active = true;
-            tab.setPointerCapture(e.pointerId);
-            tab.classList.add('is-dragging');
-            host.classList.add('is-reordering');
-            document.body.classList.add('is-reordering-spaces');
-        }
-        // Preview consumes the canonical target: the tab renders where the
-        // drop would commit it, and the sleeve highlight matches the
-        // membership the drop would assign (no separate hover rule).
-        const target = computeSpaceDropTarget(host, tab.dataset.spaceId, e.clientX);
-        placeDraggedSpaceTab(host, tab, target);
-        // Hovering a sleeve lights its boundary exactly when the drop joins.
-        host.querySelectorAll('.shell-space-group-sleeve.is-drop-target').forEach((el) => {
-            el.classList.remove('is-drop-target');
-        });
-        if (target.groupId) {
-            try {
-                host.querySelector(
-                    '.shell-space-group-sleeve[data-group-id="' + CSS.escape(target.groupId) + '"]'
-                )?.classList.add('is-drop-target');
-            } catch (_) {}
-        }
-        const rect = tab.getBoundingClientRect();
-        const layoutLeft = rect.left - drag.tx;
-        const hostRect = host.getBoundingClientRect();
-        let left = drag.originLeft + (e.clientX - drag.startX);
-        left = Math.max(hostRect.left, Math.min(left, hostRect.right - rect.width));
-        drag.tx = left - layoutLeft;
-        tab.style.transform = 'translateX(' + drag.tx + 'px)';
-    });
-
-    window.addEventListener('pointerup', (e) => {
-        if (drag && e.pointerId === drag.pointerId) finish(true, e.clientX);
-    }, true);
-    window.addEventListener('pointercancel', (e) => {
-        if (drag && e.pointerId === drag.pointerId) finish(false);
-    }, true);
-    // Releasing off-window delivers no pointerup; snap back instead of
-    // floating the tab until the next hover cancels the gesture.
-    window.addEventListener('blur', () => { if (drag) finish(false); });
-    host.addEventListener('keydown', (e) => {
-        if (drag?.active && e.key === 'Escape') {
-            e.preventDefault();
-            finish(false);
-        }
-    }, true);
-    host.addEventListener('click', (e) => {
-        if (!suppressClick) return;
-        e.stopPropagation();
-        e.preventDefault();
-    }, true);
-}
+// ── Spaces tab strip (owner: shell_spaces.js) ─────────────────
+// Tab rendering, group menus, selection wiring, activity dots, the tab
+// drag/drop and the cross-space pane-drag effects all live in
+// CuttleShellSpaces; app_shell only calls its setup() and wires shared events.
+shellSpaces.setup();
 
 // ── Pane reorder (grip under logo) ─────────────────────────────
 // RAIL_SVG_* / primaryRailLogoInnerHtml / closeRailLogoInnerHtml are defined
@@ -7125,8 +3445,6 @@ function remumberSplitColumns() {
     const cols = getSplitColumns();
     const oldToNew = new Map();
     const nextState = new Map();
-    const nextSessions = new Map();
-    const nextTokens = new Map();
     const nextChatHandles = new Map();
     const claimedOldIdx = new Set();
 
@@ -7141,8 +3459,6 @@ function remumberSplitColumns() {
             claimedOldIdx.add(oldIdx);
             oldToNew.set(oldIdx, newIdx);
             if (columnState.has(oldIdx)) nextState.set(newIdx, columnState.get(oldIdx));
-            if (paneSessionByColumn.has(oldIdx)) nextSessions.set(newIdx, paneSessionByColumn.get(oldIdx));
-            if (frameRevealTokens.has(oldIdx)) nextTokens.set(newIdx, frameRevealTokens.get(oldIdx));
             if (lastChatByColumn.has(oldIdx)) {
                 nextChatHandles.set(newIdx, { ...lastChatByColumn.get(oldIdx) });
             }
@@ -7153,18 +3469,8 @@ function remumberSplitColumns() {
 
     columnState.clear();
     nextState.forEach((v, k) => columnState.set(k, v));
-    paneSessionByColumn.clear();
-    nextSessions.forEach((v, k) => paneSessionByColumn.set(k, v));
-    frameRevealTokens.clear();
-    nextTokens.forEach((v, k) => frameRevealTokens.set(k, v));
-    // Keep in-flight frame reveals valid after index remap (avoids forever spinner).
-    try {
-        pendingFrameReveals.forEach((entry) => {
-            if (entry && oldToNew.has(entry.colIdx)) {
-                entry.colIdx = oldToNew.get(entry.colIdx);
-            }
-        });
-    } catch (_) {}
+    paneController.remapColumns(oldToNew);
+    paneController.remapRevealColumns(oldToNew);
     lastChatByColumn.clear();
     nextChatHandles.forEach((v, k) => lastChatByColumn.set(k, v));
     persistLastChatHandles();
@@ -7182,12 +3488,6 @@ function remumberSplitColumns() {
             || frames[frames.length - 1]
             || null;
         if (live0) live0.id = 'contentFrame';
-    }
-
-    if (oldToNew.has(focusedColumnIdx)) {
-        focusedColumnIdx = oldToNew.get(focusedColumnIdx);
-    } else {
-        focusedColumnIdx = 0;
     }
 
     syncSplitColumnLogos();
@@ -7255,8 +3555,8 @@ function reorderSplitColumn(fromCol, targetCol, _before) {
 
     swapMapKeys(columnState, idxA, idxB);
     swapMapKeys(lastChatByColumn, idxA, idxB);
-    swapMapKeys(paneSessionByColumn, idxA, idxB);
-    swapMapKeys(frameRevealTokens, idxA, idxB);
+    paneController.swapSessionColumns(idxA, idxB);
+    paneController.swapRevealColumns(idxA, idxB);
 
     // Slots keep their indices; contents trade. Re-apply explicit pages after the map swap.
     setState(idxA, pageB);
@@ -7274,8 +3574,7 @@ function reorderSplitColumn(fromCol, targetCol, _before) {
     const frameB = replaceFrame(idxB, pageA);
     if (frameB) attachFrameLoadListener(idxB, frameB);
 
-    if (focusedColumnIdx === idxA) focusedColumnIdx = idxB;
-    else if (focusedColumnIdx === idxB) focusedColumnIdx = idxA;
+    paneController.swapColumns(idxA, idxB);
 
     persistLastChatHandles();
     persistSplitLayout();
@@ -7297,18 +3596,9 @@ function setupPaneReorder(colEl) {
     let activated = false;
     let dropTarget = null;
     let dropBefore = true;
-    // Cross-space carry: snapshot of the dragged leaf + source space while the
-    // pointer hovers space tabs (quick drop = move to end, 1s hover = switch).
-    let dragPayload = null;
-    let carrying = false;
-    let sourceSpaceId = null;
-    let hoverTab = null;
-    let hoverTimer = 0;
-
-    const clearSpaceHover = () => {
-        if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = 0; }
-        if (hoverTab) { hoverTab.classList.remove('pane-space-hover'); hoverTab = null; }
-    };
+    // Cross-space carry (hover→switch, drop→move/swap) lives in the Spaces
+    // owner (shell_spaces.js); the within-space pane reorder below stays here.
+    const paneDrop = shellSpaces.paneDrop;
 
     const unbindWindow = () => {
         window.removeEventListener('pointermove', onMove, true);
@@ -7317,53 +3607,14 @@ function setupPaneReorder(colEl) {
         window.removeEventListener('blur', onBlurCancel, true);
     };
 
-    const autoSwitchToSpace = (spaceId) => {
-        if (!dragging || !spaceId || spaceId === spacesState.active) return;
-        if (!carrying) {
-            carrying = true;
-            sourceSpaceId = spacesState.active;
-        }
-        clearSpaceHover();
-        dropTarget = null;
-        clearPaneDropIndicators();
-        switchSpace(spaceId);
-        // Hovering home for 1s just comes back — the payload never left.
-        if (spacesState.active === sourceSpaceId) {
-            carrying = false;
-            sourceSpaceId = null;
-        }
-    };
-
-    const trackSpaceTabHover = (e) => {
-        if (spacesState.spaces.length < 2) return;
-        const tab = spaceTabAtPoint(e.clientX, e.clientY);
-        if (tab === hoverTab) return;
-        clearSpaceHover();
-        hoverTab = tab || null;
-        if (hoverTab && hoverTab.dataset.spaceId !== spacesState.active) {
-            hoverTab.classList.add('pane-space-hover');
-            const id = hoverTab.dataset.spaceId;
-            hoverTimer = setTimeout(() => {
-                if (dragging && hoverTab && hoverTab.dataset.spaceId === id) autoSwitchToSpace(id);
-            }, PANE_SPACE_HOVER_MS);
-        }
-    };
-
     const finish = (upEvent, cancelled) => {
         if (!dragging) return;
         const wasActive = activated;
         const target = dropTarget;
         const before = dropBefore;
-        const load = dragPayload;
-        const wasCarrying = carrying;
-        const srcId = sourceSpaceId;
         dragging = false;
         activated = false;
-        carrying = false;
-        sourceSpaceId = null;
-        dragPayload = null;
         unbindWindow();
-        clearSpaceHover();
         grip.classList.remove('is-dragging');
         colEl.classList.remove('is-pane-dragging');
         splitContainer?.classList.remove('is-reordering-panes');
@@ -7371,30 +3622,13 @@ function setupPaneReorder(colEl) {
         document.body.style.userSelect = '';
         clearPaneDropIndicators();
         dropTarget = null;
-        if (cancelled || !wasActive || !load) return;
-        const tab = (upEvent && Number.isFinite(upEvent.clientX) && Number.isFinite(upEvent.clientY))
-            ? spaceTabAtPoint(upEvent.clientX, upEvent.clientY)
-            : null;
-        const tabId = tab ? (tab.dataset.spaceId || '') : '';
-        if (tabId && tabId !== spacesState.active) {
-            if (!wasCarrying) {
-                setTimeout(() => moveDraggedPaneToSpace(load, colEl, tabId), 0);
-                return;
-            }
-            if (tabId === srcId) {
-                setTimeout(() => switchSpace(srcId), 0);
-                return;
-            }
-            setTimeout(() => moveCarriedPaneToSpace(load, srcId, tabId), 0);
+        if (cancelled || !wasActive || !paneDrop.isActive()) {
+            paneDrop.endDrag();
             return;
         }
-        if (wasCarrying) {
-            if (target && target.isConnected && target !== colEl) {
-                const targetEl = target;
-                setTimeout(() => exchangeCarriedPaneWithLive(load, srcId, targetEl), 0);
-            }
-            return;
-        }
+        // A space-tab drop (or a live-pane swap while carrying) is consumed by
+        // the Spaces owner; otherwise this is a within-space reorder.
+        if (paneDrop.finishDrop(upEvent, target)) return;
         if (!target || target === colEl) return;
         setTimeout(() => reorderSplitColumn(colEl, target, before), 0);
     };
@@ -7404,7 +3638,7 @@ function setupPaneReorder(colEl) {
         // A grip press whose release was missed must never start a button-less
         // drag on the next hover — cancel it instead of committing anything.
         if (e.buttons === 0) { finish(null, true); return; }
-        trackSpaceTabHover(e);
+        paneDrop.trackHover(e);
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
         if (!activated) {
@@ -7459,19 +3693,20 @@ function setupPaneReorder(colEl) {
 
     grip.addEventListener('pointerdown', (e) => {
         if (e.button != null && e.button !== 0) return;
-        if (getSplitColumns().length < 2 && spacesState.spaces.length < 2) return;
+        if (!paneDrop.canStartDrag()) return;
         if (dragging) finish();
         e.preventDefault();
         e.stopPropagation();
         dragging = true;
         activated = false;
-        carrying = false;
-        sourceSpaceId = null;
-        dragPayload = snapshotLayoutTree(colEl);
         startX = e.clientX;
         startY = e.clientY;
         dropTarget = null;
         dropBefore = true;
+        paneDrop.beginDrag(snapshotLayoutTree(colEl), colEl, () => {
+            dropTarget = null;
+            clearPaneDropIndicators();
+        });
         splitContainer?.classList.add('is-reordering-panes');
         window.addEventListener('pointermove', onMove, true);
         window.addEventListener('pointerup', onUp, true);
@@ -7765,20 +4000,7 @@ window.addEventListener('message', (e) => {
     if (e.data?.type === 'cuttle-navigate' && e.data?.page) {
         navigateFromSource(e.source, e.data.page);
     }
-    if (e.data?.type === 'electron-zoom' && window.electron) {
-        handleElectronZoomWheel(e.data.deltaY, e.data.deltaMode);
-    }
-    if (e.data?.type === 'electron-zoom-key' && window.electron) {
-        const now = Date.now();
-        if (e.data.action !== 'reset' && (now - _zoomLastStepAt) < ZOOM_MIN_STEP_MS) return;
-        _zoomLastStepAt = now;
-        _zoomWheelAccum = 0;
-        applyZoomAction(e.data.action);
-    }
-    if (e.data?.type === 'browser-zoom-hint') {
-        requestAnimationFrame(() => showZoomHud(readZoomPercent()));
-        setTimeout(() => showZoomHud(readZoomPercent()), 60);
-    }
+    CuttleShellElectron.handleZoomMessage(e.data);
     if (e.data?.type === 'cuttle-theme-change' && e.data?.theme) {
         applyShellTheme(e.data.theme);
         // Keep the other blades in sync; the sender already applied it.
@@ -7860,10 +4082,10 @@ async function runShellHeartbeat() {
         if (typeof window.__cuttleShellPollWorkers === 'function') {
             tasks.push(Promise.resolve(window.__cuttleShellPollWorkers()));
         }
-        if (paneSessionByColumn.size > 0) {
-            tasks.push(pollLiveStatusHub());
+        if (paneController?.hasSessions()) {
+            tasks.push(paneController?.pollLiveStatusHub());
         }
-        tasks.push(refreshSpaceActivityFromServer());
+        tasks.push(shellSpaces.refreshFromServer());
         await Promise.all(tasks);
     } catch (_) {
     } finally {
@@ -7892,7 +4114,7 @@ document.addEventListener('visibilitychange', () => {
     applyShellBackgroundPaused(document.hidden);
     // Immediate beat on focus so badges/toasts catch up after a long hide.
     scheduleShellHeartbeat(true);
-    schedulePendingChangesHub(true);
+    paneController?.schedulePendingChangesHub(true);
 });
 scheduleShellHeartbeat(true);
 
@@ -7957,313 +4179,4 @@ updateColumnUI(0, currentPage);
     }, 500);
 
     log('--- debug started --- initPage="' + currentPage + '"');
-})();
-
-// ── Cuttle Mobile native shell (Electron-equivalent on phone) ─
-(function initMobileAppShell() {
-    const LATER_KEY = 'cuttle-apk-update-later';
-    const LATER_HASH_KEY = 'cuttle-apk-update-later-hash';
-    let apkModalHash = '';
-    let apkInstalling = false;
-
-    function isMobileClient() {
-        if (window.isCuttleMobile || window.cuttleMobile?.isNative) return true;
-        return /\bCuttleMobile\/[\d.]+\b/.test(navigator.userAgent || '');
-    }
-
-    function localShellHash() {
-        try {
-            if (window.CuttleShellNative?.getShellHash) return String(window.CuttleShellNative.getShellHash() || '');
-        } catch (_) {}
-        try {
-            if (window.cuttleMobile?.getShellHash) return String(window.cuttleMobile.getShellHash() || '');
-        } catch (_) {}
-        return String(window.cuttleMobile?.shellHash || '');
-    }
-
-    function startInstall() {
-        apkInstalling = true;
-        const modal = document.getElementById('mobileApkUpdateModal');
-        if (modal) modal.hidden = true;
-        if (window.cuttleMobile?.installUpdate) {
-            window.cuttleMobile.installUpdate();
-            return;
-        }
-        if (window.CuttleShellNative?.installUpdate) {
-            window.CuttleShellNative.installUpdate();
-            return;
-        }
-        if (window.cuttleMobile?.checkUpdate) {
-            window.cuttleMobile.checkUpdate();
-            return;
-        }
-        if (window.CuttleShellNative?.checkUpdate) {
-            window.CuttleShellNative.checkUpdate();
-        }
-    }
-
-    function ensureModal() {
-        if (document.getElementById('mobileApkUpdateModal')) return;
-        const wrap = document.createElement('div');
-        wrap.id = 'mobileApkUpdateModal';
-        wrap.className = 'mobile-apk-update-modal';
-        wrap.hidden = true;
-        wrap.innerHTML =
-            '<div class="mobile-apk-update-card" role="dialog" aria-labelledby="mobileApkUpdateTitle">'
-            + '<h2 id="mobileApkUpdateTitle">Update available</h2>'
-            + '<p>A newer Cuttle phone app is on your PC. Install over Wi‑Fi — Android will ask you to confirm.</p>'
-            + '<div class="mobile-apk-update-actions">'
-            + '<button type="button" class="mobile-apk-update-install" id="mobileApkUpdateInstall">Download &amp; install</button>'
-            + '<button type="button" class="mobile-apk-update-later" id="mobileApkUpdateLater">Later</button>'
-            + '</div></div>';
-        document.body.appendChild(wrap);
-        wrap.querySelector('#mobileApkUpdateInstall')?.addEventListener('click', () => {
-            startInstall();
-            wrap.hidden = true;
-        });
-        wrap.querySelector('#mobileApkUpdateLater')?.addEventListener('click', () => {
-            try {
-                sessionStorage.setItem(LATER_KEY, '1');
-                if (apkModalHash) localStorage.setItem(LATER_HASH_KEY, apkModalHash);
-            } catch (_) {}
-            wrap.hidden = true;
-        });
-    }
-
-    function setRailVisible(on) {
-        document.querySelectorAll('.rail-apk-update').forEach(btn => {
-            btn.hidden = !on;
-            btn.classList.toggle('apk-update-ready', !!on);
-        });
-    }
-
-    function showStartupModal(on, hash) {
-        const modal = document.getElementById('mobileApkUpdateModal');
-        if (!modal) return;
-        if (!on || apkInstalling) {
-            modal.hidden = true;
-            return;
-        }
-        const h = String(hash || apkModalHash || '');
-        let skipped = false;
-        try {
-            skipped = sessionStorage.getItem(LATER_KEY) === '1'
-                || (h && localStorage.getItem(LATER_HASH_KEY) === h);
-        } catch (_) {}
-        if (skipped) {
-            modal.hidden = true;
-            return;
-        }
-        if (!modal.hidden && h && h === apkModalHash) return;
-        apkModalHash = h;
-        modal.hidden = false;
-    }
-
-    function ensureUpdateRail() {
-        if (!isMobileClient()) return;
-        ensureModal();
-        document.querySelectorAll('.rail-footer').forEach(footer => {
-            if (footer.querySelector('.rail-apk-update')) return;
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'rail-item rail-apk-update';
-            btn.hidden = true;
-            btn.setAttribute('data-tooltip', 'Update available');
-            btn.setAttribute('aria-label', 'Update available');
-            btn.innerHTML =
-                '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-                + '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
-                + '<polyline points="7 10 12 15 17 10"/>'
-                + '<line x1="12" y1="15" x2="12" y2="3"/>'
-                + '</svg>'
-                + '<span class="rail-badge rail-badge-apk-update">!</span>';
-            const notif = footer.querySelector('[data-id="nav-notifications"]');
-            if (notif) footer.insertBefore(btn, notif);
-            else footer.insertBefore(btn, footer.firstChild);
-            btn.addEventListener('click', () => {
-                if (railEditing || railSuppressClick) return;
-                startInstall();
-            });
-        });
-    }
-
-    window.ensureCuttleMobileApkUpdateUi = ensureUpdateRail;
-
-    async function refreshUpdateAvailability() {
-        if (!isMobileClient()) {
-            setRailVisible(false);
-            return;
-        }
-        ensureUpdateRail();
-        let available = !!window.cuttleApkUpdateAvailable;
-        try {
-            const res = await fetch('/api/mobile/android', { cache: 'no-store' });
-            if (res.ok) {
-                const remote = await res.json();
-                const local = localShellHash();
-                if (remote && remote.ok && remote.artifact && remote.hash && local) {
-                    available = remote.hash !== local;
-                    if (available) apkModalHash = remote.hash;
-                } else {
-                    available = false;
-                }
-            }
-        } catch (_) {}
-        window.cuttleApkUpdateAvailable = available;
-        setRailVisible(available);
-        showStartupModal(available, apkModalHash);
-    }
-
-    function boot() {
-        if (!isMobileClient()) return;
-        ensureUpdateRail();
-        // Delay APK check — competing with the first chat iframe on Werkzeug HTTPS
-        // causes net::ERR_TOO_MANY_RETRIES / black screens on notification opens.
-        setTimeout(() => {
-            if (!isMobileClient()) return;
-            refreshUpdateAvailability();
-            window.cuttleMobile?.checkUpdate?.();
-        }, 12000);
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState !== 'visible' || !isMobileClient()) return;
-            fetch('/api/lan-ping', { cache: 'no-store' })
-                .then((r) => (r.ok ? r.json() : Promise.reject(new Error('http'))))
-                .then((d) => {
-                    if (!d?.ok) throw new Error('bad');
-                })
-                .catch(() => {
-                    try {
-                        window.CuttleShellNative?.showConnectionError?.('');
-                    } catch (_) {}
-                });
-        });
-    }
-
-    document.addEventListener('cuttle-mobile-ready', boot);
-    document.addEventListener('cuttle-apk-update', (e) => {
-        if (!isMobileClient()) return;
-        const d = (e.detail && typeof e.detail === 'object') ? e.detail : {};
-        const status = String(d.status || '');
-        if (d.hash) apkModalHash = String(d.hash);
-        if (status === 'installing' || status === 'downloading' || status === 'checking') {
-            if (status === 'installing') apkInstalling = true;
-            setRailVisible(!!d.available);
-            if (status === 'installing') showStartupModal(false);
-            return;
-        }
-        if (status === 'up_to_date' || status === 'error') {
-            apkInstalling = false;
-            window.cuttleApkUpdateAvailable = false;
-            ensureUpdateRail();
-            setRailVisible(false);
-            showStartupModal(false);
-            return;
-        }
-        const on = !!d.available;
-        window.cuttleApkUpdateAvailable = on;
-        ensureUpdateRail();
-        setRailVisible(on);
-        showStartupModal(on, d.hash);
-    });
-    if (isMobileClient()) boot();
-    setInterval(() => {
-        if (isMobileClient()) refreshUpdateAvailability();
-    }, 60000);
-})();
-
-// ── Device-worker SSH approval (HITL) ───────────────────────────
-(function initSshApprovalModal() {
-    const modal = document.getElementById('sshApprovalModal');
-    if (!modal) return;
-    const subtitle = document.getElementById('sshApprovalSubtitle');
-    const meta = document.getElementById('sshApprovalMeta');
-    const btnOnce = document.getElementById('sshApprovalOnce');
-    const btnSession = document.getElementById('sshApprovalSession');
-    const btnDeny = document.getElementById('sshApprovalDeny');
-    let currentId = '';
-    let notifiedIds = new Set();
-    let deciding = false;
-
-    function show(req) {
-        if (!req || !req.id) return;
-        currentId = String(req.id);
-        if (subtitle) {
-            subtitle.textContent = req.message
-                || ('Cuttle (' + (req.worker_id || 'worker') + ') is requesting to attempt "'
-                    + (req.job_kind || 'execute_shell_ssh') + '". Would you like to approve?');
-        }
-        if (meta) {
-            const bits = [];
-            if (req.job_kind) bits.push(req.job_kind);
-            if (req.target) bits.push('target: ' + req.target);
-            if (req.command_preview) bits.push('cmd: ' + req.command_preview);
-            if (req.job_id) bits.push('job: ' + String(req.job_id).slice(0, 8));
-            meta.textContent = bits.join(' · ');
-        }
-        modal.hidden = false;
-        if (!notifiedIds.has(currentId)) {
-            notifiedIds.add(currentId);
-            try {
-                if (window.Notification && Notification.permission === 'granted') {
-                    new Notification('Cuttle shell approval', {
-                        body: (req.worker_id || 'worker') + ' · ' + (req.job_kind || 'unsafe shell'),
-                    });
-                } else if (window.Notification && Notification.permission === 'default') {
-                    Notification.requestPermission();
-                }
-            } catch (_) {}
-            try {
-                if (window.showToast) window.showToast('Unsafe shell approval needed', 'info');
-            } catch (_) {}
-        }
-    }
-
-    function hide() {
-        modal.hidden = true;
-        currentId = '';
-        deciding = false;
-    }
-
-    async function decide(decision) {
-        if (!currentId || deciding) return;
-        deciding = true;
-        try {
-            const r = await fetch('/api/workers/ssh-approval/' + encodeURIComponent(currentId) + '/decide', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ decision }),
-            });
-            const data = await r.json().catch(() => ({}));
-            if (!r.ok || !data.success) throw new Error(data.error || ('HTTP ' + r.status));
-            hide();
-        } catch (e) {
-            deciding = false;
-            try { if (window.showToast) window.showToast(String(e.message || e), 'error'); } catch (_) {}
-        }
-    }
-
-    btnOnce && btnOnce.addEventListener('click', () => decide('once'));
-    btnSession && btnSession.addEventListener('click', () => decide('session'));
-    btnDeny && btnDeny.addEventListener('click', () => decide('deny'));
-
-    async function poll() {
-        if (document.hidden) return;
-        try {
-            const r = await fetch('/api/workers/ssh-approval/pending', { cache: 'no-store' });
-            if (!r.ok) return;
-            const data = await r.json();
-            const pending = (data && data.pending) || [];
-            if (!pending.length) {
-                if (currentId) hide();
-                return;
-            }
-            // Show oldest pending first
-            const sorted = pending.slice().sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
-            const next = sorted[0];
-            if (!currentId || currentId !== next.id) show(next);
-        } catch (_) {}
-    }
-
-    setInterval(poll, 2000);
-    setTimeout(poll, 800);
 })();

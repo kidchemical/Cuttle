@@ -17,7 +17,8 @@ node_only = pytest.mark.skipif(
 )
 
 REPO = Path(__file__).resolve().parents[3]
-SHELL_SRC = REPO / "src/web/js/shell/app_shell.js"
+# 5E: the rail edit-mode owner is shell_rail.js.
+SHELL_SRC = REPO / "src/web/js/shell/shell_rail.js"
 SHELL_CSS = REPO / "src/web/css/app_shell.css"
 
 
@@ -83,6 +84,7 @@ const document = {
 };
 const mainEl = makeEl('shell-main');
 const col = { querySelector: (sel) => (sel === '.shell-main' ? mainEl : null) };
+const doc = document;
 """
 
 

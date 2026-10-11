@@ -5,12 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 SHELL_JS = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "shell/app_shell.js"
+OWNER_JS = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "shell/shell_spaces.js"
 SHELL_CSS = Path(__file__).resolve().parents[3] / "src" / "web" / "css" / "app_shell.css"
 CHAT_JS = Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "chat/chat_page.js"
 
 
 def test_space_activity_priority_order():
-    # Aggregation owner is spaces_activity.js (Phase 1); the shell delegates.
+    # Aggregation owner is spaces_activity.js (Phase 1); the tab-strip owner
+    # (shell_spaces.js) delegates.
     mod = (Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "spaces" / "spaces_activity.js").read_text(encoding="utf-8")
     assert "const RANK = { input: 6, running: 5, error: 4, unread: 3, queued: 2, paused: 1 }" in mod
     # Running is evaluated before (and outranks) every dot state.
@@ -19,22 +21,22 @@ def test_space_activity_priority_order():
     )[0]
     assert "hit.running" in agg
     assert agg.index("best = 'running'") < agg.index("RANK[kind]")
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert "CuttleSpaces.selectSpaceActivity(ids, lookupSpaceSessionActivity," in src
     assert "const SPACE_ACTIVITY_RANK" not in src
 
 
 def test_space_tab_renders_activity_dot():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     assert '<span class="shell-space-activity"' in src
     assert "syncSpaceActivityTabs()" in src
 
 
 def test_space_activity_covers_inactive_spaces():
-    src = SHELL_JS.read_text(encoding="utf-8")
+    src = OWNER_JS.read_text(encoding="utf-8")
     # Inactive spaces parse their stored layout tree; terminals are excluded.
     assert "flattenLayoutLeaves(space.root" in src
-    assert "CuttleSessionPrefs.create(localStorage)" in src
+    assert "CuttleSessionPrefs.create(storage)" in src
     assert "shellSessionPrefs.map()" in src
     assert "/api/auth/sessions" in src
     assert "/api/chat-live-status-batch" in src
@@ -43,10 +45,13 @@ def test_space_activity_covers_inactive_spaces():
 def test_chat_pushes_activity_snapshot_to_shell():
     chat = CHAT_JS.read_text(encoding="utf-8")
     shell = SHELL_JS.read_text(encoding="utf-8")
+    owner = OWNER_JS.read_text(encoding="utf-8")
     assert "cuttle-chat-activity" in chat
     assert "collectChatActivitySnapshot" in chat
+    # The shell routes the frame push and delegates to the Spaces owner.
     assert "cuttle-chat-activity" in shell
-    assert "CuttleSpaces.notePushSnapshot(" in shell
+    assert "shellSpaces.notePush(" in shell
+    assert "CuttleSpaces.notePushSnapshot(" in owner
     # Frames push only the chats they own (stale history-row spinners for
     # other chats used to re-arm space tabs after the poll cleared them).
     # Snapshot decisions live in chat_activity.js (CuttleChatActivity); the
@@ -60,11 +65,11 @@ def test_chat_pushes_activity_snapshot_to_shell():
 
 
 def test_background_finish_marks_unread_and_queue_strings_parse():
-    shell = SHELL_JS.read_text(encoding="utf-8")
-    assert "const finished = CuttleSpaces.noteServerSnapshot(" in shell
-    assert "if (!rows.some(row => row.attention))" in shell
+    owner = OWNER_JS.read_text(encoding="utf-8")
+    assert "const finished = CuttleSpaces.noteServerSnapshot(" in owner
+    assert "if (!rows.some(row => row.attention))" in owner
     # followup_queue is a TEXT column — the sessions list returns a JSON string.
-    assert "parseSpaceFollowupQueue(" in shell
+    assert "parseSpaceFollowupQueue(" in owner
 
 
 def test_space_activity_css_matches_chat_palette():

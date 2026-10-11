@@ -167,7 +167,7 @@ def test_ensure_update_apk_kicks_rebuild_when_stale(monkeypatch, tmp_path):
 
 
 def test_shell_does_not_reopen_apk_modal_for_later_hash():
-    src = (REPO / "src" / "web" / "js" / "shell/app_shell.js").read_text(encoding="utf-8")
+    src = (REPO / "src" / "web" / "js" / "shell" / "shell_mobile.js").read_text(encoding="utf-8")
     assert "cuttle-apk-update-later-hash" in src
     assert "apkInstalling" in src
     assert "status === 'installing'" in src
