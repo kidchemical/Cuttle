@@ -18,7 +18,6 @@ Shared global config for **every** project lives in `.cuttle_global/`:
   agents/         # Cuttle project drop-in harness agents (instance drop-ins: .cuttle_global/agents/)
   memory/         # reserved
   personal/       # install-local project overlay (gitignored; supplements this tree)
-    secrets/      # file-shaped secrets: TLS cert/key, GitHub App .pem, tokens (core.runtime_paths.secrets_dir)
 ```
 
 Pattern reference for guest projects: `.cuttle_global/README.md` + `.cuttle_global/docs/commands-and-actions.md`.
@@ -30,3 +29,4 @@ retained. Rule/doc Markdown personal twins append marked deltas; commands/action
 Script recipes use explicit literal paths. Consult the
 [overlay contract](../docs/architecture/cuttle-home.md#personal-overlays) for loader-specific scope.
 Machine paths and workflow notes belong in the install-local personal trees.
+File-shaped secrets live in `<home>/secrets/` (`core.runtime_paths.secrets_dir()`), never in a personal overlay.

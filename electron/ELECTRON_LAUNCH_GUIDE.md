@@ -1,18 +1,10 @@
 # Desktop launch guide
 
 Follow the [desktop README](README.md) for the supported Host/Client setup,
-Python 3.11+ prerequisites, OS-specific venv commands, vendor CLI authentication,
-and Windows/Linux builds.
+Python prerequisites, OS-specific venv commands, vendor CLI authentication,
+transport/ports, lifetime, and Windows/Linux builds.
 
-- **Host:** connects to or starts the local daemon; the daemon owns Flask.
-- **Client:** selects an existing trusted-LAN Host; enable Phone/LAN access on
-  the Host before connecting. Worker mode requires Python and is optional.
-- **Transport:** Electron prefers HTTP :8000 and falls back to HTTPS :8080.
-  The default certificate is self-signed; HTTP is for trusted networks only.
-- **Exit:** UI close/relaunch/update preserves the daemon. Host tray Exit is
-  the explicit daemon shutdown path. Use the restart card for Flask restart.
-
-From `electron/`, after `npm ci`, choose:
+From `electron/`, after `npm ci`:
 
 ```bash
 npm start -- --mode=host
