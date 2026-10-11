@@ -11004,10 +11004,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     let sawProgress = false;
                     try { window.CuttleNetDebug && window.CuttleNetDebug.event('stream-hold', 'POST /api/chat'); } catch (_) {}
 
-                    // Bytes/framing live in chat_stream.js; the page keeps
-                    // request, classification, session, paint, and turn
-                    // effects. onEvents applies the whole batch, then
-                    // reports stop — last final frame wins, as before.
+                    // Bytes/framing live in chat_stream.js; event
+                    // classification, the per-event effect plan (paint gating +
+                    // final-event selection) and session adoption live in
+                    // chat_pending_result.js / chat_turn_guard.js; the page
+                    // keeps request, DOM paint, and turn effects. onEvents
+                    // applies the whole batch, then reports stop — last final
+                    // frame wins, as before.
                     const streamOutcome = await CuttleChatStream.readEvents(response.body, {
                         holdMs: STREAM_HOLD_MAX_MS,
                         readTimeoutMs: STREAM_READ_TIMEOUT_MS,
@@ -11016,50 +11019,54 @@ function downloadTranscriptMarkdown(text, sessionId) {
                             for (const ev of events) {
                                 try {
                                     // Owned by chat_pending_result.js — event
-                                    // classification; the page applies paint,
-                                    // session-adopt, and finalResult effects.
+                                    // classification + per-event effect plan;
+                                    // the page applies DOM paint, session-adopt,
+                                    // and finalResult effects.
                                     const streamEv = CuttleChatPendingResult.classifyStreamEvent(ev);
-                                    if (streamEv.kind === 'status') {
-                                        sawProgress = true;
-                                        if (canPaintTurnHere()) updateTypingStatus(streamEv.message);
-                                    } else if (streamEv.kind === 'session') {
+                                    if (streamEv.kind === 'session') {
                                         const sid = canonicalizeChatSessionId(streamEv.sessionId);
                                         requestBody.session_id = sid;
                                         if (boundSessionId == null) boundSessionId = sid;
                                         // Never yank the open chat to a different id mid-turn.
-                                        // turnNavGen gates zombies after New Chat (welcome is
-                                        // currentSessionId == null — must not re-adopt chat A).
-                                        if (
-                                            !CuttleTurnGuard.isStale(turnNavGen, turnGeneration)
-                                            && (
-                                                session.current() == null
-                                                || sessionIdsEqual(session.current(), sid)
-                                                || (boundSessionId != null && isViewingSession(boundSessionId))
-                                            )
-                                        ) {
+                                        // The freshness/binding truth table lives in
+                                        // CuttleTurnGuard.shouldAdoptStreamSession; a stale
+                                        // turn after New Chat (welcome is
+                                        // currentSessionId == null) must not re-adopt chat A.
+                                        if (CuttleTurnGuard.shouldAdoptStreamSession(
+                                            turnNavGen, turnGeneration, boundSessionId, sid, {
+                                                currentSessionId: session.current(),
+                                                sessionIdsEqual: sessionIdsEqual,
+                                                isViewing: (id) => isViewingSession(id),
+                                            }
+                                        )) {
                                             adoptChatSessionId(sid);
                                         }
-                                    } else if (streamEv.kind === 'busy') {
-                                        finalResult = streamEv.result;
-                                    } else if (streamEv.kind === 'query') {
-                                        sawProgress = true;
-                                        if (canPaintTurnHere() && ev.slash_command) {
-                                            rememberTurnBadge([], { active: true, slash_command: ev.slash_command });
-                                            refreshTypingIndicatorHeaderBadges();
-                                        }
-                                        if (streamEv.reportUrl && canPaintTurnHere()) {
-                                            updateTypingIndicatorQueryLink(streamEv.reportUrl);
-                                            const qid = streamEv.queryId || '';
-                                            (window.showToast || function() {})('Running…', 'info', {
-                                                linkUrl: qid
-                                                    ? ('/query_log.html?id=' + encodeURIComponent(qid))
-                                                    : streamEv.reportUrl,
-                                                linkText: 'View query log'
-                                            });
-                                        }
-                                    } else if (streamEv.kind === 'response') {
-                                        finalResult = ev;
+                                        continue;
                                     }
+                                    const streamPlan = CuttleChatPendingResult.planStreamEvent(
+                                        streamEv, ev, {
+                                            canPaint: canPaintTurnHere(),
+                                            slashCommand: !!ev.slash_command,
+                                        }
+                                    );
+                                    if (streamPlan.progress) sawProgress = true;
+                                    if (streamPlan.paintStatus != null) {
+                                        updateTypingStatus(streamPlan.paintStatus);
+                                    }
+                                    if (streamPlan.paintBadge) {
+                                        rememberTurnBadge([], { active: true, slash_command: ev.slash_command });
+                                        refreshTypingIndicatorHeaderBadges();
+                                    }
+                                    if (streamPlan.paintLink) {
+                                        updateTypingIndicatorQueryLink(streamPlan.reportUrl);
+                                        (window.showToast || function() {})('Running…', 'info', {
+                                            linkUrl: streamPlan.queryId
+                                                ? ('/query_log.html?id=' + encodeURIComponent(streamPlan.queryId))
+                                                : streamPlan.reportUrl,
+                                            linkText: 'View query log'
+                                        });
+                                    }
+                                    if (streamPlan.final != null) finalResult = streamPlan.final;
                                 } catch (e) { /* skip */ }
                             }
                             return finalResult != null;
@@ -11084,20 +11091,11 @@ function downloadTranscriptMarkdown(text, sessionId) {
                             || turnSessionId()
                             || requestBody.session_id
                         );
-                        return {
-                            ...finalResult,
-                            success: finalResult.success,
-                            response: finalResult.response,
-                            session_id: finalResult.session_id,
-                            type: finalResult.response_type,
-                            query_id: finalResult.query_id,
-                            report_url: finalResult.report_url,
-                            cursor_run: finalResult.cursor_run || null,
-                            usage: finalResult.usage || null,
-                            // Must forward busy so processMessage can enqueue
-                            // the turn instead of rendering a "Still working" bubble.
-                            busy: !!finalResult.busy,
-                        };
+                        // Final-result shaping (response_type -> type,
+                        // cursor_run/usage/busy normalization) is owned by
+                        // chat_pending_result.js; the page forwards the shaped
+                        // payload so processMessage can enqueue a busy turn.
+                        return CuttleChatPendingResult.shapeStreamFinalResult(finalResult);
                     }
                     // Detached or stream ended without a final event — wait for
                     // the parked reply (short polls; does not hold a socket open).

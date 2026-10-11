@@ -4,6 +4,8 @@
    Owner: the post-send result lifecycle as explicit decisions plus
    injected-effect async orchestration —
      * SSE event classification (status/session/busy/query/response)
+     * SSE per-event effect plan (paint gating + final-event selection)
+       and final-result shaping
      * turn finalize disposition (which branch a finished turn takes)
      * pending-result waiter loop (collectPendingResult)
      * history recovery matching (recoverChatResult[WithRetries])
@@ -74,6 +76,67 @@
         }
         if (ev.type === 'response') return { kind: 'response' };
         return { kind: 'ignore' };
+    }
+
+    // ---------- SSE event effect plan (pure) ----------
+
+    /**
+     * Decide the per-event effect plan for one classified SSE event. The
+     * page keeps the read loop, the raw event, and applies the effects
+     * (DOM paint, finalResult accumulation, batch stop); this is the one
+     * place the paint gating and the final-event selection live. The
+     * `session` kind is handled by the page (it owns canonicalization and
+     * the turn-guard adopt gate) and is not planned here.
+     * input: streamEv (from classifyStreamEvent), rawEv (the parsed
+     * frame), ctx: { canPaint, slashCommand }.
+     * Returns { progress, paintStatus, paintBadge, reportUrl, queryId,
+     *   paintLink, final }. `progress` is the sawProgress signal;
+     * `paintStatus` is the live-status text to paint (null off/none);
+     * `final` is the event to hold as the turn's final result (null none).
+     */
+    function planStreamEvent(streamEv, rawEv, ctx) {
+        ctx = ctx || {};
+        const ev = streamEv || {};
+        const canPaint = !!ctx.canPaint;
+        if (ev.kind === 'status') {
+            return { progress: true, paintStatus: canPaint ? ev.message : null };
+        }
+        if (ev.kind === 'busy') {
+            return { progress: false, final: ev.result || null };
+        }
+        if (ev.kind === 'query') {
+            return {
+                progress: true,
+                paintBadge: !!(canPaint && ctx.slashCommand),
+                reportUrl: ev.reportUrl || null,
+                queryId: ev.queryId || '',
+                paintLink: !!(canPaint && ev.reportUrl),
+            };
+        }
+        if (ev.kind === 'response') {
+            return { progress: false, final: rawEv || null };
+        }
+        return { progress: false, final: null };
+    }
+
+    /**
+     * Shape the final SSE `response` frame into the canonical result the
+     * finalize disposition consumes (moved verbatim from the page's
+     * finalResult spread): forward success/response/session, map
+     * response_type -> type, and keep cursor_run/usage/busy normalized.
+     */
+    function shapeStreamFinalResult(finalResult) {
+        return Object.assign({}, finalResult, {
+            success: finalResult.success,
+            response: finalResult.response,
+            session_id: finalResult.session_id,
+            type: finalResult.response_type,
+            query_id: finalResult.query_id,
+            report_url: finalResult.report_url,
+            cursor_run: finalResult.cursor_run || null,
+            usage: finalResult.usage || null,
+            busy: !!finalResult.busy,
+        });
     }
 
     // ---------- Turn finalize disposition (pure) ----------
@@ -666,6 +729,8 @@
         DETACHED_WAIT_MS: DETACHED_WAIT_MS,
         DEFAULT_POLL_MS: DEFAULT_POLL_MS,
         classifyStreamEvent: classifyStreamEvent,
+        planStreamEvent: planStreamEvent,
+        shapeStreamFinalResult: shapeStreamFinalResult,
         classifyTurnFinalize: classifyTurnFinalize,
         waitForPendingResult: waitForPendingResult,
         findRecoverableAssistant: findRecoverableAssistant,

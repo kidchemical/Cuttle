@@ -454,6 +454,25 @@ out.finAssistant = fin({ canPaint: true, success: true, hasResponse: true, respo
 out.finError = fin({ canPaint: true, success: false });
 out.finErrorControl = fin({ canPaint: true, busy: true, controlLane: true, success: false });
 out.finNull = fin(null);
+// ---------- SSE per-event effect plan (STREAM stage) ----------
+const planEv = (raw, ctx) => PR.planStreamEvent(PR.classifyStreamEvent(raw), raw, ctx);
+out.planStatus = planEv({ type: 'status', message: 'Working' }, { canPaint: true });
+out.planStatusGated = planEv({ type: 'status', message: 'Working' }, { canPaint: false });
+out.planBusy = planEv({ type: 'busy', session_id: 's1' }, { canPaint: true });
+out.planQuery = planEv({ type: 'query_started', report_url: 'u', query_id: 'q' },
+  { canPaint: true, slashCommand: true });
+out.planQueryGated = planEv({ type: 'query_started', report_url: 'u', query_id: 'q' },
+  { canPaint: false, slashCommand: true });
+out.planQueryNoSlash = planEv({ type: 'query_started', report_url: 'u', query_id: 'q' },
+  { canPaint: true, slashCommand: false });
+out.planResponse = planEv({ type: 'response', response: 'x' }, { canPaint: false });
+out.planIgnore = planEv({ type: 'progress', pct: 3 }, { canPaint: true });
+out.planNull = PR.planStreamEvent(null, null, null);
+// ---------- final-result shaping (STREAM stage) ----------
+out.shapeFinal = PR.shapeStreamFinalResult({ success: true, response: 'R',
+  session_id: 's1', response_type: 'chat', query_id: 'q', report_url: 'r',
+  cursor_run: { id: 1 }, usage: { t: 2 }, busy: false });
+out.shapeMin = PR.shapeStreamFinalResult({ success: false, response: 'E' });
 process.stdout.write(JSON.stringify(out));
 })().catch((e) => { console.error('HARNESS-ERROR', e); process.exit(2); });
 """
@@ -669,6 +688,57 @@ def test_server_recovery_poll():
 
 
 @node_only
+def test_stream_event_effect_plan():
+    res = _run()
+    # ORACLE: status paints progress only when the turn can paint; the
+    # message text is the paint value (null when gated off).
+    assert res["planStatus"] == {"progress": True, "paintStatus": "Working"}
+    assert res["planStatusGated"] == {"progress": True, "paintStatus": None}
+    # ORACLE: busy selects its prebuilt "still working" result as final.
+    assert res["planBusy"]["progress"] is False
+    assert res["planBusy"]["final"]["busy"] is True
+    assert res["planBusy"]["final"]["session_id"] == "s1"
+    # ORACLE: query is progress; badge gated on canPaint AND slash_command;
+    # the query link is gated on canPaint AND a report URL.
+    assert res["planQuery"] == {
+        "progress": True, "paintBadge": True, "reportUrl": "u",
+        "queryId": "q", "paintLink": True,
+    }
+    assert res["planQueryGated"] == {
+        "progress": True, "paintBadge": False, "reportUrl": "u",
+        "queryId": "q", "paintLink": False,
+    }
+    assert res["planQueryNoSlash"] == {
+        "progress": True, "paintBadge": False, "reportUrl": "u",
+        "queryId": "q", "paintLink": True,
+    }
+    # ORACLE: a response selects the raw frame as final (unaffected by paint
+    # gating); unknown/null kinds plan nothing.
+    assert res["planResponse"] == {
+        "progress": False, "final": {"type": "response", "response": "x"},
+    }
+    assert res["planIgnore"] == {"progress": False, "final": None}
+    assert res["planNull"] == {"progress": False, "final": None}
+
+
+@node_only
+def test_stream_final_result_shaping():
+    res = _run()
+    # ORACLE: response_type -> type; cursor_run/usage/busy normalized; the
+    # original frame keys (incl. response_type) are preserved by the spread.
+    assert res["shapeFinal"] == {
+        "success": True, "response": "R", "session_id": "s1", "type": "chat",
+        "response_type": "chat", "query_id": "q", "report_url": "r",
+        "cursor_run": {"id": 1}, "usage": {"t": 2}, "busy": False,
+    }
+    # Missing optionals normalize to null / false, never undefined.
+    assert res["shapeMin"] == {
+        "success": False, "response": "E", "cursor_run": None,
+        "usage": None, "busy": False,
+    }
+
+
+@node_only
 def test_chat_pending_result_module_parses():
     import os
     proc = subprocess.run(
@@ -683,6 +753,8 @@ def test_page_delegates_lifecycle_to_owner():
     src = CHAT_PAGE_JS.read_text(encoding="utf-8")
     for call in [
         "CuttleChatPendingResult.classifyStreamEvent(",
+        "CuttleChatPendingResult.planStreamEvent(",
+        "CuttleChatPendingResult.shapeStreamFinalResult(",
         "CuttleChatPendingResult.classifyTurnFinalize(",
         "CuttleChatPendingResult.waitForPendingResult(",
         "CuttleChatPendingResult.recoverChatResult(",
