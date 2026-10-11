@@ -201,14 +201,33 @@ def _cuttle_git_rev() -> str:
     return ""
 
 
+_BOOT_GIT_REV = ""
+
+
+def _boot_git_rev() -> str:
+    """Rev captured when this sidecar process started (once).
+
+    Advertised in the heartbeat so the Host can tell whether the *running*
+    code matches disk. Without it the Host keeps a stale boot rev from an
+    earlier process and flags this worker as needing an update forever.
+    """
+    global _BOOT_GIT_REV
+    if not _BOOT_GIT_REV:
+        _BOOT_GIT_REV = _cuttle_git_rev()
+    return _BOOT_GIT_REV
+
+
 def _worker_payload(wid: str, ads: Dict[str, Any]) -> Dict[str, Any]:
     ver = str(ads.get("cuttle_version") or "").strip()
     rev = str(ads.get("cuttle_git_rev") or "").strip()
+    boot = _boot_git_rev()
     meta: Dict[str, Any] = {}
     if ver:
         meta["cuttle_version"] = ver
     if rev:
         meta["cuttle_git_rev"] = rev
+    if boot:
+        meta["boot_git_rev"] = boot
     return {
         "worker_id": wid,
         "hostname": ads.get("hostname"),
