@@ -14,7 +14,13 @@ bundle a Python runtime and dependencies under `resources/python`, so an install
 Host needs no system Python. A Client that runs a device worker also needs Python;
 a UI-only Client connects to the remote Host.
 
-Source development/builds need Node and npm. Install the chosen vendor CLI and
+Source development/builds need Node **22.12+** and npm. On Windows, run
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup_windows.ps1`
+from the repository root to install both Python and desktop dependencies and
+launch the local Host. Use `-NoLaunch` for setup only; later launches use
+`start_electron.bat`. Rerun setup after pulling dependency updates.
+
+Install the chosen vendor CLI and
 authenticate it separately: Codex uses `codex login`, Cursor its CLI login, and
 Claude account login or an Anthropic key. Optional keys in `<home>/.env` serve
 Cuttle's routing brain, direct LLM calls and vision; they do not log every CLI in.
@@ -37,6 +43,7 @@ Install desktop dependencies from `electron/`:
 
 ```bash
 npm ci
+node node_modules/electron/install.js
 npm start -- --mode=host
 # Or connect to an existing Host:
 npm start -- --mode=client

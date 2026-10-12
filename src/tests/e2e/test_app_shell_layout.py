@@ -823,7 +823,7 @@ def test_stacked_parks_stay_put_while_neighbors_resize(browser, static_server):
         assert mid["B"]["parked"] is False, mid
         # ...then finish through the shared divider: B parks, A stays put
         # (no unpark cascade even though the gesture touches parked A).
-        _drag_root_handle(page, 0, 60)
+        _drag_root_handle(page, 0, mid["B"]["w"] - 180)
         _pump_until(
             page, lambda: _abc_state(page)["B"]["parked"], 20000, "B parked")
         final = _abc_state(page)
@@ -1148,6 +1148,76 @@ def test_collapsed_strip_close_button_position_and_close(
         page.reload(wait_until="domcontentloaded")
         page.wait_for_function("typeof window.snapshotLayoutTree === 'function'")
         assert _col_count(page) == 2
+        assert errors == [], errors
+        _assert_blocked_api_free(blocked)
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
+@pytest.mark.parametrize("parked_id", ["A", "B"])
+def test_collapsed_pane_leaves_no_gap_while_new_split_is_dragged(
+        browser, static_server, orientation, parked_id):
+    seed = json.loads(json.dumps(V3H_ROOT3))
+    seed["root"]["children"] = seed["root"]["children"][:2]
+    seed["root"]["orientation"] = seed["orientation"] = orientation
+    world = ShellWorld()
+    context, page, errors, blocked = _open(browser, static_server, world, seed=seed)
+    try:
+        _load_shell(page, static_server)
+        _pump_until(page, lambda: _col_count(page) == 2, 20000, "2 panes")
+        _park_leaf(page, parked_id)
+        open_id = "B" if parked_id == "A" else "A"
+        # Create another split using the real rail control beside the parked pane.
+        page.locator(f'[data-leaf-id="{open_id}"] .rail-logo').click(
+            modifiers=["Shift" if orientation == "horizontal" else "Alt"])
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "new split")
+
+        def geometry():
+            return page.evaluate("""vertical => {
+                const group = document.getElementById('splitContainer');
+                const rect = group.getBoundingClientRect();
+                const children = [...group.children].filter(el =>
+                    !el.dataset.splitDiscarded && (el.classList.contains('split-column')
+                    || el.classList.contains('split-resize-handle')));
+                const spans = children.map(el => {
+                    const r = el.getBoundingClientRect();
+                    return {start: vertical ? r.top : r.left,
+                            end: vertical ? r.bottom : r.right,
+                            parked: el.classList.contains('pane-collapsed')};
+                }).sort((a, b) => a.start - b.start);
+                return {start: vertical ? rect.top : rect.left,
+                        end: vertical ? rect.bottom : rect.right, spans};
+            }""", orientation == "vertical")
+
+        def assert_filled(g):
+            assert abs(g["spans"][0]["start"] - g["start"]) <= 1, g
+            assert abs(g["spans"][-1]["end"] - g["end"]) <= 1, g
+            for left, right in zip(g["spans"], g["spans"][1:]):
+                assert abs(right["start"] - left["end"]) <= 1, g
+            parked = [s for s in g["spans"] if s["parked"]]
+            assert len(parked) == 1, g
+            assert abs(parked[0]["end"] - parked[0]["start"] - 28) <= 1, g
+
+        assert_filled(geometry())
+        box = page.locator('#splitContainer > .split-resize-handle').nth(
+            1 if parked_id == 'A' else 0).bounding_box()
+        assert box
+        x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        page.mouse.move(x, y)
+        page.mouse.down()
+        assert_filled(geometry())
+        open_box = page.locator(f'[data-leaf-id="{open_id}"]').bounding_box()
+        near_collapse = 120 - open_box["height" if orientation == "vertical" else "width"]
+        for delta in [-60, near_collapse, 60]:
+            page.mouse.move(x if orientation == "vertical" else x + delta,
+                            y + delta if orientation == "vertical" else y, steps=4)
+            # Check while still holding the button; release used to conceal the gap.
+            assert_filled(geometry())
+            if delta == near_collapse:
+                assert page.locator(".pane-will-collapse").count() == 1
+        page.mouse.up()
+        assert_filled(geometry())
         assert errors == [], errors
         _assert_blocked_api_free(blocked)
     finally:

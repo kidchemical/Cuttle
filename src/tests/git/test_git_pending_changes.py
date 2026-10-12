@@ -532,6 +532,70 @@ def test_commit_pending_blocks_secrets(tmp_path: Path):
     assert any(p.endswith(".env") or p == ".env" for p in result["files_committed"])
 
 
+@pytest.mark.parametrize("staged", [False, True])
+@pytest.mark.parametrize("name", ["electron/.npmrc", ".env", "credential.key"])
+def test_commit_pending_allows_deleted_secret_paths(tmp_path: Path, staged, name):
+    from scripts.utilities.git_pending_changes import commit_pending_changes
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=repo, check=True, capture_output=True,
+            text=True, encoding="utf-8",
+        )
+
+    git("init")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    path = repo / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("fixture\n", encoding="utf-8")
+    git("add", "--", name)
+    git("commit", "-m", "fixture")
+    path.unlink()
+    if staged:
+        git("add", "-u")
+    result = commit_pending_changes(str(repo), "remove credential file")
+    assert name in result["files_committed"]
+    assert name not in git("ls-tree", "-r", "--name-only", "HEAD").stdout.splitlines()
+    assert collect_pending_changes(str(repo))["clean"] is True
+
+
+@pytest.mark.parametrize("change", ["added", "modified", "recreated", "renamed"])
+def test_commit_pending_still_blocks_npmrc_contents(tmp_path: Path, change):
+    from scripts.utilities.git_pending_changes import commit_pending_changes
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=repo, check=True, capture_output=True,
+            text=True, encoding="utf-8",
+        )
+
+    git("init")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    path = repo / ".npmrc"
+    initial = path if change in ("modified", "recreated") else repo / "config.txt"
+    initial.write_text("fixture\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-m", "fixture")
+    before = git("rev-parse", "HEAD").stdout
+    if change == "recreated":
+        git("rm", ".npmrc")
+    elif change == "renamed":
+        git("mv", "config.txt", ".npmrc")
+    if change != "renamed":
+        path.write_text("changed fixture\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="likely secret files: .npmrc"):
+        commit_pending_changes(str(repo), "must refuse")
+    assert git("rev-parse", "HEAD").stdout == before
+
+
 def test_commit_pending_allows_env_example_template(tmp_path: Path):
     from scripts.utilities.git_pending_changes import (
         _looks_like_secret_path,

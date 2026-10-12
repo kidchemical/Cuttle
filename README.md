@@ -82,7 +82,7 @@ The codebase is set up so an agent can do that well:
 
 - Windows 10/11 **or** Ubuntu 22.04+
 - Python 3.11+ (the project uses a local `.venv`)
-- Optional: Node.js 18+ (Electron desktop), a Discord bot token **only if** you want REST agent-ops (`python -m api.discord_cli` / `discord.post`), OpenAI / Anthropic keys, Ollama, and the vendor agent CLIs you want to host (Cursor, Codex, Claude, …)
+- Optional: Node.js 22.12+ (Electron desktop), a Discord bot token **only if** you want REST agent-ops (`python -m api.discord_cli` / `discord.post`), OpenAI / Anthropic keys, Ollama, and the vendor agent CLIs you want to host (Cursor, Codex, Claude, …)
 
 ### Install and run
 
@@ -100,19 +100,23 @@ fi
 ./start_cuttle.sh
 ```
 
-Windows:
+Windows PowerShell (64-bit Python 3.11+ and Node.js 22.12+ for desktop):
 
 ```powershell
 git clone https://github.com/kidchemical/Cuttle.git cuttle; cd cuttle
-python -m venv .venv
-.\.venv\Scripts\pip.exe install -r src\requirements\requirements.txt
-New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Cuttle" | Out-Null
-if (-not (Test-Path "$env:LOCALAPPDATA\Cuttle\.env")) {
-    Copy-Item src\.env.example "$env:LOCALAPPDATA\Cuttle\.env"
-}
-# Edit %LOCALAPPDATA%\Cuttle\.env for optional direct-LLM, router-brain or vision provider keys
-.\.venv\Scripts\python.exe src\scripts\cuttle_daemon.py
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup_windows.ps1
 ```
+
+This creates `.venv`, installs Python and locked desktop dependencies, downloads
+Electron, and opens the local **Host**. No administrator access or venv activation
+is required. Use `-Browser` to skip Node/Electron and run the daemon with its web
+UI, or `-NoLaunch` to install without starting Cuttle. Rerun setup after pulling
+updates or a failed install; it preserves your settings and secrets. For later
+desktop launches, run `start_electron.bat`.
+
+Provider keys are optional; configure them in Settings when needed. You do not
+need to create an `.env` file before the first launch. Install and authenticate
+your chosen agent CLI separately.
 
 Cuttle never writes inside the folder you installed or cloned it to. Chats,
 settings, uploads, logs, keys and secrets live in your per-user **Cuttle home**
@@ -139,7 +143,9 @@ Install and authenticate the chosen vendor CLI separately: Codex uses `codex log
 
 ### Electron desktop
 
-Install once with `cd electron && npm install`, then:
+Windows setup above installs the desktop too. For manual source setup, use
+`npm ci` from `electron/`, then `node node_modules/electron/install.js` to ensure
+the binary is downloaded even when npm defers install scripts. Then:
 
 | Platform | Host (runs or attaches to the daemon) | Client (connects to a Host on the LAN) |
 |----------|------------------------------------|----------------------------------------|
