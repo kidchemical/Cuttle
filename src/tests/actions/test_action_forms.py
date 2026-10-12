@@ -1387,3 +1387,63 @@ def test_consume_lock_targets_only_matching_card_in_shared_bubble(monkeypatch):
     assert got is not None
     assert "Flask restart" in got["toast"]
     assert got["selected"] == ["when-idle"]
+
+
+def test_auxiliary_buttons_require_actions_and_map_fields(tmp_path):
+    raw = {"mode": "form", "buttons": [{"id": "start", "action": "capture.run",
+           "paramMap": {"duration": "seconds"}}], "submit": {"action": "capture.run"}}
+    spec = normalize_action_form_spec(raw, project_path=str(tmp_path))
+    assert spec["buttons"][0]["resume"] is False
+    runs = build_runs_from_submission(spec, {"button": "start", "fields": {"seconds": 10},
+                                          "action": "malicious", "params": {"cmd": "bad"}})
+    assert runs[0]["action"] == "capture.run"
+    assert runs[0]["params"] == {"duration": 10}
+    assert runs[0]["auxiliary"] is True
+    assert build_runs_from_submission(spec, {"button": "unknown"}) == []
+    raw["buttons"][0].pop("action")
+    assert normalize_action_form_spec(raw) is None
+
+
+def test_buttons_run_directly_and_submit_resumes_with_result(tmp_path, monkeypatch):
+    _write_action(tmp_path, "capture", "name: capture.run\ntype: shell\nrun: echo capture\n")
+    spec = normalize_action_form_spec({"mode": "form", "resume": True,
+        "buttons": [{"id": "start", "action": "capture.run", "params": {"mode": "start"}}],
+        "submit": {"action": "capture.run", "params": {"mode": "stop"}}},
+        project_path=str(tmp_path))
+    monkeypatch.setattr("api.action_forms._run_one", lambda *a, **k: {"success": True, "response": "Saved capture.csv"})
+    token = encode_form_fallback(spec)
+    start = execute_action_form_submission(form_token=token, selection={"button": "start"})
+    assert start["success"] and start["reusable"] and start["lock"] == "none"
+    assert not start["resume"]
+    end = execute_action_form_submission(form_token=token, selection={"fields": {}})
+    assert end["success"] and end["resume"]
+    assert "Saved capture.csv" in end["answer_text"]
+
+
+def test_button_failure_does_not_resume_or_consume_form(tmp_path, monkeypatch):
+    _write_action(tmp_path, "capture", "name: capture.run\ntype: shell\nrun: echo capture\n")
+    spec = normalize_action_form_spec({"mode": "form", "buttons": [
+        {"id": "stop", "action": "capture.run", "resume": True}]}, project_path=str(tmp_path))
+    monkeypatch.setattr("api.action_forms._run_one", lambda *a, **k: {"success": False, "response": "Not connected"})
+    result = execute_action_form_submission(form_token=encode_form_fallback(spec), selection={"button": "stop"})
+    assert not result["success"] and not result["resume"]
+    assert result["reusable"] and result["lock"] == "none"
+
+
+def test_script_buttons_execute_allowlisted_shell_recipe(tmp_path, monkeypatch):
+    _write_action(tmp_path, "capture", "name: capture.run\ntype: shell\nreplay: reusable\nrun: echo button-script-ran\n")
+    spec = normalize_action_form_spec({"mode": "form", "buttons": [
+        {"id": "start", "action": "capture.run"}]}, project_path=str(tmp_path))
+    result = execute_action_form_submission(form_token=encode_form_fallback(spec), selection={"button": "start"})
+    assert result["success"]
+    assert "button-script-ran" in result["results"][0]["response"]
+    assert result["resume"] is False
+
+
+def test_script_button_is_not_qa_even_when_it_can_resume(tmp_path):
+    from api.action_forms import is_qa_resume_spec
+    spec = normalize_action_form_spec({"mode": "form", "resume": True,
+        "allow_custom": True, "buttons": [{"id": "start", "action": "capture.run"}]},
+        project_path=str(tmp_path))
+    assert not is_qa_resume_spec(spec)
+    assert build_runs_from_submission(spec, {"custom_text": "run another script"}) == []
