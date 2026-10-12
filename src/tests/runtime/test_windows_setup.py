@@ -166,19 +166,30 @@ def test_command_runner_propagates_failure_and_handles_spaces(tmp_path):
         setup.run([sys.executable, "-c", "raise SystemExit(9)"], root)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows PowerShell entry point")
-def test_powershell_entry_passes_options_and_exit_code(tmp_path):
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_powershell_entry_passes_options_and_exit_code(tmp_path, exit_code):
+    powershell = shutil.which("powershell.exe") or shutil.which("pwsh")
+    if powershell is None:
+        pytest.skip("PowerShell is required")
     entry = tmp_path / "setup_windows.ps1"
     shutil.copyfile(setup.ROOT / "setup_windows.ps1", entry)
     # Fake py.exe is a PowerShell function. No interpreter/install is launched.
     script = """
+$ErrorActionPreference = 'Stop'
 function global:py.exe {
-    if (($args -join '|') -notmatch '-3\\|.*setup_windows.py\\|--browser\\|--no-launch') { exit 99 }
-    $global:LASTEXITCODE = 7
+    if (($args -join '|') -notmatch '-3\\|.*setup_windows.py\\|--browser\\|--no-launch') { throw 'Incorrect setup arguments' }
+    Write-Output 'setup helper invoked'
+    $global:LASTEXITCODE = __EXIT_CODE__
 }
 & $args[0] -Browser -NoLaunch
-"""
+# A nested script's exit sets LASTEXITCODE; forward it from this outer -File script.
+exit $LASTEXITCODE
+""".replace("__EXIT_CODE__", str(exit_code))
     wrapper = tmp_path / "test.ps1"
     wrapper.write_text(script, encoding="utf-8")
-    result = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper), str(entry)], timeout=30)
-    assert result.returncode == 7
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper), str(entry)],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    assert "setup helper invoked" in result.stdout
