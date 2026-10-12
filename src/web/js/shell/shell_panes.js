@@ -660,5 +660,30 @@
         return out;
     }
 
-    root.CuttleShellPanes = { create, equalizeAdjacentSizes };
+    /** Clamp only open panes: collapsed strips have a fixed measured size,
+     *  never the normal pane minimum. Reserve them before distributing space. */
+    function fitSplitSizes(sizes, pinnedSizes, budget, orientation, clampSizes) {
+        const fluid = sizes.map((_, i) => i).filter(i => !pinnedSizes[i]);
+        const reserved = pinnedSizes.reduce((sum, size) => sum + (size || 0), 0);
+        const fitted = clampSizes(fluid.map(i => sizes[i]), Math.max(0, budget - reserved), orientation);
+        const out = pinnedSizes.slice();
+        fluid.forEach((i, k) => { out[i] = fitted[k]; });
+        return out;
+    }
+
+    /** Expanded restore dividers are thicker than ordinary resize handles.
+     *  Measure mounted handles and reserve the default for not-yet-mounted ones. */
+    function splitGroupBudget(group, childCount, orientation, defaultHandlePx) {
+        const n = Math.max(1, childCount | 0);
+        const vertical = orientation === 'vertical';
+        const handles = Array.from(group?.children || []).filter(
+            el => el.classList?.contains('split-resize-handle'));
+        const used = handles.reduce((sum, el) => sum
+            + ((vertical ? el.offsetHeight : el.offsetWidth) || defaultHandlePx), 0);
+        const pending = Math.max(0, n - 1 - handles.length);
+        const main = vertical ? group?.clientHeight : group?.clientWidth;
+        return Math.max(n, (main || 0) - used - pending * defaultHandlePx);
+    }
+
+    root.CuttleShellPanes = { create, equalizeAdjacentSizes, fitSplitSizes, splitGroupBudget };
 })(window);

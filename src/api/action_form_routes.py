@@ -234,10 +234,12 @@ def api_action_form_run():
             except Exception as _me:
                 print(f"[CHAT] action form lock persist failed: {_me}", flush=True)
 
-        # Opt-in resume: Q&A form with "resume": true hands the client the answer
+        # Opt-in resume: Q&A answers or explicit action results go to the client.
+        # Auxiliary buttons default to silent; only opted-in controls resume.
+        # A form with "resume": true hands the client the answer
         # text to send as a normal turn. /api/chat persists that turn, so this
         # route must not also write it (that showed every answer twice).
-        # Side-effect / watch / flask forms never set resume, so they stay silent.
+        # Side-effect cards remain silent unless explicitly configured to resume.
         if result.get('success') and result.get('resume') and session_id:
             try:
                 sid_str = str(session_id)

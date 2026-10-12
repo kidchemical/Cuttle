@@ -1577,6 +1577,13 @@ def commit_pending_changes(
         f["path"]
         for f in files_to_commit
         if _looks_like_secret_path(str(f.get("path") or ""))
+        # Removing a tracked credential file introduces no secret blob. Verify
+        # absence too: a staged deletion with a recreated working file could
+        # otherwise be re-added by the staging step below.
+        and not (
+            f.get("status") == "deleted"
+            and not os.path.lexists(os.path.join(root, str(f["path"])))
+        )
     ]
     if secret_hits and not allow_secrets:
         shown = ", ".join(secret_hits[:8])

@@ -117,10 +117,30 @@ async function probeAndResolve(parsed) {
     };
 }
 
+/** Include an existing Client's saved Host before it has any server history. */
+function savedDesktopHosts(cfg) {
+    const entries = Array.isArray(cfg.recentHosts) ? cfg.recentHosts : [];
+    if (cfg.mode !== 'client' || !cfg.host) return entries.slice(0, 8);
+    const scheme = (cfg.endpoint && cfg.endpoint.scheme) || cfg.scheme || 'http';
+    const httpPort = cfg.httpPort || DEFAULT_HTTP_PORT;
+    const httpsPort = cfg.httpsPort || DEFAULT_HTTPS_PORT;
+    const port = (cfg.endpoint && cfg.endpoint.port) || (scheme === 'https' ? httpsPort : httpPort);
+    const current = { host: cfg.host, scheme, port, httpPort, httpsPort,
+        endpoint: cfg.endpoint || { kind: 'paired', scheme, host: cfg.host, port } };
+    return [current, ...entries.filter((entry) => !(entry && entry.host === current.host
+        && entry.scheme === current.scheme && Number(entry.port) === Number(current.port)))].slice(0, 8);
+}
+
 /** Apply a connected target and persist its endpoint policy in one place. */
 function applyConnectTarget({ host, httpPort, httpsPort, clientMode, policy }) {
     applyDesktopTarget({ host, httpPort, httpsPort, clientMode });
     const existing = loadDesktopConfig();
+    const recentHosts = savedDesktopHosts(existing);
+    const updatedRecentHosts = clientMode
+        ? [{ host, scheme: policy.scheme, port: policy.port, httpPort, httpsPort, endpoint: policy },
+            ...recentHosts.filter((entry) => !(entry && entry.host === host
+                && entry.scheme === policy.scheme && Number(entry.port) === Number(policy.port)))].slice(0, 8)
+        : recentHosts;
     saveDesktopConfig({
         mode: clientMode ? 'client' : 'local',
         host,
@@ -128,12 +148,28 @@ function applyConnectTarget({ host, httpPort, httpsPort, clientMode, policy }) {
         httpsPort,
         scheme: policy.scheme,
         endpoint: policy,
+        recentHosts: updatedRecentHosts,
         lastError: '',
         workerMode: existing.workerMode !== false,
         // Default the update channel to the paired Host (Scenario B); an
         // explicit user choice of 'official' is preserved.
         updateSource: String(existing.updateSource || '').toLowerCase() === 'official' ? 'official' : 'host',
     });
+}
+
+async function connectDesktopTarget(parsed) {
+    const resolved = await probeAndResolve(parsed);
+    if (!resolved.probe.ok) return resolved.probe;
+    applyConnectTarget({
+        host: parsed.host,
+        httpPort: resolved.httpPort,
+        httpsPort: resolved.httpsPort,
+        clientMode: true,
+        policy: resolved.policy,
+    });
+    await loadCuttleUi();
+    await startWorkerSidecar();
+    return { ok: true, host: parsed.host, scheme: resolved.policy.scheme };
 }
 
 function localDesktopHash() {
@@ -163,6 +199,35 @@ function desktopLaunchMode() {
     if (m === 'host' || m === 'local') return 'host';
     if (m === 'client') return 'client';
     return '';
+}
+
+/** Keep the selected Client profile while dropping one-shot --host overrides.
+ * Older Windows shortcuts passed --host=127.0.0.1 by default, and Electron's
+ * ordinary relaunch inherited it after an update, overriding the saved host. */
+function desktopRelaunchArgs() {
+    const source = process.argv.slice(1);
+    const args = [];
+    for (let i = 0; i < source.length; i += 1) {
+        if (source[i] === '--host') {
+            i += 1;
+            continue;
+        }
+        if (String(source[i]).startsWith('--host=')) continue;
+        args.push(source[i]);
+    }
+    // Legacy Windows Clients use Electron's default profile. Do not switch
+    // them to the separate --mode=client profile during an update.
+    if (!LAUNCH_MODE && CLIENT_MODE && !args.includes('--client')) {
+        args.push('--client');
+    }
+    return args;
+}
+
+/** Packaged updates restart an exe, so preserve its existing profile selector
+ * using only known flags (never interpolate user-supplied hosts into cmd). */
+function desktopUpdateRelaunchArgs() {
+    if (LAUNCH_MODE) return [`--mode=${LAUNCH_MODE}`];
+    return CLIENT_MODE ? ['--client'] : [];
 }
 
 function parsePortNumber(raw, what) {
@@ -576,6 +641,12 @@ function publicDesktopConfig() {
         // Selected-endpoint policy for web clients (pool-switch companion
         // resolution): kind/single/companion-known. Absent on legacy configs.
         endpoint: cfg.endpoint || null,
+        recentHosts: savedDesktopHosts(cfg).map((entry, index) =>
+            entry && { ...entry, index }
+        ).filter((entry) =>
+            entry && typeof entry.host === 'string' && ['http', 'https'].includes(entry.scheme)
+            && Number.isSafeInteger(Number(entry.port)) && Number(entry.port) >= 1 && Number(entry.port) <= 65535
+        ).slice(0, 8),
         packaged: app.isPackaged,
         hash: localDesktopHash(),
         packageVersion,
@@ -1477,7 +1548,7 @@ async function applyDesktopUpdate() {
         '@echo off',
         'ping 127.0.0.1 -n 4 >nul',
         `move /Y "${tmp}" "${asarPath}"`,
-        `start "" "${exe}"`,
+        `start "" "${exe}"${desktopUpdateRelaunchArgs().map((arg) => ` "${arg}"`).join('')}`,
         'del "%~f0"',
         '',
     ];
@@ -2007,19 +2078,26 @@ ipcMain.handle('desktop-show-connect', () => {
 });
 ipcMain.handle('desktop-connect', async (_event, raw) => {
     try {
-        const parsed = parseHostInput(raw);
-        const resolved = await probeAndResolve(parsed);
-        if (!resolved.probe.ok) return resolved.probe;
-        applyConnectTarget({
-            host: parsed.host,
-            httpPort: resolved.httpPort,
-            httpsPort: resolved.httpsPort,
-            clientMode: true,
-            policy: resolved.policy,
-        });
-        await loadCuttleUi();
-        await startWorkerSidecar();
-        return { ok: true, host: parsed.host, scheme: resolved.policy.scheme };
+        return await connectDesktopTarget(parseHostInput(raw));
+    } catch (err) {
+        return { ok: false, error: err.message || String(err) };
+    }
+});
+ipcMain.handle('desktop-connect-saved-host', async (_event, index) => {
+    try {
+        const recent = savedDesktopHosts(loadDesktopConfig());
+        if (!Array.isArray(recent) || !Number.isInteger(index) || index < 0 || index >= recent.length) {
+            throw new Error('That saved server is no longer available.');
+        }
+        const saved = recent[index];
+        if (!saved || !['http', 'https'].includes(saved.scheme)) throw new Error('Saved server settings are invalid.');
+        const address = saved.host.includes(':') ? `[${saved.host}]` : saved.host;
+        const selectedPort = parsePortNumber(saved.port, 'Saved port');
+        const parsed = parseHostInput(`${saved.scheme}://${address}:${selectedPort}`);
+        parsed.httpPort = parsePortNumber(saved.httpPort, 'Saved HTTP port');
+        parsed.httpsPort = parsePortNumber(saved.httpsPort, 'Saved HTTPS port');
+        parsed.single = !!(saved.endpoint && saved.endpoint.kind === 'single');
+        return await connectDesktopTarget(parsed);
     } catch (err) {
         return { ok: false, error: err.message || String(err) };
     }
@@ -2057,7 +2135,7 @@ ipcMain.handle('desktop-apply-update', () => applyDesktopUpdate());
 // asar swap in applyDesktopUpdate.
 ipcMain.handle('desktop-relaunch-app', () => {
     app.isQuitting = true;
-    app.relaunch();
+    app.relaunch({ args: desktopRelaunchArgs() });
     app.exit(0);
     return { ok: true };
 });
@@ -2290,11 +2368,6 @@ app.whenReady().then(async () => {
     };
 
     const cliHost = parseArgValue('--host');
-    if (LAUNCH_MODE === 'client' && !cliHost) {
-        await createWindow({ connect: true });
-        app.on('activate', activate);
-        return;
-    }
     if (cliHost) {
         try {
             const parsed = parseHostInput(cliHost);
@@ -2373,12 +2446,22 @@ app.whenReady().then(async () => {
             probe = { ok: false, error: err.message || String(err) };
         }
         if (probe.ok) {
+            saveDesktopConfig({ lastError: '' });
             await createWindow();
             await startWorkerSidecar();
             app.on('activate', activate);
             return;
         }
         saveDesktopConfig({ lastError: probe.error || 'Saved host is unreachable.' });
+        await createWindow({ connect: true });
+        app.on('activate', activate);
+        return;
+    }
+
+    // Client mode is a profile selector, not an instruction to forget the
+    // saved host. Restore its last successful target first; only first-run or
+    // an unreachable saved server should show the connect screen.
+    if (LAUNCH_MODE === 'client' || process.argv.includes('--client')) {
         await createWindow({ connect: true });
         app.on('activate', activate);
         return;

@@ -104,6 +104,16 @@
         }
         .status.err { color: var(--err); }
         .hint { margin-top: 18px; font-size: 11px; color: var(--dim); line-height: 1.4; }
+        .saved { margin-top: 18px; }
+        .saved-title { color: var(--dim); font-size: 11px; margin-bottom: 7px; }
+        .saved-list { display: grid; gap: 6px; max-height: 180px; overflow-y: auto; }
+        .saved-entry {
+            width: 100%; text-align: left; border: 1px solid var(--border);
+            border-radius: 7px; padding: 8px 10px; background: transparent;
+            color: var(--text); cursor: pointer; font: inherit; font-size: 12px;
+        }
+        .saved-entry:hover { border-color: var(--accent); background: rgba(255,255,255,0.04); }
+        .saved-entry small { display: block; color: var(--dim); margin-top: 3px; }
     </style>
 </head>
 <body>
@@ -126,6 +136,10 @@
                 <button type="button" class="ghost" id="localBtn">This PC hosts Cuttle</button>
             </div>
             <div class="status" id="status"></div>
+            <div class="saved" id="savedHosts" hidden>
+                <div class="saved-title">Saved servers</div>
+                <div class="saved-list" id="savedHostList"></div>
+            </div>
             <p class="hint">Use the same LAN address as Chrome. Tray menu → Change Cuttle host if you need to switch later.</p>
         </div>
     </div>
@@ -141,6 +155,30 @@
             statusEl.classList.toggle('err', !!err);
         }
 
+        function renderSavedHosts(entries) {
+            const wrap = document.getElementById('savedHosts');
+            const list = document.getElementById('savedHostList');
+            list.replaceChildren();
+            if (!Array.isArray(entries) || !entries.length) {
+                wrap.hidden = true;
+                return;
+            }
+            wrap.hidden = false;
+            for (const entry of entries) {
+                if (!entry || !entry.host || !['http', 'https'].includes(entry.scheme)) continue;
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'saved-entry';
+                const host = String(entry.host).includes(':') ? `[${entry.host}]` : String(entry.host);
+                button.textContent = `${host}:${entry.port}`;
+                const detail = document.createElement('small');
+                detail.textContent = `${entry.scheme.toUpperCase()} · click to reconnect`;
+                button.appendChild(detail);
+                button.addEventListener('click', () => connectSaved(entry.index));
+                list.appendChild(button);
+            }
+        }
+
         if (api?.windowControls) {
             document.getElementById('minBtn').onclick = () => api.windowControls.minimize();
             document.getElementById('maxBtn').onclick = () => api.windowControls.maximize();
@@ -148,6 +186,7 @@
         }
 
         api?.desktop?.getConfig?.().then((cfg) => {
+            renderSavedHosts(cfg && cfg.recentHosts);
             if (cfg && cfg.host && cfg.host !== '127.0.0.1' && cfg.host !== 'localhost') {
                 hostInput.value = cfg.httpPort && cfg.httpPort !== 8000
                     ? `${cfg.host}:${cfg.httpPort}`
@@ -157,6 +196,7 @@
         }).catch(() => {});
 
         async function connect() {
+            if (connectBtn.disabled) return;
             const raw = hostInput.value.trim();
             if (!raw) {
                 setStatus('Enter the host IP you use in Chrome.', true);
@@ -169,6 +209,24 @@
                 const result = await api.desktop.connectHost(raw);
                 if (!result || !result.ok) {
                     setStatus((result && result.error) || 'Could not reach Cuttle on that host.', true);
+                    connectBtn.disabled = false;
+                    return;
+                }
+                setStatus('Connected. Loading…');
+            } catch (err) {
+                setStatus(err.message || String(err), true);
+                connectBtn.disabled = false;
+            }
+        }
+
+        async function connectSaved(index) {
+            if (connectBtn.disabled) return;
+            connectBtn.disabled = true;
+            setStatus('Reconnecting to saved server…');
+            try {
+                const result = await api.desktop.connectSavedHost(index);
+                if (!result || !result.ok) {
+                    setStatus((result && result.error) || 'Could not reach the saved server.', true);
                     connectBtn.disabled = false;
                     return;
                 }

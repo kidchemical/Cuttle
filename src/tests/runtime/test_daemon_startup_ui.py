@@ -6,6 +6,8 @@ import importlib.util
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[3]
 DAEMON = REPO / "src" / "scripts" / "cuttle_daemon.py"
 ELECTRON_MAIN = REPO / "electron" / "main.js"
@@ -44,6 +46,16 @@ def test_stamp_daemon_line_prefixes_time():
     colored = d.colorize_daemon_line(out)
     assert "\033[92m" in colored
     assert "[12:04:09]" in colored
+
+
+def test_browser_flag_opens_web_ui_even_when_electron_is_installed(monkeypatch):
+    d = _load_daemon()
+    monkeypatch.setattr(d.sys, "argv", ["cuttle_daemon.py", "--browser"])
+    opened = []
+    monkeypatch.setattr(d.webbrowser, "open", opened.append)
+    monkeypatch.setattr(d, "_popen_gui", lambda *a, **kw: pytest.fail("Browser flag launched Electron"))
+    assert d.open_cuttle_ui(browser_path="/router_editor.html") is False
+    assert opened == [d._flask_url("/router_editor.html")]
 
 
 def _fake_desktop(monkeypatch, d, *, display: bool):

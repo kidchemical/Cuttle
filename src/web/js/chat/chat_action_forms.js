@@ -34,6 +34,7 @@
         if (!spec || typeof spec !== 'object') return false;
         if (spec.watch) return true;
         if (spec.submit && spec.submit.action) return true;
+        if (Array.isArray(spec.buttons) && spec.buttons.some((b) => b && b.action)) return true;
         const opts = Array.isArray(spec.options) ? spec.options : [];
         return opts.some((o) => o && o.action && !isExplicitActionFormCancelOption(o));
     }
@@ -562,6 +563,14 @@
                 `<button type="button" class="cuttle-button cuttle-button--primary" data-action-form-submit="1" data-label="${submitLabel}" data-busy-label="${busyLabel}"${controlsDisabled ? ' disabled' : ''}>${submitLabel}</button>` +
                 `<button type="button" class="cuttle-button" data-action-form-cancel="1"${controlsDisabled ? ' disabled' : ''}>${cancelLabel}</button>` +
                 `</div>`;
+        }
+
+        const actionButtons = Array.isArray(spec && spec.buttons) ? spec.buttons : [];
+        if (actionButtons.length) {
+            body = `<div class="cuttle-action-form-options" data-action-form-buttons>` +
+                actionButtons.map((b) => `<button type="button" class="cuttle-button" ` +
+                    `data-action-form-button="${esc(b.id)}"${controlsDisabled ? ' disabled' : ''}>` +
+                    `${esc(b.label || b.id)}</button>`).join('') + `</div>` + body;
         }
 
         // Q&A cards that resume the agent always offer a free-text custom

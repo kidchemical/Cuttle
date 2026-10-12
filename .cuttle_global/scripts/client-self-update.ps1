@@ -44,6 +44,7 @@ try {
 } catch { Log "ERROR checkout update refused: $_"; exit 1 }
 
 # Stop client UI / sidecar / client-daemon only (never host flask daemon).
+$desktopMode = ''
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
     $cmd = [string]$_.CommandLine
     if ($cmd -match 'cuttle_daemon\.py|web_chat_api') { return $false }
@@ -62,6 +63,11 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
     if ($doElectron -and $isElectron) { return $true }
     return $false
 } | ForEach-Object {
+    # Preserve the profile of the app being replaced. Host/Client launch modes
+    # use different userData; restarting a bare exe would lose the saved Host.
+    if ([string]$_.CommandLine -match '--mode(?:=|\s+)(host|client)(?:\s|$)') {
+        $desktopMode = $Matches[1]
+    }
     Log "stopping pid=$($_.ProcessId) name=$($_.Name)"
     try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
 }
@@ -89,11 +95,14 @@ if ($doDaemon) {
 }
 
 if ($doElectron) {
+    $profileArgs = @()
+    if ($desktopMode) { $profileArgs += "--mode=$desktopMode" }
+    # Reconnect using the saved endpoint, including its scheme and custom
+    # ports. HostName alone would override it with default listener ports.
     $started = $false
     $electronBin = Join-Path $electronDir 'node_modules\electron\dist\electron.exe'
     if (Test-Path -LiteralPath $electronBin) {
-        $args = @('.')
-        if ($HostName) { $args += "--host=$HostName" }
+        $args = @('.') + $profileArgs
         Log "starting electron.exe"
         Start-Process -FilePath $electronBin -ArgumentList $args -WorkingDirectory $electronDir
         $started = $true
@@ -103,7 +112,7 @@ if ($doElectron) {
         $c = Get-Command npm.cmd -ErrorAction SilentlyContinue
         if ($c) { $npmCmd = [string]$c.Source }
         if ($npmCmd) {
-            $line = if ($HostName) { "/c `"$npmCmd`" start -- --host=$HostName" } else { "/c `"$npmCmd`" start" }
+            $line = "/c `"$npmCmd`" start -- $($profileArgs -join ' ')"
             Log "starting via npm.cmd"
             Start-Process -FilePath 'cmd.exe' -ArgumentList $line -WorkingDirectory $electronDir
             $started = $true
@@ -112,8 +121,7 @@ if ($doElectron) {
     if (-not $started) {
         $exe = Join-Path $Repo 'electron\dist\win-unpacked\Cuttle.exe'
         if (Test-Path -LiteralPath $exe) {
-            $args = @()
-            if ($HostName) { $args += "--host=$HostName" }
+            $args = $profileArgs
             Log "starting packaged Cuttle.exe"
             Start-Process -FilePath $exe -ArgumentList $args -WorkingDirectory (Split-Path $exe)
             $started = $true

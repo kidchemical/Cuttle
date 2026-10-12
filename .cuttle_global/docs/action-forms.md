@@ -342,3 +342,37 @@ Ambiguous failures keep the receipt; request a fresh card/token to retry. Cancel
 claims the same receipt as Confirm. Fresh confirmations get distinct identities.
 Legacy signed tokens without a receipt use their token digest. Form receipts
 persist; expiring inline-token receipts can be reclaimed after token expiry.
+
+## Auxiliary script buttons and submit results
+
+A `mode: form` card can include `buttons` alongside its fields and final submit.
+Each button invokes an **allowlisted project/global action** directly, using the
+existing action executor (shell/CLI recipes included). Never put executable
+command text in a form: define the script/command and arguments in its action
+YAML, and pass declared parameters through `params` or `paramMap`.
+
+Auxiliary buttons default to `resume: false`, do not submit/lock the parent form,
+and display the action result in the card. `paramMap` reads the current fields.
+A button may explicitly set `resume: true` to send its successful result to the
+agent. The final submit uses the form's `resume` setting; successful side-effect
+submissions now send an `[action-result]` reply containing the action output
+(bounded to 2,000 characters). Failures leave controls available and do not
+resume. Authentication, signed specs, action allowlists and action replay policy
+apply unchanged; a reusable button does not override a recipe's replay policy.
+Scripts should enforce their own operation lifecycle (e.g. starting an active
+recording must not overwrite it, and stopping before start must report failure).
+
+```xml
+<cuttle_action_form>
+{"mode":"form","title":"Capture diagnostics","resume":true,
+ "buttons":[{"id":"start","label":"Start capture","action":"diagnostics.capture",
+             "params":{"mode":"start"}}],
+ "fields":[],"submitLabel":"End capture & submit",
+ "submit":{"action":"diagnostics.capture","params":{"mode":"stop"}}}
+</cuttle_action_form>
+```
+
+Start runs without an agent turn. End runs the stop action first; only its
+successful completion submits the result to the agent. The recipe belongs to
+that project's `.cuttle/actions/`; `diagnostics.capture` above is an example,
+not a built-in action.

@@ -172,6 +172,23 @@ def normalize_action_form_spec(
                 }
             )
 
+    # Auxiliary buttons run signed, allowlisted actions without submitting the form.
+    buttons = []
+    for button in spec.get("buttons", []) if isinstance(spec.get("buttons"), list) else []:
+        if not isinstance(button, dict):
+            continue
+        action = _coerce_action_name(button.get("action"))
+        bid = str(button.get("id") or "").strip()
+        if not bid or not action or any(b["id"] == bid for b in buttons):
+            return None
+        mapping = button.get("paramMap")
+        buttons.append({
+            "id": bid, "label": str(button.get("label") or bid), "action": action,
+            "params": dict(button.get("params") or {}) if isinstance(button.get("params"), dict) else {},
+            "paramMap": {str(k): str(v) for k, v in mapping.items()} if isinstance(mapping, dict) else {},
+            "resume": bool(button.get("resume", False)),
+        })
+
     fields_in = spec.get("fields")
     fields: List[Dict[str, Any]] = []
     if isinstance(fields_in, list):
@@ -213,10 +230,10 @@ def normalize_action_form_spec(
 
     if mode in ("choice", "multi") and not options:
         return None
-    if mode == "form" and not fields and not submit_action:
+    if mode == "form" and not fields and not submit_action and not buttons:
         return None
 
-    has_side_effect = bool(submit_action) or any(o.get("action") for o in options)
+    has_side_effect = bool(submit_action or buttons) or any(o.get("action") for o in options)
     is_watch_card = bool(spec.get("watch"))
     # Whether picking an option should post a user message and resume the agent.
     # A pure Q&A card IS the agent asking a question, so the answer must resume
@@ -259,6 +276,7 @@ def normalize_action_form_spec(
         "busyLabel": str(spec.get("busyLabel") or "Running…").strip() or "Running…",
         "options": options,
         "fields": fields,
+        "buttons": buttons,
         "content": content,
         "submit": {
             "action": submit_action,
@@ -504,7 +522,7 @@ def is_qa_resume_spec(spec: Dict[str, Any]) -> bool:
         return False
     if spec.get("watch") or spec.get("locked"):
         return False
-    if (spec.get("submit") or {}).get("action"):
+    if spec.get("buttons") or (spec.get("submit") or {}).get("action"):
         return False
     if any(o.get("action") for o in spec.get("options") or []):
         return False
@@ -887,7 +905,7 @@ def _spec_allows_custom(spec: Dict[str, Any]) -> bool:
         return False
     if spec.get("allow_custom") is False or spec.get("allowCustom") is False:
         return False
-    if spec.get("watch"):
+    if spec.get("watch") or spec.get("buttons"):
         return False
     if isinstance(spec.get("submit"), dict) and spec["submit"].get("action"):
         return False
@@ -965,6 +983,21 @@ def build_runs_from_submission(
     project_path = str(spec.get("project_path") or "")
     runs: List[Dict[str, Any]] = []
 
+    if selection.get("button") is not None:
+        button = next((b for b in spec.get("buttons", [])
+                       if b["id"] == str(selection["button"])), None)
+        if button is None:
+            return []
+        params = dict(button["params"])
+        fields = selection.get("fields") if isinstance(selection.get("fields"), dict) else {}
+        for dest, src in button["paramMap"].items():
+            if src in fields:
+                params[dest] = fields[src]
+        return [{"action": button["action"], "params": params,
+                 "option_id": button["id"], "label": button["label"],
+                 "project_path": project_path, "resume": button["resume"],
+                 "auxiliary": True}]
+
     if mode in ("choice", "multi"):
         opted = selection.get("options")
         if opted is None and selection.get("option") is not None:
@@ -1006,6 +1039,8 @@ def build_runs_from_submission(
         params["content"] = fields.get("content")
     if "content" not in params and fields.get("body") is not None:
         params["content"] = fields.get("body")
+    if not action and spec.get("buttons") and not spec.get("fields"):
+        return []
     if not action:
         # Q&A form: answers go back to the agent, nothing is posted, so
         # checkbox fields need no `line` bodies.
@@ -1574,6 +1609,10 @@ def execute_action_form_submission(
             "reusable": reusable,
         }
 
+    auxiliary = len(runs) == 1 and bool(runs[0].get("auxiliary"))
+    if auxiliary:
+        lock, reusable = "none", True
+
     # Malformed form (checked items with no post body) — never post a guess.
     blocked = next((str(r.get("blocked")) for r in runs if r.get("blocked")), "")
     if blocked:
@@ -1779,6 +1818,12 @@ def execute_action_form_submission(
         "session_id": session_id or None,
         "actions": [str(r.get("action") or "") for r in runs if r.get("action")],
     }
+    should_resume = all_ok and bool(runs[0].get("resume", spec.get("resume")))
+    out["resume"] = should_resume
+    if should_resume:
+        label = str(runs[0].get("label") or "Action")
+        details = "\n".join(str(r.get("response") or "") for r in results)
+        out["answer_text"] = (f"[action-result] {label}\n" + details)[:2000]
     if restart_result:
         out['flask_restart'] = restart_result
     return out

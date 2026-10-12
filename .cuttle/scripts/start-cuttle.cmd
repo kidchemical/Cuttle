@@ -15,7 +15,7 @@ set "ICON=%CUTTLE_ROOT%\src\img\cuttle_logo.ico"
 if defined CUTTLE_HOST (
   set "DEFAULT_HOST=%CUTTLE_HOST%"
 ) else (
-  set "DEFAULT_HOST=127.0.0.1"
+  set "DEFAULT_HOST=saved server"
 )
 
 if not exist "%CUTTLE_ROOT%\.git" (
@@ -62,7 +62,11 @@ goto MENU
 echo.
 echo Starting Cuttle Client -^> %DEFAULT_HOST% ...
 if exist "%CUTTLE_EXE%" (
-  start "Cuttle Client" /D "%ELECTRON_DIR%\dist\win-unpacked" "%CUTTLE_EXE%" --host=%DEFAULT_HOST%
+  if defined CUTTLE_HOST (
+    start "Cuttle Client" /D "%ELECTRON_DIR%\dist\win-unpacked" "%CUTTLE_EXE%" --client --host="%CUTTLE_HOST%"
+  ) else (
+    start "Cuttle Client" /D "%ELECTRON_DIR%\dist\win-unpacked" "%CUTTLE_EXE%" --client
+  )
   goto :eof
 )
 where npm.cmd >nul 2>&1
@@ -72,7 +76,11 @@ if errorlevel 1 (
   exit /b 1
 )
 pushd "%ELECTRON_DIR%"
-start "Cuttle Client" npm.cmd start -- --host=%DEFAULT_HOST%
+if defined CUTTLE_HOST (
+  start "Cuttle Client" npm.cmd start -- --client --host="%CUTTLE_HOST%"
+) else (
+  start "Cuttle Client" npm.cmd start -- --client
+)
 popd
 goto :eof
 
@@ -117,4 +125,3 @@ if exist "%SHORTCUTS_PS1%" (
 echo.
 pause
 goto :eof
-

@@ -1943,14 +1943,7 @@ function measureSplitMain(el, orientation) {
 
 /** Pixel budget for siblings inside a group. */
 function getSplitGroupBudget(groupEl, childCount) {
-    const n = Math.max(1, childCount | 0);
-    const handles = Math.max(0, n - 1);
-    const ori = getGroupOrientation(groupEl);
-    const main = ori === 'vertical'
-        ? (groupEl?.clientHeight || 0)
-        : (groupEl?.clientWidth || 0);
-    const raw = main - handles * SPLIT_HANDLE_PX;
-    return Math.max(n, raw);
+    return CuttleShellPanes.splitGroupBudget(groupEl, childCount, getGroupOrientation(groupEl), SPLIT_HANDLE_PX);
 }
 
 /**
@@ -2072,7 +2065,8 @@ function applySplitPixelFlex(cols, widths, orientation, groupEl) {
     const group = groupEl || (cols[0] && getLeafParentGroup(cols[0])) || splitContainer;
     const ori = orientation || getGroupOrientation(group);
     const budget = getSplitGroupBudget(group, cols.length);
-    const clamped = clampSplitWidths(widths, budget, ori);
+    const clamped = CuttleShellPanes.fitSplitSizes(widths,
+        cols.map(c => isPaneCollapsedEl(c) ? measureSplitMain(c, ori) : 0), budget, ori, clampSplitWidths);
     cols.forEach((c, i) => {
         // A parked pane never takes pixel flex — it keeps its strip size.
         if (isPaneCollapsedEl(c)) {
@@ -3764,12 +3758,7 @@ function setupGroupSplitResize(handleEl, groupEl, leftPos, rightPos) {
         const minPx = splitMinPxFor(cols.length, budget, ori);
         // Measure BEFORE unparking: clearing the pin lets the pane spring
         // to ratio size, which would detach the gesture from the press point.
-        const startWidths = clampSplitWidths(
-            cols.map((c) => measureSplitMain(c, ori)),
-            budget,
-            ori
-        );
-        cols.forEach((c, i) => { if (isPaneCollapsedEl(c)) startWidths[i] = measureSplitMain(c, ori); });
+        const startWidths = cols.map(c => measureSplitMain(c, ori));
         const startCoord = vertical ? e.clientY : e.clientX;
         handleEl.classList.add('dragging');
         splitContainer?.classList.add('split-resizing');

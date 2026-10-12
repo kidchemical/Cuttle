@@ -583,6 +583,13 @@
                 }, { signal: life.signal });
             });
 
+            card.querySelectorAll('[data-action-form-button]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    runSubmission({ button: button.getAttribute('data-action-form-button'),
+                        fields: collectFormFields(card) });
+                }, { signal: life.signal });
+            });
+
             const submitBtn = card.querySelector('[data-action-form-submit]');
             if (submitBtn) {
                 submitBtn.addEventListener('click', () => {

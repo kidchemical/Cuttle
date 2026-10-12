@@ -70,7 +70,8 @@
                     (collapsed sleeves included as lanes, never as join)
        x: viewport clientX (NaN allowed → conservative)
      @returns {{ order: string[], groupId: string|null, noop: boolean }}
-       order = post-drop visible order; groupId = membership after drop.
+       order = post-drop visible order; fullOrder includes collapsed members;
+       groupId = membership after drop. `place` renders this same result.
      */
     function computeDropTarget(args) {
         const spaces = (args && args.spaces) || [];
@@ -157,27 +158,23 @@
             }
         }
 
-        // Preview directive: the exact DOM placement the old pointermove
-        // performed for this lane resolution (park appends inside the sleeve
-        // end; a sleeve lane inserts before the sleeve element; a tab lane
-        // inserts before that tab; otherwise the strip end). The commit path
-        // ignores `place` — it consumes order + groupId only.
         let place = { end: true };
-        if (joinSleeve && !(before && ((before.t === 'sleeve' && before.gid === joinSleeve) ||
-                (before.t === 'tab' && _visibleMembers(spaces, others, joinSleeve).indexOf(before.id) >= 0)))) {
-            place = { park: joinSleeve };
-        } else if (before) {
-            place = before.t === 'tab' ? { beforeTab: before.id } : { beforeSleeve: before.gid };
-        }
 
-        const visibleOrder = others.slice(0, at).concat([draggedId], others.slice(at));
-
-        // 3. Membership: neighbor rule on the resulting FULL order (hidden
-        //    members keep their slots, so neighbors may be hidden — exactly
-        //    like the old commit path that read post-preview state order).
-        const M = _mods();
+        // 3. Membership: neighbor rule on the resulting full order.
         const allIds = spaces.map((s) => s && s.id);
-        const fullOrder = M.order.computeReorderedIds(allIds, visibleOrder, draggedId) || allIds;
+        // Anchor against the next item, including a collapsed group's hidden
+        // first member. A previous-visible-neighbor anchor loses these boundaries.
+        let anchor = others[at] || null;
+        if (before?.t === 'sleeve' && _groupOf(groups, before.gid)?.collapsed) {
+            anchor = spaces.find((s) => s.groupId === before.gid)?.id || anchor;
+        }
+        const insertBefore = (id) => {
+            const rest = allIds.filter((id) => id !== draggedId);
+            const index = id == null ? rest.length : rest.indexOf(id);
+            rest.splice(index < 0 ? rest.length : index, 0, draggedId);
+            return rest;
+        };
+        let fullOrder = insertBefore(anchor);
         const byId = new Map(spaces.map((s) => [s && s.id, s]));
         const i = fullOrder.indexOf(draggedId);
         const left = i > 0 ? byId.get(fullOrder[i - 1]) || null : null;
@@ -215,7 +212,22 @@
             }
         }
 
-        return { order: visibleOrder, groupId: want, noop: false, place };
+        // The DOM placement must express the same membership and full order,
+        // rather than reusing the earlier lane directive (which may sit outside
+        // a sleeve that the membership calculation just joined).
+        const next = byId.get(fullOrder[fullOrder.indexOf(draggedId) + 1]);
+        if (want) {
+            place = next?.groupId === want ? { beforeTab: next.id } : { park: want };
+        } else if (next?.groupId) {
+            const first = spaces.find((s) => s.id !== draggedId && s.groupId === next.groupId);
+            fullOrder = insertBefore(first?.id || next.id);
+            place = { beforeSleeve: next.groupId };
+        } else {
+            place = next ? { beforeTab: next.id } : { end: true };
+        }
+        const visibleSet = new Set(visibleIds);
+        const visibleOrder = fullOrder.filter((id) => visibleSet.has(id));
+        return { order: visibleOrder, fullOrder, groupId: want, noop: false, place };
     }
 
     /**
@@ -227,7 +239,13 @@
         let orderChanged = false;
         let groupChanged = false;
         if (target && !target.noop) {
-            orderChanged = M.order.applyVisibleOrder(state, target.order, draggedId);
+            if (target.fullOrder) {
+                const byId = new Map(state.spaces.map((s) => [s.id, s]));
+                orderChanged = target.fullOrder.some((id, index) => id !== state.spaces[index]?.id);
+                if (orderChanged) state.spaces = target.fullOrder.map((id) => byId.get(id));
+            } else {
+                orderChanged = M.order.applyVisibleOrder(state, target.order, draggedId);
+            }
             const space = M.state.getSpaceById(state, draggedId);
             if (space) {
                 const have = space.groupId || null;

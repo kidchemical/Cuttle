@@ -455,3 +455,30 @@ def test_previous_acknowledgement_does_not_replay_as_completed_green_result(tmp_
     assert not result.get('already_locked')
     assert result['flask_restart']['restart_id'] == 'current-request'
     assert 'old-request' not in result['toast']
+
+
+def test_script_button_then_submit_only_resumes_after_stop(tmp_path, monkeypatch):
+    import json
+    import api.action_forms as af
+    ctx = _ctx(tmp_path, monkeypatch)
+    actions = tmp_path / '.cuttle/actions'
+    actions.mkdir(parents=True)
+    (actions / 'capture.yaml').write_text('name: capture.run\ntype: shell\nrun: echo capture\nreplay: reusable\n')
+    monkeypatch.setattr(af, '_run_one', lambda *a, **k: {'success': True, 'response': 'Capture saved: capture.csv'})
+    spec = {'mode': 'form', 'resume': True, 'session_id': f"db_session_{ctx['owner_sid']}",
+            'buttons': [{'id': 'start', 'action': 'capture.run'}],
+            'submit': {'action': 'capture.run'}}
+    text, n = af.rewrite_action_forms('<cuttle_action_form>'+json.dumps(spec)+'</cuttle_action_form>',
+                                    session_id=spec['session_id'], project_path=str(tmp_path))
+    assert n == 1
+    ctx['db'].add_message(ctx['owner_sid'], 'assistant', text)
+    fid = json.loads(re.search(r'<cuttle_action_form_pending[^>]*>\s*(\{.*?\})\s*</cuttle_action_form_pending>', text, re.S)[1])['id']
+    client = _as(ctx['client'], ctx['owner'])
+    payload = {'token': fid, 'session_id': ctx['owner_sid'], 'selection': {'button': 'start'}}
+    start = client.post('/api/action-form/run', json=payload, environ_base=LAN).get_json()
+    assert start['success'] and start['reusable']
+    assert not start.get('should_resume') and not start.get('injected_user_message')
+    payload['selection'] = {'fields': {}}
+    end = client.post('/api/action-form/run', json=payload, environ_base=LAN).get_json()
+    assert end['success'] and end['should_resume']
+    assert 'Capture saved: capture.csv' in end['injected_user_message']

@@ -122,7 +122,7 @@ def test_tab_drag_nudges_groups_live():
     # The pill itself is never an insertion point: a sleeve lane resolves to
     # before its first visible member.
     assert "beforeSleeve" in mod
-    assert "{ beforeTab: before.id } : { beforeSleeve: before.gid }" in mod
+    assert "{ beforeTab: next.id } : { park: want }" in mod
 
 
 def test_sleeve_end_preview_matches_drop():
@@ -132,7 +132,7 @@ def test_sleeve_end_preview_matches_drop():
     mod = DROP_JS.read_text(encoding="utf-8")
     assert "inside the sleeve end" in mod
     assert "r.left + r.width + 6" in mod  # same +6 end slop as membership
-    assert "place = { park: joinSleeve }" in mod
+    assert "{ park: want }" in mod
     src = OWNER_JS.read_text(encoding="utf-8")
     assert "placeDraggedSpaceTab(host, tab, target)" in src
     assert "sleeve.appendChild(tab)" in src
@@ -169,8 +169,8 @@ def test_groups_collapse_and_expand():
     assert "collapsed: !!g.collapsed" in mod  # persisted
     assert "group.collapsed) return" in src  # members hidden while collapsed
     assert "shell-space-group-count" in src  # pill shows member count
-    # The active tab is never hidden: collapse refuses, switching expands.
-    assert "Active space is in this group" in src
+    # Collapse keeps the active space running; explicit switching expands its group.
+    assert "Active space is in this group" not in src
     assert "targetGroup.collapsed" in src
 
 
@@ -215,17 +215,15 @@ def test_group_tint_css():
     assert ".shell-space-group-sleeve > .shell-space-tab.has-accent" in css
 
 
-def test_group_sleeve_and_active_only_underline():
+def test_group_sleeve_and_active_tab_shape():
     src = OWNER_JS.read_text(encoding="utf-8")
     assert "shell-space-group-sleeve" in src
     assert "closeSleeve" in src
     css = SHELL_CSS.read_text(encoding="utf-8")
     assert ".shell-space-group-sleeve" in css
     assert ".shell-space-group-sleeve.is-drop-target" in css
-    # Exactly one underline in the strip: the active tab. Dark gray fallback
-    # when the active space has no color.
     assert ".shell-space-tab.is-active::before" in css
-    assert "#6b7280" in css
+    assert "border-radius: 8px 8px 0 0" in css
     assert ".shell-space-tab.has-accent::before" not in css
 
 

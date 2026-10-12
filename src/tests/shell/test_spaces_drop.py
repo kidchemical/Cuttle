@@ -52,6 +52,16 @@ const cases = {
     groups: [{ id: 'g1', collapsed: true }], visibleIds: ['A', 'D'],
     sleeveRects: {}, lanes: [{ t: 'tab', id: 'A' }, { t: 'tab', id: 'D' }],
   }),
+  beforeCollapsed: t('D', 149, {
+    groups: [{ id: 'g1', collapsed: true }], visibleIds: ['A', 'D'],
+    sleeveRects: {g1: {left: 100, width: 100}},
+    lanes: [{t: 'tab', id: 'A'}, {t: 'sleeve', gid: 'g1'}, {t: 'tab', id: 'D'}],
+  }),
+  afterCollapsed: t('D', 201, {
+    groups: [{ id: 'g1', collapsed: true }], visibleIds: ['A', 'D'],
+    sleeveRects: {g1: {left: 100, width: 100}},
+    lanes: [{t: 'tab', id: 'A'}, {t: 'sleeve', gid: 'g1'}, {t: 'tab', id: 'D'}],
+  }),
 };
 process.stdout.write(JSON.stringify(cases));
 """
@@ -106,6 +116,7 @@ def test_front_slot_and_pill_join():
     res = _run()
     assert res["frontSlot"]["order"] == ["A", "D", "B", "C"]
     assert res["frontSlot"]["groupId"] == "g1"
+    assert res["frontSlot"]["place"] == {"beforeTab": "B"}
     assert res["onPill"]["groupId"] == "g1"
 
 
@@ -131,6 +142,15 @@ def test_no_coords_conservative():
 def test_collapsed_group_never_gains():
     res = _run()
     assert res["collapsed"]["groupId"] is None
+
+
+@node_only
+def test_collapsed_group_boundaries_include_hidden_members():
+    res = _run()
+    assert res['beforeCollapsed']['fullOrder'] == ['A', 'D', 'B', 'C']
+    assert res['beforeCollapsed']['place'] == {'beforeSleeve': 'g1'}
+    assert res['afterCollapsed']['fullOrder'] == ['A', 'B', 'C', 'D']
+    assert res['afterCollapsed']['place'] == {'end': True}
 
 
 @node_only

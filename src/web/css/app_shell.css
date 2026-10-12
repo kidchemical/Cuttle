@@ -123,7 +123,7 @@ body.is-electron {
     height: 36px;
     align-items: stretch;
     background: var(--rail-bg);
-    border-bottom: 1px solid var(--rail-border);
+    box-shadow: inset 0 -1px var(--rail-border);
     z-index: 10000;
     user-select: none;
 }
@@ -254,17 +254,19 @@ body.is-electron.fullscreen .shell-zoom-hud {
     margin-left: 10px;
     min-width: 0;
     flex: 0 1 auto;
+    align-self: stretch;
 }
 
 .shell-spaces-tabs {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     gap: 3px;
     min-width: 0;
     overflow-x: auto;
     scrollbar-width: none;
     -webkit-app-region: no-drag;
     app-region: no-drag;
+    height: 100%;
 }
 
 .shell-spaces-tabs::-webkit-scrollbar {
@@ -273,6 +275,41 @@ body.is-electron.fullscreen .shell-zoom-hud {
 
 .shell-spaces-tabs:empty {
     display: none;
+}
+
+.shell-spaces-scroll {
+    flex: 0 0 22px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--rail-icon);
+    font-size: 20px;
+    line-height: 20px;
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+}
+
+.shell-spaces-scroll[hidden] {
+    display: none;
+}
+
+.shell-spaces-scroll:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--rail-icon-hover);
+}
+
+.shell-spaces-scroll:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.shell-spaces-scroll:focus-visible {
+    outline: 2px solid var(--rail-icon-hover);
+    outline-offset: -2px;
 }
 
 .shell-space-tab {
@@ -295,6 +332,7 @@ body.is-electron.fullscreen .shell-zoom-hud {
     outline: none;
     user-select: none;
     -webkit-user-select: none;
+    margin-bottom: 6px;
 }
 
 .shell-spaces-tabs.is-reordering,
@@ -320,8 +358,12 @@ body.is-electron.fullscreen .shell-zoom-hud {
 }
 
 .shell-space-tab.is-active {
+    height: 30px;
+    margin-bottom: 0;
+    border-radius: 8px 8px 0 0;
     background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.14);
+    border-color: var(--space-accent, var(--rail-border));
+    border-bottom: 0;
     color: var(--rail-icon-hover, var(--rail-icon));
     opacity: 1;
 }
@@ -472,20 +514,6 @@ body.is-reordering-spaces iframe {
     white-space: nowrap;
 }
 
-/* Active space only (one at a time): the underline. Group color, own color,
-   else dark gray when the space has no color. */
-.shell-space-tab.is-active::before {
-    content: '';
-    position: absolute;
-    left: 9px;
-    right: 9px;
-    bottom: 2px;
-    height: 2px;
-    border-radius: 1px;
-    background: var(--space-accent, #6b7280);
-    pointer-events: none;
-}
-
 /* Ungrouped colored singles keep their own wash; grouped tabs live in the
    sleeve and take its background instead (no double tint). */
 .shell-spaces-tabs > .shell-space-tab.has-accent {
@@ -498,23 +526,36 @@ body.is-reordering-spaces iframe {
    spaces read as a single block. Its left/right edges are the join boundary
    when dragging tabs (outside stays out, inside joins). */
 .shell-space-group-sleeve {
+    position: relative;
+    isolation: isolate;
     display: inline-flex;
-    align-items: center;
+    align-items: flex-end;
     gap: 2px;
     flex-shrink: 0;
-    height: 22px;
+    height: 100%;
     box-sizing: border-box;
     padding: 0 4px 0 2px;
+}
+
+/* Keep the group capsule above the toolbar edge; only its active tab joins it. */
+.shell-space-group-sleeve::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    inset: auto 0 6px;
+    height: 22px;
+    box-sizing: border-box;
     border: 1px solid color-mix(in srgb, var(--space-accent, #e8eaed) 55%, transparent);
     border-radius: 8px;
     background: color-mix(in srgb, var(--space-accent, #e8eaed) 20%, transparent);
+    pointer-events: none;
 }
 
 .shell-space-group-sleeve.is-collapsed {
     opacity: 0.85;
 }
 
-.shell-space-group-sleeve.is-drop-target {
+.shell-space-group-sleeve.is-drop-target::before {
     border-color: #fff;
     background: color-mix(in srgb, var(--space-accent, #e8eaed) 34%, transparent);
 }
@@ -524,6 +565,26 @@ body.is-reordering-spaces iframe {
     border: none;
     background: transparent;
     padding: 0 3px 0 2px;
+    align-self: center;
+}
+
+/* A collapsed group stands in for its hidden active tab. */
+.shell-space-group-sleeve.is-collapsed:has(> .shell-space-group.is-active) {
+    opacity: 1;
+}
+
+.shell-space-group-sleeve.is-collapsed:has(> .shell-space-group.is-active)::before {
+    display: none;
+}
+
+.shell-space-group-sleeve > .shell-space-group.is-collapsed.is-active {
+    align-self: flex-end;
+    height: 30px;
+    border: 1px solid var(--space-accent, var(--rail-border));
+    border-bottom: 0;
+    border-radius: 8px 8px 0 0;
+    background: color-mix(in srgb, var(--space-accent, #e8eaed) 20%, var(--rail-bg));
+    box-shadow: none;
 }
 
 .shell-space-group-sleeve > .shell-space-tab {
@@ -534,6 +595,50 @@ body.is-reordering-spaces iframe {
 .shell-space-group-sleeve > .shell-space-tab.has-accent {
     background: transparent;
     border-color: transparent;
+}
+
+/* Active tabs keep their joined shape inside tinted groups and as colored singles. */
+.shell-spaces-tabs > .shell-space-tab.is-active,
+.shell-space-group-sleeve > .shell-space-tab.is-active {
+    height: 30px;
+    margin-bottom: 0;
+    border-color: var(--space-accent, var(--rail-border));
+    border-bottom: 0;
+}
+
+.shell-space-group-sleeve > .shell-space-tab.is-active {
+    background: color-mix(in srgb, var(--space-accent, #e8eaed) 20%, var(--rail-bg));
+}
+
+/* Paint outside the truncated title spans so their overflow cannot clip the line. */
+.shell-space-group.is-collapsed.is-active {
+    position: relative;
+}
+
+.shell-space-tab.is-active::before,
+.shell-space-group.is-collapsed.is-active::after {
+    content: '';
+    position: absolute;
+    left: 9px;
+    right: 9px;
+    bottom: 3px;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--space-accent, #6b7280);
+    pointer-events: none;
+}
+
+.shell-space-group-sleeve.is-dragging {
+    z-index: 1;
+    opacity: 1;
+}
+
+.shell-space-group-sleeve.is-dragging::before {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.shell-spaces-tabs.is-reordering .shell-space-group {
+    cursor: grabbing;
 }
 
 /* Space tab right-click menu + submenus. */

@@ -363,6 +363,9 @@ def _electron_package_version() -> str:
 
 def open_cuttle_ui(extra_args: Optional[List[str]] = None, browser_path: str = "/app_shell.html") -> bool:
     """Open the Electron app (or browser fallback). Returns True if Electron was spawned."""
+    if "--browser" in sys.argv:
+        webbrowser.open(_flask_url(browser_path))
+        return False
     env = os.environ.copy()
     # Electron must not spawn a second cuttle_daemon.py (blank console).
     env["CUTTLE_HOSTED_BY_DAEMON"] = "1"

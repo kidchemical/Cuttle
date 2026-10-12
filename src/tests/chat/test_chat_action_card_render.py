@@ -370,3 +370,23 @@ console.log(JSON.stringify({html, tests, count:(bounded.match(/class="watch-cell
     assert '<img src=x>' not in out['html'] and '&lt;img src=x&gt;' in out['html']
     assert out['count'] == 2048
     assert out['colour'] == out['same']
+
+
+@node_only
+def test_script_buttons_render_separately_from_submit_and_escape_labels():
+    script = '''
+const A = require(process.env.MOD_JS);
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+const spec = {mode:'form', resume:true, buttons:[{id:'start', label:'<Start>', action:'capture.run'}],
+    submit:{action:'capture.run'}, submitLabel:'End capture & submit'};
+console.log(JSON.stringify({sideEffect:A.actionFormHasSideEffect(spec),
+ html:A.renderActionFormCardHtml({spec, formId:'f', esc})}));
+'''
+    result = subprocess.run(['node', '-e', script], env={**os.environ, 'MOD_JS': str(MOD_JS)},
+                            capture_output=True, text=True, check=True)
+    data = json.loads(result.stdout)
+    assert data['sideEffect'] is True
+    assert 'data-action-form-button="start"' in data['html']
+    assert '&lt;Start>' in data['html']
+    assert 'data-action-form-submit="1"' in data['html']
+    assert 'data-custom-submit' not in data['html']
