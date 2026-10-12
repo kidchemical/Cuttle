@@ -129,15 +129,10 @@
             return true;
         }
 
-        /** Collapse/expand a group. Never hides the active tab. */
+        /** Collapse/expand a group without changing the active space. */
         function toggleSpaceGroupCollapsed(gid) {
-            const res = CuttleSpaces.toggleGroupCollapsed(spacesState, gid, spacesState.active);
-            if (!res.ok) {
-                if (res.reason === 'hides-active' && typeof win.showToast === 'function') {
-                    win.showToast('Active space is in this group', 'info');
-                }
-                return false;
-            }
+            const res = CuttleSpaces.toggleGroupCollapsed(spacesState, gid);
+            if (!res.ok) return false;
             persistSpacesState();
             renderSpaceTabs();
             return true;
@@ -160,10 +155,12 @@
             const color = CuttleSpaces.sanitizeColor(group.color) || CuttleSpaces.DEFAULT_COLOR;
             const name = escapeHtml(group.name || '');
             const collapsed = !!group.collapsed;
+            const active = spacesState.spaces.some((s) => s.id === spacesState.active && s.groupId === group.id);
             const members = spacesState.spaces.filter((s) => s && s.groupId === group.id).length;
             const title = (group.name ? 'Group: ' + name : 'Group')
-                + ' — click to ' + (collapsed ? 'expand' : 'collapse') + ', right-click to edit';
-            return '<button type="button" class="shell-space-group' + (collapsed ? ' is-collapsed' : '') + '"'
+                + ' — click to ' + (collapsed ? 'expand' : 'collapse') + ', drag to reorder, right-click to edit';
+            return '<button type="button" class="shell-space-group' + (collapsed ? ' is-collapsed' : '') + (active ? ' is-active' : '') + '"'
+                + ' aria-expanded="' + !collapsed + '"'
                 + ' data-group-id="' + escapeHtml(group.id) + '"'
                 + ' style="--space-accent:' + color + '"'
                 + ' title="' + title + '">'
@@ -360,12 +357,65 @@
 
         /** Toggle the active tab in place — re-rendering would eat the second click of a dblclick. */
         function syncActiveSpaceTab() {
+            syncTabOverflow();
             doc.querySelectorAll('.shell-space-tab').forEach((tab) => {
                 const active = tab.dataset.spaceId === spacesState.active;
                 tab.classList.toggle('is-active', active);
                 tab.setAttribute('aria-selected', active ? 'true' : 'false');
                 if (active) tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
             });
+            doc.querySelectorAll('.shell-space-group').forEach((pill) => {
+                const active = spacesState.spaces.some((s) => s.id === spacesState.active && s.groupId === pill.dataset.groupId);
+                pill.classList.toggle('is-active', active);
+                if (active && spaceGroupById(pill.dataset.groupId)?.collapsed) {
+                    pill.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+                }
+            });
+            syncTabOverflow();
+        }
+
+        /** Measure capacity without arrows so their own width cannot keep them visible. */
+        function syncTabOverflow() {
+            const tabs = doc.getElementById('shellSpacesTabs');
+            const spaces = doc.getElementById('shellSpaces');
+            const add = doc.getElementById('shellSpacesAdd');
+            const left = doc.getElementById('shellSpacesScrollLeft');
+            const right = doc.getElementById('shellSpacesScrollRight');
+            if (!tabs || !spaces || !add || !left || !right || !spaces.clientWidth) return;
+            const gap = parseFloat(win.getComputedStyle(spaces).columnGap) || 0;
+            const capacity = spaces.clientWidth - add.offsetWidth - gap;
+            const overflow = tabs.scrollWidth > capacity + 1;
+            left.hidden = right.hidden = !overflow;
+            left.disabled = tabs.scrollLeft <= 1;
+            right.disabled = tabs.scrollLeft >= tabs.scrollWidth - tabs.clientWidth - 1;
+        }
+
+        function setupTabOverflow(tabs) {
+            for (const [id, direction] of [['shellSpacesScrollLeft', -1], ['shellSpacesScrollRight', 1]]) {
+                const button = doc.getElementById(id);
+                button?.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    tabs.scrollBy({ left: direction * Math.max(80, tabs.clientWidth * 0.8), behavior: 'smooth' });
+                });
+                button?.addEventListener('dblclick', (e) => e.stopPropagation());
+            }
+            tabs.addEventListener('scroll', syncTabOverflow, { passive: true });
+            tabs.addEventListener('wheel', (e) => {
+                if (e.ctrlKey || !e.deltaY || Math.abs(e.deltaX) >= Math.abs(e.deltaY)
+                    || tabs.scrollWidth <= tabs.clientWidth) return;
+                e.preventDefault();
+                const unit = e.deltaMode === 1 ? 22 : e.deltaMode === 2 ? tabs.clientWidth : 1;
+                tabs.scrollLeft += e.deltaY * unit;
+            }, { passive: false });
+            // Track window resizing, titlebar reveal, and width changes in adjacent chrome.
+            const observer = win.ResizeObserver ? new win.ResizeObserver(syncActiveSpaceTab) : null;
+            observer?.observe(tabs);
+            win.addEventListener('resize', syncActiveSpaceTab);
+            win.addEventListener('pagehide', () => {
+                observer?.disconnect();
+                win.removeEventListener('resize', syncActiveSpaceTab);
+            });
+            syncActiveSpaceTab();
         }
 
         // ── Cross-space pane drag (grip → space tab) ───────────────
@@ -1422,9 +1472,9 @@
             let drag = null;
             let suppressClick = false;
 
-            const finish = (commit, dropX) => {
+            const finish = (commit) => {
                 if (!drag) return;
-                const { tab, active, pointerId } = drag;
+                const { tab, active, pointerId, groupId, beforeId, target } = drag;
                 drag = null;
                 if (!active) return;
                 tab.classList.remove('is-dragging');
@@ -1435,10 +1485,13 @@
                 if (commit) {
                     // Commit consumes the same canonical target the preview showed:
                     // no re-derivation from DOM order, no separate neighbor pass.
-                    const target = computeSpaceDropTarget(host, tab.dataset.spaceId, dropX);
-                    if (!target.noop) {
-                        const res = CuttleSpaces.applyDropTarget(spacesState, target, tab.dataset.spaceId);
-                        if (res.orderChanged || res.groupChanged || res.pruned) persistSpacesState();
+                    if (groupId) {
+                        if (CuttleSpaces.moveGroupBefore(spacesState, groupId, beforeId)) persistSpacesState();
+                    } else {
+                        if (target && !target.noop) {
+                            const res = CuttleSpaces.applyDropTarget(spacesState, target, tab.dataset.spaceId);
+                            if (res.orderChanged || res.groupChanged || res.pruned) persistSpacesState();
+                        }
                     }
                 }
                 renderSpaceTabs();
@@ -1449,9 +1502,10 @@
 
             host.addEventListener('pointerdown', (e) => {
                 if (e.button !== 0 || spacesState.spaces.length < 2) return;
-                const tab = e.target.closest('.shell-space-tab');
+                const pill = e.target.closest('.shell-space-group');
+                const tab = pill ? pill.closest('.shell-space-group-sleeve') : e.target.closest('.shell-space-tab');
                 if (!tab || e.target.closest('.shell-space-close, .shell-space-rename')) return;
-                drag = { tab, pointerId: e.pointerId, startX: e.clientX, originLeft: tab.getBoundingClientRect().left, tx: 0, active: false };
+                drag = { tab, groupId: pill?.dataset.groupId, pointerId: e.pointerId, startX: e.clientX, originLeft: tab.getBoundingClientRect().left, tx: 0, active: false };
             });
 
             // Move/up/cancel ride on window (capture): the strip is small and the page
@@ -1467,6 +1521,21 @@
                 if (!drag.active) {
                     if (Math.abs(e.clientX - drag.startX) < THRESHOLD) return;
                     drag.active = true;
+                    if (drag.groupId) {
+                        // A group can have multiple visible runs after individual tab moves.
+                        // Gather every run into the dragged sleeve; cancel re-renders the original.
+                        const members = new Map(Array.from(host.querySelectorAll('.shell-space-tab'))
+                            .filter((member) => member.dataset.groupId === drag.groupId)
+                            .map((member) => [member.dataset.spaceId, member]));
+                        spacesState.spaces.forEach((space) => {
+                            const member = members.get(space.id);
+                            if (member) tab.appendChild(member);
+                        });
+                        host.querySelectorAll('.shell-space-group-sleeve').forEach((sleeve) => {
+                            if (sleeve === tab || sleeve.dataset.groupId !== drag.groupId) return;
+                            sleeve.remove();
+                        });
+                    }
                     tab.setPointerCapture(e.pointerId);
                     tab.classList.add('is-dragging');
                     host.classList.add('is-reordering');
@@ -1475,8 +1544,21 @@
                 // Preview consumes the canonical target: the tab renders where the
                 // drop would commit it, and the sleeve highlight matches the
                 // membership the drop would assign (no separate hover rule).
-                const target = computeSpaceDropTarget(host, tab.dataset.spaceId, e.clientX);
-                placeDraggedSpaceTab(host, tab, target);
+                const target = drag.groupId ? {} : computeSpaceDropTarget(host, tab.dataset.spaceId, e.clientX);
+                drag.target = target;
+                if (drag.groupId) {
+                    const ref = Array.from(host.children).find((el) => {
+                        if (el === tab) return false;
+                        const r = el.getBoundingClientRect();
+                        return e.clientX < r.left + r.width / 2;
+                    });
+                    drag.beforeId = ref
+                        ? ref.dataset.spaceId || spacesState.spaces.find((s) => s.groupId === ref.dataset.groupId)?.id || null
+                        : null;
+                    host.insertBefore(tab, ref || null);
+                } else {
+                    placeDraggedSpaceTab(host, tab, target);
+                }
                 // Hovering a sleeve lights its boundary exactly when the drop joins.
                 host.querySelectorAll('.shell-space-group-sleeve.is-drop-target').forEach((el) => {
                     el.classList.remove('is-drop-target');
@@ -1498,7 +1580,7 @@
             });
 
             win.addEventListener('pointerup', (e) => {
-                if (drag && e.pointerId === drag.pointerId) finish(true, e.clientX);
+                if (drag && e.pointerId === drag.pointerId) finish(true);
             }, true);
             win.addEventListener('pointercancel', (e) => {
                 if (drag && e.pointerId === drag.pointerId) finish(false);
@@ -1506,7 +1588,7 @@
             // Releasing off-window delivers no pointerup; snap back instead of
             // floating the tab until the next hover cancels the gesture.
             win.addEventListener('blur', () => { if (drag) finish(false); });
-            host.addEventListener('keydown', (e) => {
+            win.addEventListener('keydown', (e) => {
                 if (drag?.active && e.key === 'Escape') {
                     e.preventDefault();
                     finish(false);
@@ -1527,6 +1609,7 @@
             persistSpacesState();
             renderSpaceTabs();
 
+            setupTabOverflow(hostEl);
             const tabId = (e) => e.target.closest('.shell-space-tab')?.dataset.spaceId || '';
             hostEl.addEventListener('click', (e) => {
                 const id = tabId(e);

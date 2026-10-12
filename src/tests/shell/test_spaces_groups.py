@@ -45,15 +45,25 @@ G.createGroupForSpace(s3, 'A', 'gd', '#e8eaed');
 G.setGroup(s3, 'B', 'gd');
 const members = G.planGroupDelete(s3, 'gd');
 const pruned = G.pruneEmptyGroups(s3);
-// collapse refuses to hide the active tab
+// collapse preserves the active space; a second click expands
 const s4 = { active: 'A', spaces: [{ id: 'A', groupId: 'gc' }, { id: 'B' }], groups: [{ id: 'gc', collapsed: false }] };
 const collapseRefused = G.toggleGroupCollapsed(s4, 'gc');
 const collapseOk = G.toggleGroupCollapsed({ active: 'B', spaces: s4.spaces, groups: s4.groups }, 'gc');
+const s5 = {active: 'A', spaces: [
+  {id: 'A', groupId: 'g'}, {id: 'X'}, {id: 'B', groupId: 'g'}, {id: 'Y', groupId: 'h'}
+], groups: [{id: 'g', collapsed: true}, {id: 'h'}]};
+const moveEnd = G.moveGroupBefore(s5, 'g', null);
+const endOrder = s5.spaces.map(s => s.id);
+const moveBefore = G.moveGroupBefore(s5, 'g', 'Y');
+const beforeOrder = s5.spaces.map(s => s.id);
+const moveIntoSelf = G.moveGroupBefore(s5, 'g', 'B');
+const moveMissing = G.moveGroupBefore(s5, 'g', 'missing');
 process.stdout.write(JSON.stringify({ set1, set2, orderAfterJoin, toggleOff, stillHas,
   orderFirstStays, colorOk, colorAfterOk, colorBad, colorAfterBad, renamed, members, pruned,
   color: s1.groups.find((x) => x.id === 'g1').color,
   gname: s1.groups.find((x) => x.id === 'g1').name,
-  collapseRefused, collapseOk, groupsLeft: s3.groups }));
+  collapseRefused, collapseOk, groupsLeft: s3.groups,
+  moveEnd, endOrder, moveBefore, beforeOrder, moveIntoSelf, moveMissing, movedState: s5 }));
 """
 
 
@@ -96,10 +106,24 @@ def test_color_rename_dissolve_delete():
 
 
 @node_only
-def test_collapse_never_hides_active():
+def test_collapse_preserves_active_space():
     res = _run()
-    assert res["collapseRefused"] == {"ok": False, "reason": "hides-active"}
-    assert res["collapseOk"] == {"ok": True, "collapsed": True}
+    assert res["collapseRefused"] == {"ok": True, "collapsed": True}
+    assert res["collapseOk"] == {"ok": True, "collapsed": False}
+
+
+@node_only
+def test_group_moves_include_hidden_and_separated_members():
+    res = _run()
+    assert res['moveEnd'] is True
+    assert res['endOrder'] == ['X', 'Y', 'A', 'B']
+    assert res['moveBefore'] is True
+    assert res['beforeOrder'] == ['X', 'A', 'B', 'Y']
+    assert res['moveIntoSelf'] is False
+    assert res['moveMissing'] is False
+    assert res['movedState']['active'] == 'A'
+    assert res['movedState']['groups'][0]['collapsed'] is True
+    assert [s['id'] for s in res['movedState']['spaces'] if s.get('groupId') == 'g'] == ['A', 'B']
 
 
 @node_only

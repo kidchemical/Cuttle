@@ -135,24 +135,26 @@
         return true;
     }
 
-    /**
-     * Collapse/expand. Collapsing a group that hides the active tab is
-     * refused ({ ok:false, reason:'hides-active' }); never hides active.
-     */
-    function toggleGroupCollapsed(state, gid, activeId) {
+    /** Collapse changes only the strip; the active space keeps its live layout. */
+    function toggleGroupCollapsed(state, gid) {
         const S = _state();
         const group = S.getGroupById(state, gid);
         if (!group) return { ok: false, reason: 'missing' };
-        if (!group.collapsed) {
-            const hidesActive = (state.spaces || []).some(
-                (s) => s && s.groupId === gid && s.id === (activeId !== undefined ? activeId : state.active)
-            );
-            if (hidesActive) return { ok: false, reason: 'hides-active' };
-            group.collapsed = true;
-        } else {
-            group.collapsed = false;
-        }
+        group.collapsed = !group.collapsed;
         return { ok: true, collapsed: group.collapsed };
+    }
+
+    /** Move every group member together, preserving membership and member order. */
+    function moveGroupBefore(state, gid, beforeId) {
+        const members = state.spaces.filter((s) => s.groupId === gid);
+        if (!members.length || members.some((s) => s.id === beforeId)) return false;
+        const rest = state.spaces.filter((s) => s.groupId !== gid);
+        const index = beforeId == null ? rest.length : rest.findIndex((s) => s.id === beforeId);
+        if (index < 0) return false;
+        const next = rest.slice(0, index).concat(members, rest.slice(index));
+        if (next.every((s, i) => s === state.spaces[i])) return false;
+        state.spaces = next;
+        return true;
     }
 
     /**
@@ -181,6 +183,7 @@
         setSpaceColor,
         dissolveGroup,
         toggleGroupCollapsed,
+        moveGroupBefore,
         planGroupDelete,
     };
 
