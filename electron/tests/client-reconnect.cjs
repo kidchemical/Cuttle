@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8');
 
 function harness(args, config = {}) {
-    const files = new Map([['/resources/app.asar', 'fixture']]);
+    const files = new Map([[path.join('/resources', 'app.asar'), 'fixture']]);
     const calls = [];
     const handlers = new Map();
     let ready;

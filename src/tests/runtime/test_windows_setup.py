@@ -172,7 +172,7 @@ def test_powershell_entry_passes_options_and_exit_code(tmp_path):
     shutil.copyfile(setup.ROOT / "setup_windows.ps1", entry)
     # Fake py.exe is a PowerShell function. No interpreter/install is launched.
     script = """
-function py.exe {
+function global:py.exe {
     if (($args -join '|') -notmatch '-3\\|.*setup_windows.py\\|--browser\\|--no-launch') { exit 99 }
     $global:LASTEXITCODE = 7
 }
