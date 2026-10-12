@@ -99,6 +99,7 @@ contextBridge.exposeInMainWorld('electron', {
     desktop: {
         getConfig: () => ipcRenderer.invoke('desktop-get-config'),
         connectHost: (host) => ipcRenderer.invoke('desktop-connect', host),
+        connectSavedHost: (index) => ipcRenderer.invoke('desktop-connect-saved-host', index),
         useLocal: () => ipcRenderer.invoke('desktop-use-local'),
         showConnect: () => ipcRenderer.invoke('desktop-show-connect'),
         updateStatus: () => ipcRenderer.invoke('desktop-update-status'),
