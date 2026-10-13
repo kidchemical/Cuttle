@@ -119,6 +119,7 @@
         const fragment=document.createDocumentFragment();
         const title=node('h2','Active now');title.className='feed-active-title';fragment.append(title);
         for(const run of activeRuns) {
+            const entry=document.createElement('div');entry.className='feed-active-entry';
             const row=document.createElement(run.chat_session_id?'a':'div');row.className='feed-active-row';
             if(run.chat_session_id) row.href='/chat_page.html?chat='+encodeURIComponent(run.chat_session_id);
             const orbit=document.createElement('span');orbit.className='typing-orbit typing-orbit--feed';orbit.setAttribute('aria-hidden','true');
@@ -133,9 +134,39 @@
                 const chat=node('span','CH-'+String(run.chat_session_id).padStart(6,'0'));chat.className='feed-active-chat';
                 row.append(chat);
             }
-            fragment.append(row);
+            entry.append(row);
+            // Any live chat can be ended here: the stop hits the same cancel
+            // path as the chat page's Stop button.
+            if(run.chat_session_id) {
+                const handle='CH-'+String(run.chat_session_id).padStart(6,'0');
+                const end=node('button','End');end.type='button';end.className='feed-active-end';
+                end.title='End this running chat';end.setAttribute('aria-label','End '+handle);
+                end.addEventListener('click',event=>{
+                    event.preventDefault();event.stopPropagation();
+                    if(!window.confirm('End the running chat '+handle+'?')) return;
+                    endRun(run,end);
+                });
+                entry.append(end);
+            }
+            fragment.append(entry);
         }
         activeEl.replaceChildren(fragment);
+    }
+    async function endRun(run,button) {
+        if(!run||!run.chat_session_id) return;
+        if(button){button.disabled=true;button.textContent='Ending…';}
+        try {
+            const response=await fetch('/api/chat-cancel',{method:'POST',credentials:'include',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({session_id:run.chat_session_id,cancel_jobs:true})});
+            const data=await response.json().catch(()=>({}));
+            if(!response.ok||!data.success) throw new Error(data.error||'Could not end the chat');
+            if(status) status.textContent='Ended '+('CH-'+String(run.chat_session_id).padStart(6,'0'));
+            await loadActive();
+        } catch(error) {
+            if(button){button.disabled=false;button.textContent='End';}
+            if(status) status.textContent=error.message;
+        }
     }
     async function loadActive() {
         try {

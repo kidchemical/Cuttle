@@ -304,7 +304,6 @@ body.voice-mode .chat-chrome-menu {
     flex-direction: column;
     gap: 10px;
     padding: 4px 2px;
-    scroll-behavior: smooth;
 }
 
 .voice-mode-line {

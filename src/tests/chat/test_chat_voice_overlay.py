@@ -139,6 +139,7 @@ class El {
   get textContent() { return this._t + this.children.map((c) => c.textContent).join(''); }
   get lastElementChild() { return this.children[this.children.length - 1] || null; }
   appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
+  scrollTo(opts) { if (opts && typeof opts === 'object' && 'top' in opts) this.scrollTop = opts.top; }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
   removeEventListener() {}

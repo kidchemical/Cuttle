@@ -32,7 +32,15 @@
     }
 
     function isMobileShell() {
-        return !!(root.isCuttleMobile || (root.cuttleMobile && root.cuttleMobile.isNative));
+        // The chat page is an iframe inside the shell, so the native marker
+        // lives on the parent window there (same-origin read; cross-origin throws).
+        try {
+            const parent = (root.parent && root.parent !== root) ? root.parent : null;
+            return !!(root.isCuttleMobile || (root.cuttleMobile && root.cuttleMobile.isNative)
+                || (parent && (parent.isCuttleMobile || (parent.cuttleMobile && parent.cuttleMobile.isNative))));
+        } catch (_) {
+            return !!(root.isCuttleMobile || (root.cuttleMobile && root.cuttleMobile.isNative));
+        }
     }
 
     function speakKey(messageEl) {
@@ -344,9 +352,13 @@
         }
 
         /** Follow new content only for a reader already at the bottom; a reader
-         *  who scrolled up keeps their place. */
+         *  who scrolled up keeps their place. Follows instantly: smooth scrolling
+         *  animates behind a streamed reply and then snaps to the end. */
         function stickToBottom(box, wasPinned) {
-            if (box && wasPinned) box.scrollTop = box.scrollHeight;
+            if (!box || !wasPinned) return;
+            const top = box.scrollHeight;
+            if (typeof box.scrollTo === 'function') box.scrollTo({ top: top, behavior: 'auto' });
+            else box.scrollTop = top;
         }
 
         function onPhraseClick(e) {
@@ -782,7 +794,9 @@
             if (engine === 'live') {
                 // The shell owns backgrounding. An iframe presenter can disappear
                 // during a Space switch without affecting the shell's call.
-                if (!sharedVoice) await live?.stop();
+                // On the phone the microphone foreground service keeps the native
+                // call alive with the screen off, so a screen lock must not hang up.
+                if (!sharedVoice && !isMobileShell()) await live?.stop();
                 return;
             }
             if (engine === 'realtime') {

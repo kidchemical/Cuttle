@@ -36,6 +36,7 @@ import com.cuttle.mobile.notify.NetworkUtil;
 import com.cuttle.mobile.notify.ShellUpdate;
 import com.cuttle.mobile.voice.NativeMic;
 import com.cuttle.mobile.voice.LiveVoiceAudio;
+import com.cuttle.mobile.voice.VoiceCallService;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebViewClient;
 import org.json.JSONObject;
@@ -66,6 +67,15 @@ public class MainActivity extends BridgeActivity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final NativeMic nativeMic = new NativeMic();
     private final LiveVoiceAudio liveVoice = new LiveVoiceAudio(event -> mainHandler.post(() -> {
+        // A terminal native event ends the call; release the microphone
+        // foreground service even if the WebView is paused (screen off) and its
+        // JavaScript cannot run cleanup yet.
+        try {
+            String type = new org.json.JSONObject(event).optString("type");
+            if ("session.closed".equals(type) || "cuttle.error".equals(type)) {
+                VoiceCallService.stop(MainActivity.this);
+            }
+        } catch (Exception ignored) {}
         WebView view = bridge != null ? bridge.getWebView() : null;
         if (view != null) view.evaluateJavascript("window.dispatchEvent(new CustomEvent('cuttle-live-voice',{detail:" + org.json.JSONObject.quote(event) + "}));", null);
     }));
@@ -140,7 +150,9 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onPause() {
-        liveVoice.stop();
+        // A live voice call keeps running with the screen off: the microphone
+        // foreground service (started with the call) owns that lifetime, so we
+        // do NOT tear the call down here. It stops via liveVoiceStop / onDestroy.
         // Persist Set-Cookie from /api/auth/login to disk. Without flush(), a
         // force-close right after sign-in (or any cold kill) drops the session
         // and the next launch looks logged out.
@@ -154,6 +166,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onDestroy() {
         liveVoice.stop();
+        VoiceCallService.stop(this);
         nativeMic.stop();
         super.onDestroy();
     }
@@ -983,6 +996,7 @@ public class MainActivity extends BridgeActivity {
             nativeMic.stop();
             String result = liveVoice.start(MainActivity.this, base, CookieManager.getInstance().getCookie(base), id);
             if ("denied".equals(result)) mainHandler.post(() -> maybeRequestMicrophonePermission(true));
+            if ("ok".equals(result)) VoiceCallService.start(MainActivity.this);
             return result;
         }
 
@@ -990,7 +1004,10 @@ public class MainActivity extends BridgeActivity {
         public void liveVoiceMute(boolean muted) { liveVoice.mute(muted); }
 
         @JavascriptInterface
-        public void liveVoiceStop() { liveVoice.stop(); }
+        public void liveVoiceStop() {
+            liveVoice.stop();
+            VoiceCallService.stop(MainActivity.this);
+        }
 
         /** Voice-mode recording (see NativeMic): "ok", "denied" (prompts) or "error:…". */
         @JavascriptInterface

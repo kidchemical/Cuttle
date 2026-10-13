@@ -119,6 +119,12 @@ def test_feed_active_strip_and_finish_states(browser,static_server):
             body={'events':[ok,fail],'next_cursor':2,'stream_cursor':2}
         route.fulfill(content_type='application/json',body=json.dumps(body))
     page.route('**/api/agent-events**',handle)
+    cancels=[]
+    def on_cancel(route):
+        cancels.append(json.loads(route.request.post_data or '{}'))
+        route.fulfill(content_type='application/json',body=json.dumps({'success':True,'cancelled':True}))
+    page.route('**/api/chat-cancel',on_cancel)
+    page.on('dialog',lambda dialog:dialog.accept())
     try:
         page.goto(static_server+'/agent_feed.html')
         expect(page.locator('#feedActive')).to_be_visible()
@@ -130,6 +136,12 @@ def test_feed_active_strip_and_finish_states(browser,static_server):
         active_row=page.locator('.feed-active-row').first
         assert active_row.get_attribute('href')=='/chat_page.html?chat=1066'
         expect(active_row.locator('.feed-active-chat')).to_have_text('CH-001066')
+        # Any live chat can be ended from the strip (same cancel path as Stop).
+        end=page.locator('.feed-active-end')
+        expect(end).to_have_text('End')
+        end.click()
+        expect(page.locator('#feedStatus')).to_contain_text('Ended CH-001066')
+        assert cancels==[{'session_id':'1066','cancel_jobs':True}]
         expect(page.locator('.feed-step[data-state=ok]')).to_have_count(1)
         expect(page.locator('.feed-step[data-state=error]')).to_have_count(1)
         assert page.locator('.feed-step[data-state=ok] .feed-title').inner_text()=='Finished'

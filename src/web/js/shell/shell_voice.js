@@ -5,6 +5,7 @@
         let active=null, muted=false, status='', usage=null, controller=null;
         const listeners=new Map();
         const doc=win.document;
+        function isMobileShell(){try{return !!(win.isCuttleMobile||(win.cuttleMobile&&win.cuttleMobile.isNative));}catch(_){return false;}}
         const bar=doc.createElement('div');bar.hidden=true;bar.className='shell-voice-controls';bar.setAttribute('role','region');bar.setAttribute('aria-label','Active voice conversation');
         const style=doc.createElement('style');style.textContent='.shell-voice-controls{position:fixed;z-index:1600;right:16px;bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;max-width:calc(100vw - 32px);padding:10px 14px;border:1px solid var(--border-color,#41414c);border-radius:14px;background:var(--bg-secondary,#20202a);color:var(--text-primary,#fff);box-shadow:0 4px 20px #0005}.shell-voice-controls[hidden]{display:none}.shell-voice-controls button{cursor:pointer;background:transparent;color:inherit;border:1px solid #7776;border-radius:8px;padding:6px 9px}.shell-voice-controls span{font-size:12px}';
         doc.head.appendChild(style);doc.body.appendChild(bar);
@@ -47,7 +48,10 @@
             const instance=controller;
             try{await instance.start(context);}catch(err){if(active===own){status=err.message;emit('onError',status);active=null;paint();}throw err;}
         }
-        doc.addEventListener('visibilitychange',()=>{if(doc.hidden)void stop();});
+        // Desktop: leaving the tab stops the call. Phone: the microphone
+        // foreground service keeps the native call alive with the screen off,
+        // so a screen lock must NOT hang up (only pagehide / explicit End do).
+        doc.addEventListener('visibilitychange',()=>{if(doc.hidden&&!isMobileShell())void stop();});
         win.addEventListener('pagehide',()=>void stop());
         const api={start,stop,attach,isOpen:sid=>!!(active&&String(active.session_id)===String(sid)&&controller?.isOpen()),
             engine:sid=>String(active?.session_id)===String(sid)?active.engine:null};
