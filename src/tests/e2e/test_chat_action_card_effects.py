@@ -592,6 +592,9 @@ def test_raw_persisted_restart_card_recovers(browser, static_server):
         assert world.restart_status_hits >= 1
         assert world.messages_hits > msgs_before  # recovery sync ran
         assert "is-pending" not in (card.get_attribute("class") or "")
+        # The retained restart id is a receipt, not evidence of running work.
+        from playwright.sync_api import expect
+        expect(frame.locator('#chatSessionRunningIcon')).to_be_hidden()
         assert errors == []
     finally:
         page.close()
@@ -1469,6 +1472,7 @@ def test_restart_submission_shows_waiting_count_before_status_poll(browser, stat
         world.restart_status['status']['state'] = 'healthy'
         expect(progress).to_contain_text('Flask restarted', timeout=10000)
         assert 'is-pending' not in (card.get_attribute('class') or '')
+        expect(frame.locator('#chatSessionRunningIcon')).to_be_hidden()
         assert not errors
     finally:
         page.close()

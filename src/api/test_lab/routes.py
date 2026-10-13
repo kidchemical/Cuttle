@@ -86,4 +86,7 @@ def run_route(run_id: str):
 @test_lab_pages_bp.get("/test_lab_page.html")
 @authenticated_required
 def test_lab_page():
+    disabled = _disabled()
+    if disabled:
+        return disabled
     return send_from_directory(Path(__file__).resolve().parents[2] / "web", "test_lab_page.html")

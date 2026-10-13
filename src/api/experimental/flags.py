@@ -50,6 +50,8 @@ class FlagSpec:
         "since",
         "needs_restart",
         "context_bundle",
+        "exclusive_group",
+        "conflicts",
     )
 
     def __init__(
@@ -64,6 +66,8 @@ class FlagSpec:
         since: str = "",
         needs_restart: bool = False,
         context_bundle: bool = False,
+        exclusive_group: str = "",
+        conflicts: tuple[str, ...] = (),
     ) -> None:
         self.id = str(id or "").strip().lower()
         self.label = str(label or "")
@@ -74,6 +78,8 @@ class FlagSpec:
         self.since = str(since or "")
         self.needs_restart = bool(needs_restart)
         self.context_bundle = bool(context_bundle)
+        self.exclusive_group = str(exclusive_group or "").strip()
+        self.conflicts = tuple(str(value).strip().lower() for value in conflicts)
 
     def to_dict(self, enabled: Optional[bool] = None) -> Dict[str, Any]:
         return {
@@ -86,6 +92,8 @@ class FlagSpec:
             "since": self.since,
             "needs_restart": self.needs_restart,
             "context_bundle": self.context_bundle,
+            "exclusive_group": self.exclusive_group,
+            "conflicts": list(self.conflicts),
             "enabled": self.default if enabled is None else bool(enabled),
         }
 
@@ -160,26 +168,58 @@ def is_enabled(flag_id: Any) -> bool:
     spec = get_flag(flag_id)
     if spec is None:
         return False
-    if kill_switch_active():
-        return False
-    stored = _stored_flags().get(spec.id)
-    if isinstance(stored, bool):
-        return stored
-    return spec.default
+    return enabled_flags().get(spec.id, False)
+
+
+class FlagConflictError(ValueError):
+    """An atomic enable was rejected because another feature is configured on."""
+
+    def __init__(self, flag_id, conflicts):
+        self.flag_id = flag_id
+        self.conflicts = list(conflicts)
+        labels = ", ".join(FLAG_SPECS[key].label for key in self.conflicts)
+        super().__init__(f"Disable {labels} before enabling {FLAG_SPECS[flag_id].label}.")
+
+
+def incompatible_flags(flag_id: str) -> list[str]:
+    """Symmetric conflicts, declared once in registry metadata."""
+    spec = get_flag(flag_id)
+    if not spec:
+        return []
+    return [other.id for other in FLAG_SPECS.values() if other.id != spec.id and (
+        other.id in spec.conflicts or spec.id in other.conflicts or
+        (spec.exclusive_group and spec.exclusive_group == other.exclusive_group))]
+
+
+def configured_flags(stored=None) -> Dict[str, bool]:
+    stored = _stored_flags() if stored is None else stored
+    return {spec.id: stored.get(spec.id) if isinstance(stored.get(spec.id), bool) else spec.default
+            for spec in FLAG_SPECS.values()}
+
+
+def resolve_flags(configured: Dict[str, bool]) -> Dict[str, bool]:
+    # Old settings or hand edits may contain conflicts. Fail closed for every
+    # participant, without silently choosing or rewriting the user's preference.
+    return {key: on and not any(configured.get(other) for other in incompatible_flags(key))
+            for key, on in configured.items()}
 
 
 def enabled_flags() -> Dict[str, bool]:
     """Every registered flag id → resolved value (for bulk client delivery)."""
     disabled = kill_switch_active()
-    stored = {} if disabled else _stored_flags()
-    return {spec.id: False if disabled else stored.get(spec.id) if isinstance(stored.get(spec.id), bool) else spec.default
-            for spec in FLAG_SPECS.values()}
+    return {key: False for key in FLAG_SPECS} if disabled else resolve_flags(configured_flags())
 
 
 def flags_payload() -> Dict[str, Any]:
     """Wire shape for GET /api/experimental/flags."""
-    resolved = enabled_flags()
+    configured = configured_flags()
+    resolved = resolve_flags(configured) if not kill_switch_active() else {key: False for key in configured}
     flags = [spec.to_dict(resolved.get(spec.id, spec.default)) for spec in FLAG_SPECS.values()]
+    for flag in flags:
+        flag["configured_enabled"] = configured[flag["id"]]
+        flag["incompatible_with"] = incompatible_flags(flag["id"])
+        flag["blocked_by"] = [{"id": key, "label": FLAG_SPECS[key].label}
+                              for key in flag["incompatible_with"] if configured.get(key)]
     flags.sort(key=lambda f: (f["category"], f["label"]))
     return {
         "flags": flags,
@@ -205,10 +245,17 @@ def set_enabled(flag_id: Any, value: Any) -> Dict[str, Any]:
     from managers.settings_manager import get_settings_manager
 
     sm = get_settings_manager()
+    rejection = []
     def apply(current):
         # Read and change ONE override under the settings store's lock.
         # Preserve unknown ids too: an older process must not erase newer flags.
         updated = dict(current) if isinstance(current, dict) else {}
+        if enabled:
+            configured = configured_flags(updated)
+            blocked = [key for key in incompatible_flags(spec.id) if configured.get(key)]
+            if blocked:
+                rejection.append(FlagConflictError(spec.id, blocked))
+                return updated
         if enabled == spec.default:
             updated.pop(spec.id, None)
         else:
@@ -217,6 +264,8 @@ def set_enabled(flag_id: Any, value: Any) -> Dict[str, Any]:
 
     if sm.update_setting(SETTINGS_KEY, apply) is False:
         raise OSError("Could not persist experimental flags")
+    if rejection:
+        raise rejection[0]
     return spec.to_dict(is_enabled(spec.id))
 
 

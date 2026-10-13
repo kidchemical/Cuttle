@@ -27,7 +27,7 @@ def mutate(conn, sid, uid, operation, value, expected, parse, normalize, claim_i
         return None
     if claim_id is not None and (not isinstance(claim_id, str) or not claim_id or len(claim_id) > 160):
         raise ValueError('Invalid queue claim id')
-    if operation == 'take' and claim_id:
+    if operation in ('take', 'take_one') and claim_id:
         receipt = conn.execute('SELECT result FROM chat_followup_claims WHERE session_id=? AND claim_id=?', (sid, claim_id)).fetchone()
         if receipt:
             # The claimed batch is stable, but other clients may have changed
@@ -50,12 +50,17 @@ def mutate(conn, sid, uid, operation, value, expected, parse, normalize, claim_i
     elif operation == 'take':
         taken = [x for x in items if not x.get('paused')]
         items = [x for x in items if x.get('paused')]
+    elif operation == 'take_one':
+        taken = [x for x in items if x.get('id') == value]
+        items = [x for x in items if x.get('id') != value]
+    else:
+        raise ValueError('Unknown follow-up operation')
     revision = before['revision']
     if items != before['followups']:
         revision += 1
         conn.execute('UPDATE chat_sessions SET followup_queue=?, followup_revision=?, last_activity=CURRENT_TIMESTAMP WHERE id=?', (json.dumps(items), revision, sid))
     result = {'followups': items, 'revision': revision, 'taken': taken}
-    if operation == 'take' and claim_id and taken:
+    if operation in ('take', 'take_one') and claim_id and taken:
         conn.execute('INSERT INTO chat_followup_claims(session_id, claim_id, result) VALUES (?,?,?)', (sid, claim_id, json.dumps(result)))
     conn.commit()
     return result

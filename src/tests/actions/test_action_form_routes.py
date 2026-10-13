@@ -130,7 +130,13 @@ def test_run_success_lock_and_cancel(tmp_path, monkeypatch):
         af, "execute_inline_action", lambda token, session_id=None: {"success": True, "response": "ok"}
     )
     # One-shot lock persists through history: write the card there first.
-    text = "<cuttle_action_form>" + _json.dumps(_choice_spec(ctx["owner_sid"])) + "</cuttle_action_form>"
+    from api import flask_restart as restart
+    monkeypatch.setattr(restart, 'request_restart', lambda **kw: {
+        'success': True, 'state': 'healthy', 'response': 'ok',
+    })
+    one_shot = _choice_spec(ctx["owner_sid"])
+    one_shot['options'][0]['params']['mode'] = 'graceful'
+    text = "<cuttle_action_form>" + _json.dumps(one_shot) + "</cuttle_action_form>"
     out, n = rewrite_action_forms(
         text, session_id=f"db_session_{ctx['owner_sid']}", project_path=str(tmp_path)
     )
@@ -409,6 +415,70 @@ def test_native_restart_card_still_requires_owner(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.get_json()['success'] is False
     assert 'Owner privileges required' in response.get_json()['toast']
+
+
+def test_native_status_does_not_consume_restart_chooser(tmp_path, monkeypatch):
+    from api import action_forms as af, flask_restart as restart
+    ctx = _ctx(tmp_path, monkeypatch)
+    monkeypatch.setattr(restart, 'status_snapshot', lambda **kw: {
+        'success': True, 'status': {'state': 'healthy'},
+        'active_work': {'active_count': 2},
+    })
+    spec = af.normalize_action_form_spec(_choice_spec(ctx['owner_sid']), project_path=str(tmp_path))
+    fid = af.register_action_form(session_id=f"db_session_{ctx['owner_sid']}", project_path=str(tmp_path), spec=spec)
+    client = _as(ctx['client'], ctx['owner'])
+    for _ in range(2):
+        result = client.post('/api/action-form/run', json={
+            'token': fid, 'selection': {'option': 'a'}, 'session_id': ctx['owner_sid'],
+        }).get_json()
+        assert result['success'] and result['reusable']
+        assert result['lock'] == 'none'
+        assert result['toast'] == 'Flask restart state: healthy. Active tasks: 2.'
+        assert not result.get('flask_restart')
+    calls = []
+    monkeypatch.setattr(restart, 'request_restart', lambda **kw: calls.append(kw) or {
+        'success': True, 'restart_id': 'new', 'state': 'waiting_for_idle',
+    })
+    result = client.post('/api/action-form/run', json={
+        'token': fid, 'selection': {'option': 'when-idle'}, 'session_id': ctx['owner_sid'],
+    }).get_json()
+    assert result['success'] and not result.get('already_locked')
+    assert calls[0]['mode'] == 'when-idle'
+
+
+def test_cold_boot_generation_reuse_does_not_block_when_idle(tmp_path, monkeypatch):
+    from api import action_forms as af, flask_restart as restart
+    from api.action_replay import claim, key
+    ctx = _ctx(tmp_path, monkeypatch)
+    monkeypatch.setenv('CUTTLE_FLASK_GENERATION', '1')
+    monkeypatch.setattr(restart, 'restart_dispatch_scope', lambda: 'new-process:123')
+    # Real persisted receipt from the old generation-only key.
+    assert claim(key('form:flask-restart-g1:when-idle', 'flask.restart', '', ''))
+    calls = []
+    monkeypatch.setattr(restart, 'request_restart', lambda **kw: calls.append(kw) or {
+        'success': True, 'state': 'waiting_for_idle', 'restart_id': 'fresh',
+        'response': 'Waiting for 2 active tasks',
+    })
+    spec = af.normalize_action_form_spec({
+        'options': [{'id': 'idle', 'action': 'flask.restart', 'params': {'mode': 'when-idle'}}],
+    }, project_path=str(tmp_path))
+    fid = af.register_action_form(session_id=f"db_session_{ctx['owner_sid']}", project_path=str(tmp_path), spec=spec,
+                                  form_id=restart.shared_restart_form_id())
+    assert fid == 'flask-restart-g1'
+    client = _as(ctx['client'], ctx['owner'])
+    payload = {'token': fid, 'selection': {'option': 'idle'}, 'session_id': ctx['owner_sid']}
+    result = client.post('/api/action-form/run', json=payload).get_json()
+    assert result['success'], result
+    assert result['flask_restart']['restart_id'] == 'fresh'
+    # A second click in this incarnation must still be deduplicated.
+    duplicate = client.post('/api/action-form/run', json=payload).get_json()
+    assert duplicate['success'] is False
+    assert len(calls) == 1
+    # Another cold boot with the same generation gets a new dispatch scope.
+    monkeypatch.setattr(restart, 'restart_dispatch_scope', lambda: 'next-process:456')
+    fresh = client.post('/api/action-form/run', json=payload).get_json()
+    assert fresh['success'], fresh
+    assert len(calls) == 2
 
 
 def test_when_idle_returns_own_restart_identity_without_reading_global_status(tmp_path, monkeypatch):

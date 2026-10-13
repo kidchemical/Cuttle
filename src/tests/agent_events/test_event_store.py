@@ -77,3 +77,25 @@ def test_summary_only_mode_never_writes_full_thinking(tmp_path,monkeypatch):
         assert event['compacted']=='summary_only'
         assert not list((tmp_path/'blobs').rglob('*.gz'))
     finally:writer.close()
+
+
+def test_surrogate_text_persists_instead_of_poisoning_batch(tmp_path):
+    store=EventStore(tmp_path)
+    store.write_batch([('event','q',{'kind':'writing','block_id':'a','text':'split \udc80 tail'})])
+    events=store.events('q',full=True)
+    assert len(events)==1 and events[0]['text']=='split ? tail'
+
+
+def test_writer_drains_surrogate_pending_batch(tmp_path):
+    import gzip,json
+    from api.agent_events.writer import EventWriter
+    pending=tmp_path/'pending';pending.mkdir()
+    payload=[['event','q',{'kind':'writing','block_id':'a','text':'x \udc80'}]]
+    (pending/'poison.json.gz').write_bytes(gzip.compress(json.dumps(payload).encode()))
+    writer=EventWriter(tmp_path)
+    try:
+        writer.submit('event','q',{'kind':'writing','block_id':'b','text':'ok'})
+        writer.flush()
+        assert not list(pending.glob('*.json.gz'))
+        assert {e['block_id'] for e in EventStore(tmp_path).events('q',full=True)}=={'a','b'}
+    finally:writer.close()

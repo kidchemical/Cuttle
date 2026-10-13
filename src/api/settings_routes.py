@@ -97,6 +97,28 @@ SETTING_FAMILIES = (
 
 # --- validators (owned here) ---------------------------------------------
 
+@settings_bp.route('/settings/voice-chat', methods=['GET'])
+@authenticated_required
+def voice_chat_settings():
+    from api.voice_live.settings import catalog
+    return jsonify(success=True, **catalog())
+
+
+@settings_bp.route('/settings/voice-chat', methods=['POST'])
+@owner_required
+def update_voice_chat_settings():
+    from api.voice_live.settings import catalog, save
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify(success=False, error='Expected JSON object.'), 400
+    try:
+        save(body.get('voice_chat') if isinstance(body.get('voice_chat'), dict) else body)
+        return jsonify(success=True, **catalog())
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except RuntimeError as exc:
+        return jsonify(success=False, error=str(exc)), 500
+
 def validate_channel_update(data: dict) -> tuple[bool, str]:
     """Channel writes accept only the live channels."""
     if data.get('channel') != 'webchat':

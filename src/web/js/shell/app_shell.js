@@ -25,6 +25,7 @@ const splitContainer = document.getElementById('splitContainer');
 
 // ── Restore rail & active page from session ──────────────────
 const STORAGE_PAGE = 'shell_page';
+const shellVoice = CuttleShellVoice.create({win:window, navigate:sid=>navigate(0,'/chat_page.html?chat='+encodeURIComponent(sid))});
 const STORAGE_RAIL = 'shell_rail_collapsed';
 const STORAGE_SPLITS = 'shell_split_count';
 /** Durable multi-pane layout (survives browser/Electron close). */

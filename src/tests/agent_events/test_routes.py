@@ -69,3 +69,18 @@ def test_active_runs_lists_only_running_agents(client):
     assert [r['query_id'] for r in payload['runs']]==['live']
     assert payload['runs'][0]['agent_id']=='codex'
     assert payload['runs'][0]['chat_session_id']=='1066'
+
+
+def test_active_feed_recovers_prior_boot_without_hiding_current_run(client):
+    store=EventStore(state_dir())
+    store.write_batch([
+        ('run','orphan',{'harness':{'agent_id':'opencode'},'user_context':{'web_ui':True}}),
+        ('run','current',{'harness':{'agent_id':'codex'},'user_context':{'web_ui':True}}),
+    ])
+    with store.connection() as conn:
+        conn.execute("UPDATE runs SET started_at=1 WHERE query_id='orphan'")
+    payload=client.get('/api/agent-events/active').get_json()
+    assert [r['query_id'] for r in payload['runs']]==['current']
+    log=client.get('/api/agent-events/runs/orphan/log').get_json()
+    assert log['executing'] is False
+    assert log['capture_interrupted'] is True

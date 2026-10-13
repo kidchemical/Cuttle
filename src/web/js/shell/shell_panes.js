@@ -177,6 +177,12 @@
             rememberChatHandleFromPage(colIdx, page);
             const state = getState(colIdx);
             if (state.page === page && !(opts && opts.force)) return;
+            // A space switch (force) that lands this pane on the same existing
+            // chat reuses the live frame: a reload would destroy the page's
+            // state (voice mode, streams) for no gain — an existing chat's
+            // composer draft is keyed by chat id, not by space. Blank/new chats
+            // still reload so their per-space draft scope is re-read.
+            if (opts && opts.force && shellPagesEqual(state.page, page) && !isShellNewChatPage(page)) return;
             console.log('[App Shell] Navigating to:', page);
             if (colIdx === 0 && !applyingShellHistory && !(opts && opts.history === 'none')) pushShellBackEntry(state.page);
             setState(colIdx, page);

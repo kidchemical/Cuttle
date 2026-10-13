@@ -11,6 +11,7 @@ import base64
 from flask import Blueprint, jsonify, request
 
 from api import voice_narrator
+from api.voice_usage import attributed_call
 from api.http_authz import authenticated_required
 
 voice_narrator_bp = Blueprint("voice_narrator", __name__, url_prefix="/api/voice-narrator")
@@ -20,6 +21,7 @@ _DISABLED = {"success": False, "disabled": True, "error": "Voice narrator is dis
 
 @voice_narrator_bp.route("/narrate", methods=["POST"])
 @authenticated_required
+@attributed_call
 def narrate():
     if not voice_narrator.is_enabled():
         return jsonify(_DISABLED)

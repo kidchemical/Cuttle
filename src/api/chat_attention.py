@@ -12,7 +12,7 @@ import re
 _CARDS = re.compile(r'<cuttle_action_form(?:_pending)?\b([^>]*)>(.*?)</cuttle_action_form(?:_pending)?\s*>', re.I | re.S)
 
 
-def awaiting_input(content: str) -> bool:
+def awaiting_input(content: str, *, restart_generation: int | None = None) -> bool:
     """Only the current assistant turn's unlocked interactive cards need input."""
     for attrs, body in _CARDS.findall(content or ''):
         try:
@@ -20,6 +20,15 @@ def awaiting_input(content: str) -> bool:
         except (TypeError, ValueError):
             continue
         if not isinstance(spec, dict) or spec.get('locked') or re.search(r'\blocked=["\']1["\']', attrs):
+            continue
+        group = str(spec.get('restartFormGroup') or spec.get('id') or '')
+        if not group:
+            match = re.search(r'\bid=["\']([^"\']+)["\']', attrs)
+            group = match[1] if match else ''
+        epoch = re.fullmatch(r'flask-restart-g(\d+)', group, re.I)
+        if epoch and restart_generation is not None and restart_generation > int(epoch[1]):
+            # Linked controllers lock on the client after a restart, even when
+            # the restart was requested from a different chat/device.
             continue
         # Watch/restart execution is running work, separately from a question.
         if spec.get('watch') or spec.get('restartId'):
@@ -88,7 +97,18 @@ def get_many(conn, user_id: int, ids: list[int]) -> dict:
     marks = ','.join('?' for _ in ids)
     rows = conn.execute(f'''SELECT a.* FROM chat_attention a JOIN chat_sessions s ON s.id=a.session_id
         WHERE s.user_id=? AND s.is_active=1 AND s.id IN ({marks})''', [user_id, *ids]).fetchall()
-    return {r['session_id']: snapshot(r) for r in rows}
+    result = {r['session_id']: snapshot(r) for r in rows}
+    awaiting = [r for r in rows if r['awaiting_input']]
+    if awaiting:
+        marks = ','.join('?' for _ in awaiting)
+        replies = conn.execute(f'SELECT chat_session_id, content FROM chat_messages WHERE id IN ({marks})',
+                               [r['reply_id'] for r in awaiting]).fetchall()
+        from api.flask_restart import live_flask_generation
+        generation = live_flask_generation()
+        for reply in replies:
+            result[reply['chat_session_id']]['awaitingInput'] = awaiting_input(
+                reply['content'], restart_generation=generation)
+    return result
 
 
 def mark(conn, session_id: int, user_id: int, data: dict) -> dict | None:
@@ -110,6 +130,5 @@ def mark(conn, session_id: int, user_id: int, data: dict) -> dict | None:
         through = min(through, row['reply_id'])
         conn.execute('''UPDATE chat_attention SET read_id=MAX(read_id,?), manual_unread=0,
             legacy_imported=1, revision=revision+1 WHERE session_id=? AND (read_id<? OR manual_unread=1 OR legacy_imported=0)''', (through, session_id, through))
-    result = snapshot(conn.execute('SELECT * FROM chat_attention WHERE session_id=?', (session_id,)).fetchone())
     conn.commit()
-    return result
+    return get_many(conn, user_id, [session_id]).get(session_id)

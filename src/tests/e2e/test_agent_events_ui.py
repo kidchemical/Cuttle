@@ -87,6 +87,7 @@ def test_feed_and_full_detail(browser,static_server):
         page.locator('.feed-step summary').click()
         expect(page.locator('.feed-step pre')).to_contain_text('+after')
         assert page.locator('.feed-step a').get_attribute('href').endswith('&seq=1')
+        assert page.locator('.feed-run a').last.get_attribute('href')=='/chat_page.html?chat=1066'
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         page.screenshot(path='temp/agent-feed-desktop.png',full_page=True)
         page.set_viewport_size({'width':390,'height':800})
@@ -127,7 +128,7 @@ def test_feed_active_strip_and_finish_states(browser,static_server):
         assert page.locator('.feed-active-row .typing-orbit--feed').count()==1
         assert page.locator('.feed-active-dots i').count()==3
         active_row=page.locator('.feed-active-row').first
-        assert active_row.get_attribute('href').endswith('session_id=1066')
+        assert active_row.get_attribute('href')=='/chat_page.html?chat=1066'
         expect(active_row.locator('.feed-active-chat')).to_have_text('CH-001066')
         expect(page.locator('.feed-step[data-state=ok]')).to_have_count(1)
         expect(page.locator('.feed-step[data-state=error]')).to_have_count(1)

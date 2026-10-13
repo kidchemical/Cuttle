@@ -14,6 +14,9 @@ class VoiceWorld(AgentWorld):
                    'voices':{'openai':'alloy'},'speed':1,'stability':.5,'summarize_provider':'anthropic',
                    'summarize_models':{'anthropic':'haiku-new'},'summarize_efforts':{'anthropic':{'haiku-new':'high'}}}
         self.requests=[]; self.pending=None; self.delay=False; self.fail_models=False
+        self.realtime={'model':'gpt-realtime-2.1','voice':'marin','transcription_model':'gpt-4o-mini-transcribe'}
+        self.realtime_saves=[]; self.realtime_enabled=False
+        self.live_enabled=False; self.voice_chat={'engine':'auto','model':'gpt-live-1','voice':'marin','idle_seconds':150};self.engine_saves=[]
 
     def models(self,pid,op):
         mids=['haiku-new','haiku-budget'] if pid=='anthropic' else ['gpt-text'] if op=='text_generation' else ['tts-new','tts-old'] if pid=='openai' else ['speech-new']
@@ -29,6 +32,23 @@ class VoiceWorld(AgentWorld):
                     'speed_range':[.25,4] if pid=='openai' else [.7,1.2],'supports_stability':pid=='elevenlabs','supports_fetch_voices':pid=='elevenlabs'} for pid in ('openai','elevenlabs')],
                   'summarize_providers':[{'id':pid,'label':pid.title(),'configured':True,'default_model':'haiku-new' if pid=='anthropic' else 'gpt-text',
                     'effective_model':'haiku-new' if pid=='anthropic' else 'gpt-text','suggested_models':['haiku-new'] if pid=='anthropic' else ['gpt-text']} for pid in ('openai','anthropic')]}
+        elif path=='/api/voice-stt/realtime/settings':
+            if route.request.method=='POST':
+                self.realtime_saves.append(json.loads(route.request.post_data))
+                self.realtime=self.realtime_saves[-1].get('voice_realtime',self.realtime)
+            data={'success':True,'voice_realtime':self.realtime,
+                  'models':[{'id':'gpt-realtime-2.1','label':'gpt-realtime-2.1'},{'id':'gpt-realtime-2.1-mini','label':'mini'}],
+                  'voices':[{'id':'marin','label':'marin'},{'id':'cedar','label':'cedar'}],
+                  'transcription_models':[{'id':'gpt-4o-mini-transcribe','label':'mini'},{'id':'whisper-1','label':'whisper-1'}],
+                  'defaults':{'model':'gpt-realtime-2.1','voice':'marin','transcription_model':'gpt-4o-mini-transcribe'},
+                  'enabled':self.realtime_enabled,'configured':True}
+        elif path=='/api/settings/voice-chat':
+            if route.request.method=='POST':
+                patch=json.loads(route.request.post_data);self.engine_saves.append(patch);self.voice_chat.update(patch)
+            engine=self.voice_chat['engine']
+            if engine=='auto':engine='live' if self.live_enabled else 'realtime' if self.realtime_enabled else 'tts'
+            data={'success':True,'voice_chat':self.voice_chat,'engine':engine,'live_enabled':self.live_enabled,'realtime_enabled':self.realtime_enabled,'configured':True,
+                  'models':[{'id':'gpt-live-1'}],'voices':[{'id':'marin'},{'id':'cedar'}]}
         elif path=='/api/settings/chat-tts':
             if route.request.method=='POST':
                 self.saves.append(json.loads(route.request.post_data))
@@ -52,6 +72,7 @@ class VoiceWorld(AgentWorld):
 def show_voice(page):
     expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
     page.evaluate("CuttleSettingsTabs.setTab('voice')")
+    page.evaluate("document.getElementById('voiceModeSelect').value = 'tts'; onVoiceModeChanged();")
     page.locator('#voiceDetails').evaluate('(element) => element.open = true')
 
 
@@ -103,3 +124,61 @@ def test_slow_previous_speech_catalog_cannot_replace_new_provider(browser,static
         world.pending.fulfill(content_type='application/json',body=json.dumps(world.models('openai','speech_generation')))
         assert page.locator('#chatTtsModel option[value="tts-old"]').count()==0
     finally: page.close()
+
+
+def test_voice_realtime_mode_configures_and_saves(browser,static_server):
+    world=VoiceWorld(); world.realtime_enabled=True
+    page=open_settings(browser,static_server,world,width=390); errors=[]
+    page.on('pageerror',lambda error:errors.append(str(error)))
+    try:
+        expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
+        page.evaluate("CuttleSettingsTabs.setTab('voice')")
+        expect(page.locator('#voiceRealtimeConfig')).to_be_visible()
+        expect(page.locator('#voiceTtsConfig')).to_be_hidden()
+        expect(page.locator('#voiceRealtimeModel')).to_have_value('gpt-realtime-2.1')
+        choose(page, page.locator('#voiceRealtimeModel'), 'gpt-realtime-2.1-mini')
+        choose(page, page.locator('#voiceRealtimeVoice'), 'cedar')
+        page.evaluate('saveVoiceRealtimeSettings()')
+        expect(page.locator('.cuttle-toast').last).to_contain_text('Live voice saved')
+        assert world.realtime['model']=='gpt-realtime-2.1-mini' and world.realtime['voice']=='cedar'
+        page.evaluate("document.getElementById('voiceModeSelect').value = 'tts'; onVoiceModeChanged();")
+        expect(page.locator('#voiceTtsConfig')).to_be_visible()
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        assert not errors,errors
+    finally: page.close()
+
+
+def test_live_mode_is_gated_and_saved_as_actual_engine(browser, static_server):
+    world=VoiceWorld();world.live_enabled=True
+    page=open_settings(browser,static_server,world)
+    try:
+        expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
+        page.evaluate("CuttleSettingsTabs.setTab('voice')")
+        expect(page.locator('#voiceLiveConfig')).to_be_visible()
+        expect(page.locator('#voiceRealtimeConfig')).to_be_hidden()
+        expect(page.locator('#voiceModeSelect')).to_have_value('live')
+        choose(page,page.locator('#voiceLiveVoice'),'cedar')
+        page.locator('#voiceLiveIdle').fill('300')
+        with page.expect_response('**/api/settings/voice-chat'):
+            page.get_by_role('button',name='Save GPT-Live voice').click()
+        expect(page.locator('#voiceLiveVoice')).to_have_value('cedar')
+        page.wait_for_function("document.getElementById('voiceLiveStatus').textContent.includes('Cuttle agent')")
+        assert world.voice_chat['engine']=='live'
+        assert world.voice_chat['voice']=='cedar'
+        assert world.voice_chat['idle_seconds']==300
+        world.live_enabled=False
+        page.evaluate('voiceProvidersController().load()')
+        expect(page.locator('#voiceLiveConfig')).to_be_hidden()
+        expect(page.locator('#voiceModeSelect option[value="live"]')).to_have_count(0)
+    finally:page.close()
+
+
+def test_experimental_conflicts_disable_toggle_with_explanation(browser, static_server):
+    world=VoiceWorld()
+    page=open_settings(browser,static_server,world)
+    try:
+        html=page.evaluate("renderExperimentalFlag({id:'voice_live',label:'GPT-Live',enabled:false,configured_enabled:false,blocked_by:[{id:'voice_realtime',label:'OpenAI Realtime'}]})")
+        page.evaluate("html=>{document.getElementById('experimentalFlagList').innerHTML=html;}",html)
+        expect(page.locator('#expFlag-voice_live')).to_be_disabled()
+        expect(page.locator('[data-experimental-flag="voice_live"]')).to_contain_text('first disable OpenAI Realtime')
+    finally:page.close()

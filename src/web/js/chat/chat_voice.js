@@ -10,6 +10,8 @@
     const Stars = root.CuttleChatVoiceStars;
     const Narrator = root.CuttleChatVoiceNarrator;
     const Recorder = root.CuttleChatVoiceRecorder;
+    const Realtime = root.CuttleChatVoiceRealtime;
+    const Live = root.CuttleChatVoiceLive;
     const Waveform = root.CuttleChatVoiceWaveform || null;
 
     /** Give up waiting for in-flight phrase transcriptions after this long. */
@@ -88,6 +90,11 @@
         /** 'webspeech' (browser recognizer) or 'server' (record + /api/voice-stt). */
         let engine = 'webspeech';
         let recorder = null;
+        let realtime = null;
+        let live = null, sharedVoice = null, detachVoice = null, voiceChatId = null;
+        let realtimeQueued = false;
+        /** Priced Realtime session usage, summed from server-priced deltas. */
+        let realtimeUsage = null;
         let speaking = false;
         let transcribing = 0;
         /** Engine + narrator flags resolve on enter; listening waits for them. */
@@ -100,6 +107,30 @@
 
         function overlayEl() {
             return byId('voiceModeOverlay');
+        }
+
+        /** Voice mode is per chat; remember it so the shell's space-switch frame
+         *  reload re-enters voice view instead of dropping back to chat view. */
+        function voiceModeStorageKey() {
+            try {
+                const search = root.location && root.location.search ? root.location.search : '';
+                const params = new root.URLSearchParams(search);
+                const id = params.get('chat') || params.get('session');
+                return id ? 'cuttle.voiceMode.' + id : '';
+            } catch (_) { return ''; }
+        }
+        function rememberVoiceMode(on) {
+            const key = voiceModeStorageKey();
+            if (!key) return;
+            try {
+                if (on) root.sessionStorage.setItem(key, '1');
+                else root.sessionStorage.removeItem(key);
+            } catch (_) {}
+        }
+        function voiceModeRemembered() {
+            const key = voiceModeStorageKey();
+            if (!key) return false;
+            try { return root.sessionStorage.getItem(key) === '1'; } catch (_) { return false; }
         }
 
         function setStatus(text) {
@@ -129,6 +160,7 @@
                 else if (phase === 'speaking') mic.title = 'Tap to interrupt and talk';
                 else if (busy) mic.title = 'Tap to talk to the running agent';
                 else mic.title = 'Tap to talk';
+                if ((engine === 'live' && live?.isOpen()) || (engine === 'realtime' && realtime && realtime.isOpen())) mic.title = 'Disconnect voice conversation';
                 mic.setAttribute('aria-label', mic.title);
             }
             const watch = byId('voiceModeWatchBtn');
@@ -145,7 +177,8 @@
             const hint = byId('voiceModeHint');
             if (hint) {
                 if (!hint.dataset.base) hint.dataset.base = hint.textContent;
-                const label = engine === 'server'
+                const label = engine === 'live' ? 'GPT-Live · tap mic to connect/disconnect' : engine === 'realtime' ? 'OpenAI Realtime · tap mic to connect/disconnect'
+                    : engine === 'server'
                     ? (Recorder.sourceKind() === 'native' ? 'Server transcription (app mic)' : 'Server transcription')
                     : (wantServer ? 'Browser speech — server transcription needs ' + missing.join(', ') : '');
                 hint.textContent = label ? hint.dataset.base + ' · ' + label : hint.dataset.base;
@@ -223,12 +256,21 @@
 
         /** Session-total strip; hidden until some usage is known. */
         function renderSessionUsage() {
+            const connection = byId('voiceModeConnectionUsage');
+            if(connection){
+                const value=realtimeUsage&&host.usageHtml?.({...realtimeUsage,usage_source:'voice'});
+                connection.hidden=!active||!['live','realtime'].includes(engine)||!value;
+                connection.innerHTML=value?'<span class="voice-mode-session-usage-label">Voice connection</span>'+value:'';
+            }
             const box = byId('voiceModeSessionUsage');
             if (!box) return;
             let html = '';
             try {
-                if (typeof host.sessionUsage === 'function' && typeof host.usageHtml === 'function') {
-                    const total = host.sessionUsage();
+                if (typeof host.usageHtml === 'function') {
+                    let total = null;
+                    if (typeof host.sessionUsage === 'function') total = host.sessionUsage();
+                    // Production totals already include the durable voice ledger.
+                    if (realtimeUsage && !host.refreshUsage) total = host.sumUsage ? host.sumUsage([total, realtimeUsage]) : (total || realtimeUsage);
                     if (total) html = host.usageHtml(total) || '';
                 }
             } catch (_) {
@@ -328,6 +370,52 @@
             box.scrollTop = box.scrollHeight;
         }
 
+        function appendLiveTranscript(role, text, partial) {
+            const box = byId('voiceModeTranscript');
+            const last = box && box.lastElementChild;
+            if (partial && last && last.dataset.liveRole === role) {
+                const body = last.lastElementChild;
+                if (body) body.textContent += text;
+                return;
+            }
+            appendTranscriptLine(role, text);
+            if (partial && box?.lastElementChild) box.lastElementChild.dataset.liveRole = role;
+        }
+
+        async function voiceContext() {
+            let id = host.sessionId?.();
+            if (!id && host.adoptSession) {
+                const r = await host.fetch('/api/auth/sessions', {method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body:JSON.stringify({session_name:'Voice conversation'})});
+                const d = await r.json();
+                if (!r.ok || !d.success) throw new Error('Could not create the originating voice chat');
+                id = d.session_id; host.adoptSession(id); rememberVoiceMode(true);
+            }
+            if (!id) throw new Error('Open or create a chat before connecting voice');
+            voiceChatId = String(id).replace(/^db_session_/, '').replace(/^CH-0*/, '');
+            const probe = '__voice_request__', composed = host.compose(probe);
+            return {session_id:voiceChatId, engine, prefix:composed.endsWith(probe) ? composed.slice(0,-probe.length) : '', chat_request:host.requestContext?.()||{}};
+        }
+
+        function conversationCallbacks() {
+            return {onTranscript:appendLiveTranscript, alive:()=>{try{return root.parent===root||!!root.frameElement?.isConnected;}catch(_){return false;}},
+                onStatus:text=>{if(active)setPhase(text.startsWith('Disconnected')?'idle':text.startsWith('Speaking')?'speaking':'listening',text);},
+                onError:text=>{if(active)setPhase('idle',text);},
+                onUsage:priced=>{realtimeUsage=priced;host.refreshUsage?.();renderSessionUsage();}};
+        }
+
+        async function startLive() {
+            host.stopSpeech();
+            const context = await voiceContext();
+            try { sharedVoice = root.parent !== root ? root.parent.cuttleVoiceRuntime : null; } catch (_) {}
+            if (sharedVoice) {
+                detachVoice?.(); detachVoice=sharedVoice.attach(context.session_id,conversationCallbacks());
+                live={start:()=>sharedVoice.start(context),stop:()=>sharedVoice.engine(context.session_id)?sharedVoice.stop():Promise.resolve(),isOpen:()=>sharedVoice.isOpen(context.session_id)};
+            } else if (!live) live=Live.create({fetch:host.fetch,...conversationCallbacks()});
+            setPhase('processing','Connecting GPT-Live…');
+            try { await live.start(context); }
+            catch(err){if(active)setPhase('idle',err.message||'GPT-Live connection failed');}
+        }
+
         function stopRecognition() {
             const rec = recognition;
             recognition = null;
@@ -364,6 +452,7 @@
         function serverRecorder() {
             if (recorder) return recorder;
             recorder = Recorder.create({
+                sessionId: host.sessionId,
                 fetch: host.fetch,
                 onSpeech: (on) => {
                     speaking = on;
@@ -448,6 +537,61 @@
         async function startListening() {
             await flagsReady;
             if (!active) return;
+            if (engine === 'live') { await startLive(); return; }
+            if (engine === 'realtime') {
+                try { sharedVoice = host.sessionId && root.parent !== root ? root.parent.cuttleVoiceRuntime : null; } catch (_) {}
+                if (sharedVoice) {
+                    const context=await voiceContext();detachVoice?.();detachVoice=sharedVoice.attach(context.session_id,conversationCallbacks());
+                    realtime={start:()=>sharedVoice.start(context),stop:()=>sharedVoice.engine(context.session_id)?sharedVoice.stop():Promise.resolve(),isOpen:()=>sharedVoice.isOpen(context.session_id)};
+                    try{await realtime.start();}catch(err){if(active)setPhase('idle',err.message);}
+                    return;
+                }
+                host.stopSpeech();
+                if (!realtime) realtime = Realtime.create({
+                    fetch: host.fetch, experimentalFlags: host.experimentalFlags,
+                    onTranscript: appendTranscriptLine,
+                    onStatus: (text) => { if (active) setPhase('listening', text); },
+                    onError: (text) => { if (active) setPhase('idle', text); },
+                    realtimeUsage: async (payload) => {
+                        try {
+                            const res = await host.fetch('/api/voice-stt/realtime/usage', {
+                                method: 'POST', credentials: 'include', keepalive: true,
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload),
+                            });
+                            const data = await res.json();
+                            return data && data.success ? data.usage : null;
+                        } catch (_) { return null; }
+                    },
+                    onUsage: (priced) => {
+                        realtimeUsage = host.sumUsage ? host.sumUsage([realtimeUsage, priced]) : priced;
+                        renderSessionUsage();
+                    },
+                    delegate: async (spoken) => {
+                        const message = host.compose(spoken);
+                        if (!host.isSendable(message)) return { error: 'Empty request' };
+                        if (host.isGenerating() && !host.isControlLane(message)) {
+                            if (await host.steer(message)) {
+                                realtimeQueued = true;
+                                return { status: 'steered; awaiting reply' };
+                            }
+                            host.enqueue(message, spoken);
+                            return { status: 'queued; the result will appear in the chat transcript' };
+                        }
+                        const before = host.lastAssistantMessage();
+                        await host.submit(message, spoken);
+                        const after = host.lastAssistantMessage();
+                        return after && after !== before
+                            ? { reply: String(after.dataset.rawContent || after.textContent || '').slice(0, 16000) }
+                            : { error: 'No new reply available; check the chat transcript' };
+                    },
+                });
+                setPhase('processing', 'Connecting Realtime voice…');
+                try { await realtime.start(host.sessionId ? await voiceContext() : undefined); }
+                catch (err) { if (active) setPhase('idle', err.message || 'Realtime connection failed'); }
+                if (!active) realtime.stop();
+                return;
+            }
             const Ctor = engine === 'server' ? null : speechRecognitionCtor();
             if (engine !== 'server' && !Ctor) {
                 host.toast('Voice input needs Chrome or Edge (Web Speech API)', 'error');
@@ -584,6 +728,12 @@
         }
 
         async function finishListeningAndSend() {
+            if (engine === 'live') { await live?.stop(); setPhase('idle','GPT-Live disconnected — tap mic to reconnect'); return; }
+            if (engine === 'realtime') {
+                if (realtime) realtime.stop();
+                setPhase('idle', 'Realtime disconnected — tap mic to reconnect');
+                return;
+            }
             if (closing) return;
             closing = true;
             wantListening = false;
@@ -608,6 +758,17 @@
 
         /** Screen off / app backgrounded: stop the mic but keep every phrase. */
         async function pauseListening() {
+            if (engine === 'live') {
+                // The shell owns backgrounding. An iframe presenter can disappear
+                // during a Space switch without affecting the shell's call.
+                if (!sharedVoice) await live?.stop();
+                return;
+            }
+            if (engine === 'realtime') {
+                if (!sharedVoice && realtime) realtime.stop();
+                settlePhase('Realtime paused — tap mic to reconnect');
+                return;
+            }
             if (phase !== 'listening' || closing) return;
             wantListening = false;
             await stopInput(true);
@@ -620,11 +781,17 @@
         }
 
         function onVisibilityChange() {
+            if (document.hidden && active && engine === 'realtime') { pauseListening(); return; }
             if (document.hidden && active && phase === 'listening') pauseListening();
         }
 
         function toggleListening() {
             if (!active || closing) return;
+            if (engine === 'live' && live?.isOpen()) { void finishListeningAndSend(); return; }
+            if (engine === 'realtime' && realtime && realtime.isOpen()) {
+                finishListeningAndSend();
+                return;
+            }
             if (phase === 'listening') {
                 finishListeningAndSend();
                 return;
@@ -777,7 +944,7 @@
         async function narrateAck(message, mode) {
             if (!narratorOn) return;
             const turn = narration.turn;
-            const result = await Narrator.request(host.fetch, { kind: 'ack', message: message, mode: mode });
+            const result = await Narrator.request(host.fetch, { kind: 'ack', message: message, mode: mode, session_id:host.sessionId?.() });
             await playNarration(result, turn);
             scheduleProgress();
         }
@@ -798,7 +965,7 @@
                 scheduleProgress();
                 return;
             }
-            const result = await Narrator.request(host.fetch, payload);
+            const result = await Narrator.request(host.fetch, {...payload, session_id:host.sessionId?.()});
             if (!Narrator.isCurrent(narration, turn)) return;
             Narrator.finishRequest(narration);
             await playNarration(result, turn);
@@ -807,6 +974,15 @@
 
         function onGenerationEnded(opts) {
             endNarration();
+            if (engine === 'live') return;
+            if (engine === 'realtime') {
+                if (active && realtimeQueued && realtime) {
+                    realtimeQueued = false;
+                    const el = host.lastAssistantMessage();
+                    if (el) realtime.agentResult(String(el.dataset.rawContent || el.textContent || ''));
+                }
+                return;
+            }
             if (!active && !replyPending) return;
             const trySpeak = (attempt) => {
                 if (!active && !replyPending) return;
@@ -833,6 +1009,7 @@
                 return;
             }
             active = true;
+            rememberVoiceMode(true);
             document.body.classList.add('voice-mode');
             overlay.hidden = false;
             overlay.setAttribute('aria-hidden', 'false');
@@ -856,14 +1033,49 @@
             lastSpokenKey = '';
             replyPending = false;
             deferredReply = null;
+            realtimeUsage = null;
             endNarration();
             narratorOn = false;
-            flagsReady = host.experimentalFlags().then((on) => {
+            flagsReady = host.experimentalFlags().then(async (on) => {
                 if (!active) return;
                 narratorOn = on.has('voice_narrator');
                 const wantServer = on.has('voice_server_stt');
+                const wantRealtime = on.has('voice_realtime');
+                let selected = 'auto';
+                if (Live) {
+                    try { const r=await host.fetch('/api/settings/voice-chat',{cache:'no-store'});const d=await r.json();if(r.ok&&d.success)selected=d.engine; } catch (_) {}
+                    if (!active) return;
+                }
                 const missing = wantServer ? Recorder.missingSupport() : [];
                 engine = wantServer && !missing.length ? 'server' : 'webspeech';
+                if (on.has('voice_live') && selected !== 'tts' && Live?.supported()) {
+                    engine='live';narratorOn=false;
+                    try {
+                        const runtime=root.parent !== root && root.parent.cuttleVoiceRuntime;
+                        const id=String(host.sessionId?.()||'').replace(/^db_session_/, '');
+                        if(runtime?.isOpen(id)&&runtime.engine(id)==='live') {
+                            sharedVoice=runtime;voiceChatId=id;detachVoice?.();detachVoice=runtime.attach(id,conversationCallbacks());
+                            live={start:()=>runtime.start({session_id:id,engine:'live'}),stop:()=>runtime.engine(id)?runtime.stop():Promise.resolve(),isOpen:()=>runtime.isOpen(id)};
+                        }
+                    } catch (_) {}
+                } else if (wantRealtime && selected !== 'tts' && Realtime && Realtime.supported()) {
+                    engine = 'realtime';
+                    narratorOn = false;
+                    try {
+                        const runtime=root.parent !== root && root.parent.cuttleVoiceRuntime;
+                        const id=String(host.sessionId?.()||'').replace(/^db_session_/, '');
+                        if(runtime?.isOpen(id)&&runtime.engine(id)==='realtime') {
+                            sharedVoice=runtime;voiceChatId=id;detachVoice?.();detachVoice=runtime.attach(id,conversationCallbacks());
+                            realtime={start:()=>runtime.start({session_id:id,engine:'realtime'}),stop:()=>runtime.engine(id)?runtime.stop():Promise.resolve(),isOpen:()=>runtime.isOpen(id)};
+                        }
+                    } catch (_) {}
+                } else if (selected !== 'tts' && (wantRealtime || on.has('voice_live'))) {
+                    // Realtime needs a secure context (HTTPS) for getUserMedia —
+                    // on cleartext LAN HTTP the mobile WebView hides it entirely.
+                    host.toast(root.isSecureContext === false
+                        ? 'The selected voice engine needs a secure connection or an updated Android app; using existing voice input'
+                        : 'The selected voice engine needs microphone support; using existing voice input', 'error');
+                }
                 showEngine(wantServer, missing);
             }, () => {});
             clearPhrases();
@@ -888,6 +1100,11 @@
             if (!active) return;
             const wasRunning = phase === 'processing';
             active = false;
+            rememberVoiceMode(false);
+            if (realtime) realtime.stop();
+            if (live) void live.stop();
+            detachVoice?.();detachVoice=null;
+            realtimeQueued = false;
             wantListening = false;
             stopInput(false);
             stopMicMonitor();
@@ -930,6 +1147,7 @@
 
         function onMicPointerDown(e) {
             if (!active) return;
+            if (engine === 'realtime') return;
             if (e && e.pointerType === 'mouse' && typeof e.button === 'number' && e.button !== 0) return;
             if (closing) return;
             holdDown = true;
@@ -961,6 +1179,8 @@
         }
 
         function wire() {
+            root.addEventListener('cuttle-session-usage-updated',renderSessionUsage);
+            root.addEventListener('pagehide',()=>{detachVoice?.();detachVoice=null;if(!sharedVoice)void live?.stop();});
             const mic = byId('voiceModeMicBtn');
             if (mic) {
                 mic.addEventListener('click', function (e) {
@@ -1000,6 +1220,11 @@
         }
 
         wire();
+
+        // The shell reloads this chat's frame on a space switch; restore the
+        // voice view the user left (the live mic session itself is re-opened on
+        // the next mic tap, never silently).
+        if (voiceModeRemembered()) { try { enter(); } catch (_) {} }
 
         return {
             enter: enter,

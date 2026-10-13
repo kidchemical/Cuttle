@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261007hdr2">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261011pageControls2">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261012experimentConflicts">
     <link rel="stylesheet" href="css/searchable_select.css?v=20261011attachedMenus">
 <link rel="stylesheet" href="/css/storage_settings.css?v=20261007">
 <link rel="stylesheet" href="/css/page_controls.css?v=20261011attachedMenus">
@@ -505,8 +505,22 @@
 
             <section class="settings-panel" id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" tabindex="0" hidden>
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🔊</span> Chat voice (TTS) <button type="button" class="cuttle-info" data-tooltip="Listen to replies using the play button in chat. Audio is generated only when you press play." aria-label="About Chat voice">i</button> <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+                <h3 class="settings-title"><span class="emoji">🔊</span> Voice <button type="button" class="cuttle-info" data-tooltip="Configure voice conversations and spoken replies. Experimental engines appear here when enabled in Experimental settings." aria-label="About Voice">i</button> <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
 
+                <div class="setting-item" id="voiceModeRow" hidden>
+                    <div class="setting-label">
+                        <strong>Conversation engine</strong><button type="button" class="cuttle-info" data-tooltip="Select the engine used when you enter voice chat. Availability is controlled in Experimental settings." aria-label="About Conversation engine">i</button>
+                    </div>
+                    <div class="setting-control setting-control--column">
+                        <select id="voiceModeSelect" class="setting-input" onchange="onVoiceModeChanged()">
+                            <option value="tts">Standard voice (transcription + TTS)</option>
+                            <option value="realtime">Live voice · OpenAI Realtime</option>
+                        </select>
+                        <div class="setting-description" id="voiceModeStatus" role="status"></div>
+                    </div>
+                </div>
+
+                <div id="voiceTtsConfig">
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Show play button</strong><button type="button" class="cuttle-info" data-tooltip="Hide the speaker control on chat bubbles when off" aria-label="About Show play button">i</button>
@@ -619,6 +633,55 @@
                 <div class="setting-item">
                     <div class="setting-description" id="chatTtsPreviewStatus" role="status"></div>
                 </div>
+                </div><!-- /voiceTtsConfig -->
+
+                <div id="voiceLiveConfig" hidden>
+                    <p class="setting-description">GPT-Live listens and speaks at the same time. Project work uses this chat's selected Cuttle agent.</p>
+                    <div class="setting-item"><div class="setting-label"><strong>Voice model</strong></div><div class="setting-control"><select id="voiceLiveModel" class="setting-input"></select></div></div>
+                    <div class="setting-item"><div class="setting-label"><strong>Voice</strong></div><div class="setting-control"><select id="voiceLiveVoice" class="setting-input"></select></div></div>
+                    <div class="setting-item"><div class="setting-label"><strong>Disconnect after inactivity</strong><div class="setting-description">Voice remains billed while connected, including silence. 0 keeps the conversation connected continuously.</div></div><div class="setting-control"><input type="number" id="voiceLiveIdle" class="setting-input" min="0" max="3600" step="30" value="150" aria-label="Idle timeout in seconds"></div></div>
+                    <div class="setting-description" id="voiceLiveStatus" role="status"></div>
+                    <p class="setting-description">$0.05 per active minute, billed per second, plus your agent's usage. Microphone mute keeps the connection active; End voice disconnects it. Voice continues across Spaces.</p>
+                    <button type="button" class="control-button btn-start" onclick="voiceProvidersController().saveLive()"><span class="emoji">💾</span> Save GPT-Live voice</button>
+                </div>
+                <div id="voiceRealtimeConfig" hidden>
+                    <p id="voiceRealtimeNotice" class="setting-description" role="status"></p>
+                    <div class="setting-item">
+                        <div class="setting-label">
+                            <strong>Realtime model</strong><button type="button" class="cuttle-info" data-tooltip="Speech-to-speech model for the live conversation. The mini model is roughly three times cheaper." aria-label="About Realtime model">i</button>
+                        </div>
+                        <div class="setting-control setting-control--column">
+                            <select id="voiceRealtimeModel" class="setting-input"><option value="">Loading…</option></select>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-label">
+                            <strong>Voice</strong><button type="button" class="cuttle-info" data-tooltip="The spoken voice for the live conversation." aria-label="About Realtime voice">i</button>
+                        </div>
+                        <div class="setting-control setting-control--column">
+                            <select id="voiceRealtimeVoice" class="setting-input"><option value="">Loading…</option></select>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-label">
+                            <strong>Input transcription</strong><button type="button" class="cuttle-info" data-tooltip="Model that turns your microphone audio into the on-screen text transcript. Billed separately." aria-label="About Input transcription">i</button>
+                        </div>
+                        <div class="setting-control setting-control--column">
+                            <select id="voiceRealtimeTranscription" class="setting-input"><option value="">Loading…</option></select>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-description" id="voiceRealtimeStatus" role="status"></div>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-control" style="gap:8px;flex-wrap:wrap">
+                            <button type="button" class="control-button btn-start" onclick="saveVoiceRealtimeSettings()"><span class="emoji">💾</span> Save live voice</button>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <div class="setting-description">Live voice is billed per audio token in both directions (OpenAI Realtime); the session total shows in the voice overlay. Enable it under <a href="/settings_page.html?tab=experimental">Settings → Experimental → Voice: OpenAI Realtime</a>.</div>
+                    </div>
+                </div><!-- /voiceRealtimeConfig -->
             </div>
             </section>
 
@@ -777,7 +840,7 @@
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261011menuPosition2"></script>
     <script src="/js/settings/settings_background_helpers.js?v=20261011menuPosition2"></script>
-    <script src="/js/settings/settings_voice_providers.js?v=20261009b"></script>
+    <script src="/js/settings/settings_voice_providers.js?v=20261012live2"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
     <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
@@ -1979,6 +2042,13 @@
             const id = escapeHtml(flag.id);
             const label = escapeHtml(flag.label);
             const riskClass = flag.risk === 'high' ? ' setting-item--risk' : '';
+            const configured = flag.configured_enabled == null ? flag.enabled : flag.configured_enabled;
+            const blockers = (flag.blocked_by || []).map(other => other.label).join(', ');
+            const blocked = !!blockers;
+            const paused = configured && !flag.enabled && blocked;
+            const warning = paused
+                ? 'Paused: this saved configuration conflicts with ' + blockers + '. This feature is inactive. Turn off this feature or the conflicting features to resolve it.'
+                : 'Cannot enable while ' + blockers + ' is enabled. Turn off the conflicting features first.';
             const help = [
                 flag.description,
                 flag.needs_restart ? 'Takes effect after a Flask restart.' : '',
@@ -1989,23 +2059,27 @@
                 + '  <div class="setting-label">'
                 + '    <strong>' + label + '</strong>'
                 + (help ? '<button type="button" class="cuttle-info" data-tooltip="' + escapeHtml(help) + '" aria-label="About ' + label + '">i</button>' : '')
+                + (blocked ? '<button type="button" class="cuttle-info experimental-conflict-warning" data-tooltip="' + escapeHtml(warning) + '" aria-label="Conflict for ' + label + '">⚠</button>' : '')
+                + (paused ? '<div class="setting-description" role="status">Paused due to a conflict</div>' : '')
                 + '  </div>'
                 + '  <div class="setting-control">'
-                + '    <label class="toggle-switch' + (flag.enabled ? ' active' : '') + '" id="expFlagToggle-' + id + '" onclick="toggleExperimentalFlag(event, \'' + id + '\')">'
-                + '      <input type="checkbox" id="expFlag-' + id + '"' + (flag.enabled ? ' checked' : '') + ' style="display: none;">'
+                + '    <label class="toggle-switch' + (flag.enabled ? ' active' : '') + (blocked ? ' is-disabled experimental-conflict-toggle' : '') + '" id="expFlagToggle-' + id + '" aria-disabled="' + blocked + '" onclick="toggleExperimentalFlag(event, \'' + id + '\')">'
+                + '      <input type="checkbox" id="expFlag-' + id + '"' + (configured ? ' checked' : '') + (blocked ? ' disabled' : '') + ' style="display: none;">'
                 + '      <span class="slider"></span>'
                 + '    </label>'
+                + (paused ? '<button type="button" class="control-button" aria-label="Turn off ' + label + '" onclick="toggleExperimentalFlag(event, \'' + id + '\', true)">Turn off</button>' : '')
                 + '  </div>'
                 + '</div>';
         }
 
-        async function toggleExperimentalFlag(event, flagId) {
+        async function toggleExperimentalFlag(event, flagId, forceDisable = false) {
             // Label + nested checkbox would otherwise fire this twice per click.
             if (event) event.preventDefault();
             const checkbox = document.getElementById('expFlag-' + flagId);
             const toggle = document.getElementById('expFlagToggle-' + flagId);
-            if (!checkbox) return;
-            const next = !checkbox.checked;
+            if (!checkbox || (checkbox.disabled && !forceDisable) || toggle?.dataset.saving === '1') return;
+            if (toggle) toggle.dataset.saving = '1';
+            const next = forceDisable ? false : !checkbox.checked;
             checkbox.checked = next;
             if (toggle) toggle.classList.toggle('active', next);
             try {
@@ -2026,6 +2100,9 @@
                 checkbox.checked = !next;
                 if (toggle) toggle.classList.toggle('active', !next);
                 (window.showToast || alert)('Failed to update ' + flagId + ': ' + (e.message || e), 'error');
+                await loadExperimentalFlags();
+            } finally {
+                if (toggle) delete toggle.dataset.saving;
             }
         }
 
@@ -2211,6 +2288,8 @@
         function fetchChatTtsVoices() { return voiceProvidersController().voices(true); }
         function refreshChatTtsModels() { return voiceProvidersController().refreshSpeech(); }
         function refreshNarratorModels() { return voiceProvidersController().refreshNarrator(); }
+        function onVoiceModeChanged() { return voiceProvidersController().changeMode(); }
+        function saveVoiceRealtimeSettings() { return voiceProvidersController().saveRealtime(); }
         function onChatTtsSpeedInput() {
             document.getElementById('chatTtsSpeedValue').textContent = Number(document.getElementById('chatTtsSpeed').value).toFixed(2) + '×';
         }

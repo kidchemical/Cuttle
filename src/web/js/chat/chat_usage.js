@@ -53,7 +53,7 @@
         } else {
             cost = null;
         }
-        if (!pt && !ct && cost == null && !cacheRead && !cacheWrite) return null;
+        if (!pt && !ct && cost == null && !cacheRead && !cacheWrite && !(Number(raw.duration_seconds) > 0)) return null;
         const meta = metadata || {};
         const chips = (meta.slash_command || {}).chips || [];
         const agent = String(raw.agent_id || (meta.routing_badge || {}).agent ||
@@ -77,6 +77,9 @@
             cost,
             cost_estimated: !!raw.cost_estimated,
             model: raw.model ? String(raw.model) : '',
+            duration_seconds: Math.max(0, Number(raw.duration_seconds) || 0),
+            usage_source: raw.usage_source || '',
+            finalization_unconfirmed: !!raw.finalization_unconfirmed,
         };
         // Pass explicit context snapshots through so the gauge can seed
         // from the footer object instead of refetching (see chat_page.js).
@@ -96,6 +99,7 @@
         const u = normalizeUsagePayload(usage);
         if (!u) return '';
         const parts = [];
+        if (u.duration_seconds) parts.push(`<span class="message-usage-duration" title="Billable voice session duration">🎙 ${escapeHtml(Math.round(u.duration_seconds) + 's')}</span>`);
         if (u.prompt_tokens || u.completion_tokens || u.cache_read_tokens || u.cache_write_tokens) {
             const known = u.cache_inclusive != null;
             const totalInput = u.cache_inclusive === false
@@ -127,10 +131,10 @@
         }
         const costLabel = formatUsageCostUsd(u.cost, u.cost_estimated);
         if (costLabel) {
-            const tip = u.cost_estimated
+            const tip = u.finalization_unconfirmed ? 'Last reported voice usage; final session cost is unconfirmed' : u.cost_estimated
                 ? (u.cache_read_tokens > 0
                     ? 'Estimated from models.dev list prices (cache-adjusted)'
-                    : 'Estimated from models.dev list prices')
+                    : (u.usage_source === 'voice' || u.duration_seconds ? 'Estimated API voice cost' : 'Estimated from models.dev list prices'))
                 : 'Cost reported by the agent';
             parts.push(
                 `<span class="message-usage-cost" title="${escapeHtml(tip)}">${escapeHtml(costLabel)}</span>`
@@ -148,13 +152,15 @@
     function sumUsagePayloads(list) {
         const items = (Array.isArray(list) ? list : []).map((u) => normalizeUsagePayload(u)).filter(Boolean);
         if (!items.length) return null;
-        let pt = 0, ct = 0, cr = 0, cw = 0, cost = 0, estimated = false, hasCost = false;
-        let convention = null, conflict = false;
+        let pt = 0, ct = 0, cr = 0, cw = 0, cost = 0, seconds = 0, estimated = false, hasCost = false;
+        let convention = null, conflict = false, unconfirmed = false;
         items.forEach((u) => {
             pt += u.prompt_tokens || 0;
             ct += u.completion_tokens || 0;
             cr += u.cache_read_tokens || 0;
             cw += u.cache_write_tokens || 0;
+            seconds += u.duration_seconds || 0;
+            unconfirmed = unconfirmed || u.finalization_unconfirmed;
             if (u.cost != null) {
                 hasCost = true;
                 cost += u.cost;
@@ -174,12 +180,14 @@
             cache_write_tokens: cw,
             cache_inclusive: conflict ? null : convention,
             model: '',
+            duration_seconds: seconds,
+            finalization_unconfirmed: unconfirmed,
         };
         if (hasCost) {
             out.cost = Math.round(cost * 1e6) / 1e6;
             out.cost_estimated = estimated;
         }
-        if (!pt && !ct && !hasCost && !cr && !cw) return null;
+        if (!pt && !ct && !hasCost && !cr && !cw && !seconds) return null;
         return out;
     }
 

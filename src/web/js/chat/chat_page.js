@@ -7439,27 +7439,8 @@
         return `/api/auth/sessions/${encodeURIComponent(authSid)}/messages${q ? `?${q}` : ''}`;
     }
 
-    function updateSessionUsageSummary(entries) {
-        const panel = document.getElementById('chatSessionUsage');
-        const totals = document.getElementById('chatSessionUsageTotals');
-        if (!panel || !totals) return;
-        const enabled = localStorage.getItem('cuttleShowSessionUsageEstimate') === 'true';
-        panel.hidden = !enabled;
-        if (!enabled) return;
-        // Missing data is not evidence of an empty session.
-        if (!Array.isArray(entries)) {
-            totals.textContent = entries === null ? 'Session usage unavailable' : 'Loading session usage…';
-            return;
-        }
-        const normalized = entries.map((entry) => CuttleChatUsage.normalize(entry && entry.usage, entry && entry.metadata)).filter(Boolean);
-        const sum = CuttleChatUsage.sum(normalized);
-        if (!sum) {
-            totals.textContent = 'No token usage recorded for this session';
-            return;
-        }
-        totals.innerHTML = CuttleChatUsage.render(sum, escapeHtml)
-            || 'No token usage recorded for this session';
-    }
+    const sessionUsage = CuttleChatSessionUsage.create({window, document, storage:localStorage, sessionId:()=>session.current(), fetch:(...args)=>fetch(...args), escapeHtml});
+    function updateSessionUsageSummary(entries) { return sessionUsage.update(entries); }
 
     async function refreshSessionUsageSummary() {
         const id = session.current();
@@ -11489,6 +11470,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
 
     // Bubble speech: prefs, speaker buttons and the shared audio channel (chat_tts.js).
     const chatTts = CuttleChatTts.create({
+        sessionId: () => session.current(),
         win: window,
         fetch: (url, opts) => fetch(url, opts),
         toast: (message, variant) => (window.showToast || function () {})(message, variant),
@@ -11541,6 +11523,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
     }
 
     const chatVoice = CuttleChatVoice.create({
+        sessionId: () => session.current(), adoptSession: adoptChatSessionId,
+        requestContext: () => { const body={sticky_agent:stickyAgentOverrideForRequest('')}; attachAgentIdentityToRequest(body); applyOutboundProjectToRequest(body); return body; },
         closeMenus: closeAllSessionMenus,
         isGenerating: isSessionGenerating,
         compose: composeVoiceOutbound,
@@ -11558,16 +11542,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         usageFor: (el) => (el && el._cuttleUsage) || null,
         sumUsage: (parts) => CuttleChatUsage.sum(parts),
         usageHtml: (usage) => getMessageUsageHtml(usage),
-        sessionUsage: () => {
-            const box = document.getElementById('chatMessages');
-            if (!box) return null;
-            const parts = [];
-            box.querySelectorAll(CHAT_RECORD_SELECTOR + '.assistant').forEach((el) => {
-                if (el._cuttleUsage) parts.push(el._cuttleUsage);
-                if (el._cuttleVoiceUsage) parts.push(el._cuttleVoiceUsage);
-            });
-            return CuttleChatUsage.sum(parts);
-        },
+        sessionUsage: sessionUsage.total, refreshUsage: sessionUsage.refresh,
         experimentalFlags: fetchEnabledExperimentalFlags,
         fetch: (url, opts) => fetch(url, opts),
         toast: (message, variant, opts) => (window.showToast || function () {})(message, variant, opts),

@@ -435,6 +435,18 @@
     cursor: not-allowed;
 }
 
+/* Incompatible experiments are inactive even when their saved preference is on. */
+.toggle-switch.experimental-conflict-toggle {
+    background: var(--text-tertiary, #858b99);
+}
+
+button.cuttle-info.experimental-conflict-warning,
+button.cuttle-info.experimental-conflict-warning:hover,
+button.cuttle-info.experimental-conflict-warning:focus-visible {
+    color: var(--warning-color, #d99b30);
+    font-family: system-ui, sans-serif;
+}
+
 .provider-status {
     display: flex;
     flex-wrap: wrap;

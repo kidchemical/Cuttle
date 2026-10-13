@@ -15,6 +15,8 @@ a ledger write must not break the call it measures.
 from __future__ import annotations
 
 import os
+import json
+import math
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -70,6 +72,16 @@ def _connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_provider_calls_time "
         "ON provider_calls(provider, model, recorded_at)"
     )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_calls)")}
+    for name, kind in (("usage_key", "TEXT"), ("usage_json", "TEXT"), ("message_id", "INTEGER")):
+        if name not in columns:
+            try:
+                conn.execute(f"ALTER TABLE provider_calls ADD COLUMN {name} {kind}")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_usage_key ON provider_calls(usage_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_provider_session ON provider_calls(session_id)")
     return conn
 
 
@@ -94,6 +106,8 @@ def record_call(
     cost: Optional[float] = None,
     recorded_at: Optional[float] = None,
     db_path: Optional[Path] = None,
+    usage_key: Optional[str] = None,
+    message_id: Optional[int] = None,
 ) -> bool:
     """Append one provider-call row. Never raises; returns False when skipped."""
     if not str(provider or "").strip() or not str(operation or "").strip():
@@ -115,8 +129,9 @@ def record_call(
                 INSERT INTO provider_calls (
                     recorded_at, provider, operation, model, task, session_id,
                     success, failure_kind, latency_ms,
-                    prompt_tokens, completion_tokens, total_tokens, cost
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    prompt_tokens, completion_tokens, total_tokens, cost, usage_key, usage_json, message_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(usage_key) DO NOTHING
                 """,
                 (
                     float(recorded_at) if recorded_at is not None else time.time(),
@@ -131,12 +146,48 @@ def record_call(
                     prompt,
                     completion,
                     total,
-                    cost_f if cost_f is not None and cost_f >= 0 else None,
+                    cost_f if cost_f is not None and math.isfinite(cost_f) and cost_f >= 0 else None,
+                    usage_key, json.dumps(use, allow_nan=False), message_id,
                 ),
             )
     except Exception:
         return False
     return True
+
+
+def record_duration(*, usage_key: str, session_id, seconds: float, cost: float,
+                    model: str, finalized: bool = False, initializing: bool = False, db_path=None) -> bool:
+    """One Live connection row; cumulative checkpoints update monotonically."""
+    if not math.isfinite(seconds) or seconds < 0 or not math.isfinite(cost) or cost < 0:
+        return False
+    try:
+        with _session(db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT usage_json FROM provider_calls WHERE usage_key=?", (usage_key,)).fetchone()
+            previous = json.loads(row[0] or "{}") if row else {}
+            if seconds < previous.get("duration_seconds", 0) and not previous.get("initializing"):
+                return True
+            usage = dict(previous, duration_seconds=seconds, cost_estimated=True,
+                         billing_basis="session_seconds", finalized=finalized or previous.get("finalized", False),
+                         rate_per_minute=(cost * 60 / seconds) if seconds else 0.05, initializing=initializing)
+            conn.execute("""INSERT INTO provider_calls
+                (recorded_at,provider,operation,model,task,session_id,success,cost,usage_key,usage_json)
+                VALUES (?,'openai','live_session',?,'voice:live',?,1,?,?,?)
+                ON CONFLICT(usage_key) DO UPDATE SET cost=excluded.cost, usage_json=excluded.usage_json""",
+                (time.time(), model, str(session_id), cost, usage_key, json.dumps(usage)))
+        return True
+    except Exception:
+        return False
+
+
+def calls_for_sessions(session_ids, *, db_path=None):
+    ids = [str(value) for value in session_ids]
+    if not ids:
+        return []
+    with _session(db_path) as conn:
+        marks = ",".join("?" for _ in ids)
+        return [dict(row) for row in conn.execute(
+            f"SELECT * FROM provider_calls WHERE session_id IN ({marks}) ORDER BY id", ids)]
 
 
 def all_calls(

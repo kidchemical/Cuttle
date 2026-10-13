@@ -58,8 +58,20 @@
             layout_version: RAIL_LAYOUT_VERSION,
         };
 
-        // Experiment availability does not change the user's saved pin preferences.
-        let agentFeedEnabled = false;
+        // Experimental apps: their rail icon and Apps-grid tile stay hidden
+        // unless the owning feature flag is on. Availability never changes the
+        // user's saved pin layout.
+        const EXPERIMENTAL_RAIL_APPS = {
+            'nav-achievements': 'achievements',
+            'nav-agent-feed': 'agent_feed',
+            'nav-gizmos': 'gizmos',
+            'nav-test-lab': 'test_lab',
+        };
+        let enabledFlags = new Set();
+        function railAppEnabled(id) {
+            const flag = EXPERIMENTAL_RAIL_APPS[id];
+            return !flag || enabledFlags.has(flag);
+        }
         /** Shared rail layout for every blade (not per-bar). */
         let lastUILayout = {
             rail_items: DEFAULT_LAYOUT.rail_items.slice(),
@@ -282,21 +294,29 @@
             return { layout, changed: true };
         }
 
-        function applyAgentFeedAvailability() {
-            doc.querySelectorAll('[data-id="nav-agent-feed"]').forEach(el => {
-                el.style.setProperty('display', agentFeedEnabled ? '' : 'none', 'important');
+        function applyExperimentalRailAvailability() {
+            Object.keys(EXPERIMENTAL_RAIL_APPS).forEach(id => {
+                const on = enabledFlags.has(EXPERIMENTAL_RAIL_APPS[id]);
+                doc.querySelectorAll(`[data-id="${id}"]`).forEach(el => {
+                    el.style.setProperty('display', on ? '' : 'none', 'important');
+                });
             });
         }
-        async function refreshAgentFeedAvailability() {
+        // Compatibility name (app_shell + window contract call it by this name).
+        const applyAgentFeedAvailability = applyExperimentalRailAvailability;
+        async function refreshExperimentalRailAvailability() {
             try {
                 const response = await fetchImpl('/api/experimental/flags', {credentials:'include', cache:'no-store'});
-                if (!response.ok) return;
+                if (!response.ok) throw new Error('flags unavailable');
                 const data = await response.json();
-                agentFeedEnabled = !data.kill_switch && data.flags.some(flag => flag.id === 'agent_feed' && flag.enabled);
-            } catch (_) { agentFeedEnabled = false; }
-            applyAgentFeedAvailability();
+                enabledFlags = new Set(data.kill_switch ? []
+                    : (data.flags || []).filter(flag => flag.enabled).map(flag => flag.id));
+            } catch (_) { enabledFlags = new Set(); }
+            applyExperimentalRailAvailability();
             broadcastAppsList();
         }
+        // Compatibility name (app_shell + window contract call it by this name).
+        const refreshAgentFeedAvailability = refreshExperimentalRailAvailability;
 
         // ── Cuttle web apps (Apps page ↔ blade bar) ─────────────────────
         // Footer utilities live outside the pinnable rail order but belong in the
@@ -308,7 +328,7 @@
             if (!col) return [];
             const apps = [];
             CANONICAL_RAIL_ITEM_ORDER.forEach(id => {
-                if (RAIL_LOCKED_IDS.has(id) || (id === 'nav-agent-feed' && !agentFeedEnabled)) return;
+                if (RAIL_LOCKED_IDS.has(id) || !railAppEnabled(id)) return;
                 const el = col.querySelector(`.rail-items .rail-item[data-id="${id}"], .rail-stash .rail-item[data-id="${id}"]`);
                 if (!el || !el.dataset.page) return;
                 apps.push({
@@ -471,7 +491,7 @@
             const list = picker?.querySelector('.rail-add-picker-list');
             if (!picker || !list) return;
             const layout = getLayoutFromDOM(getColumnEl(0));
-            const hiddenIds = (layout.rail_hidden || []).filter(id => CANONICAL_RAIL_ITEM_ORDER.includes(id) && (id !== 'nav-agent-feed' || agentFeedEnabled));
+            const hiddenIds = (layout.rail_hidden || []).filter(id => CANONICAL_RAIL_ITEM_ORDER.includes(id) && railAppEnabled(id));
             list.innerHTML = '';
             if (!hiddenIds.length) {
                 const empty = doc.createElement('div');

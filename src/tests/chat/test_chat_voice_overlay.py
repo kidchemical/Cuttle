@@ -413,6 +413,47 @@ def test_server_engine_records_without_speech_recognizer():
 
 
 @node_only
+def test_realtime_flag_selects_live_engine_and_hands_off_to_chat():
+    setup = r"""
+let realtimeHost, realtimeStarts = 0, realtimeStops = 0, liveOpen = false;
+globalThis.CuttleChatVoiceRealtime = {
+  supported: () => true,
+  create: (h) => { realtimeHost = h; return {
+    start: async () => { realtimeStarts++; liveOpen = true; h.onStatus('Listening…'); },
+    stop: () => { realtimeStops++; liveOpen = false; }, isOpen: () => liveOpen,
+    agentResult() {},
+  }; },
+};
+"""
+    harness = CONTROLLER_HARNESS.replace("const V = require(process.argv[4]);", setup + "const V = require(process.argv[4]);")
+    _node(harness + r"""
+(async () => {
+  flagsOn = ['voice_realtime', 'voice_server_stt', 'voice_narrator'];
+  let last = assistant;
+  host.lastAssistantMessage = () => last;
+  host.submit = async (m) => { submitted.push(m); last = {dataset: {rawContent: 'Verified agent result'}}; };
+  host.compose = (m) => '/codex ' + m;
+  voice.enter(); mic.dispatch('click', ev(mic)); await sleep(5);
+  assert.strictEqual(realtimeStarts, 1);
+  assert.strictEqual(recs.length, 0, 'Realtime takes precedence over other voice engines');
+  assert.match(document.getElementById('voiceModeHint').textContent, /OpenAI Realtime/);
+  const result = await realtimeHost.delegate('inspect files');
+  assert.deepStrictEqual(submitted, ['/codex inspect files']);
+  assert.deepStrictEqual(result, {reply: 'Verified agent result'});
+  voice.onGenerationEnded({}); await sleep(150);
+  assert.strictEqual(played, 0, 'Realtime tool result owns voice playback, no duplicate TTS');
+  assert.strictEqual(narrateCalls.length, 0, 'Realtime has no competing narrator');
+  mic.dispatch('click', ev(mic)); await sleep(5);
+  assert.ok(realtimeStops > 0 && !liveOpen, 'tap disconnects without sending another turn');
+  mic.dispatch('click', ev(mic)); await sleep(5);
+  document.hidden = true; document.dispatch('visibilitychange'); await sleep(5);
+  assert.ok(!liveOpen, 'screen lock closes live microphone');
+  voice.exit();
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
 def test_voice_steers_the_running_agent():
     _node(CONTROLLER_HARNESS + r"""
 (async () => {
@@ -537,6 +578,36 @@ def test_narrator_acks_then_narrates_and_stops_at_reply():
   await sleep(60);
   assert.strictEqual(narrateCalls.length, 3, 'reply ended the turn: no late narration');
   assert.strictEqual(played, 1, 'final reply still spoken');
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_voice_mode_persists_across_space_switch_reload():
+    """The shell reloads the chat frame on a space switch; voice view must return."""
+    setup = r"""
+globalThis.location = { search: '?chat=42' };
+const _voiceStore = {};
+globalThis.sessionStorage = {
+  getItem: (k) => (k in _voiceStore ? _voiceStore[k] : null),
+  setItem: (k, v) => { _voiceStore[k] = String(v); },
+  removeItem: (k) => { delete _voiceStore[k]; },
+};
+"""
+    harness = CONTROLLER_HARNESS.replace("const V = require(process.argv[4]);", setup + "const V = require(process.argv[4]);")
+    _node(harness + r"""
+(async () => {
+  const v = V.create(host);
+  assert.ok(!v.isActive(), 'a fresh chat opens in chat view');
+  v.enter();
+  assert.ok(v.isActive());
+  assert.strictEqual(_voiceStore['cuttle.voiceMode.42'], '1', 'voice mode is remembered per chat');
+  v.exit();
+  assert.strictEqual(_voiceStore['cuttle.voiceMode.42'], undefined, 'exiting voice mode clears the memory');
+  // The shell reloads this chat on a space switch: voice view is restored.
+  _voiceStore['cuttle.voiceMode.42'] = '1';
+  const v2 = V.create(host);
+  assert.ok(v2.isActive(), 'voice mode restored after the space-switch reload');
 })().catch((e) => { console.error(e); process.exit(1); });
 """)
 

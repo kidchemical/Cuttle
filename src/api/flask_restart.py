@@ -89,6 +89,18 @@ def shared_restart_form_id(generation: Optional[int] = None) -> str:
     return f"flask-restart-g{max(0, g)}"
 
 
+def restart_dispatch_scope() -> str:
+    """One dispatch scope per Flask incarnation, including cold daemon boots.
+
+    Daemon generations restart at one on cold boot; durable receipts must not
+    collide with an earlier daemon's generation one. Creation time also
+    distinguishes reused operating-system PIDs.
+    """
+    import psutil
+    process = psutil.Process()
+    return f"{process.pid}:{process.create_time()}"
+
+
 def is_flask_restart_controller_spec(spec: Any) -> bool:
     """True when a cuttle_action_form is the daemon-owned Flask restart chooser."""
     if not isinstance(spec, dict):
@@ -692,7 +704,11 @@ def request_restart(
         return {"success": False, "error": f"Unknown mode `{mode}`", "type": "flask_restart"}
 
     if mode == "status":
-        return {**status_snapshot(exclude_session_id=session_id), "type": "flask_restart"}
+        snapshot = status_snapshot(exclude_session_id=session_id)
+        state = (snapshot.get("status") or {}).get("state") or "none"
+        count = (snapshot.get("active_work") or {}).get("active_count", 0)
+        return {**snapshot, "type": "flask_restart",
+                "response": f"Flask restart state: {state}. Active tasks: {count}."}
 
     # The initiating native control request is not agent work; excluding it
     # keeps `/restart graceful` from rejecting itself.
@@ -1377,4 +1393,3 @@ def api_flask_restart_notify():
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
-

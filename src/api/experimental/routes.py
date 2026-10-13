@@ -49,6 +49,9 @@ def set_experimental_flag(flag_id: str):
         return jsonify({"success": False, "error": err}), 400
     try:
         spec = flags.set_enabled(flag_id, patch["enabled"])
+    except flags.FlagConflictError as e:
+        return jsonify(success=False, error=str(e), conflicts=e.conflicts,
+                       **flags.flags_payload()), 409
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
     except Exception as e:

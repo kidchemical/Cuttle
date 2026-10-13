@@ -35,6 +35,7 @@ import com.cuttle.mobile.notify.CuttleApi;
 import com.cuttle.mobile.notify.NetworkUtil;
 import com.cuttle.mobile.notify.ShellUpdate;
 import com.cuttle.mobile.voice.NativeMic;
+import com.cuttle.mobile.voice.LiveVoiceAudio;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebViewClient;
 import org.json.JSONObject;
@@ -64,6 +65,10 @@ public class MainActivity extends BridgeActivity {
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final NativeMic nativeMic = new NativeMic();
+    private final LiveVoiceAudio liveVoice = new LiveVoiceAudio(event -> mainHandler.post(() -> {
+        WebView view = bridge != null ? bridge.getWebView() : null;
+        if (view != null) view.evaluateJavascript("window.dispatchEvent(new CustomEvent('cuttle-live-voice',{detail:" + org.json.JSONObject.quote(event) + "}));", null);
+    }));
     private boolean shellReady = false;
     private boolean forceSetupOnce = false;
     private String pendingOpenChat;
@@ -135,6 +140,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onPause() {
+        liveVoice.stop();
         // Persist Set-Cookie from /api/auth/login to disk. Without flush(), a
         // force-close right after sign-in (or any cold kill) drops the session
         // and the next launch looks logged out.
@@ -147,6 +153,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onDestroy() {
+        liveVoice.stop();
         nativeMic.stop();
         super.onDestroy();
     }
@@ -952,6 +959,35 @@ public class MainActivity extends BridgeActivity {
         public void requestMicrophone() {
             mainHandler.post(() -> maybeRequestMicrophonePermission(true));
         }
+
+        /** A server-bound voice ID, never a provider credential or caller-selected URL. */
+        @JavascriptInterface
+        public String liveVoiceStart(String id) {
+            String base = readBaseUrl();
+            WebView view = bridge != null ? bridge.getWebView() : null;
+            if (base == null || base.isEmpty() || view == null) return "error:host unavailable";
+            java.util.concurrent.atomic.AtomicReference<String> pageRef = new java.util.concurrent.atomic.AtomicReference<>("");
+            java.util.concurrent.CountDownLatch read = new java.util.concurrent.CountDownLatch(1);
+            mainHandler.post(() -> { pageRef.set(view.getUrl()); read.countDown(); });
+            try { if (!read.await(1, java.util.concurrent.TimeUnit.SECONDS)) return "error:host page unavailable"; }
+            catch (InterruptedException error) { Thread.currentThread().interrupt(); return "error:host page unavailable"; }
+            String page = pageRef.get();
+            try {
+                android.net.Uri host = android.net.Uri.parse(base), current = android.net.Uri.parse(page);
+                if (!java.util.Objects.equals(host.getHost(), current.getHost()) || host.getPort() != current.getPort()
+                    || !java.util.Objects.equals(host.getScheme(), current.getScheme())) return "error:untrusted voice page";
+            } catch (Exception error) { return "error:host unavailable"; }
+            nativeMic.stop();
+            String result = liveVoice.start(MainActivity.this, base, CookieManager.getInstance().getCookie(base), id);
+            if ("denied".equals(result)) mainHandler.post(() -> maybeRequestMicrophonePermission(true));
+            return result;
+        }
+
+        @JavascriptInterface
+        public void liveVoiceMute(boolean muted) { liveVoice.mute(muted); }
+
+        @JavascriptInterface
+        public void liveVoiceStop() { liveVoice.stop(); }
 
         /** Voice-mode recording (see NativeMic): "ok", "denied" (prompts) or "error:…". */
         @JavascriptInterface

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import json
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -36,7 +37,10 @@ SOURCES = [
     {"id": "pinned", "name": "Pinned agents"},
     {"id": "router", "name": "Agent router"},
     {"id": "api", "name": "API calls"},
+    {"id": "voice", "name": "Voice"},
 ]
+# Provider-ledger operations that bill voice (Realtime session, TTS, STT).
+_VOICE_OPERATIONS = frozenset({"speech_generation", "audio_transcription", "realtime_session", "live_session"})
 METRICS = [
     {"id": "cost_usd", "label": "API-equivalent cost (estimate)", "unit": "usd"},
     {"id": "total_tokens", "label": "Total tokens", "unit": "tokens"},
@@ -45,6 +49,7 @@ METRICS = [
     {"id": "cached_input_tokens", "label": "Cached input tokens", "unit": "tokens"},
     {"id": "output_tokens", "label": "Output tokens", "unit": "tokens"},
     {"id": "agent_hours", "label": "Agent time", "unit": "hours"},
+    {"id": "voice_minutes", "label": "Voice duration", "unit": "minutes"},
 ]
 MAX_GROUPS = 50
 _AMBIGUOUS_MODELS = {"", "default", "auto", "codex"}
@@ -211,6 +216,7 @@ def _row_metrics(row: Dict[str, Any]) -> Dict[str, float]:
         "cached_input_tokens": float(row.get("cached_tokens") or 0),
         "output_tokens": float(row.get("completion_tokens") or 0),
         "agent_hours": (float(latency) / 3_600_000.0) if latency is not None else 0.0,
+        "voice_minutes": float(row.get("duration_seconds") or 0) / 60,
     }
 
 
@@ -263,6 +269,7 @@ def _provider_call_rows(
             "source": "api",
             "task": str(call.get("task") or ""),
             "operation": str(call.get("operation") or ""),
+            "duration_seconds": float(json.loads(call.get("usage_json") or "{}").get("duration_seconds") or 0),
             "success": call.get("success"),
             "failure_kind": call.get("failure_kind") or "none",
             "latency_ms": None,
@@ -351,6 +358,8 @@ def cuttle_usage(
         rows = [r for r in rows if r.get("source") not in ("pinned", "api")]
     elif source_id == "api":
         rows = [r for r in rows if r.get("source") == "api"]
+    elif source_id == "voice":
+        rows = [r for r in rows if r.get("operation") in _VOICE_OPERATIONS]
 
     if start_day is None:
         stamps = [float(r["recorded_at"]) for r in rows]
@@ -433,6 +442,8 @@ def cuttle_usage(
             "Cost is the harness-reported price when it reports one (OpenCode), otherwise a "
             "models.dev estimate from the turn's tokens (Muse, Codex; Cursor subscription "
             "turns when a concrete model is pinned — Auto has no public rate). "
-            "API calls without public rates (Jev, speech) track counts and tokens only."
+            "Voice includes Live session duration, Realtime audio/text tokens, and STT/TTS estimates. "
+            "Legacy gpt-4o-mini-tts uses a character approximation; its actual API bills text/audio tokens. "
+            "Calls without a known price track counts and available tokens only."
         ),
     }

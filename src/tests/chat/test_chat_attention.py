@@ -50,6 +50,27 @@ def test_question_answer_and_dismiss_recover_on_another_device(tmp_path):
     assert not db.get_attention(sid, uid)['awaitingInput']
 
 
+def test_restart_from_another_chat_clears_input_on_session_and_history_reads(tmp_path, monkeypatch):
+    from api import flask_restart
+    db, uid, sid = database(tmp_path)
+    spec = {'restartFormGroup': 'flask-restart-g1', 'locked': False,
+            'options': [{'id': 'graceful', 'action': 'flask.restart'}]}
+    card = '<cuttle_action_form_pending id="flask-restart-g1">' + json.dumps(spec) + '</cuttle_action_form_pending>'
+    reply = db.add_message(sid, 'assistant', card)
+    monkeypatch.setattr(flask_restart, 'live_flask_generation', lambda: 1)
+    assert db.get_attention(sid, uid)['awaitingInput']
+    monkeypatch.setattr(flask_restart, 'live_flask_generation', lambda: 2)
+    state = db.get_attention(sid, uid)
+    assert not state['awaitingInput']
+    assert state['hasUnread'] and state['reply_id'] == reply
+    assert not db.get_user_chat_sessions(uid)[0]['attention']['awaitingInput']
+    assert not db.mark_attention(sid, uid, {'through_id': reply})['awaitingInput']
+    # Another unanswered question in that same reply still deserves blue.
+    question = '<cuttle_action_form>{"options":[{"id":"yes"}]}</cuttle_action_form>'
+    db.update_message_content(reply, card + question)
+    assert db.get_attention(sid, uid)['awaitingInput']
+
+
 def test_error_manual_unread_and_one_time_legacy_import(tmp_path):
     db, uid, sid = database(tmp_path)
     reply = db.add_message(sid, 'assistant', 'failed', {'slash_command_failed': True})

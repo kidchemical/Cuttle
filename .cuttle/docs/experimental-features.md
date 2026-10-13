@@ -122,6 +122,25 @@ independent; packaged source presence does not imply operational availability.
    Do not add a feature-specific toggle route or bespoke block to that tab.
 5. Document agent operations, tests, and teardown in the feature owner.
 
+### Compatibility rules
+
+`FlagSpec(exclusive_group="name")` declares alternative experiments that must
+not run together. `FlagSpec(conflicts=("other_flag",))` declares individual
+incompatibilities; the relation is symmetric, so declare each pair once.
+The generic Experimental page shows which enabled experiment blocks a toggle.
+Blocked and paused switches are gray and disabled. A warning tooltip next to
+the info tooltip names the conflicts. A paused feature has a **Turn off** button
+to clear its saved preference while its switch remains disabled.
+API and CLI enables reject conflicting combinations; the check runs under the
+shared settings lock, including concurrent writers. Existing manually edited
+or older conflicting configurations pause every participant until the user
+disables the conflicting choice. No preference is silently discarded.
+
+GPT-Live, Realtime and server transcription share `voice_input`. The standalone
+voice narrator conflicts with Live and Realtime, which own their spoken output.
+Server transcription and the narrator remain compatible. Flags determine
+availability; Voice settings determine which available conversation engine runs.
+
 ## Achievements App
 
 Open **Apps → Achievements** for the trophy case, unlock summary, and progress
@@ -143,7 +162,8 @@ remain available independently of this flag.
 
 ## Test Lab App
 
-The Test Lab tile stays visible in Apps while disabled; enable the `test_lab`
+The Test Lab tile and pinned icon are hidden while disabled; its direct page
+and operation routes also reject disabled access. Enable the `test_lab`
 flag in Experimental settings to use it. Select a registered
 project to inspect its recognized test suites and recent run history. Test Lab
 does not execute tests during discovery; choose **Run suite** or **Run all
@@ -151,6 +171,110 @@ tests** to start them. Runs are bounded to 20 minutes, use the project's local
 Python environment when present, and keep their recent output in the Cuttle
 home database. Discovery supports pytest files, npm `test` scripts, Go modules,
 and Rust Cargo packages. Only the owner can inspect projects or start runs.
+
+## GPT-Live voice
+
+Flag `voice_live` (default off): Settings → Experimental → **Voice: GPT-Live**.
+After enabling it, Settings → Voice offers GPT-Live as the recommended conversation
+engine, `gpt-live-1`, its supported voice catalog, and an idle timeout (150 seconds
+by default; 0 keeps the connection open continuously). Other voice input
+experiments and the standalone narrator must be disabled first.
+
+The voice session uses client delegation to the chat's selected Cuttle agent.
+The server observes transcripts, claims delegation IDs once, and submits work
+through the existing authenticated chat transport. Steerable running turns
+receive steering; other turns use the shared durable follow-up queue. A speech
+interruption does not cancel agent work. Approvals still require the chat's
+confirmation controls. Voice results use short speakable appends; private
+reasoning and UI markup are not forwarded as spoken results.
+
+The shell owns the microphone/speaker connection, independently of disposable
+chat iframes. Switching Spaces preserves the originating chat and exposes a
+compact return/mute/end control. Returning to the chat reattaches its voice
+presentation. Backgrounding or locking the app closes voice while agent work
+can continue in chat. Muting keeps the duration meter active.
+
+OpenAI bills $0.05 per active minute, by the second, including silence and
+agent waiting. WebRTC initialization bills 15 seconds provisionally; running
+usage replaces that amount rather than adding it again. The server records
+cumulative duration checkpoints and finalization in the existing provider
+ledger. Usage appears in the composer, voice view and Cuttle Usage's Voice
+filter; the dashboard includes a Voice duration metric. Per-message speech
+costs are attributed to their bubble when a message/query identity is available.
+Unknown or unconfirmed finalization remains distinct from a verified zero.
+
+Owners: `api.voice_live` (sessions/delegation/transcript receipts),
+`model_providers.openai.live` (provider transport), `voice_usage` and provider
+usage (pricing/ledger), `shell_voice.js` (connection lifetime),
+`chat_voice_live.js` (Live protocol), `chat_voice.js` (presentation), and
+`chat_session_usage.js` (durable usage presentation). Settings are under
+`/api/settings/voice-chat`; session routes are `/api/voice-stt/live/sessions`.
+Owner auth and chat ownership are required; credentials remain on the server.
+Provider audio recording storage is off. Reconnects seed bounded saved text
+history. No ambiguous paid create/delegation request is blindly retried.
+
+Secure browsers use WebRTC. The updated Capacitor Android app can stream native
+24 kHz mono PCM through its authenticated host socket when LAN HTTP cannot use
+`getUserMedia`. Native capture/playback owns permissions, audio focus, echo
+handling, bounded queues and shutdown. Older APKs do not expose that bridge;
+they need the updated app for Live on HTTP. Realtime still requires WebRTC
+microphone support; an unavailable engine is reported explicitly.
+
+Tests use fake providers and private state; real microphone/model-access and
+physical-device audio quality require a deliberate smoke test.
+
+## OpenAI Realtime voice
+
+Flag `voice_realtime` (default off), in Settings → Experimental →
+**Voice: OpenAI Realtime**. It enhances the existing voice overlay. When enabled,
+it becomes available in the Voice conversation-engine selector. It conflicts
+with Live, server transcription and the standalone narrator. The process kill switch
+`CUTTLE_EXPERIMENTAL=0` also disables it.
+
+Tap the microphone to connect, speak naturally, and tap again to disconnect.
+Semantic voice activity detection sends turns automatically and supports
+interrupting spoken replies. The shell owns the live connection across Space
+switches; ending voice or backgrounding the shell closes it. An open connection rechecks the flag every
+10 seconds and closes when disabled. Failed connections show an error; tap to
+retry. Unsupported WebRTC clients retain the established voice input engine.
+
+OpenAI `gpt-realtime-2.1` handles live input/output audio over WebRTC. The
+owner-authenticated `POST /api/voice-stt/realtime/session` mints a 60-second
+ephemeral credential using the existing OpenAI provider key. No long-lived key
+is sent to the browser. The response has `Cache-Control: no-store`; secrets
+are not persisted or logged. Custom `OPENAI_BASE_URL` proxies are rejected for
+this feature. Input transcription uses `gpt-4o-mini-transcribe`; spoken output
+uses Realtime's `marin` voice, independently of the existing chat TTS preference.
+
+The live companion can converse directly. Its `ask_cuttle_agent` function hands
+project work and context questions to the ordinary chat submitter, preserving
+the sticky agent, router, chat persistence and execution ownership. Completed
+agent replies return as tool outputs and are spoken by Realtime. A running
+steerable agent receives steering; its eventual reply is fed back to the live
+session. Other running agents receive a queued follow-up; the server correlates
+the queued request and its eventual reply before returning the result. Closing
+voice does not cancel already submitted chat work.
+
+Live small-talk transcripts are displayed only in the voice overlay; agent
+handoffs are persisted through the existing chat path. A new live session does
+not automatically receive the full chat history; it can ask the chat agent for
+context. Audio usage is priced with its frozen model/transcription settings and
+recorded using idempotent provider event receipts. It contributes to durable
+chat totals and the dashboard. This is a
+WebRTC feature; the Android `NativeMic` bridge is not a WebRTC transport.
+
+Owners: `api.voice_realtime` (session config/credential issuance),
+`chat_voice_realtime.js` (connection, audio, events and tool lifecycle),
+`chat_voice.js` (overlay and chat handoff composition). Credential routes are
+mounted as a child blueprint of the existing voice API. No Electron code or
+new execution lane is required.
+
+Protocol references: [OpenAI WebRTC](https://developers.openai.com/api/docs/guides/voice-webrtc),
+[Realtime conversations](https://developers.openai.com/api/docs/guides/realtime-conversations).
+Validation uses mocked providers, WebRTC and microphone devices; a real account
+and microphone smoke test is required to establish live model access and audio
+quality. Tests: `src/tests/chat/test_voice_realtime.py` and
+`src/tests/chat/test_chat_voice_overlay.py`.
 
 ## Voice narrator
 

@@ -55,6 +55,22 @@ def state_dir() -> Path:
     return Path(override) if override else runtime_state_path('agent_events')
 
 
+def _strip_surrogates(value):
+    """Drop lone surrogates so every payload stays UTF-8 encodable.
+
+    Streamed harness text can split an astral character across chunk
+    boundaries, yielding a lone surrogate that neither ``str.encode('utf-8')``
+    nor a SQLite TEXT bind accepts. Left in place it poisons the batch forever.
+    """
+    if isinstance(value, str):
+        return value.encode('utf-8', 'replace').decode('utf-8')
+    if isinstance(value, dict):
+        return {_strip_surrogates(k): _strip_surrogates(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_strip_surrogates(item) for item in value]
+    return value
+
+
 class EventStore:
     def __init__(self, root: Path):
         self.root = Path(root)
@@ -78,7 +94,7 @@ class EventStore:
             conn.close()
 
     def encode(self, payload):
-        raw = json.dumps(payload, ensure_ascii=False, default=str).encode('utf-8')
+        raw = json.dumps(payload, ensure_ascii=False, default=str).encode('utf-8', 'replace')
         if len(raw) <= 8192:
             return raw.decode('utf-8'), None
         digest = hashlib.sha256(raw).hexdigest()
@@ -103,13 +119,21 @@ class EventStore:
     def write_batch(self, messages):
         with self.connection() as conn:
             for operation, qid, body in messages:
+                body = _strip_surrogates(body)
                 conn.execute('INSERT OR IGNORE INTO runs(query_id,started_at) VALUES (?,?)', (qid,time.time()))
                 if operation == 'run':
+                    # A delayed metadata snapshot or spool replay cannot reopen
+                    # a completed/interrupted run.
+                    if (conn.execute('SELECT finished_at FROM runs WHERE query_id=?', (qid,)).fetchone()[0] is not None
+                            and (not body.get('finished_at') or body.get('capture_interrupted'))):
+                        continue
                     harness = body.get('harness') or {}
                     context = body.get('user_context') or {}
                     status = 'running' if not body.get('finished_at') else ('ok' if body.get('success') else 'failed')
                     if body.get('cancelled') or '[CANCELLED]' in str(body.get('error_message') or ''):
                         status = 'cancelled'
+                    if body.get('capture_interrupted'):
+                        status = 'interrupted'
                     conn.execute('''UPDATE runs SET agent_id=?,model=?,chat_session_id=?,project_root=?,
                         finished_at=?,status=?,metadata=? WHERE query_id=?''', (
                         harness.get('agent_id'), harness.get('model'),
@@ -196,6 +220,12 @@ class EventStore:
             rows=conn.execute('''SELECT query_id,agent_id,model,chat_session_id,project_root,started_at
                 FROM runs WHERE status='running' ORDER BY started_at''').fetchall()
         return [dict(r) for r in rows]
+
+    def recent_running_runs(self):
+        """All unfinished headers, including metadata needed for recovery."""
+        with self.connection() as conn:
+            rows = conn.execute("SELECT * FROM runs WHERE status='running'").fetchall()
+        return [{**dict(row), 'metadata': json.loads(row['metadata'])} for row in rows]
 
     def recent_runs(self, limit=200, status=None):
         """Recent run records with decoded metadata, newest first (Jobs ledger source)."""

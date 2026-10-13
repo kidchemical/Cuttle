@@ -66,12 +66,28 @@ register_flag(FlagSpec(
     id="voice_narrator", label="Voice narrator",
     description="In voice mode, Cuttle speaks a quick acknowledgment as soon as you send, then short spoken updates on what the agent is doing until the reply is ready. Uses gpt-4o-mini plus your chat speech voice (OpenAI key required).",
     default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
+    conflicts=("voice_live", "voice_realtime"),
+))
+
+register_flag(FlagSpec(
+    id="voice_live", label="Voice: GPT-Live",
+    description="Full-duplex GPT-Live conversation that delegates project work to this chat's Cuttle agent. Requires an OpenAI API key. Voice sessions are billed by duration, including silence; agent usage is separate.",
+    default=False, category="chat", risk="medium", since="0.0.0", needs_restart=False,
+    exclusive_group="voice_input",
+))
+
+register_flag(FlagSpec(
+    id="voice_realtime", label="Voice: OpenAI Realtime",
+    description="Microphone and spoken conversation over OpenAI Realtime, with project requests handed to the selected chat agent. Requires an OpenAI API key and WebRTC microphone support. Uses token-based audio billing.",
+    default=False, category="chat", risk="medium", since="0.0.0", needs_restart=False,
+    exclusive_group="voice_input",
 ))
 
 register_flag(FlagSpec(
     id="voice_server_stt", label="Voice: server transcription",
     description="Voice mode records continuously and transcribes each phrase on the server (OpenAI) instead of the browser speech recognizer. Removes the Android chime between pauses and works in browsers without Web Speech; phrases appear about a second after you stop talking.",
     default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
+    exclusive_group="voice_input",
 ))
 
 register_flag(FlagSpec(

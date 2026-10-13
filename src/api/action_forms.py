@@ -1612,6 +1612,11 @@ def execute_action_form_submission(
     auxiliary = len(runs) == 1 and bool(runs[0].get("auxiliary"))
     if auxiliary:
         lock, reusable = "none", True
+    if (len(runs) == 1 and runs[0].get("action") == "flask.restart"
+            and str((runs[0].get("params") or {}).get("mode") or "").lower() == "status"):
+        # The native status path bypasses recipe replay settings. Reading
+        # status must leave the restart chooser available for a later request.
+        lock, reusable = "none", True
 
     # Malformed form (checked items with no post body) — never post a guess.
     blocked = next((str(r.get("blocked")) for r in runs if r.get("blocked")), "")
@@ -1731,7 +1736,12 @@ def execute_action_form_submission(
                 from api.action_replay import claim, duplicate_result, key, release_rejected
                 restart_mode = str(run_params.get("mode") or "graceful").strip().lower()
                 # Shared controller generations coalesce copies across chats.
-                receipt_key = key(f"form:{form_id}:{restart_mode}", action, "", "" if _is_flask_restart_form_id(form_id) else session_id)
+                receipt_id = f"form:{form_id}:{restart_mode}"
+                shared_controller = _is_flask_restart_form_id(form_id)
+                if shared_controller:
+                    from api.flask_restart import restart_dispatch_scope
+                    receipt_id += ':' + restart_dispatch_scope()
+                receipt_key = key(receipt_id, action, "", "" if shared_controller else session_id)
                 if restart_mode != "status" and not claim(receipt_key):
                     res = duplicate_result()
                     all_ok = False

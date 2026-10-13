@@ -9,15 +9,22 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 
 from api import voice_stt
+from api.voice_usage import attributed_call
 from api.http_authz import authenticated_required
+from api.voice_realtime.routes import voice_realtime_bp
+from api.voice_live.routes import voice_live_bp, voice_usage_bp
 
 voice_stt_bp = Blueprint("voice_stt", __name__, url_prefix="/api/voice-stt")
+voice_stt_bp.register_blueprint(voice_realtime_bp)
+voice_stt_bp.register_blueprint(voice_live_bp)
+voice_stt_bp.register_blueprint(voice_usage_bp)
 
 _DISABLED = {"success": False, "disabled": True, "error": "Server transcription is disabled"}
 
 
 @voice_stt_bp.route("/transcribe", methods=["POST"])
 @authenticated_required
+@attributed_call
 def transcribe():
     if not voice_stt.is_enabled():
         return jsonify(_DISABLED)

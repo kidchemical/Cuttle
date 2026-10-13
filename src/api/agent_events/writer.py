@@ -23,6 +23,9 @@ class EventWriter:
         self.error=None
         self.next_maintenance=time.monotonic()+300
         self.dropped_status=0
+        self.bad_pending=set()
+        from .lifecycle import process_owner
+        self.owner=process_owner()
         self.thread=threading.Thread(target=self._work,name='agent-events-writer',daemon=True)
         self.thread.start()
 
@@ -30,7 +33,10 @@ class EventWriter:
         if self.queue.qsize()>10_000 and operation=='event' and payload.get('kind')=='status':
             self.dropped_status+=1
             return
-        self.queue.put_nowait((operation,str(qid),copy.deepcopy(payload)))
+        payload=copy.deepcopy(payload)
+        if operation=='run':
+            payload['capture_owner']=self.owner.copy()
+        self.queue.put_nowait((operation,str(qid),payload))
 
     def flush(self, timeout=10):
         done=threading.Event()
@@ -56,14 +62,39 @@ class EventWriter:
             self.queue.put(('stop',None,None))
             self.thread.join(10)
 
+    def active_runs(self):
+        """Serialize lifecycle recovery with capture before serving the feed."""
+        from .lifecycle import reconcile
+        def read(store):
+            self._replay(store)
+            reconcile(store,self.owner)
+            return store.active_runs()
+        return self.call(read)
+
     def _work(self):
         store=None
         pending=None
+        from .lifecycle import reconcile
+        # Replay finishes before recovering orphaned headers. Otherwise a
+        # durable finish waiting in the spool could be labelled interrupted.
+        try:
+            store=EventStore(self.root)
+            self._replay(store)
+            reconcile(store,self.owner)
+        except Exception as exc:
+            self.error=exc
+            log.exception('Agent event startup recovery unavailable')
         while True:
             try:
                 first=pending or self.queue.get(timeout=30)
                 pending=None
             except queue.Empty:
+                try:
+                    store=store or EventStore(self.root)
+                    self._replay(store)
+                    reconcile(store,self.owner)
+                except Exception:
+                    log.exception('Agent event lifecycle recovery unavailable')
                 if not os.environ.get('CUTTLE_AGENT_EVENTS_DIR') and time.monotonic()>=self.next_maintenance:
                     try:
                         from .maintenance import prune
@@ -112,6 +143,10 @@ class EventWriter:
                 merged={}
                 for op,qid,body in batch:
                     key=(op,qid,body.get('block_id'))
+                    if op=='run':
+                        # Preserve lifecycle order: coalescing a finish with a
+                        # later unfinished snapshot would erase the finish.
+                        key=(op,qid,len(merged))
                     if key in merged and op=='event':
                         merged[key][2].update(body)
                     else:
@@ -162,7 +197,20 @@ class EventWriter:
 
     def _replay(self,store):
         for path in sorted((self.root/'pending').glob('*.json.gz')):
-            store.write_batch(json.loads(gzip.decompress(path.read_bytes())))
+            try:
+                store.write_batch(json.loads(gzip.decompress(path.read_bytes())))
+            except Exception:
+                # A batch that keeps failing must never block the queue behind
+                # it (head-of-line poison pill). Retry once, then quarantine.
+                if path.name in self.bad_pending:
+                    log.exception('Agent events: quarantining unrecoverable pending batch %s',path.name)
+                    failed=self.root/'pending_failed';failed.mkdir(parents=True,exist_ok=True)
+                    path.replace(failed/path.name)
+                    self.bad_pending.discard(path.name)
+                    continue
+                self.bad_pending.add(path.name)
+                raise
+            self.bad_pending.discard(path.name)
             path.unlink()
 
 

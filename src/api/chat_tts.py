@@ -18,6 +18,7 @@ from flask import Flask, jsonify, request
 
 from api.http_authz import authenticated_required, owner_required
 from api import tts_providers as providers
+from api.voice_usage import attributed_call
 
 # Narrator (speak-summary) backends. The model id itself is free-form — any
 # model the user's key can reach — with registry suggestions in the UI.
@@ -579,6 +580,7 @@ def register_chat_tts_routes(app: Flask) -> None:
 
     @app.route("/api/chat/tts", methods=["POST"])
     @authenticated_required
+    @attributed_call
     def chat_tts_speak():
         """Summarize (optional) + synthesize, with a 7-day clip cache.
 
@@ -682,9 +684,9 @@ def register_chat_tts_routes(app: Flask) -> None:
                         sum_usage,
                         provider=resolved["provider"],
                         tts_model=resolved["model"],
-                        tts_chars=len(spoken),
-                        tts_input_tokens=int(extra.get("input_tokens") or 0),
-                        tts_output_tokens=int(extra.get("output_tokens") or 0),
+                        tts_chars=0 if cached else len(spoken),
+                        tts_input_tokens=0 if cached else int(extra.get("input_tokens") or 0),
+                        tts_output_tokens=0 if cached else int(extra.get("output_tokens") or 0),
                     ),
                 }
             )

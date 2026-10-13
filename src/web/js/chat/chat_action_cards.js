@@ -1186,7 +1186,7 @@
             const locked = card.getAttribute('data-locked') === '1'
                 || card.classList.contains('cuttle-action-form--locked');
             const restartId = String(card.getAttribute('data-restart-id') || '').trim();
-            if (locked) return !!restartId;
+            if (locked) return !!restartId && card.classList.contains('is-pending');
             if (card.getAttribute('data-restart-pending-sync') === '1') return false;
             return card.classList.contains('is-pending');
         }

@@ -301,6 +301,25 @@ settings compatibility/cost facade, with no vendor transport. Contract:
 `src/api/model_providers/ADDING_A_PROVIDER.md`; agent CLI:
 `.cuttle/docs/model-providers.md`.
 
+**Realtime voice (experimental):** `api.voice_realtime` owns OpenAI Realtime
+session configuration and owner-only ephemeral credential issuance, mounted
+under the existing voice API as `/api/voice-stt/realtime/session`.
+`chat_voice_realtime.js` owns the WebRTC/audio/data-channel lifetime;
+`chat_voice.js` composes its overlay callbacks and selected-agent handoff using
+the existing chat submit/steer/queue capabilities. `voice_realtime` defaults
+off. No alternative chat execution route is introduced. Runbook:
+`.cuttle/docs/experimental-features.md`.
+
+**GPT-Live voice (experimental):** `api.voice_live` owns durable session,
+transcript and delegation receipts; `model_providers.openai.live` owns the SDK
+transport. Delegation uses the existing authenticated chat submission surface,
+steering and follow-up owners. `shell_voice.js` owns voice across disposable
+Space/chat iframes; `chat_voice_live.js` owns Live protocol and `chat_voice.js`
+its presenter. `chat_session_usage.js` merges persisted agent metadata and
+voice ledger records for all chat usage displays. `FlagSpec` compatibility
+metadata gates conflicting experiments atomically. Android's `LiveVoiceAudio`
+streams duplex PCM through the same session owner for LAN HTTP WebViews.
+
 **Local model preference:** retired with the old `RuntimeConfig`
 (`bot_config.json` / `runtime_config.json`). `core.local_llm.resolve_local_model`
 reads `OLLAMA_MODEL`, then Settings `completion_models.local` (owned by

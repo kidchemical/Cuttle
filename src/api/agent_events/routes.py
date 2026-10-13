@@ -47,7 +47,8 @@ def events():
 @bp.get('/api/agent-events/active')
 @owner_required
 def active():
-    return jsonify(runs=store().active_runs())
+    from .writer import get_writer
+    return jsonify(runs=get_writer().active_runs())
 
 
 @bp.get('/api/agent-events/events/<int:ident>')

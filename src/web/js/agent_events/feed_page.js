@@ -42,7 +42,7 @@
                 header.append(' · ',link);
                 if(row.chat_session_id) {
                     const chat=node('a','CH-'+String(row.chat_session_id).padStart(6,'0'));
-                    chat.href='/chat_page.html?session_id='+encodeURIComponent(row.chat_session_id);header.append(' · ',chat);
+                    chat.href='/chat_page.html?chat='+encodeURIComponent(row.chat_session_id);header.append(' · ',chat);
                 }
                 fragment.append(header);previous=row.query_id;
             }
@@ -120,7 +120,7 @@
         const title=node('h2','Active now');title.className='feed-active-title';fragment.append(title);
         for(const run of activeRuns) {
             const row=document.createElement(run.chat_session_id?'a':'div');row.className='feed-active-row';
-            if(run.chat_session_id) row.href='/chat_page.html?session_id='+encodeURIComponent(run.chat_session_id);
+            if(run.chat_session_id) row.href='/chat_page.html?chat='+encodeURIComponent(run.chat_session_id);
             const orbit=document.createElement('span');orbit.className='typing-orbit typing-orbit--feed';orbit.setAttribute('aria-hidden','true');
             orbit.innerHTML='<span class="typing-orbit-ring"></span><span class="typing-orbit-ring typing-orbit-ring--inner"></span><span class="typing-orbit-core"></span><span class="typing-orbit-sat typing-orbit-sat--1"></span><span class="typing-orbit-sat typing-orbit-sat--2"></span><span class="typing-orbit-sat typing-orbit-sat--3"></span><span class="typing-orbit-beam"></span>';
             const chip=node('span',run.agent_id||'Agent');chip.className='feed-active-agent';

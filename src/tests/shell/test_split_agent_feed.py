@@ -32,8 +32,8 @@ def _extract_mount():
 
 def _extract_availability():
     source = RAIL_SRC.read_text(encoding="utf-8")
-    start = source.index("function applyAgentFeedAvailability()")
-    end = source.index("async function refreshAgentFeedAvailability", start)
+    start = source.index("function applyExperimentalRailAvailability()")
+    end = source.index("async function refreshExperimentalRailAvailability", start)
     return source[start:end]
 
 
@@ -70,7 +70,8 @@ def test_agent_feed_availability_clears_baked_in_hide():
     import subprocess
 
     script = "const assert = require('node:assert/strict');\n"
-    script += "let agentFeedEnabled = true;\n"
+    script += "const EXPERIMENTAL_RAIL_APPS = { 'nav-agent-feed': 'agent_feed' };\n"
+    script += "let enabledFlags = new Set(['agent_feed']);\n"
     script += """
 function makeFeedBtn() {
     const calls = [];
@@ -83,14 +84,14 @@ const doc = document;
 """
     script += _extract_availability() + "\n"
     script += """
-applyAgentFeedAvailability();
+applyExperimentalRailAvailability();
 for (const btn of buttons) {
     assert.deepEqual(btn.calls, [['display', '', 'important']],
         'enabled flag clears the baked-in display:none on the cloned icon');
 }
-agentFeedEnabled = false;
+enabledFlags = new Set();
 for (const btn of buttons) btn.calls.length = 0;
-applyAgentFeedAvailability();
+applyExperimentalRailAvailability();
 for (const btn of buttons) {
     assert.deepEqual(btn.calls, [['display', 'none', 'important']],
         'disabled flag keeps the icon hidden');
