@@ -26,7 +26,7 @@ import org.json.JSONObject;
 public final class LiveVoiceAudio {
     private static final int RATE = 24000;
     private final Consumer<String> events;
-    private final ArrayBlockingQueue<byte[]> playback = new ArrayBlockingQueue<>(40);
+    private ArrayBlockingQueue<byte[]> playback = new ArrayBlockingQueue<>(40);
     private final OkHttpClient client = new OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.SECONDS).pingInterval(20, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false).build();
@@ -38,25 +38,37 @@ public final class LiveVoiceAudio {
     private int previousMode;
     private boolean previousSpeaker;
     private volatile boolean running, closing, muted;
+    private volatile long generation;
     private final AudioManager.OnAudioFocusChangeListener focus = change -> { if (change < 0) stop(); };
 
     public LiveVoiceAudio(Consumer<String> events) { this.events = events; }
 
     public synchronized String start(Context context, String base, String cookie, String id) {
-        if (socket != null) return "error:the previous voice connection is still closing";
         if (!id.matches("[a-f0-9]{32}")) return "error:invalid voice session";
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) return "denied";
+        if (socket != null) {
+            if (!closing) return "error:a voice connection is already active";
+            // A retry may arrive after the server confirmed closure but before
+            // OkHttp's close callback. Detach that transport before replacing it.
+            WebSocket old = socket;
+            cleanup();
+            old.cancel();
+        }
+        final long own = ++generation;
+        playback = new ArrayBlockingQueue<>(40);
         String url = base.replaceAll("/+$", "").replaceFirst("^https:", "wss:")
             .replaceFirst("^http:", "ws:") + "/api/voice-stt/live/sessions/" + id + "/socket";
         closing = false; muted = false;
         socket = client.newWebSocket(new Request.Builder().url(url)
             .header("Cookie", cookie == null ? "" : cookie).build(), new WebSocketListener() {
                 @Override public void onMessage(WebSocket ws, String text) {
+                    synchronized (LiveVoiceAudio.this) {
+                    if (generation != own || socket != ws) return;
                     try {
                         JSONObject event = new JSONObject(text);
                         String type = event.optString("type");
-                        if ("session.started".equals(type)) startAudio(context);
+                        if ("session.started".equals(type)) startAudio(context, own);
                         if ("session.output_audio.delta".equals(type) && running) {
                             byte[] pcm = Base64.decode(event.optString("delta"), Base64.DEFAULT);
                             if (pcm.length <= RATE * 2 && pcm.length % 2 == 0) {
@@ -65,16 +77,25 @@ public final class LiveVoiceAudio {
                         } else if (!"session.input_audio.append".equals(type)) events.accept(text);
                         if ("session.closed".equals(type)) { cleanup(); ws.close(1000, "Voice ended"); }
                     } catch (Exception exc) { fail("Could not process native voice audio."); }
+                    }
                 }
                 @Override public void onFailure(WebSocket ws, Throwable error, Response response) {
-                    fail("Native voice connection failed; check the host connection and reconnect.");
+                    synchronized (LiveVoiceAudio.this) {
+                        if (generation != own || socket != ws) return;
+                        cleanup();
+                        events.accept("{\"type\":\"cuttle.error\",\"message\":\"Native voice connection failed; check the host connection and reconnect.\"}");
+                    }
                 }
-                @Override public void onClosed(WebSocket ws, int code, String reason) { cleanup(); }
+                @Override public void onClosed(WebSocket ws, int code, String reason) {
+                    synchronized (LiveVoiceAudio.this) {
+                        if (generation == own && socket == ws) cleanup();
+                    }
+                }
             });
         return "ok";
     }
 
-    private synchronized void startAudio(Context context) {
+    private synchronized void startAudio(Context context, long own) {
         if (running || closing) return;
         try {
             audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
@@ -95,37 +116,39 @@ public final class LiveVoiceAudio {
                     .setSampleRate(RATE).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
                 .setTransferMode(AudioTrack.MODE_STREAM).setBufferSizeInBytes(4800).build();
             recorder.startRecording(); speaker.play(); running = true;
-            new Thread(this::capture, "cuttle-live-capture").start();
-            new Thread(this::play, "cuttle-live-playback").start();
+            new Thread(() -> capture(own), "cuttle-live-capture").start();
+            ArrayBlockingQueue<byte[]> ownPlayback = playback;
+            new Thread(() -> play(own, ownPlayback), "cuttle-live-playback").start();
         } catch (Exception exc) { fail("Native microphone or speaker is unavailable."); }
     }
 
-    private void capture() {
+    private void capture(long own) {
         byte[] frame = new byte[960]; // 20 ms, mono PCM16 at 24 kHz
-        while (running) {
+        while (running && generation == own) {
             AudioRecord input = recorder; WebSocket connection = socket;
             if (input == null || connection == null) break;
             try {
                 int size = input.read(frame, 0, frame.length);
-                if (size < 0) { fail("Native microphone stopped unexpectedly."); break; }
-                if (size > 0 && !muted && !closing) {
-                    if (connection.queueSize() > 96000) { fail("Voice network is too slow; reconnect to retry."); break; }
+                if (size < 0) { fail(own, "Native microphone stopped unexpectedly."); break; }
+                if (size > 0 && generation == own && !muted && !closing) {
+                    if (connection.queueSize() > 96000) { fail(own, "Voice network is too slow; reconnect to retry."); break; }
                     JSONObject event = new JSONObject();event.put("type", "session.input_audio.append");
                     event.put("audio", Base64.encodeToString(frame, 0, size, Base64.NO_WRAP));
                     connection.send(event.toString());
                 }
-            } catch (Exception exc) { if (running) fail("Native microphone stopped unexpectedly."); break; }
+            } catch (Exception exc) { if (running) fail(own, "Native microphone stopped unexpectedly."); break; }
         }
     }
 
-    private void play() {
-        while (running) {
+    private void play(long own, ArrayBlockingQueue<byte[]> ownPlayback) {
+        while (running && generation == own) {
             try {
-                byte[] frame = playback.poll(200, TimeUnit.MILLISECONDS);
+                byte[] frame = ownPlayback.poll(200, TimeUnit.MILLISECONDS);
+                if (generation != own) break;
                 AudioTrack output = speaker;
                 if (frame == null || output == null) continue;
                 int offset = 0;
-                while (running && offset < frame.length) {
+                while (running && generation == own && offset < frame.length) {
                     int written = output.write(frame, offset, frame.length-offset, AudioTrack.WRITE_BLOCKING);
                     if (written <= 0) break;
                     offset += written;
@@ -150,7 +173,11 @@ public final class LiveVoiceAudio {
         } else cleanup();
     }
 
-    private void fail(String message) {
+    private synchronized void fail(long own, String message) {
+        if (generation == own) fail(message);
+    }
+
+    private synchronized void fail(String message) {
         events.accept("{\"type\":\"cuttle.error\",\"message\":" + JSONObject.quote(message) + "}");
         stop();
     }

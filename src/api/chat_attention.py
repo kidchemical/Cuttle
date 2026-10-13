@@ -3,11 +3,19 @@
 AuthDatabase supplies its connection; updates share the message transaction.
 Reply ids, not client clocks, order reads. Idle/running stays owned by delivery
 and live status, so restarting Flask cannot leave a persistent running flag.
+
+Per-card lifecycle truth lives in ``api.action_form_state`` (one durable row per
+session/form). This module reads that index for "awaiting input" so a card locked
+on one client, or a restart that already finished, is never reported blue again.
+The content parser below is the legacy fallback for rows written before the
+index existed (and for the first read of any message).
 """
 from __future__ import annotations
 
 import json
 import re
+
+from api import action_form_state
 
 _CARDS = re.compile(r'<cuttle_action_form(?:_pending)?\b([^>]*)>(.*?)</cuttle_action_form(?:_pending)?\s*>', re.I | re.S)
 
@@ -62,6 +70,7 @@ def ensure_schema(conn) -> None:
         reply_error INTEGER NOT NULL DEFAULT 0, awaiting_input INTEGER NOT NULL DEFAULT 0,
         manual_unread INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0,
         legacy_imported INTEGER NOT NULL DEFAULT 0)''')
+    action_form_state.ensure_schema(conn)
     if not existed:
         # Upgrade baseline: don't light up every historical chat as unread.
         for row in conn.execute('SELECT id FROM chat_sessions').fetchall():
@@ -76,7 +85,14 @@ def refresh(conn, session_id: int) -> None:
     user = conn.execute("SELECT MAX(id) FROM chat_messages WHERE chat_session_id=? AND role='user'", (session_id,)).fetchone()[0] or 0
     reply_id = reply['id'] if reply else 0
     error = int(is_error(reply['content'], reply['metadata'])) if reply else 0
-    awaiting = int(bool(reply and reply_id > user and awaiting_input(reply['content'])))
+    awaiting = 0
+    if reply and reply_id > user:
+        # Keep the host index in lockstep with this reply, then read truth from it.
+        action_form_state.sync_message(conn, session_id, reply_id, reply['content'], reply['metadata'])
+        if action_form_state.has_message(conn, session_id, reply_id):
+            awaiting = int(action_form_state.awaiting_input(conn, session_id, reply_id))
+        else:
+            awaiting = int(awaiting_input(reply['content']))
     conn.execute('''UPDATE chat_attention SET reply_id=?, reply_error=?, awaiting_input=?,
         revision=revision+1 WHERE session_id=? AND (reply_id!=? OR reply_error!=? OR awaiting_input!=?)''',
         (reply_id, error, awaiting, session_id, reply_id, error, awaiting))
@@ -101,13 +117,20 @@ def get_many(conn, user_id: int, ids: list[int]) -> dict:
     awaiting = [r for r in rows if r['awaiting_input']]
     if awaiting:
         marks = ','.join('?' for _ in awaiting)
-        replies = conn.execute(f'SELECT chat_session_id, content FROM chat_messages WHERE id IN ({marks})',
+        replies = conn.execute(f'SELECT id, chat_session_id, content FROM chat_messages WHERE id IN ({marks})',
                                [r['reply_id'] for r in awaiting]).fetchall()
         from api.flask_restart import live_flask_generation
         generation = live_flask_generation()
         for reply in replies:
-            result[reply['chat_session_id']]['awaitingInput'] = awaiting_input(
-                reply['content'], restart_generation=generation)
+            sid = reply['chat_session_id']
+            # Host index is authoritative when it has this reply; otherwise fall
+            # back to parsing the stored content (legacy rows, first read).
+            if action_form_state.has_message(conn, sid, reply['id']):
+                result[sid]['awaitingInput'] = action_form_state.awaiting_input(
+                    conn, sid, reply['id'], generation)
+            else:
+                result[sid]['awaitingInput'] = awaiting_input(
+                    reply['content'], restart_generation=generation)
     return result
 
 

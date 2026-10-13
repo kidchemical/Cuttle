@@ -1309,6 +1309,17 @@ def api_flask_restart_status():
             )
         except Exception:
             snap['restart_form_id'] = None
+        # Host-owned reconcile: every client polls this endpoint, so settle any
+        # restart card whose restart is over here instead of per-client.
+        try:
+            from api.action_forms import reconcile_restart_forms
+
+            reconcile_restart_forms(
+                live_generation=snap.get('live_generation'),
+                status=snap.get('status'),
+            )
+        except Exception as _rec:
+            print(f"[CHAT] restart form reconcile failed: {_rec}", flush=True)
         return jsonify(snap)
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

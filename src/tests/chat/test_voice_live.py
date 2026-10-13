@@ -106,7 +106,9 @@ def test_configuration_uses_client_delegation_and_limits_frontend_permissions():
     assert config["store"] is False
     assert "session.commentary.append" not in config["client"]["data_channel"]["allowed_client_events"]
     assert "format" not in config["audio"]
-    assert service.config(settings.load(), [], native=True)["audio"]["format"] == {"type": "audio/pcm", "rate": 24000}
+    native = service.config(settings.load(), [], native=True)
+    assert native["audio"]["format"] == {"type": "audio/pcm", "rate": 24000}
+    assert "client" not in native  # WebSocket setup rejects client.data_channel.
 
 
 def test_start_gate_and_idempotent_native_setup(tmp_path, monkeypatch, _isolated_application_settings):
@@ -137,3 +139,29 @@ def test_http_owner_chat_gate_and_settings_validation(run, monkeypatch):
         settings.normalize({"voice": "not-a-live-voice"})
     with pytest.raises(ValueError):
         settings.normalize({"model": "gpt-live-1-mini"})
+
+
+def test_native_setup_error_reaches_client_and_closes_socket(run, monkeypatch):
+    from api.voice_live import routes
+    handlers = []
+    class FakeSock:
+        def route(self, *args, **kwargs):
+            def register(handler):
+                handlers.append(handler)
+                return handler
+            return register
+    monkeypatch.setattr('flask_sock.Sock', FakeSock)
+    monkeypatch.setattr('api.http_authz.require_owner', lambda: ({'id': run.user_id}, None))
+    def unavailable(*args):
+        raise TimeoutError('provider unavailable')
+    monkeypatch.setattr(service, 'native_connection', unavailable)
+    routes.register_socket()
+    sent, closed = [], []
+    socket = SimpleNamespace(send=sent.append, close=lambda: closed.append(True))
+    with Flask(__name__).test_request_context():
+        handlers[0](socket, run.id)
+    assert closed == [True]
+    error = json.loads(sent[0])
+    assert error['type'] == 'cuttle.error'
+    assert 'host network' in error['message']
+    assert store.get(run.id)['state'] == 'disconnected'

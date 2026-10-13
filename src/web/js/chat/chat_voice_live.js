@@ -27,11 +27,15 @@
                 const seconds = Number(data.usage?.seconds || 0);
                 host.onUsage({duration_seconds:seconds, cost:seconds * .05 / 60, cost_estimated:true, model:'gpt-live-1'});
             }
-            if (data.type === 'error' || data.type === 'cuttle.error') host.onError(data.message || 'GPT-Live reported an error; reconnect to retry');
-            if (data.type === 'session.closed') { s.resolveClosed?.();cleanup(s); if (current === s) current = null; host.onStatus('Disconnected'); }
+            if (data.type === 'error' || data.type === 'cuttle.error') {
+                s.lastError = data.message || data.error?.message || 'GPT-Live reported an error; reconnect to retry';
+                host.onError(s.lastError);
+            }
+            if (data.type === 'session.closed') { s.resolveClosed?.();cleanup(s); if (current === s) current = null; host.onStatus(s.lastError ? 'Disconnected · ' + s.lastError : 'Disconnected'); }
         }
         function cleanup(s) {
-            if (!s) return;
+            if (!s || s.cleaned) return;
+            s.cleaned = true;
             clearTimeout(s.timeout); clearInterval(s.poll);
             s.abort.abort();
             s.stream?.getTracks().forEach(track => track.stop());
@@ -40,9 +44,15 @@
             if (s.audio) { s.audio.pause(); s.audio.srcObject = null; }
             if (s.nativeListener) root.removeEventListener('cuttle-live-voice', s.nativeListener);
         }
-        async function close() {
-            const s = current; sequence++;
-            if (!s) return;
+        function close() {
+            const s = current;
+            if (!s) return Promise.resolve();
+            if (s.closePromise) return s.closePromise;
+            sequence++;
+            s.closePromise = drain(s);
+            return s.closePromise;
+        }
+        async function drain(s) {
             s.closing = true;
             // Capture/stop the microphone immediately; retain receiver until final usage.
             s.stream?.getTracks().forEach(track => { track.enabled = false; });
@@ -54,13 +64,15 @@
             let timeout;
             await Promise.race([s.closed,new Promise(resolve=>{timeout=setTimeout(resolve,8000);})]);
             clearTimeout(timeout);
-            cleanup(s); current = null; host.onStatus('Disconnected');
+            cleanup(s);
+            if (current === s) { current = null; host.onStatus(s.lastError ? 'Disconnected · ' + s.lastError : 'Disconnected'); }
         }
         async function poll(s) {
             if (current !== s || !s.id) return;
             try {
                 const r = await host.fetch('/api/voice-stt/live/sessions/' + s.id, {cache:'no-store'});
                 const data = await r.json();
+                if (current !== s) return;
                 if (!r.ok || !data.success) throw new Error('Session unavailable');
                 const session = data.session;
                 for (const data of session.transcripts || []) event(s, data);
@@ -68,7 +80,7 @@
                 if (['closed','disconnected','uncertain'].includes(session.state)) {
                     s.resolveClosed?.();
                     cleanup(s); if (current === s) current = null;
-                    host.onStatus(session.finalized ? 'Disconnected' : 'Disconnected · final usage unconfirmed');
+                    host.onStatus(s.lastError ? 'Disconnected · ' + s.lastError : session.error ? 'Disconnected · ' + session.error : session.finalized ? 'Disconnected' : 'Disconnected · final usage unconfirmed');
                 }
             } catch (_) { host.onError('Could not verify the Live session; disconnecting.'); void close(); }
         }

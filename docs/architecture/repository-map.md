@@ -174,7 +174,14 @@ service; Flask serialize/SSE transport stays in the route.
 `api.chat_attention` owns persisted reply/read watermarks, manual unread and
 latest-question attention in that database. AuthDatabase updates attention in
 the message transaction and auth routes expose revisioned snapshots/read
-acknowledgments. `api.chat_followups` owns shared queue transactions/revisions
+acknowledgments. `api.chat_attention` reads awaiting-input from
+`api.action_form_state` — the host-owned, one-row-per-`(session, form)` lifecycle
+index (message-scoped status/kind/restart id/generation) synced from the message
+in the same write. `api.action_forms.reconcile_restart_forms` (triggered by the
+`/api/flask/restart/status` poll every client already makes) terminalizes restart
+cards whose restart is superseded or finished, so history/dots/spinners agree
+across devices without client-side generation inference; messages GET exposes the
+snapshot as `action_forms`. `api.chat_followups` owns shared queue transactions/revisions
 and retryable take receipts; AuthDatabase injects its private connection.
 Activity SSE is a wake signal; snapshots and periodic recovery supply truth.
 

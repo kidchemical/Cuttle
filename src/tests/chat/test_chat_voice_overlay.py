@@ -132,10 +132,12 @@ class CL {
 }
 class El {
   constructor(id) { this.id = id; this.children = []; this.classList = new CL(); this.attrs = {};
-    this.dataset = {}; this.hidden = false; this._t = ''; this.listeners = {}; this.style = {}; }
+    this.dataset = {}; this.hidden = false; this._t = ''; this.listeners = {}; this.style = {};
+    this.scrollTop = 0; this.scrollHeight = 0; this.clientHeight = 0; }
   set className(v) { this.classList = new CL(); String(v).split(/\s+/).filter(Boolean).forEach((c) => this.classList.add(c)); }
   set textContent(v) { this._t = String(v); this.children = []; }
   get textContent() { return this._t + this.children.map((c) => c.textContent).join(''); }
+  get lastElementChild() { return this.children[this.children.length - 1] || null; }
   appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
@@ -448,6 +450,53 @@ globalThis.CuttleChatVoiceRealtime = {
   mic.dispatch('click', ev(mic)); await sleep(5);
   document.hidden = true; document.dispatch('visibilitychange'); await sleep(5);
   assert.ok(!liveOpen, 'screen lock closes live microphone');
+  voice.exit();
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_voice_transcript_follows_only_when_pinned_to_bottom():
+    """Auto-scroll is sticky, never forced.
+
+    At the bottom → new bubbles and streamed text keep up; scrolled up → the
+    reader's place is kept (a long spoken reply must not yank them down).
+    """
+    setup = r"""
+let rtHost = null;
+globalThis.CuttleChatVoiceRealtime = {
+  supported: () => true,
+  create: (h) => { rtHost = h; return {
+    start: async () => { h.onStatus('Listening…'); }, stop() {}, isOpen: () => true,
+  }; },
+};
+"""
+    harness = CONTROLLER_HARNESS.replace(
+        "const V = require(process.argv[4]);", setup + "const V = require(process.argv[4]);")
+    _node(harness + r"""
+(async () => {
+  flagsOn = ['voice_realtime', 'voice_server_stt', 'voice_narrator'];
+  voice.enter(); mic.dispatch('click', ev(mic)); await sleep(5);
+  const t = document.getElementById('voiceModeTranscript');
+  t.clientHeight = 200;
+  // Pinned to the newest line → a new bubble scrolls into view.
+  t.scrollHeight = 1000; t.scrollTop = 800;
+  rtHost.onTranscript('assistant', 'first reply', false);
+  assert.strictEqual(t.scrollTop, 1000, 'pinned: new bubble follows to the bottom');
+  // Reader scrolled up → a new bubble must not yank them down.
+  t.scrollHeight = 1200; t.scrollTop = 100;
+  rtHost.onTranscript('assistant', 'second reply', false);
+  assert.strictEqual(t.scrollTop, 100, 'scrolled up: new bubble keeps the reading position');
+  // Streamed growth of the live line follows the same rule.
+  t.scrollHeight = 1300; t.scrollTop = 1100;         // at bottom
+  rtHost.onTranscript('assistant', 'stream', true);  // opens a live line
+  assert.strictEqual(t.scrollTop, 1300, 'pinned: live line opens at the bottom');
+  t.scrollHeight = 1400; t.scrollTop = 1200;         // at bottom
+  rtHost.onTranscript('assistant', 'ing…', true);    // extends the live line
+  assert.strictEqual(t.scrollTop, 1400, 'pinned: streamed text follows');
+  t.scrollHeight = 1500; t.scrollTop = 0;            // scrolled up
+  rtHost.onTranscript('assistant', 'more', true);
+  assert.strictEqual(t.scrollTop, 0, 'scrolled up: streamed text stays put');
   voice.exit();
 })().catch((e) => { console.error(e); process.exit(1); });
 """)

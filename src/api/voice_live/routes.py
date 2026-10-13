@@ -1,10 +1,11 @@
 """Authenticated GPT-Live transport and durable voice usage snapshots."""
+import json
 import re
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from api.auth_session import get_request_session_token
 from api.http_authz import owner_required, authenticated_required, current_user, require_chat_session_access
-from api.voice_live import service
+from api.voice_live import service, store
 from api import voice_usage
 
 voice_live_bp = Blueprint("voice_live", __name__, url_prefix="/live")
@@ -96,9 +97,27 @@ def register_socket():
             return
         try:
             service.native_connection(voice_id, user["id"], socket)
-        except Exception:
+        except Exception as exc:
+            current_app.logger.exception("GPT-Live native transport failed for session %s", voice_id)
+            status = getattr(exc, "status_code", None)
+            if status in {401, 403}:
+                message = f"OpenAI rejected the GPT-Live connection (HTTP {status}); check API key and project access."
+            elif status == 404:
+                message = "OpenAI could not find the GPT-Live endpoint or model for this project (HTTP 404)."
+            elif status == 429:
+                message = "OpenAI rate or usage limit blocked the GPT-Live connection (HTTP 429)."
+            elif isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+                message = "Cuttle could not connect to OpenAI for GPT-Live; check the host network."
+            elif "OpenAI API key" in str(exc):
+                message = "Configure an OpenAI API key in Cuttle Settings → Providers."
+            else:
+                message = f"GPT-Live setup failed ({type(exc).__name__}); details were logged on the Cuttle host."
             try:
-                socket.send('{"type":"cuttle.error","message":"Native voice connection failed; reconnect to retry."}')
+                store.update(voice_id, state="disconnected", error=message, finalized=False)
+            except Exception:
+                current_app.logger.exception("Could not persist GPT-Live transport error for session %s", voice_id)
+            try:
+                socket.send(json.dumps({"type": "cuttle.error", "message": message}))
                 socket.close()
             except Exception:
                 pass

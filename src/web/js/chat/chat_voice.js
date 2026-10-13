@@ -20,6 +20,9 @@
     /** Hold this long before a press becomes hold-to-talk (shorter presses stay taps). */
     const HOLD_MS = 280;
 
+    /** Within this many pixels of the end, the transcript still counts as pinned. */
+    const BOTTOM_SLACK_PX = 48;
+
     function byId(id) {
         return document.getElementById(id);
     }
@@ -301,6 +304,9 @@
         function renderPhrases() {
             const box = byId('voiceModeSegments');
             if (!box) return;
+            // Capture the pin before rebuild: clearing resets scrollTop, which
+            // would otherwise always read as "at bottom".
+            const follow = scrolledToBottom(box);
             box.textContent = '';
             phrases.segments.forEach((seg) => {
                 const row = document.createElement('div');
@@ -328,7 +334,19 @@
                 box.appendChild(live);
             }
             box.hidden = Segments.isEmpty(phrases) && !indicator;
-            box.scrollTop = box.scrollHeight;
+            stickToBottom(box, follow);
+        }
+
+        /** True while the box sits within a few pixels of its newest line. */
+        function scrolledToBottom(box) {
+            if (!box) return false;
+            return (box.scrollHeight - box.scrollTop - box.clientHeight) <= BOTTOM_SLACK_PX;
+        }
+
+        /** Follow new content only for a reader already at the bottom; a reader
+         *  who scrolled up keeps their place. */
+        function stickToBottom(box, wasPinned) {
+            if (box && wasPinned) box.scrollTop = box.scrollHeight;
         }
 
         function onPhraseClick(e) {
@@ -348,6 +366,7 @@
         function appendTranscriptLine(role, text, usageHtml) {
             const box = byId('voiceModeTranscript');
             if (!box) return;
+            const follow = scrolledToBottom(box);
             const line = document.createElement('div');
             line.className = 'voice-mode-line is-' + (role === 'user' ? 'user' : 'assistant')
                 + (role === 'narrator' ? ' is-narration' : '');
@@ -367,15 +386,17 @@
                 } catch (_) {}
             }
             box.appendChild(line);
-            box.scrollTop = box.scrollHeight;
+            stickToBottom(box, follow);
         }
 
         function appendLiveTranscript(role, text, partial) {
             const box = byId('voiceModeTranscript');
             const last = box && box.lastElementChild;
             if (partial && last && last.dataset.liveRole === role) {
+                const follow = scrolledToBottom(box);
                 const body = last.lastElementChild;
                 if (body) body.textContent += text;
+                stickToBottom(box, follow);
                 return;
             }
             appendTranscriptLine(role, text);

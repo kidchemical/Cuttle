@@ -1427,6 +1427,7 @@ def get_session_messages(session_id):
             'followups': followup_state['followups'],
             'followup_revision': followup_state['revision'],
             'attention': db.get_attention(session_id, user['id']),
+            'action_forms': db.get_action_form_state(session_id),
             'composer_selection': db.get_composer_selection(session_id, user['id']),
             'display_name': session.get('display_name') or '',
             'avatar': session.get('avatar') or '',

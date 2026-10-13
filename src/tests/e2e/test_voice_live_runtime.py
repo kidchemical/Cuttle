@@ -132,7 +132,7 @@ def test_live_native_http_setup_uses_bridge_and_drains_final_event(browser):
     try:
         page.set_content('<html><body></body></html>')
         page.evaluate('''() => {
-            window.requests=[];window.nativeStarts=[];window.nativeStops=0;window.usages=[];
+            window.requests=[];window.nativeStarts=[];window.nativeStops=0;window.usages=[];window.errors=[];
             window.cuttleMobile={liveVoiceStart:id=>{nativeStarts.push(id);return 'ok';},liveVoiceStop:()=>nativeStops++,liveVoiceMute(){}};
             window.fakeFetch=async(url,opts)=>{requests.push({url,opts});return {ok:true,json:async()=>({success:true,
                 session:url.endsWith('/sessions')?{id:'native123'}:{state:'active',seconds:0,cost:0,model:'gpt-live-1'}})};};
@@ -140,13 +140,18 @@ def test_live_native_http_setup_uses_bridge_and_drains_final_event(browser):
         page.add_script_tag(path=str(REPO / 'src/web/js/chat/chat_voice_live.js'))
         assert not page.evaluate('isSecureContext')
         page.evaluate('''async () => {
-            window.voice=CuttleChatVoiceLive.create({fetch:fakeFetch,onStatus(){},onTranscript(){},onUsage:u=>usages.push(u),onError:e=>{throw Error(e);}});
-            await voice.start({session_id:42});window.stopped=voice.stop();
+            window.voice=CuttleChatVoiceLive.create({fetch:fakeFetch,onStatus(){},onTranscript(){},onUsage:u=>usages.push(u),onError:e=>errors.push(e)});
+            await voice.start({session_id:42});
+            dispatchEvent(new CustomEvent('cuttle-live-voice',{detail:{type:'error',event_id:'rejected',error:{message:'client.data_channel is only supported for WebRTC sessions.'}}}));
+            window.stopped=voice.stop();window.stoppedAgain=voice.stop();
         }''')
         assert page.evaluate('JSON.parse(requests[0].opts.body).transport') == 'native'
         assert len(page.evaluate('JSON.parse(requests[0].opts.body).request_id')) == 32
         assert page.evaluate('nativeStarts') == ['native123']
         assert page.evaluate('nativeStops') >= 1
+        assert page.evaluate('errors') == ['client.data_channel is only supported for WebRTC sessions.']
+        assert page.evaluate('stopped === stoppedAgain')
+        assert page.evaluate('requests.filter(r=>r.url.endsWith("/close")).length') == 1
         page.evaluate('''async () => {
             dispatchEvent(new CustomEvent('cuttle-live-voice',{detail:{type:'session.closed',event_id:'close',usage:{seconds:60}}}));
             await stopped;
