@@ -1659,9 +1659,13 @@ async function createWindow(opts = {}) {
         frame: false,
         fullscreenable: true,
         autoHideMenuBar: true,
-        icon: app.isPackaged
-            ? path.join(process.resourcesPath, 'app', 'src', 'img', 'cuttle_logo.ico')
-            : path.join(__dirname, '..', 'src', 'img', 'cuttle_logo.ico'),
+        // ICO decoding is Windows-only. Linux needs a PNG for the window/dock.
+        icon: path.join(
+            app.isPackaged ? path.join(process.resourcesPath, 'app') : path.join(__dirname, '..'),
+            'src', 'img',
+            process.platform === 'win32' ? 'cuttle_logo.ico'
+                : LAUNCH_MODE === 'host' ? 'cuttle-mascot_square_host.png' : 'cuttle-mascot_square.png'
+        ),
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
@@ -2296,7 +2300,7 @@ app.on('certificate-error', (event, webContents, url, error, certificate, callba
     }
 });
 
-// Host vs Client dock shortcuts use separate userData + WM_CLASS so both can run.
+// Host vs Client dock shortcuts use separate userData and Linux desktop IDs.
 const LAUNCH_MODE = desktopLaunchMode();
 if (LAUNCH_MODE === 'host') {
     app.setName('Cuttle Host');
@@ -2306,6 +2310,11 @@ if (LAUNCH_MODE === 'host') {
     app.setName('Cuttle Client');
     app.setPath('userData', path.join(os.homedir(), '.config', 'cuttle-desktop-client'));
     app.commandLine.appendSwitch('class', 'CuttleClient');
+}
+if (process.platform === 'linux' && ['host', 'client'].includes(LAUNCH_MODE)) {
+    // Must precede ready; supplies both X11 WM_CLASS and Wayland app_id.
+    // --class does not override Electron's desktop identity.
+    app.setDesktopName(`cuttle-${LAUNCH_MODE}.desktop`);
 }
 
 // Single-instance lock: if another instance is already running, focus it and quit this one.
@@ -2328,7 +2337,7 @@ app.on('second-instance', () => {
 
 /**
  * Create/repair the Host / Client / Daemon desktop launchers (idempotent).
- * Skips when they already exist, so it costs nothing on normal starts.
+ * Repairs existing Linux entries too, so older installs gain desktop fixes.
  */
 function ensureDesktopShortcuts() {
     try {
@@ -2346,12 +2355,6 @@ function ensureDesktopShortcuts() {
         } else if (process.platform === 'linux') {
             const script = path.join(repoRoot, 'src', 'scripts', 'create_desktop_shortcuts.sh');
             if (!fs.existsSync(script)) return;
-            let desktop = path.join(os.homedir(), 'Desktop');
-            try {
-                const out = spawnSync('xdg-user-dir', ['DESKTOP'], { encoding: 'utf8', timeout: 3000 });
-                if (out && out.stdout && out.stdout.trim()) desktop = out.stdout.trim();
-            } catch (_) { /* default Desktop */ }
-            if (fs.existsSync(path.join(desktop, 'cuttle-host.desktop'))) return;
             spawn('bash', [script, '--quiet'], { detached: true, stdio: 'ignore' }).unref();
         }
     } catch (err) {
