@@ -2244,6 +2244,13 @@ body.light-mode .rail-logo-clickable[data-tooltip]::after {
     background: rgba(0, 0, 0, 0.2);
 }
 
+/* Windowed Electron reserves space for its 36px titlebar. Fullscreen,
+   browser and mobile panels continue to fill the viewport from the top. */
+body.is-electron:not(.fullscreen) .notifications-slide-layer,
+body.is-electron:not(.fullscreen) .notifications-popover-backdrop {
+    top: 36px;
+}
+
 .notifications-popover-header {
     display: flex;
     align-items: center;
