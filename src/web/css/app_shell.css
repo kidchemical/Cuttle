@@ -2189,6 +2189,22 @@ body.light-mode .rail-logo-clickable[data-tooltip]::after {
 }
 
 /* Notifications popover (past toasts) */
+.notifications-slide-layer {
+    position: fixed;
+    inset: 0 0 0 var(--rail-width);
+    overflow: hidden;
+    z-index: 999997;
+    pointer-events: none;
+}
+
+/* Clip the slide at the blade edge so it emerges from behind the toolbar. */
+.notifications-slide-layer > .notifications-popover {
+    position: absolute;
+    left: 0;
+    max-width: calc(100% - 24px);
+    pointer-events: auto;
+}
+
 .notifications-popover {
     position: fixed;
     left: var(--rail-width);
