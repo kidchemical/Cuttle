@@ -8,7 +8,7 @@
         function paint(){
             const panel=doc.getElementById('chatSessionUsage'),box=doc.getElementById('chatSessionUsageTotals');
             if(panel&&box){panel.hidden=host.storage.getItem('cuttleShowSessionUsageEstimate')!=='true';
-                box.innerHTML=Usage.render(total(),host.escapeHtml)||(agents===null?(agentLoading?'Loading session usage…':'Session usage unavailable'):'No token usage recorded for this session');
+                box.innerHTML=Usage.render(total(),host.escapeHtml)||(agents===null?(agentLoading?'Loading session usage…':'Session usage unavailable'):Usage.placeholder(host.escapeHtml));
                 if(voiceUnavailable)box.innerHTML+='<span class="voice-usage-unavailable"> Voice usage unavailable; totals may be incomplete.</span>';}
             for(const bubble of doc.querySelectorAll('.message.assistant')){
                 const id=Number(bubble.dataset.messageId||0),queryId=bubble.querySelector('.message-query-log-link')?.dataset.queryId;

@@ -140,6 +140,10 @@ GPT-Live, Realtime and server transcription share `voice_input`. The standalone
 voice narrator conflicts with Live and Realtime, which own their spoken output.
 Server transcription and the narrator remain compatible. Flags determine
 availability; Voice settings determine which available conversation engine runs.
+Settings → Voice keeps stock **Spoken replies** (bubble play button and standard
+voice chat) always visible. The 🧪 **Voice conversation** section, with its engine
+selector and engine settings, renders only while GPT-Live or Realtime is enabled.
+Loading the tab never writes the engine; only choosing one does.
 
 ## Achievements App
 
@@ -178,7 +182,11 @@ Flag `voice_live` (default off): Settings → Experimental → **Voice: GPT-Live
 After enabling it, Settings → Voice offers GPT-Live as the recommended conversation
 engine, `gpt-live-1`, its supported voice catalog, and an idle timeout (150 seconds
 by default; 0 keeps the connection open continuously). Other voice input
-experiments and the standalone narrator must be disabled first.
+experiments and the standalone narrator must be disabled first. A **Preview
+voice** button plays the selected voice through OpenAI text-to-speech without
+opening a billable session (`POST /api/voice-stt/live/preview`, cached 7 days).
+Only voices TTS also speaks (`PREVIEW_VOICES` in `api.voice_live.settings`) can be
+previewed; Live-only voices disable the button and say why.
 
 The voice session uses client delegation to the chat's selected Cuttle agent.
 The server observes transcripts, claims delegation IDs once, and submits work
@@ -217,8 +225,9 @@ Secure browsers use WebRTC. The updated Capacitor Android app can stream native
 24 kHz mono PCM through its authenticated host socket when LAN HTTP cannot use
 `getUserMedia`. Native capture/playback owns permissions, audio focus, echo
 handling, bounded queues and shutdown. Older APKs do not expose that bridge;
-they need the updated app for Live on HTTP. Realtime still requires WebRTC
-microphone support; an unavailable engine is reported explicitly.
+they need the updated app for Live on HTTP. Realtime uses the same native Android
+transport when LAN HTTP cannot use WebRTC; an unavailable engine is reported
+explicitly.
 
 Tests use fake providers and private state; real microphone/model-access and
 physical-device audio quality require a deliberate smoke test.
@@ -238,13 +247,32 @@ switches; ending voice or backgrounding the shell closes it. An open connection 
 10 seconds and closes when disabled. Failed connections show an error; tap to
 retry. Unsupported WebRTC clients retain the established voice input engine.
 
-OpenAI `gpt-realtime-2.1` handles live input/output audio over WebRTC. The
-owner-authenticated `POST /api/voice-stt/realtime/session` mints a 60-second
-ephemeral credential using the existing OpenAI provider key. No long-lived key
-is sent to the browser. The response has `Cache-Control: no-store`; secrets
-are not persisted or logged. Custom `OPENAI_BASE_URL` proxies are rejected for
-this feature. Input transcription uses `gpt-4o-mini-transcribe`; spoken output
-uses Realtime's `marin` voice, independently of the existing chat TTS preference.
+OpenAI `gpt-realtime-2.1` handles live input/output audio. On a secure origin the
+browser connects over WebRTC: the owner-authenticated `POST
+/api/voice-stt/realtime/session` mints a 60-second ephemeral credential using the
+existing OpenAI provider key, and no long-lived key is sent to the browser. The
+response has `Cache-Control: no-store`; secrets are not persisted or logged.
+Custom `OPENAI_BASE_URL` proxies are rejected for this feature. Input
+transcription uses `gpt-4o-mini-transcribe`; spoken output uses Realtime's `marin`
+voice, independently of the existing chat TTS preference.
+
+**Preview voice** in its settings makes one real Realtime call with the selected
+model and voice (`POST /api/voice-stt/realtime/preview`, owner-only, flag-gated):
+text in, one spoken sentence out as WAV. It costs about $0.002 on the mini model,
+is recorded in the provider ledger, and is cached with the other voice clips for
+7 days. Owner `api/voice_realtime/preview.py`; tests `src/tests/chat/test_voice_preview.py`.
+
+The Capacitor Android app loads the UI over LAN HTTP, where the page has no
+secure context and cannot open WebRTC. There the same `POST
+/api/voice-stt/realtime/session` is called with `transport: "native"`: Cuttle
+mints no credential and instead owns a server-side OpenAI Realtime **WebSocket**,
+returning only an opaque voice id. The app streams 24 kHz mono PCM over its
+authenticated host socket (`/api/voice-stt/realtime/sessions/<id>/socket`) and
+the server translates events to the shared `session.*` wire protocol
+(`api/voice_realtime/service.py`). Delegation, task steering/queueing and usage
+pricing run on the server. The native bridge (`realtimeVoiceStart/Mute/Stop`) is
+delivered by the updated APK; older APKs fall back to the established voice input
+engine.
 
 The live companion can converse directly. Its `ask_cuttle_agent` function hands
 project work and context questions to the ordinary chat submitter, preserving
@@ -260,21 +288,22 @@ handoffs are persisted through the existing chat path. A new live session does
 not automatically receive the full chat history; it can ask the chat agent for
 context. Audio usage is priced with its frozen model/transcription settings and
 recorded using idempotent provider event receipts. It contributes to durable
-chat totals and the dashboard. This is a
-WebRTC feature; the Android `NativeMic` bridge is not a WebRTC transport.
+chat totals and the dashboard. Secure browsers use WebRTC; the Android app uses
+the native host-socket transport described above.
 
-Owners: `api.voice_realtime` (session config/credential issuance),
-`chat_voice_realtime.js` (connection, audio, events and tool lifecycle),
-`chat_voice.js` (overlay and chat handoff composition). Credential routes are
-mounted as a child blueprint of the existing voice API. No Electron code or
-new execution lane is required.
+Owners: `api.voice_realtime` (session config/credential issuance and the native
+`service.py` WebSocket bridge), `chat_voice_realtime.js` (WebRTC + native
+connection, audio, events and tool lifecycle), `chat_voice.js` (overlay and chat
+handoff composition), `apps/mobile/.../LiveVoiceAudio.java` (native duplex PCM).
+Routes are mounted as a child blueprint of the existing voice API. No Electron
+code or new execution lane is required.
 
 Protocol references: [OpenAI WebRTC](https://developers.openai.com/api/docs/guides/voice-webrtc),
 [Realtime conversations](https://developers.openai.com/api/docs/guides/realtime-conversations).
-Validation uses mocked providers, WebRTC and microphone devices; a real account
-and microphone smoke test is required to establish live model access and audio
-quality. Tests: `src/tests/chat/test_voice_realtime.py` and
-`src/tests/chat/test_chat_voice_overlay.py`.
+Validation uses mocked providers, WebRTC, native sockets and microphone devices;
+a real account and microphone smoke test is required to establish live model
+access and audio quality. Tests: `src/tests/chat/test_voice_realtime.py` and
+`src/tests/chat/test_voice_realtime_native.py`.
 
 ## Voice narrator
 

@@ -22,9 +22,10 @@ import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
 import org.json.JSONObject;
 
-/** Continuous duplex PCM for GPT-Live when LAN HTTP cannot use getUserMedia. */
+/** Continuous duplex PCM for server-owned voice when LAN HTTP cannot use getUserMedia. */
 public final class LiveVoiceAudio {
     private static final int RATE = 24000;
+    private final String engine;
     private final Consumer<String> events;
     private ArrayBlockingQueue<byte[]> playback = new ArrayBlockingQueue<>(40);
     private final OkHttpClient client = new OkHttpClient.Builder()
@@ -41,7 +42,13 @@ public final class LiveVoiceAudio {
     private volatile long generation;
     private final AudioManager.OnAudioFocusChangeListener focus = change -> { if (change < 0) stop(); };
 
-    public LiveVoiceAudio(Consumer<String> events) { this.events = events; }
+    public LiveVoiceAudio(Consumer<String> events) { this("live", events); }
+
+    /** @param engine "live" (GPT-Live) or "realtime" (OpenAI Realtime). */
+    public LiveVoiceAudio(String engine, Consumer<String> events) {
+        this.engine = "realtime".equals(engine) ? "realtime" : "live";
+        this.events = events;
+    }
 
     public synchronized String start(Context context, String base, String cookie, String id) {
         if (!id.matches("[a-f0-9]{32}")) return "error:invalid voice session";
@@ -58,7 +65,7 @@ public final class LiveVoiceAudio {
         final long own = ++generation;
         playback = new ArrayBlockingQueue<>(40);
         String url = base.replaceAll("/+$", "").replaceFirst("^https:", "wss:")
-            .replaceFirst("^http:", "ws:") + "/api/voice-stt/live/sessions/" + id + "/socket";
+            .replaceFirst("^http:", "ws:") + "/api/voice-stt/" + engine + "/sessions/" + id + "/socket";
         closing = false; muted = false;
         socket = client.newWebSocket(new Request.Builder().url(url)
             .header("Cookie", cookie == null ? "" : cookie).build(), new WebSocketListener() {
@@ -131,7 +138,9 @@ public final class LiveVoiceAudio {
                 int size = input.read(frame, 0, frame.length);
                 if (size < 0) { fail(own, "Native microphone stopped unexpectedly."); break; }
                 if (size > 0 && generation == own && !muted && !closing) {
-                    if (connection.queueSize() > 96000) { fail(own, "Voice network is too slow; reconnect to retry."); break; }
+                    // A transient backlog (host busy reading a long turn) must not
+                    // end the call: drop this frame and keep the socket alive.
+                    if (connection.queueSize() > 96000) continue;
                     JSONObject event = new JSONObject();event.put("type", "session.input_audio.append");
                     event.put("audio", Base64.encodeToString(frame, 0, size, Base64.NO_WRAP));
                     connection.send(event.toString());

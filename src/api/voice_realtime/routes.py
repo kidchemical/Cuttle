@@ -1,6 +1,10 @@
 """Owner-only issuance of short-lived voice credentials (never cached),
 Realtime voice settings, and usage accounting for the live session."""
-from flask import Blueprint, jsonify, request
+import base64
+import json
+import re
+
+from flask import Blueprint, current_app, jsonify, request
 
 from api import voice_usage
 from api.http_authz import owner_required, current_user
@@ -13,6 +17,8 @@ from api.voice_realtime import (
 )
 
 voice_realtime_bp = Blueprint("voice_realtime", __name__, url_prefix="/realtime")
+
+_PREFIX_RE = re.compile(r"(?:/[a-zA-Z0-9_-]+\s+){1,3}")
 
 
 @voice_realtime_bp.post("/session")
@@ -28,6 +34,8 @@ def session():
             return error
     context = data.get("chat_request") if isinstance(data.get("chat_request"), dict) else {}
     context = {key: context[key] for key in ("agent_pins", "sticky_agent", "project_id") if key in context}
+    if data.get("transport") == "native":
+        return _native_session(data, sid, context)
     try:
         out = create_session(current_user()["id"], sid, context, str(data.get("prefix") or "")[:128]) if sid else create_session(current_user()["id"])
         response = jsonify(success=True, **out)
@@ -38,6 +46,58 @@ def session():
         response.status_code = 503
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+def _native_session(data, sid, context):
+    """Android/native transport: Cuttle owns the OpenAI Realtime WebSocket.
+
+    No ephemeral credential is minted; the client never talks to OpenAI. The
+    page only needs an opaque Cuttle voice id to open the audio socket.
+    """
+    from api.auth_session import get_request_session_token
+    from api.voice_realtime import service
+
+    if not sid:
+        return jsonify(success=False, error="Native Realtime voice needs an open chat."), 400
+    prefix = str(data.get("prefix") or "")
+    if (prefix and not _PREFIX_RE.fullmatch(prefix)) or len(prefix) > 128:
+        return jsonify(success=False, error="Invalid voice agent prefix."), 400
+    try:
+        out = service.start_native(user_id=current_user()["id"], chat_id=sid,
+            token=get_request_session_token(), prefix=prefix, chat_request=context)
+    except PermissionError:
+        response = jsonify(success=False, disabled=True, error="Realtime voice is disabled")
+        response.status_code = 403
+    except (ValueError, LookupError) as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    else:
+        response = jsonify(success=True, connection_id=out["id"], model=out["model"], native=True)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@voice_realtime_bp.get("/sessions/<voice_id>")
+@owner_required
+def get_native_session(voice_id):
+    from api.voice_realtime import service
+    try:
+        response = jsonify(success=True, session=service.snapshot(voice_id, current_user()["id"]))
+    except LookupError as exc:
+        return jsonify(success=False, error=str(exc)), 404
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@voice_realtime_bp.post("/sessions/<voice_id>/close")
+@owner_required
+def close_native_session(voice_id):
+    from api.voice_realtime import service
+    try:
+        return jsonify(success=True, session=service.close(voice_id, current_user()["id"]))
+    except LookupError as exc:
+        return jsonify(success=False, error=str(exc)), 404
+    except Exception:
+        return jsonify(success=False, error="Could not confirm voice closure; reconnect to check status."), 503
 
 
 @voice_realtime_bp.get("/settings")
@@ -62,6 +122,33 @@ def update_settings():
     except RuntimeError as exc:
         return jsonify(success=False, error=str(exc)), 500
     return jsonify(success=True, voice_realtime=saved)
+
+
+@voice_realtime_bp.post("/preview")
+@owner_required
+def preview():
+    """Speak a short sample with the selected Realtime model and voice."""
+    from api.experimental import is_enabled
+    from api.voice_realtime import FLAG_ID
+    from api.voice_realtime import preview as realtime_preview
+    if not is_enabled(FLAG_ID):
+        return jsonify(success=False, disabled=True, error="OpenAI Realtime is disabled in Settings → Experimental."), 403
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(success=False, error="Expected JSON object."), 400
+    current = load_settings()
+    try:
+        audio, mime, meta = realtime_preview.synthesize(
+            str(data.get("model") or current["model"]), str(data.get("voice") or current["voice"]))
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except RuntimeError as exc:
+        return jsonify(success=False, error=str(exc)), 503
+    except Exception as exc:
+        from api.model_providers.cache import public_error
+        return jsonify(success=False, error=public_error(exc, "Voice preview")), 503
+    return jsonify(success=True, content_type=mime, cached=meta["cached"], cost=meta["cost"],
+                   audio_base64=base64.b64encode(audio).decode("ascii"))
 
 
 @voice_realtime_bp.post("/usage")
@@ -147,3 +234,47 @@ def delegate():
         result = {"error": "Cuttle handoff failed. Check the chat before retrying."}
     store.finish_delegation(row["id"], call_id, result)
     return jsonify(success=True, **result)
+
+
+def register_socket():
+    from flask_sock import Sock
+    sock = Sock()
+
+    @sock.route("/sessions/<voice_id>/socket", bp=voice_realtime_bp)
+    def native_voice(socket, voice_id):
+        from api.http_authz import require_owner
+        from api.voice_realtime import service
+        user, error = require_owner()
+        if error:
+            socket.close()
+            return
+        try:
+            service.native_connection(voice_id, user["id"], socket)
+        except Exception as exc:
+            current_app.logger.exception("Realtime native transport failed for session %s", voice_id)
+            status = getattr(exc, "status_code", None)
+            if status in {401, 403}:
+                message = "OpenAI rejected the Realtime connection; check API key and project access."
+            elif status == 404:
+                message = "OpenAI could not find the Realtime model for this project (HTTP 404)."
+            elif status == 429:
+                message = "OpenAI rate or usage limit blocked the Realtime connection (HTTP 429)."
+            elif isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+                message = "Cuttle could not connect to OpenAI for Realtime; check the host network."
+            elif "OpenAI API key" in str(exc):
+                message = "Configure an OpenAI API key in Cuttle Settings → Providers."
+            else:
+                message = f"Realtime setup failed ({type(exc).__name__}); details were logged on the Cuttle host."
+            try:
+                from api.voice_live import store
+                store.update(voice_id, state="disconnected", error=message, finalized=False)
+            except Exception:
+                current_app.logger.exception("Could not persist Realtime transport error for session %s", voice_id)
+            try:
+                socket.send(json.dumps({"type": "cuttle.error", "message": message}))
+                socket.close()
+            except Exception:
+                pass
+
+
+register_socket()

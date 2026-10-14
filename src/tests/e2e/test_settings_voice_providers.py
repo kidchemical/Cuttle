@@ -1,4 +1,5 @@
 """Production Voice settings, fake account catalogs, no vendor/Flask calls."""
+import base64
 import json
 from urllib.parse import urlparse, parse_qs
 from playwright.sync_api import expect
@@ -17,6 +18,7 @@ class VoiceWorld(AgentWorld):
         self.realtime={'model':'gpt-realtime-2.1','voice':'marin','transcription_model':'gpt-4o-mini-transcribe'}
         self.realtime_saves=[]; self.realtime_enabled=False
         self.live_enabled=False; self.voice_chat={'engine':'auto','model':'gpt-live-1','voice':'marin','idle_seconds':150};self.engine_saves=[]
+        self.live_previews=[]; self.realtime_previews=[]
 
     def models(self,pid,op):
         mids=['haiku-new','haiku-budget'] if pid=='anthropic' else ['gpt-text'] if op=='text_generation' else ['tts-new','tts-old'] if pid=='openai' else ['speech-new']
@@ -48,7 +50,7 @@ class VoiceWorld(AgentWorld):
             engine=self.voice_chat['engine']
             if engine=='auto':engine='live' if self.live_enabled else 'realtime' if self.realtime_enabled else 'tts'
             data={'success':True,'voice_chat':self.voice_chat,'engine':engine,'live_enabled':self.live_enabled,'realtime_enabled':self.realtime_enabled,'configured':True,
-                  'models':[{'id':'gpt-live-1'}],'voices':[{'id':'marin'},{'id':'cedar'}]}
+                  'models':[{'id':'gpt-live-1'}],'voices':[{'id':'marin','preview':True},{'id':'cedar','preview':True},{'id':'juni','preview':False}]}
         elif path=='/api/settings/chat-tts':
             if route.request.method=='POST':
                 self.saves.append(json.loads(route.request.post_data))
@@ -56,6 +58,15 @@ class VoiceWorld(AgentWorld):
                     route.fulfill(status=500,content_type='application/json',body='{"success":false,"error":"Save failed"}'); return
                 self.conf=self.saves[-1]
             data={'success':True,'chat_tts':self.conf}
+        elif path=='/api/voice-stt/live/preview':
+            self.live_previews.append(json.loads(route.request.post_data))
+            voice=self.live_previews[-1].get('voice','marin')
+            data={'success':True,'voice':voice,'content_type':'audio/mpeg',
+                  'audio_base64':base64.b64encode(b'MP3:sample').decode()}
+        elif path=='/api/voice-stt/realtime/preview':
+            self.realtime_previews.append(json.loads(route.request.post_data))
+            data={'success':True,'content_type':'audio/wav','cached':False,'cost':0.0021,
+                  'audio_base64':base64.b64encode(b'RIFF:sample').decode()}
         elif path.startswith('/api/settings/model-providers/'):
             pid=path.split('/')[-2]; op=query.get('operation',['text_generation'])[0]; self.requests.append(route.request.url)
             if self.delay and pid=='openai' and op=='speech_generation': self.pending=route; return
@@ -134,15 +145,18 @@ def test_voice_realtime_mode_configures_and_saves(browser,static_server):
         expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
         page.evaluate("CuttleSettingsTabs.setTab('voice')")
         expect(page.locator('#voiceRealtimeConfig')).to_be_visible()
-        expect(page.locator('#voiceTtsConfig')).to_be_hidden()
+        # Stock spoken replies stay configurable beside the experiment.
+        expect(page.locator('#voiceTtsConfig')).to_be_visible()
+        expect(page.locator('#voiceModeSelect option[value="live"]')).to_have_count(0)
         expect(page.locator('#voiceRealtimeModel')).to_have_value('gpt-realtime-2.1')
         choose(page, page.locator('#voiceRealtimeModel'), 'gpt-realtime-2.1-mini')
         choose(page, page.locator('#voiceRealtimeVoice'), 'cedar')
         page.evaluate('saveVoiceRealtimeSettings()')
-        expect(page.locator('.cuttle-toast').last).to_contain_text('Live voice saved')
+        expect(page.locator('.cuttle-toast').last).to_contain_text('Realtime settings saved')
         assert world.realtime['model']=='gpt-realtime-2.1-mini' and world.realtime['voice']=='cedar'
         page.evaluate("document.getElementById('voiceModeSelect').value = 'tts'; onVoiceModeChanged();")
-        expect(page.locator('#voiceTtsConfig')).to_be_visible()
+        expect(page.locator('#voiceRealtimeConfig')).to_be_hidden()
+        assert world.engine_saves[-1]=={'engine':'tts'}
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         assert not errors,errors
     finally: page.close()
@@ -159,17 +173,108 @@ def test_live_mode_is_gated_and_saved_as_actual_engine(browser, static_server):
         expect(page.locator('#voiceModeSelect')).to_have_value('live')
         choose(page,page.locator('#voiceLiveVoice'),'cedar')
         page.locator('#voiceLiveIdle').fill('300')
+        page.locator('#voiceLiveSpeed').fill('0.8')
+        expect(page.locator('#voiceLiveSpeedValue')).to_have_text('0.80×')
+        page.locator('#voiceLiveProgress').fill('45')
         with page.expect_response('**/api/settings/voice-chat'):
-            page.get_by_role('button',name='Save GPT-Live voice').click()
+            page.get_by_role('button',name='Save GPT-Live settings').click()
         expect(page.locator('#voiceLiveVoice')).to_have_value('cedar')
         page.wait_for_function("document.getElementById('voiceLiveStatus').textContent.includes('Cuttle agent')")
         assert world.voice_chat['engine']=='live'
         assert world.voice_chat['voice']=='cedar'
         assert world.voice_chat['idle_seconds']==300
+        assert world.voice_chat['speed']==0.8
+        assert world.voice_chat['progress_seconds']==45
         world.live_enabled=False
         page.evaluate('voiceProvidersController().load()')
         expect(page.locator('#voiceLiveConfig')).to_be_hidden()
+        expect(page.locator('#voiceConversationGroup')).to_be_hidden()
         expect(page.locator('#voiceModeSelect option[value="live"]')).to_have_count(0)
+    finally:page.close()
+
+
+def test_live_voice_preview_button_requests_and_plays_sample(browser, static_server):
+    world=VoiceWorld();world.live_enabled=True
+    page=open_settings(browser,static_server,world); errors=[]
+    page.on('pageerror',lambda error:errors.append(str(error)))
+    try:
+        expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
+        page.evaluate("CuttleSettingsTabs.setTab('voice')")
+        expect(page.locator('#voiceLiveConfig')).to_be_visible()
+        page.evaluate("() => { window.Audio = class { constructor(){} play(){ return Promise.resolve(); } }; }")
+        choose(page,page.locator('#voiceLiveVoice'),'cedar')
+        with page.expect_response('**/api/voice-stt/live/preview'):
+            page.locator('#voiceLivePreviewBtn').click()
+        expect(page.locator('#voiceLivePreviewStatus')).to_contain_text('Preview played')
+        assert world.live_previews[-1]['voice']=='cedar'
+        assert not errors,errors
+    finally:page.close()
+
+
+def test_live_only_voice_cannot_be_previewed(browser, static_server):
+    world=VoiceWorld();world.live_enabled=True
+    page=open_settings(browser,static_server,world)
+    try:
+        expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
+        page.evaluate("CuttleSettingsTabs.setTab('voice')")
+        expect(page.locator('#voiceLivePreviewBtn')).to_be_enabled()
+        choose(page,page.locator('#voiceLiveVoice'),'juni')
+        expect(page.locator('#voiceLivePreviewBtn')).to_be_disabled()
+        expect(page.locator('#voiceLivePreviewStatus')).to_contain_text('No preview')
+        assert world.live_previews==[]
+    finally:page.close()
+
+
+def test_realtime_preview_requests_selected_model_and_voice(browser, static_server):
+    world=VoiceWorld();world.realtime_enabled=True
+    page=open_settings(browser,static_server,world); errors=[]
+    page.on('pageerror',lambda error:errors.append(str(error)))
+    try:
+        expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
+        page.evaluate("CuttleSettingsTabs.setTab('voice')")
+        expect(page.locator('#voiceRealtimeConfig')).to_be_visible()
+        page.evaluate("() => { window.Audio = class { constructor(){} play(){ return Promise.resolve(); } }; }")
+        choose(page,page.locator('#voiceRealtimeModel'),'gpt-realtime-2.1-mini')
+        choose(page,page.locator('#voiceRealtimeVoice'),'cedar')
+        with page.expect_response('**/api/voice-stt/realtime/preview'):
+            page.locator('#voiceRealtimePreviewBtn').click()
+        expect(page.locator('#voiceRealtimePreviewStatus')).to_contain_text('$0.0021')
+        assert world.realtime_previews[-1]=={'model':'gpt-realtime-2.1-mini','voice':'cedar'}
+        assert not errors,errors
+    finally:page.close()
+
+
+def test_voice_tab_without_experiments_shows_only_stock_settings(browser, static_server):
+    world=VoiceWorld()
+    page=open_settings(browser,static_server,world); errors=[]
+    page.on('pageerror',lambda error:errors.append(str(error)))
+    try:
+        expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
+        page.evaluate("CuttleSettingsTabs.setTab('voice')")
+        expect(page.locator('#chatTtsModel')).to_have_value('tts-old')
+        page.evaluate('voiceProvidersController().load()')
+        expect(page.locator('#voiceTtsConfig')).to_be_visible()
+        for hidden in ('#voiceConversationGroup','#voiceLiveConfig','#voiceRealtimeConfig'):
+            expect(page.locator(hidden)).to_be_hidden()
+        text=page.locator('#panel-voice').inner_text()
+        for word in ('GPT-Live','Realtime','Experimental','Conversation engine'):
+            assert word not in text, word
+        assert world.engine_saves==[] and world.realtime_saves==[]
+        assert not errors,errors
+    finally:page.close()
+
+
+def test_reloading_voice_tab_never_overwrites_saved_engine(browser, static_server):
+    world=VoiceWorld();world.live_enabled=True;world.voice_chat['engine']='live'
+    page=open_settings(browser,static_server,world)
+    try:
+        expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
+        page.evaluate("CuttleSettingsTabs.setTab('voice')")
+        expect(page.locator('#voiceModeSelect')).to_have_value('live')
+        page.evaluate('voiceProvidersController().load()')
+        page.evaluate('voiceProvidersController().load()')
+        expect(page.locator('#voiceModeSelect')).to_have_value('live')
+        assert world.engine_saves==[]
     finally:page.close()
 
 

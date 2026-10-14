@@ -51,6 +51,32 @@ def test_voice_stays_bound_across_space_presenters_and_restores(browser):
         page.close()
 
 
+def test_shell_voice_controls_clear_phone_safe_area(browser):
+    """The floating Mute/End voice bar must sit above the home indicator."""
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    try:
+        page.set_content('<html><head></head><body></body></html>')
+        page.evaluate('''() => {
+            document.documentElement.style.setProperty('--cuttle-safe-bottom', '34px');
+            document.documentElement.style.setProperty('--cuttle-safe-right', '24px');
+            window.CuttleChatVoiceLive={create:host=>({start:async()=>{host.onStatus('Listening…');},stop:async()=>{},isOpen:()=>true,mute(){}})};
+        }''')
+        page.add_script_tag(path=str(REPO / 'src/web/js/shell/shell_voice.js'))
+        page.evaluate('''async () => {
+            window.runtime=CuttleShellVoice.create({win:window,navigate(){}});
+            await runtime.start({session_id:7,engine:'live'});
+        }''')
+        page.locator('.shell-voice-controls').wait_for(state='visible')
+        box = page.evaluate('''() => {
+            const s=getComputedStyle(document.querySelector('.shell-voice-controls'));
+            return {bottom:s.bottom,right:s.right};
+        }''')
+        assert box['bottom'] == '50px', box
+        assert box['right'] == '40px', box
+    finally:
+        page.close()
+
+
 def test_live_webrtc_protocol_drains_final_usage_before_transport_close(browser):
     page = browser.new_page()
     try:

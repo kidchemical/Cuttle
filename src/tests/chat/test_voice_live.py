@@ -1,4 +1,5 @@
 """Live contracts use official-shaped events, private state and no paid calls."""
+import base64
 import json
 from types import SimpleNamespace
 
@@ -111,6 +112,42 @@ def test_configuration_uses_client_delegation_and_limits_frontend_permissions():
     assert "client" not in native  # WebSocket setup rejects client.data_channel.
 
 
+def test_speaking_speed_is_validated_and_sent_only_when_non_default():
+    """Reply rate is an API output setting, exposed as a preference."""
+    base = settings.normalize({})
+    assert base["speed"] == 1.0
+    assert service.config(base, [])["audio"]["output"] == {"voice": base["voice"]}
+    slow = service.config(settings.normalize({"speed": 0.8}), [])
+    assert slow["audio"]["output"]["speed"] == 0.8
+    assert settings.normalize({"speed": 0.75})["speed"] == 0.75
+    with pytest.raises(ValueError):
+        settings.normalize({"speed": 2.0})
+    with pytest.raises(ValueError):
+        settings.normalize({"speed": "fast"})
+    with pytest.raises(ValueError):
+        settings.normalize({"speed": True})
+
+
+def test_spoken_progress_interval_is_validated_and_throttles(monkeypatch):
+    from types import SimpleNamespace as NS
+    from api.voice_live import delegation
+    assert settings.normalize({})["progress_seconds"] == 0
+    assert settings.normalize({"progress_seconds": 45})["progress_seconds"] == 45
+    with pytest.raises(ValueError):
+        settings.normalize({"progress_seconds": -1})
+    with pytest.raises(ValueError):
+        settings.normalize({"progress_seconds": 999})
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(delegation, "time", NS(monotonic=lambda: clock["t"]))
+    run = NS(prefs={"progress_seconds": 30}, progress_at=0.0)
+    assert delegation.progress_due(run) is True          # first line always speaks
+    assert delegation.progress_due(run) is False         # within the gap
+    clock["t"] += 31
+    assert delegation.progress_due(run) is True
+    unthrottled = NS(prefs={"progress_seconds": 0}, progress_at=0.0)
+    assert delegation.progress_due(unthrottled) and delegation.progress_due(unthrottled)
+
+
 def test_start_gate_and_idempotent_native_setup(tmp_path, monkeypatch, _isolated_application_settings):
     monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
     monkeypatch.setattr(service.provider, "create_webrtc", lambda *_: pytest.fail("Paid call was attempted"))
@@ -128,6 +165,29 @@ def test_start_gate_and_idempotent_native_setup(tmp_path, monkeypatch, _isolated
         service._runs.clear()
 
 
+def test_voice_preview_synthesizes_without_opening_a_session(monkeypatch, _isolated_application_settings):
+    """The settings preview is a TTS sample, never a billable Live session."""
+    import api.tts_providers as tts
+    monkeypatch.setattr("api.http_authz.require_owner", lambda: ({"id": 7}, None))
+    calls = []
+    monkeypatch.setattr(tts, "synthesize",
+                        lambda pid, text, **kw: (calls.append((pid, text, kw)), (b"MP3:preview", "audio/mpeg", {}))[1])
+    app = Flask(__name__)
+    app.register_blueprint(voice_live_bp, url_prefix="/live")
+    client = app.test_client()
+    flags.set_enabled("voice_live", True)
+    try:
+        ok = client.post("/live/preview", json={"voice": "marin", "speed": 0.9})
+        assert ok.status_code == 200 and ok.json["success"]
+        assert ok.json["content_type"] == "audio/mpeg"
+        assert base64.b64decode(ok.json["audio_base64"]) == b"MP3:preview"
+        assert calls[0][0] == "openai" and calls[0][2]["voice"] == "marin"
+        bad = client.post("/live/preview", json={"voice": "not-a-live-voice"})
+        assert bad.status_code == 400 and not bad.json["success"]
+    finally:
+        flags.set_enabled("voice_live", False)
+
+
 def test_http_owner_chat_gate_and_settings_validation(run, monkeypatch):
     monkeypatch.setattr("api.http_authz.require_owner", lambda: ({"id": 7}, None))
     monkeypatch.setattr("api.voice_live.routes.require_chat_session_access", lambda sid: ({"id": 7}, 42, None))
@@ -139,6 +199,26 @@ def test_http_owner_chat_gate_and_settings_validation(run, monkeypatch):
         settings.normalize({"voice": "not-a-live-voice"})
     with pytest.raises(ValueError):
         settings.normalize({"model": "gpt-live-1-mini"})
+
+
+def test_catalog_falls_back_to_the_enabled_engine(_isolated_application_settings):
+    """Switching the engine flag must not strand a saved engine on plain TTS."""
+    manager = _isolated_application_settings
+    flags.set_enabled("voice_live", False)
+    flags.set_enabled("voice_realtime", True)
+    manager.set_setting("voice_chat", {**settings.load(), "engine": "live"})
+    catalog = settings.catalog()
+    assert catalog["engine"] == "realtime"
+    assert catalog["realtime_enabled"] is True and catalog["live_enabled"] is False
+    # An explicit TTS preference is never overridden by an enabled engine.
+    manager.set_setting("voice_chat", {**settings.load(), "engine": "tts"})
+    assert settings.catalog()["engine"] == "tts"
+    # Re-enabling the saved engine's flag restores the saved choice.
+    flags.set_enabled("voice_realtime", False)
+    flags.set_enabled("voice_live", True)
+    manager.set_setting("voice_chat", {**settings.load(), "engine": "live"})
+    assert settings.catalog()["engine"] == "live"
+    flags.set_enabled("voice_live", False)
 
 
 def test_native_setup_error_reaches_client_and_closes_socket(run, monkeypatch):
@@ -165,3 +245,70 @@ def test_native_setup_error_reaches_client_and_closes_socket(run, monkeypatch):
     assert error['type'] == 'cuttle.error'
     assert 'host network' in error['message']
     assert store.get(run.id)['state'] == 'disconnected'
+
+
+def _voice_owner(**overrides):
+    owner = SimpleNamespace(chat_id=42, user_id=7, prefix="", chat_request={},
+                            token="private-token", id="voice-test")
+    for key, value in overrides.items():
+        setattr(owner, key, value)
+    return owner
+
+
+def test_run_request_spawns_a_subagent_chat_when_busy_and_not_steerable(monkeypatch):
+    """GPT-Live latches to one agent; a second request runs in its own chat."""
+    from api import chat_delivery
+    from api.voice_live import delegation
+    monkeypatch.setattr(delegation, "get_auth_db", lambda: SimpleNamespace(
+        get_chat_session=lambda sid, uid: {"id": sid}, get_messages=lambda *a, **k: []))
+    monkeypatch.setattr(chat_delivery, "is_busy", lambda sid: True)
+    monkeypatch.setattr(chat_delivery, "current_turn", lambda sid: "turn-1")
+    monkeypatch.setattr(delegation, "request_json", lambda token, path, data: (200, {"steered": False}))
+    spawned = {}
+    monkeypatch.setattr(delegation, "spawn_parallel_request",
+                        lambda run, did, message: (spawned.__setitem__("message", message), {"response": "Done."})[1])
+    monkeypatch.setattr(delegation, "queue_request", lambda *a: pytest.fail("queue must be bypassed"))
+    assert delegation.run_request(_voice_owner(), "d1", "do the thing") == {"response": "Done."}
+    assert spawned["message"] == "do the thing"
+
+
+def test_run_request_falls_back_to_queue_when_no_subagent_can_start(monkeypatch):
+    from api import chat_delivery
+    from api.voice_live import delegation
+    monkeypatch.setattr(delegation, "get_auth_db", lambda: SimpleNamespace(
+        get_chat_session=lambda sid, uid: {"id": sid}, get_messages=lambda *a, **k: []))
+    monkeypatch.setattr(chat_delivery, "is_busy", lambda sid: True)
+    monkeypatch.setattr(chat_delivery, "current_turn", lambda sid: "turn-1")
+    monkeypatch.setattr(delegation, "request_json", lambda token, path, data: (200, {"steered": False}))
+    monkeypatch.setattr(delegation, "spawn_parallel_request", lambda *a: None)
+    monkeypatch.setattr(delegation, "queue_request", lambda run, did, message: {"response": "queued"})
+    assert delegation.run_request(_voice_owner(), "d1", "task") == {"response": "queued"}
+
+
+def test_spawn_parallel_request_runs_child_in_its_own_chat_and_speaks_reply(monkeypatch):
+    from api.subagents import service as subagents
+    from api.voice_live import delegation
+    captured = {}
+    payload = {"children": [{"session_id": 99, "handle": "CH-000099", "status": "done"}], "timed_out": False}
+    monkeypatch.setattr(subagents, "spawn", lambda **kwargs: captured.update(kwargs) or payload)
+    monkeypatch.setattr(delegation, "_child_reply", lambda sid: "The file is updated.")
+    appended = []
+    owner = _voice_owner(prefix="/cursor ")
+    owner.append = lambda kind, did, text: appended.append(text)
+    assert delegation.spawn_parallel_request(owner, "d1", "/cursor fix the tests") == {
+        "response": "The file is updated."}
+    assert captured["parent_session_id"] == 42
+    assert captured["collect"] == "first" and captured["lifetime"] == "one_shot"
+    assert captured["children"][0]["agent"] == "cursor"
+    assert "its own chat" in appended[0]
+
+
+def test_spawn_parallel_request_reports_a_still_running_child(monkeypatch):
+    from api.subagents import service as subagents
+    from api.voice_live import delegation
+    payload = {"children": [{"session_id": 99, "handle": "CH-000099", "status": "running"}], "timed_out": True}
+    monkeypatch.setattr(subagents, "spawn", lambda **kwargs: payload)
+    owner = _voice_owner()
+    owner.append = lambda *a: None
+    out = delegation.spawn_parallel_request(owner, "d1", "a long task")
+    assert "still running" in out["response"] and "CH-000099" in out["response"]

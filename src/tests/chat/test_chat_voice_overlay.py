@@ -24,6 +24,7 @@ SEGMENTS_JS = CHAT_JS / "chat_voice_segments.js"
 STARS_JS = CHAT_JS / "chat_voice_stars.js"
 NARRATOR_JS = CHAT_JS / "chat_voice_narrator.js"
 RECORDER_JS = CHAT_JS / "chat_voice_recorder.js"
+ACTIVITY_JS = CHAT_JS / "chat_voice_activity.js"
 VOICE_JS = CHAT_JS / "chat_voice.js"
 PAGE_JS = CHAT_JS / "chat_page.js"
 CHAT_HTML = WEB / "chat_page.html"
@@ -68,7 +69,7 @@ def _fn_body(src: str, name: str) -> str:
 
 def _node(script: str) -> None:
     proc = subprocess.run(
-        ["node", "-e", script, str(SEGMENTS_JS), str(STARS_JS), str(NARRATOR_JS), str(VOICE_JS), str(RECORDER_JS)],
+        ["node", "-e", script, str(SEGMENTS_JS), str(STARS_JS), str(NARRATOR_JS), str(VOICE_JS), str(RECORDER_JS), str(ACTIVITY_JS)],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -121,6 +122,31 @@ assert.deepStrictEqual(st.segments.map((s) => s.text), ['hello how are you']);
 """)
 
 
+@node_only
+def test_segments_split_sentences_and_merge_reemitted_overlap():
+    """Phrase bubbles follow the spoken content: one per sentence, re-emitted
+    words are joined once instead of duplicated into separate bubbles."""
+    _node(r"""
+const assert = require('assert');
+const S = require(process.argv[1]);
+const r = (t, f) => ({ isFinal: f, 0: { transcript: t } });
+assert.deepStrictEqual(S.splitSentences('Book a flight. Then a hotel.'),
+  ['Book a flight.', 'Then a hotel.']);
+assert.deepStrictEqual(S.splitSentences('3.14 is pi'), ['3.14 is pi']);
+const st = S.createState();
+S.beginSession(st);
+// One recognizer final carrying two sentences becomes two removable bubbles.
+S.applyResults(st, [r('Book a flight. Then a hotel.', true)]);
+assert.deepStrictEqual(st.segments.map((s) => s.text), ['Book a flight.', 'Then a hotel.']);
+// A re-emitted phrase that repeats the tail joins once ("how" is not duplicated).
+S.commit(st, 'hello how');
+S.commit(st, 'how are you');
+assert.deepStrictEqual(st.segments.map((s) => s.text),
+  ['Book a flight.', 'Then a hotel.', 'hello how are you']);
+S.endSession(st);
+""")
+
+
 CONTROLLER_HARNESS = r"""
 const assert = require('assert');
 class CL {
@@ -139,6 +165,7 @@ class El {
   get textContent() { return this._t + this.children.map((c) => c.textContent).join(''); }
   get lastElementChild() { return this.children[this.children.length - 1] || null; }
   appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
+  remove() { const p = this.parentNode; if (p) { const i = p.children.indexOf(this); if (i >= 0) p.children.splice(i, 1); } this.parentNode = null; }
   scrollTo(opts) { if (opts && typeof opts === 'object' && 'top' in opts) this.scrollTop = opts.top; }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
@@ -164,6 +191,7 @@ require(process.argv[1]);
 require(process.argv[2]);
 const N = require(process.argv[3]);
 const R = require(process.argv[5]);
+require(process.argv[6]);
 const V = require(process.argv[4]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const res = (t, f) => ({ isFinal: f, 0: { transcript: t } });
@@ -252,6 +280,69 @@ def test_pending_reply_still_speaks_after_leaving_overlay_mid_run():
   assert.strictEqual(played, 1, 'no pending reply → nothing more to speak');
 })().catch((e) => { console.error(e); process.exit(1); });
 """)
+
+
+@node_only
+def test_agent_activity_bubble_matches_chat_style_and_updates_in_place():
+    """While the agent runs, the voice transcript shows the same chat-style
+    processing bubble as the regular chat view (orbit + wave + sweep status),
+    carrying tool activity instead of a bare center caption."""
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  const A = require(process.argv[6]);
+  assert.ok(A && A.orbitHtml().indexOf('typing-orbit') >= 0, 'shared orbit markup');
+  assert.ok(A.orbitHtml().indexOf('typing-wave') >= 0, 'shared wave markup');
+  const transcript = document.getElementById('voiceModeTranscript');
+  const center = document.getElementById('voiceModeStatus');
+  const count = () => transcript.children.filter((c) => c.classList.contains('is-activity')).length;
+
+  voice.enter();
+  voice.onGenerationStarted();
+  assert.strictEqual(count(), 1, 'one activity bubble while the agent runs');
+  const bubble = transcript.children[0];
+  assert.ok(bubble.classList.contains('voice-mode-line'));
+  const indicator = bubble.children[0];
+  const status = bubble.children[1];
+  assert.ok(indicator.classList.contains('typing-indicator'));
+  assert.ok(indicator.innerHTML.indexOf('typing-orbit') >= 0);
+  assert.ok(status.classList.contains('typing-status'));
+  assert.strictEqual(status.textContent, 'Thinking…');
+
+  // Tool activity lands in the bubble, never as a bare center caption.
+  voice.onAgentStatus('Reading src/api/app.py');
+  assert.strictEqual(status.textContent, 'Reading src/api/app.py');
+  assert.strictEqual(center.textContent, 'Thinking…');
+  voice.onAgentStatus('Running tests');
+  assert.strictEqual(count(), 1, 'status updates never duplicate the bubble');
+  assert.strictEqual(status.textContent, 'Running tests');
+
+  // The reply supersedes the bubble.
+  voice.onGenerationEnded({ isError: false });
+  await sleep(250);
+  assert.strictEqual(count(), 0, 'activity bubble clears when the turn ends');
+
+  // Leaving voice view clears it too.
+  voice.enter();
+  voice.onGenerationStarted();
+  assert.strictEqual(count(), 1);
+  voice.exit();
+  assert.strictEqual(count(), 0, 'leaving voice view clears the activity bubble');
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+def test_voice_activity_owner_and_styles_are_wired():
+    activity = ACTIVITY_JS.read_text(encoding="utf-8")
+    for cls in ("typing-orbit", "typing-orbit-ring", "typing-orbit-sat", "typing-wave"):
+        assert cls in activity
+    voice = VOICE_JS.read_text(encoding="utf-8")
+    assert "'typing-status'" in voice, "activity status line built by the overlay owner"
+    css = VOICE_CSS.read_text(encoding="utf-8")
+    assert ".voice-mode-line.is-activity" in css
+    assert ".voice-mode-line.is-activity .typing-status" in css
+    html = CHAT_HTML.read_text(encoding="utf-8")
+    assert "chat_voice_activity.js" in html
+    assert html.find("chat_voice_activity.js") < html.find("/js/chat/chat_voice.js")
 
 
 @node_only
@@ -457,6 +548,43 @@ globalThis.CuttleChatVoiceRealtime = {
 
 
 @node_only
+def test_mobile_screen_dim_keeps_full_duplex_call():
+    """A phone screen lock must not pause/disconnect GPT-Live or Realtime.
+
+    The foreground microphone service keeps the call alive with the screen off.
+    Pausing the presenter here left the connection open while the orb read
+    "paused", so the next tap disconnected the call.
+    """
+    setup = r"""
+let realtimeHost, realtimeStarts = 0, realtimeStops = 0, liveOpen = false;
+globalThis.parent = { cuttleMobile: { isNative: true, platform: 'android' } };
+globalThis.CuttleChatVoiceRealtime = {
+  supported: () => true,
+  create: (h) => { realtimeHost = h; return {
+    start: async () => { realtimeStarts++; liveOpen = true; h.onStatus('Listening…'); },
+    stop: () => { realtimeStops++; liveOpen = false; }, isOpen: () => liveOpen,
+    agentResult() {},
+  }; },
+};
+"""
+    harness = CONTROLLER_HARNESS.replace(
+        "const V = require(process.argv[4]);", setup + "const V = require(process.argv[4]);")
+    _node(harness + r"""
+(async () => {
+  flagsOn = ['voice_realtime', 'voice_server_stt', 'voice_narrator'];
+  voice.enter(); mic.dispatch('click', ev(mic)); await sleep(5);
+  assert.strictEqual(realtimeStarts, 1);
+  document.hidden = true; document.dispatch('visibilitychange'); await sleep(5);
+  assert.ok(liveOpen && realtimeStops === 0, 'screen lock keeps the phone call alive');
+  assert.doesNotMatch(document.getElementById('voiceModeStatus').textContent, /paused/i);
+  document.hidden = false; document.dispatch('visibilitychange'); await sleep(5);
+  assert.ok(liveOpen, 'call is still open after waking');
+  voice.exit();
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
 def test_voice_transcript_follows_only_when_pinned_to_bottom():
     """Auto-scroll is sticky, never forced.
 
@@ -498,6 +626,45 @@ globalThis.CuttleChatVoiceRealtime = {
   t.scrollHeight = 1500; t.scrollTop = 0;            // scrolled up
   rtHost.onTranscript('assistant', 'more', true);
   assert.strictEqual(t.scrollTop, 0, 'scrolled up: streamed text stays put');
+  voice.exit();
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_voice_transcript_groups_streaming_deltas_by_utterance():
+    """Streaming transcript deltas grow one bubble per spoken item.
+
+    A late input transcript landing between two output-transcript deltas used to
+    split the assistant's phrase into two bubbles; grouping by the provider item
+    id keeps each utterance whole, and a new response starts a fresh bubble.
+    """
+    setup = r"""
+let rtHost = null;
+globalThis.CuttleChatVoiceRealtime = {
+  supported: () => true,
+  create: (h) => { rtHost = h; return {
+    start: async () => { h.onStatus('Listening…'); }, stop() {}, isOpen: () => true,
+  }; },
+};
+"""
+    harness = CONTROLLER_HARNESS.replace(
+        "const V = require(process.argv[4]);", setup + "const V = require(process.argv[4]);")
+    _node(harness + r"""
+(async () => {
+  flagsOn = ['voice_realtime'];
+  voice.enter(); mic.dispatch('click', ev(mic)); await sleep(5);
+  const t = document.getElementById('voiceModeTranscript');
+  const bodies = () => t.children.map((c) => c.lastElementChild && c.lastElementChild.textContent);
+  rtHost.onTranscript('assistant', 'Hel', true, 'resp-1');
+  rtHost.onTranscript('user', 'hi', true, 'in-1');
+  rtHost.onTranscript('assistant', 'lo', true, 'resp-1');
+  rtHost.onTranscript('user', ' there', true, 'in-1');
+  assert.strictEqual(t.children.length, 2, 'one bubble per utterance, not per delta');
+  assert.deepStrictEqual(bodies(), ['Hello', 'hi there']);
+  rtHost.onTranscript('assistant', 'Again', true, 'resp-2');
+  assert.strictEqual(t.children.length, 3, 'a new response opens a new bubble');
+  assert.deepStrictEqual(bodies(), ['Hello', 'hi there', 'Again']);
   voice.exit();
 })().catch((e) => { console.error(e); process.exit(1); });
 """)
@@ -662,6 +829,79 @@ globalThis.sessionStorage = {
 """)
 
 
+@node_only
+def test_leaving_voice_view_keeps_a_shell_owned_call_alive():
+    """Looking at the chat must not hang up the call.
+
+    The chat page is a presenter over the shell-owned voice runtime; exiting
+    voice view used to call the runtime's stop(), dropping the call the moment
+    the user switched to the chat to read the reply.
+    """
+    setup = r"""
+let runtimeStops = 0, attached = 0;
+globalThis.parent = { cuttleVoiceRuntime: {
+  isOpen: () => true, engine: () => 'live',
+  attach: () => { attached++; return () => {}; },
+  start: async () => {}, stop: () => { runtimeStops++; },
+} };
+globalThis.CuttleChatVoiceLive = { supported: () => true,
+  create: () => ({ start: async () => {}, stop: async () => {}, isOpen: () => true, mute() {} }) };
+"""
+    harness = CONTROLLER_HARNESS.replace(
+        "const V = require(process.argv[4]);", setup + "const V = require(process.argv[4]);")
+    _node(harness + r"""
+(async () => {
+  host.sessionId = () => 42;
+  host.fetch = async () => ({ ok: true, json: async () => ({ success: true, engine: 'auto', flags: [] }) });
+  flagsOn = ['voice_live'];
+  voice.enter(); mic.dispatch('click', ev(mic)); await sleep(5);
+  assert.ok(attached > 0, 'presenter attaches to the shell-owned runtime');
+  voice.exit();
+  await sleep(5);
+  assert.strictEqual(runtimeStops, 0, 'exiting voice view must not stop the shell call');
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_leaving_voice_view_keeps_a_standalone_call_alive():
+    """A chat opened on its own (no shell iframe) owns a document-lifetime call.
+
+    Without the shell runtime the presenter used a bare Live controller that
+    ``exit()`` stopped, so opening a chat in a browser tab and switching back to
+    chat view dropped the call. It must use a page-owned runtime with the same
+    attach/start contract as the shell.
+    """
+    setup = r"""
+let creates = 0, runtimeStarts = 0, runtimeStops = 0, attached = 0, open = false;
+globalThis.CuttleShellVoice = { create: () => { creates++; return {
+  isOpen: () => open, engine: () => 'live',
+  attach: () => { attached++; return () => {}; },
+  start: async () => { runtimeStarts++; open = true; },
+  stop: () => { runtimeStops++; open = false; },
+}; } };
+globalThis.CuttleChatVoiceLive = { supported: () => true,
+  create: () => ({ start: async () => { open = true; }, stop: async () => { open = false; },
+    isOpen: () => open, mute() {} }) };
+"""
+    harness = CONTROLLER_HARNESS.replace(
+        "const V = require(process.argv[4]);", setup + "const V = require(process.argv[4]);")
+    _node(harness + r"""
+(async () => {
+  host.sessionId = () => 42;
+  host.fetch = async () => ({ ok: true, json: async () => ({ success: true, engine: 'auto', flags: [] }) });
+  flagsOn = ['voice_live'];
+  voice.enter(); mic.dispatch('click', ev(mic)); await sleep(5);
+  assert.strictEqual(creates, 1, 'one document-lifetime runtime is created');
+  assert.ok(runtimeStarts > 0, 'standalone chat starts through the page-owned runtime');
+  assert.ok(attached > 0, 'presenter attaches to the page-owned runtime');
+  voice.exit();
+  await sleep(5);
+  assert.strictEqual(runtimeStops, 0, 'exiting voice view must not stop the page-owned call');
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
 def test_chat_page_does_not_own_voice_state():
     page = PAGE_JS.read_text(encoding="utf-8")
     for owned in ("SpeechRecognition", "voiceModePhase", "voiceModeActive", "_voiceHoldOwner"):
@@ -752,10 +992,14 @@ def test_voice_overlay_markup_and_styles():
     assert overlay_at >= 0
     assert html.find('id="voiceModeSegments"') > overlay_at
     assert html.find('id="voiceModeWatchBtn"') > overlay_at
+    # The orbital orb itself is the talk control; the standalone record button is gone.
+    assert html.count('id="voiceModeMicBtn"') == 1
+    assert 'class="voice-mode-orbit-wrap voice-mode-mic-btn" id="voiceModeMicBtn"' in html
+    assert 'voice-mic-icon' not in html, "no separate record button / mic icon"
     css = VOICE_CSS.read_text(encoding="utf-8")
     for sel in (".voice-mode-segment-remove", ".voice-mode-watch-btn", ".voice-mode-mic-btn"):
         assert sel in css
-    assert "touch-action: none" in css, "mic must opt out of touch scrolling for reliable holds"
+    assert "touch-action: none" in css, "orb must opt out of touch scrolling for reliable holds"
     # The typing status sets inline visibility:visible; only !important on
     # descendants keeps it from showing through the transparent overlay.
     assert "body.voice-mode .chat-area *" in css

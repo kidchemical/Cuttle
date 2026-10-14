@@ -4,7 +4,7 @@ Contracts pinned here:
 - smoothLevel/mapLevel/ringRadii/barHeights are pure and bounded;
 - the overlay carries a subtle background canvas, a ring canvas around the
   orbit, and a session-total strip (hidden until usage is known);
-- the mic caption stays minimal ("Tap or hold to record");
+- the orb caption stays minimal ("Tap or hold the orb");
 - the waveform script loads before chat_voice.js.
 """
 
@@ -70,7 +70,7 @@ def test_waveform_markup_hint_and_styles():
     hint_at = html.find('id="voiceModeHint"')
     hint_close = html.find('</p>', hint_at)
     hint_text = html[html.find('>', hint_at) + 1:hint_close]
-    assert hint_text.strip() == "Tap or hold to record"
+    assert hint_text.strip() == "Tap or hold the orb"
     order = [
         html.find('src="/js/chat/chat_voice_recorder.js'),
         html.find('src="/js/chat/chat_voice_waveform.js'),

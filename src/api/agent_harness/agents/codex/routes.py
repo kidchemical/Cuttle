@@ -20,6 +20,7 @@ def api_codex_models():
     try:
         from api.agent_harness.agents.codex.model_catalog import (
             codex_common_reasoning_efforts,
+            codex_efforts_for_model,
             codex_model_label,
             list_codex_palette_models,
         )
@@ -54,6 +55,10 @@ def api_codex_models():
                 'id': preferred,
                 'label': codex_model_label(preferred),
                 'description': 'Custom model id pinned for this chat',
+                # A pinned model the live CLI catalog omits still needs its
+                # per-model ``efforts`` here, or the chat chip/palette derive
+                # no effort levels.
+                'efforts': codex_efforts_for_model(preferred),
                 'current': True,
             })
         return jsonify({

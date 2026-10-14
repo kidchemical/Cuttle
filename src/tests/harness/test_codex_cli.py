@@ -455,6 +455,11 @@ def test_codex_models_endpoints(tmp_path: Path, monkeypatch):
 
         again = client.get("/api/codex/models?session=api-sess").get_json()
         assert again["preferredModel"] == "gpt-5.6-luna"
+        pinned_row = next(m for m in again["models"] if m["id"] == "gpt-5.6-luna")
+        assert pinned_row["current"] is True
+        # Synthesized pinned rows must carry an efforts key (possibly empty) so
+        # the chat chip/palette can derive levels instead of "No options loaded".
+        assert "efforts" in pinned_row
 
         refreshed = client.get("/api/codex/models?refresh=1&session=api-sess").get_json()
         assert refreshed["success"] is True

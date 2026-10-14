@@ -195,6 +195,21 @@ def test_routes_round_trip_model_and_effort(client):
     assert [m["id"] for m in current] == ["claude-sonnet-4-6"]
 
 
+def test_pinned_model_absent_from_live_catalog_keeps_efforts(client):
+    # `claude-opus-5-5` is a resolved/manifest id the live CLI rows do not list
+    # by `id`; the synthesized pinned row must still carry its effort levels or
+    # the chat chip and slash palette derive no options ("No options loaded").
+    assert client.post(
+        "/api/claude/model", json={"session": "13", "model": "claude-opus-5-5"}
+    ).get_json()["success"]
+    body = client.get("/api/claude/models?session=13").get_json()
+    row = next(m for m in body["models"] if m["id"] == "claude-opus-5-5")
+    assert row["current"] is True
+    assert row["efforts"] == ["low", "medium", "high", "xhigh", "max"]
+    levels = [lv["id"] for lv in client.get("/api/claude/effort?session=13").get_json()["levels"]]
+    assert levels == ["low", "medium", "high", "xhigh", "max"]
+
+
 def test_user_badge_snapshots_claude_model_and_effort(cli_models):
     from api.chat_metadata import user_badge_metadata
 

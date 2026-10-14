@@ -144,6 +144,21 @@
         return `<div class="message-usage" aria-label="Token usage">${parts.join('<span class="message-usage-sep">·</span>')}</div>`;
     }
 
+    // Dash placeholders for a session with no recorded usage. Mirrors the
+    // footer's value slots (input / output / cost) so the layout does not
+    // collapse to a sentence.
+    function getUsagePlaceholderHtml(escapeHtml) {
+        const esc = typeof escapeHtml === 'function' ? escapeHtml : (v) => String(v);
+        const sep = '<span class="message-usage-sep">·</span>';
+        return `<div class="message-usage message-usage-placeholder" aria-label="Token usage unavailable">`
+            + `<span class="message-usage-in" title="${esc('Input tokens')}">↑ —</span>`
+            + sep
+            + `<span class="message-usage-out" title="${esc('Output tokens')}">↓ —</span>`
+            + sep
+            + `<span class="message-usage-cost" title="${esc('Cost')}">$ —</span>`
+            + `</div>`;
+    }
+
     // Add normalized payloads (agent turn + voice layers, or a whole
     // session). Token counts add; cost adds with `estimated` winning when
     // any layer is estimated. Cache convention survives only when every
@@ -191,8 +206,8 @@
         return out;
     }
 
-    const api = { normalize: normalizeUsagePayload, render: getMessageUsageHtml, sum: sumUsagePayloads,
-        formatTokenCount, formatUsageCostUsd };
+    const api = { normalize: normalizeUsagePayload, render: getMessageUsageHtml, placeholder: getUsagePlaceholderHtml,
+        sum: sumUsagePayloads, formatTokenCount, formatUsageCostUsd };
     if (typeof module === 'object' && module.exports) module.exports = api;
     else root.CuttleChatUsage = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

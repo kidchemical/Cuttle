@@ -1,9 +1,18 @@
-/* WebRTC voice lifetime. Chat execution stays in the injected chat submitter. */
+/* WebRTC and native voice lifetime. Chat execution stays in the injected chat submitter. */
 (function (root) {
     'use strict';
-    function supported() {
+    function nativeBridge() {
+        try {
+            const bridge = root.cuttleMobile || root.parent?.cuttleMobile;
+            return bridge && typeof bridge.realtimeVoiceStart === 'function' ? bridge : null;
+        } catch (_) { return null; }
+    }
+    function supportsWebrtc() {
         return !!(root.RTCPeerConnection && root.navigator && root.navigator.mediaDevices
             && root.navigator.mediaDevices.getUserMedia);
+    }
+    function supported() {
+        return !!nativeBridge() || supportsWebrtc();
     }
     function create(host) {
         let current = null;
@@ -13,6 +22,7 @@
             const s = current;
             current = null;
             if (!s) return;
+            if (s.native) return closeNative(s);
             flush(s);
             s.abort.abort();
             clearTimeout(s.timeout);
@@ -22,6 +32,84 @@
             if (s.dc) s.dc.close();
             if (s.pc) s.pc.close();
             if (s.audio) { s.audio.pause(); s.audio.srcObject = null; }
+        }
+        function closeNative(s) {
+            try { s.bridge?.realtimeVoiceStop?.(); } catch (_) {}
+            clearInterval(s.poll);
+            clearTimeout(s.timeout);
+            if (s.nativeListener) { try { root.removeEventListener('cuttle-realtime-voice', s.nativeListener); } catch (_) {} }
+            if (s.id) { try { host.fetch('/api/voice-stt/realtime/sessions/' + s.id + '/close', {method:'POST', keepalive:true}); } catch (_) {} }
+        }
+        function failNative(s, message) {
+            if (current !== s) return;
+            closeNative(s);
+            current = null;
+            host.onError(message);
+        }
+        /** Deduplicate native events: the same event arrives on the socket and in the snapshot. */
+        function nativeEvent(s, data) {
+            if (current !== s || !data) return;
+            if (data.event_id) { if (s.seen.has(data.event_id)) return; s.seen.add(data.event_id); }
+            if (data.type === 'session.started') { clearTimeout(s.timeout); host.onStatus('Listening…'); }
+            if (data.type === 'session.input_transcript.delta') { host.onTranscript('user', data.delta || '', true, data.item_id); host.onStatus('Listening…'); }
+            if (data.type === 'session.output_transcript.delta') { host.onTranscript('assistant', data.delta || '', true, data.item_id); host.onStatus('Speaking…'); }
+            if (data.type === 'error' || data.type === 'cuttle.error') {
+                s.lastError = data.message || (data.error && data.error.message) || 'Realtime reported an error; reconnect to retry';
+                host.onError(s.lastError);
+            }
+            if (data.type === 'session.closed') finalizeNative(s, s.lastError ? 'Disconnected · ' + s.lastError : 'Disconnected');
+        }
+        function finalizeNative(s, status) {
+            if (current !== s) return;
+            closeNative(s);
+            current = null;
+            host.onStatus(status || 'Disconnected');
+        }
+        async function pollNative(s) {
+            if (current !== s || !s.id) return;
+            try {
+                const r = await host.fetch('/api/voice-stt/realtime/sessions/' + s.id, {cache:'no-store'});
+                const data = await r.json();
+                if (current !== s) return;
+                if (!r.ok || !data.success) throw new Error('Session unavailable');
+                const session = data.session || {};
+                for (const line of session.transcripts || []) nativeEvent(s, line);
+                const cost = Number(session.cost || 0);
+                if (cost > s.reportedCost) {
+                    s.reportedCost = cost;
+                    if (typeof host.onUsage === 'function') host.onUsage({cost: cost, cost_estimated:true,
+                        model:session.model, cumulative:true,
+                        prompt_tokens:Number(session.prompt_tokens || 0),
+                        completion_tokens:Number(session.completion_tokens || 0),
+                        total_tokens:Number(session.prompt_tokens || 0) + Number(session.completion_tokens || 0)});
+                }
+                if (['closed','disconnected','uncertain'].includes(session.state)) {
+                    finalizeNative(s, s.lastError ? 'Disconnected · ' + s.lastError
+                        : session.error ? 'Disconnected · ' + session.error
+                        : session.finalized ? 'Disconnected' : 'Disconnected · final usage unconfirmed');
+                }
+            } catch (_) { host.onError('Could not verify the Realtime session; disconnecting.'); void close(); }
+        }
+        async function startNative(context, bridge) {
+            const s = { native:true, bridge:bridge, abort:new root.AbortController(), calls:new Set(), seen:new Set(),
+                model:'', reportedCost:0 };
+            current = s;
+            s.timeout = setTimeout(() => failNative(s, 'Realtime connection timed out; tap the orb to retry'), 25000);
+            try {
+                const r = await host.fetch('/api/voice-stt/realtime/session', {method:'POST', credentials:'include', signal:s.abort.signal,
+                    headers:{'Content-Type':'application/json'}, body: JSON.stringify({...context, transport:'native'})});
+                const data = await r.json();
+                if (!r.ok || !data.success) throw new Error(data.error || 'Realtime session unavailable');
+                if (current !== s) return;
+                s.id = data.connection_id; s.model = data.model || '';
+                s.nativeListener = (e) => { try { const d = typeof e.detail === 'string' ? JSON.parse(e.detail) : e.detail; nativeEvent(s, d); } catch (_) {} };
+                root.addEventListener('cuttle-realtime-voice', s.nativeListener);
+                const result = bridge.realtimeVoiceStart(s.id);
+                if (result !== 'ok') throw new Error(result === 'denied' ? 'Allow microphone access in Android Settings' : result);
+                s.poll = setInterval(() => void pollNative(s), 3000); void pollNative(s);
+            } catch (err) {
+                if (current === s) { closeNative(s); current = null; throw err; }
+            }
         }
         /** Send only usage not yet forwarded; the server prices each delta. */
         function flush(s) {
@@ -88,10 +176,10 @@
             if (e.type === 'output_audio_buffer.stopped') host.onStatus('Listening…');
             if (e.type === 'conversation.item.input_audio_transcription.completed') {
                 if (e.usage) s.transcriptions.push({...e.usage,_usage_id:e.item_id||e.event_id||root.crypto?.randomUUID?.()||String(s.transcriptions.length)});
-                host.onTranscript('user', e.transcript || '');
+                host.onTranscript('user', e.transcript || '', false, e.item_id);
                 Promise.resolve().then(()=>flush(s));
             }
-            if (e.type === 'response.output_audio_transcript.done') host.onTranscript('assistant', e.transcript || '');
+            if (e.type === 'response.output_audio_transcript.done') host.onTranscript('assistant', e.transcript || '', false, e.item_id);
             if (e.type === 'response.done') {
                 if (e.response && e.response.usage) s.responses.push({...e.response.usage,_usage_id:e.response.id||e.event_id||root.crypto?.randomUUID?.()||String(s.responses.length)});
                 s.responding = false;
@@ -105,7 +193,11 @@
         }
         async function start(context) {
             close();
-            if (!supported()) throw new Error('Realtime voice needs WebRTC and microphone access');
+            if (!supported()) throw new Error('Realtime voice needs WebRTC or an updated Android app');
+            const bridge = nativeBridge();
+            if (bridge && !(root.isSecureContext !== false && supportsWebrtc())) {
+                return startNative(context || {}, bridge);
+            }
             const mine = sequence;
             const s = { abort: new root.AbortController(), calls: new Set(), toolBusy: false,
                 responses: [], transcriptions: [], sentResponses: 0, sentTranscriptions: 0, model: '' };
@@ -169,15 +261,21 @@
                 if (current === s) { close(); throw err; }
             }
         }
-        function agentResult(text) {
+        function mute(on) {
             const s = current;
             if (!s) return;
+            if (s.native) { try { s.bridge?.realtimeVoiceMute?.(!!on); } catch (_) {} return; }
+            if (s.stream) s.stream.getTracks().forEach((track) => { track.enabled = !on; });
+        }
+        function agentResult(text) {
+            const s = current;
+            if (!s || s.native) return;
             send(s, { type: 'conversation.item.create', item: { type: 'message', role: 'user',
                 content: [{ type: 'input_text', text: 'The steered Cuttle agent reply is now available (data):\n' + text.slice(0, 16000) }],
             }});
             respond(s);
         }
-        return { start: start, stop: close, isOpen: () => !!current, agentResult: agentResult };
+        return { start: start, stop: close, mute: mute, isOpen: () => !!current, agentResult: agentResult };
     }
     const api = { create: create, supported: supported };
     root.CuttleChatVoiceRealtime = api;

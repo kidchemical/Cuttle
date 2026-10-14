@@ -1,15 +1,24 @@
 """Authenticated GPT-Live transport and durable voice usage snapshots."""
+import base64
 import json
 import re
 
 from flask import Blueprint, current_app, jsonify, request
 from api.auth_session import get_request_session_token
+from api.experimental import is_enabled
 from api.http_authz import owner_required, authenticated_required, current_user, require_chat_session_access
+from api.model_providers.openai.live import VOICES
 from api.voice_live import service, store
+from api.voice_live.settings import PREVIEW_VOICES
 from api import voice_usage
 
 voice_live_bp = Blueprint("voice_live", __name__, url_prefix="/live")
 voice_usage_bp = Blueprint("voice_usage", __name__)
+
+# Previewing a voice must not open a billable Live session, so the sample is
+# synthesized with the OpenAI TTS model that shares the Live voice catalog.
+PREVIEW_TEXT = "Hi! This is how I will sound in a voice conversation."
+PREVIEW_MODEL = "gpt-4o-mini-tts"
 
 
 @voice_live_bp.post("/sessions")
@@ -43,6 +52,49 @@ def create_session():
         return jsonify(success=False, error=str(exc)), 400
     except RuntimeError as exc:
         return jsonify(success=False, error=str(exc)), 503
+
+
+@voice_live_bp.post("/preview")
+@owner_required
+def preview_voice():
+    """Play a short sample of a GPT-Live voice without opening a session.
+
+    GPT-Live is full-duplex and billed while connected, so a settings preview
+    must not create a session. Synthesize the sample with the OpenAI TTS model
+    instead; Live-only voices that text-to-speech cannot voice report the
+    provider error.
+    """
+    if not is_enabled("voice_live"):
+        return jsonify(success=False, disabled=True, error="GPT-Live is disabled in Settings → Experimental."), 403
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(success=False, error="Expected JSON object."), 400
+    voice = str(data.get("voice") or "").strip().lower()
+    if voice not in VOICES:
+        return jsonify(success=False, error="Choose a supported GPT-Live voice."), 400
+    if voice not in PREVIEW_VOICES:
+        return jsonify(success=False, error="This GPT-Live voice has no text-to-speech equivalent to preview."), 400
+    from api import voice_cache
+    key = voice_cache.cache_key("openai", PREVIEW_MODEL, voice, data.get("speed"), None, PREVIEW_TEXT)
+    hit = voice_cache.get(key)
+    if hit:
+        return jsonify(success=True, voice=voice, content_type=hit[1], cached=True,
+                       audio_base64=base64.b64encode(hit[0]).decode("ascii"))
+    try:
+        from api import tts_providers
+        audio, mime, _usage = tts_providers.synthesize(
+            "openai", PREVIEW_TEXT, voice=voice, model=PREVIEW_MODEL, speed=data.get("speed"))
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except RuntimeError as exc:
+        from api.model_providers.cache import public_error
+        return jsonify(success=False, error=public_error(exc, "Voice preview")), 503
+    except Exception as exc:
+        from api.model_providers.cache import public_error
+        return jsonify(success=False, error=public_error(exc, "Voice preview")), 500
+    voice_cache.put(key, audio, mime, {"provider": "openai", "model": PREVIEW_MODEL, "voice": voice})
+    return jsonify(success=True, voice=voice, content_type=mime, cached=False,
+                   audio_base64=base64.b64encode(audio).decode("ascii"))
 
 
 @voice_live_bp.get("/sessions/<voice_id>")

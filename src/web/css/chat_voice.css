@@ -38,7 +38,7 @@
     opacity: 0.8;
 }
 
-/* Session-total usage strip at the top of the voice stage. */
+/* Session-total usage strip. */
 .voice-mode-session-usage {
     display: flex;
     align-items: center;
@@ -51,6 +51,17 @@
     background: color-mix(in srgb, var(--bg-secondary) 82%, transparent);
     font-size: 0.78rem;
     color: var(--text-secondary);
+}
+
+/* The session total is pinned just under the fixed session title
+   (.chat-session-title: top 14px + 32px tall, + safe-area on phones). */
+.voice-mode-overlay > #voiceModeSessionUsage {
+    position: absolute;
+    top: calc(52px + var(--cuttle-safe-top, 0px));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    max-width: calc(100% - 32px);
 }
 
 .voice-mode-session-usage[hidden] {
@@ -338,6 +349,27 @@ body.voice-mode .chat-chrome-menu {
     font-style: italic;
 }
 
+/* Chat-style agent processing bubble (chat_voice_activity.js): reuses the
+   regular assistant typing-orbit / wave / sweep primitives. */
+.voice-mode-line.is-activity {
+    align-self: flex-start;
+    max-width: 96%;
+    padding: 8px 14px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+
+.voice-mode-line.is-activity .typing-indicator {
+    padding: 2px 0 0;
+    min-height: 0;
+}
+
+.voice-mode-line.is-activity .typing-status {
+    margin-top: 6px;
+    font-size: 0.95rem;
+}
+
 .voice-mode-line-label {
     display: block;
     font-size: 0.72rem;
@@ -348,56 +380,41 @@ body.voice-mode .chat-chrome-menu {
     margin-bottom: 4px;
 }
 
+/* The orbital orb IS the talk control now: no button chrome, just a hit target. */
 .voice-mode-mic-btn {
-    width: 72px;
-    height: 72px;
+    padding: 0;
+    border: 0;
+    background: transparent;
     border-radius: 50%;
+    color: inherit;
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;
-    border: 2px solid color-mix(in srgb, var(--accent-color) 55%, var(--border-color));
-    background: color-mix(in srgb, var(--accent-color) 14%, var(--bg-secondary));
-    color: var(--accent-color);
+    -webkit-tap-highlight-color: transparent;
     cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
-    transition: background 0.2s, border-color 0.2s, color 0.2s, transform 0.12s, box-shadow 0.2s;
 }
 
 .voice-mode-mic-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent-color) 24%, var(--bg-secondary));
-    border-color: var(--accent-color);
-    color: var(--text-primary);
+    opacity: 1;
 }
 
-.voice-mode-mic-btn:active:not(:disabled) {
-    transform: scale(0.96);
+.voice-mode-mic-btn:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 8px;
 }
 
 .voice-mode-mic-btn:disabled {
-    opacity: 0.45;
     cursor: not-allowed;
 }
 
 .voice-mode-overlay.is-listening .voice-mode-mic-btn {
-    background: color-mix(in srgb, var(--accent-color) 40%, var(--bg-secondary));
-    border-color: var(--accent-color);
-    color: var(--text-primary);
-    box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent-color) 22%, transparent);
     animation: voice-mic-pulse 1.6s ease-in-out infinite;
 }
 
-.voice-mode-overlay.is-processing .voice-mode-mic-btn,
-.voice-mode-overlay.is-speaking .voice-mode-mic-btn {
-    opacity: 0.55;
-}
-
 @keyframes voice-mic-pulse {
-    0%, 100% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-color) 18%, transparent); }
-    50% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--accent-color) 10%, transparent); }
+    0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 30%, transparent); }
+    50% { box-shadow: 0 0 0 16px color-mix(in srgb, var(--accent-color) 6%, transparent); }
 }
 
 .voice-mode-hint {
@@ -431,7 +448,7 @@ body.voice-mode .chat-chrome-menu {
     display: none;
 }
 
-/* Phones: a smaller orbit leaves room for phrases + transcript above the mic. */
+/* Phones: a smaller orbit leaves room for phrases + transcript. */
 @media (max-height: 760px) {
     .voice-mode-stage {
         gap: 10px;
@@ -454,10 +471,6 @@ body.voice-mode .chat-chrome-menu {
     .voice-mode-orbit .typing-orbit-sat {
         animation-name: voice-sat-orbit-sm;
     }
-    .voice-mode-mic-btn {
-        width: 64px;
-        height: 64px;
-    }
 }
 
 @keyframes voice-sat-orbit-sm {
@@ -467,6 +480,9 @@ body.voice-mode .chat-chrome-menu {
 
 @media (prefers-reduced-motion: reduce) {
     .voice-mode-overlay.is-listening .voice-mode-mic-btn {
+        animation: none;
+    }
+    .voice-mode-line.is-activity .typing-status {
         animation: none;
     }
     .voice-mode-orbit-wrap {

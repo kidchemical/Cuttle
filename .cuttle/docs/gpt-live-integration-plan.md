@@ -202,3 +202,21 @@ Automated checks now cover early sideband attachment contracts, transcript assem
 - Realtime's browser-reported usage retains unacknowledged receipts in origin storage, retries after reload, and records idempotently under its server-bound connection. No audio or transcript text is stored in that retry queue.
 - GPT-Live is off by default. Enable **Voice: GPT-Live** in Experimental after disabling its listed conflicts, then select GPT-Live in Voice settings. Python activation uses the normal restart card followed by a UI refresh. The phone requires the rebuilt APK.
 - No paid OpenAI call, real agent execution, or physical microphone/device test was made. Native echo, headset routing and duplex interruption behavior still need a physical-device smoke test. Legacy `gpt-4o-mini-tts` cost remains an explicitly estimated character approximation rather than actual token billing.
+
+## Follow-up — Realtime native Android transport (2026-10-12)
+
+Stage 5's native audio path now covers **Realtime** as well as GPT-Live. The
+Android app loads the UI over LAN HTTP, where the WebView is not a secure context
+and cannot open a WebRTC peer connection or call `getUserMedia`, so selecting
+Realtime previously reported "needs a secure connection or an updated Android
+app". `api/voice_realtime/service.py` adds a server-owned OpenAI Realtime
+**WebSocket** session: `POST /api/voice-stt/realtime/session` with
+`transport: "native"` returns only an opaque voice id, the phone streams PCM over
+`/api/voice-stt/realtime/sessions/<id>/socket` (same duplex code path as GPT-Live
+via `LiveVoiceAudio("realtime")`), and the server translates the shared
+`session.*` wire protocol, runs delegation/steering, and prices usage. The
+`chat_voice_realtime.js` controller prefers the native bridge whenever a secure
+WebRTC context is unavailable. Secure browsers keep the unchanged WebRTC path.
+Tests: `src/tests/chat/test_voice_realtime_native.py`. Requires a rebuilt APK for
+the `realtimeVoiceStart/Mute/Stop` bridge; a real account/device smoke test
+remains.

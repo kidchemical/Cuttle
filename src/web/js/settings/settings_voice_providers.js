@@ -1,14 +1,14 @@
 /* Voice Settings orchestration over the shared provider/model picker.
-   One Voice tab, two modes: Spoken replies (TTS) and Live voice (Realtime).
-   The mode selector swaps which configuration is shown; the TTS controller
-   (provider/model picker) and the Realtime controller (catalog + settings)
-   stay independent. */
+   Spoken replies (TTS) are stock Cuttle and always configurable. The Voice
+   conversation section belongs to the voice-engine experiments: it is built
+   only from engines whose flags are on, so with every experiment off nothing
+   experimental renders and nothing is written. Loading never saves. */
 (function (root) {
     'use strict';
     function create({document: doc, fetch, notify, onSaved}) {
         const el = id => doc.getElementById(id);
         let providers = [], narrators = [], drafts = {}, pid = '', nid = '', voiceTicket = 0, saving = false;
-        let mode = 'tts', realtime = {}, realtimeCatalog = null, realtimeSaving = false, liveCatalog = null;
+        let mode = 'tts', realtimeCatalog = null, realtimeSaving = false, liveCatalog = null;
         const row = () => providers.find(p => p.id === el('chatTtsProvider').value);
         const narrator = () => narrators.find(p => p.id === el('chatTtsNarratorProvider').value);
         function options(select, items, selected) {
@@ -100,97 +100,125 @@
             el('chatTtsStabilityValue').textContent = Number(el('chatTtsStability').value).toFixed(2);
             return Promise.all([changeProvider(), changeNarrator()]);
         }
-        function applyRealtime(conf) {
-            realtime = {...(conf || {})};
-            if (realtimeCatalog) {
-                const defaults = realtimeCatalog.defaults || {};
-                el('voiceRealtimeModel').value = realtime.model || defaults.model || '';
-                el('voiceRealtimeVoice').value = realtime.voice || defaults.voice || '';
-                el('voiceRealtimeTranscription').value = realtime.transcription_model || defaults.transcription_model || '';
-            }
-            renderModeStatus();
+        /** GET JSON, or null when the owner route is absent/denied/failing. */
+        async function optional(url) {
+            try {
+                const response = await fetch(url, {cache: 'no-store'});
+                const data = await response.json();
+                return response.ok && data && data.success ? data : null;
+            } catch (_) { return null; }
         }
-        function populateRealtime(catalog) {
-            realtimeCatalog = catalog || null;
-            const cat = catalog || {};
+        function applyRealtime(conf) {
+            const defaults = (realtimeCatalog && realtimeCatalog.defaults) || {}, saved = conf || {};
+            el('voiceRealtimeModel').value = saved.model || defaults.model || '';
+            el('voiceRealtimeVoice').value = saved.voice || defaults.voice || '';
+            el('voiceRealtimeTranscription').value = saved.transcription_model || defaults.transcription_model || '';
+        }
+        function populateRealtime(cat) {
             options(el('voiceRealtimeModel'), cat.models || [], (cat.defaults || {}).model);
             options(el('voiceRealtimeVoice'), cat.voices || [], (cat.defaults || {}).voice);
             options(el('voiceRealtimeTranscription'), cat.transcription_models || [], (cat.defaults || {}).transcription_model);
-            if (!catalog) el('voiceRealtimeStatus').textContent = 'Realtime settings unavailable.';
+            applyRealtime(cat.voice_realtime);
+            el('voiceRealtimeStatus').textContent = cat.configured ? '' : 'Add an OpenAI API key in Settings → Providers to use it.';
         }
-        /** The whole Realtime surface is gated by the experimental flag: when it
-         *  is off there is no Live voice mode option to see or pick. */
-        function setRealtimeModeAvailable(on) {
-            const rowEl = el('voiceModeRow');
-            if (rowEl) rowEl.hidden = !on;
-            const sel = el('voiceModeSelect');
-            if (!sel) return;
-            let opt = sel.querySelector('option[value="realtime"]');
-            if (on && !opt) {
-                opt = doc.createElement('option');
-                opt.value = 'realtime';
-                opt.textContent = 'Live voice · OpenAI Realtime';
-                sel.appendChild(opt);
-            } else if (!on && opt) {
-                opt.remove();
-                if (mode === 'realtime') mode = 'tts';
-            }
+        function populateLive(data) {
+            const prefs = data.voice_chat || {};
+            options(el('voiceLiveModel'), data.models || [], prefs.model);
+            options(el('voiceLiveVoice'), data.voices || [], prefs.voice);
+            el('voiceLiveIdle').value = prefs.idle_seconds == null ? 150 : prefs.idle_seconds;
+            el('voiceLiveSpeed').value = prefs.speed == null ? 1 : prefs.speed;
+            el('voiceLiveSpeedValue').textContent = Number(el('voiceLiveSpeed').value).toFixed(2) + '×';
+            el('voiceLiveProgress').value = prefs.progress_seconds == null ? 0 : prefs.progress_seconds;
+            el('voiceLiveStatus').textContent = data.configured ? 'Uses this chat’s selected Cuttle agent for delegated work.' : 'Add an OpenAI API key in Settings → Providers.';
+            livePreviewable();
         }
-        function renderModeStatus() {
-            const status = el('voiceModeStatus');
-            if (!status) return;
-            if (mode !== 'realtime') { status.textContent = ''; return; }
-            if (!realtimeCatalog) { status.textContent = 'Realtime settings unavailable.'; return; }
-            const notes = [];
-            if (!realtimeCatalog.enabled) notes.push('Realtime is off — enable it in Settings → Experimental → Voice: OpenAI Realtime.');
-            if (!realtimeCatalog.configured) notes.push('Add an OpenAI API key in Providers to use it.');
-            if (!notes.length) notes.push('Realtime is enabled.');
-            status.textContent = notes.join(' ');
-            const notice = el('voiceRealtimeNotice');
-            if (notice) {
-                notice.textContent = realtimeCatalog.enabled
-                    ? 'Live voice is ready. Billed per audio token in both directions.'
-                    : 'Realtime is currently disabled; your model and voice choices are saved and apply once you enable the flag.';
-            }
+        /** Only Live voices that TTS also speaks can be previewed without a billed session. */
+        function livePreviewable() {
+            const voice = el('voiceLiveVoice').value;
+            const row = ((liveCatalog && liveCatalog.voices) || []).find(v => v.id === voice);
+            const ok = !!(row && row.preview);
+            const status = el('voiceLivePreviewStatus'), none = 'No preview for this GPT-Live-only voice; text-to-speech cannot speak it.';
+            el('voiceLivePreviewBtn').disabled = !ok;
+            if (!ok) status.textContent = none;
+            else if (status.textContent === none) status.textContent = '';
         }
-        function changeMode() {
-            mode = el('voiceModeSelect').value;
-            el('voiceTtsConfig').hidden = mode !== 'tts';
+        /** Build the Voice conversation section from enabled experiments only. */
+        async function loadEngines() {
+            const [chat, rt] = await Promise.all([optional('/api/settings/voice-chat'), optional('/api/voice-stt/realtime/settings')]);
+            liveCatalog = chat && chat.live_enabled ? chat : null;
+            realtimeCatalog = rt && rt.enabled ? rt : null;
+            if (liveCatalog) populateLive(liveCatalog);
+            if (realtimeCatalog) populateRealtime(realtimeCatalog);
+            const engines = [{id: 'tts', label: 'Standard · Spoken replies voice'}];
+            if (liveCatalog) engines.push({id: 'live', label: 'GPT-Live'});
+            if (realtimeCatalog) engines.push({id: 'realtime', label: 'OpenAI Realtime'});
+            options(el('voiceModeSelect'), engines);
+            el('voiceConversationGroup').hidden = engines.length < 2;
+            const resolved = chat ? chat.engine : realtimeCatalog ? 'realtime' : 'tts';
+            mode = engines.some(e => e.id === resolved) ? resolved : 'tts';
+            el('voiceModeSelect').value = mode;
+            showMode();
+        }
+        function showMode() {
+            el('voiceLiveConfig').hidden = mode !== 'live';
             el('voiceRealtimeConfig').hidden = mode !== 'realtime';
-            if (el('voiceLiveConfig')) el('voiceLiveConfig').hidden = mode !== 'live';
-            renderModeStatus();
-            if (liveCatalog) void saveEngine();
+            el('voiceModeStatus').textContent = mode === 'tts'
+                ? 'Voice chat listens, then reads replies with your Spoken replies voice.' : '';
         }
-        async function saveEngine() {
+        /** User picked an engine: show it and persist the choice. */
+        async function changeMode() {
+            mode = el('voiceModeSelect').value;
+            showMode();
             try {
-                const response=await fetch('/api/settings/voice-chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({engine:mode})});
-                const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Could not select the voice engine');
-                liveCatalog=data;
-            } catch(error) {notify(error.message,'error');}
+                const response = await fetch('/api/settings/voice-chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({engine: mode})});
+                const data = await response.json();
+                if (!response.ok || !data.success) throw new Error(data.error || 'Could not select the voice engine');
+            } catch (error) { notify(error.message, 'error'); }
         }
         async function saveLive() {
             try {
-                const response=await fetch('/api/settings/voice-chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({engine:'live',model:el('voiceLiveModel').value,voice:el('voiceLiveVoice').value,idle_seconds:Number(el('voiceLiveIdle').value)})});
-                const data=await response.json();if(!response.ok||!data.success)throw new Error(data.error||'Could not save GPT-Live');
-                liveCatalog=data;notify('GPT-Live settings saved','success');
-            }catch(error){notify(error.message,'error');}
+                const response = await fetch('/api/settings/voice-chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({engine: 'live',
+                    model: el('voiceLiveModel').value, voice: el('voiceLiveVoice').value, idle_seconds: Number(el('voiceLiveIdle').value),
+                    speed: Number(el('voiceLiveSpeed').value), progress_seconds: Number(el('voiceLiveProgress').value)})});
+                const data = await response.json();
+                if (!response.ok || !data.success) throw new Error(data.error || 'Could not save GPT-Live');
+                liveCatalog = data; notify('GPT-Live settings saved', 'success');
+            } catch (error) { notify(error.message, 'error'); }
         }
-        async function loadLive() {
-            if(!el('voiceLiveConfig'))return;
+        /** POST a preview request, play the returned clip, and report cache/cost. */
+        async function playPreview(url, body, button, status, note) {
             try {
-                const response=await fetch('/api/settings/voice-chat',{cache:'no-store'}),data=await response.json();
-                if(!response.ok||!data.success||!data.voice_chat||typeof data.live_enabled!=='boolean'||!data.engine)throw new Error('Voice settings unavailable');
-                const sel=el('voiceModeSelect'),old=sel.querySelector('option[value="live"]');old?.remove();
-                if(data.live_enabled){const option=doc.createElement('option');option.value='live';option.textContent='GPT-Live · recommended';sel.appendChild(option);}
-                const prefs=data.voice_chat||{};
-                options(el('voiceLiveModel'),data.models||[],prefs.model);options(el('voiceLiveVoice'),data.voices||[],prefs.voice);
-                el('voiceLiveIdle').value=prefs.idle_seconds==null?150:prefs.idle_seconds;
-                el('voiceLiveStatus').textContent=data.configured?'Uses this chat’s selected Cuttle agent for delegated work.':'Add an OpenAI API key in Settings → Providers.';
-                el('voiceModeRow').hidden=!(data.live_enabled||data.realtime_enabled);
-                mode=data.engine||'tts';sel.value=mode;
-                // Load preferences without writing a new engine selection.
-                liveCatalog=null;changeMode();liveCatalog=data;
-            }catch(_){el('voiceLiveConfig').hidden=true;}
+                button.disabled = true;
+                status.textContent = 'Synthesizing preview…';
+                const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+                const data = await response.json();
+                if (!response.ok || !data.success || !data.audio_base64) throw new Error((data && data.error) || ('Preview failed (' + response.status + ')'));
+                const bin = atob(data.audio_base64), bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                await new Audio(URL.createObjectURL(new Blob([bytes], {type: data.content_type || 'audio/mpeg'}))).play();
+                const cost = data.cost != null ? data.cost : data.usage && data.usage.tts_cost;
+                const bits = [note, data.cached ? 'served from cache (no charge)' : cost != null ? '≈$' + Number(cost).toFixed(4) + ' this preview' : ''].filter(Boolean);
+                status.textContent = 'Preview played' + (bits.length ? ' — ' + bits.join(' · ') : '') + '.';
+            } catch (error) {
+                status.textContent = '';
+                notify('Voice preview failed: ' + (error.message || error), 'error');
+            } finally { button.disabled = false; }
+        }
+        function previewSpeech() {
+            let ui;
+            try { ui = read(); } catch (error) { notify('Voice preview failed: ' + error.message, 'error'); return; }
+            return playPreview('/api/chat/tts', {text: 'Hello! This is how I will sound when I read replies aloud.', summarize: false,
+                provider: ui.provider, tts_model: (ui.models || {})[ui.provider], voice: (ui.voices || {})[ui.provider],
+                speed: ui.speed, stability: ui.stability}, el('chatTtsPreviewBtn'), el('chatTtsPreviewStatus'));
+        }
+        async function previewLive() {
+            await playPreview('/api/voice-stt/live/preview', {voice: el('voiceLiveVoice').value, speed: Number(el('voiceLiveSpeed').value)},
+                el('voiceLivePreviewBtn'), el('voiceLivePreviewStatus'), 'approximated with OpenAI text-to-speech');
+            livePreviewable();
+        }
+        function previewRealtime() {
+            return playPreview('/api/voice-stt/realtime/preview', {model: el('voiceRealtimeModel').value, voice: el('voiceRealtimeVoice').value},
+                el('voiceRealtimePreviewBtn'), el('voiceRealtimePreviewStatus'));
         }
         function readRealtime() {
             return {
@@ -208,7 +236,7 @@
                 const data = await response.json();
                 if (!response.ok || !data.success) throw new Error(data.error || 'Save failed');
                 applyRealtime(data.voice_realtime);
-                notify('Live voice saved', 'success');
+                notify('Realtime settings saved', 'success');
             } catch (error) { notify(error.message, 'error'); }
             finally { realtimeSaving = false; }
         }
@@ -231,26 +259,8 @@
                         if (legacyNarrator) legacyNarrator.hidden = !notice.hidden;
                     } catch (_) { notice.hidden = true; }
                 }
-                await loadRealtime();
-                await loadLive();
             } catch (error) { notify(error.message, 'error'); }
-        }
-        async function loadRealtime() {
-            try {
-                const response = await fetch('/api/voice-stt/realtime/settings', {cache: 'no-store'});
-                const data = await response.json();
-                if (!response.ok || !data.success) throw new Error(data.error || 'Realtime settings unavailable');
-                populateRealtime(data);
-                applyRealtime(data.voice_realtime);
-                setRealtimeModeAvailable(!!data.enabled);
-                mode = data.enabled ? 'realtime' : 'tts';
-            } catch (_) {
-                populateRealtime(null);
-                setRealtimeModeAvailable(false);
-                mode = 'tts';
-            }
-            el('voiceModeSelect').value = mode;
-            changeMode();
+            await loadEngines();
         }
         function read() {
             if (!speech.valid() || !text.valid()) throw new Error('Enter a custom model ID or choose Provider default.');
@@ -274,7 +284,9 @@
             finally { saving = false; }
         }
         el('chatTtsVoice').addEventListener('change', () => { el('chatTtsCustomVoice').value = ''; rememberSpeech(); });
+        el('voiceLiveVoice').addEventListener('change', livePreviewable);
         return {load, apply, read, save, changeProvider, changeNarrator, voices, changeMode, saveRealtime, saveLive,
+                previewSpeech, previewLive, previewRealtime,
                 refreshSpeech: () => Promise.all([speech.discover(true), voices(true)]), refreshNarrator: () => text.discover(true)};
     }
     root.CuttleVoiceProviders = {create};

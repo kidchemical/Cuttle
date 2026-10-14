@@ -27,6 +27,7 @@ import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import com.cuttle.mobile.notify.NotifyController;
@@ -66,19 +67,8 @@ public class MainActivity extends BridgeActivity {
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final NativeMic nativeMic = new NativeMic();
-    private final LiveVoiceAudio liveVoice = new LiveVoiceAudio(event -> mainHandler.post(() -> {
-        // A terminal native event ends the call; release the microphone
-        // foreground service even if the WebView is paused (screen off) and its
-        // JavaScript cannot run cleanup yet.
-        try {
-            String type = new org.json.JSONObject(event).optString("type");
-            if ("session.closed".equals(type) || "cuttle.error".equals(type)) {
-                VoiceCallService.stop(MainActivity.this);
-            }
-        } catch (Exception ignored) {}
-        WebView view = bridge != null ? bridge.getWebView() : null;
-        if (view != null) view.evaluateJavascript("window.dispatchEvent(new CustomEvent('cuttle-live-voice',{detail:" + org.json.JSONObject.quote(event) + "}));", null);
-    }));
+    private final LiveVoiceAudio liveVoice = new LiveVoiceAudio("live", voiceEventDispatcher("cuttle-live-voice"));
+    private final LiveVoiceAudio realtimeVoice = new LiveVoiceAudio("realtime", voiceEventDispatcher("cuttle-realtime-voice"));
     private boolean shellReady = false;
     private boolean forceSetupOnce = false;
     private String pendingOpenChat;
@@ -166,9 +156,59 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onDestroy() {
         liveVoice.stop();
+        realtimeVoice.stop();
         VoiceCallService.stop(this);
         nativeMic.stop();
         super.onDestroy();
+    }
+
+    /**
+     * Deliver a native voice event to the page. A terminal event also releases
+     * the microphone foreground service even if the WebView is paused.
+     */
+    private Consumer<String> voiceEventDispatcher(String eventName) {
+        return event -> mainHandler.post(() -> {
+            try {
+                String type = new org.json.JSONObject(event).optString("type");
+                // Only a real call end releases the microphone foreground service.
+                // A transient provider error event must not: the server keeps the
+                // call alive (and may reconnect the model), so dropping the service
+                // would let the OS freeze the socket.
+                if ("session.closed".equals(type)) {
+                    VoiceCallService.stop(MainActivity.this);
+                }
+            } catch (Exception ignored) {}
+            WebView view = bridge != null ? bridge.getWebView() : null;
+            if (view != null) view.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('" + eventName + "',{detail:" + org.json.JSONObject.quote(event) + "}));", null);
+        });
+    }
+
+    /**
+     * Validate the calling page shares the configured host, then open the native
+     * duplex audio socket for one engine (GPT-Live or Realtime). The page supplies
+     * only an opaque server-bound voice id, never a credential or URL.
+     */
+    private String startServerVoice(LiveVoiceAudio voice, String id) {
+        String base = readBaseUrl();
+        WebView view = bridge != null ? bridge.getWebView() : null;
+        if (base == null || base.isEmpty() || view == null) return "error:host unavailable";
+        java.util.concurrent.atomic.AtomicReference<String> pageRef = new java.util.concurrent.atomic.AtomicReference<>("");
+        java.util.concurrent.CountDownLatch read = new java.util.concurrent.CountDownLatch(1);
+        mainHandler.post(() -> { pageRef.set(view.getUrl()); read.countDown(); });
+        try { if (!read.await(1, java.util.concurrent.TimeUnit.SECONDS)) return "error:host page unavailable"; }
+        catch (InterruptedException error) { Thread.currentThread().interrupt(); return "error:host page unavailable"; }
+        String page = pageRef.get();
+        try {
+            android.net.Uri host = android.net.Uri.parse(base), current = android.net.Uri.parse(page);
+            if (!java.util.Objects.equals(host.getHost(), current.getHost()) || host.getPort() != current.getPort()
+                || !java.util.Objects.equals(host.getScheme(), current.getScheme())) return "error:untrusted voice page";
+        } catch (Exception error) { return "error:host unavailable"; }
+        nativeMic.stop();
+        String result = voice.start(MainActivity.this, base, CookieManager.getInstance().getCookie(base), id);
+        if ("denied".equals(result)) mainHandler.post(() -> maybeRequestMicrophonePermission(true));
+        if ("ok".equals(result)) VoiceCallService.start(MainActivity.this);
+        return result;
     }
 
     @Override
@@ -404,6 +444,9 @@ public class MainActivity extends BridgeActivity {
                 + "  liveVoiceStart:function(id){try{return CuttleShellNative.liveVoiceStart(id||'')}catch(e){return 'error:'+e}},"
                 + "  liveVoiceMute:function(muted){try{CuttleShellNative.liveVoiceMute(!!muted)}catch(e){}},"
                 + "  liveVoiceStop:function(){try{CuttleShellNative.liveVoiceStop()}catch(e){}},"
+                + "  realtimeVoiceStart:function(id){try{return CuttleShellNative.realtimeVoiceStart(id||'')}catch(e){return 'error:'+e}},"
+                + "  realtimeVoiceMute:function(muted){try{CuttleShellNative.realtimeVoiceMute(!!muted)}catch(e){}},"
+                + "  realtimeVoiceStop:function(){try{CuttleShellNative.realtimeVoiceStop()}catch(e){}},"
                 + "  getSafeAreaInsets:function(){try{return JSON.parse(CuttleShellNative.getSafeAreaInsets())}catch(e){return null}}"
                 + "});"
                 + "try{"
@@ -979,25 +1022,8 @@ public class MainActivity extends BridgeActivity {
         /** A server-bound voice ID, never a provider credential or caller-selected URL. */
         @JavascriptInterface
         public String liveVoiceStart(String id) {
-            String base = readBaseUrl();
-            WebView view = bridge != null ? bridge.getWebView() : null;
-            if (base == null || base.isEmpty() || view == null) return "error:host unavailable";
-            java.util.concurrent.atomic.AtomicReference<String> pageRef = new java.util.concurrent.atomic.AtomicReference<>("");
-            java.util.concurrent.CountDownLatch read = new java.util.concurrent.CountDownLatch(1);
-            mainHandler.post(() -> { pageRef.set(view.getUrl()); read.countDown(); });
-            try { if (!read.await(1, java.util.concurrent.TimeUnit.SECONDS)) return "error:host page unavailable"; }
-            catch (InterruptedException error) { Thread.currentThread().interrupt(); return "error:host page unavailable"; }
-            String page = pageRef.get();
-            try {
-                android.net.Uri host = android.net.Uri.parse(base), current = android.net.Uri.parse(page);
-                if (!java.util.Objects.equals(host.getHost(), current.getHost()) || host.getPort() != current.getPort()
-                    || !java.util.Objects.equals(host.getScheme(), current.getScheme())) return "error:untrusted voice page";
-            } catch (Exception error) { return "error:host unavailable"; }
-            nativeMic.stop();
-            String result = liveVoice.start(MainActivity.this, base, CookieManager.getInstance().getCookie(base), id);
-            if ("denied".equals(result)) mainHandler.post(() -> maybeRequestMicrophonePermission(true));
-            if ("ok".equals(result)) VoiceCallService.start(MainActivity.this);
-            return result;
+            realtimeVoice.stop();
+            return startServerVoice(liveVoice, id);
         }
 
         @JavascriptInterface
@@ -1006,6 +1032,22 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void liveVoiceStop() {
             liveVoice.stop();
+            VoiceCallService.stop(MainActivity.this);
+        }
+
+        /** Same native duplex transport as GPT-Live, for the OpenAI Realtime engine. */
+        @JavascriptInterface
+        public String realtimeVoiceStart(String id) {
+            liveVoice.stop();
+            return startServerVoice(realtimeVoice, id);
+        }
+
+        @JavascriptInterface
+        public void realtimeVoiceMute(boolean muted) { realtimeVoice.mute(muted); }
+
+        @JavascriptInterface
+        public void realtimeVoiceStop() {
+            realtimeVoice.stop();
             VoiceCallService.stop(MainActivity.this);
         }
 

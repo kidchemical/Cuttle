@@ -20,7 +20,13 @@ _lock = threading.RLock()
 
 
 def config(prefs, history, *, native=False):
-    audio = {"output": {"voice": prefs["voice"]}}
+    output = {"voice": prefs["voice"]}
+    # Speaking speed is an output setting; only send it when it differs from the
+    # provider default so existing sessions are byte-identical.
+    speed = prefs.get("speed")
+    if isinstance(speed, (int, float)) and not isinstance(speed, bool) and abs(float(speed) - 1.0) > 1e-9:
+        output["speed"] = float(speed)
+    audio = {"output": output}
     if native:
         audio["format"] = {"type": "audio/pcm", "rate": 24000}
     configuration = {"model": provider.MODEL, "store": False, "audio": audio,
@@ -95,6 +101,7 @@ class Run:
     initializing: bool = False
     meter_lock: threading.RLock = field(default_factory=threading.RLock)
     finalized: bool = False
+    progress_at: float = 0.0
 
     def send(self, event):
         with self.sending:

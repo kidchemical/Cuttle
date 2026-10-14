@@ -18,9 +18,9 @@
             if (data.event_id && seen.has(data.event_id)) return;
             if (data.event_id) seen.add(data.event_id);
             if (data.type === 'session.started') host.onStatus('Listening…');
-            if (data.type === 'session.input_transcript.delta') {host.onTranscript('user', data.delta || '', true);host.onStatus('Listening…');}
+            if (data.type === 'session.input_transcript.delta') {host.onTranscript('user', data.delta || '', true, data.item_id);host.onStatus('Listening…');}
             if (data.type === 'session.output_transcript.delta') {
-                host.onTranscript('assistant', data.delta || '', true);
+                host.onTranscript('assistant', data.delta || '', true, data.item_id);
                 host.onStatus('Speaking…');
             }
             if (data.type === 'session.usage.updated' || data.type === 'session.closed') {

@@ -28,6 +28,7 @@ process.stdout.write(JSON.stringify({
   explicitWins: A.normalize({...muse, cache_inclusive: false}, meta).cache_inclusive,
   zero: A.render({cost: 0, cost_estimated: false}, escape),
   empty: A.render(null, escape),
+  placeholder: A.placeholder(escape),
 }));
 """
     result = subprocess.run(["node", "-e", script, str(MODULE)], capture_output=True, text=True, encoding="utf-8", check=True)
@@ -52,6 +53,11 @@ process.stdout.write(JSON.stringify({
     assert out["explicitWins"] is False
     assert "$0" in out["zero"]
     assert out["empty"] == ""
+    # No-record state renders dash placeholders per value, not a sentence.
+    assert "↑ —</span>" in out["placeholder"]
+    assert "↓ —</span>" in out["placeholder"]
+    assert "$ —</span>" in out["placeholder"]
+    assert "message-usage-placeholder" in out["placeholder"]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node unavailable")

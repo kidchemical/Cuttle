@@ -16,6 +16,27 @@ def chat_lock(chat_id):
         return _chat_locks.setdefault(chat_id, threading.Lock())
 
 
+def progress_due(run):
+    """Throttle spoken progress lines to the configured interval.
+
+    The backend streams a status event for most steps; without a gap the voice
+    model narrates almost continuously. ``progress_seconds`` 0 preserves the
+    original speak-every-update behavior.
+    """
+    try:
+        gap = float((getattr(run, "prefs", {}) or {}).get("progress_seconds") or 0)
+    except (TypeError, ValueError):
+        gap = 0.0
+    if gap <= 0:
+        return True
+    now = time.monotonic()
+    last = float(getattr(run, "progress_at", 0.0) or 0.0)
+    if now - last < gap:
+        return False
+    run.progress_at = now
+    return True
+
+
 def speakable_chunks(text):
     from api.chat_tts import clean_text_for_speech
     text = clean_text_for_speech(text)
@@ -78,20 +99,102 @@ def run_request(run, delegation_id, spoken):
             rows = get_auth_db().get_messages(sid, after_id=before_id)
             replies = [row for row in rows if row.get("role") == "assistant"]
             return {"response": replies[-1]["content"] if replies else "The reply is available in the chat."}
-        # The durable shared queue keeps the request visible while waiting.
-        import uuid
-        queue_id = "voice:" + uuid.uuid5(uuid.NAMESPACE_URL, run.id + ":" + delegation_id).hex
-        db = get_auth_db()
-        db.mutate_followups(sid, run.user_id, "append", {"id": queue_id, "content": message, "paused": True})
-        run.append("thinking", delegation_id, "The Cuttle agent is busy. This request is queued until its turn finishes.")
-        while chat_delivery.is_busy(sid_key) or chat_delivery.is_busy(sid):
-            if not db.get_chat_session(sid, run.user_id):
-                return {"error": "The chat was removed."}
-            time.sleep(0.5)
-        claimed = db.mutate_followups(sid, run.user_id, "take_one", queue_id, claim_id=queue_id)
-        if not claimed or not claimed.get("taken"):
-            return {"error": "The queued request was removed; no work was started."}
+        # Not steerable. GPT-Live latches to one agent, which runs a single turn,
+        # so instead of queueing behind it, run this request in a sub-agent chat
+        # (its own chat) so it proceeds in parallel. Fall back to the durable
+        # shared queue only when no sub-agent can be started.
+        spawned = spawn_parallel_request(run, delegation_id, message)
+        if spawned is not None:
+            return spawned
+        return queue_request(run, delegation_id, message)
     return stream_request(run, delegation_id, request)
+
+
+def queue_request(run, delegation_id, message):
+    """Durable same-chat fallback: queue behind the latched turn, then run.
+
+    Kept only for when a sub-agent cannot be started (nesting cap, launch
+    failure). The normal path is :func:`spawn_parallel_request`.
+    """
+    from api import chat_delivery
+    sid = run.chat_id
+    sid_key = "db_session_" + str(sid)
+    import uuid
+    queue_id = "voice:" + uuid.uuid5(uuid.NAMESPACE_URL, run.id + ":" + delegation_id).hex
+    db = get_auth_db()
+    db.mutate_followups(sid, run.user_id, "append", {"id": queue_id, "content": message, "paused": True})
+    run.append("thinking", delegation_id, "The Cuttle agent is busy. This request is queued until its turn finishes.")
+    while chat_delivery.is_busy(sid_key) or chat_delivery.is_busy(sid):
+        if not db.get_chat_session(sid, run.user_id):
+            return {"error": "The chat was removed."}
+        time.sleep(0.5)
+    claimed = db.mutate_followups(sid, run.user_id, "take_one", queue_id, claim_id=queue_id)
+    if not claimed or not claimed.get("taken"):
+        return {"error": "The queued request was removed; no work was started."}
+    return stream_request(run, delegation_id, {**run.chat_request, "session_id": sid_key, "message": message, "stream": True})
+
+
+# Long enough for a real sub-agent turn, short enough to report back when it is
+# still working instead of holding the voice turn open indefinitely.
+VOICE_SUBAGENT_TIMEOUT_SEC = 1800.0
+
+
+def _prefix_agent(prefix):
+    """Sticky slash agent (`/cursor `) carried into the sub-agent child."""
+    match = re.match(r"^/([a-z0-9_-]+)(?:\s|$)", str(prefix or ""), re.I)
+    return match.group(1).lower() if match else ""
+
+
+def _child_reply(session_id):
+    if not session_id:
+        return ""
+    try:
+        rows = get_auth_db().get_messages(int(session_id), limit=6)
+    except Exception:
+        return ""
+    for row in reversed(rows or []):
+        if row.get("role") == "assistant" and str(row.get("content") or "").strip():
+            return str(row["content"])
+    return ""
+
+
+def spawn_parallel_request(run, delegation_id, message):
+    """Run a voice request in its own sub-agent chat, in parallel.
+
+    Returns a delegation result dict, or ``None`` when no sub-agent could be
+    started (the caller then falls back to the same-chat queue).
+    """
+    try:
+        from api.subagents import service as subagents
+    except Exception:
+        return None
+    child = {"title": "Voice task", "message": message}
+    agent = _prefix_agent(run.prefix)
+    if agent:
+        child["agent"] = agent
+    run.append("thinking", delegation_id, "The Cuttle agent is busy; running this in its own chat.")
+    try:
+        payload = subagents.spawn(
+            parent_session_id=int(run.chat_id),
+            children=[child],
+            collect="first",
+            lifetime="one_shot",
+            wait=True,
+            timeout=VOICE_SUBAGENT_TIMEOUT_SEC,
+        )
+    except Exception:
+        return None
+    children = payload.get("children") or []
+    row = children[0] if children else {}
+    handle = str(row.get("handle") or "").strip() or "the new chat"
+    status = str(row.get("status") or "")
+    if payload.get("timed_out") or status in ("pending", "running"):
+        return {"response": f"That task is still running in {handle}; open it to follow along."}
+    if status == "done":
+        reply = _child_reply(row.get("session_id"))
+        return {"response": reply or f"Done in {handle}; see that chat for the result."}
+    error = str(row.get("error") or "").strip()
+    return {"error": error or f"That task failed in {handle}; check that chat."}
 
 
 def stream_request(run, delegation_id, data):
@@ -115,7 +218,8 @@ def stream_request(run, delegation_id, data):
                 continue
             event = json.loads(line[6:])
             if event.get("type") == "status":
-                run.append("thinking", delegation_id, str(event.get("message") or "Working…"))
+                if progress_due(run):
+                    run.append("thinking", delegation_id, str(event.get("message") or "Working…"))
             if event.get("type") == "query_started":
                 run.task_identity[delegation_id] = event.get("query_id")
             if event.get("type") == "response":

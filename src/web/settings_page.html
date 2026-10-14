@@ -505,20 +505,7 @@
 
             <section class="settings-panel" id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" tabindex="0" hidden>
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🔊</span> Voice <button type="button" class="cuttle-info" data-tooltip="Configure voice conversations and spoken replies. Experimental engines appear here when enabled in Experimental settings." aria-label="About Voice">i</button> <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
-
-                <div class="setting-item" id="voiceModeRow" hidden>
-                    <div class="setting-label">
-                        <strong>Conversation engine</strong><button type="button" class="cuttle-info" data-tooltip="Select the engine used when you enter voice chat. Availability is controlled in Experimental settings." aria-label="About Conversation engine">i</button>
-                    </div>
-                    <div class="setting-control setting-control--column">
-                        <select id="voiceModeSelect" class="setting-input" onchange="onVoiceModeChanged()">
-                            <option value="tts">Standard voice (transcription + TTS)</option>
-                            <option value="realtime">Live voice · OpenAI Realtime</option>
-                        </select>
-                        <div class="setting-description" id="voiceModeStatus" role="status"></div>
-                    </div>
-                </div>
+                <h3 class="settings-title"><span class="emoji">🔊</span> Spoken replies <button type="button" class="cuttle-info" data-tooltip="How Cuttle reads replies aloud: the play button on chat bubbles and replies in voice chat." aria-label="About Spoken replies">i</button> <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
 
                 <div id="voiceTtsConfig">
                 <div class="setting-item">
@@ -627,25 +614,58 @@
                 <div class="setting-item">
                     <div class="setting-control" style="gap:8px;flex-wrap:wrap">
                         <button type="button" class="control-button btn-start" onclick="saveChatTtsSettings()"><span class="emoji">💾</span> Save chat voice</button>
-                        <button type="button" class="control-button btn-info" onclick="previewChatTtsVoice(event)" title="Synthesize a sample with the exact provider, model, voice, and tunables shown above (cached for 7 days)">🔊 Try voice</button>
+                        <button type="button" class="control-button btn-info" id="chatTtsPreviewBtn" onclick="previewChatTtsVoice(event)" title="Synthesize a sample with the exact provider, model, voice, and tunables shown above (cached for 7 days)">🔊 Try voice</button>
                     </div>
                 </div>
                 <div class="setting-item">
                     <div class="setting-description" id="chatTtsPreviewStatus" role="status"></div>
                 </div>
                 </div><!-- /voiceTtsConfig -->
+            </div>
+
+            <!-- Experiment-owned: stays hidden unless a voice-engine flag is on. -->
+            <div class="settings-group" id="voiceConversationGroup" hidden>
+                <h3 class="settings-title"><span class="emoji">🧪</span> Voice conversation <button type="button" class="cuttle-info" data-tooltip="Added by the voice experiments enabled in Settings → Experimental. Turning them off removes this section; voice chat then uses Spoken replies." aria-label="About Voice conversation">i</button> <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+
+                <div class="setting-item" id="voiceModeRow">
+                    <div class="setting-label">
+                        <strong>Conversation engine</strong><button type="button" class="cuttle-info" data-tooltip="The engine used when you enter voice chat. Standard listens, then reads the reply with your Spoken replies voice." aria-label="About Conversation engine">i</button>
+                    </div>
+                    <div class="setting-control setting-control--column">
+                        <select id="voiceModeSelect" class="setting-input" onchange="onVoiceModeChanged()"></select>
+                        <div class="setting-description" id="voiceModeStatus" role="status"></div>
+                    </div>
+                </div>
 
                 <div id="voiceLiveConfig" hidden>
                     <p class="setting-description">GPT-Live listens and speaks at the same time. Project work uses this chat's selected Cuttle agent.</p>
                     <div class="setting-item"><div class="setting-label"><strong>Voice model</strong></div><div class="setting-control"><select id="voiceLiveModel" class="setting-input"></select></div></div>
-                    <div class="setting-item"><div class="setting-label"><strong>Voice</strong></div><div class="setting-control"><select id="voiceLiveVoice" class="setting-input"></select></div></div>
+                    <div class="setting-item">
+                        <div class="setting-label"><strong>Voice</strong></div>
+                        <div class="setting-control setting-control--column">
+                            <select id="voiceLiveVoice" class="setting-input"></select>
+                            <button type="button" class="control-button btn-info" id="voiceLivePreviewBtn" onclick="voiceProvidersController().previewLive()" title="Plays the same voice through OpenAI text-to-speech. A real GPT-Live sample would open a session billed by the minute.">🔊 Preview voice</button>
+                            <div class="setting-description" id="voiceLivePreviewStatus" role="status"></div>
+                        </div>
+                    </div>
                     <div class="setting-item"><div class="setting-label"><strong>Disconnect after inactivity</strong><div class="setting-description">Voice remains billed while connected, including silence. 0 keeps the conversation connected continuously.</div></div><div class="setting-control"><input type="number" id="voiceLiveIdle" class="setting-input" min="0" max="3600" step="30" value="150" aria-label="Idle timeout in seconds"></div></div>
+                    <div class="setting-item">
+                        <div class="setting-label">
+                            <strong>Speaking speed</strong><button type="button" class="cuttle-info" data-tooltip="How fast Cuttle speaks. 1.00× is the provider default; lower is slower." aria-label="About speaking speed">i</button>
+                            <span class="setting-description" id="voiceLiveSpeedValue">1.00×</span>
+                        </div>
+                        <div class="setting-control">
+                            <input type="range" id="voiceLiveSpeed" class="setting-input" min="0.25" max="1.5" step="0.05" value="1" style="min-width: 160px;" oninput="onVoiceLiveSpeedInput()">
+                        </div>
+                    </div>
+                    <div class="setting-item"><div class="setting-label"><strong>Spoken progress</strong><div class="setting-description">Minimum seconds between spoken progress updates while the agent works. 0 speaks every backend update.</div></div><div class="setting-control"><input type="number" id="voiceLiveProgress" class="setting-input" min="0" max="300" step="5" value="0" aria-label="Spoken progress interval in seconds"></div></div>
                     <div class="setting-description" id="voiceLiveStatus" role="status"></div>
                     <p class="setting-description">$0.05 per active minute, billed per second, plus your agent's usage. Microphone mute keeps the connection active; End voice disconnects it. Voice continues across Spaces.</p>
-                    <button type="button" class="control-button btn-start" onclick="voiceProvidersController().saveLive()"><span class="emoji">💾</span> Save GPT-Live voice</button>
+                    <button type="button" class="control-button btn-start" onclick="voiceProvidersController().saveLive()"><span class="emoji">💾</span> Save GPT-Live settings</button>
                 </div>
+
                 <div id="voiceRealtimeConfig" hidden>
-                    <p id="voiceRealtimeNotice" class="setting-description" role="status"></p>
+                    <p class="setting-description">OpenAI Realtime listens and speaks at the same time. Project work uses this chat's selected Cuttle agent. Billed per audio token in both directions; the session total shows in the voice overlay.</p>
                     <div class="setting-item">
                         <div class="setting-label">
                             <strong>Realtime model</strong><button type="button" class="cuttle-info" data-tooltip="Speech-to-speech model for the live conversation. The mini model is roughly three times cheaper." aria-label="About Realtime model">i</button>
@@ -660,6 +680,8 @@
                         </div>
                         <div class="setting-control setting-control--column">
                             <select id="voiceRealtimeVoice" class="setting-input"><option value="">Loading…</option></select>
+                            <button type="button" class="control-button btn-info" id="voiceRealtimePreviewBtn" onclick="voiceProvidersController().previewRealtime()" title="Speaks one sentence with the selected Realtime model and voice (a real, fraction-of-a-cent API call; replays are cached for 7 days).">🔊 Preview voice</button>
+                            <div class="setting-description" id="voiceRealtimePreviewStatus" role="status"></div>
                         </div>
                     </div>
                     <div class="setting-item">
@@ -670,18 +692,9 @@
                             <select id="voiceRealtimeTranscription" class="setting-input"><option value="">Loading…</option></select>
                         </div>
                     </div>
-                    <div class="setting-item">
-                        <div class="setting-description" id="voiceRealtimeStatus" role="status"></div>
-                    </div>
-                    <div class="setting-item">
-                        <div class="setting-control" style="gap:8px;flex-wrap:wrap">
-                            <button type="button" class="control-button btn-start" onclick="saveVoiceRealtimeSettings()"><span class="emoji">💾</span> Save live voice</button>
-                        </div>
-                    </div>
-                    <div class="setting-item">
-                        <div class="setting-description">Live voice is billed per audio token in both directions (OpenAI Realtime); the session total shows in the voice overlay. Enable it under <a href="/settings_page.html?tab=experimental">Settings → Experimental → Voice: OpenAI Realtime</a>.</div>
-                    </div>
-                </div><!-- /voiceRealtimeConfig -->
+                    <div class="setting-description" id="voiceRealtimeStatus" role="status"></div>
+                    <button type="button" class="control-button btn-start" onclick="saveVoiceRealtimeSettings()"><span class="emoji">💾</span> Save Realtime settings</button>
+                </div>
             </div>
             </section>
 
@@ -840,7 +853,7 @@
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261011menuPosition2"></script>
     <script src="/js/settings/settings_background_helpers.js?v=20261011menuPosition2"></script>
-    <script src="/js/settings/settings_voice_providers.js?v=20261012live2"></script>
+    <script src="/js/settings/settings_voice_providers.js?v=20261012engines"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
     <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
@@ -2293,53 +2306,14 @@
         function onChatTtsSpeedInput() {
             document.getElementById('chatTtsSpeedValue').textContent = Number(document.getElementById('chatTtsSpeed').value).toFixed(2) + '×';
         }
+        function onVoiceLiveSpeedInput() {
+            document.getElementById('voiceLiveSpeedValue').textContent = Number(document.getElementById('voiceLiveSpeed').value).toFixed(2) + '×';
+        }
         function onChatTtsStabilityInput() {
             document.getElementById('chatTtsStabilityValue').textContent = Number(document.getElementById('chatTtsStability').value).toFixed(2);
         }
 
-        async function previewChatTtsVoice(event) {
-            const btn = event && event.currentTarget ? event.currentTarget : null;
-            const status = document.getElementById('chatTtsPreviewStatus');
-            try {
-                if (btn) btn.disabled = true;
-                if (status) status.textContent = 'Synthesizing preview…';
-                const ui = readChatTtsFromUi();
-                const r = await fetch('/api/chat/tts', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        text: 'Hello! This is how I will sound when I read replies aloud.',
-                        summarize: false,
-                        provider: ui.provider,
-                        tts_model: (ui.models || {})[ui.provider],
-                        voice: (ui.voices || {})[ui.provider],
-                        speed: ui.speed,
-                        stability: ui.stability,
-                    }),
-                });
-                const d = await r.json();
-                if (!r.ok || !d.success || !d.audio_base64) {
-                    throw new Error((d && d.error) || ('Preview failed (' + r.status + ')'));
-                }
-                const bin = atob(d.audio_base64);
-                const bytes = new Uint8Array(bin.length);
-                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-                const url = URL.createObjectURL(new Blob([bytes], { type: d.content_type || 'audio/mpeg' }));
-                await new Audio(url).play();
-                if (status) {
-                    const bits = [];
-                    if (d.cached) bits.push('served from cache (no charge)');
-                    const cost = d.usage && d.usage.tts_cost;
-                    if (cost != null) bits.push('≈$' + Number(cost).toFixed(4) + ' this preview');
-                    status.textContent = 'Preview played' + (bits.length ? ' — ' + bits.join(' · ') : '') + '.';
-                }
-            } catch (e) {
-                if (status) status.textContent = '';
-                (window.showToast || alert)('Voice preview failed: ' + (e.message || e), 'error');
-            } finally {
-                if (btn) btn.disabled = false;
-            }
-        }
+        function previewChatTtsVoice() { return voiceProvidersController().previewSpeech(); }
 
         function toggleChatTtsEnabled(event) {
             // Label + nested checkbox would otherwise fire this twice per click.

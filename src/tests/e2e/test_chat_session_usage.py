@@ -109,7 +109,11 @@ def test_missing_prefetch_summary_is_fetched_immediately(browser, static_server,
         page.goto(static_server + '/chat_page.html?chat=42', wait_until='domcontentloaded')
         totals = page.locator('#chatSessionUsageTotals')
         if empty:
-            expect(totals).to_have_text('No token usage recorded for this session', timeout=3000)
+            expect(totals.locator('.message-usage-placeholder')).to_have_count(1, timeout=3000)
+            expect(totals.locator('.message-usage-in')).to_have_text('↑ —')
+            expect(totals.locator('.message-usage-out')).to_have_text('↓ —')
+            expect(totals.locator('.message-usage-cost')).to_have_text('$ —')
+            assert 'No token usage recorded for this session' not in page.evaluate('window.usageStates')
         else:
             expect(totals.locator('.message-usage-in')).to_have_text('↑ 1.2k', timeout=3000)
             assert 'Loading session usage…' in page.evaluate('window.usageStates')

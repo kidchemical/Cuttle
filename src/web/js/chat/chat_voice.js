@@ -13,6 +13,7 @@
     const Realtime = root.CuttleChatVoiceRealtime;
     const Live = root.CuttleChatVoiceLive;
     const Waveform = root.CuttleChatVoiceWaveform || null;
+    const Activity = root.CuttleChatVoiceActivity || null;
 
     /** Give up waiting for in-flight phrase transcriptions after this long. */
     const TRANSCRIBE_WAIT_MS = 15000;
@@ -94,6 +95,9 @@
         let stars = null;
         let waveform = null;
         let micMonitor = null;
+        /** Chat-style processing bubble in the transcript while the agent runs. */
+        let activityEl = null;
+        let activityStatusEl = null;
         const phrases = Segments.createState();
         let narratorOn = false;
         let narrateTimer = 0;
@@ -103,6 +107,8 @@
         let recorder = null;
         let realtime = null;
         let live = null, sharedVoice = null, detachVoice = null, voiceChatId = null;
+        /** Document-lifetime runtime for a chat page opened without the shell. */
+        let pageRuntime = null;
         let realtimeQueued = false;
         /** Priced Realtime session usage, summed from server-priced deltas. */
         let realtimeUsage = null;
@@ -151,10 +157,11 @@
 
         function listeningText() {
             if (deferredReply) return 'Reply ready — it plays after you send';
-            return host.isGenerating() ? 'Listening… tap mic to send to the running agent' : 'Listening… tap mic to send';
+            return host.isGenerating() ? 'Listening… tap the orb to send to the running agent' : 'Listening… tap the orb to send';
         }
 
         function setPhase(next, statusText) {
+            const prev = phase;
             phase = next || 'idle';
             const overlay = overlayEl();
             if (overlay) {
@@ -176,8 +183,15 @@
             }
             const watch = byId('voiceModeWatchBtn');
             if (watch) watch.hidden = !(active && busy);
+            // Chat-style processing bubble: only while the agent runs, one at a
+            // time; entering processing shows it, leaving processing clears it.
+            if (phase === 'processing') {
+                if (prev !== 'processing') showActivity(statusText);
+            } else if (prev === 'processing') {
+                hideActivity();
+            }
             if (statusText != null) setStatus(statusText);
-            else if (phase === 'idle') setStatus('Tap the mic to talk');
+            else if (phase === 'idle') setStatus('Tap the orb to talk');
             else if (phase === 'listening') setStatus(listeningText());
             else if (phase === 'processing') setStatus('Thinking…');
             else if (phase === 'speaking') setStatus('Speaking…');
@@ -188,7 +202,7 @@
             const hint = byId('voiceModeHint');
             if (hint) {
                 if (!hint.dataset.base) hint.dataset.base = hint.textContent;
-                const label = engine === 'live' ? 'GPT-Live · tap mic to connect/disconnect' : engine === 'realtime' ? 'OpenAI Realtime · tap mic to connect/disconnect'
+                const label = engine === 'live' ? 'GPT-Live · tap the orb to connect/disconnect' : engine === 'realtime' ? 'OpenAI Realtime · tap the orb to connect/disconnect'
                     : engine === 'server'
                     ? (Recorder.sourceKind() === 'native' ? 'Server transcription (app mic)' : 'Server transcription')
                     : (wantServer ? 'Browser speech — server transcription needs ' + missing.join(', ') : '');
@@ -375,7 +389,56 @@
             renderPhrases();
         }
 
+        /**
+         * Chat-style agent processing bubble inside the voice transcript. It
+         * reuses the regular chat view's typing-orbit markup so "thinking" and
+         * tool activity read the same as a normal assistant bubble.
+         */
+        function showActivity(statusText) {
+            if (!Activity) return;
+            const box = byId('voiceModeTranscript');
+            if (!box) return;
+            const follow = scrolledToBottom(box);
+            if (!activityEl) {
+                activityEl = document.createElement('div');
+                activityEl.className = 'voice-mode-line is-activity';
+                const indicator = document.createElement('div');
+                indicator.className = 'typing-indicator';
+                indicator.setAttribute('aria-hidden', 'true');
+                indicator.innerHTML = Activity.orbitHtml();
+                activityStatusEl = document.createElement('div');
+                activityStatusEl.className = 'typing-status';
+                activityStatusEl.setAttribute('aria-live', 'polite');
+                activityStatusEl.setAttribute('role', 'status');
+                activityStatusEl.textContent = Activity.normalizeStatus(statusText);
+                activityEl.appendChild(indicator);
+                activityEl.appendChild(activityStatusEl);
+                box.appendChild(activityEl);
+            } else if (activityStatusEl) {
+                activityStatusEl.textContent = Activity.normalizeStatus(statusText);
+            }
+            stickToBottom(box, follow);
+        }
+
+        function updateActivity(statusText) {
+            if (!Activity) return;
+            if (!activityEl) { showActivity(statusText); return; }
+            if (activityStatusEl) activityStatusEl.textContent = Activity.normalizeStatus(statusText);
+        }
+
+        function hideActivity() {
+            if (!activityEl) return;
+            const box = activityEl.parentNode;
+            const follow = box ? scrolledToBottom(box) : false;
+            activityEl.remove();
+            activityEl = null;
+            activityStatusEl = null;
+            if (box) stickToBottom(box, follow);
+        }
+
         function appendTranscriptLine(role, text, usageHtml) {
+            // The reply (or its error fallback) supersedes the processing bubble.
+            if (role === 'assistant') hideActivity();
             const box = byId('voiceModeTranscript');
             if (!box) return;
             const follow = scrolledToBottom(box);
@@ -401,18 +464,46 @@
             stickToBottom(box, follow);
         }
 
-        function appendLiveTranscript(role, text, partial) {
+        /** The still-open streaming line for one spoken item (role + provider item id). */
+        function openTranscriptLine(box, role, itemId) {
+            if (!box || !itemId) return null;
+            for (let i = box.children.length - 1; i >= 0; i--) {
+                const el = box.children[i];
+                if (el.dataset && el.dataset.liveRole === role && el.dataset.liveItem === itemId) return el;
+            }
+            return null;
+        }
+
+        /**
+         * Streaming transcript deltas must grow one bubble per spoken item, not
+         * one bubble per delta. Deltas of the same utterance are grouped by the
+         * provider `itemId` (falling back to the trailing role) so a late user
+         * transcript arriving between two assistant deltas cannot split the
+         * assistant's phrase in half.
+         */
+        function appendLiveTranscript(role, text, partial, itemId) {
             const box = byId('voiceModeTranscript');
-            const last = box && box.lastElementChild;
-            if (partial && last && last.dataset.liveRole === role) {
-                const follow = scrolledToBottom(box);
-                const body = last.lastElementChild;
-                if (body) body.textContent += text;
-                stickToBottom(box, follow);
-                return;
+            if (!box) return;
+            if (partial && !String(text || '').length) return;
+            if (partial) {
+                const last = box.lastElementChild;
+                let line = (last && last.dataset.liveRole === role
+                    && (!itemId || last.dataset.liveItem === itemId)) ? last : null;
+                if (!line) line = openTranscriptLine(box, role, itemId);
+                if (line) {
+                    const follow = scrolledToBottom(box);
+                    const body = line.lastElementChild;
+                    if (body) body.textContent += text;
+                    stickToBottom(box, follow);
+                    return;
+                }
             }
             appendTranscriptLine(role, text);
-            if (partial && box?.lastElementChild) box.lastElementChild.dataset.liveRole = role;
+            const line = box.lastElementChild;
+            if (partial && line) {
+                line.dataset.liveRole = role;
+                if (itemId) line.dataset.liveItem = itemId;
+            }
         }
 
         async function voiceContext() {
@@ -429,6 +520,28 @@
             return {session_id:voiceChatId, engine, prefix:composed.endsWith(probe) ? composed.slice(0,-probe.length) : '', chat_request:host.requestContext?.()||{}};
         }
 
+        /** The one runtime that owns the call: the shell's when this chat page is
+         *  an iframe presenter, otherwise a document-lifetime runtime so leaving
+         *  voice view does not hang up a call in a standalone/browser tab. */
+        function voiceRuntime() {
+            try {
+                const parent = root.parent;
+                if (parent && parent !== root) {
+                    const shared = parent.cuttleVoiceRuntime;
+                    if (shared) return shared;
+                }
+            } catch (_) {}
+            if (!pageRuntime && root.CuttleShellVoice && typeof root.CuttleShellVoice.create === 'function') {
+                try {
+                    pageRuntime = root.CuttleShellVoice.create({
+                        win:root,
+                        navigate:(sid)=>{try{if(sid)root.location.href='/chat_page.html?chat='+encodeURIComponent(sid);}catch(_){}},
+                    });
+                } catch (_) { pageRuntime = null; }
+            }
+            return pageRuntime;
+        }
+
         function conversationCallbacks() {
             return {onTranscript:appendLiveTranscript, alive:()=>{try{return root.parent===root||!!root.frameElement?.isConnected;}catch(_){return false;}},
                 onStatus:text=>{if(active)setPhase(text.startsWith('Disconnected')?'idle':text.startsWith('Speaking')?'speaking':'listening',text);},
@@ -439,7 +552,7 @@
         async function startLive() {
             host.stopSpeech();
             const context = await voiceContext();
-            try { sharedVoice = root.parent !== root ? root.parent.cuttleVoiceRuntime : null; } catch (_) {}
+            sharedVoice = voiceRuntime();
             if (sharedVoice) {
                 detachVoice?.(); detachVoice=sharedVoice.attach(context.session_id,conversationCallbacks());
                 live={start:()=>sharedVoice.start(context),stop:()=>sharedVoice.engine(context.session_id)?sharedVoice.stop():Promise.resolve(),isOpen:()=>sharedVoice.isOpen(context.session_id)};
@@ -572,7 +685,7 @@
             if (!active) return;
             if (engine === 'live') { await startLive(); return; }
             if (engine === 'realtime') {
-                try { sharedVoice = host.sessionId && root.parent !== root ? root.parent.cuttleVoiceRuntime : null; } catch (_) {}
+                sharedVoice = host.sessionId ? voiceRuntime() : null;
                 if (sharedVoice) {
                     const context=await voiceContext();detachVoice?.();detachVoice=sharedVoice.attach(context.session_id,conversationCallbacks());
                     realtime={start:()=>sharedVoice.start(context),stop:()=>sharedVoice.engine(context.session_id)?sharedVoice.stop():Promise.resolve(),isOpen:()=>sharedVoice.isOpen(context.session_id)};
@@ -582,7 +695,7 @@
                 host.stopSpeech();
                 if (!realtime) realtime = Realtime.create({
                     fetch: host.fetch, experimentalFlags: host.experimentalFlags,
-                    onTranscript: appendTranscriptLine,
+                    onTranscript: appendLiveTranscript,
                     onStatus: (text) => { if (active) setPhase('listening', text); },
                     onError: (text) => { if (active) setPhase('idle', text); },
                     realtimeUsage: async (payload) => {
@@ -816,8 +929,14 @@
         }
 
         function onVisibilityChange() {
-            if (document.hidden && active && engine === 'realtime') { pauseListening(); return; }
-            if (document.hidden && active && phase === 'listening') pauseListening();
+            if (!document.hidden || !active) return;
+            // The phone's microphone foreground service keeps a full-duplex call
+            // (GPT-Live / Realtime) alive with the screen dimmed or off. Only a
+            // desktop tab switch pauses/stops it; pausing here left the call open
+            // while the orb showed "paused", so the next tap disconnected it.
+            if (isMobileShell() && (engine === 'realtime' || engine === 'live')) return;
+            if (engine === 'realtime') { pauseListening(); return; }
+            if (phase === 'listening') pauseListening();
         }
 
         function toggleListening() {
@@ -925,16 +1044,17 @@
                 host.toast('Browser blocked autoplay — tap the mic once, then try again', 'error');
                 return;
             }
-            settlePhase('Tap the mic to talk');
+            settlePhase('Tap the orb to talk');
         }
 
         function onGenerationStarted() {
             if (active && (phase === 'idle' || phase === 'processing')) setPhase('processing', 'Thinking…');
         }
 
-        /** Live agent status line (same text as the typing indicator). */
+        /** Live agent status line — the chat view's typing-status text. It lands
+         *  in the transcript activity bubble, never as a bare center caption. */
         function onAgentStatus(text) {
-            if (active && phase === 'processing') setStatus(text);
+            if (active && phase === 'processing') updateActivity(text);
             if (narratorOn && Narrator.noteStatus(narration, text)) scheduleProgress();
         }
 
@@ -1086,7 +1206,7 @@
                 if (on.has('voice_live') && selected !== 'tts' && Live?.supported()) {
                     engine='live';narratorOn=false;
                     try {
-                        const runtime=root.parent !== root && root.parent.cuttleVoiceRuntime;
+                        const runtime=voiceRuntime();
                         const id=String(host.sessionId?.()||'').replace(/^db_session_/, '');
                         if(runtime?.isOpen(id)&&runtime.engine(id)==='live') {
                             sharedVoice=runtime;voiceChatId=id;detachVoice?.();detachVoice=runtime.attach(id,conversationCallbacks());
@@ -1097,7 +1217,7 @@
                     engine = 'realtime';
                     narratorOn = false;
                     try {
-                        const runtime=root.parent !== root && root.parent.cuttleVoiceRuntime;
+                        const runtime=voiceRuntime();
                         const id=String(host.sessionId?.()||'').replace(/^db_session_/, '');
                         if(runtime?.isOpen(id)&&runtime.engine(id)==='realtime') {
                             sharedVoice=runtime;voiceChatId=id;detachVoice?.();detachVoice=runtime.attach(id,conversationCallbacks());
@@ -1113,6 +1233,7 @@
                 }
                 showEngine(wantServer, missing);
             }, () => {});
+            hideActivity();
             clearPhrases();
             if (host.isGenerating()) setPhase('processing', 'Working…');
             else setPhase('idle');
@@ -1136,8 +1257,14 @@
             const wasRunning = phase === 'processing';
             active = false;
             rememberVoiceMode(false);
-            if (realtime) realtime.stop();
-            if (live) void live.stop();
+            // Leaving voice view only detaches this presenter. A shell-owned
+            // call keeps running (the shell bar carries Mute/End, and the mic
+            // entry re-attaches). Stopping it here is what dropped the call
+            // whenever the user looked at the chat.
+            if (!sharedVoice) {
+                if (realtime) realtime.stop();
+                if (live) void live.stop();
+            }
             detachVoice?.();detachVoice=null;
             realtimeQueued = false;
             wantListening = false;
@@ -1152,6 +1279,7 @@
                 endNarration();
             }
             clearPhrases();
+            hideActivity();
             setPhase('idle');
             document.body.classList.remove('voice-mode');
             if (stars) stars.stop();
