@@ -7,6 +7,8 @@ paths, same auth matrix, same payload shapes as the monolith era.
 
 from __future__ import annotations
 
+import os
+
 from tests.auth.test_http_authz import _auth_client, LAN
 
 READS = [
@@ -378,3 +380,48 @@ def test_update_source_round_trip(tmp_path, monkeypatch):
         "/api/settings/update-source", json={"update_source": "bogus"}, environ_base=LAN
     )
     assert res.status_code == 400
+
+
+def test_agent_cli_paths_round_trip_validation_and_owner_access(tmp_path, monkeypatch):
+    from api.agent_harness import cli_paths
+
+    isolated = _isolated_settings(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli_paths, 'get_settings_manager', lambda: isolated)
+    ctx = _auth_client(tmp_path, monkeypatch)
+    ctx['client'].set_cookie('session_token', ctx['token'])
+    wrapper = tmp_path / 'sandbox wrapper'
+    wrapper.write_text('#!/bin/sh\nexit 0\n')
+    wrapper.chmod(0o755)
+    patch = {agent: str(wrapper) for agent in cli_paths.CLI_PATH_ENV}
+    url = '/api/settings/agent-adapters'
+    response = ctx['client'].post(url, json={'cli_paths': patch}, environ_base=LAN)
+    assert response.status_code == 200, response.get_json()
+    assert isolated.get_setting('agent_cli_paths') == patch
+    for agent, row in response.get_json()['cli_paths'].items():
+        assert row['path'] == str(wrapper)
+        assert row['env_var'] == cli_paths.CLI_PATH_ENV[agent]
+        assert row['error'] == ''
+    # Validate the entire patch before writing anything, including other settings.
+    for bad in [None, {}, [], {'unknown': str(wrapper)}, {'codex': 7},
+                {'codex': 'relative/path'}, {'codex': str(tmp_path)},
+                {'codex': str(wrapper) + ' --flag'}, {'codex': 'bad\npath'}]:
+        response = ctx['client'].post(url, json={'cli_paths': bad}, environ_base=LAN)
+        assert response.status_code == 400, (bad, response.get_json())
+        assert isolated.get_setting('agent_cli_paths') == patch
+    if os.name != 'nt':
+        wrapper.chmod(0o644)
+        response = ctx['client'].post(url, json={'cli_paths': {'codex': str(wrapper)}}, environ_base=LAN)
+        assert response.status_code == 400
+        assert 'not executable' in response.get_json()['error']
+    wrapper.unlink()
+    body = ctx['client'].get(url, environ_base=LAN).get_json()
+    assert body['cli_paths']['codex']['path'] == str(wrapper)
+    assert body['cli_paths']['codex']['error']
+    response = ctx['client'].post(url, json={'cli_paths': {'codex': ''}}, environ_base=LAN)
+    assert response.status_code == 200
+    assert response.get_json()['cli_paths']['codex']['path'] == ''
+    assert isolated.get_setting('agent_cli_paths')['claude'] == str(wrapper)
+    ctx['client'].set_cookie('session_token', ctx['other_token'])
+    response = ctx['client'].post(url, json={'cli_paths': {'claude': ''}}, environ_base=LAN)
+    assert response.status_code == 403
+    assert isolated.get_setting('agent_cli_paths')['claude'] == str(wrapper)

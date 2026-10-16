@@ -51,6 +51,8 @@ class SettingsManager:
             },
             "starred_slash_commands": [],
             "starred_project": None,
+            # Host-local executable/wrapper paths; blank uses CLI discovery.
+            "agent_cli_paths": {},
             "discovery": {
                 "mdns_enabled": False,
                 "lan_access_enabled": False

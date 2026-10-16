@@ -58,7 +58,9 @@ CEILINGS = {
     # api.shared_media, api.mobile_companion, agent_router.supervised,
     # agent_harness, agents/<id>/routes.py and settings/providers owners;
     # chat_endpoint lanes moved to api.chat_turn_workflow / api.chat_coordinator.
-    "src/api/web_chat_api.py": 5106,
+    # 2026-10-15: CLI health probe delegates to its executable owner so saved
+    # wrappers also govern diagnostic launches.
+    "src/api/web_chat_api.py": 5082,
 }
 NET_GROWTH_LIMIT = 150
 TRAILER = "Composition-Root-Growth:"

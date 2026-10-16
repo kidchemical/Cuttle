@@ -1,4 +1,4 @@
-/* Shared app-page controls. Loaded after each page's layout stylesheet;
+/* Shared app-page controls and panel surfaces. Loaded after each page's layout stylesheet;
    chat does not load this skin. Layout and domain-specific visuals stay owned
    by each page; action controls share sizing, focus and theme surfaces. */
 body.compact-shell-page {
@@ -7,6 +7,7 @@ body.compact-shell-page {
     --control-hover: color-mix(in srgb, var(--bg-secondary) 88%, var(--text-primary) 12%);
     --control-selected: color-mix(in srgb, var(--bg-secondary) 84%, var(--accent-color) 16%);
     --control-surface: var(--bg-secondary);
+    --control-border: color-mix(in srgb, var(--border-color) 76%, var(--text-primary) 24%);
     color-scheme: dark;
     color: var(--text-primary);
 }
@@ -27,7 +28,7 @@ body.compact-shell-page :is(.control-button, .btn, .re-btn, .git-graph-btn, .his
     min-width: 0;
     max-width: 100%;
     padding: 6px 10px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--control-radius);
     background: var(--control-surface);
     color: var(--text-primary);
@@ -82,7 +83,7 @@ body.compact-shell-page :is(input:where(:not(.cuttle-combo-search):not([type='ch
     min-width: 0;
     max-width: 100%;
     padding: 6px 10px;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--control-radius);
     background: var(--control-surface);
     color: var(--text-primary);
@@ -116,7 +117,7 @@ body.compact-shell-page .cuttle-combo--page.is-open .cuttle-combo-caret { transf
 /* Portaled to the body/open dialog and promoted to the top layer: never
    consumes row space or gets cut off by scrollable cards/dialogs. */
 body.compact-shell-page .cuttle-combo-popup {
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--control-radius);
     background: var(--control-surface);
     color: var(--text-primary);
@@ -169,7 +170,7 @@ body.compact-shell-page :is(.apps-menu, .dash-menu, .device-row-menu) {
     background: var(--control-surface);
     background: rgb(from var(--control-surface) r g b / 1);
     color: var(--text-primary);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--control-border);
     border-radius: var(--control-radius);
     box-shadow: 0 8px 24px #0003;
 }
@@ -199,7 +200,7 @@ body.compact-shell-page .dash-axis-field > .cuttle-combo { flex: 1; }
 body.compact-shell-page .test-lab-controls > .cuttle-combo { flex: 1 1 190px; max-width: 300px; }
 body.compact-shell-page .git-graph-field > .cuttle-combo { flex: 1; width: 180px; max-width: 280px; }
 body.compact-shell-page .git-graph-branches { background: var(--bg-tertiary); }
-body.compact-shell-page .git-graph-branch { background: var(--control-surface); border-color: var(--border-color); }
+body.compact-shell-page .git-graph-branch { background: var(--control-surface); border-color: var(--control-border); }
 body.compact-shell-page .git-graph-branch:hover { background: var(--control-hover); }
 body.compact-shell-page .git-graph-branch.is-active { background: var(--control-selected); border-color: var(--accent-color); }
 body.compact-shell-page .test-lab-overview { grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); }
@@ -242,4 +243,25 @@ body.compact-shell-page :is(.status-pill.running, .status-pill.claimed, .status-
     body.compact-shell-page { --control-height: 40px; }
     body.compact-shell-page .cuttle-combo-popup .cuttle-combo-option { padding-block: 10px; }
     body.compact-shell-page :is(input:not([type='checkbox']):not([type='radio']):not([type='range']), textarea) { font-size: 16px; }
+}
+
+/* One surface treatment for app-page panels. Page owners keep their layout,
+   padding and semantic borders (rarity, selection, status). Menus remain opaque
+   above; chat bubbles and terminal canvases own their separate surfaces. */
+body.compact-shell-page :where(
+    .service-card, .settings-group, .task-controls, .tasks-container, .task-stats,
+    .server-item, .tool-item, .downloader-item, .skill-card,
+    .job-card, .running-now-card, .job-stat-card, .jobs-table-scroll,
+    .jobs-empty, .jobs-loading, .dash-card, .dash-stat-card, .dash-widget,
+    .test-lab-notice, .test-lab-stat, .test-lab-suite, .test-lab-run, .test-lab-output-section,
+    .re-card, .feed-toolbar, .feed-step, .feed-active-entry, .feed-empty,
+    .achievement-card, .gizmos-create, .gizmo-item, .gizmos-empty,
+    .projects-app .panel, .projects-app .metric, .projects-app .project-sidebar,
+    .projects-app .detail-header, .projects-app .tabs, .projects-app #detail > .empty,
+    .git-graph-layout, .git-graph-pending-wrap .pending-changes
+) {
+    background: var(--page-card-bg);
+    border-radius: var(--page-card-radius);
+    -webkit-backdrop-filter: var(--page-card-blur);
+    backdrop-filter: var(--page-card-blur);
 }

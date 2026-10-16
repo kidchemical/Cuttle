@@ -4114,39 +4114,15 @@ def health_check():
     this handler can run `claude --version` (3s) then `wsl which claude` (5s),
     which exceeds the watchdog's 5s HTTP timeout and caused false restarts.
     """
-    from core.agent_cli_env import agent_cli_env
+    from scripts.utilities.claude_cli_tool import claude_cli_health
+    from scripts.utilities.cursor_cli_tool import _resolve_cursor_agent_argv
     import platform
-    import shutil
 
     py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     cwd = str(actual_project_root.resolve())
     anthropic_set = bool(os.environ.get('ANTHROPIC_API_KEY'))
     openai_set = bool(os.environ.get('OPENAI_API_KEY'))
-
-    claude_cli = False
-    try:
-        r = subprocess.run(
-            ["claude", "--version"],
-            env=agent_cli_env(),
-            capture_output=True,
-            text=True,
-            timeout=3,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-        )
-        claude_cli = r.returncode == 0
-    except Exception:
-        try:
-            r = subprocess.run(
-                ["wsl", "which", "claude"],
-                env=agent_cli_env(),
-            capture_output=True,
-                text=True,
-                timeout=5,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-            )
-            claude_cli = r.returncode == 0
-        except Exception:
-            claude_cli = False
+    claude_cli = claude_cli_health()
 
     ollama_reachable = None
     try:
@@ -4159,7 +4135,7 @@ def health_check():
         local_llm_backend = 'ollama'
         local_llm_label = 'Ollama'
 
-    cursor_exe = bool(shutil.which("agent") or shutil.which("cursor-agent"))
+    cursor_exe = bool(_resolve_cursor_agent_argv())
     from api.device_workers.capabilities import cuttle_version
 
     payload = {

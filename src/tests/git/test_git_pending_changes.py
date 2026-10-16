@@ -78,6 +78,31 @@ def test_resolve_allowed_rewrites_windows_cuttle_src_path():
     assert err2 is None and Path(cwd2) == Path(live).resolve()
 
 
+def test_resolve_allowed_maps_registered_alias_to_live_path(tmp_path: Path):
+    """A chat saved on Windows sends the project's Windows path; any registered
+    alias resolves to the project's live (resolved) path."""
+    live = tmp_path / "Escape-Purgatory-Unity6"
+    live.mkdir()
+    projects = [{
+        "id": 14,
+        "name": "EP",
+        "path": str(live),
+        "stored_path": r"G:\Game Dev\Escape-Purgatory-Unity6",
+        "paths": [r"G:\Game Dev\Escape-Purgatory-Unity6", str(live)],
+    }]
+    for sent in (r"G:\Game Dev\Escape-Purgatory-Unity6",
+                 "g:\\game dev\\escape-purgatory-unity6\\",
+                 "G:/Game Dev/Escape-Purgatory-Unity6"):
+        cwd, proj, err = resolve_allowed_project_cwd(sent, None, projects, None)
+        assert err is None, sent
+        assert proj["id"] == 14
+        assert Path(cwd) == live.resolve()
+
+    # Unregistered Windows paths are still rejected.
+    cwd, proj, err = resolve_allowed_project_cwd(r"G:\Other", None, projects, None)
+    assert cwd is None and err
+
+
 def test_git_run_timeout_returns_124(monkeypatch):
     from scripts.utilities import git_pending_changes as gpc
 

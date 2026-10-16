@@ -5,61 +5,7 @@
  * top-layer popup with the same pending-diff-* chrome as chat.
  */
 
-:root {
-    --bg-primary: #0f172a;
-    --bg-secondary: #1e293b;
-    --bg-tertiary: #334155;
-    --bg-hover: #334155;
-    --text-primary: #e2e8f0;
-    --text-secondary: #94a3b8;
-    --text-tertiary: #64748b;
-    --text-inverse: #ffffff;
-    --border-color: #334155;
-    --section-bg: rgba(15, 23, 42, 0.55);
-    --accent-color: #3b82f6;
-    --input-bg: #0f172a;
-    /* Match shared_navigation.css themed scrollbars (chat pending-diff uses these) */
-    --scrollbar-size: 10px;
-    --scrollbar-track: rgba(0, 0, 0, 0.32);
-    --scrollbar-thumb: rgba(167, 139, 250, 0.35);
-    --scrollbar-thumb-hover: rgba(196, 181, 253, 0.55);
-}
-
-html.light-mode {
-    --bg-primary: #ffffff;
-    --bg-secondary: #f7f7f8;
-    --bg-tertiary: #ececf1;
-    --bg-hover: #e8e8ed;
-    --text-primary: #1a1a2e;
-    --text-secondary: #4a4a5a;
-    --text-tertiary: #8a8a9a;
-    --text-inverse: #ffffff;
-    --border-color: #d9d9e3;
-    --section-bg: rgba(247, 247, 248, 0.95);
-    --accent-color: #667eea;
-    --input-bg: #ffffff;
-    --scrollbar-track: rgba(0, 0, 0, 0.06);
-    --scrollbar-thumb: rgba(124, 58, 237, 0.38);
-    --scrollbar-thumb-hover: rgba(124, 58, 237, 0.58);
-}
-
-html.midnight-mode {
-    --bg-primary: #0a0a0f;
-    --bg-secondary: #0f0f15;
-    --bg-tertiary: #15151f;
-    --bg-hover: #1a1a28;
-    --text-primary: #e0e0f0;
-    --text-secondary: #a0a0b0;
-    --text-tertiary: #707080;
-    --text-inverse: #ffffff;
-    --border-color: #1a1a25;
-    --section-bg: rgba(15, 15, 21, 0.9);
-    --accent-color: #7c3aed;
-    --input-bg: #15151f;
-    --scrollbar-track: rgba(255, 255, 255, 0.06);
-    --scrollbar-thumb: rgba(255, 255, 255, 0.22);
-    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.34);
-}
+/* Palette comes from shared_navigation.css, like the other app pages. */
 
 html.git-graph-root {
     height: 100%;
@@ -434,7 +380,7 @@ body.git-graph-body {
 
 .git-graph-drawer {
     border-left: 1px solid var(--border-color, #334155);
-    background: rgba(2, 6, 23, 0.45);
+    background: var(--panel-hover, color-mix(in srgb, var(--text-primary) 4%, transparent));
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -556,7 +502,7 @@ html.git-graph-root *::-webkit-scrollbar-corner {
     padding: 4px 8px;
     border-radius: 6px;
     border: 1px solid rgba(148, 163, 184, 0.35);
-    background: rgba(15, 23, 42, 0.96);
+    background: rgb(from var(--bg-secondary) r g b / 1);
     color: var(--text-primary, #e2e8f0);
     font-size: 12px;
     font-weight: 500;

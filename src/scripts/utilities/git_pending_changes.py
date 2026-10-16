@@ -1205,6 +1205,18 @@ def collect_file_pending_diff(
     }
 
 
+def _path_alias_key(path: Optional[str]) -> str:
+    """Comparable form of a registered path string (no filesystem access).
+
+    Forward slashes, no trailing slash; drive-letter paths are lowercased since
+    Windows paths are case-insensitive.
+    """
+    text = (path or "").strip().replace("\\", "/").rstrip("/")
+    if re.match(r"^[A-Za-z]:(/|$)", text):
+        return text.lower()
+    return text
+
+
 def resolve_allowed_project_cwd(
     path: Optional[str],
     project_id: Optional[int],
@@ -1237,6 +1249,18 @@ def resolve_allowed_project_cwd(
                     return str(want), p, None
             except OSError:
                 continue
+        # Any registered location of a project (``paths`` / stored path) resolves to
+        # that project's live path — chats saved on another OS keep sending e.g.
+        # ``G:\Game Dev\X`` for a project now resolved to ``/mnt/.../X``.
+        key = _path_alias_key(path)
+        if key:
+            for p in projects or []:
+                aliases = list(p.get("paths") or []) + [p.get("stored_path") or ""]
+                if not any(a and _path_alias_key(a) == key for a in aliases):
+                    continue
+                pp = _live_fs_path((p.get("path") or "").strip())
+                if pp and os.path.isdir(pp):
+                    return str(Path(pp).resolve()), p, None
         # Allow exact match of current project even if list is stale
         if current_project and (current_project.get("path") or "").strip():
             try:

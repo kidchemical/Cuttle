@@ -51,6 +51,12 @@ _REAP_TIMEOUT_SEC = 10.0
 
 
 def codex_executable() -> Optional[str]:
+    from api.agent_harness.cli_paths import cli_path_override
+
+    configured, override = cli_path_override("codex")
+    if configured:
+        return override
+
     override = (os.getenv("CODEX_CLI_PATH") or "").strip()
     if override and os.path.isfile(override):
         return override

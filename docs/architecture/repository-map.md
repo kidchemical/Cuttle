@@ -549,3 +549,9 @@ For harnesses, integrations, surfaces, or agent operations, also read:
 - Never kill Flask from an agent it hosts; use daemon `/restart`.
 - Action-form recovery: HMAC on persisted specs (`action_forms` / `project_actions`).
 - Electron sandbox: no automatic `--no-sandbox`.
+
+Host-local agent executable/wrapper overrides are owned by
+`api.agent_harness.cli_paths`; each bundled discovery function consults that
+owner before its legacy environment/install discovery. Settings → Agents and
+`/api/settings/agent-adapters` configure the host-local `agent_cli_paths` key.
+Wrapper contract and rollout rationale: [Agent CLI paths](../../.cuttle/docs/agent-cli-paths.md).

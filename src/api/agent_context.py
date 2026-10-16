@@ -919,9 +919,9 @@ def _compact_muse(cwd: str, chat_session_id: Any, resume_id: str) -> Dict[str, A
 
 
 def _which_opencode() -> Optional[str]:
-    import shutil
+    from api.agent_harness.agents.opencode.adapter import opencode_executable
 
-    return shutil.which("opencode") or shutil.which("opencode.exe")
+    return opencode_executable()
 
 
 def _compact_opencode(cwd: str, resume_id: str) -> Dict[str, Any]:
