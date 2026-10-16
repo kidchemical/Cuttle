@@ -1,11 +1,12 @@
 /* ================================================================
    Cuttle Chat — messages/history record domain (chat_messages.js).
    Owner: message-record normalization, history-window decisions,
-   and user-bubble display dispatch as pure functions over explicit
-   inputs: no document, no window, no localStorage, no fetch here.
+   and user-bubble display dispatch as pure functions, plus server-order
+   reconciliation over explicit transcript nodes. No document, window,
+   localStorage, or fetch globals here.
    Loaded before chat_page.js; the page owns transcript DOM paint,
-   message sync/poll machinery, persistence, session restore +
-   ordering, search/history-panel UI, prompt history, streaming and
+   message sync/poll machinery, persistence, session restore,
+   search/history-panel UI, prompt history, streaming and
    live-status orchestration, leaf renderers (markdown, attachment
    HTML, form-reply/button, slash chips), and calls into
    `CuttleChatMessages.*`.
@@ -291,8 +292,23 @@
         return t;
     }
 
+    function splitPostprocessedResponse(text) {
+        const source = String(text || '');
+        const match = /^<cuttle_original_response>([\s\S]*?)<\/cuttle_original_response>\s*/i.exec(source);
+        if (!match) return null;
+        try {
+            const original = JSON.parse(match[1]);
+            return typeof original === 'string' ? {original, response: source.slice(match[0].length)} : null;
+        } catch (_) { return null; }
+    }
+
+    function postprocessedBody(text) {
+        const parsed = splitPostprocessedResponse(text);
+        return parsed ? parsed.response : text;
+    }
+
     /**
-     * Head structured-block extraction (think + tool_output). Runs at
+     * Head structured-block extraction (original reply, think, tool_output). Runs at
      * the pipeline position before supervised-activity extraction, so
      * later stages never see raw think/tool markup.
      * Returns { text, blocks: { think, tool } }.
@@ -301,6 +317,17 @@
         const d = deps || {};
         let out = String(text || '');
         const thinkBlocks = [];
+        // Host-generated original reply disclosure. JSON framing keeps quoted
+        // markup inert; its contents use the ordinary escaped markdown renderer.
+        const processed = splitPostprocessedResponse(out);
+        if (processed) {
+            const placeholder = '{{CUTTLE_THINK_' + thinkBlocks.length + '}}';
+            const content = typeof d.formatMessage === 'function'
+                ? d.formatMessage(processed.original) : d.escapeHtmlInline(processed.original);
+            thinkBlocks.push('<details class="response-original-block"><summary>Original response</summary>'
+                + '<div class="response-original-content">' + content + '</div></details>');
+            out = placeholder + '\n\n' + processed.response;
+        }
         const pushThinkBlock = (content) => {
             const placeholder = '{{CUTTLE_THINK_' + thinkBlocks.length + '}}';
             thinkBlocks.push(
@@ -793,6 +820,47 @@
         return '<div class="thinking-inner">' + parts.join('') + '</div>';
     }
 
+    /** Reconcile server order using explicit transcript/live DOM nodes only. */
+    function reorderMessageNode(box, node, typing) {
+        if (!box || !node) return;
+        const mid = Number(node.dataset.messageId);
+        if (!Number.isFinite(mid)) return;
+        // A native control exchange follows the existing live activity. History
+        // sync must not move that exchange above the reply it interrupted.
+        if (node.dataset.controlRequestId && typing
+                && (typing.compareDocumentPosition(node) & 4)) return;
+        const messages = Array.from(box.querySelectorAll('.message')).filter(
+            (el) => el.id !== 'typing-indicator' && el.id !== 'typing-indicator-remote' && el.dataset.stopped !== 'true'
+        );
+        let insertBefore = null;
+        for (const el of messages) {
+            if (el === node) continue;
+            const id = el.dataset.messageId;
+            if (id != null && Number(id) > mid) {
+                insertBefore = el;
+                break;
+            }
+        }
+        // Server-known ids must stay above optimistic (unstamped) bubbles.
+        // Otherwise a late sync of an older assistant reply appends under the
+        // user's newer send — looks like the transcript was "reordered".
+        if (!insertBefore) {
+            const firstUnstamped = messages.find(
+                (el) => el !== node && el.dataset.messageId == null
+            );
+            if (firstUnstamped) insertBefore = firstUnstamped;
+        }
+        if (!insertBefore) {
+            if (typing && node.nextSibling !== typing) {
+                box.insertBefore(node, typing);
+            }
+            return;
+        }
+        if (node.nextSibling !== insertBefore) {
+            box.insertBefore(node, insertBefore);
+        }
+    }
+
     /** Server transcript ends on an assistant turn → live-status reads idle. */
     function transcriptEndsWithAssistant(messages) {
         if (!Array.isArray(messages) || !messages.length) return false;
@@ -1059,12 +1127,14 @@
         countVisibleChatMessages,
         historyPageMeta,
         windowHistoryMessages,
+        reorderMessageNode,
         transcriptEndsWithAssistant,
         formatUserMessageForDisplay,
         formatThinkingLineInline,
         formatThinkingInner,
         renderCuttlePricingHtml,
         extractHeadStructuredBlocks,
+        postprocessedBody,
         extractTailStructuredBlocks,
         extractCodeLinkBlocks,
         restoreStructuredBlocks,

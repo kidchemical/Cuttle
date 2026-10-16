@@ -522,6 +522,14 @@ def test_structured_restore_and_copy_text():
     assert res["copyClean"] == "ab c"
 
 
+@node_only
+def test_copy_and_speech_use_processed_body_without_original_wire_markup():
+    response = '<cuttle_original_response>' + json.dumps('Original with **Markdown**') + '</cuttle_original_response>\n\nSummary'
+    script = 'const m=require(process.argv[1]); process.stdout.write(JSON.stringify([m.postprocessedBody(process.argv[2]),m.postprocessedBody("Plain"),m.postprocessedBody("<cuttle_original_response>bad</cuttle_original_response>Tail")]));'
+    proc = subprocess.run(['node', '-e', script, str(MOD_JS), response], text=True, capture_output=True, check=True)
+    assert json.loads(proc.stdout) == ['Summary', 'Plain', '<cuttle_original_response>bad</cuttle_original_response>Tail']
+
+
 CODELINK_HARNESS = """
 const fs = require('fs');
 const SRC = fs.readFileSync(process.env.CHAT_PAGE_JS, 'utf-8');

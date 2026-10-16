@@ -191,6 +191,9 @@ def submit_agent_turn(
         )
 
     def _after(body):
+        if not claim:
+            from api.response_postprocessing import process_result
+            process_result(body)
         _after_run(
             body,
             make_saver=io.make_saver,

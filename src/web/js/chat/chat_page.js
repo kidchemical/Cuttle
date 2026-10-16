@@ -1033,6 +1033,7 @@
         let seenUser = false;
         let asst = null;
         for (const el of nodes) {
+            if (CuttleChatPendingResult.parseControlRequestId(el.dataset)) continue;
             if (el.classList.contains('user')) {
                 if (messageElMatchesText(el, inFlightUserMessage)) {
                     seenUser = true;
@@ -1097,7 +1098,7 @@
                 const m = messages[i];
                 if (
                     m
-                    && m.role === 'assistant'
+                    && CuttleChatPendingResult.isAgentReply(m)
                     && String(m.content || '').trim()
                     && !isCancelledAgentText(m.content)
                 ) {
@@ -1224,7 +1225,7 @@
 
     /** Server transcript ends on an assistant turn → treat live-status as idle. */
     function transcriptEndsWithAssistant(messages) {
-        return CuttleChatMessages.transcriptEndsWithAssistant(messages);
+        return CuttleChatMessages.transcriptEndsWithAssistant(CuttleChatPendingResult.agentTranscript(messages));
     }
 
     /** Persisted Stop notice — survives refresh; in-memory stop flags do not. */
@@ -7778,47 +7779,14 @@
         return changed;
     }
 
-    /** Place a just-appended message node among siblings by data-message-id. */
+    /** Page gathers DOM; message ordering belongs to CuttleChatMessages. */
     function reorderChatMessageNodeById(messageId) {
         const mid = Number(messageId);
         if (!Number.isFinite(mid)) return;
         const box = document.getElementById('chatMessages');
-        if (!box) return;
-        const node = box.querySelector(`.message[data-message-id="${mid}"]`);
-        if (!node) return;
-        const messages = Array.from(box.querySelectorAll('.message')).filter(
-            (el) => el.id !== 'typing-indicator' && el.id !== 'typing-indicator-remote' && el.dataset.stopped !== 'true'
-        );
-        let insertBefore = null;
-        for (const el of messages) {
-            if (el === node) continue;
-            const id = el.dataset.messageId;
-            if (id != null && Number(id) > mid) {
-                insertBefore = el;
-                break;
-            }
-        }
-        // Server-known ids must stay above optimistic (unstamped) bubbles.
-        // Otherwise a late sync of an older assistant reply appends under the
-        // user's newer send — looks like the transcript was "reordered".
-        if (!insertBefore) {
-            const firstUnstamped = messages.find(
-                (el) => el !== node && el.dataset.messageId == null
-            );
-            if (firstUnstamped) insertBefore = firstUnstamped;
-        }
-        if (!insertBefore) {
-            const typing =
-                document.getElementById('typing-indicator')
-                || document.getElementById('typing-indicator-remote');
-            if (typing && node.nextSibling !== typing) {
-                box.insertBefore(node, typing);
-            }
-            return;
-        }
-        if (node.nextSibling !== insertBefore) {
-            box.insertBefore(node, insertBefore);
-        }
+        const node = box && box.querySelector(`.message[data-message-id="${mid}"]`);
+        CuttleChatMessages.reorderMessageNode(box, node,
+            document.getElementById('typing-indicator') || document.getElementById('typing-indicator-remote'));
     }
 
     function normalizeMessageContentForMatch(s) {
@@ -7951,6 +7919,7 @@
         const reply = isReply ? {
             queryId: last.dataset.queryId,
             timestamp: stamp && stamp.dataset.ts,
+            controlRequestId: last.dataset.controlRequestId,
         } : null;
         return liveStatusLooksActive(liveStatus)
             && !CuttleChatActivity.liveStatusPredatesReply(liveStatus, reply);
@@ -8728,7 +8697,7 @@
                     default:
                         appendServerMessageToUI(msg);
                         addedAny = true;
-                        if (msg.role === 'assistant') {
+                        if (CuttleChatPendingResult.isAgentReply(msg)) {
                             appendedAssistant = true;
                             appendedNewAssistant = true;
                         }
@@ -10236,9 +10205,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         // This turn's generation-lock token: end calls below release only
         // if no newer turn (or detach) has since claimed generation.
         let turnGenToken = null;
-        // Control-lane replies must not clobber an in-flight agent turn's stop/abort state.
-        const prevInFlight = inFlightUserMessage;
-        const prevController = activeRequestController;
         if (!controlLane) {
             if (window.CuttleCompletionNotifications) window.CuttleCompletionNotifications.broker().begin(session.current() || completionNotificationPendingId);
             CuttleStopState.beginSend(stopState);
@@ -10259,13 +10225,19 @@ function downloadTranscriptMarkdown(text, sessionId) {
         // Welcome composer is only for the first turn
         setWelcomeComposerEnabled(false);
 
-        // New turn owns the typing indicator — drop the previous turn's
-        // sub-agent orbs first so they never bleed into a turn that uses none.
-        // Live-status / stream syncs repopulate when this turn spawns sub-agents.
-        try { subagentLaunchers.clearLive(); } catch (_) {}
-        // Add typing indicator — pass slash meta so chip appears immediately
-        turnBadgeBySession.set(sendPlan.badgeKey, sendPlan.pendingSlash);
-        addTypingIndicator(sendPlan.pendingSlash);
+        const activity = CuttleChatGeneration.createSendActivity(controlLane, {
+            start: () => {
+                try { subagentLaunchers.clearLive(); } catch (_) {}
+                turnBadgeBySession.set(sendPlan.badgeKey, sendPlan.pendingSlash);
+                addTypingIndicator(sendPlan.pendingSlash);
+            },
+            clear: removeTypingIndicator,
+            clearRemote: removeRemoteWaitingIndicator,
+            notify: notifyAssistantResponseReady,
+            liveBubble: () => document.getElementById('typing-indicator'),
+            addMessage: addMessageToUI,
+        });
+        activity.start();
 
         let skipFollowupDrain = false;
         let controlController = null;
@@ -10329,6 +10301,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             if (controlLane) {
                 // Control-lane idempotency key is chosen by the owner.
                 inFlightControlRequestId = submitPlan.controlRequestId;
+                activity.bindControlRequest(submitPlan.controlRequestId);
                 // Stamp the latest unmarked user bubble so sync can claim by control id.
                 const userEl = claimUnmarkedMessageEl('user', message);
                 if (userEl) {
@@ -10594,7 +10567,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         data = transportOutcome.data;
                     } else if (transportOutcome.outcome === 'handoff-remote') {
                         // Hand off to remote waiting + poll; don't fake an error.
-                        removeTypingIndicator();
+                        activity.clear();
                         // Clear local generating before remote-waiting UI (it no-ops while isLoading).
                         if (!controlLane) endLocalGeneration(turnGenToken);
                         startMessageSync();
@@ -10631,7 +10604,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
 
             // Action-form silent results (toast + lock only — no assistant bubble).
             if (data && (data.type === 'action_form' || data.silent) && !(data.response || '').trim()) {
-                removeTypingIndicator();
+                activity.clear();
                 if (data.toast) {
                     (window.showToast || function () {})(
                         data.toast,
@@ -10646,7 +10619,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             syncPreferredModelFromResponse(data);
 
             // Remove typing indicator
-            removeTypingIndicator();
+            activity.clear();
 
             const assistantFailed = stickyCmd && isStickySlashAssistantFailure(stickyCmd, data);
             const routedBadge = data && data.routing_badge;
@@ -10704,7 +10677,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     // the post-nav "already painted" heuristic while still working.
                     && readyBody
                 ) {
-                    notifyAssistantResponseReady(readySid, { isError: !!assistantFailed });
+                    activity.notify(readySid, { isError: !!assistantFailed });
                     // If we are somehow still on that session's pane (id drift /
                     // focus race), chirp alone left an empty transcript until refresh.
                     if (
@@ -10713,7 +10686,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         && openTranscriptMissingThisTurnReply()
                         && readyBody
                     ) {
-                        addMessageToUI(readyBody, 'assistant', {
+                        activity.addMessage(readyBody, 'assistant', {
                             report_url: data.report_url,
                             timestamp: Date.now(),
                         });
@@ -10822,7 +10795,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         }
                     }
                     if (data.session_id) adoptChatSessionId(data.session_id);
-                    removeTypingIndicator();
+                    activity.clear();
                     startMessageSync();
                     syncSessionMessagesFromServer();
                     // Fall through to finally without appending.
@@ -10851,12 +10824,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
                             `#chatMessages .message[data-control-request-id="${CSS.escape(cid)}"]`
                         );
                         if (already) {
-                            removeTypingIndicator();
+                            activity.clear();
                             if (!controlLane) endLocalGeneration(turnGenToken);
                             // skip assistant append
                         } else if (!turnAlreadyShowsAssistantReply(data.response)) {
                             const assistantTs = Date.now();
-                            const el = addMessageToUI(data.response, 'assistant', {
+                            const el = activity.addMessage(data.response, 'assistant', {
                                 report_url: data.report_url,
                                 timestamp: assistantTs,
                                 slash_command: assistantSlash || undefined,
@@ -10868,7 +10841,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                             seenControlRequestIds.add(cid);
                         }
                         // Continue to finally (do not duplicate saveChatSession path)
-                        removeTypingIndicator();
+                        activity.clear();
                         if (data.session_id) adoptChatSessionId(data.session_id);
                         startMessageSync();
                         refreshChatWidgets();
@@ -10885,13 +10858,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
                                 routing_badge: data.routing_badge || undefined,
                                 usage: normalizeUsagePayload(data.usage) || undefined,
                             };
-                            addMessageToUI(data.response, 'assistant', elOpts);
+                            activity.addMessage(data.response, 'assistant', elOpts);
                             const lastAsst = document.querySelector('#chatMessages .message.assistant:last-child');
                             if (lastAsst) lastAsst.dataset.controlRequestId = cid;
                         }
                         if (data.session_id) adoptChatSessionId(data.session_id);
-                        removeRemoteWaitingIndicator();
-                        notifyAssistantResponseReady(session.current() || generation.localSessionId, {
+                        activity.clearRemote();
+                        activity.notify(session.current() || generation.localSessionId, {
                             isError: !!assistantFailed,
                         });
                         startMessageSync();
@@ -10903,7 +10876,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 // (skip if this turn already shows that reply — not a prior bubble)
                 if (!turnAlreadyShowsAssistantReply(data.response)) {
                     const assistantTs = Date.now();
-                    addMessageToUI(data.response, 'assistant', {
+                    activity.addMessage(data.response, 'assistant', {
                         report_url: data.report_url,
                         timestamp: assistantTs,
                         slash_command: assistantSlash || undefined,
@@ -10943,8 +10916,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 refreshChatWidgets();
                 // Reply is on screen — drop any remote-waiting UI a parallel
                 // sync may have armed from a stale live-status snapshot.
-                removeRemoteWaitingIndicator();
-                notifyAssistantResponseReady(session.current() || generation.localSessionId, {
+                activity.clearRemote();
+                activity.notify(session.current() || generation.localSessionId, {
                     isError: !!assistantFailed,
                 });
                 startMessageSync();
@@ -10962,7 +10935,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     if (data.session_id) adoptChatSessionId(data.session_id);
                 } else {
                     if (!turnAlreadyShowsAssistantReply(errBody)) {
-                        addMessageToUI(errBody, 'assistant', {
+                        activity.addMessage(errBody, 'assistant', {
                             report_url: data.report_url,
                             timestamp: Date.now(),
                             slash_command: assistantSlash || undefined,
@@ -10977,7 +10950,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     if (data.session_id) {
                         adoptChatSessionId(data.session_id);
                     }
-                    notifyAssistantResponseReady(session.current() || generation.localSessionId, {
+                    activity.notify(session.current() || generation.localSessionId, {
                         isError: true,
                     });
                     startMessageSync();
@@ -10992,15 +10965,15 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 if (abortClass === 'stopped') {
                     CuttleStopState.clearAbortSuppression(stopState);
                 }
-                removeTypingIndicator();
+                activity.clear();
             } else if (error?.name === 'AbortError') {
                 // Dropped local stream (shell pause, navigation, refresh).
                 // Not a user Stop — stopGenerating() is the only writer of
                 // "Stopped generating." The server run keeps going.
-                removeTypingIndicator();
+                activity.clear();
             } else {
                 console.error('Error sending message:', error);
-                removeTypingIndicator();
+                activity.clear();
                 responseData = null;
                 const em = error && error.message ? String(error.message) : '';
                 const netFail =
@@ -11011,7 +10984,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     ? `Could not reach the Cuttle API (connection failed) from ${window.location.origin}. Often a dropped link during a long agent run, Wi‑Fi blip, phone sleep, or Flask restart — confirm the tray daemon is still running, then retry. On PC prefer https://127.0.0.1:8080; on LAN phone use this same host (port 8000 HTTP or the HTTPS portal).`
                     : `Request failed${em ? ': ' + em : ''}. If the UI loaded but chat fails, check ${window.location.origin} matches the API and see the browser console for details.`;
                 if (canPaintTurnHere()) {
-                    addMessageToUI(offlineMsg, 'assistant', {
+                    activity.addMessage(offlineMsg, 'assistant', {
                         timestamp: Date.now(),
                         slash_command: replySlash || undefined,
                         slash_command_failed: !!stickyCmd,
@@ -11020,24 +10993,19 @@ function downloadTranscriptMarkdown(text, sessionId) {
                         slash_command: replySlash || undefined,
                         slash_command_failed: !!stickyCmd,
                     });
-                    notifyAssistantResponseReady(
+                    activity.notify(
                         session.current() || generation.localSessionId || turnSessionId(),
                         { isError: true }
                     );
                 } else {
                     const readySid = turnSessionId();
-                    if (readySid) notifyAssistantResponseReady(readySid, { isError: true });
+                    if (readySid) activity.notify(readySid, { isError: true });
                 }
             }
         } finally {
             // Re-enable inputs
             const wasStopped = stopState.userStopped;
-            if (controlLane) {
-                // Restore in-flight agent turn bookkeeping; do not end generation.
-                inFlightUserMessage = prevInFlight;
-                activeRequestController = prevController;
-                removeTypingIndicator();
-            } else {
+            if (!controlLane) {
                 inFlightUserMessage = null;
                 endLocalGeneration(turnGenToken);
                 activeRequestController = null;
@@ -11721,6 +11689,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             text = contentEl?.innerText?.trim() || '';
         }
         // Slash chips (/cursor, /muse, …) are UI chrome — copy the body only.
+        text = CuttleChatMessages.postprocessedBody(text);
         const parsedSlash = parseStoredSlashCommandMessage(text);
         if (parsedSlash) {
             text = parsedSlash.body || '';
@@ -12127,7 +12096,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
 
     /** Page-owned seams for structured-block render planning (chat_messages.js). */
     function structuredRenderDeps() {
-        return {
+        return { formatMessage,
             escapeHtmlInline,
             clamp,
             renderMdLinkChip,

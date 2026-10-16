@@ -61,6 +61,33 @@ branch, tracks an existing `origin` branch, or creates a new branch at HEAD.
 Running turns share that checkout: switch only after their work is finished.
 No branch is reset, deleted, pushed, or merged by this action.
 
+## Moving an existing project
+
+After verifying the destination checkout, replace its locations in **Save paths**,
+`PUT /api/projects/<id>` with `{"paths":["/new/location"]}`, or
+`python -m api.projects_cli update <id> --json '{"paths":["/new/location"]}'`.
+These all call the same registry owner. `config.paths` is the ordered location
+list; the legacy `projects.path` column is maintained for compatibility. Chat
+rows and message metadata retain saved context; the project ID resolves the
+current host location at execution time. They are not additional registries.
+
+OpenCode also saves a working directory inside its native conversation. On a
+registered project move, its adapter finds this chat's previous resume mapping
+and copies the native transcript through OpenCode export/import into the current
+location, including when the old directory has been deleted. Recovery requires
+the chat's project ID, an old location recorded in that project's registry audit
+history, and a matching resume mapping. It verifies the imported transcript
+before saving the new mapping and preserves the original native conversation.
+Unrecorded locations and unrelated projects remain rejected. Only exact recorded
+root locations qualify; a session saved in an unrecorded subdirectory may still
+require explicit recovery.
+
+Do not bulk-rewrite native resume-map keys or historical messages to move a
+project. The older `migrate_project_paths.py` repair script now updates ordered
+registry locations through `ProjectManager`, but also rewrites legacy chat
+snapshots/settings and does not relocate native conversations. It remains a
+repair tool; the normal project-editing interface is the App, API, or CLI above.
+
 ## Agent interface
 
 From the Cuttle root, with the project venv:

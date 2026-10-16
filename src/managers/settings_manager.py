@@ -53,6 +53,12 @@ class SettingsManager:
             "starred_project": None,
             # Host-local executable/wrapper paths; blank uses CLI discovery.
             "agent_cli_paths": {},
+            "chat_prompts": {},
+            "response_postprocessing": {
+                "enabled": False, "mode": "append",
+                "prompt": "Give me a concise TL;DR of the response.",
+                "chain": [],
+            },
             "discovery": {
                 "mdns_enabled": False,
                 "lan_access_enabled": False
@@ -237,4 +243,3 @@ def get_settings_manager() -> SettingsManager:
     if _settings_manager is None:
         _settings_manager = SettingsManager()
     return _settings_manager
-

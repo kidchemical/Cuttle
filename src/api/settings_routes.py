@@ -41,6 +41,12 @@ except ImportError:
 # backend, its validator, and its auth. Add rows here, not new modules.
 # backend: "settings-manager" | named helper module.
 SETTING_FAMILIES = (
+    {"name": "chat-prompts", "routes": ["GET/POST /settings/chat-prompts"],
+     "backend": "api.chat_preferences", "validator": "save_prompts",
+     "read": "authenticated", "write": "owner"},
+    {"name": "response-postprocessing", "routes": ["GET/POST /settings/response-postprocessing", "GET /settings/response-postprocessing/<kind>/<target>/models"],
+     "backend": "api.chat_preferences", "validator": "save_processor",
+     "read": "authenticated", "write": "owner"},
     {"name": "storage", "routes": ["GET /settings/storage", "POST /settings/storage/<id>", "POST /settings/storage/<id>/<operation>"],
      "backend": "api.storage.service + api.agent_events.service", "validator": "api.storage.service.validate",
      "read": "owner", "write": "owner"},
@@ -639,6 +645,7 @@ def update_update_source_setting():
 # --- agent adapters (backends: agent_harness.steer / catalog / agent_defaults)
 
 def _agent_adapters_payload() -> dict:
+    from api.chat_preferences import prompts
     from api.agent_harness.cli_paths import describe_cli_paths
     from api.agent_harness.agent_defaults import get_starred_effort, get_starred_model
     from api.agent_harness.catalog import (
@@ -651,6 +658,7 @@ def _agent_adapters_payload() -> dict:
 
     return {
         'success': True,
+        'system_prompts': prompts(),
         'defaults': {
             aid: {'model': get_starred_model(aid) or '', 'effort': get_starred_effort(aid) or ''}
             for aid in list_agents()
@@ -705,6 +713,53 @@ def update_agent_adapters_setting():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# --- user prompt and final-response preferences ---------------------------
+@settings_bp.route('/settings/chat-prompts', methods=['GET'])
+@authenticated_required
+def get_chat_prompts():
+    from api.chat_preferences import prompts
+    return jsonify(success=True, prompts=prompts())
+
+
+@settings_bp.route('/settings/chat-prompts', methods=['POST'])
+@owner_required
+def set_chat_prompts():
+    from api.chat_preferences import prompts, save_prompts
+    try:
+        if not save_prompts(request.get_json(silent=True)):
+            return jsonify(success=False, error='Unable to save prompts'), 500
+        return jsonify(success=True, prompts=prompts())
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+
+
+def _response_processor_payload():
+    from api.chat_preferences import processor_preferences
+    from api.experimental import is_enabled
+    from api.background_helpers import targets
+    available = is_enabled('response_postprocessing')
+    return dict(success=True, preferences=processor_preferences(), available=available,
+                targets=targets() if available else [])
+
+
+@settings_bp.route('/settings/response-postprocessing', methods=['GET'])
+@authenticated_required
+def get_response_processor():
+    return jsonify(_response_processor_payload())
+
+
+@settings_bp.route('/settings/response-postprocessing', methods=['POST'])
+@owner_required
+def set_response_processor():
+    from api.chat_preferences import save_processor
+    try:
+        if not save_processor(request.get_json(silent=True)):
+            return jsonify(success=False, error='Unable to save post-processing'), 500
+        return jsonify(_response_processor_payload())
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+
+
 # --- background text execution (API / restricted installed CLI) -----------
 @settings_bp.route('/settings/background-helpers', methods=['GET'])
 @authenticated_required
@@ -725,9 +780,22 @@ def set_background_helpers():
         return jsonify(success=False, error=str(exc)), 400
 
 
+@settings_bp.route('/settings/response-postprocessing/<kind>/<target>/models', methods=['GET'])
+@owner_required
+def response_processor_models(kind, target):
+    from api.experimental import is_enabled
+    if not is_enabled('response_postprocessing'):
+        return jsonify(success=False, disabled=True), 403
+    return _executor_models(kind, target)
+
+
 @settings_bp.route('/settings/background-helpers/<kind>/<target>/models', methods=['GET'])
 @owner_required
 def background_helper_models(kind, target):
+    return _executor_models(kind, target)
+
+
+def _executor_models(kind, target):
     from api.background_helpers import discover
     from api.model_providers.cache import public_error
     try:

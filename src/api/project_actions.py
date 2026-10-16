@@ -910,8 +910,10 @@ def execute_inline_action(
             return duplicate_result()
     if cancel:
         return {"success": True, "response": "Cancelled — action was not run.", "type": "project_action"}
-    if action_type in ("discord.post", "discord_post", "discord"):
-        result = _execute_discord_post(action, params)
+    from api.service_ops.catalog import find_op
+    op = find_op(action_type)
+    if op is not None:
+        result = op.execute(action, params, session_id=session_id)
     elif action_type in ("shell", "run", "script") or action.get("run") or action.get("run_posix"):
         result = _execute_shell(action, params, session_id=session_id)
     else:
@@ -934,15 +936,6 @@ def execute_inline_action(
         "type": "project_action",
         "action": action_name,
     }
-
-
-def _execute_discord_post(action: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
-    from api.experimental.context_bundles import executable_available
-    if not executable_available(action, action.get("project_path")):
-        return {"success": False, "error": "Feature action is unavailable."}
-    from api.discord_ops.post import execute_discord_post
-
-    return execute_discord_post(action, params)
 
 
 _ENV_KEY_RE = re.compile(r"[^A-Z0-9_]")

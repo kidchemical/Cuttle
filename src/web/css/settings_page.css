@@ -854,6 +854,33 @@ body.compact-shell-page button.cuttle-info {
     }
 }
 
+#responsePostprocessingSettings[hidden] { display: none !important; }
+.chat-prompt-editor {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    margin: 12px 0;
+    width: 100%;
+}
+.chat-prompt-editor label:not(.toggle-switch) { width: 100%; }
+body.compact-shell-page .chat-prompt-editor textarea.setting-input {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    height: auto;
+    min-height: 110px;
+    margin-top: 8px;
+    resize: vertical;
+    font: inherit;
+    line-height: 1.5;
+}
+.chat-prompt-editor > .setting-item,
+.postprocessing-executors { box-sizing: border-box; width: 100%; }
+.chat-prompt-editor > .setting-item { margin: 0; }
+.postprocessing-executors > .setting-label { margin-bottom: 10px; }
+.postprocessing-executors .background-executor { margin-bottom: 12px; }
+
 /* ── Cuttle updates: device update source + status (Settings → Cuttle updates) ── */
 #cuttleReleaseSettings select.setting-input[data-update-source] {
     min-width: 220px;

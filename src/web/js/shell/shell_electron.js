@@ -746,6 +746,40 @@
     let _zoomWheelIdleTimer = null;
     let _zoomLastStepAt = 0;
 
+    // Renderer zoom lives in ``webFrame`` only, so it does not survive a shell
+    // reload on its own. Persist the ladder value per shell origin and re-apply
+    // it on startup so a refresh does not snap back to 100%.
+    const ZOOM_STORAGE_KEY = 'cuttle.shell.zoomPercent';
+
+    function readPersistedZoomPercent() {
+        try {
+            const raw = window.localStorage?.getItem(ZOOM_STORAGE_KEY);
+            if (raw == null) return null;
+            const n = Number(raw);
+            return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function persistZoomPercent(pct) {
+        try {
+            const n = Number(pct);
+            if (Number.isFinite(n) && n > 0) {
+                window.localStorage?.setItem(ZOOM_STORAGE_KEY, String(Math.round(n)));
+            }
+        } catch (_) {}
+    }
+
+    function restorePersistedZoom() {
+        if (typeof window.electron?.setZoomPercent !== 'function') return;
+        const stored = readPersistedZoomPercent();
+        if (stored == null || stored === 100) return;
+        try {
+            window.electron.setZoomPercent(stored);
+        } catch (_) {}
+    }
+
     /** Chromium-ish: one zoom step per ~100px of wheel delta (pixel mode). */
     const ZOOM_WHEEL_THRESHOLD = 100;
     /** Ignore opposite-direction jitter while actively zooming one way. */
@@ -809,7 +843,9 @@
                 pct = window.electron.resetZoom();
             }
         } catch (_) {}
-        showZoomHud(pct != null ? pct : readZoomPercent());
+        const resolved = pct != null ? pct : readZoomPercent();
+        persistZoomPercent(resolved);
+        showZoomHud(resolved);
     }
 
     /**
@@ -856,6 +892,10 @@
     function setupShellZoomHud() {
         if (document.documentElement.dataset.cuttleZoomHud === '1') return;
         document.documentElement.dataset.cuttleZoomHud = '1';
+
+        // Re-apply the zoom chosen before the last reload (webFrame zoom is
+        // frame-scoped and would otherwise reset to 100%).
+        restorePersistedZoom();
 
         document.addEventListener('wheel', (e) => {
             if (!(e.ctrlKey || e.metaKey)) return;

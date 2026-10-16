@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261015glass">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261015cliPaths">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261016separateProcessor">
     <link rel="stylesheet" href="css/searchable_select.css?v=20261011attachedMenus">
 <link rel="stylesheet" href="/css/storage_settings.css?v=20261007">
 <link rel="stylesheet" href="/css/page_controls.css?v=20261015glass">
@@ -40,6 +40,10 @@
             <!-- General is the pre-activation panel: if the tab script fails to
                  load, the page still renders its settings instead of nothing. -->
             <section class="settings-panel active" id="panel-general" role="tabpanel" aria-labelledby="tab-general" tabindex="0">
+            <div class="settings-group" id="sharedSystemPromptSettings">
+                <h3 class="settings-title">System prompt <span class="settings-scope" data-scope="server">All chats</span></h3>
+                <div id="sharedSystemPromptEditor"></div>
+            </div>
             <div class="settings-group" id="cuttleReleaseSettings">
                 <h3 class="settings-title">📦 Cuttle updates <span class="settings-scope" data-scope="server">This server checkout</span><button type="button" class="cuttle-info" data-tooltip="Published releases describe what changed. For device updates, open Jobs → Devices; Git revision checks also detect changes between releases." aria-label="About 📦 Cuttle updates">i</button></h3>
                 <div class="setting-item setting-item--stack">
@@ -296,6 +300,11 @@
                 <div id="agentCliList" class="agent-cli-list"></div>
                 <button type="button" class="control-button agent-refresh" onclick="refreshAgentSetup(this)">Check again</button>
                 <span id="agentSetupStatus" role="status" aria-live="polite"></span>
+            </div>
+
+            <div class="settings-group" id="responsePostprocessingSettings" hidden>
+                <h3 class="settings-title">Response post-processing <span class="settings-scope">Experimental</span></h3>
+                <div id="responsePostprocessingEditor"></div>
             </div>
 
             <div class="settings-group" id="backgroundHelpersSettings">
@@ -851,9 +860,10 @@
     <script src="/js/settings/settings_releases.js?v=20261011androidRow"></script>
     <script src="/js/settings/settings_storage.js?v=20261007"></script>
     <script src="/js/settings/settings_agent_cli_paths.js?v=20261015paths"></script>
+    <script src="/js/settings/settings_chat_preferences.js?v=20261016separateProcessor"></script>
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261011menuPosition2"></script>
-    <script src="/js/settings/settings_background_helpers.js?v=20261011menuPosition2"></script>
+    <script src="/js/settings/settings_background_helpers.js?v=20261016separateProcessor"></script>
     <script src="/js/settings/settings_voice_providers.js?v=20261012engines"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
@@ -995,6 +1005,10 @@
             (window.showToast || alert)('Agent name saved successfully!', 'success');
         }
 
+        const chatPreferences = CuttleSettingsChatPreferences.create({
+            document, fetch: window.fetch.bind(window),
+            notify: (message, kind) => (window.showToast || alert)(message, kind)
+        });
         // Catalog and picker behavior live in the settings slice.
         let _completionPicker;
         function completionPicker() {
@@ -1201,6 +1215,8 @@
                     data => { adapterConfig.cli_paths = data.cli_paths; }
                 );
                 if (cliPath) detail.appendChild(cliPath);
+                const promptEditor = chatPreferences.agentEditor(agent, adapterConfig && adapterConfig.system_prompts);
+                if (promptEditor) detail.appendChild(promptEditor);
                 const config = agent.available ? agentConfigSection(agent, adapterConfig) : null;
                 if (config) detail.appendChild(config);
                 if (agent.sticky && agent.ready) {
@@ -2041,6 +2057,7 @@
                 list.innerHTML = (d.flags || []).map(renderExperimentalFlag).join('')
                     || '<div class="provider-status">No experimental features registered.</div>';
                 if (window.cuttleCompletionSettings) window.cuttleCompletionSettings.refresh();
+                chatPreferences.refreshProcessorAvailability();
                 if (d.kill_switch) {
                     list.innerHTML += '<div class="provider-status" style="margin-top:12px">'
                         + '⚠️ CUTTLE_EXPERIMENTAL=0 is set — every flag is forced off at the process level.</div>';
@@ -2817,9 +2834,11 @@
             const tabs = window.CuttleSettingsTabs;
             if (tabs && typeof tabs.register === 'function') {
                 tabs.register('general', function () {
+                    chatPreferences.mountGlobal(document.getElementById('sharedSystemPromptEditor'));
                     window.CuttleSettingsReleases.mount(document.getElementById('cuttleReleaseSettings'));
                 });
                 tabs.register('agents', function () {
+                    chatPreferences.mountProcessor(document.getElementById('responsePostprocessingEditor'));
                     loadAgentCatalog();
                     loadCompletionProviders();
                     loadGitAutoCommitSetting();
@@ -2838,6 +2857,8 @@
                 tabs.init();
             } else {
                 // No tab shell (e.g. markup edited by hand): load everything.
+                chatPreferences.mountGlobal(document.getElementById('sharedSystemPromptEditor'));
+                chatPreferences.mountProcessor(document.getElementById('responsePostprocessingEditor'));
                 window.CuttleSettingsReleases.mount(document.getElementById('cuttleReleaseSettings'));
                 loadAgentCatalog();
                 loadGitAutoCommitSetting();

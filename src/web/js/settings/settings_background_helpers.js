@@ -5,8 +5,8 @@
    - a per-task chain that overrides the Default until you Reset to Default. */
 (function (root) {
     'use strict';
-    function create({document: doc, fetch, notify, endpoint}) {
-        const el = id => doc.getElementById(id);
+    function create({document: doc, fetch, notify, endpoint, elements, standalone = false}) {
+        const el = id => elements ? elements[id] : doc.getElementById(id);
         let targets = [], tasks = {}, preferences = {chain: [], tasks: {}}, profile = '', generation = 0, saving = false;
         const states = [];
         let legacy = {};
@@ -42,13 +42,12 @@
             const active = editorActive();
 
             el('backgroundChain').replaceChildren();
-            el('backgroundAdd').disabled = !active;
+            el('backgroundAdd').disabled = !active || !targets.length;
             const reset = el('backgroundReset');
             if (reset) reset.hidden = !hasOverride;
 
             if (!taskMode) {
-                el('backgroundInheritance').textContent =
-                    'Default chain';
+                el('backgroundInheritance').textContent = standalone ? '' : 'Default chain';
             } else if (hasOverride) {
                 el('backgroundInheritance').textContent =
                     'Custom chain for this task';
@@ -59,7 +58,9 @@
 
             if (active) chain().forEach((saved, index) => paintRow(saved, index));
             if (!taskMode) {
-                el('backgroundStatus').textContent = preferences.chain.length
+                el('backgroundStatus').textContent = standalone
+                    ? (preferences.chain.length ? '' : 'Choose an executor for post-processing.')
+                    : preferences.chain.length
                     ? 'Targets run in this order. Only listed fallbacks may be used.'
                     : 'No Default chain yet. Leave it empty to use the Providers settings (API order: '
                         + ((legacy.order || []).join(' → ') || 'none')
@@ -80,15 +81,18 @@
             }
         }
         function paintRow(saved, index) {
+            const context = standalone ? 'Post-processing' : 'Background';
             const card = node('div'); card.className = 'background-executor';
             const controls = node('div'); controls.className = 'provider-picker';
             const target = node('select'), model = node('select'), custom = node('input'), effort = node('select'), auth = node('select'), temperature = node('input');
+            effort.setAttribute('aria-label', context + ' effort ' + (index + 1));
+            auth.setAttribute('aria-label', context + ' authentication ' + (index + 1));
             [target, model, custom, effort, auth, temperature].forEach(n => n.className = 'setting-input');
-            target.setAttribute('aria-label', 'Background executor ' + (index + 1));
-            model.setAttribute('aria-label', 'Background model ' + (index + 1));
-            custom.placeholder = 'Custom model ID'; custom.setAttribute('aria-label', 'Custom background model ' + (index + 1));
+            target.setAttribute('aria-label', context + ' executor ' + (index + 1));
+            model.setAttribute('aria-label', context + ' model ' + (index + 1));
+            custom.placeholder = 'Custom model ID'; custom.setAttribute('aria-label', 'Custom ' + context.toLowerCase() + ' model ' + (index + 1));
             temperature.type = 'number'; temperature.step = '.05'; temperature.placeholder = 'Task default';
-            temperature.setAttribute('aria-label', 'Background temperature ' + (index + 1));
+            temperature.setAttribute('aria-label', context + ' temperature ' + (index + 1));
             targets.forEach(t => option(target, t.key, (t.kind === 'cli' ? 'Agent CLI · ' : t.kind === 'local' ? 'Local model · ' : 'API · ') + t.label + (t.configured ? '' : ' (not configured)')));
             const key = saved.kind + ':' + saved.target;
             if (!targets.some(t => t.key === key)) option(target, key, key + ' (unavailable)');
@@ -202,8 +206,8 @@
             rows = ((t && t.suggested_models) || []).map(id => ({id})); paint(saved.model || ''); discover(false);
         }
         function defaultTarget() { const t = targets.find(t => t.configured) || targets[0]; return {kind: t.kind === 'cli' ? 'cli' : 'api', target: t.target, model: '', effort: '', temperature: null, auth: t.kind === 'cli' ? 'subscription' : ''}; }
-        el('backgroundTask').addEventListener('change', switchProfile);
-        el('backgroundOverride').addEventListener('change', () => {
+        if (el('backgroundTask')) el('backgroundTask').addEventListener('change', switchProfile);
+        if (el('backgroundOverride')) el('backgroundOverride').addEventListener('change', () => {
             if (isDefaultProfile()) return;
             if (el('backgroundOverride').checked) {
                 // New override starts from the Default (or one empty target) so
@@ -221,25 +225,35 @@
             render();
         });
         el('backgroundAdd').addEventListener('click', () => { remember(); if (chain().length >= 8) { notify('At most eight fallback targets.', 'error'); return; } setChain([...chain(), defaultTarget()]); render(); });
+        function paintTaskProfiles() {
+            if (!el('backgroundTask')) return;
+            el('backgroundTask').replaceChildren(); option(el('backgroundTask'), '', 'Default — all tasks');
+            Object.entries(tasks).forEach(([id, label]) => option(el('backgroundTask'), id, label)); el('backgroundTask').value = profile;
+            profile = el('backgroundTask').value || '';
+            el('backgroundTask').value = profile;
+        }
         function accept(data) {
             targets = data.targets || []; tasks = data.tasks || {}; preferences = data.preferences || {}; legacy = data.legacy || {};
             preferences.chain ||= []; preferences.tasks ||= {};
-            el('backgroundTask').replaceChildren(); option(el('backgroundTask'), '', 'Default — all tasks');
-            Object.entries(tasks).forEach(([id, label]) => option(el('backgroundTask'), id, label)); el('backgroundTask').value = profile;
-            profile = el('backgroundTask').value;
+            paintTaskProfiles();
             render();
         }
         async function load() {
             try { const response = await fetch(endpoint), data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'Unable to load helpers'); accept(data); }
             catch (error) { el('backgroundStatus').textContent = error.message; }
         }
+        function value() {
+            if (states.some(s => !s.valid())) throw new Error('Enter a custom model ID or choose the default model.');
+            remember();
+            if ([preferences.chain, ...Object.values(preferences.tasks)].some(c => c.some(t => !t.target || (t.temperature != null && !Number.isFinite(t.temperature))))) throw new Error('Choose valid executors and temperatures.');
+            return JSON.parse(JSON.stringify(preferences));
+        }
         async function save() {
             if (saving) return;
-            if (states.some(s => !s.valid())) { notify('Enter a custom model ID or choose the default model.', 'error'); return; }
-            remember();
-            if ([preferences.chain, ...Object.values(preferences.tasks)].some(c => c.some(t => !t.target || (t.temperature !== null && !Number.isFinite(t.temperature))))) { notify('Choose valid executors and temperatures.', 'error'); return; }
+            let body;
+            try { body = JSON.stringify(value()); }
+            catch (error) { notify(error.message, 'error'); return; }
             saving = true;
-            const body = JSON.stringify(preferences);
             try {
                 const response = await fetch(endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body}), data = await response.json();
                 if (!response.ok || !data.success) throw new Error(data.error || 'Save failed');
@@ -248,7 +262,7 @@
             } catch (error) { notify(error.message, 'error'); }
             finally { saving = false; }
         }
-        return {load, save};
+        return {load, save, configure: accept, value};
     }
     root.CuttleBackgroundHelpers = {create};
     if (typeof module !== 'undefined' && module.exports) module.exports = root.CuttleBackgroundHelpers;

@@ -37,6 +37,22 @@ def test_ordered_paths_are_host_resolved_and_survive_restart(registry, tmp_path,
     assert restarted.get_project(pid)['id'] == pid
 
 
+def test_recorded_move_paths_are_scoped_to_available_project(registry, tmp_path):
+    pm, pid, folder = registry
+    moved = tmp_path / 'moved'
+    moved.mkdir()
+    # Windows locations must not become relative POSIX paths under this checkout.
+    foreign = 'Z:\\Other' if os.name != 'nt' else '/other-host/project'
+    pm.update_project(pid, paths=[foreign, str(moved)])
+    assert pm.previous_project_paths(pid, str(moved)) == [str(folder)]
+    assert pm.previous_project_paths(pid, str(folder)) == []
+    assert pm.previous_project_paths(pid + 99, str(moved)) == []
+    pm.update_project(pid, archived=True)
+    assert pm.previous_project_paths(pid, str(moved)) == []
+    pm.update_project(pid, archived=False, paths=[str(tmp_path / 'missing')])
+    assert pm.previous_project_paths(pid, str(tmp_path / 'missing')) == []
+
+
 def test_unavailable_paths_never_choose_an_unrelated_folder(registry, tmp_path):
     from managers.project_locations import ProjectUnavailable, require_project_path
     pm, pid, _ = registry

@@ -290,6 +290,18 @@ locked atomic persistence. `<home>/config/settings.json` owns server preferences
 `schema_version: 1` marks the storage schema, independently of the release SemVer.
 No `/api/settings` routes live on the Flask root.
 
+`api.chat_preferences` owns shared/per-agent chat prompt preferences and
+final-response processor configuration. The harness kernel applies prompts to
+each normal execution (including resumes). `api.response_postprocessing` runs
+the opt-in `response_postprocessing` experimental pass via restricted
+`background_helpers` before claimed sync/stream persistence and delivery;
+`chat_coordinator` also applies it to unclaimed compatibility turns.
+Its executor chain is stored in `response_postprocessing.chain`, independently
+of Background helpers preferences; the shared helper engine and picker provide
+API/CLI capabilities. `chat_messages.js` owns the collapsed original-reply
+disclosure and processed copy text. `settings_chat_preferences.js` owns the General/Agents editors. Behavior and
+settings contracts: [Chat prompts](../../.cuttle/docs/chat-prompts.md).
+
 **Direct model APIs:** `api.model_providers` owns validated provider manifests,
 account-scoped discovery, shared raw models.dev metadata, capability provenance,
 and operation-specific adapters under `<provider>/`. It executes typed
@@ -384,7 +396,7 @@ arguments or injected host interfaces):
 | `pending_changes_panel.js` (`CuttlePendingChangesPanel`) | standalone periodic scans and explicit panel refresh/actions; embedded panes use existing shell per-project polling hub | `app_shell.js` owns periodic shared scans; page project reconciliation reports path through `reportProjectToShell`; no duplicate embedded interval |
 | `chat_generation.js` (`CuttleChatGeneration`) | busy-lock `{loading, localSessionId, seq}` + token-scoped release, sync cadence, detached-poll classes, session-open flags, the send PREPARE decision (`prepareSend`: control-lane classification + sticky/slash meta + pending typing badge as one pure record), the send SUBMIT decision (`planSubmit`: outbound request body + origin binding + SSE-vs-JSON / control-lane-JSON-only transport policy; `classifySubmitFailure`: abort / control-recover / retry-JSON fallback); one sync-claim state `{inFlight, startedAt, seq}` through `createSyncState`, `claimSync`, `isSyncCurrent`, `finishSync` | timers, transport, voice, running-flag paint |
 | `chat_voice.js` (`CuttleChatVoice`) + `chat_voice_segments.js` (pure phrase bubbles) + `chat_voice_stars.js` (overlay canvas) + `chat_voice_narrator.js` (narration pacing + `/api/voice-narrator` transport) + `chat_voice_recorder.js` (pure pause detector + phrase upload to `/api/voice-stt`; audio from the Android app's `NativeMic` bridge when present, else browser MediaRecorder on secure origins) | voice-mode state, overlay DOM, Web Speech recognition (pauses restart listening; only a mic tap or hold-release sends), removable phrase bubbles kept across screen lock, talking while the agent works (sends steer the live turn, else queue; a reply that lands mid-speech waits), mic permission, spoken-reply sequencing incl. replies pending after the overlay closes; experimental `voice_narrator` acknowledgment + progress/heartbeat lines (server owner `api.voice_narrator`; narration never speaks over the user or the final reply); experimental `voice_server_stt` chime-free recording engine (server owner `api.voice_stt`) | `create(host)` capabilities: compose/send/steer/queue, last assistant bubble, TTS speech/playback from `CuttleChatTts` (shared with bubble speaker buttons); generation start/end + status hooks; voice `submit` is a thin caller of the shared `processMessage` turn interface (chat_generation busy-lock) — same lifecycle as text chat, no second execution path |
-| `chat_messages.js` (`CuttleChatMessages`) | records/windowing, display dispatch as pure functions | transcript DOM paint, sync/poll, session restore, streaming orchestration, leaf renderers |
+| `chat_messages.js` (`CuttleChatMessages`) | records/windowing, display dispatch as pure functions; server message reordering over explicit transcript/live nodes (`reorderMessageNode`) preserves control exchanges after live activity | transcript DOM paint, sync/poll, session restore, streaming orchestration, leaf renderers |
 | `chat_action_forms.js` (`CuttleChatActionForms`) | pure card model/watch interpretation (`isExplicitActionFormCancelOption`, `actionFormHasSideEffect`, `isWatchFormAction`, `cardWatchBind`, `normalizeWatchBars` formatting transforms, restart-link helpers) plus card HTML/render planning (`renderActionFormCardHtml`, `renderWatchBarsHtml`, job-agnostic `renderWatchGridHtml` — no render target, no DOM) | card DOM/button/watch wiring moved to `chat_action_cards` (`CuttleChatActionCards`, plan C2 done), never into this pure module |
 | `chat_markdown.js` | markdown/block composition (pure) | page render orchestration |
 | `chat_media.js` (`CuttleChatMedia`) | media thumb HTML + poster fallback, the shared lightbox (gallery, fit/actual/zoom/pan/pinch, sidecar captions via `/api/shared-media/meta`, download) and the image Copy/Save menu, with all their state; pure helpers (`mediaKindFromUrl`, `isSafeMediaSrc`, `mediaDownloadUrl`, …) on the namespace, `create({win, escapeHtmlInline, clamp, hostTeardownSignal})` → per-frame controller. The lightbox mounts on the host (shell) document; host listeners ride `hostTeardownSignal` | one `create` + `bind()` in init, `window.CuttleMediaThumbFallback` export, `formatMessage` calls `buildMediaThumbHtml` |
@@ -411,7 +423,9 @@ cache convention interpretation and footer markup. The page delegates rendering;
 Pure today: `chat_action_forms` model/watch interpretation + card HTML planning,
 `chat_messages`/`chat_markdown` planning, turn/stop/queue/generation
 decisions. Effects live in `chat_activate` helpers, the
-`chat_action_cards` controller, `chat_usage_live.start`, and the page —
+`chat_action_cards` controller, `chat_usage_live.start`, the generation owner's
+per-send `createSendActivity` (injected activity effects and reply placement),
+the messages owner's explicit-node ordering helper, and the page —
 do not describe all frontend modules as pure.
 
 **Experimental feature UI:** `api.experimental` owns rollout flags, and Settings

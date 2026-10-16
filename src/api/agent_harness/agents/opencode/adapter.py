@@ -55,6 +55,24 @@ _STREAM_LIMIT = 64 * 1024 * 1024
 _WRITING_BUF_KEY = "__writing_buf__"
 
 
+def _previous_project_paths(cwd: str, chat_session_id: Any) -> List[str]:
+    """Only the chat's registered project can authorize relocation recovery."""
+    if chat_session_id is None:
+        return []
+    from api.auth_db import get_auth_db
+    from api.session_keys import bare_chat_session_id
+    from managers.project_manager import project_manager
+
+    try:
+        sid = int(bare_chat_session_id(chat_session_id))
+    except (TypeError, ValueError):
+        return []
+    stored = get_auth_db().get_session_project(sid)
+    if not stored or stored.get('project_id') is None:
+        return []
+    return project_manager.previous_project_paths(stored['project_id'], cwd)
+
+
 async def _git_common_directory(cwd: str, chat_session_id: Any) -> Optional[Path]:
     """Identify linked checkouts using Git's own metadata, never path ancestry."""
     proc = await asyncio.create_subprocess_exec(
@@ -179,13 +197,21 @@ async def _resume_directory(exe: str, cwd: str, resume: str, chat_session_id: An
                     break
                 native = Path(directory).resolve()
                 project = Path(cwd).resolve()
+                if native == project and native.is_dir():
+                    return str(project), resume
+                # A project move can delete the native cwd. A rewritten map key
+                # alone is insufficient: require this chat's binding AND the
+                # registry's recorded old location before copying its transcript.
+                if (str(native) in _previous_project_paths(str(project), chat_session_id)
+                        and resume in (load_opencode_resume_id(str(project), chat_session_id),
+                                       load_opencode_resume_id(str(native), chat_session_id))):
+                    recovered = await _copy_session_to_directory(exe, str(project), resume, chat_session_id)
+                    return str(project), recovered
                 if not native.is_dir():
                     raise ValueError(
                         "OpenCode session directory is outside the selected project or no longer exists; "
                         "select its original project or start a new chat. No turn was started."
                     )
-                if native == project:
-                    return str(project), resume
                 selected_repo = await _git_common_directory(str(project), chat_session_id)
                 native_repo = await _git_common_directory(str(native), chat_session_id)
                 if selected_repo is not None and selected_repo == native_repo:
@@ -839,7 +865,18 @@ class Adapter:
         return resolve_harness_cwd(project_path)
 
     def load_resume(self, cwd: str, chat_session_id: Optional[str]) -> Optional[str]:
-        return load_opencode_resume_id(cwd, chat_session_id)
+        resume = load_opencode_resume_id(cwd, chat_session_id)
+        if resume:
+            return resume
+        # Keep the old key until a verified export/import succeeds. No bulk
+        # map rewrite, history rewrite, or fallback to another chat is needed.
+        candidates = {
+            value for old in _previous_project_paths(cwd, chat_session_id)
+            if (value := load_opencode_resume_id(old, chat_session_id))
+        }
+        if len(candidates) > 1:
+            raise ValueError('Several OpenCode conversations match this project move; select a session before continuing.')
+        return candidates.pop() if candidates else None
 
     def save_resume(
         self, cwd: str, chat_session_id: Optional[str], cli_session_id: Optional[str]

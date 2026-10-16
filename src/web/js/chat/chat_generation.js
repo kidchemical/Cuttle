@@ -19,9 +19,12 @@
      never release a newer turn's busy state. Force (no token) is reserved
      for Stop / chat-delete, which own the turn outright. Detach always
      wins and invalidates pre-detach tokens.
+   - createSendActivity owns per-request activity cleanup and reply placement
+     through injected effects. Control sends never own the agent's live bubble,
+     notification, or sub-agent state; their replies carry the control id.
    - Pure where possible (decide/classify/isLoadingForSession take
      snapshots; no document, no window, no fetch, no timers). The page
-     holds the single state instance and performs ALL effects: timer
+     holds the generation state instance and supplies effect capabilities: timer
      handles/scheduling, transport, DOM, persistence, voice phase,
      stop-state transitions, history running-flag paint, and the
      session-adopt guards. Turn/stop/queue/pending-result owners are used
@@ -351,7 +354,36 @@
         return { clearHubCache: true, deferGenerating: true, markIdle: true };
     }
 
+    /** Per-request activity effects. Native controls never own agent activity. */
+    function createSendActivity(controlLane, host) {
+        let controlRequestId = null;
+        let replyAnchor = null;
+        return {
+            bindControlRequest: (id) => { controlRequestId = id; },
+            start: () => { if (!controlLane) host.start(); },
+            clear: () => {
+                if (controlLane) return;
+                const live = host.liveBubble();
+                if (live) replyAnchor = live.nextSibling;
+                host.clear();
+            },
+            clearRemote: () => { if (!controlLane) host.clearRemote(); },
+            notify: (...args) => { if (!controlLane) host.notify(...args); },
+            addMessage: (text, role, opts) => {
+                const options = controlLane
+                    ? Object.assign({}, opts, { control_request_id: controlRequestId }) : opts;
+                const el = host.addMessage(text, role, options);
+                if (!controlLane && role === 'assistant' && el && replyAnchor
+                        && replyAnchor.parentNode === el.parentNode) {
+                    el.parentNode.insertBefore(el, replyAnchor);
+                }
+                return el;
+            },
+        };
+    }
+
     var api = {
+        createSendActivity: createSendActivity,
         SYNC_MS: SYNC_MS,
         createGenerationState: createGenerationState,
         createSyncState: createSyncState,

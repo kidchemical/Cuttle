@@ -10,6 +10,29 @@ from api.agent_harness.agents.opencode import adapter as oc
 from tests.harness.test_agent_harness_timeouts import _Proc
 
 
+@pytest.fixture
+def moved_project(monkeypatch, tmp_path):
+    from api import auth_db
+    from managers import project_manager as module
+
+    monkeypatch.setenv('CUTTLE_HOME', str(tmp_path / 'home'))
+    monkeypatch.setattr(module.ProjectManager, 'ensure_default_project', lambda self: None)
+    pm = module.ProjectManager(str(tmp_path / 'projects.db'))
+    db = auth_db.AuthDatabase(tmp_path / 'auth.db')
+    monkeypatch.setattr(module, 'project_manager', pm)
+    monkeypatch.setattr(auth_db, 'get_auth_db', lambda: db)
+    old, selected = tmp_path / 'old', tmp_path / 'selected'
+    old.mkdir()
+    selected.mkdir()
+    pid = pm.register_project('Moved', str(old))
+    uid = db.create_user('move@test', 'Mover', 'local', password='x')
+    sid = db.create_chat_session(uid, 'Keep my work')
+    db.set_session_project(sid, uid, project_id=pid, project_path=str(old))
+    pm.update_project(pid, paths=[str(selected)])
+    oc.save_opencode_resume_id(str(old), sid, 'saved')
+    return pm, db, pid, uid, sid, old, selected
+
+
 class ListingProcess:
     returncode = 0
 
@@ -78,6 +101,100 @@ def test_resume_copies_into_selected_linked_checkout(monkeypatch, tmp_path):
     assert argv[argv.index("--session") + 1] == "recovered"
     assert argv[argv.index("--dir") + 1] == str(selected)
     assert kwargs["cwd"] == str(selected)
+
+
+@pytest.mark.parametrize('rekeyed', [False, True])
+@pytest.mark.parametrize('deleted', [False, True])
+def test_project_move_preserves_resume_without_rewriting_history(
+        monkeypatch, moved_project, rekeyed, deleted):
+    pm, db, pid, uid, sid, old, selected = moved_project
+    if deleted:
+        import shutil
+        shutil.rmtree(old)
+    if rekeyed:
+        oc.clear_opencode_resume_id(str(old), sid)
+        oc.save_opencode_resume_id(str(selected), sid, 'saved')
+    calls = patch_cli(monkeypatch, [{'id': 'saved', 'directory': str(old)}])
+    recovered = []
+
+    async def copy_session(exe, cwd, resume, chat_session_id):
+        recovered.append((cwd, resume, chat_session_id))
+        oc.save_opencode_resume_id(cwd, chat_session_id, 'recovered')
+        return 'recovered'
+
+    monkeypatch.setattr(oc, '_copy_session_to_directory', copy_session)
+    adapter = oc.Adapter()
+    resume = adapter.load_resume(str(selected), sid)
+    assert resume == 'saved'
+    result = asyncio.run(adapter.execute(
+        'continue', cwd=str(selected), resume=resume, model=None, chat_session_id=sid))
+    assert result.success
+    assert recovered == [(str(selected), 'saved', sid)]
+    argv, kwargs = calls[-1]
+    assert argv[argv.index('--session') + 1] == 'recovered'
+    assert kwargs['cwd'] == str(selected)
+    assert oc.load_opencode_resume_id(str(selected), sid) == 'recovered'
+    # Saved chat context is historical, not another current project registry.
+    assert db.get_session_project(sid)['project_path'] == str(old)
+    assert pm.get_project(pid)['path'] == str(selected)
+
+
+@pytest.mark.parametrize('case', ['different_project', 'unrecorded', 'wrong_resume', 'nested', 'archived'])
+def test_project_move_recovery_requires_registry_and_chat_provenance(monkeypatch, moved_project, case):
+    pm, db, pid, uid, sid, old, selected = moved_project
+    native = old
+    if case == 'different_project':
+        other = pm.register_project('Other', str(selected))
+        db.set_session_project(sid, uid, project_id=other, project_path=str(selected))
+    elif case == 'unrecorded':
+        native = old.parent / 'unknown'
+    elif case == 'wrong_resume':
+        oc.save_opencode_resume_id(str(old), sid, 'unrelated')
+    elif case == 'nested':
+        native = old / 'nested'
+    elif case == 'archived':
+        pm.update_project(pid, archived=True)
+    calls = patch_cli(monkeypatch, [{'id': 'saved', 'directory': str(native)}])
+
+    async def forbidden(*args):
+        pytest.fail('Unverified project move copied a native conversation')
+
+    monkeypatch.setattr(oc, '_copy_session_to_directory', forbidden)
+    result = asyncio.run(oc.Adapter().execute(
+        'continue', cwd=str(selected), resume='saved', model=None, chat_session_id=sid))
+    assert not result.success and 'No turn was started' in result.error
+    assert len(calls) == 1
+
+
+def test_move_resume_lookup_does_not_cross_chats_or_checkouts(monkeypatch, moved_project, tmp_path):
+    _, _, _, _, sid, old, selected = moved_project
+    oc.clear_opencode_resume_id(str(old), sid)
+    oc.save_opencode_resume_id(str(old), sid + 1, 'other-chat')
+    oc.save_opencode_resume_id(str(tmp_path / 'unrelated'), sid, 'other-project')
+    assert oc.Adapter().load_resume(str(selected), sid) is None
+    oc.save_opencode_resume_id(str(old), sid, 'saved')
+    assert oc.Adapter().load_resume(str(tmp_path), sid) is None
+
+
+def test_move_resume_lookup_rejects_ambiguous_native_sessions(moved_project, tmp_path):
+    pm, _, pid, _, sid, _, selected = moved_project
+    another = tmp_path / 'another'
+    another.mkdir()
+    pm.update_project(pid, paths=[str(another)])
+    pm.update_project(pid, paths=[str(selected)])
+    oc.save_opencode_resume_id(str(another), sid, 'another-session')
+    with pytest.raises(ValueError, match='Several OpenCode conversations'):
+        oc.Adapter().load_resume(str(selected), sid)
+    # An already verified target mapping always wins over old candidates.
+    oc.save_opencode_resume_id(str(selected), sid, 'current')
+    assert oc.Adapter().load_resume(str(selected), sid) == 'current'
+
+
+def test_move_provenance_accepts_session_aliases(moved_project):
+    _, _, _, _, sid, old, selected = moved_project
+    for alias in (sid, str(sid), f'db_session_{sid}', f'CH-{sid:06d}'):
+        assert oc._previous_project_paths(str(selected), alias) == [str(old)]
+    assert oc._previous_project_paths(str(selected), 'worker-session') == []
 
 
 def test_nested_foreign_repository_cannot_resume(monkeypatch, tmp_path):

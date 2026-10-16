@@ -20,6 +20,12 @@ from __future__ import annotations
 from api.experimental.flags import FlagSpec, register_flag
 
 register_flag(FlagSpec(
+    id="response_postprocessing", label="Response post-processing",
+    description="Run a configurable API or restricted agent CLI pass on completed replies. Configure its own instructions, executor, model, effort and output in Agents settings.",
+    default=False, category="chat", risk="medium", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
     id="render_result_attachments", label="Render result attachments",
     description="Automatically save verified render previews and encoded videos to the originating chat for registered batches.",
     default=False, category="power", risk="low", since="0.0.0", needs_restart=False, context_bundle=True,

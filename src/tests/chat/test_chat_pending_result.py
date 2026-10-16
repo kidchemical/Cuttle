@@ -35,6 +35,20 @@ const out = {};
 let now = 1000000;
 const clock = { now: () => now, sleep: async (ms) => { now += (ms || 0); } };
 const norm = (s) => String(s || '').trim().toLowerCase();
+// A command exchange interleaved with a running turn is not its reply.
+{
+  const messages = [
+    { role: 'user', content: 'original task' },
+    { role: 'user', content: '/restart', metadata: { control_request_id: 'c' } },
+    { role: 'assistant', content: 'restart form', metadata: '{"control_request_id":"c"}' },
+  ];
+  const fns = { norm, alreadyOnScreen: () => false, isCancelledText: () => false };
+  out.controlPending = PR.findRecoverableAssistant(messages, 'original task', fns);
+  out.controlTrailing = PR.findRecoverableAssistant(messages.slice(1), '', fns);
+  out.agentTranscript = PR.agentTranscript(messages);
+  messages.push({ role: 'assistant', content: 'actual result' });
+  out.controlReady = PR.findRecoverableAssistant(messages, 'original task', fns).content;
+}
 // ---------- waiter deps ----------
 const mkWaitDeps = (o) => {
   const log = { consume: [], status: [], links: [], debug: [], history: 0 };
@@ -589,6 +603,15 @@ def test_heal_decisions():
     assert res["healRemoteNoReply"] == {"kind": "none"}
     assert res["healZombie"] == {"kind": "finish", "why": "zombie"}
     assert res["healIdle"] == {"kind": "none"}
+
+
+@node_only
+def test_history_recovery_ignores_interleaved_control_exchange():
+    res = _run()
+    assert res['controlPending'] is None
+    assert res['controlTrailing'] is None
+    assert res['controlReady'] == 'actual result'
+    assert res['agentTranscript'] == [{'role': 'user', 'content': 'original task'}]
 
 
 @node_only

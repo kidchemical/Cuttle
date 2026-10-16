@@ -12,6 +12,8 @@ import os
 from tests.auth.test_http_authz import _auth_client, LAN
 
 READS = [
+    "/api/settings/chat-prompts",
+    "/api/settings/response-postprocessing",
     "/api/settings/lan-access",
     "/api/settings/channels",
     "/api/settings/starred-slash",
@@ -28,6 +30,8 @@ READS = [
 
 # (method, path, payload): writes must stay owner-only.
 WRITES = [
+    ("POST", "/api/settings/chat-prompts", {"global": "Keep it brief"}),
+    ("POST", "/api/settings/response-postprocessing", {"enabled": False, "prompt": "Summarize", "mode": "append"}),
     ("POST", "/api/settings/lan-access", {"lan_access_enabled": False}),
     ("POST", "/api/settings/channels", {"channel": "webchat"}),
     ("POST", "/api/settings/starred-slash", {"prefixes": []}),

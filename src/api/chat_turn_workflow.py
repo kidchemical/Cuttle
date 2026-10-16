@@ -95,6 +95,9 @@ def run_agent_sync_turn(
     try:
         persist_user()
         body = run()
+        if isinstance(body, dict):
+            from api.response_postprocessing import process_result
+            process_result(body, cancelled=lambda: is_turn_superseded(delivery, session_id, token))
         if isinstance(body, dict) and not is_turn_superseded(
             delivery, session_id, token
         ):
@@ -400,6 +403,11 @@ def run_agent_stream_turn(
             }
         if not isinstance(result, dict):
             result = {}
+        from api.response_postprocessing import process_result
+        process_result(
+            result, cancelled=lambda: is_turn_superseded(delivery, session_id, token),
+            status=lambda message: events.publish('status', message),
+        )
         if not rewrite_result:
             display = result
         else:

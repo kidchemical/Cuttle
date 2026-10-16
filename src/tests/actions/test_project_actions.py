@@ -248,7 +248,8 @@ def test_inline_confirm_payload_roundtrip(tmp_path: Path):
     assert decoded and decoded["action"] == "discord.post"
     assert decoded["params"]["channel"] == "prompt-lab"
 
-    with patch("api.project_actions._execute_discord_post") as mock_post:
+    from api.service_ops.catalog import find_op
+    with patch.object(find_op("discord.post"), "execute") as mock_post:
         mock_post.return_value = {
             "success": True,
             "response": "Posted",
@@ -417,7 +418,8 @@ def test_confirm_recovers_hmac_from_history_after_pending_flush(tmp_path, monkey
     unsigned = "inline." + __import__("base64").urlsafe_b64encode(
         b'{"action":"flask.restart","project_path":"/evil","params":{}}'
     ).decode("ascii").rstrip("=")
-    with patch("api.project_actions._execute_discord_post") as mock_post:
+    from api.service_ops.catalog import find_op
+    with patch.object(find_op("discord.post"), "execute") as mock_post:
         mock_post.return_value = {"success": True, "response": "Posted", "url": "u"}
         res = handle_project_action_button(
             f"[button:project-action-confirm] {action_id} {unsigned}",

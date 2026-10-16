@@ -10,6 +10,13 @@ Achievements is **opt-in and off by default**. The flag-management API is always
 
 ## Turning things on/off
 
+**Response post-processing:** flag `response_postprocessing` (default off).
+Its instructions, append/replace behavior, API/CLI, model, effort and fallback
+chain are configured together in Settings → Agents → Response post-processing,
+independently of Background helpers.
+Details and teardown owners: [chat-prompts.md](chat-prompts.md). The global kill
+switch also disables the pass.
+
 **UI**: Settings → 🧪 **Experimental** tab. Rows are rendered from the registry,
 so anything listed there is a real flag on the server.
 
@@ -100,8 +107,16 @@ Choose the surface that fits the feature:
 
 Keep feature logic in its owned API package and expose library/agent CLI verbs
 when agents should operate it. Gate behavior with the registry flag; respect the
-process kill switch. A discoverable App may show a disabled state with a link to
-Experimental settings, while its functionality remains gated.
+process kill switch. **Disabled experiments must also hide their feature UI**:
+headings, settings panels, controls, picker options, and navigation entries.
+Start those surfaces hidden before flags load; unknown or failed flag resolution
+keeps them hidden. Use the server's effective flag state, including the kill
+switch and conflicts, and update visibility after in-page flag changes. Preserve
+saved preferences when hiding a feature. Backend-only gating is incomplete.
+
+A discoverable App may show a disabled state with a link to Experimental settings
+only when the feature's documented product design explicitly calls for that
+exception; it must expose no operating controls while disabled.
 
 ## Adding a new experimental feature
 
@@ -116,11 +131,15 @@ independent; packaged source presence does not imply operational availability.
 1. Add one row in `src/api/experimental/features.py`, normally default-off.
 2. Gate behavior with `api.experimental.is_enabled("your_flag")`.
 3. Put feature UI in its own appropriate surface, following the design practice
-   above. Register an App with the shell's canonical rail catalog if appropriate;
-   start it stashed so it appears in Apps and can be pinned by the user.
+   above, and hide it while disabled. Register an App with the shell's canonical
+   rail catalog if appropriate; start it stashed so it appears in Apps and can
+   be pinned by the user.
 4. The generic Experimental tab and flag CLI automatically read the registry.
    Do not add a feature-specific toggle route or bespoke block to that tab.
-5. Document agent operations, tests, and teardown in the feature owner.
+5. Test both execution and UI with the flag off, on, and forced off by
+   `CUTTLE_EXPERIMENTAL=0`. UI tests must cover initial loading/failure (no flash
+   of controls), in-page enable/disable, and retained settings after re-enable.
+6. Document agent operations, tests, and teardown in the feature owner.
 
 ### Compatibility rules
 

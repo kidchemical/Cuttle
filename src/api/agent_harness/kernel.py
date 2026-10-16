@@ -829,6 +829,9 @@ def run_agent_web_command(
                 agent_prompt = compiled
                 brain_meta = {}
                 brain_receipt = None
+            from api.chat_preferences import apply_agent_prompt
+            agent_prompt = apply_agent_prompt(agent_prompt, manifest.id)
+            brain_meta = dict(brain_meta, prompt_chars=len(agent_prompt))
             try:
                 tr = get_query_tracker(query_id)
                 if tr and tr.query_id == query_id:

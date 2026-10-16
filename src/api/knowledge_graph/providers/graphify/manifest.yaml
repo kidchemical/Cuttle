@@ -1,0 +1,16 @@
+id: graphify
+label: Graphify
+store_root: graphify
+executable_names:
+  - graphify
+capabilities:
+  - index
+  - update
+  - query
+  - explain
+  - node_path
+  - export
+install_hint: "uv tool install graphifyy"
+description: >-
+  Local tree-sitter AST knowledge graph (PyPI graphifyy). Query-first code
+  navigation; deterministic and offline for code, no API key.
