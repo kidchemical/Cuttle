@@ -23,7 +23,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 AGENTS_ROOT = REPO_ROOT / "src" / "api" / "agent_harness" / "agents"
 CHAT_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_page.js"
 SLASH_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_slash.js"
+COMPOSER_JS = REPO_ROOT / "src" / "web" / "js" / "chat/chat_composer.js"
 SLASH_MOD = str(SLASH_JS)
+COMPOSER_MOD = str(COMPOSER_JS)
 
 # Agents whose reply chips share palette chrome + model enrichment.
 PALETTE_AGENTS = frozenset(w._HARNESS_PALETTE_AGENTS) - {"cursor"}
@@ -264,6 +266,8 @@ function prettyOpenCodeModelLabel(m) { return m; }
     )
     harness = f"""
 const CuttleChatSlash = require({json.dumps(str(SLASH_MOD))});
+const CuttleChatComposer = require({json.dumps(str(COMPOSER_MOD))});
+global.window = {{}};
 {escape}
 {stubs}
 {stub_stored}

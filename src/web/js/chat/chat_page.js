@@ -5186,13 +5186,13 @@
 
     function stickyTitleChipsForSession(sessionId) {
         const prefs = sessionPrefsForHistory(sessionId);
-        const sticky = prefs && Array.isArray(prefs.stickyChips) ? prefs.stickyChips : [];
-        return sticky.map((c) => ({
-            label: c.label || String(c.prefix || '').replace(/^\//, '').trim() || 'cmd',
-            meta: String(c.prefix || c.meta || '').replace(/\s+$/, '') || c.label,
-            category: c.category || 'command',
-            prefix: c.prefix,
-        })).filter((c) => c.meta);
+        const sessions = (window.CuttleAuth && window.CuttleAuth.getSessions
+            && window.CuttleAuth.getSessions()) || [];
+        // Local prefs win; otherwise the owner falls back to the server's shared
+        // composer_selection so phone/other-device rows show model + effort too.
+        return CuttleChatComposer.historyStickyChipsFor({
+            prefs: prefs, sessions: sessions, sessionId: sessionId,
+        });
     }
 
     /**
@@ -13034,6 +13034,10 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     if (window.CuttleAuth && window.CuttleAuth.adoptSessions) window.CuttleAuth.adoptSessions(e.data.sessions);
                     applyGeneratingFlagsFromSessions(e.data.sessions || []);
                     syncHistoryUnreadIndicators();
+                    // Session list carries each row's shared composer_selection;
+                    // repaint agent chips so a freshly-arrived snapshot upgrades
+                    // bare title tokens to the rich model/effort badge.
+                    refreshHistoryAgentChips();
                     return;
                 }
                 if (e.data.type === 'cuttle-open-panes') {

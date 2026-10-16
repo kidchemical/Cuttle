@@ -784,6 +784,26 @@ def oauth_callback(provider):
 
 # ==================== Session Management ====================
 
+def _attach_parsed_composer_selection(sessions):
+    """Parse the raw ``composer_selection`` JSON column for list responses.
+
+    The history sidebar renders each row's agent/model/effort chip from this
+    shared snapshot, so any device (phone included) gets the rich label without
+    first opening the chat. ``chat_sessions.composer_selection`` is stored as a
+    JSON string (``cs.*``); expose it as a dict here, ``None`` when absent.
+    """
+    for s in sessions or []:
+        raw = s.get('composer_selection')
+        if isinstance(raw, str) and raw:
+            try:
+                s['composer_selection'] = json.loads(raw)
+            except (TypeError, ValueError):
+                s['composer_selection'] = None
+        elif not isinstance(raw, dict):
+            s['composer_selection'] = None
+    return sessions
+
+
 @auth_bp.route('/sessions', methods=['GET'])
 def get_chat_sessions():
     """Get all chat sessions for current user.
@@ -816,6 +836,8 @@ def get_chat_sessions():
             sessions = db.get_user_chat_sessions(user['id']) + db.get_archived_chat_sessions(user['id'])
         else:
             sessions = db.get_user_chat_sessions(user['id'])
+
+        _attach_parsed_composer_selection(sessions)
 
         # Mark chats that still have an in-flight reply (history spinner after refresh).
         try:
@@ -893,6 +915,7 @@ def search_chat_sessions():
             })
 
         sessions = db.search_user_chats(user['id'], query)
+        _attach_parsed_composer_selection(sessions)
         try:
             from api import chat_delivery as _chat_delivery
             from api.chat_live_status import active_live_session_ids as _active_live_ids

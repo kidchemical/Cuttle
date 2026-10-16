@@ -354,3 +354,64 @@ process.stdout.write(JSON.stringify({saved, empty: A.draftChips(null)}));
     assert result['saved'][1]['modelId'] == 'custom'
     assert result['saved'][2]['label'] == 'Live usage'
     assert result['empty'] == []
+
+
+@node_only
+def test_history_sticky_chips_fall_back_to_server_selection():
+    """Cross-device history chips (phone has no local prefs).
+
+    The sidebar reads each row's shared ``composer_selection`` from the session
+    list so a device that never opened the chat still shows the rich
+    agent/model/effort badge instead of the bare title slash token. Local prefs
+    stay authoritative while they exist (including an explicit badge removal).
+    """
+    import os
+    proc = subprocess.run(["node", "-e", """
+const A = require(process.env.MOD_JS);
+const sessions = [{
+  id: 42,
+  composer_selection: {
+    stickyChips: [{
+      prefix: '/codex ',
+      label: 'Codex - GPT-6.1-Sol \\u00b7 high',
+      category: 'codex',
+    }],
+  },
+}];
+const server = () => A.historyStickyChipsFor({ prefs: null, sessions, sessionId: 42 });
+const serverRaw = () => A.historyStickyChipsFor({
+  prefs: null,
+  sessions: [{ id: 42, composer_selection: JSON.stringify({
+    stickyChips: [{ prefix: '/codex ', label: 'Codex - GPT-6.1-Sol \\u00b7 high', category: 'codex' }],
+  }) }],
+  sessionId: 42,
+});
+const localWins = () => A.historyStickyChipsFor({
+  prefs: { stickyChips: [{ prefix: '/muse ', label: 'Muse Code - Spark 1.3', category: 'muse' }] },
+  sessions, sessionId: 42,
+});
+const clearedWins = () => A.historyStickyChipsFor({
+  prefs: { stickyChips: [], stickyCleared: true },
+  sessions, sessionId: 42,
+});
+const unknown = () => A.historyStickyChipsFor({ prefs: null, sessions, sessionId: 999 });
+process.stdout.write(JSON.stringify({
+  server: server(), serverRaw: serverRaw(),
+  local: localWins(), cleared: clearedWins(), unknown: unknown(),
+}));
+"""], capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "MOD_JS": str(MOD_JS)}, timeout=10)
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["server"][0]["label"] == "Codex - GPT-6.1-Sol \u00b7 high"
+    assert result["server"][0]["meta"] == "/codex"
+    assert result["server"][0]["category"] == "codex"
+    # Tolerates a raw JSON string (older backend / broker payloads).
+    assert result["serverRaw"][0]["label"] == "Codex - GPT-6.1-Sol \u00b7 high"
+    # Local prefs beat the server snapshot.
+    assert result["local"][0]["label"] == "Muse Code - Spark 1.3"
+    # Explicit badge removal is not resurrected by the server value.
+    assert result["cleared"] == []
+    # A session missing from the list yields no chips (falls back to title).
+    assert result["unknown"] == []
+
