@@ -175,30 +175,6 @@
             const title = document.getElementById('logoutConfirmTitle');
             if (title) title.textContent = name || 'Account';
 
-            const provider = user().auth_provider || 'local';
-            const isGuest = !!(user().is_guest || provider === 'guest');
-            const isLocal = provider === 'local';
-            const isGoogle = provider === 'google';
-            const linked = !!(user().google_linked || user().provider_user_id);
-            const canLinkGoogle = window.CuttleAuth && window.CuttleAuth.userCanLinkGoogle
-                ? window.CuttleAuth.userCanLinkGoogle(user())
-                : ((isLocal || isGuest) && !linked);
-            const canManageGoogle = isLocal || isGuest || isGoogle;
-
-            const subtitle = document.getElementById('logoutConfirmSubtitle');
-            if (subtitle) {
-                const uname = user().username ? `@${user().username}` : '';
-                if (isGuest && !linked) {
-                    subtitle.textContent = uname
-                        ? `${uname} — sign in with Google to keep this account, or log out.`
-                        : 'Sign in with Google to keep this account, or log out.';
-                } else {
-                    subtitle.textContent = uname
-                        ? `${uname} — connect Google for your avatar, or log out.`
-                        : 'Connect Google for your avatar, or log out.';
-                }
-            }
-
             const avatar = document.getElementById('logoutConfirmAvatar');
             if (avatar) {
                 avatar.innerHTML = avatarInnerHtml(user());
@@ -214,28 +190,61 @@
                 roleChip.classList.toggle('is-guest', role === 'guest');
             }
 
-            const linkBtn = document.getElementById('logoutConfirmLinkGoogle');
-            const refreshBtn = document.getElementById('logoutConfirmRefreshGoogle');
-            const statusEl = document.getElementById('logoutConfirmGoogleStatus');
-
-            if (linkBtn) {
-                linkBtn.hidden = !canLinkGoogle;
-                linkBtn.textContent = isGuest ? 'Continue with Google' : 'Connect Google';
-                linkBtn.href = '/api/auth/oauth/google?link=1';
-            }
-            if (refreshBtn) {
-                refreshBtn.hidden = !(canManageGoogle && linked && !isGuest);
-            }
-            if (statusEl) {
-                statusEl.hidden = !(canManageGoogle && linked);
-                statusEl.textContent = linked ? 'Google linked — avatar syncs to this account.' : '';
-            }
+            renderGoogleControls();
+            if (win.CuttleAuth?.refreshGoogleSignInUi) win.CuttleAuth.refreshGoogleSignInUi();
 
             const controller = modalController();
             if (controller) controller.open();
             else modal.classList.add('active');
             const cancel = document.getElementById('logoutConfirmCancel');
             if (cancel) cancel.focus();
+        }
+
+        function renderGoogleControls() {
+            if (!user()) return;
+            const googleEnabled = win.CuttleAuth?.googleSignInEnabled?.() === true;
+            const provider = user().auth_provider || 'local';
+            const isGuest = !!(user().is_guest || provider === 'guest');
+            const isLocal = provider === 'local';
+            const isGoogle = provider === 'google';
+            const linked = !!(user().google_linked || user().provider_user_id);
+            const canLinkGoogle = window.CuttleAuth && window.CuttleAuth.userCanLinkGoogle
+                ? window.CuttleAuth.userCanLinkGoogle(user())
+                : ((isLocal || isGuest) && !linked);
+            const canManageGoogle = isLocal || isGuest || isGoogle;
+
+            const subtitle = document.getElementById('logoutConfirmSubtitle');
+            if (subtitle) {
+                const uname = user().username ? `@${user().username}` : '';
+                if (!googleEnabled) {
+                    subtitle.textContent = uname ? `${uname} — manage your account or log out.` : 'Manage your account or log out.';
+                } else if (isGuest && !linked) {
+                    subtitle.textContent = uname
+                        ? `${uname} — sign in with Google to keep this account, or log out.`
+                        : 'Sign in with Google to keep this account, or log out.';
+                } else {
+                    subtitle.textContent = uname
+                        ? `${uname} — connect Google for your avatar, or log out.`
+                        : 'Connect Google for your avatar, or log out.';
+                }
+            }
+
+            const linkBtn = document.getElementById('logoutConfirmLinkGoogle');
+            const refreshBtn = document.getElementById('logoutConfirmRefreshGoogle');
+            const statusEl = document.getElementById('logoutConfirmGoogleStatus');
+
+            if (linkBtn) {
+                linkBtn.hidden = !(googleEnabled && canLinkGoogle);
+                linkBtn.textContent = isGuest ? 'Continue with Google' : 'Connect Google';
+                linkBtn.href = '/api/auth/oauth/google?link=1';
+            }
+            if (refreshBtn) {
+                refreshBtn.hidden = !(googleEnabled && canManageGoogle && linked && !isGuest);
+            }
+            if (statusEl) {
+                statusEl.hidden = !(googleEnabled && canManageGoogle && linked);
+                statusEl.textContent = linked ? 'Google linked — avatar syncs to this account.' : '';
+            }
         }
 
         async function logout() {
@@ -302,6 +311,7 @@
          *  and the OAuth query-flag cleanup. Called once by app_shell. */
         function setup() {
             bindModal();
+            win.addEventListener('cuttle-google-signin-changed', renderGoogleControls);
             renderButtons();
             refreshAuth();
             handleAuthQueryFlags();

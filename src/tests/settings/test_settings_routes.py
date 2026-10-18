@@ -41,6 +41,8 @@ WRITES = [
     ("POST", "/api/settings/git-auto-commit", {"git_auto_commit": False}),
     ("POST", "/api/settings/timeouts", {"agent_run_seconds": 3600}),
     ("POST", "/api/settings/update-source", {"update_source": "host"}),
+    ("POST", "/api/settings/updates/check", {}),
+    ("POST", "/api/settings/developer-mode", {"enabled": True}),
     ("POST", "/api/settings/agent-adapters", {"steer": {"claude": True}}),
     ("POST", "/api/settings/github-app", {"app_id": "1", "installation_id": "2"}),
     ("POST", "/api/settings/github-app/test", {}),

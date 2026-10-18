@@ -105,6 +105,11 @@
     display: none;
 }
 
+/* Developer-only update rows (source checkouts) use the same pattern. */
+#cuttleReleaseSettings .setting-item[hidden] {
+    display: none;
+}
+
 #chatTtsFetchVoicesBtn[hidden] {
     display: none;
 }

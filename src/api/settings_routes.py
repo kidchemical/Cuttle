@@ -88,6 +88,9 @@ SETTING_FAMILIES = (
     {"name": "releases", "routes": ["GET /settings/releases"],
      "backend": "api.releases (read-only, process cache)",
      "validator": "normalize_release", "read": "authenticated", "write": "n/a"},
+    {"name": "updates", "routes": ["GET /settings/updates", "POST /settings/updates/check", "POST /settings/developer-mode"],
+     "backend": "api.updates (install kind, Developer mode key 'updates', checkout status over api.releases)",
+     "validator": "set_developer_mode", "read": "owner", "write": "owner"},
     {"name": "agent-adapters", "routes": ["GET/POST /settings/agent-adapters"],
      "backend": "api.agent_harness.cli_paths (key 'agent_cli_paths') + steer (key 'agent_steer') + catalog (key 'agent_harness'); "
                 "model/effort defaults read here, written via POST /agent-defaults/<id>",
@@ -640,6 +643,36 @@ def update_update_source_setting():
         return jsonify({'success': True, 'update_source': src})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- update channels (backend: api.updates) ----------------------------------
+
+@settings_bp.route('/settings/updates', methods=['GET'])
+@owner_required
+def get_update_channels():
+    """Install kind, Developer mode and channel status as of the last fetch."""
+    from api.updates import snapshot
+    return jsonify(snapshot(include_release=request.args.get('release') != '0'))
+
+
+@settings_bp.route('/settings/updates/check', methods=['POST'])
+@owner_required
+def check_update_channels():
+    """Explicit check: refresh published releases and fetch the upstream."""
+    from api.updates import snapshot
+    return jsonify(snapshot(check=True))
+
+
+@settings_bp.route('/settings/developer-mode', methods=['POST'])
+@owner_required
+def update_developer_mode():
+    """Body: { enabled: bool }. Source checkouts only."""
+    from api.updates import set_developer_mode
+    try:
+        mode = set_developer_mode((request.get_json(silent=True) or {}).get('enabled'))
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    return jsonify({'success': True, 'developer_mode': mode})
 
 
 # --- agent adapters (backends: agent_harness.steer / catalog / agent_defaults)

@@ -202,6 +202,10 @@
     /* When in iframe (app shell embeds this page), parent shell owns the video. Forward requests. */
     if (window !== window.top) {
         function applyShellVideoState(active) {
+            if (window.CuttleUiBoot) {
+                window.CuttleUiBoot.setWallpaperActive(!!active);
+                return;
+            }
             document.documentElement.classList.toggle('has-video-background', !!active);
             if (document.body) document.body.classList.toggle('has-video-background', !!active);
             try { localStorage.setItem('cuttleVideoBackgroundActive', active ? '1' : '0'); } catch (_) {}
@@ -239,6 +243,12 @@
     /* Mirrored so ui_boot.js can make a page transparent before its first paint,
        instead of waiting for the shell's postMessage on iframe load. */
     function rememberActive(active) {
+        // Keep the theme owner's state current too: its next apply must preserve
+        // live playback changes made after boot (and preserve disabled playback).
+        if (window.CuttleUiBoot) {
+            window.CuttleUiBoot.setWallpaperActive(!!active);
+            return;
+        }
         try { localStorage.setItem(ACTIVE_KEY, active ? '1' : '0'); } catch (_) {}
     }
 

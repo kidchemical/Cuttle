@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261015glass">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261016separateProcessor">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261018updateCenter">
     <link rel="stylesheet" href="css/searchable_select.css?v=20261011attachedMenus">
 <link rel="stylesheet" href="/css/storage_settings.css?v=20261007">
 <link rel="stylesheet" href="/css/page_controls.css?v=20261015glass">
@@ -45,7 +45,7 @@
                 <div id="sharedSystemPromptEditor"></div>
             </div>
             <div class="settings-group" id="cuttleReleaseSettings">
-                <h3 class="settings-title">📦 Cuttle updates <span class="settings-scope" data-scope="server">This server checkout</span><button type="button" class="cuttle-info" data-tooltip="Published releases describe what changed. For device updates, open Jobs → Devices; Git revision checks also detect changes between releases." aria-label="About 📦 Cuttle updates">i</button></h3>
+                <h3 class="settings-title">📦 Cuttle updates <span class="settings-scope" data-scope="server">This server checkout</span><button type="button" class="cuttle-info" data-tooltip="Check for updates lists every channel this install can use and what each would change. Nothing installs until you pick a channel and confirm it. The titlebar Update button opens the same window." aria-label="About 📦 Cuttle updates">i</button></h3>
                 <div class="setting-item setting-item--stack">
                     <div class="setting-control setting-control--stack">
                         <button type="button" class="control-button" data-release-version title="Copy version and Git revision">Cuttle version</button>
@@ -63,7 +63,7 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Check for updates automatically</strong><button type="button" class="cuttle-info" data-tooltip="Check for a newer published Cuttle release when this Updates section opens and enable first-launch release notes. This never installs or restarts anything; you can always check manually." aria-label="About Check for updates automatically">i</button>
+                        <strong>Check for updates automatically</strong><button type="button" class="cuttle-info" data-tooltip="Look for a newer published Cuttle release in the background (cached for hours) and when this section opens; the titlebar shows Update when one exists. Also enables first-launch release notes. This never installs or restarts anything; you can always check manually." aria-label="About Check for updates automatically">i</button>
                     </div>
                     <div class="setting-control">
                         <label class="toggle-switch active" data-release-auto-toggle>
@@ -72,29 +72,32 @@
                         </label>
                     </div>
                 </div>
-                <div class="setting-item">
+                <!-- Developer rows: source checkouts only (never on a release install). -->
+                <div class="setting-item" data-developer-mode-row hidden>
                     <div class="setting-label">
-                        <strong>Device update source</strong><button type="button" class="cuttle-info" data-tooltip="Choose which channel this device updates from. HOST follows the Cuttle mesh this device is paired to (its working tree, no git push needed). OFFICIAL follows the upstream GitHub repo / published release. Applies to this device's Update button." aria-label="About Device update source">i</button>
+                        <strong>Developer mode</strong><button type="button" class="cuttle-info" data-tooltip="Adds the GitHub branch and Host channels to Check for updates. Those fast-forward this source checkout — the repository you develop in — so they still ask you to pick and confirm. Release installs never show them." aria-label="About Developer mode">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch" data-developer-mode-toggle>
+                            <input type="checkbox" data-developer-mode-check style="display: none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-item" data-developer-row hidden>
+                    <div class="setting-label">
+                        <strong>Preferred developer channel</strong><button type="button" class="cuttle-info" data-tooltip="Listed first in Check for updates and used by mesh-initiated updates of this device. HOST follows the Cuttle Host this device is paired to (its working tree, no git push needed). GITHUB follows this checkout's upstream branch." aria-label="About Preferred developer channel">i</button>
                     </div>
                     <div class="setting-control">
                         <select class="setting-input" data-update-source>
                             <option value="host">HOST — this Cuttle mesh</option>
-                            <option value="official">OFFICIAL — GitHub</option>
+                            <option value="official">GITHUB — upstream branch</option>
                         </select>
                     </div>
                 </div>
-                <div class="setting-item setting-item--stack">
+                <div class="setting-item setting-item--stack" data-developer-row hidden>
                     <div class="setting-label">
-                        <strong>Update this device</strong><button type="button" class="cuttle-info" data-tooltip="Pull the selected channel and restart Cuttle on THIS device. Unlike Check for updates (published GitHub releases), this actually updates the running install. The titlebar Update button does the same." aria-label="About Update this device">i</button>
-                    </div>
-                    <div class="setting-control setting-control--stack">
-                        <div class="device-update-status" data-device-update-status role="status" aria-live="polite" hidden></div>
-                        <button type="button" class="control-button" data-device-update>Update this device</button>
-                    </div>
-                </div>
-                <div class="setting-item setting-item--stack">
-                    <div class="setting-label">
-                        <strong>Phone app (Android / Capacitor)</strong><button type="button" class="cuttle-info" data-tooltip="The phone app updates itself from an APK this host serves at /api/mobile/android — it is not a mesh worker and does not use the device Update button. This shows the served APK and can rebuild it by re-running Gradle assembleDebug on this host." aria-label="About Phone app">i</button>
+                        <strong>Phone app (Android / Capacitor)</strong><button type="button" class="cuttle-info" data-tooltip="The phone app updates itself from an APK this host serves at /api/mobile/android — it is not a mesh worker and does not use Check for updates. This shows the served APK and can rebuild it by re-running Gradle assembleDebug on this host." aria-label="About Phone app">i</button>
                     </div>
                     <div class="setting-control setting-control--stack">
                         <div class="device-update-status" data-android-status role="status" aria-live="polite" hidden></div>
@@ -857,7 +860,7 @@
     <script src="/js/media/background_effect_blend.js"></script>
     <script src="/js/shared/toast.js"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
-    <script src="/js/settings/settings_releases.js?v=20261011androidRow"></script>
+    <script src="/js/settings/settings_releases.js?v=20261018updateCenter"></script>
     <script src="/js/settings/settings_storage.js?v=20261007"></script>
     <script src="/js/settings/settings_agent_cli_paths.js?v=20261015paths"></script>
     <script src="/js/settings/settings_chat_preferences.js?v=20261016separateProcessor"></script>

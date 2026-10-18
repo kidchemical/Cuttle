@@ -489,6 +489,7 @@ singleton, DOM, frames, and persistence effects.
 | `shell/shell_spaces.js` (`CuttleShellSpaces`) over `spaces/*` | Spaces tab-strip UI, drag/drop, group menus (5C) | singleton, frame fan-out, persistence |
 | `shell/shell_rail.js` (`CuttleShellRail`) | rail customization, apps list, edit mode, jobs/mesh chip split (5E) | `getAppsList` global delegate, pane-mount re-apply |
 | `shell/shell_electron.js` (`CuttleShellElectron`) | Electron titlebar chrome, zoom HUD + per-frame zoom binder (5F) | zoom postMessage forwarding, space-menu hide scheduling |
+| `shell/shell_updates.js` (`CuttleShellUpdates`) over `shell/desktop_update_policy.js` (`updatePlan`, pure) and `api.updates` | the Cuttle updates modal: channel snapshot (`/api/settings/updates`), titlebar Update button, pick → confirm → apply (release download, checkout fast-forward via `/api/workers/self-update`, packaged shell), restart prompt; opened by `cuttle-open-updates` postMessage | nothing (`shell_electron` reports desktop config / mesh rev / asar offer) |
 | `shell/shell_mobile.js` | mobile-client detection, LAN APK update rail/modal, SSH approval modal (5F) | shared click handler, account-panel sync, frame-retry spine |
 
 **Pane tree (not yet separated):** `snapshotLayoutTree` serializes the

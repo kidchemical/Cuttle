@@ -1,0 +1,185 @@
+/* Cuttle updates modal (js/shell/shell_updates.js). Shares the Account panel
+   surface (auth-modal + logout-confirm-*); only the channel list is new. */
+.update-center-modal {
+    max-width: 460px;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+}
+
+.update-center-icon {
+    color: #c4b5fd;
+}
+
+.update-center-modal .auth-modal-subtitle {
+    font-variant-numeric: tabular-nums;
+}
+
+.update-center-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+    text-align: left;
+}
+
+.update-channel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.update-channel {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.update-channel:hover:not(.is-disabled) {
+    border-color: rgba(139, 92, 246, 0.5);
+}
+
+.update-channel:has(input:checked) {
+    border-color: rgba(139, 92, 246, 0.85);
+    background: rgba(139, 92, 246, 0.12);
+}
+
+.update-channel:has(input:focus-visible) {
+    outline: 2px solid #a78bfa;
+    outline-offset: 2px;
+}
+
+.update-channel.is-disabled {
+    cursor: default;
+    opacity: 0.72;
+}
+
+.update-channel input {
+    margin-top: 3px;
+    accent-color: #8b5cf6;
+    flex: 0 0 auto;
+}
+
+.update-channel-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.update-channel-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.update-channel-chip {
+    padding: 0 6px;
+    border-radius: 4px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    line-height: 16px;
+    background: rgba(255, 255, 255, 0.12);
+    color: #e2e8f0;
+}
+
+.update-channel[data-channel="host"] .update-channel-chip { background: rgba(45, 164, 78, 0.28); }
+.update-channel[data-channel="official"] .update-channel-chip { background: rgba(59, 130, 246, 0.28); }
+
+.update-channel-title {
+    font-size: 0.95rem;
+    color: #f1f5f9;
+}
+
+/* State is always spelled out; color only reinforces it. */
+.update-channel-state {
+    margin-left: auto;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #94a3b8;
+}
+
+.update-channel.is-available .update-channel-state { color: #86efac; }
+.update-channel.is-blocked .update-channel-state { color: #fca5a5; }
+
+.update-channel-sub {
+    font-size: 0.78rem;
+    color: #94a3b8;
+    overflow-wrap: anywhere;
+}
+
+.update-channel-summary {
+    font-size: 0.85rem;
+    color: #cbd5e1;
+    overflow-wrap: anywhere;
+}
+
+.update-center-note,
+.update-confirm-what {
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: #cbd5e1;
+}
+
+.update-center-note { color: #a0aec0; }
+
+.update-confirm-what code,
+.update-confirm-commits code {
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+    color: #e9d5ff;
+}
+
+.update-confirm-commits {
+    margin: 0;
+    padding: 10px 12px 10px 28px;
+    max-height: 160px;
+    overflow-y: auto;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.22);
+    font-size: 0.82rem;
+    color: #cbd5e1;
+}
+
+.update-confirm-more { color: #94a3b8; list-style: none; margin-left: -16px; }
+
+.update-confirm-warning {
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid rgba(251, 191, 36, 0.4);
+    background: rgba(251, 191, 36, 0.1);
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: #fde68a;
+}
+
+.update-center-running::before {
+    content: "";
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 8px;
+    vertical-align: -1px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: cuttle-update-spin 0.7s linear infinite;
+}
+
+#cuttleUpdateModal.is-running .auth-modal-close { visibility: hidden; }
+
+@keyframes cuttle-update-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+    .update-center-running::before { animation: none; }
+}

@@ -239,10 +239,13 @@ OAUTH_CONFIGS = {
 @auth_bp.route('/oauth/status', methods=['GET'])
 def oauth_status():
     """Which OAuth providers are usable (public — reveals nothing secret)."""
+    from api.experimental import is_enabled
+
     return jsonify({
         'success': True,
         'providers': {
-            name: {'configured': _oauth_configured(name)}
+            name: {'configured': _oauth_configured(name),
+                   'enabled': is_enabled('google_signin') if name == 'google' else True}
             for name in OAUTH_CONFIGS
         },
     })

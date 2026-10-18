@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
     <link rel="stylesheet" href="/css/video_background.css?v=20260927blendTarget">
     <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
+    <link rel="stylesheet" href="/css/update_center.css?v=20261018updateCenter">
     <link rel="stylesheet" href="/css/git_push_report.css?v=20261018pushReview" data-push-style="git_push_report">
     <link rel="stylesheet" href="/css/gizmos.css?v=20261015gzTokens">
 </head>
@@ -394,16 +395,22 @@
     </section>
 </div>
 
-<div class="auth-modal-overlay" id="cuttleRestartModal" hidden role="dialog" aria-modal="true" aria-labelledby="cuttleRestartTitle" aria-describedby="cuttleRestartDescription">
-    <section class="auth-modal update-restart-modal">
+<!-- Cuttle updates: the one modal behind Settings "Check for updates" and the
+     titlebar Update button (js/shell/shell_updates.js). Pick a channel, confirm,
+     then restart — nothing updates on the first click. -->
+<div class="auth-modal-overlay" id="cuttleUpdateModal" hidden role="dialog" aria-modal="true" aria-labelledby="cuttleUpdateTitle" aria-describedby="cuttleUpdateSubtitle">
+    <section class="auth-modal logout-confirm-modal update-center-modal">
+        <button type="button" class="auth-modal-close" data-update-close aria-label="Close">×</button>
         <div class="auth-modal-header">
-            <h2 class="auth-modal-title" id="cuttleRestartTitle">Update ready</h2>
-            <p class="auth-modal-subtitle" id="cuttleRestartDescription">Cuttle updated to <strong data-restart-version>the latest</strong>. Restart now to apply it, or keep working and restart later.</p>
+            <div class="logout-confirm-avatar update-center-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>
+            </div>
+            <h2 class="auth-modal-title" id="cuttleUpdateTitle">Cuttle updates</h2>
+            <p class="auth-modal-subtitle" id="cuttleUpdateSubtitle" data-update-subtitle></p>
+            <span class="logout-confirm-role" data-update-badge hidden></span>
         </div>
-        <div class="logout-confirm-actions">
-            <button type="button" class="logout-confirm-btn logout-confirm-submit" data-restart-now>Restart now</button>
-            <button type="button" class="logout-confirm-btn logout-confirm-cancel" data-restart-later>Later</button>
-        </div>
+        <div class="update-center-body" data-update-body aria-live="polite"></div>
+        <div class="logout-confirm-actions" data-update-actions></div>
     </section>
 </div>
 
@@ -412,9 +419,9 @@
 <script src="/js/shared/net_debug.js?v=20260810c"></script>
 <script src="/js/media/youtube_id.js"></script>
 <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
-<script src="/js/shared/auth.js?v=20261008sync"></script>
+<script src="/js/shared/auth.js?v=20261018googleGate"></script>
 <script src="/js/shared/modal.js?v=20261011modal1"></script>
-<script src="/js/shell/desktop_update_policy.js?v=20260819role"></script>
+<script src="/js/shell/desktop_update_policy.js?v=20261018updateCenter"></script>
 <script src="/js/chat/chat_find.js?v=20260819find"></script>
 <script src="/js/spaces/spaces_state.js?v=20260930spaces1"></script>
 <script src="/js/spaces/spaces_groups.js?v=20260930spaces1"></script>
@@ -427,8 +434,9 @@
 <script src="/js/achievements/celebrate.js?v=20261003vfx1"></script>
 <script src="/js/achievements/achievements.js?v=20261003ach1"></script>
 <script src="/js/shell/whats_new.js?v=20261008whatsNew"></script>
-<script src="/js/shell/account_panel.js?v=20261011sharedModal1"></script>
-<script src="/js/shell/shell_electron.js?v=20261011sharedModal1"></script>
+<script src="/js/shell/account_panel.js?v=20261018googleGate"></script>
+<script src="/js/shell/shell_updates.js?v=20261018updateCenter"></script>
+<script src="/js/shell/shell_electron.js?v=20261018updateCenter"></script>
 <script src="/js/shell/shell_mobile.js?v=20261011shell5f"></script>
 <script src="/js/shell/shell_panes.js?v=20261018menus"></script>
 <script src="/js/shell/shell_spaces.js?v=20261011spaces5c"></script>

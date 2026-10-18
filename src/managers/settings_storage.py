@@ -13,7 +13,7 @@ import threading
 import time
 
 SCHEMA_VERSION = 1
-MACHINE_KEYS = frozenset({"device_workers", "discovery", "agent_cli_paths"})
+MACHINE_KEYS = frozenset({"device_workers", "discovery", "agent_cli_paths", "updates"})
 UI_KEYS = frozenset({"ui_layout", "shell_workspaces"})
 RETIRED_KEYS = frozenset({
     "version", "default_pipeline", "factory_default_pipeline", "auto_start_default",

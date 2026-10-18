@@ -20,6 +20,12 @@ from __future__ import annotations
 from api.experimental.flags import FlagSpec, register_flag
 
 register_flag(FlagSpec(
+    id="google_signin", label="Google sign-in",
+    description="Show Google sign-in and sign-up options, account linking, and Google photo controls on authentication and account screens.",
+    default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
     id="response_postprocessing", label="Response post-processing",
     description="Run a configurable API or restricted agent CLI pass on completed replies. Configure its own instructions, executor, model, effort and output in Agents settings.",
     default=False, category="chat", risk="medium", since="0.0.0", needs_restart=False,

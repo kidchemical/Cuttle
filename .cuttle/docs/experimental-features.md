@@ -41,6 +41,24 @@ cd src && ../.venv/bin/python -m api.experimental list   # must run with src on 
 
 ---
 
+## Google sign-in
+
+Flag `google_signin` (default off), labeled **Google sign-in** in Settings →
+Experimental. Shows Google options in sign-in/sign-up forms, account linking,
+photo refresh, and the legacy account menu. Disabled or unresolved flags hide
+these controls and Google-specific account prompts. Local sign-in, guest access,
+logout, existing linked identities and saved avatars remain available.
+
+The public `/api/auth/oauth/status` reports the effective flag before login;
+shared `auth.js` owns UI availability and the account panel consumes it. Changes
+refresh in place on Experimental settings notifications, focus and modal open.
+OAuth credentials are still required. This flag gates UI visibility; existing
+OAuth endpoints are unchanged. Tests: `auth/test_oauth_link_account.py` and
+`e2e/test_google_signin_gate.py`. Teardown: remove the flag row, status field,
+shared availability controller and account visibility gates.
+
+---
+
 ## Achievements verbs
 
 ```bash

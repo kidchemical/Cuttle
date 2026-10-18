@@ -192,24 +192,96 @@ def _run_policy_node(script: str) -> subprocess.CompletedProcess:
     return proc
 
 
-def test_update_channels_single_vs_both():
-    """configured channel drives one button; both show only when diverged."""
+def _update_plan(cases: str) -> None:
     policy_js = json.dumps(str(POLICY))
     script = f"""
 const p = require({policy_js});
-let r = p.updateChannels({{configuredSource:'host', host:{{available:true}}, official:{{available:false}}}});
-if (!r.show || r.mode!=='single' || r.buttons.length!==1 || r.buttons[0].chip!=='HOST') process.exit(2);
-r = p.updateChannels({{configuredSource:'official', host:{{available:true}}, official:{{available:false}}}});
-if (r.buttons[0].source!=='host') process.exit(3);
-r = p.updateChannels({{configuredSource:'host', host:{{available:true}}, official:{{available:true}}}});
-if (r.mode!=='single' || r.buttons[0].source!=='host') process.exit(4);
-r = p.updateChannels({{configuredSource:'host', host:{{available:true}}, official:{{available:true, diverged:true}}}});
-if (r.mode!=='both' || r.buttons.length!==2) process.exit(5);
-if (r.buttons[0].chip!=='OFFICIAL' || r.buttons[1].chip!=='HOST') process.exit(6);
-r = p.updateChannels({{}});
-if (r.show) process.exit(7);
+const assert = require('assert');
+const src = (extra) => Object.assign({{install_kind:'source', developer_mode:{{enabled:true, available:true}},
+    update_source:'official', release:{{state:'latest', release:{{version:'0.3.0', url:'u'}}}},
+    checkout:{{path:'/repo', branch:'dev', upstream:'origin/dev', behind:0, ahead:0, commits:[]}}}}, extra || {{}});
+const ids = (plan) => plan.channels.map((c) => c.id + ':' + c.state);
+{cases}
 console.log('ok');
 """
     proc = _run_policy_node(script)
     assert proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
     assert "ok" in (proc.stdout or "")
+
+
+def test_update_plan_release_install_shows_release_only():
+    """A release build gets one channel: download the published release."""
+    _update_plan("""
+let plan = p.updatePlan({role:'host', snapshot:{install_kind:'release', developer_mode:{enabled:false, available:false},
+    release:{state:'available', release:{version:'0.4.0', url:'https://github.com/kidchemical/Cuttle/releases/tag/v0.4.0'}}}});
+assert.deepStrictEqual(ids(plan), ['release:available']);
+assert.strictEqual(plan.selected, 'release');
+assert.strictEqual(plan.channels[0].action, 'download');
+assert.strictEqual(plan.channels[0].actionLabel, 'Download v0.4.0');
+assert.strictEqual(plan.titlebar.show, true);
+assert.strictEqual(plan.titlebar.chip, 'RELEASE');
+// Even a stored Developer flag cannot add checkout channels to a release install.
+plan = p.updatePlan({role:'host', snapshot:{install_kind:'release', developer_mode:{enabled:false}, checkout:{behind:9}}});
+assert.deepStrictEqual(ids(plan), ['release:unknown']);
+assert.strictEqual(plan.titlebar.show, false);
+// No snapshot (non-owner / old server): release-only, nothing actionable.
+plan = p.updatePlan({});
+assert.deepStrictEqual(ids(plan), ['release:unknown']);
+assert.strictEqual(plan.selected, '');
+""")
+
+
+def test_update_plan_source_checkout_without_developer_mode_never_pulls():
+    """Developer mode off: the release is information, not an action on a checkout."""
+    _update_plan("""
+const plan = p.updatePlan({role:'host', snapshot:src({developer_mode:{enabled:false, available:true},
+    release:{state:'available', release:{version:'0.4.0'}}, checkout:null})});
+assert.deepStrictEqual(ids(plan), ['release:info']);
+assert.strictEqual(plan.channels[0].selectable, false);
+assert.strictEqual(plan.titlebar.show, false);
+assert.strictEqual(plan.developerModeAvailable, true);
+""")
+
+
+def test_update_plan_developer_host_branch_channel():
+    """Developer Host: GitHub branch channel with commit preview, or blocked/current."""
+    _update_plan("""
+let plan = p.updatePlan({role:'host', snapshot:src({checkout:{path:'/repo', branch:'dev', upstream:'origin/dev',
+    behind:2, ahead:0, commits:[{rev:'b', subject:'two'}, {rev:'a', subject:'one'}]}})});
+assert.deepStrictEqual(ids(plan), ['release:current', 'official:available']);
+const branch = plan.channels[1];
+assert.strictEqual(plan.selected, 'official');
+assert.strictEqual(branch.actionLabel, 'Pull 2 commits');
+assert.strictEqual(branch.source, 'official');
+assert.strictEqual(branch.path, '/repo');
+assert.strictEqual(plan.titlebar.chip, 'GITHUB');
+// Host role never offers the Host channel (it would follow itself).
+assert.ok(!plan.channels.some((c) => c.id === 'host'));
+plan = p.updatePlan({role:'host', snapshot:src({checkout:{upstream:'origin/dev', behind:1, blocked:'Local changes'}})});
+assert.deepStrictEqual(ids(plan), ['release:current', 'official:blocked']);
+assert.strictEqual(plan.selected, '');
+assert.strictEqual(plan.titlebar.show, false);
+plan = p.updatePlan({role:'host', snapshot:src()});
+assert.deepStrictEqual(ids(plan), ['release:current', 'official:current']);
+assert.ok(plan.channels[1].summary.includes('as of the last fetch'));
+""")
+
+
+def test_update_plan_client_must_pick_when_several_channels_have_updates():
+    """Two available channels: nothing preselected until the user picks one."""
+    _update_plan("""
+const mesh = {available:true, localVersion:'0.2.1 (aaa)', hostVersion:'0.2.1 (bbb)', target:'laptop'};
+let plan = p.updatePlan({role:'client', snapshot:src({update_source:'host'}), mesh, desktop:{available:true}});
+assert.deepStrictEqual(ids(plan), ['release:current', 'host:available', 'official:unknown', 'desktop:available']);
+assert.strictEqual(plan.selected, '');
+assert.deepStrictEqual(plan.available, ['host', 'desktop']);
+assert.strictEqual(plan.titlebar.chip, '2 UPDATES');
+// The titlebar's preferred channel preselects; unknown channels stay pickable.
+plan = p.updatePlan({role:'client', snapshot:src(), mesh, preferred:'host'});
+assert.strictEqual(plan.selected, 'host');
+assert.strictEqual(plan.channels.find((c) => c.id === 'official').selectable, true);
+// A Client on another branch cannot follow the Host.
+plan = p.updatePlan({role:'client', snapshot:src(), mesh:{wrongBranch:true, branch:'main', hostBranch:'dev'}});
+assert.strictEqual(plan.channels.find((c) => c.id === 'host').state, 'blocked');
+assert.strictEqual(plan.titlebar.show, false);
+""")
