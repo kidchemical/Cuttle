@@ -33,6 +33,7 @@
             'nav-agent-feed',
             'nav-gizmos',
             'nav-test-lab',
+            'nav-ide',
             'nav-projects',
             'nav-apps',
         ];
@@ -46,9 +47,9 @@
         // not page apps, but the Apps grid still lists them so they can be re-pinned.
         const HIDEABLE_FOOTER_IDS = new Set(['nav-workspace']);
         // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-        const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
+        const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-ide', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
         // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
-        const RAIL_LAYOUT_VERSION = 10;
+        const RAIL_LAYOUT_VERSION = 11;
 
         const DEFAULT_LAYOUT = {
             rail_items: CANONICAL_RAIL_ITEM_ORDER.filter(id => !DEFAULT_RAIL_HIDDEN.includes(id)),
@@ -66,6 +67,7 @@
             'nav-agent-feed': 'agent_feed',
             'nav-gizmos': 'gizmos',
             'nav-test-lab': 'test_lab',
+            'nav-ide': 'ide',
         };
         let enabledFlags = new Set();
         function railAppEnabled(id) {
@@ -278,14 +280,16 @@
             const hidden = new Set(Array.isArray(saved.rail_hidden) ? saved.rail_hidden : []);
             // Existing v4 user pins remain intact; only the new App starts stashed.
             const version = Number(saved.layout_version) || 0;
-            const additions = version >= 9 ? ['nav-test-lab']
-                : version >= 8 ? ['nav-mesh', 'nav-test-lab']
+            const additions = version >= 10 ? ['nav-ide']
+                : version >= 9 ? ['nav-test-lab', 'nav-ide']
+                : version >= 8 ? ['nav-mesh', 'nav-test-lab', 'nav-ide']
                 : version >= 7 ? ['nav-agent-feed'] : version >= 6 ? ['nav-gizmos', 'nav-agent-feed']
                 : version >= 5 ? ['nav-projects', 'nav-gizmos', 'nav-agent-feed']
                 : version >= 4 ? ['nav-achievements', 'nav-projects', 'nav-gizmos', 'nav-agent-feed']
                 : DEFAULT_RAIL_HIDDEN;
             additions.forEach(id => hidden.add(id));
             hidden.add('nav-test-lab');
+            hidden.add('nav-ide');
             const known = new Set(CANONICAL_RAIL_ITEM_ORDER);
             layout.rail_hidden = Array.from(hidden).filter(id => known.has(id));
             layout.rail_items = (Array.isArray(saved.rail_items) ? saved.rail_items : CANONICAL_RAIL_ITEM_ORDER)

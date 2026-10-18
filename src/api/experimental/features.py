@@ -108,6 +108,12 @@ register_flag(FlagSpec(
     default=False, category="ui", risk="medium", since="0.0.0", needs_restart=False,
 ))
 
+register_flag(FlagSpec(
+    id="ide", label="IDE",
+    description="A Cursor-style code editor in Apps → IDE: Monaco editing of registered projects with explorer, tabs, quick open, find in files, source control diffs, an integrated terminal, and an AI chat panel bound to the project. Also adds an Editor button to file diffs.",
+    default=False, category="ui", risk="medium", since="0.0.0", needs_restart=False,
+))
+
 # Achievements: default OFF. Experimental features are opt-in by design; a
 # user who does not know the system exists should never have it running.
 register_flag(

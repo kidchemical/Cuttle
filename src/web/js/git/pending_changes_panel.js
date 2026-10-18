@@ -127,6 +127,7 @@
      * @param {ParentNode} [options.root]
      * @param {HTMLElement|null} [options.host]
      * @param {boolean} [options.useShellHub]
+     * @param {boolean} [options.startExpanded] open each repo's file list initially (IDE Source Control)
      * @param {Function} [options.fetchWithTimeout]
      * @param {(s:any)=>string} [options.escapeHtml]
      */
@@ -143,6 +144,7 @@
         const fetchWithTimeout = options.fetchWithTimeout || defaultFetchWithTimeout;
         const escapeHtmlInline = options.escapeHtml || defaultEsc;
         const useShellHub = !!options.useShellHub;
+        const startExpanded = !!options.startExpanded;
 
         let host = options.host || null;
         if (!host) {
@@ -396,7 +398,7 @@
         }
 
         function createRepoPanel(panelEl, repoRoot, label, showChip) {
-            let expanded = false;
+            let expanded = startExpanded;
             let hasSnapshot = false;
             let quickCommitInFlight = false;
             let fileInclusion = {};

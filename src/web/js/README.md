@@ -14,6 +14,7 @@ their existing globals and module interfaces. No bundler or path aliases.
 | `queries/` | Query log inspector |
 | `achievements/` | Achievement UI and celebration presentation |
 | `test_lab/` | Registered-project test suite discovery and run history |
+| `ide/` | IDE App: pure model, Monaco engine, explorer, search, quick input, terminal and AI chat panels |
 | `media/` | Wallpaper, background effects, YouTube parsing and emoticons |
 | `shared/` | Shared boot, auth, notifications, navigation, CDN loading and UI utilities |
 

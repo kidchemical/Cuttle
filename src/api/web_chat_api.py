@@ -4,6 +4,7 @@ Web Chat API Server for Cuttle Landing Page
 Connects the landing page to the local bot functionality
 """
 
+import importlib
 import json
 import threading
 import time
@@ -288,19 +289,18 @@ try:
 except Exception as _experimental_err:
     print(f"[EXPERIMENTAL] Failed to register routes: {_experimental_err}")
 
-try:
-    from api.achievements.routes import achievements_bp, achievements_pages_bp
-    app.register_blueprint(achievements_bp)
-    app.register_blueprint(achievements_pages_bp)
-except Exception as _achievements_err:
-    print(f"[ACHIEVEMENTS] Failed to register routes: {_achievements_err}")
-
-try:
-    from api.test_lab.routes import test_lab_bp, test_lab_pages_bp
-    app.register_blueprint(test_lab_bp)
-    app.register_blueprint(test_lab_pages_bp)
-except Exception as _test_lab_err:
-    print(f"[TEST_LAB] Failed to register routes: {_test_lab_err}")
+# Experimental Apps: (owner routes module, its API + page blueprints).
+for _app_module, _app_bps in (
+    ("api.achievements.routes", ("achievements_bp", "achievements_pages_bp")),
+    ("api.test_lab.routes", ("test_lab_bp", "test_lab_pages_bp")),
+    ("api.ide.routes", ("ide_bp", "ide_pages_bp")),
+):
+    try:
+        _app_routes = importlib.import_module(_app_module)
+        for _bp_name in _app_bps:
+            app.register_blueprint(getattr(_app_routes, _bp_name))
+    except Exception as _app_err:
+        print(f"[{_app_module}] Failed to register routes: {_app_err}")
 
 try:
     from api.agent_events.routes import bp as agent_events_bp

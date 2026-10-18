@@ -133,6 +133,7 @@ const BUTTONS = {
     'nav-chat': makeBtn('nav-chat', '/chat_page.html'),
     'nav-test-lab': makeBtn('nav-test-lab', '/test_lab_page.html'),
     'nav-achievements': makeBtn('nav-achievements', '/achievements_page.html'),
+    'nav-ide': makeBtn('nav-ide', '/ide_page.html'),
 };
 function getColumnEl() {
     return { querySelector: (sel) => {
@@ -148,6 +149,9 @@ assert.ok(ids().includes('nav-chat'), 'non-experimental app still listed');
 enabledFlags = new Set(['test_lab']);
 assert.ok(ids().includes('nav-test-lab'), 'Test Lab listed once its flag is on');
 assert.ok(!ids().includes('nav-achievements'), 'Achievements stays gated independently');
+assert.ok(!ids().includes('nav-ide'), 'IDE hidden while its flag is off');
+enabledFlags = new Set(['ide']);
+assert.ok(ids().includes('nav-ide'), 'IDE listed once its flag is on');
 """
     subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
 

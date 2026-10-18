@@ -195,6 +195,54 @@ Python environment when present, and keep their recent output in the Cuttle
 home database. Discovery supports pytest files, npm `test` scripts, Go modules,
 and Rust Cargo packages. Only the owner can inspect projects or start runs.
 
+## IDE App
+
+Flag `ide` (default off). Open **Apps → IDE** (stashed; pin it to the blade
+bar), or click **Editor** in a pending-changes / commit file diff: text files
+that still exist open in the IDE at that file; binary and deleted files get no
+button. While disabled the tile, rail icon and Editor button are hidden and the
+page and `/api/ide/*` answer 403.
+
+What it does (VS Code / Cursor parity, scoped to registered projects and
+registered worktree checkouts — the same allowlist as the Git routes):
+
+- Monaco editor (pinned `monaco-editor` from jsDelivr, like xterm/highlight.js);
+  offline it falls back to a plain text editor with the same tabs and saving.
+- Explorer (lazy tree, git colors, ignored files dimmed, drag to move,
+  context menu, new/rename/delete), preview/pinned tabs, breadcrumbs,
+  Ctrl+P quick open (`:line`, `>` commands, `@` symbols), Ctrl+Shift+P command
+  palette, find/replace in files (ripgrep when installed, else Python),
+  quick-diff gutter against HEAD, Source Control via the shared pending-changes
+  strip (commit/ignore) with a Monaco diff editor.
+- Integrated terminal (Ctrl+`): the existing localhost-only PTY terminal,
+  started in the project folder (`cwd` must resolve to a registered project).
+- AI: a side panel hosting the real chat page in a chat bound to the project
+  (Ctrl+I). Ctrl+L adds the selection to its composer; Ctrl+K sends an inline
+  edit request through that chat's normal send path, so the starred agent or
+  the router runs it — there is no second execution route. When the agent
+  writes the file, the IDE shows **Review / Keep / Undo**. Opt-in
+  **✦ Tab** completions use the API completion providers (`api.llm_complete`,
+  never a CLI helper chain) and cost a small request per pause while typing.
+
+Files: saves are atomic and optimistic (`etag`); if the file changed on disk,
+the save is refused with **Compare / Overwrite disk / Load disk version**.
+Clean open files follow disk changes as one undoable edit. Unsaved buffers
+survive reloads (browser localStorage, per project, 4 MB cap). `.git/` is
+read-only; symlinks cannot escape the project. Only the owner can use the API.
+
+Owners: `api.ide.service` (workspace resolution, path confinement, file,
+search and git-content operations), `api.ide.routes` (transport);
+client `src/web/js/ide/` — `ide_model.js` (`CuttleIdeModel`, pure),
+`ide_api.js` (transport), `ide_editor.js` (Monaco/textarea engine),
+`ide_explorer.js`, `ide_search.js`, `ide_quick.js`, `ide_terminal.js`,
+`ide_chat.js`, composed by `ide_page.js`. Tests: `src/tests/ide/`,
+`src/tests/e2e/test_ide_app.py` (offline engine; `CUTTLE_IDE_E2E_MONACO=1`
+for a deliberate Monaco smoke run). Teardown: drop the flag row, `api/ide/`,
+its entry in the experimental-Apps registration loop in `web_chat_api.py`,
+`ide_page.html`, `css/ide_page.css`, `js/ide/`, the `nav-ide` rail entry
+(`app_shell.html`, `shell_rail.js`, `apps_page.js`, `app_shell.js` title), the
+Editor button in `diff_modal.js`, and the optional `cwd` in `api.web_terminal`.
+
 ## GPT-Live voice
 
 Flag `voice_live` (default off): Settings → Experimental → **Voice: GPT-Live**.

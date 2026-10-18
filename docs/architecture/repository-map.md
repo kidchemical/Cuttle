@@ -435,6 +435,17 @@ surfaces: Achievements uses `/achievements_page.html` (page blueprint in
 stashed App in the shell. New features generally start experimental; surface
 selection and exceptions are documented in `.cuttle/docs/experimental-features.md`.
 
+**IDE (experimental):** `api.ide.service` owns workspace resolution (registered
+projects/checkouts via the Git allowlist), path confinement, atomic etag-checked
+writes, search/replace and committed content; `api.ide.routes` is owner-only
+transport. The page `ide_page.js` composes `src/web/js/ide/` owners (pure
+`ide_model`, Monaco/textarea `ide_editor`, explorer, search, quick input,
+terminal over `api.web_terminal` with a project `cwd`, and `ide_chat`, which hosts
+the real chat page — AI edits go through that chat's send path, never a new
+execution lane). Source Control reuses `CuttlePendingChangesPanel`; the shared
+`CuttleDiffModal` offers **Editor** for text files while the flag is on.
+Runbook: `.cuttle/docs/experimental-features.md` (IDE App).
+
 **Gizmos (experimental):** live UI objects outside chat bubbles (widgets stay
 inside bubbles). `api.gizmos` owns types (`catalog`), normalized vendor plan
 usage (`usage`, reused from `api.agent_usage` fetchers), validation/placement

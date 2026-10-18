@@ -190,28 +190,30 @@ def test_shell_loads_gizmos_after_app_shell():
 def test_gizmos_app_starts_stashed_and_migrates_once():
     source = (WEB / "js" / "shell" / "shell_rail.js").read_text(encoding="utf-8")
     assert "'nav-gizmos'" in source.split("const CANONICAL_RAIL_ITEM_ORDER")[1].split("];")[0]
-    assert "const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];" in source
-    assert "const RAIL_LAYOUT_VERSION = 10;" in source
+    assert "const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-ide', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];" in source
+    assert "const RAIL_LAYOUT_VERSION = 11;" in source
     start = source.index("function migrateUILayout(saved)")
     end = source.index("\n        }\n", start) + len("\n        }\n")
     script = """const assert = require('assert');
-const DEFAULT_LAYOUT={}; const DEFAULT_RAIL_HIDDEN=['nav-achievements','nav-gizmos','nav-test-lab','nav-projects','nav-agent-feed','nav-mesh'];
-const RAIL_LAYOUT_VERSION=10;
+const DEFAULT_LAYOUT={}; const DEFAULT_RAIL_HIDDEN=['nav-achievements','nav-gizmos','nav-test-lab','nav-ide','nav-projects','nav-agent-feed','nav-mesh'];
+const RAIL_LAYOUT_VERSION=11;
 const HIDEABLE_FOOTER_IDS=new Set(['nav-workspace']);
-const CANONICAL_RAIL_ITEM_ORDER=['nav-chat','nav-achievements','nav-gizmos','nav-test-lab','nav-projects','nav-agent-feed','nav-mesh','nav-apps'];
+const CANONICAL_RAIL_ITEM_ORDER=['nav-chat','nav-achievements','nav-gizmos','nav-test-lab','nav-ide','nav-projects','nav-agent-feed','nav-mesh','nav-apps'];
 """ + source[start:end] + """
 let r = migrateUILayout({layout_version:6, rail_items:['nav-chat','nav-achievements','nav-apps'], rail_hidden:['nav-projects']});
-assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-agent-feed','nav-gizmos','nav-projects','nav-test-lab']);
+assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-agent-feed','nav-gizmos','nav-ide','nav-projects','nav-test-lab']);
 assert(r.layout.rail_items.includes('nav-achievements'));
 r = migrateUILayout({layout_version:7, rail_items:['nav-chat','nav-gizmos'], rail_hidden:[]});
 assert.equal(r.changed, true); assert(r.layout.rail_items.includes('nav-gizmos'));
-assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-agent-feed','nav-test-lab']);
+assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-agent-feed','nav-ide','nav-test-lab']);
 r = migrateUILayout({layout_version:8, rail_items:['nav-chat','nav-gizmos'], rail_hidden:[]});
 assert.equal(r.changed, true); assert(r.layout.rail_hidden.includes('nav-mesh'));
 r = migrateUILayout({layout_version:9, rail_items:['nav-chat','nav-gizmos'], rail_hidden:[]});
 assert.equal(r.changed, true); assert(r.layout.rail_hidden.includes('nav-test-lab'));
 r = migrateUILayout({layout_version:10, rail_items:['nav-chat','nav-gizmos'], rail_hidden:[]});
-assert.equal(r.changed, false); assert(r.layout.rail_items.includes('nav-gizmos'));
+assert.equal(r.changed, true); assert(r.layout.rail_hidden.includes('nav-ide')); assert(!r.layout.rail_items.includes('nav-ide'));
+r = migrateUILayout({layout_version:11, rail_items:['nav-chat','nav-gizmos','nav-ide'], rail_hidden:[]});
+assert.equal(r.changed, false); assert(r.layout.rail_items.includes('nav-ide'));
 """
     if not shutil.which("node"):
         pytest.skip("node not available")
