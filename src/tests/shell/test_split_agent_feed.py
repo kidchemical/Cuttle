@@ -32,7 +32,7 @@ def _extract_mount():
 
 def _extract_availability():
     source = RAIL_SRC.read_text(encoding="utf-8")
-    start = source.index("function applyExperimentalRailAvailability()")
+    start = source.index("function applyExperimentalRailAvailability(")
     end = source.index("async function refreshExperimentalRailAvailability", start)
     return source[start:end]
 
@@ -95,6 +95,17 @@ applyExperimentalRailAvailability();
 for (const btn of buttons) {
     assert.deepEqual(btn.calls, [['display', 'none', 'important']],
         'disabled flag keeps the icon hidden');
+}
+const scopedButton = makeFeedBtn();
+const pane = { querySelectorAll: (sel) => (
+    sel === '[data-id="nav-agent-feed"]' ? [scopedButton] : []) };
+enabledFlags = new Set(['agent_feed']);
+for (const btn of buttons) btn.calls.length = 0;
+applyExperimentalRailAvailability(pane);
+assert.deepEqual(scopedButton.calls, [['display', '', 'important']],
+    'a newly mounted pane receives the live flag state');
+for (const btn of buttons) {
+    assert.deepEqual(btn.calls, [], 'a scoped update leaves other panes untouched');
 }
 """
     subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
