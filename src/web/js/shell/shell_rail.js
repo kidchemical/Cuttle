@@ -189,7 +189,8 @@
             return base;
         }
 
-        function applyLayoutToColumn(colEl, layout) {
+        // Pane mounts omit layout: always inherit the current shared preferences.
+        function applyLayoutToColumn(colEl, layout = lastUILayout) {
             if (!colEl || !layout) return;
             ensureRailEditChrome(colEl);
             const rail = colEl.querySelector('.rail-items');
@@ -225,11 +226,11 @@
                     if (el.classList.contains('rail-item')) el.hidden = footerHidden.has(id);
                 }
             });
+            applyExperimentalRailAvailability(colEl);
         }
 
         function applyLayoutToAllColumns(layout) {
             doc.querySelectorAll('.split-column').forEach(col => applyLayoutToColumn(col, layout));
-            applyAgentFeedAvailability();
             if (typeof win.ensureCuttleMobileApkUpdateUi === 'function') {
                 win.ensureCuttleMobileApkUpdateUi();
             }
@@ -298,10 +299,10 @@
             return { layout, changed: true };
         }
 
-        function applyExperimentalRailAvailability() {
+        function applyExperimentalRailAvailability(scope = doc) {
             Object.keys(EXPERIMENTAL_RAIL_APPS).forEach(id => {
                 const on = enabledFlags.has(EXPERIMENTAL_RAIL_APPS[id]);
-                doc.querySelectorAll(`[data-id="${id}"]`).forEach(el => {
+                scope.querySelectorAll(`[data-id="${id}"]`).forEach(el => {
                     el.style.setProperty('display', on ? '' : 'none', 'important');
                 });
             });

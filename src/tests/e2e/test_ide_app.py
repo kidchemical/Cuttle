@@ -194,7 +194,7 @@ def test_workspace_palette_and_wallpaper(page, theme):
         assert appearance["terminal"]["foreground"] == p["text"]
         assert appearance["terminal"]["cursor"] == p["accent"]
         assert appearance["terminal"]["background"] == "#00000000"
-        assert appearance["monaco"]["colors"]["editor.background"] == "#00000000"
+        assert appearance["monaco"]["colors"]["editor.background"] == p["surface"] + "00"
         assert appearance["monaco"]["colors"]["editor.foreground"] == p["text"]
         assert appearance["monaco"]["base"] == ("vs" if p["light"] else "vs-dark")
         assert 150 < appearance["canvas"] < (230 if video else 255)
@@ -263,6 +263,45 @@ def test_shell_appearance_reaches_nested_chat(page):
     ide.locator("[data-view='search']").click()
     assert ide.locator("[data-view-panel='search']").is_visible()
     page.screenshot(path="temp/ide-shell-narrow.png")
+    assert not page.errors
+
+
+@pytest.mark.skipif(not MONACO, reason="Minimap regression requires the real Monaco canvas")
+def test_minimap_follows_live_light_theme_changes(page, project):
+    (project / 'src' / 'app.py').write_text(''.join(
+        f"result_{i} = calculate_total(items, offset={i}, label='minimap theme regression')\n"
+        for i in range(400)))
+    page.click(".ide-tree-row[data-path='src']")
+    page.click(".ide-tree-row[data-path='src/app.py']")
+    page.wait_for_function("monaco.editor.getModels().some(m => m.uri.path === '/src/app.py' && m.getLineCount() > 400)")
+    page.locator('.minimap canvas').first.wait_for()
+    page.add_style_tag(content='* { transition: none !important; animation: none !important; }')
+    for theme in ('dark', 'light', 'sakura', 'mint', 'lavender', 'paper', 'midnight', 'light'):
+        page.evaluate('theme => CuttleUiBoot.applyTheme(theme)', theme)
+        page.evaluate("""async () => {
+            const editor = monaco.editor.getEditors()[0];
+            editor.setScrollTop(editor.getScrollHeight() / 2);
+            await new Promise(requestAnimationFrame);
+            await new Promise(requestAnimationFrame);
+        }""")
+        if theme in ('dark', 'midnight'):
+            continue
+        pixels = page.locator('.minimap canvas').first.evaluate("""canvas => {
+            const d = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+            let painted = 0, black = 0;
+            for (let i = 0; i < d.length; i += 4) {
+                if (d[i + 3] < 240) continue;
+                painted++;
+                if (Math.max(d[i], d[i+1], d[i+2]) < 32) black++;
+            }
+            return {painted, black};
+        }""")
+        assert pixels['painted'] > 100, (theme, pixels)
+        assert pixels['black'] / pixels['painted'] < .05, (theme, pixels)
+        # The main editor must keep showing the Cuttle glass panel underneath.
+        assert page.locator('.monaco-editor-background').first.evaluate(
+            "el => getComputedStyle(el).backgroundColor") == 'rgba(0, 0, 0, 0)'
+    page.screenshot(path='temp/ide-minimap-light.png')
     assert not page.errors
 
 

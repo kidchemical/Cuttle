@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
 $venv = Join-Path $repo '.venv\Scripts\python.exe'
-$setup = Join-Path $repo 'src\scripts\setup_windows.py'
+$setup = Join-Path $repo 'src\scripts\setup_cuttle.py'
 $setupArgs = @()
 if ($Browser) { $setupArgs += '--browser' }
 if ($NoLaunch) { $setupArgs += '--no-launch' }

@@ -28,13 +28,17 @@
 
     function monacoTheme() {
         const p = palette();
+        // Monaco blends minimap glyphs against the editor's RGB even when its
+        // alpha is zero. Transparent black creates opaque black character cells
+        // in light themes; retain the surface RGB beneath the transparent alpha.
+        const clearSurface = p.surface + '00';
         return {
             base: p.light ? 'vs' : 'vs-dark', inherit: true,
             rules: [{ token: '', foreground: p.text.slice(1) },
                 { token: 'comment', foreground: p.muted.slice(1) }],
             colors: {
-                'editor.background': '#00000000', 'editor.foreground': p.text,
-                'editorGutter.background': '#00000000', 'minimap.background': '#00000000',
+                'editor.background': clearSurface, 'editor.foreground': p.text,
+                'editorGutter.background': clearSurface, 'minimap.background': clearSurface,
                 'editorOverviewRuler.background': '#00000000',
                 'editorOverviewRuler.border': '#00000000', 'scrollbar.shadow': '#00000000',
                 'editorCursor.foreground': p.accent, 'editorLineNumber.foreground': p.muted,

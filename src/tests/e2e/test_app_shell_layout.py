@@ -250,6 +250,78 @@ def _assert_blocked_api_free(blocked):
         assert ":8080" not in url, f"live Flask touched: {url}"
 
 
+@pytest.mark.parametrize("mount", ["append", "nested", "restore"])
+def test_split_toolbars_inherit_shared_configuration(browser, static_server, mount):
+    """Fresh template chrome must receive saved pins/order and feature gates."""
+    layout = {
+        "layout_version": 11,
+        "rail_items": ["nav-git", "nav-chat", "nav-apps", "nav-ide"],
+        "rail_hidden": ["nav-editor", "nav-jobs", "nav-mesh", "nav-dashboards",
+                        "nav-achievements", "nav-agent-feed", "nav-gizmos",
+                        "nav-test-lab", "nav-projects"],
+        "rail_footer": ["nav-settings", "nav-workspace", "nav-account",
+                        "nav-notifications", "panelToggle"],
+        "rail_footer_hidden": ["nav-workspace"],
+    }
+
+    class ToolbarWorld(ShellWorld):
+        def handle(self, route):
+            if urlparse(route.request.url).path == "/api/settings/ui-layout":
+                route.fulfill(status=200, content_type="application/json",
+                              body=json.dumps({"ui_layout": layout}))
+            else:
+                super().handle(route)
+
+    world = ToolbarWorld()
+    context, page, errors, blocked = _open(
+        browser, static_server, world,
+        seed=V2_NESTED if mount == "restore" else None)
+    try:
+        _load_shell(page, static_server)
+        page.wait_for_function("""() => window.lastUILayout?.rail_items[0] === 'nav-git'
+            && document.querySelector('[data-id="nav-ide"]').style.display === 'none'""")
+        if mount == "append":
+            page.locator('.rail-logo-primary').click()
+        elif mount == "nested":
+            page.evaluate("splitLeafColumn(getColumnEl(0), 'vertical')")
+        expected_count = 3 if mount == "restore" else 2
+        page.wait_for_function(
+            "n => document.querySelectorAll('.split-column:not([data-split-discarded])').length === n",
+            arg=expected_count)
+
+        def assert_toolbars(expected_items):
+            bars = page.evaluate("""() => [...document.querySelectorAll(
+                '.split-column:not([data-split-discarded])')].map(col => ({
+                    items: [...col.querySelectorAll('.rail-items .rail-item[data-id]')]
+                        .map(el => el.dataset.id),
+                    footer: [...col.querySelectorAll('.rail-footer [data-id]')]
+                        .map(el => [el.dataset.id, el.hidden]),
+                    ideDisplay: getComputedStyle(col.querySelector('[data-id="nav-ide"]')).display,
+                }))""")
+            assert len(bars) == expected_count
+            for bar in bars:
+                assert bar["items"] == expected_items
+                assert bar["footer"] == [[id_, id_ == "nav-workspace"]
+                                          for id_ in layout["rail_footer"]]
+                assert bar["ideDisplay"] == "none"
+
+        assert_toolbars(layout["rail_items"])
+        # Apps pinning from a secondary pane must update every existing toolbar.
+        page.evaluate("""() => {
+            const frame = document.querySelectorAll('.split-column iframe')[1];
+            frame.contentWindow.parent.postMessage(
+                {type: 'cuttle-apps-pin', id: 'nav-editor', pinned: true}, '*');
+        }""")
+        page.wait_for_function("""() => [...document.querySelectorAll(
+            '.split-column:not([data-split-discarded])')].every(col =>
+                col.querySelector('.rail-items [data-id="nav-editor"]'))""")
+        assert_toolbars(["nav-git", "nav-chat", "nav-editor", "nav-apps", "nav-ide"])
+        assert not errors
+        _assert_blocked_api_free(blocked)
+    finally:
+        context.close()
+
+
 def test_update_restart_popup_uses_shared_account_modal_surface(browser, static_server):
     world = ShellWorld()
     context, page, errors, blocked = _open(browser, static_server, world)

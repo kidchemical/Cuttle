@@ -16,6 +16,9 @@ User-visible changes to Cuttle. The format follows
   around accounts that are out of quota.
 - Projects app with a project registry and ordered host locations.
 - Headless Linux hosts run as a systemd user service.
+- Guided Linux setup: `./setup_linux.sh` installs Python and desktop
+  dependencies, checks the Electron sandbox helper, and launches the Host,
+  matching `setup_windows.ps1`.
 - Shared skills appear in the compiled context inventory without needing
   ranked context.
 - `git.push` can push a single release tag.
