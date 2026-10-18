@@ -400,3 +400,37 @@ def clear_muse_resume_id(cwd: str, cuttle_session_id: Optional[Any]) -> None:
         if key in data:
             del data[key]
             _write_all(data)
+
+
+def pop_dead_muse_resume(
+    cwd: str, cuttle_session_id: Optional[Any], resume_id: Optional[str]
+) -> Optional[str]:
+    """Evict a resume binding whose CLI session data is gone from this host.
+
+    Sandbox cutovers and CLI retention can strand a mapped UUID with no
+    ``session.jsonl`` behind it; passing it to ``muse exec --session-id``
+    fails the turn instead of resuming. When the host sessions root exists
+    but holds no log for ``resume_id``, drop the binding so the caller
+    starts a fresh session, and return a user-facing notice. Return None
+    when there is nothing to evict (no resume, session present, or an
+    uncertain layout — the caller then attempts resume exactly as before).
+    """
+    rid = str(resume_id or "").strip()
+    if not rid or not _UUID_RE.match(rid):
+        return None
+    try:
+        root = muse_data_home() / "sessions"
+        if not root.is_dir():
+            return None
+        if muse_session_log_paths(rid):
+            return None
+    except Exception:
+        return None
+    try:
+        clear_muse_resume_id(cwd, cuttle_session_id)
+    except Exception:
+        pass
+    return (
+        "The previous Muse Code session for this chat was not found on this "
+        "host, so this turn started a fresh session."
+    )

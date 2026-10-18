@@ -156,6 +156,128 @@ def test_list_catalog_falls_back_to_favorites(catalog_cache, monkeypatch):
     assert out["models"][0]["id"] == "openai/gpt-4o-mini"
 
 
+_TRUNCATED_MID_OBJECT = """\
+openrouter/deepseek/deepseek-v4.1-flash
+{
+  "id": "deepseek/deepseek-v4.1-flash",
+  "providerID": "openrouter",
+  "name": "DeepSeek V4.1 Flash",
+  "capabilities": {"reasoning": true, "toolcall": true},
+  "variants": {}
+}
+openrouter/z-ai/glm-5.3-flash
+{
+  "id": "z-ai/glm-5.3-flash",
+  "providerID": "openrouter",
+  "audio": false,
+"""
+
+_VERBOSE_ONE_MODEL = """\
+openrouter/deepseek/deepseek-v4.1-flash
+{
+  "id": "deepseek/deepseek-v4.1-flash",
+  "providerID": "openrouter",
+  "name": "DeepSeek V4.1 Flash",
+  "capabilities": {"reasoning": true, "toolcall": true},
+  "variants": {}
+}
+"""
+
+_PLAIN_THREE_IDS = """\
+Available models
+openrouter/deepseek/deepseek-v4.1-flash
+openrouter/z-ai/glm-5.3-flash
+openrouter/example/no-variants
+"""
+
+
+class _Proc:
+    def __init__(self, stdout, returncode=0):
+        self.stdout = stdout
+        self.stderr = ""
+        self.returncode = returncode
+
+
+def _mock_run(monkeypatch, script):
+    """Serve canned ``opencode models`` outputs; record argv shapes seen."""
+    from api.agent_harness.agents.opencode import model_catalog as mc
+
+    seen = []
+    it = iter(script)
+
+    def fake_run(cmd, **kwargs):
+        seen.append([c for c in cmd if str(c).startswith("-")])
+        return next(it)
+
+    monkeypatch.setattr(
+        "api.agent_harness.agents.opencode.adapter.opencode_executable",
+        lambda: "/fake/opencode",
+    )
+    monkeypatch.setattr(mc.subprocess, "run", fake_run)
+    return seen
+
+
+def test_run_rejects_mid_object_truncation(monkeypatch):
+    from api.agent_harness.agents.opencode import model_catalog as mc
+
+    seen = _mock_run(monkeypatch, [_Proc(_TRUNCATED_MID_OBJECT)])
+    rows, err = mc._run_opencode_models(refresh=True)
+    assert rows == []
+    assert err is not None and "mid-object" in err
+    # Rejected on the end marker alone — no second CLI call needed.
+    assert seen == [["--verbose", "--refresh"]]
+
+
+def test_run_rejects_boundary_exact_cut_via_plain_count(monkeypatch):
+    from api.agent_harness.agents.opencode import model_catalog as mc
+
+    seen = _mock_run(
+        monkeypatch, [_Proc(_VERBOSE_ONE_MODEL), _Proc(_PLAIN_THREE_IDS)]
+    )
+    rows, err = mc._run_opencode_models(refresh=True)
+    assert rows == []
+    assert err is not None and "plain" in err
+    assert seen == [["--verbose", "--refresh"], []]
+
+
+def test_run_accepts_complete_stream(monkeypatch):
+    from api.agent_harness.agents.opencode import model_catalog as mc
+
+    _mock_run(monkeypatch, [_Proc(_VERBOSE_SAMPLE), _Proc(_PLAIN_THREE_IDS)])
+    rows, err = mc._run_opencode_models(refresh=True)
+    assert err is None
+    assert [r["id"] for r in rows] == [
+        "openrouter/deepseek/deepseek-v4.1-flash",
+        "openrouter/z-ai/glm-5.3-flash",
+        "openrouter/example/no-variants",
+    ]
+
+
+def test_run_accepts_complete_stream_when_plain_check_fails(monkeypatch):
+    from api.agent_harness.agents.opencode import model_catalog as mc
+
+    _mock_run(monkeypatch, [_Proc(_VERBOSE_SAMPLE), _Proc("", returncode=1)])
+    rows, err = mc._run_opencode_models(refresh=True)
+    assert err is None
+    assert len(rows) == 3
+
+
+def test_refresh_never_overwrites_good_cache_with_partial(catalog_cache, monkeypatch):
+    from api.agent_harness.agents.opencode import model_catalog as mc
+
+    full = mc._parse_models_stdout(_VERBOSE_SAMPLE)
+    mc._write_cache(full, refreshed=True)
+    before = catalog_cache.read_bytes()
+
+    _mock_run(monkeypatch, [_Proc(_TRUNCATED_MID_OBJECT)])
+    out = mc.list_opencode_catalog_models(refresh=True)
+
+    assert catalog_cache.read_bytes() == before
+    assert out["error"] is not None and "mid-object" in out["error"]
+    ids = [m["id"] for m in out["models"]]
+    assert "openrouter/deepseek/deepseek-v4.1-flash" in ids
+
+
 def test_opencode_model_slash_refresh(monkeypatch):
     from api.agent_harness.agents.opencode.adapter import _handle_opencode_model_slash
 

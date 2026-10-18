@@ -251,7 +251,61 @@ def _run_opencode_models(*, refresh: bool = False) -> Tuple[List[Dict[str, Any]]
     if not rows and proc.returncode:
         err = (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
         return [], err[:300] or f"opencode models failed (exit {proc.returncode})"
+    if rows and not proc.returncode:
+        trunc_err = _verbose_truncation_error(proc.stdout or "", rows, exe=exe)
+        if trunc_err:
+            return [], trunc_err
     return rows, None
+
+
+_VERBOSE_MARKERS = ('"providerID"', '"variants"', '"capabilities"')
+
+
+def _verbose_truncation_error(
+    stdout: str, rows: Sequence[Dict[str, Any]], *, exe: str
+) -> Optional[str]:
+    """Refuse a cut-off ``models --verbose`` stream (CH-001353).
+
+    A sandbox pipe can truncate the CLI's large verbose stdout mid-object
+    while the process still exits 0; the parser then silently drops the
+    trailing partial block and the caller would cache a partial catalog
+    (everything after the cut — e.g. DeepSeek entries — vanishes from the
+    palette). Detect the two shapes of cut:
+
+    * the stream does not end on a complete ``}`` object boundary, or
+    * the verbose id count is smaller than the small plain ``models`` list
+      (which always fits the pipe, so it is the completeness oracle).
+    """
+    text = stdout or ""
+    if not any(marker in text for marker in _VERBOSE_MARKERS):
+        return None
+    tail = text.strip().splitlines()
+    if not tail or tail[-1].strip() != "}":
+        return (
+            f"opencode models --verbose ended mid-object after {len(rows)} "
+            "complete models; not caching a partial catalog"
+        )
+    try:
+        plain = subprocess.run(
+            [exe, "models"],
+            env=agent_cli_env(),
+            capture_output=True,
+            text=True,
+            timeout=_CLI_TIMEOUT_SEC,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if plain.returncode:
+        return None
+    plain_count = len(_parse_models_stdout(plain.stdout or ""))
+    if plain_count > len(rows):
+        return (
+            f"opencode models --verbose lists {len(rows)} models but plain "
+            f"models lists {plain_count}; not caching a partial catalog"
+        )
+    return None
 
 
 def _curated_favorites() -> List[Dict[str, Any]]:
@@ -324,8 +378,8 @@ def list_opencode_catalog_models(
     models: List[Dict[str, Any]] = []
 
     with _lock:
-        cached = None if refresh else _read_cache()
-        if cached and isinstance(cached.get("models"), list):
+        cached = _read_cache()
+        if not refresh and cached and isinstance(cached.get("models"), list):
             age = time.time() - float(cached.get("fetched_at") or 0)
             if age <= _CACHE_TTL_SEC and cached["models"]:
                 models = [m for m in cached["models"] if isinstance(m, dict)]
