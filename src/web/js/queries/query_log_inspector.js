@@ -401,8 +401,16 @@
         return html;
     }
 
-    function bindTimeline(body, events) {
+    function bindTimeline(body, events, previousDetails) {
         body.querySelectorAll('details.query-log-event').forEach(function (d) {
+            var index = d.getAttribute('data-i');
+            var signature = JSON.stringify(events[Number(index)]);
+            var previous = previousDetails && previousDetails[index];
+            if (previous && previous._eventSignature === signature) {
+                d.replaceWith(previous);
+                return;
+            }
+            d._eventSignature = signature;
             d.addEventListener('toggle', function () {
                 var i = d.getAttribute('data-i');
                 var n = Number(i);
@@ -465,15 +473,19 @@
     function paintTimelineInto(body, data, events, prefixHtml) {
         var atBottom = (body.scrollHeight - body.scrollTop - body.clientHeight) < 140;
         var prevTop = body.scrollTop;
-        var prevHeight = body.scrollHeight;
+        // Reuse unchanged details so expanded payloads do not collapse and
+        // refetch on every poll, temporarily clamping the scroll position.
+        var previousDetails = Object.create(null);
+        body.querySelectorAll('details.query-log-event').forEach(function (d) {
+            previousDetails[d.getAttribute('data-i')] = d;
+        });
         body.innerHTML = (prefixHtml || '') + renderTimeline(Object.assign({}, data, { events: events }));
-        bindTimeline(body, events);
+        bindTimeline(body, events, previousDetails);
         if (atBottom && isLive(data)) {
-            var liveEl = body.querySelector('.query-log-live');
-            if (liveEl && liveEl.scrollIntoView) liveEl.scrollIntoView({ block: 'nearest' });
-            else body.scrollTop = body.scrollHeight;
+            body.scrollTop = body.scrollHeight;
         } else {
-            body.scrollTop = prevTop + (body.scrollHeight - prevHeight);
+            // Rows append below the reader; a height delta must not move them.
+            body.scrollTop = prevTop;
         }
         bindLazyLoad(body);
         maybeSeqScroll(body, events);
