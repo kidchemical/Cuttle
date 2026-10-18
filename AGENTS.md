@@ -112,7 +112,7 @@ imports the monolith); acyclic `src/api`; per-owner route delegation
 funnel + SSE pump proven at runtime; manifest schema),
 `src/tests/quality/test_composition_root_growth.py` (line ceilings lowered to
 the post-refactor baseline: `chat_page.js` 13,405 / `app_shell.js` 4,182 /
-`web_chat_api.py` 5,106) and `src/tests/quality/test_composition_root_delegation.py`
+`web_chat_api.py` 5,200) and `src/tests/quality/test_composition_root_delegation.py`
 (each frontend owner namespace + a thin composition-root call site).
 
 | Task | Owner (code) | Entry interface | Tests |

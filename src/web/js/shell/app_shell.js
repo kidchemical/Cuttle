@@ -931,6 +931,7 @@ paneController = CuttleShellPanes.create({
     withRememberedChat, rememberChatHandleFromPage, getState,
     setState, storagePageKey: STORAGE_PAGE,
     updateColumnUI, persistSplitLayout, sessionStorage,
+    splitPane: splitLeafColumn, revealPane: col => setPaneCollapsed(col, false),
     desktopCfg: CuttleShellElectron.getDesktopConfig(),
     spacesActivity: CuttleSpaces,
     refreshParkedPaneTitle,

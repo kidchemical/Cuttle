@@ -43,20 +43,6 @@
         return loadPromise;
     }
 
-    function cssColor(probeStyle, fallback) {
-        const el = document.createElement('div');
-        el.style.cssText = 'position:absolute;visibility:hidden;' + probeStyle;
-        document.body.appendChild(el);
-        const value = getComputedStyle(el).backgroundColor || '';
-        el.remove();
-        const m = value.match(/rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+))?/);
-        if (!m) return fallback;
-        const hex = (n) => ('0' + Math.round(Number(n)).toString(16)).slice(-2);
-        const alpha = m[4] == null ? '' : hex(Math.max(0, Math.min(1, Number(m[4]))) * 255);
-        return '#' + hex(m[1]) + hex(m[2]) + hex(m[3]) + (alpha === 'ff' ? '' : alpha);
-    }
-    function isLight() { return document.body.classList.contains('light-mode'); }
-
     // ── Monaco engine ───────────────────────────────────────────────
     function createMonaco(monaco, host) {
         const models = new Map(); // path → {model, saved, viewState}
@@ -83,18 +69,7 @@
         });
 
         function applyTheme() {
-            const light = isLight();
-            const bg = cssColor('background: var(--bg-primary)', light ? '#ffffff' : '#1e1e1e');
-            monaco.editor.defineTheme('cuttle', {
-                base: light ? 'vs' : 'vs-dark', inherit: true, rules: [],
-                colors: {
-                    'editor.background': bg,
-                    'editorGutter.background': bg,
-                    'minimap.background': bg,
-                    'editorStickyScroll.background': bg,
-                    focusBorder: '#00000000',
-                },
-            });
+            monaco.editor.defineTheme('cuttle', root.CuttleIdeTheme.monacoTheme());
             monaco.editor.setTheme('cuttle');
         }
         applyTheme();
@@ -391,7 +366,11 @@
             },
             setOptions(o) { ta.wrap = o.wordWrap ? 'soft' : 'off'; },
             applyTheme() {},
-            run() {},
+            run(action) {
+                ta.focus();
+                if (action === 'editor.action.selectAll') ta.select();
+                else if (action === 'undo' || action === 'redo') document.execCommand(action);
+            },
             setGutter() {},
             showDiff(original, modified) {
                 note.innerHTML = '';

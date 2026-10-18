@@ -122,7 +122,8 @@ def test_diff_modal_editor_button_is_gated():
     assert "f.id === 'ide' && f.enabled" in js and "!d.kill_switch" in js
     assert "statusLabel(data.status) !== 'D'" in js and "!data.binary" in js
     page = (WEB / "ide_page.html").read_text(encoding="utf-8")
-    for script in ("ide_model.js", "ide_api.js", "ide_editor.js", "ide_quick.js", "ide_explorer.js",
-                   "ide_search.js", "ide_terminal.js", "ide_chat.js", "ide_page.js"):
+    for script in ("ide_model.js", "ide_api.js", "ide_theme.js", "ide_editor.js", "ide_quick.js", "ide_menubar.js",
+                   "ide_navigation.js", "ide_explorer.js", "ide_search.js", "ide_terminal.js", "ide_chat.js",
+                   "ide_page.js"):
         assert f"/js/ide/{script}?v=" in page
-    assert page.index("ide_model.js") < page.index("ide_page.js")
+    assert page.index("ide_model.js") < page.index("ide_menubar.js") < page.index("ide_page.js")

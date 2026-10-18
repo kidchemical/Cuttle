@@ -14,6 +14,9 @@
     const LAST_WS_KEY = 'cuttleIdeLastWorkspace';
     const WATCH_MS = 2500;
     const inShell = window.parent && window.parent !== window;
+    const navigation = window.CuttleIdeNavigation.create({
+        win: window, open: params => openDeepLink(params), fail, isChatSource: source => chat.isSource(source),
+    });
 
     let layout = M.normalizeLayout(readJson(LAYOUT_KEY));
     let workspaces = [];
@@ -590,6 +593,7 @@
 
     // ── tabs / crumbs / status ──────────────────────────────────────
     function renderTabs() {
+        menuBar.refresh();
         const labels = M.tabLabels(tabs);
         $('ideTabs').innerHTML = tabs.tabs.map((t) => {
             const doc = docs.get(t.path);
@@ -973,6 +977,10 @@
 
     // ── commands / quick open ───────────────────────────────────────
     const COMMANDS = [
+        { id: 'file.quickOpen', label: 'File: Open File…', keys: 'Ctrl+P', run: () => quickOpen('') },
+        { id: 'editor.undo', label: 'Undo', keys: 'Ctrl+Z', run: () => editor.run('undo') },
+        { id: 'editor.redo', label: 'Redo', keys: 'Ctrl+Shift+Z', run: () => editor.run('redo') },
+        { id: 'editor.selectAll', label: 'Select All', keys: 'Ctrl+A', run: () => editor.run('editor.action.selectAll') },
         { id: 'file.save', label: 'File: Save', keys: 'Ctrl+S', run: () => save() },
         { id: 'file.saveAll', label: 'File: Save All', keys: 'Ctrl+Alt+S', run: saveAll },
         { id: 'file.new', label: 'File: New File…', run: () => newEntry('file') },
@@ -1024,6 +1032,10 @@
         { id: 'workspace.switch', label: 'Project: Switch Project…', run: pickWorkspace },
     ];
     const commandById = (id) => COMMANDS.find((c) => c.id === id);
+    const menuBar = window.CuttleIdeMenubar.create({
+        win: window, el: $('ideMenubar'), getCommand: commandById, runCommand,
+        hasFile: () => !!tabs.active, isDirty: () => !!tabs.active && isDirty(tabs.active),
+    });
     function runCommand(id) {
         const c = commandById(id);
         if (c) Promise.resolve(c.run()).catch(fail);
@@ -1194,13 +1206,13 @@
         if (d.type === 'cuttle-navigate' && typeof d.page === 'string') {
             const url = new URL(d.page, location.origin);
             // "Editor" from a diff inside the side chat opens here, not a new IDE.
-            if (url.pathname === '/ide_page.html') openDeepLink(url.searchParams).catch(fail);
-            else if (inShell) window.parent.postMessage(d, '*');
+            if (url.pathname !== '/ide_page.html' && inShell) window.parent.postMessage(d, '*');
         }
     });
     async function openDeepLink(params) {
         const path = params.get('path');
         if (path && (!ws || M.absKey(path) !== M.absKey(ws.path))) await openWorkspace(path);
+        if (path && (!ws || M.absKey(path) !== M.absKey(ws.path))) return; // Cancelled project switch.
         const file = params.get('file');
         if (!file || !ws) return;
         let rel = M.normPath(file);
@@ -1277,6 +1289,7 @@
             try { history.replaceState(null, '', location.pathname); } catch (_) {}
         }
         startWatching();
+        navigation.ready();
     }
     boot();
 })();

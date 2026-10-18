@@ -12,6 +12,23 @@
         let sessionId = null;
         let workspace = null;
 
+        // Shell broadcasts reach the IDE frame; relay appearance to its nested
+        // chat as well, so changing theme/wallpaper updates both together.
+        const appearanceMessages = new Set(['cuttle-theme-change', 'cuttle-video-state',
+            'cuttle-bg-effect-blend', 'cuttle-ui-anim-change', 'cuttle-shell-visibility']);
+        root.addEventListener('message', (e) => {
+            if (e.origin !== location.origin || e.source !== root.parent || !appearanceMessages.has(e.data?.type)) return;
+            if (frame) frame.contentWindow?.postMessage(e.data, location.origin);
+        });
+        function syncAppearance() {
+            if (!frame || !root.CuttleUiBoot) return;
+            const target = frame.contentWindow;
+            target.postMessage({ type: 'cuttle-theme-change', theme: root.CuttleUiBoot.currentTheme() }, location.origin);
+            target.postMessage({ type: 'cuttle-video-state', active: document.body.classList.contains('has-video-background') }, location.origin);
+            target.postMessage({ type: 'cuttle-bg-effect-blend', value:
+                Number(getComputedStyle(document.documentElement).getPropertyValue('--cuttle-bg-effect-blend')) * 100 }, location.origin);
+        }
+
         async function json(url, init) {
             const response = await fetch(url, Object.assign({ credentials: 'include', cache: 'no-store' }, init || {}));
             const data = await response.json().catch(() => null);
@@ -45,6 +62,7 @@
                 frame = document.createElement('iframe');
                 frame.className = 'ide-chat-frame';
                 frame.title = 'Cuttle chat';
+                frame.addEventListener('load', syncAppearance);
                 frameHost.appendChild(frame);
             }
             const src = '/chat_page.html?chat=' + encodeURIComponent(id);

@@ -335,13 +335,17 @@
         const snapshot = state;
         ideEnabled().then((on) => { if (on && state === snapshot) btn.hidden = false; });
     }
-    function openInEditor() {
-        if (!state) return;
-        const qs = new URLSearchParams({ path: state.projectPath, file: state.file });
-        if (state.repoRoot) qs.set('repo_root', state.repoRoot);
+    function openInEditor(options) {
+        const file = options && options.file ? options : state;
+        if (!file) return;
+        const qs = new URLSearchParams({ path: file.projectPath, file: file.file });
+        if (file.repoRoot) qs.set('repo_root', file.repoRoot);
         const page = '/ide_page.html?' + qs.toString();
         close();
-        if (global.parent && global.parent !== global) global.parent.postMessage({ type: 'cuttle-navigate', page: page }, '*');
+        const localIde = global.location.pathname === '/ide_page.html';
+        const shell = document.getElementById('splitContainer');
+        if (localIde || shell) global.postMessage({ type: 'cuttle-open-editor', page: page }, global.location.origin);
+        else if (global.parent && global.parent !== global) global.parent.postMessage({ type: 'cuttle-open-editor', page: page }, global.location.origin);
         else global.location.href = page;
     }
     function open(options) {
@@ -358,5 +362,5 @@
         el('close').focus();
         return loadFile(state.file);
     }
-    global.CuttleDiffModal = { open: open, close: close, isOpen: isOpen, navigate: navigate };
+    global.CuttleDiffModal = { open: open, close: close, isOpen: isOpen, navigate: navigate, openInEditor: openInEditor };
 })(typeof window !== 'undefined' ? window : this);

@@ -197,17 +197,28 @@ and Rust Cargo packages. Only the owner can inspect projects or start runs.
 
 ## IDE App
 
+The workspace follows Cuttle's theme, including live palette changes and the
+shell video background through glass panels. Monaco and the integrated terminal
+use the same palette; the nested chat receives shell appearance updates too.
+
 Flag `ide` (default off). Open **Apps → IDE** (stashed; pin it to the blade
-bar), or click **Editor** in a pending-changes / commit file diff: text files
-that still exist open in the IDE at that file; binary and deleted files get no
-button. While disabled the tile, rail icon and Editor button are hidden and the
-page and `/api/ide/*` answer 403.
+bar), or use the pencil in a pending-changes row / **Editor** in a commit file
+diff: text files that still exist open in the IDE at that file; binary and
+deleted files get no button. A pending-changes pencil reuses the IDE already
+open in the current space (keeping its tabs and unsaved edits) or splits one
+beside the source pane; it never switches to an IDE in another space. While
+disabled the tile, rail icon and editor buttons are hidden and the page and
+`/api/ide/*` answer 403.
 
 What it does (VS Code / Cursor parity, scoped to registered projects and
 registered worktree checkouts — the same allowlist as the Git routes):
 
 - Monaco editor (pinned `monaco-editor` from jsDelivr, like xterm/highlight.js);
   offline it falls back to a plain text editor with the same tabs and saving.
+- Compact **File / Edit / View / Go / Terminal / AI** menu bar plus a visible
+  **Save** button (Ctrl+S, Ctrl+Alt+S for all). Menu items run the same command
+  registry as the palette and disable when no file is open; keyboard navigation
+  covers the menu bar and popups.
 - Explorer (lazy tree, git colors, ignored files dimmed, drag to move,
   context menu, new/rename/delete), preview/pinned tabs, breadcrumbs,
   Ctrl+P quick open (`:line`, `>` commands, `@` symbols), Ctrl+Shift+P command
@@ -233,15 +244,21 @@ read-only; symlinks cannot escape the project. Only the owner can use the API.
 Owners: `api.ide.service` (workspace resolution, path confinement, file,
 search and git-content operations), `api.ide.routes` (transport);
 client `src/web/js/ide/` — `ide_model.js` (`CuttleIdeModel`, pure),
-`ide_api.js` (transport), `ide_editor.js` (Monaco/textarea engine),
-`ide_explorer.js`, `ide_search.js`, `ide_quick.js`, `ide_terminal.js`,
-`ide_chat.js`, composed by `ide_page.js`. Tests: `src/tests/ide/`,
-`src/tests/e2e/test_ide_app.py` (offline engine; `CUTTLE_IDE_E2E_MONACO=1`
-for a deliberate Monaco smoke run). Teardown: drop the flag row, `api/ide/`,
-its entry in the experimental-Apps registration loop in `web_chat_api.py`,
-`ide_page.html`, `css/ide_page.css`, `js/ide/`, the `nav-ide` rail entry
-(`app_shell.html`, `shell_rail.js`, `apps_page.js`, `app_shell.js` title), the
-Editor button in `diff_modal.js`, and the optional `cwd` in `api.web_terminal`.
+`ide_api.js` (transport), `ide_theme.js` (Cuttle palette bridge),
+`ide_editor.js` (Monaco/textarea engine), `ide_menubar.js` (compact menus),
+`ide_navigation.js` (deep-link/request queue), `ide_explorer.js`,
+`ide_search.js`, `ide_quick.js`, `ide_terminal.js`,
+`ide_chat.js`, composed by `ide_page.js`. The shell opens files through
+`shell_panes.js` (`cuttle-open-editor` / `cuttle-ide-ready`), while
+`pending_changes_panel.js` gates the pencil on the `ide` flag. Tests:
+`src/tests/ide/`, `src/tests/e2e/test_ide_app.py` (offline engine;
+`CUTTLE_IDE_E2E_MONACO=1` for a deliberate Monaco smoke run). Teardown: drop
+the flag row, `api/ide/`, its entry in the experimental-Apps registration loop
+in `web_chat_api.py`, `ide_page.html`, `css/ide_page.css`, `js/ide/`, the
+`nav-ide` rail entry (`app_shell.html`, `shell_rail.js`, `apps_page.js`,
+`app_shell.js` title), the pending-changes pencil and Editor button in
+`diff_modal.js`, the editor bridge in `shell_panes.js`, and the optional `cwd`
+in `api.web_terminal`.
 
 ## GPT-Live voice
 

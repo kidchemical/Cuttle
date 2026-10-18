@@ -178,6 +178,20 @@
         let destroyed = false;
         let pollTimer = null;
         let projectPathBound = '';
+        let ideEnabled = false;
+        async function refreshEditorAvailability() {
+            try {
+                const response = await fetchWithTimeout('/api/experimental/flags', { credentials: 'include', cache: 'no-store' }, 5000);
+                const data = response.ok ? await response.json() : null;
+                if (!destroyed) ideEnabled = !!(data && !data.kill_switch && (data.flags || []).some(f => f.id === 'ide' && f.enabled));
+            } catch (_) { ideEnabled = false; }
+            if (!destroyed) host.classList.toggle('has-ide-editors', ideEnabled);
+        }
+        function onEditorFlagsChanged(e) {
+            if (e.origin === global.location.origin && e.data?.type === 'cuttle-experimental-flags-changed') refreshEditorAvailability();
+        }
+        global.addEventListener('message', onEditorFlagsChanged);
+        refreshEditorAvailability();
 
         function currentProject() {
             return getProject();
@@ -942,6 +956,10 @@
                         const diffBtn =
                             '<button type="button" class="pending-changes-diff-btn" data-rel-path="'
                             + path + '" title="View diff" aria-label="View diff for ' + path + '">Δ</button>';
+                        const editorBtn = '<button type="button" class="pending-changes-editor-btn" data-rel-path="'
+                            + path + '" title="' + (st === 'deleted' ? 'Deleted file has no working copy' : 'Open in Cuttle IDE')
+                            + '" aria-label="Open ' + path + ' in Cuttle IDE"' + (st === 'deleted' ? ' disabled' : '') + '>'
+                            + '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>';
                         const main =
                             '<button type="button" class="pending-changes-item" data-rel-path="'
                             + path + '" title="View diff">' + badge + fileSpan + statsHtml + '</button>';
@@ -949,7 +967,7 @@
                             '<li class="pending-changes-row'
                             + (included ? '' : ' is-excluded')
                             + '" data-rel-path="' + path + '">'
-                            + check + main + ignoreBtn + diffBtn + '</li>'
+                            + check + main + editorBtn + ignoreBtn + diffBtn + '</li>'
                         );
                     }).join('');
                     const moreN = unlistedCount();
@@ -990,6 +1008,16 @@
                 if (list) {
                     list.addEventListener('click', function (e) {
                         const t = e.target;
+                        const editorBtn = t && t.closest ? t.closest('.pending-changes-editor-btn') : null;
+                        if (editorBtn) {
+                            e.preventDefault(); e.stopPropagation();
+                            if (!ideEnabled || editorBtn.disabled) return;
+                            const project = currentProject();
+                            if (project && global.CuttleDiffModal) global.CuttleDiffModal.openInEditor({
+                                projectPath: project.path, repoRoot: repoRoot, file: editorBtn.getAttribute('data-rel-path'),
+                            });
+                            return;
+                        }
                         const ignoreBtn = t && t.closest ? t.closest('.pending-changes-ignore-btn') : null;
                         if (ignoreBtn) {
                             e.preventDefault();
@@ -1172,6 +1200,7 @@
             if (!isPageBackgrounded()) scheduleRefresh(200);
         });
         window.addEventListener('focus', function () {
+            if (!destroyed) refreshEditorAvailability();
             if (Date.now() < pendingChangesSuppressFocusRefreshUntil) return;
             scheduleRefresh(200);
         });
@@ -1184,6 +1213,8 @@
             hide: hideAll,
             destroy: function () {
                 destroyed = true;
+                global.removeEventListener('message', onEditorFlagsChanged);
+                host.classList.remove('has-ide-editors');
                 if (pendingChangesTimer) clearTimeout(pendingChangesTimer);
                 pendingChangesTimer = null;
                 if (pollTimer) clearInterval(pollTimer);

@@ -50,10 +50,7 @@
             return (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/api/terminal/ws';
         }
         function theme() {
-            const light = document.body.classList.contains('light-mode');
-            return light
-                ? { background: '#ffffff', foreground: '#1f2328', cursor: '#1f2328', selectionBackground: '#b6d4fe' }
-                : { background: '#11151c', foreground: '#e6edf3', cursor: '#e6edf3', selectionBackground: '#264f78' };
+            return root.CuttleIdeTheme.terminalTheme();
         }
         function writeB64(t, b64) {
             try {
@@ -136,7 +133,7 @@
             el.className = 'ide-term-host';
             bodyEl.appendChild(el);
             const term = new root.Terminal({
-                cursorBlink: true, fontSize: 13, allowProposedApi: true,
+                cursorBlink: true, fontSize: 13, allowProposedApi: true, allowTransparency: true,
                 fontFamily: "'JetBrains Mono', 'Cascadia Code', ui-monospace, Menlo, Consolas, monospace",
                 theme: theme(),
             });
