@@ -53,6 +53,11 @@ Summarize into `{project}/.cuttle/docs/` only when the user wants persistent mir
 2. End with `<cuttle_confirm action="discord.post" channel="<alias>">` or `<cuttle_action_form>` with `"action": "discord.post"`.
 3. Human clicks Post → Flask runs the allowlisted `{project}` action — **no LLM**, no second agent turn.
 
+`discord.post` is dispatched through the service-op registry
+(`src/api/service_ops/`; `python -m api.service_ops list`). The REST/allowlist
+behavior lives in `api.discord_ops`; swapping in another chat service is a new
+registered op, not an edit to `project_actions`.
+
 Channel aliases (or allowlisted snowflake **values**) must match
 `{project}/.cuttle/actions/discord-post.yaml`. Arbitrary numeric channel IDs cannot
 bypass that map.

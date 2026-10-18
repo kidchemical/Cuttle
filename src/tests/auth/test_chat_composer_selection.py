@@ -22,6 +22,32 @@ def test_two_devices_share_selection_and_removal(owner_session):
     assert phone.get(f'/api/auth/sessions/{sid}/messages').get_json()['composer_selection']['stickyCleared'] is True
 
 
+def test_sessions_list_exposes_parsed_composer_selection(owner_session):
+    """History sidebar chips read the shared selection from the list payload.
+
+    A device that has never opened the chat (phone) must still get the rich
+    agent/model/effort label, so ``GET /api/auth/sessions`` returns the parsed
+    ``composer_selection`` object, not the raw JSON column string.
+    """
+    import json as _json
+    phone, desktop = clients(owner_session)
+    sid = owner_session.db.create_chat_session(owner_session.user_id, 'List chip')
+    owner_session.db.add_message(sid, 'user', '/codex work', metadata={
+        'slash_command': {'chips': [{
+            'label': 'Codex - GPT-6.1-Sol · medium',
+            'meta': '/codex · model gpt-6.1-sol · effort medium',
+            'category': 'codex',
+        }]},
+    })
+    sessions = desktop.get('/api/auth/sessions').get_json()['sessions']
+    row = next(s for s in sessions if int(s['id']) == sid)
+    assert isinstance(row['composer_selection'], dict), row.get('composer_selection')
+    assert row['composer_selection']['stickyChips'][0]['label'] == 'Codex - GPT-6.1-Sol · medium'
+    # Never leak the raw column string to the client.
+    assert not isinstance(row['composer_selection'], str)
+    assert isinstance(_json.dumps(row['composer_selection']), str)
+
+
 def test_user_send_updates_selection_but_steer_and_reply_do_not(owner_session):
     db, uid = owner_session.db, owner_session.user_id
     sid = db.create_chat_session(uid, 'Phone sends Codex')

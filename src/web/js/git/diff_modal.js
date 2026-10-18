@@ -10,6 +10,7 @@
     let generation = 0;
     let controller = null;
     let returnFocus = null;
+    let ideFlag = null; // Promise<boolean>: experimental `ide` (Editor button)
     const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;')
         .replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const el = (key) => modal.querySelector('[data-diff="' + key + '"]');
@@ -53,6 +54,7 @@
                             <span class="pending-diff-modal-badge" data-diff="status"></span>
                             <span class="pending-diff-modal-stats" data-diff="stats"></span>
                             <span class="git-diff-commit" data-diff="source"></span>
+                            <button type="button" class="pending-diff-editor-btn" data-diff="editor" title="Open this file in the Cuttle IDE" hidden>Editor</button>
                             <div class="pending-diff-view-toggle" role="group" aria-label="Diff view mode">
                                 <button type="button" class="pending-diff-view-btn" data-diff-view="split" aria-pressed="true" title="Separate Added and Removed sections">Split</button>
                                 <button type="button" class="pending-diff-view-btn" data-diff-view="unified" aria-pressed="false" title="Preserve hunk line order (adds and removes interleaved)">Unified</button>
@@ -76,6 +78,7 @@
         document.body.appendChild(modal);
         el('close').addEventListener('click', close);
         el('title').addEventListener('click', (e) => { e.preventDefault(); openFile(); });
+        el('editor').addEventListener('click', openInEditor);
         ['prev', 'sidePrev'].forEach((key) => el(key).addEventListener('click', () => navigate(-1)));
         ['next', 'sideNext'].forEach((key) => el(key).addEventListener('click', () => navigate(1)));
         modal.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
@@ -237,6 +240,7 @@
         el('stats').innerHTML = (data.additions ? '<span class="pending-changes-add">' + esc(formatStat(data.additions, '+')) + '</span>' : '')
             + (data.deletions ? '<span class="pending-changes-del">' + esc(formatStat(data.deletions, '-')) + '</span>' : '');
         el('loading').hidden = true;
+        syncEditorButton(data);
         const sections = data.sections;
         const hasSections = !!(sections && (sections.added || sections.removed));
         const hunks = Array.isArray(data.hunks) ? data.hunks : [];
@@ -275,6 +279,7 @@
         el('title').title = requestState.commitHash ? 'Open the current working-tree file in its default application' : 'Open file in its default application';
         el('status').textContent = '';
         el('stats').textContent = '';
+        el('editor').hidden = true;
         el('loading').hidden = false;
         el('empty').hidden = true;
         el('hunks').hidden = true;
@@ -312,8 +317,41 @@
             if (!response.ok || !data || !data.success) throw new Error((data && data.error) || ('HTTP ' + response.status));
         } catch (err) { toast('Could not open file: ' + ((err && err.message) || err)); }
     }
+    function ideEnabled() {
+        if (!ideFlag) {
+            ideFlag = fetch('/api/experimental/flags', { credentials: 'include', cache: 'no-store' })
+                .then((r) => (r.ok ? r.json() : null))
+                .then((d) => !!(d && !d.kill_switch && (d.flags || []).some((f) => f.id === 'ide' && f.enabled)))
+                .catch(() => false);
+        }
+        return ideFlag;
+    }
+    /** Text files that still exist can open in the IDE (experimental `ide`). */
+    function syncEditorButton(data) {
+        const btn = el('editor');
+        btn.hidden = true;
+        const editable = data && data.success === true && !data.binary && !data.secret_redacted && statusLabel(data.status) !== 'D';
+        if (!editable) return;
+        const snapshot = state;
+        ideEnabled().then((on) => { if (on && state === snapshot) btn.hidden = false; });
+    }
+    function openInEditor(options) {
+        const file = options && options.file ? options : state;
+        if (!file) return;
+        const qs = new URLSearchParams({ path: file.projectPath, file: file.file });
+        if (file.repoRoot) qs.set('repo_root', file.repoRoot);
+        const page = '/ide_page.html?' + qs.toString();
+        close();
+        const localIde = global.location.pathname === '/ide_page.html';
+        const shell = document.getElementById('splitContainer');
+        if (localIde || shell) global.postMessage({ type: 'cuttle-open-editor', page: page }, global.location.origin);
+        else if (global.parent && global.parent !== global) global.parent.postMessage({ type: 'cuttle-open-editor', page: page }, global.location.origin);
+        else global.location.href = page;
+    }
     function open(options) {
         if (!options || !options.projectPath || !options.file) return Promise.resolve();
+        // Re-read the flag per popup so an in-page toggle shows/hides the button.
+        ideFlag = null;
         ensureModal();
         const files = Array.from(new Set((options.files || []).map((f) => typeof f === 'string' ? f : f.path).filter(Boolean)));
         if (!files.includes(options.file)) files.unshift(options.file);
@@ -324,5 +362,5 @@
         el('close').focus();
         return loadFile(state.file);
     }
-    global.CuttleDiffModal = { open: open, close: close, isOpen: isOpen, navigate: navigate };
+    global.CuttleDiffModal = { open: open, close: close, isOpen: isOpen, navigate: navigate, openInEditor: openInEditor };
 })(typeof window !== 'undefined' ? window : this);

@@ -3535,7 +3535,13 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
 }
 
 .message-content pre code,
-.message-content pre code.hljs {
+.message-content pre code.hljs,
+.message.user .message-content pre code,
+.message.user .message-content pre code.hljs,
+.light-mode .message-content pre code,
+.light-mode .message-content pre code.hljs,
+.light-mode .message.user .message-content pre code,
+.light-mode .message.user .message-content pre code.hljs {
     background: transparent;
     padding: 0;
     border: none;
@@ -6498,11 +6504,13 @@ pre.has-code-copy:hover .code-copy-btn,
     max-width: 70%;
 }
 
+.response-original-block,
 .tool-block,
 .thinking-block {
     margin: 10px 0;
 }
 
+.response-original-block > summary,
 .tool-block > summary,
 .thinking-block > summary {
     cursor: pointer;

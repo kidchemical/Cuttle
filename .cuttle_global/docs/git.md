@@ -55,6 +55,15 @@ Source/value previews are redacted. “View flagged commit diff” opens the exi
 shared diff popup only on an explicit click; that local authenticated view can
 show original secret material. Database cell values remain redacted in reports.
 
+For a reviewed false positive, choose **Allow this finding**, enter a reason,
+then **Save exception**. The owner-only action verifies the committed source
+and writes an exact exception to the project's existing
+`.cuttle/scripts/git-hooks/scanner-exceptions.json`. Retry the push after
+resolving every finding, and include the policy change in the next commit.
+Path-policy and SQLite findings cannot be allowed from this report.
+The report opens centered over the app with a blurred backdrop, including
+when opened from a split chat pane.
+
 The checks are `path-policy`, `secret-patterns`, `gitleaks` (when installed), and
 `sqlite-secrets`. Every introduced commit version is scanned, including a secret
 removed by a later commit. Gitleaks errors are reported as coverage warnings;

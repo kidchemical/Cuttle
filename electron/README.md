@@ -18,7 +18,9 @@ Source development/builds need Node **22.12+** and npm. On Windows, run
 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup_windows.ps1`
 from the repository root to install both Python and desktop dependencies and
 launch the local Host. Use `-NoLaunch` for setup only; later launches use
-`start_electron.bat`. Rerun setup after pulling dependency updates.
+`start_electron.bat`. On Linux, `./setup_linux.sh` does the same (`--no-launch`,
+`--browser`) and checks the Chromium sandbox helper; later launches use
+`.cuttle/scripts/launch-cuttle-host.sh`. Rerun setup after pulling dependency updates.
 
 Install the chosen vendor CLI and
 authenticate it separately: Codex uses `codex login`, Cursor its CLI login, and

@@ -154,9 +154,25 @@ def _wsl_command() -> Optional[List[str]]:
     return None
 
 
-def _resolve_shell_preset(shell_id: str) -> Tuple[Optional[List[str]], str, Dict[str, str]]:
-    """Return (argv, cwd, env) for a shell preset id."""
-    cwd = str(_REPO_ROOT)
+def resolve_project_cwd(raw: Optional[str]) -> Optional[str]:
+    """A registered project (or checkout) path to start a shell in, else None."""
+    if not raw or not str(raw).strip():
+        return None
+    try:
+        from managers.project_manager import project_manager
+        from scripts.utilities.git_pending_changes import resolve_allowed_project_cwd
+
+        projects = project_manager.get_projects() if project_manager else []
+        current = project_manager.get_current_project() if project_manager else None
+        cwd, _proj, err = resolve_allowed_project_cwd(str(raw).strip(), None, projects, current)
+    except Exception:
+        return None
+    return None if err else cwd
+
+
+def _resolve_shell_preset(shell_id: str, cwd: Optional[str] = None) -> Tuple[Optional[List[str]], str, Dict[str, str]]:
+    """Return (argv, cwd, env) for a shell preset id (default cwd: the Cuttle checkout)."""
+    cwd = cwd or str(_REPO_ROOT)
     env: Dict[str, str] = os.environ.copy()
 
     def _hermes_preset() -> Tuple[Optional[List[str]], str, Dict[str, str]]:
@@ -214,9 +230,10 @@ def list_shell_presets() -> List[Dict[str, Any]]:
 class _PtySession:
     """One interactive PTY that can detach/reattach across WebSocket refreshes."""
 
-    def __init__(self, session_id: str, shell_id: str, cols: int, rows: int):
+    def __init__(self, session_id: str, shell_id: str, cols: int, rows: int, cwd: Optional[str] = None):
         self.session_id = session_id
         self.shell_id = shell_id
+        self.cwd = cwd
         self.cols = max(20, cols)
         self.rows = max(5, rows)
         self._pty: Any = None
@@ -274,7 +291,7 @@ class _PtySession:
             return base64.b64encode(bytes(self._scrollback)).decode('ascii')
 
     def start(self) -> Optional[str]:
-        argv, cwd, env = _resolve_shell_preset(self.shell_id)
+        argv, cwd, env = _resolve_shell_preset(self.shell_id, self.cwd)
         if not argv:
             return f'Shell "{self.shell_id}" is not available on this machine.'
 
@@ -492,6 +509,7 @@ def _attach_or_create_session(
     rows: int,
     on_output: Callable[[bytes], None],
     on_exit: Callable[[int], None],
+    cwd: Optional[str] = None,
 ) -> Tuple[Optional[_PtySession], bool, Optional[str]]:
     """
     Return (session, resumed, error).
@@ -508,7 +526,7 @@ def _attach_or_create_session(
         # Shell switched, or process died — replace.
         _destroy_session(session_id)
 
-    session = _PtySession(session_id, shell_id, cols, rows)
+    session = _PtySession(session_id, shell_id, cols, rows, cwd)
     session.set_callbacks(on_output, on_exit)
     err = session.start()
     if err:
@@ -559,6 +577,11 @@ def _handle_ws_connection(ws: Any) -> None:
                 cols = int(msg.get('cols') or 80)
                 rows = int(msg.get('rows') or 24)
                 session_id = str(msg.get('session_id') or uuid.uuid4().hex[:12])
+                # Optional project folder (IDE terminal); only registered projects.
+                cwd = resolve_project_cwd(msg.get('cwd'))
+                if msg.get('cwd') and not cwd:
+                    _ws_send(ws, {'op': 'error', 'message': 'Terminal folder is not a registered project'})
+                    continue
 
                 # Switching attachment on this socket: detach previous handle first.
                 if attached_id and attached_id != session_id and session:
@@ -567,7 +590,7 @@ def _handle_ws_connection(ws: Any) -> None:
                     attached_id = None
 
                 session, resumed, err = _attach_or_create_session(
-                    session_id, shell_id, cols, rows, on_output, on_exit,
+                    session_id, shell_id, cols, rows, on_output, on_exit, cwd,
                 )
                 if err or not session:
                     _ws_send(ws, {'op': 'error', 'message': err or 'Failed to start shell'})

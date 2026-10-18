@@ -65,10 +65,10 @@ The codebase is set up so an agent can do that well:
 | Surface | What you get |
 | --- | --- |
 | **Open source** | MIT-licensed Python and vanilla JS with agent briefings built in, so any hosted agent can extend Cuttle itself. See [Make it yours](#make-it-yours). |
-| **Chat** | Web UI, Electron desktop (Host + LAN Client), and Android app over one history. Streamed progress notes, pinned **Tasks** lists, clickable **action forms** for questions and approvals, image and PDF attachments with a vision pre-pass, and mid-turn steering for Codex and Muse Code. |
+| **Chat** | Web UI, Electron desktop (Host + LAN Client), and Android app over one history. Streamed progress notes, pinned **Tasks** lists, clickable **action forms** for questions and approvals, image and PDF attachments with a vision pre-pass, and mid-turn steering for Codex, Muse Code, and Claude Code. |
 | **Agents** | `/cursor`, `/codex`, `/claude`, `/muse`, `/hermes`, `/deepseek`, `/opencode`, `/antigravity`, and more from a shared harness catalog ([`src/api/agent_harness/agents/`](src/api/agent_harness/agents/)). Star one as the default for new chats. |
-| **Agent router** | Picks a harness on clean sessions and escalates on failure (Cursor Auto → Grok → Codex fallback chain). Starred or sticky agents bypass it, and Stop is always terminal. |
-| **Workspace** | Split any pane horizontally or vertically, drag to resize, and keep a separate layout per space. 14 themes plus YouTube or video wallpapers behind the whole UI. |
+| **Agent router** | Classifies each turn on clean sessions and picks a harness per lane (default Cursor Auto). Falls back only when an agent never ran (quota, auth, missing CLI); a task that ran and failed, or was stopped, is terminal. Starred or sticky agents bypass it. |
+| **Workspace** | Split any pane horizontally or vertically, drag to resize, and keep a separate layout per space. 13 built-in themes, a custom theme, and YouTube or video wallpapers behind the whole UI. |
 | **Sub-agents** | Fan a task out into real child chats across harnesses, then synthesize one reply ([`python -m api.subagents`](.cuttle_global/docs/subagents.md)). |
 | **Cuttle Workers** | A multi-device LAN mesh: file copy, shell recipes, a Blender render farm with work stealing, and self-update for every client. |
 | **Dashboards** | Model Benchmarks (cost vs. pass rate vs. duration), Jev performance tracking, and per-agent cost. |
@@ -80,24 +80,17 @@ The codebase is set up so an agent can do that well:
 
 ### Requirements
 
-- Windows 10/11 **or** Ubuntu 22.04+
+- Windows 10/11 **or** Ubuntu 24.04+ (22.04 works with a `python3.11` install; its default `python3` is 3.10)
 - Python 3.11+ (the project uses a local `.venv`)
-- Optional: Node.js 22.12+ (Electron desktop), a Discord bot token **only if** you want REST agent-ops (`python -m api.discord_cli` / `discord.post`), OpenAI / Anthropic keys, Ollama, and the vendor agent CLIs you want to host (Cursor, Codex, Claude, …)
+- Optional: Node.js 22.12+ (Electron desktop), a Discord bot token **only if** you want REST agent-ops (`python -m api.discord_cli` / `discord.post`), OpenAI / Anthropic keys, a local model server (llama.cpp, Ollama, …) for the router brain, and the vendor agent CLIs you want to host (Cursor, Codex, Claude, …)
 
 ### Install and run
 
-Ubuntu / Linux:
+Ubuntu / Linux (Python 3.11+ with `python3-venv`; Node.js 22.12+ for desktop):
 
 ```bash
 git clone https://github.com/kidchemical/Cuttle.git cuttle && cd cuttle
-python3 -m venv .venv
-.venv/bin/pip install -r src/requirements/requirements.txt
-mkdir -p ~/.local/share/cuttle
-if [ ! -e ~/.local/share/cuttle/.env ]; then
-  cp src/.env.example ~/.local/share/cuttle/.env
-fi
-# Edit ~/.local/share/cuttle/.env for optional direct-LLM, router-brain or vision provider keys
-./start_cuttle.sh
+./setup_linux.sh
 ```
 
 Windows PowerShell (64-bit Python 3.11+ and Node.js 22.12+ for desktop):
@@ -107,12 +100,14 @@ git clone https://github.com/kidchemical/Cuttle.git cuttle; cd cuttle
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup_windows.ps1
 ```
 
-This creates `.venv`, installs Python and locked desktop dependencies, downloads
+Setup creates `.venv`, installs Python and locked desktop dependencies, downloads
 Electron, and opens the local **Host**. No administrator access or venv activation
-is required. Use `-Browser` to skip Node/Electron and run the daemon with its web
-UI, or `-NoLaunch` to install without starting Cuttle. Rerun setup after pulling
-updates or a failed install; it preserves your settings and secrets. For later
-desktop launches, run `start_electron.bat`.
+is required. Use `--browser` (`-Browser` on Windows) to skip Node/Electron and run
+the daemon with its web UI, or `--no-launch` (`-NoLaunch`) to install without
+starting Cuttle. Rerun setup after pulling updates or a failed install; it
+preserves your settings and secrets. For later launches, run
+`.cuttle/scripts/launch-cuttle-host.sh` or `./start_cuttle.sh` (browser) on Linux,
+and `start_electron.bat` on Windows.
 
 Provider keys are optional; configure them in Settings when needed. You do not
 need to create an `.env` file before the first launch. Install and authenticate
@@ -143,7 +138,7 @@ Install and authenticate the chosen vendor CLI separately: Codex uses `codex log
 
 ### Electron desktop
 
-Windows setup above installs the desktop too. For manual source setup, use
+Guided setup above installs the desktop too. For manual source setup, use
 `npm ci` from `electron/`, then `node node_modules/electron/install.js` to ensure
 the binary is downloaded even when npm defers install scripts. Then:
 
@@ -152,7 +147,7 @@ the binary is downloaded even when npm defers install scripts. Then:
 | Windows | `start_electron.bat` | Installed Cuttle Desktop (`build_electron.bat`), then pick the Host on the first-run connect page or pass `--host <pc-ip>` |
 | Linux | `.cuttle/scripts/launch-cuttle-host.sh` | `.cuttle/scripts/launch-cuttle-client.sh` |
 
-On Ubuntu 24.04+ (AppArmor restricts unprivileged user namespaces), Electron's Chromium sandbox needs a setuid-root helper. The Linux launchers refuse to start without it. Run this once after each `npm install`:
+On Ubuntu 24.04+ (AppArmor restricts unprivileged user namespaces), Electron's Chromium sandbox needs a setuid-root helper. The Linux launchers refuse to start without it, and `setup_linux.sh` stops before launch with the commands to run. Run this once after each `npm install` (it has no effect on a `nosuid` mount such as NTFS; keep the checkout on a Linux filesystem):
 
 ```bash
 sudo chown root:root electron/node_modules/electron/dist/chrome-sandbox
@@ -189,7 +184,7 @@ flowchart LR
   API --> Router[Agent router]
   Router --> Harness[Agent harness adapters]
   Harness --> CLIs[Cursor · Codex · Claude · Muse · Hermes · DeepSeek · OpenCode]
-  Harness --> Local[Ollama / llama.cpp]
+  Router -.-> Local[Local LLM endpoint<br/>router brain]
   API --> Brain[Cuttle Brain<br/>global + project context compiler]
   API --> Store[(SQLite<br/>chats · auth)]
   API --> Workers[Cuttle Workers]

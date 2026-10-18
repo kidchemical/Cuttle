@@ -43,6 +43,34 @@ class UsageWorld(IsolatedAPI):
         route.fulfill(content_type='application/json', body=json.dumps(data))
 
 
+class VoiceUsageWorld(UsageWorld):
+    def handle(self, route):
+        if urlparse(route.request.url).path == '/api/voice-stt/usage/42':
+            route.fulfill(content_type='application/json', body=json.dumps({'success': True, 'entries': [
+                {'id': 1, 'usage': {'duration_seconds': 90, 'cost': .075, 'cost_estimated': True,
+                                  'usage_source': 'voice', 'model': 'gpt-live-1'}},
+            ]}))
+        else:
+            super().handle(route)
+
+
+def test_saved_voice_duration_merges_with_whole_chat_and_survives_reload(browser, static_server):
+    page = browser.new_page()
+    apply_request_guard(page.context, static_server)
+    page.add_init_script("localStorage.setItem('cuttleShowSessionUsageEstimate', 'true');")
+    page.route(static_server + '/api/**', VoiceUsageWorld().handle)
+    try:
+        page.goto(static_server + '/chat_page.html?chat=42', wait_until='domcontentloaded')
+        for _ in range(2):
+            totals = page.locator('#chatSessionUsageTotals')
+            expect(totals.locator('.message-usage-duration')).to_have_text('🎙 90s')
+            expect(totals.locator('.message-usage-cost')).to_have_text('~$0.095')
+            expect(totals.locator('.message-usage-out')).to_have_text('↓ 45')
+            page.reload(wait_until='domcontentloaded')
+    finally:
+        page.close()
+
+
 @pytest.mark.parametrize('include', [False, True])
 def test_refresh_fetches_session_totals_with_first_transcript(browser, static_server, include):
     world = UsageWorld()
@@ -81,7 +109,11 @@ def test_missing_prefetch_summary_is_fetched_immediately(browser, static_server,
         page.goto(static_server + '/chat_page.html?chat=42', wait_until='domcontentloaded')
         totals = page.locator('#chatSessionUsageTotals')
         if empty:
-            expect(totals).to_have_text('No token usage recorded for this session', timeout=3000)
+            expect(totals.locator('.message-usage-placeholder')).to_have_count(1, timeout=3000)
+            expect(totals.locator('.message-usage-in')).to_have_text('↑ —')
+            expect(totals.locator('.message-usage-out')).to_have_text('↓ —')
+            expect(totals.locator('.message-usage-cost')).to_have_text('$ —')
+            assert 'No token usage recorded for this session' not in page.evaluate('window.usageStates')
         else:
             expect(totals.locator('.message-usage-in')).to_have_text('↑ 1.2k', timeout=3000)
             assert 'Loading session usage…' in page.evaluate('window.usageStates')

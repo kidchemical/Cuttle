@@ -33,6 +33,7 @@
             'nav-agent-feed',
             'nav-gizmos',
             'nav-test-lab',
+            'nav-ide',
             'nav-projects',
             'nav-apps',
         ];
@@ -46,9 +47,9 @@
         // not page apps, but the Apps grid still lists them so they can be re-pinned.
         const HIDEABLE_FOOTER_IDS = new Set(['nav-workspace']);
         // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-        const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
+        const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-ide', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
         // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
-        const RAIL_LAYOUT_VERSION = 10;
+        const RAIL_LAYOUT_VERSION = 11;
 
         const DEFAULT_LAYOUT = {
             rail_items: CANONICAL_RAIL_ITEM_ORDER.filter(id => !DEFAULT_RAIL_HIDDEN.includes(id)),
@@ -58,8 +59,21 @@
             layout_version: RAIL_LAYOUT_VERSION,
         };
 
-        // Experiment availability does not change the user's saved pin preferences.
-        let agentFeedEnabled = false;
+        // Experimental apps: their rail icon and Apps-grid tile stay hidden
+        // unless the owning feature flag is on. Availability never changes the
+        // user's saved pin layout.
+        const EXPERIMENTAL_RAIL_APPS = {
+            'nav-achievements': 'achievements',
+            'nav-agent-feed': 'agent_feed',
+            'nav-gizmos': 'gizmos',
+            'nav-test-lab': 'test_lab',
+            'nav-ide': 'ide',
+        };
+        let enabledFlags = new Set();
+        function railAppEnabled(id) {
+            const flag = EXPERIMENTAL_RAIL_APPS[id];
+            return !flag || enabledFlags.has(flag);
+        }
         /** Shared rail layout for every blade (not per-bar). */
         let lastUILayout = {
             rail_items: DEFAULT_LAYOUT.rail_items.slice(),
@@ -175,7 +189,8 @@
             return base;
         }
 
-        function applyLayoutToColumn(colEl, layout) {
+        // Pane mounts omit layout: always inherit the current shared preferences.
+        function applyLayoutToColumn(colEl, layout = lastUILayout) {
             if (!colEl || !layout) return;
             ensureRailEditChrome(colEl);
             const rail = colEl.querySelector('.rail-items');
@@ -211,11 +226,11 @@
                     if (el.classList.contains('rail-item')) el.hidden = footerHidden.has(id);
                 }
             });
+            applyExperimentalRailAvailability(colEl);
         }
 
         function applyLayoutToAllColumns(layout) {
             doc.querySelectorAll('.split-column').forEach(col => applyLayoutToColumn(col, layout));
-            applyAgentFeedAvailability();
             if (typeof win.ensureCuttleMobileApkUpdateUi === 'function') {
                 win.ensureCuttleMobileApkUpdateUi();
             }
@@ -266,14 +281,16 @@
             const hidden = new Set(Array.isArray(saved.rail_hidden) ? saved.rail_hidden : []);
             // Existing v4 user pins remain intact; only the new App starts stashed.
             const version = Number(saved.layout_version) || 0;
-            const additions = version >= 9 ? ['nav-test-lab']
-                : version >= 8 ? ['nav-mesh', 'nav-test-lab']
+            const additions = version >= 10 ? ['nav-ide']
+                : version >= 9 ? ['nav-test-lab', 'nav-ide']
+                : version >= 8 ? ['nav-mesh', 'nav-test-lab', 'nav-ide']
                 : version >= 7 ? ['nav-agent-feed'] : version >= 6 ? ['nav-gizmos', 'nav-agent-feed']
                 : version >= 5 ? ['nav-projects', 'nav-gizmos', 'nav-agent-feed']
                 : version >= 4 ? ['nav-achievements', 'nav-projects', 'nav-gizmos', 'nav-agent-feed']
                 : DEFAULT_RAIL_HIDDEN;
             additions.forEach(id => hidden.add(id));
             hidden.add('nav-test-lab');
+            hidden.add('nav-ide');
             const known = new Set(CANONICAL_RAIL_ITEM_ORDER);
             layout.rail_hidden = Array.from(hidden).filter(id => known.has(id));
             layout.rail_items = (Array.isArray(saved.rail_items) ? saved.rail_items : CANONICAL_RAIL_ITEM_ORDER)
@@ -282,21 +299,29 @@
             return { layout, changed: true };
         }
 
-        function applyAgentFeedAvailability() {
-            doc.querySelectorAll('[data-id="nav-agent-feed"]').forEach(el => {
-                el.style.setProperty('display', agentFeedEnabled ? '' : 'none', 'important');
+        function applyExperimentalRailAvailability(scope = doc) {
+            Object.keys(EXPERIMENTAL_RAIL_APPS).forEach(id => {
+                const on = enabledFlags.has(EXPERIMENTAL_RAIL_APPS[id]);
+                scope.querySelectorAll(`[data-id="${id}"]`).forEach(el => {
+                    el.style.setProperty('display', on ? '' : 'none', 'important');
+                });
             });
         }
-        async function refreshAgentFeedAvailability() {
+        // Compatibility name (app_shell + window contract call it by this name).
+        const applyAgentFeedAvailability = applyExperimentalRailAvailability;
+        async function refreshExperimentalRailAvailability() {
             try {
                 const response = await fetchImpl('/api/experimental/flags', {credentials:'include', cache:'no-store'});
-                if (!response.ok) return;
+                if (!response.ok) throw new Error('flags unavailable');
                 const data = await response.json();
-                agentFeedEnabled = !data.kill_switch && data.flags.some(flag => flag.id === 'agent_feed' && flag.enabled);
-            } catch (_) { agentFeedEnabled = false; }
-            applyAgentFeedAvailability();
+                enabledFlags = new Set(data.kill_switch ? []
+                    : (data.flags || []).filter(flag => flag.enabled).map(flag => flag.id));
+            } catch (_) { enabledFlags = new Set(); }
+            applyExperimentalRailAvailability();
             broadcastAppsList();
         }
+        // Compatibility name (app_shell + window contract call it by this name).
+        const refreshAgentFeedAvailability = refreshExperimentalRailAvailability;
 
         // ── Cuttle web apps (Apps page ↔ blade bar) ─────────────────────
         // Footer utilities live outside the pinnable rail order but belong in the
@@ -308,7 +333,7 @@
             if (!col) return [];
             const apps = [];
             CANONICAL_RAIL_ITEM_ORDER.forEach(id => {
-                if (RAIL_LOCKED_IDS.has(id) || (id === 'nav-agent-feed' && !agentFeedEnabled)) return;
+                if (RAIL_LOCKED_IDS.has(id) || !railAppEnabled(id)) return;
                 const el = col.querySelector(`.rail-items .rail-item[data-id="${id}"], .rail-stash .rail-item[data-id="${id}"]`);
                 if (!el || !el.dataset.page) return;
                 apps.push({
@@ -471,7 +496,7 @@
             const list = picker?.querySelector('.rail-add-picker-list');
             if (!picker || !list) return;
             const layout = getLayoutFromDOM(getColumnEl(0));
-            const hiddenIds = (layout.rail_hidden || []).filter(id => CANONICAL_RAIL_ITEM_ORDER.includes(id) && (id !== 'nav-agent-feed' || agentFeedEnabled));
+            const hiddenIds = (layout.rail_hidden || []).filter(id => CANONICAL_RAIL_ITEM_ORDER.includes(id) && railAppEnabled(id));
             list.innerHTML = '';
             if (!hiddenIds.length) {
                 const empty = doc.createElement('div');
@@ -521,7 +546,8 @@
             });
             doc.addEventListener('pointerdown', (e) => {
                 if (!railEditing) return;
-                if (e.target.closest('.icon-rail, .rail-add-picker')) return;
+                // Keep edit controls interactive, but let blank rail space dismiss.
+                if (e.target.closest('.rail-item, .rail-panel-toggle, .rail-add-slot, .rail-logo, .rail-pane-grip, .rail-add-picker')) return;
                 setRailEditing(false);
             });
             doc.addEventListener('click', (e) => {

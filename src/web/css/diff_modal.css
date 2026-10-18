@@ -459,3 +459,19 @@ dialog.pending-diff-modal::backdrop {
 .cuttle-diff-modal .git-diff-commit { font: .68rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text-secondary); }
 .cuttle-diff-modal .pending-diff-modal-body { overscroll-behavior: contain; }
 .cuttle-diff-modal a:focus-visible, .cuttle-diff-modal button:focus-visible { outline: 2px solid var(--accent-color, #60a5fa); outline-offset: 2px; }
+
+/* "Editor" — open the file in the IDE App (experimental `ide`). */
+.pending-diff-editor-btn {
+    margin-left: auto;
+    padding: 3px 10px;
+    border: 1px solid color-mix(in srgb, var(--accent-color) 55%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+    color: var(--text-primary);
+    font-size: 0.66rem;
+    font-weight: 650;
+    cursor: pointer;
+}
+.pending-diff-editor-btn:hover { background: color-mix(in srgb, var(--accent-color) 28%, transparent); }
+.pending-diff-editor-btn[hidden] { display: none; }
+.pending-diff-editor-btn:not([hidden]) + .pending-diff-view-toggle { margin-left: 6px; }

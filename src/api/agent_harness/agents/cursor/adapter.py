@@ -242,6 +242,24 @@ class Adapter:
             kernel_model=model,
         )
 
+        # A resume UUID with no transcript behind it (sandbox cutover, repo
+        # move, CLI pruning) would fail the turn instead of resuming. Drop
+        # the dead binding first so this turn starts fresh with a notice.
+        # The tool below re-resolves the binding from the map, so clearing
+        # here is enough to suppress `--resume`.
+        fresh_notice: Optional[str] = None
+        try:
+            from scripts.utilities.cursor_cli_session_store import (
+                load_cursor_resume_binding,
+                pop_dead_cursor_resume,
+            )
+
+            bound = load_cursor_resume_binding(cwd, chat_session_id) or {}
+            bound_rid = bound.get("resume_id")
+            if bound_rid:
+                fresh_notice = pop_dead_cursor_resume(cwd, chat_session_id, bound_rid)
+        except Exception:
+            fresh_notice = None
         put_status(status_queue, "Calling Cursor Agent…")
         run_meta: dict = {}
 
@@ -309,6 +327,11 @@ class Adapter:
                     usage["context_tokens"] = int(peak)
                 except (TypeError, ValueError):
                     pass
+        reported = (
+            str(run_meta.get("reported_model") or mid).strip()
+            if isinstance(run_meta, dict)
+            else mid
+        )
         # Cursor (subscription billing) never reports cost — estimate the
         # API-equivalent price from the final cumulative usage. Cursor usage
         # is additive (inputTokens excludes cached reads), so the inclusive
@@ -321,11 +344,6 @@ class Adapter:
             attach_estimated_cost(usage, reported or "", cache_inclusive=False)
         except Exception:
             pass
-        reported = (
-            str(run_meta.get("reported_model") or mid).strip()
-            if isinstance(run_meta, dict)
-            else mid
-        )
         meta = {"cursor_run": dict(run_meta)} if run_meta else {}
         if mid and mid.lower() != "auto":
             meta["preferred_model"] = mid
@@ -352,6 +370,9 @@ class Adapter:
             meta["agent_model"] = mid
         except Exception:
             pass
+        if fresh_notice:
+            suffix = f"_{fresh_notice}_"
+            output = f"{output}\n\n{suffix}" if (output or "").strip() else suffix
         if failed:
             return AgentResult(
                 success=False,

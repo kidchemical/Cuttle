@@ -15,6 +15,7 @@ body.compact-shell-page {
     --page-pad-bottom: 16px;
     --page-card-radius: 10px;
     --page-card-bg: var(--section-bg);
+    --page-card-blur: blur(12px);
     --page-card-border: 1px solid var(--border-color);
     /* Full-bleed bars (Router) inset their content to the frame edge. */
     --page-bleed-inset: max(var(--page-pad-x), calc((100% - var(--page-max-width)) / 2 + var(--page-pad-x)));
@@ -191,7 +192,8 @@ body.compact-shell-page .service-card {
     border-radius: var(--page-card-radius);
     padding: 10px 11px;
     margin: 0;
-    backdrop-filter: none;
+    backdrop-filter: var(--page-card-blur);
+    -webkit-backdrop-filter: var(--page-card-blur);
     box-shadow: none;
     transition: border-color 0.15s, background 0.15s;
 }
@@ -260,7 +262,8 @@ body.compact-shell-page .settings-group {
     border-radius: var(--page-card-radius);
     padding: 10px 12px;
     margin-bottom: 8px;
-    backdrop-filter: none;
+    backdrop-filter: var(--page-card-blur);
+    -webkit-backdrop-filter: var(--page-card-blur);
 }
 
 body.compact-shell-page .settings-title {

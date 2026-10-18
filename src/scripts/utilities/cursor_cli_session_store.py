@@ -466,6 +466,49 @@ def clear_cursor_resume_id(cwd: str, cuttle_session_id: Optional[str]) -> None:
     # cwd kept in the signature for callers; lookup is by chat id.
 
 
+def _cursor_transcript_root() -> Optional[Path]:
+    """Host root of ``agent-transcripts/<uuid>/`` dirs (one per workspace slug)."""
+    try:
+        return Path.home() / ".cursor" / "projects"
+    except Exception:
+        return None
+
+
+def pop_dead_cursor_resume(
+    cwd: str, cuttle_session_id: Optional[str], resume_id: Optional[str]
+) -> Optional[str]:
+    """Evict a resume binding whose CLI transcript is gone from this host.
+
+    Mirrors ``pop_dead_muse_resume``: sandbox cutovers, repo moves (the
+    transcript is keyed by workspace slug), and CLI pruning can strand a
+    mapped UUID with no ``agent-transcripts/<uuid>/`` behind it, and
+    ``agent --resume`` then fails the turn instead of resuming. When the
+    host transcripts root exists but no workspace holds the id, drop the
+    binding so the caller starts a fresh session, and return a user-facing
+    notice. Return None when there is nothing to evict or the layout is
+    uncertain — the caller then attempts resume exactly as before.
+    """
+    rid = str(resume_id or "").strip()
+    if not rid or not re.fullmatch(r"[0-9A-Za-z-]{8,64}", rid):
+        return None
+    try:
+        root = _cursor_transcript_root()
+        if root is None or not root.is_dir():
+            return None
+        if any(p.is_dir() for p in root.glob(f"*/agent-transcripts/{rid}")):
+            return None
+    except Exception:
+        return None
+    try:
+        clear_cursor_resume_id(cwd, cuttle_session_id)
+    except Exception:
+        pass
+    return (
+        "The previous Cursor Agent session for this chat was not found on "
+        "this host, so this turn started a fresh session."
+    )
+
+
 def append_cursor_run_meta(
     cwd: str,
     cuttle_session_id: Optional[str],

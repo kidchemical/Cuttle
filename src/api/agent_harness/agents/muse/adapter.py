@@ -360,6 +360,21 @@ class Adapter:
             # historic session/starred pins mean "no pin" (omit the flag).
             effort, effort_source = None, SOURCE_NONE
 
+        # A resume UUID with no session log behind it (sandbox cutover, repo
+        # move, CLI pruning) would fail the turn instead of resuming. Drop
+        # the dead binding first so this turn starts fresh with a notice.
+        fresh_notice: Optional[str] = None
+        if resume:
+            try:
+                from scripts.utilities.muse_cli_session_store import (
+                    pop_dead_muse_resume,
+                )
+
+                fresh_notice = pop_dead_muse_resume(cwd, chat_session_id, resume)
+                if fresh_notice:
+                    resume = None
+            except Exception:
+                fresh_notice = None
         # MuseCliTool owns Cursor-style activity + silent heartbeat. Do not also
         # run a coarse adapter heartbeat (stomps tool/thinking lines).
         put_status(status_queue, "Calling Muse Code…")
@@ -507,6 +522,9 @@ class Adapter:
             display = (raw.get("output") or "").strip()
         else:
             display = (raw.get("output") or "").strip() or (err or "")
+        if fresh_notice:
+            suffix = f"_{fresh_notice}_"
+            display = f"{display}\n\n{suffix}" if display else suffix
         return AgentResult(
             success=ok,
             output=display,

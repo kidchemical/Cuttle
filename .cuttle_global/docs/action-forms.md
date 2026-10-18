@@ -268,6 +268,9 @@ Flask-restart controller with a shared id `flask-restart-g{generation}` (daemon
 Flask generation). Cards in every open chat stay linked until Flask actually
 restarts; then the generation bumps and the next batch of cards gets a new id.
 Clicking Graceful/When-idle/Force on one card settles the others.
+Durable dispatch receipts additionally include the Flask PID and creation time:
+generation counters reset on a cold daemon boot, so generation alone cannot
+identify a restart request across daemon lifetimes.
 
 **Do not soft-dismiss restart cards:** sending a follow-up chat message collapses
 ordinary one-shot forms as “Ignored”. Flask restart controllers are exempt —

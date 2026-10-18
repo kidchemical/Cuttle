@@ -83,11 +83,15 @@ def transcribe(
     if re.fullmatch(r"[a-z]{2}", lang):
         kwargs["language"] = lang
     last_error: Optional[Exception] = None
+    from api import voice_usage
+
     for model in (DEFAULT_MODEL, FALLBACK_MODEL):
+        seconds = (duration_ms / 1000.0) if duration_ms else None
+        cost = voice_usage.estimate_transcription_cost_usd(model, seconds=seconds)
         try:
             result = provider_transcribe("openai", TranscriptionRequest(audio, model,
                         filename=f"phrase.{file_extension(mime)}", mime=mime or "audio/webm", **kwargs),
-                        usage_task="stt")
+                        usage_task="stt", usage_cost=cost)
         except Exception as exc:  # model unavailable on this key → try the fallback
             last_error = exc
             continue

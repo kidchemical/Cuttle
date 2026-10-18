@@ -66,6 +66,11 @@ class NotARepositoryError(GitError):
     """``cwd`` is not inside a Git work tree (status route answers 400)."""
 
 
+def approve_push_finding(cwd, finding, reason):
+    from core.git_push_diagnostics import approve_scanner_exception
+    return approve_scanner_exception(cwd, finding, reason)
+
+
 def _run(args: List[str], cwd: str) -> subprocess.CompletedProcess:
     if git_run is not None:
         return git_run(list(args), cwd, timeout=None)

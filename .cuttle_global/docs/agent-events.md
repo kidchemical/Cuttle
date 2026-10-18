@@ -9,6 +9,11 @@ own vendor shapes; the event owner owns persistence, snapshots and retention.
   legacy JSON files in `<home>/logs/queries/`. Old truncation cannot be recovered from those files.
 - Apps → Agent Feed: enable **Agent Feed** in Settings → Experimental for live
   SSE. Shows this server's agents; remote-worker aggregation is deferred.
+  Capture records carry a PID and process creation time. The writer replays
+  pending finishes, then marks runs owned by exited processes **interrupted**
+  (outcome unknown). On upgrade, unfinished legacy web runs from before the
+  current process boot are recovered the same way. Recovery never uses an age
+  limit or kills an agent process.
 - Settings → Data → Databases: sizes for known stores, plus agent-events policy,
   prune, vacuum and typed-confirm reset. Other stores currently expose sizes;
   their owning subsystems retain their existing maintenance interfaces.

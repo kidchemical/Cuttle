@@ -1,6 +1,7 @@
-/* Shell Electron chrome: frameless window titlebar (window controls, update
- * and worker chips, restart modal, fullscreen auto-hide), the chat-find
- * shortcut bridge, and the Ctrl+wheel / Ctrl+/- zoom HUD.
+/* Shell Electron chrome: frameless window titlebar (window controls, worker
+ * chip, fullscreen auto-hide), the chat-find shortcut bridge, and the
+ * Ctrl+wheel / Ctrl+/- zoom HUD. The titlebar Update button and its modal are
+ * owned by shell_updates.js; this file reports device state to it.
  *
  * Owned here. app_shell.js loads after this file, forwards zoom postMessages
  * through ``CuttleShellElectron.handleZoomMessage``, calls
@@ -107,86 +108,19 @@
         };
         desktopCfg = { clientMode: false, host: '127.0.0.1' };
         applyHostChip(desktopCfg);
-        // Two update channels share one titlebar button:
-        //  - asar: packaged Client shell hash vs host /api/desktop/electron
-        //  - mesh: this machine's cuttle_version vs host_cuttle_version (8s workers poll)
-        let asarUpdateAvailable = false;
-        let meshUpdate = { available: false, target: '', localVersion: '', hostVersion: '', localRev: '', hostRev: '' };
-
-        const isRemoteClient = () => {
-            if (typeof cuttleIsRemoteDesktopClient === 'function') {
-                return !!cuttleIsRemoteDesktopClient(desktopCfg);
-            }
-            return !!(desktopCfg && desktopCfg.clientMode);
+        // The titlebar Update button belongs to the update center
+        // (shell_updates.js): this file only reports device state to it —
+        // desktop config, the packaged-shell (asar) offer and the mesh rev.
+        const updates = root.cuttleShellUpdates || null;
+        if (updates) updates.bindTitlebar(updateBtn, updateChip);
+        else if (updateBtn) updateBtn.hidden = true;
+        const NO_MESH_UPDATE = { available: false, target: '', localVersion: '', hostVersion: '', localRev: '', hostRev: '' };
+        let meshUpdate = { ...NO_MESH_UPDATE };
+        const reportUpdateState = () => {
+            if (updates) updates.setDesktopState({ cfg: desktopCfg, mesh: meshUpdate });
         };
-
-        // Configured update channel for this device: 'host' (follow the paired
-        // Host) or 'official' (follow upstream / release). A thin Client defaults
-        // to its Host; a local install defaults to upstream.
-        const configuredUpdateSource = () => {
-            const s = String((desktopCfg && desktopCfg.updateSource) || '').toLowerCase();
-            if (s === 'host' || s === 'official') return s;
-            return isRemoteClient() ? 'host' : 'official';
-        };
-
-        const refreshUpdateBtn = () => {
-            if (!updateBtn) return;
-            const asarOn = asarUpdateAvailable && isRemoteClient();
-            const meshOn = !!meshUpdate.available;
-            // Mesh (git) wins over asar when both are offered — same as click handler.
-            const preferMesh = meshOn;
-            const on = asarOn || meshOn;
-            updateBtn.hidden = !on;
-            updateBtn.classList.toggle('is-mesh-update', preferMesh);
-            updateBtn.classList.toggle('is-asar-update', asarOn && !preferMesh);
-            if (!on) {
-                updateBtn.classList.remove('is-busy');
-                if (updateChip) { updateChip.hidden = true; updateChip.textContent = ''; }
-                return;
-            }
-            updateBtn.classList.remove('is-busy');
-            const label = updateBtn.querySelector('.shell-win-update-label');
-            if (label) label.textContent = 'Update';
-            // Channel chip: always show which channel the (single) button updates.
-            const decision = (typeof cuttleUpdateChannels === 'function')
-                ? cuttleUpdateChannels({
-                    configuredSource: configuredUpdateSource(),
-                    host: { available: meshOn },
-                    official: { available: false },
-                })
-                : null;
-            const activeChannel = decision && decision.buttons[0] ? decision.buttons[0].source : '';
-            meshUpdate.channel = activeChannel;
-            if (updateChip) {
-                if (activeChannel) {
-                    updateChip.hidden = false;
-                    updateChip.textContent = activeChannel === 'host' ? 'HOST' : 'OFFICIAL';
-                    updateChip.dataset.source = activeChannel;
-                } else {
-                    updateChip.hidden = true;
-                    updateChip.textContent = '';
-                }
-            }
-            if (preferMesh) {
-                const local = meshUpdate.localVersion || '?';
-                const host = meshUpdate.hostVersion || '?';
-                if (meshUpdate.wrongBranch) {
-                    updateBtn.title = `Wrong branch — on ${meshUpdate.branch || '?'}, host is on ${meshUpdate.hostBranch || '?'}. `
-                        + 'Update cannot fast-forward across branches; switch this device to the host branch.';
-                    updateBtn.setAttribute('aria-label', `Wrong branch: ${meshUpdate.branch || '?'} vs host ${meshUpdate.hostBranch || '?'}`);
-                } else {
-                    updateBtn.title = `Update available — ${local} → ${host} (git pull + restart)`;
-                    updateBtn.setAttribute('aria-label', `Update Cuttle from ${local} to ${host}`);
-                }
-            } else {
-                updateBtn.title = 'Update Cuttle desktop shell (download from host)';
-                updateBtn.setAttribute('aria-label', 'Update Cuttle desktop shell');
-            }
-        };
-
         const applyAsarUpdateBtn = (payload) => {
-            asarUpdateAvailable = !!(payload && payload.available);
-            refreshUpdateBtn();
+            if (updates) updates.setDesktopState({ asarAvailable: !!(payload && payload.available) });
         };
         // Tell Jobs iframe who "you" are (iframe has no preload).
         const postViewerIdentity = (cfg) => {
@@ -231,6 +165,7 @@
             // still prefers its local shell version (update button compares hashes).
             const isClient = !!(desktopCfg && desktopCfg.clientMode);
             applyTitleVersion(isClient ? (fromCfg || fromApi) : (fromApi || fromCfg));
+            reportUpdateState();
             applyAsarUpdateBtn(status);
             // Seed identity for Jobs iframe (no preload there) — fixes Client "you" = host.
             try {
@@ -353,7 +288,7 @@
                 branch: String((me && me.git_branch) || '').trim(),
                 hostBranch,
             };
-            refreshUpdateBtn();
+            reportUpdateState();
         };
 
         const refreshWorkersChip = async () => {
@@ -362,15 +297,15 @@
                 const r = await fetch('/api/workers', { cache: 'no-store' });
                 if (!r.ok) {
                     applyWorkersChip(0, 0);
-                    meshUpdate = { available: false, target: '', localVersion: '', hostVersion: '', localRev: '', hostRev: '' };
-                    refreshUpdateBtn();
+                    meshUpdate = { ...NO_MESH_UPDATE };
+                    reportUpdateState();
                     return;
                 }
                 const data = await r.json();
                 if (!data || data.enabled === false) {
                     applyWorkersChip(0, 0);
-                    meshUpdate = { available: false, target: '', localVersion: '', hostVersion: '', localRev: '', hostRev: '' };
-                    refreshUpdateBtn();
+                    meshUpdate = { ...NO_MESH_UPDATE };
+                    reportUpdateState();
                     return;
                 }
                 applyMeshUpdateFromWorkers(data);
@@ -388,8 +323,8 @@
                 applyWorkersChip(online, remote.length);
             } catch (_) {
                 applyWorkersChip(0, 0);
-                meshUpdate = { available: false, target: '', localVersion: '', hostVersion: '', localRev: '', hostRev: '' };
-                refreshUpdateBtn();
+                meshUpdate = { ...NO_MESH_UPDATE };
+                reportUpdateState();
             }
         };
 
@@ -402,187 +337,6 @@
         // Polled by the shell heartbeat (not a separate setInterval).
         window.__cuttleShellPollWorkers = refreshWorkersChip;
         refreshWorkersChip();
-
-        updateBtn?.addEventListener('click', async () => {
-            const label = updateBtn.querySelector('.shell-win-update-label');
-            const asarOn = asarUpdateAvailable && isRemoteClient();
-            const meshOn = !!meshUpdate.available && !!meshUpdate.target;
-            // Prefer mesh (git pull + relaunch) when the Client is behind on the
-            // repo. ASAR-only replaces the packaged shell and used to win the
-            // click even when the real intent was mesh — then quit without pull.
-            if (!meshOn && asarOn && typeof api.desktop?.applyUpdate === 'function') {
-                updateBtn.classList.add('is-busy');
-                if (label) label.textContent = 'Updating…';
-                try {
-                    const result = await api.desktop.applyUpdate();
-                    if (!result || !result.ok) {
-                        updateBtn.classList.remove('is-busy');
-                        if (label) label.textContent = 'Update';
-                        if (window.showToast) window.showToast(result?.error || 'Desktop update failed', 'error');
-                    }
-                } catch (err) {
-                    updateBtn.classList.remove('is-busy');
-                    if (label) label.textContent = 'Update';
-                    if (window.showToast) window.showToast(err.message || String(err), 'error');
-                }
-                return;
-            }
-
-            if (!meshOn) return;
-            updateBtn.classList.add('is-busy');
-            if (label) label.textContent = 'Updating…';
-            const isClient = !!(desktopCfg && desktopCfg.clientMode);
-            try {
-                const r = await fetch('/api/workers/self-update', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        target: meshUpdate.target,
-                        submitted_by: 'titlebar',
-                        // Channel: follow the paired Host's working tree, or upstream.
-                        update_source: meshUpdate.channel || configuredUpdateSource(),
-                        // A titlebar click is interactive: pull now, but ask before
-                        // restarting (programmatic host→worker updates still auto-restart).
-                        defer_restart: true,
-                        // Host Electron refresh should not kill cuttle_daemon.
-                        no_daemon: !isClient,
-                    }),
-                });
-                const data = await r.json().catch(() => ({}));
-                if (!r.ok || !data.success) {
-                    throw new Error(data.error || (`HTTP ${r.status}`));
-                }
-                const jobId = String(
-                    (data.job && (data.job.id || data.job.job_id))
-                    || data.job_id
-                    || ''
-                ).trim();
-                if (label) label.textContent = 'Pulling…';
-                if (window.showToast) {
-                    window.showToast(
-                        `Updating ${meshUpdate.target} (${meshUpdate.localVersion} → ${meshUpdate.hostVersion})…`,
-                        'info'
-                    );
-                }
-                // Wait for stash+pull to finish so dirty-tree / ff failures are not silent.
-                let final = data.job || null;
-                if (jobId) {
-                    const deadline = Date.now() + 180000;
-                    while (Date.now() < deadline) {
-                        await new Promise((res) => setTimeout(res, 1500));
-                        try {
-                            const sr = await fetch(`/api/workers/jobs/${encodeURIComponent(jobId)}`, {
-                                cache: 'no-store',
-                            });
-                            const sj = await sr.json().catch(() => ({}));
-                            final = (sj && (sj.job || sj)) || final;
-                            const st = String((final && final.status) || '').toLowerCase();
-                            if (st === 'succeeded' || st === 'failed' || st === 'cancelled') break;
-                            if (label && st === 'running') label.textContent = 'Pulling…';
-                        } catch (_) { /* keep waiting */ }
-                    }
-                }
-                const st = String((final && final.status) || '').toLowerCase();
-                if (st === 'failed' || st === 'cancelled') {
-                    const err = String(
-                        (final && (final.error || (final.result && final.result.error)))
-                        || 'Self-update failed'
-                    );
-                    throw new Error(err);
-                }
-                if (st && st !== 'succeeded') {
-                    throw new Error(`Self-update timed out (status=${st || 'unknown'})`);
-                }
-                if (label) label.textContent = 'Restarting…';
-                // Job success only means the updater was scheduled. Confirm the
-                // worker actually advanced (or toast a clear failure).
-                const beforeVer = String(meshUpdate.localVersion || '');
-                const expectHost = String(meshUpdate.hostVersion || '');
-                let advanced = false;
-                const verifyDeadline = Date.now() + 90000;
-                while (Date.now() < verifyDeadline) {
-                    await new Promise((res) => setTimeout(res, 2500));
-                    try {
-                        await refreshWorkersChip();
-                    } catch (_) {}
-                    const nowVer = String(meshUpdate.localVersion || '');
-                    const stillNeeds = !!meshUpdate.available;
-                    if (nowVer && nowVer !== beforeVer) {
-                        advanced = true;
-                        break;
-                    }
-                    // Host/client versions match and Update cleared.
-                    if (!stillNeeds && expectHost && nowVer && nowVer === expectHost) {
-                        advanced = true;
-                        break;
-                    }
-                    if (!stillNeeds && nowVer && beforeVer && nowVer !== beforeVer) {
-                        advanced = true;
-                        break;
-                    }
-                }
-                if (!advanced) {
-                    throw new Error(
-                        'Update scheduled but this device is still on '
-                        + (meshUpdate.localVersion || beforeVer || '?')
-                        + '. Check Desktop\\cuttle-self-update-last.log on that machine.'
-                    );
-                }
-                // The checkout is current — ask before restarting (titlebar clicks
-                // defer the restart; see defer_restart above).
-                updateBtn.classList.remove('is-busy');
-                if (label) label.textContent = 'Update';
-                refreshUpdateBtn();
-                showRestartModal(meshUpdate.localVersion || expectHost);
-            } catch (err) {
-                updateBtn.classList.remove('is-busy');
-                if (label) label.textContent = 'Update';
-                if (window.showToast) window.showToast(err.message || String(err), 'error');
-            }
-        });
-
-        // "Update ready" modal: restart the app now, or keep working.
-        const restartModal = document.getElementById('cuttleRestartModal');
-        const restartPopup = restartModal && window.CuttleModal
-            ? window.CuttleModal.create(restartModal) : null;
-        const showRestartModal = (version) => {
-            if (!restartModal) return;
-            const v = restartModal.querySelector('[data-restart-version]');
-            if (v) v.textContent = String(version || 'the latest');
-            if (restartPopup) restartPopup.open();
-            else { restartModal.hidden = false; restartModal.classList.add('active'); }
-        };
-        const hideRestartModal = () => {
-            if (!restartModal) return;
-            if (restartPopup) restartPopup.close();
-            else { restartModal.classList.remove('active'); restartModal.hidden = true; }
-        };
-        if (restartModal) {
-            restartModal.querySelector('[data-restart-now]')?.addEventListener('click', async () => {
-                hideRestartModal();
-                if (api.desktop && typeof api.desktop.relaunchApp === 'function') {
-                    api.desktop.relaunchApp();
-                    return;
-                }
-                // Older Electron without the relaunch IPC: ask the mesh updater to
-                // restart (the pull is a no-op, but it stops/relaunches the client).
-                try {
-                    await fetch('/api/workers/self-update', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            target: meshUpdate.target,
-                            submitted_by: 'titlebar-restart',
-                            update_source: meshUpdate.channel || configuredUpdateSource(),
-                            no_daemon: !isClient,
-                        }),
-                    });
-                } catch (_) {
-                    window.location.reload();
-                }
-            });
-            restartModal.querySelector('[data-restart-later]')?.addEventListener('click', hideRestartModal);
-        }
 
         // Fullscreen: titlebar overlays and auto-hides; a top-edge hotzone reveals it.
         // Iframes swallow mousemove, so a dedicated strip is required.
@@ -746,6 +500,40 @@
     let _zoomWheelIdleTimer = null;
     let _zoomLastStepAt = 0;
 
+    // Renderer zoom lives in ``webFrame`` only, so it does not survive a shell
+    // reload on its own. Persist the ladder value per shell origin and re-apply
+    // it on startup so a refresh does not snap back to 100%.
+    const ZOOM_STORAGE_KEY = 'cuttle.shell.zoomPercent';
+
+    function readPersistedZoomPercent() {
+        try {
+            const raw = window.localStorage?.getItem(ZOOM_STORAGE_KEY);
+            if (raw == null) return null;
+            const n = Number(raw);
+            return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function persistZoomPercent(pct) {
+        try {
+            const n = Number(pct);
+            if (Number.isFinite(n) && n > 0) {
+                window.localStorage?.setItem(ZOOM_STORAGE_KEY, String(Math.round(n)));
+            }
+        } catch (_) {}
+    }
+
+    function restorePersistedZoom() {
+        if (typeof window.electron?.setZoomPercent !== 'function') return;
+        const stored = readPersistedZoomPercent();
+        if (stored == null || stored === 100) return;
+        try {
+            window.electron.setZoomPercent(stored);
+        } catch (_) {}
+    }
+
     /** Chromium-ish: one zoom step per ~100px of wheel delta (pixel mode). */
     const ZOOM_WHEEL_THRESHOLD = 100;
     /** Ignore opposite-direction jitter while actively zooming one way. */
@@ -809,7 +597,9 @@
                 pct = window.electron.resetZoom();
             }
         } catch (_) {}
-        showZoomHud(pct != null ? pct : readZoomPercent());
+        const resolved = pct != null ? pct : readZoomPercent();
+        persistZoomPercent(resolved);
+        showZoomHud(resolved);
     }
 
     /**
@@ -856,6 +646,10 @@
     function setupShellZoomHud() {
         if (document.documentElement.dataset.cuttleZoomHud === '1') return;
         document.documentElement.dataset.cuttleZoomHud = '1';
+
+        // Re-apply the zoom chosen before the last reload (webFrame zoom is
+        // frame-scoped and would otherwise reset to 100%).
+        restorePersistedZoom();
 
         document.addEventListener('wheel', (e) => {
             if (!(e.ctrlKey || e.metaKey)) return;

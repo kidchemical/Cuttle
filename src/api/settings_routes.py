@@ -41,6 +41,12 @@ except ImportError:
 # backend, its validator, and its auth. Add rows here, not new modules.
 # backend: "settings-manager" | named helper module.
 SETTING_FAMILIES = (
+    {"name": "chat-prompts", "routes": ["GET/POST /settings/chat-prompts"],
+     "backend": "api.chat_preferences", "validator": "save_prompts",
+     "read": "authenticated", "write": "owner"},
+    {"name": "response-postprocessing", "routes": ["GET/POST /settings/response-postprocessing", "GET /settings/response-postprocessing/<kind>/<target>/models"],
+     "backend": "api.chat_preferences", "validator": "save_processor",
+     "read": "authenticated", "write": "owner"},
     {"name": "storage", "routes": ["GET /settings/storage", "POST /settings/storage/<id>", "POST /settings/storage/<id>/<operation>"],
      "backend": "api.storage.service + api.agent_events.service", "validator": "api.storage.service.validate",
      "read": "owner", "write": "owner"},
@@ -82,8 +88,11 @@ SETTING_FAMILIES = (
     {"name": "releases", "routes": ["GET /settings/releases"],
      "backend": "api.releases (read-only, process cache)",
      "validator": "normalize_release", "read": "authenticated", "write": "n/a"},
+    {"name": "updates", "routes": ["GET /settings/updates", "POST /settings/updates/check", "POST /settings/developer-mode"],
+     "backend": "api.updates (install kind, Developer mode key 'updates', checkout status over api.releases)",
+     "validator": "set_developer_mode", "read": "owner", "write": "owner"},
     {"name": "agent-adapters", "routes": ["GET/POST /settings/agent-adapters"],
-     "backend": "api.agent_harness.steer (key 'agent_steer') + catalog (key 'agent_harness'); "
+     "backend": "api.agent_harness.cli_paths (key 'agent_cli_paths') + steer (key 'agent_steer') + catalog (key 'agent_harness'); "
                 "model/effort defaults read here, written via POST /agent-defaults/<id>",
      "validator": "validate_agent_adapters_update", "read": "authenticated", "write": "owner"},
     {"name": "timeouts", "routes": ["GET/POST /settings/timeouts"],
@@ -96,6 +105,28 @@ SETTING_FAMILIES = (
 
 
 # --- validators (owned here) ---------------------------------------------
+
+@settings_bp.route('/settings/voice-chat', methods=['GET'])
+@authenticated_required
+def voice_chat_settings():
+    from api.voice_live.settings import catalog
+    return jsonify(success=True, **catalog())
+
+
+@settings_bp.route('/settings/voice-chat', methods=['POST'])
+@owner_required
+def update_voice_chat_settings():
+    from api.voice_live.settings import catalog, save
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify(success=False, error='Expected JSON object.'), 400
+    try:
+        save(body.get('voice_chat') if isinstance(body.get('voice_chat'), dict) else body)
+        return jsonify(success=True, **catalog())
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except RuntimeError as exc:
+        return jsonify(success=False, error=str(exc)), 500
 
 def validate_channel_update(data: dict) -> tuple[bool, str]:
     """Channel writes accept only the live channels."""
@@ -199,12 +230,18 @@ def validate_completion_providers_update(data: dict) -> tuple[bool, str, dict]:
 
 
 def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
-    """Validate per-adapter steering, subagent defaults and drop-in opt-in."""
+    """Validate executable paths, steering, subagent defaults and drop-in opt-in."""
     from api.agent_harness.steer import STEERABLE_AGENTS
 
     if not isinstance(data, dict):
         return False, 'Body must be a JSON object', {}
     clean: dict = {}
+    if 'cli_paths' in data:
+        from api.agent_harness.cli_paths import validate_cli_paths
+        try:
+            clean['cli_paths'] = validate_cli_paths(data['cli_paths'])
+        except ValueError as exc:
+            return False, str(exc), {}
     steer = data.get('steer')
     if steer is not None:
         if not isinstance(steer, dict) or not steer:
@@ -608,9 +645,41 @@ def update_update_source_setting():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# --- update channels (backend: api.updates) ----------------------------------
+
+@settings_bp.route('/settings/updates', methods=['GET'])
+@owner_required
+def get_update_channels():
+    """Install kind, Developer mode and channel status as of the last fetch."""
+    from api.updates import snapshot
+    return jsonify(snapshot(include_release=request.args.get('release') != '0'))
+
+
+@settings_bp.route('/settings/updates/check', methods=['POST'])
+@owner_required
+def check_update_channels():
+    """Explicit check: refresh published releases and fetch the upstream."""
+    from api.updates import snapshot
+    return jsonify(snapshot(check=True))
+
+
+@settings_bp.route('/settings/developer-mode', methods=['POST'])
+@owner_required
+def update_developer_mode():
+    """Body: { enabled: bool }. Source checkouts only."""
+    from api.updates import set_developer_mode
+    try:
+        mode = set_developer_mode((request.get_json(silent=True) or {}).get('enabled'))
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    return jsonify({'success': True, 'developer_mode': mode})
+
+
 # --- agent adapters (backends: agent_harness.steer / catalog / agent_defaults)
 
 def _agent_adapters_payload() -> dict:
+    from api.chat_preferences import prompts
+    from api.agent_harness.cli_paths import describe_cli_paths
     from api.agent_harness.agent_defaults import get_starred_effort, get_starred_model
     from api.agent_harness.catalog import (
         list_agents,
@@ -622,11 +691,13 @@ def _agent_adapters_payload() -> dict:
 
     return {
         'success': True,
+        'system_prompts': prompts(),
         'defaults': {
             aid: {'model': get_starred_model(aid) or '', 'effort': get_starred_effort(aid) or ''}
             for aid in list_agents()
         },
         'steer': steer_settings(),
+        'cli_paths': describe_cli_paths(),
         'subagents': get_settings_manager().get_setting('agent_subagent_defaults') or {},
         'steer_env_disabled': steer_env_disabled(),
         'allow_project_adapters': project_adapters_setting(),
@@ -637,7 +708,7 @@ def _agent_adapters_payload() -> dict:
 @settings_bp.route('/settings/agent-adapters', methods=['GET'])
 @authenticated_required
 def get_agent_adapters_setting():
-    """Per-agent adapter config: starred model/effort, steering, drop-in opt-in."""
+    """Per-agent executable paths, starred defaults, steering and drop-in opt-in."""
     try:
         return jsonify(_agent_adapters_payload())
     except Exception as e:
@@ -647,15 +718,18 @@ def get_agent_adapters_setting():
 @settings_bp.route('/settings/agent-adapters', methods=['POST'])
 @owner_required
 def update_agent_adapters_setting():
-    """Body: ``{steer?: {agent: bool}, allow_project_adapters?: bool}``."""
+    """Body: optional cli_paths, steer, subagents and allow_project_adapters patches."""
     try:
         ok, message, clean = validate_agent_adapters_update(request.get_json(silent=True))
         if not ok:
             return jsonify({'success': False, 'error': message}), 400
         from api.agent_harness.catalog import set_project_adapters_allowed
         from api.agent_harness.steer import set_steer_enabled
+        from api.agent_harness.cli_paths import save_cli_paths
         from managers.settings_manager import get_settings_manager
 
+        if 'cli_paths' in clean:
+            save_cli_paths(clean['cli_paths'])
         for agent, value in (clean.get('steer') or {}).items():
             if not set_steer_enabled(agent, value):
                 return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
@@ -670,6 +744,53 @@ def update_agent_adapters_setting():
         return jsonify(_agent_adapters_payload())
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# --- user prompt and final-response preferences ---------------------------
+@settings_bp.route('/settings/chat-prompts', methods=['GET'])
+@authenticated_required
+def get_chat_prompts():
+    from api.chat_preferences import prompts
+    return jsonify(success=True, prompts=prompts())
+
+
+@settings_bp.route('/settings/chat-prompts', methods=['POST'])
+@owner_required
+def set_chat_prompts():
+    from api.chat_preferences import prompts, save_prompts
+    try:
+        if not save_prompts(request.get_json(silent=True)):
+            return jsonify(success=False, error='Unable to save prompts'), 500
+        return jsonify(success=True, prompts=prompts())
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+
+
+def _response_processor_payload():
+    from api.chat_preferences import processor_preferences
+    from api.experimental import is_enabled
+    from api.background_helpers import targets
+    available = is_enabled('response_postprocessing')
+    return dict(success=True, preferences=processor_preferences(), available=available,
+                targets=targets() if available else [])
+
+
+@settings_bp.route('/settings/response-postprocessing', methods=['GET'])
+@authenticated_required
+def get_response_processor():
+    return jsonify(_response_processor_payload())
+
+
+@settings_bp.route('/settings/response-postprocessing', methods=['POST'])
+@owner_required
+def set_response_processor():
+    from api.chat_preferences import save_processor
+    try:
+        if not save_processor(request.get_json(silent=True)):
+            return jsonify(success=False, error='Unable to save post-processing'), 500
+        return jsonify(_response_processor_payload())
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
 
 
 # --- background text execution (API / restricted installed CLI) -----------
@@ -692,9 +813,22 @@ def set_background_helpers():
         return jsonify(success=False, error=str(exc)), 400
 
 
+@settings_bp.route('/settings/response-postprocessing/<kind>/<target>/models', methods=['GET'])
+@owner_required
+def response_processor_models(kind, target):
+    from api.experimental import is_enabled
+    if not is_enabled('response_postprocessing'):
+        return jsonify(success=False, disabled=True), 403
+    return _executor_models(kind, target)
+
+
 @settings_bp.route('/settings/background-helpers/<kind>/<target>/models', methods=['GET'])
 @owner_required
 def background_helper_models(kind, target):
+    return _executor_models(kind, target)
+
+
+def _executor_models(kind, target):
     from api.background_helpers import discover
     from api.model_providers.cache import public_error
     try:

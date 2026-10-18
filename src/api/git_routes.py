@@ -1195,6 +1195,34 @@ def git_pull():
             'error': str(e)
         }), 500
 
+@git_bp.route('/git/push-exceptions', methods=['POST'])
+@owner_required
+def git_push_exception():
+    """Allow one explicitly reviewed source finding in a registered repository."""
+    from api.git_service import approve_push_finding
+    from scripts.utilities.git_pending_changes import resolve_allowed_repo_root
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(success=False, error='Expected a JSON object'), 400
+    try:
+        path, repo_root = data.get('path'), data.get('repo_root')
+        if any(value is not None and not isinstance(value, str) for value in (path, repo_root)):
+            raise ValueError('Invalid project or repository path')
+        pid = data.get('project_id')
+        pid = int(pid) if pid not in (None, '') else None
+        cwd, error = _resolve_optional_repo_cwd(path, pid)
+        if error or not cwd:
+            raise ValueError(error or 'No project')
+        cwd = resolve_allowed_repo_root(cwd, repo_root)
+        result = approve_push_finding(cwd, data.get('finding'), data.get('reason'))
+        return jsonify(success=True, **result)
+    except (ValueError, TypeError) as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except OSError:
+        return jsonify(success=False, error='Could not save the scanner exception policy'), 500
+
+
 @git_bp.route('/git/push', methods=['POST'])
 @owner_required
 def git_push():
@@ -1373,4 +1401,3 @@ def git_branch():
             'success': False,
             'error': str(e)
         }), 500
-

@@ -10,7 +10,7 @@
 python-dotenv>=1.2.4
 
 # AI and LLM functionality (llm_complete, vision_prepass, chat_tts)
-openai>=3.24.0
+openai[realtime]>=3.26.0
 anthropic>=1.11.0
 
 # Image and PDF handling (chat attachment pipeline via vision_prepass)

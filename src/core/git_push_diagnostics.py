@@ -1,15 +1,19 @@
 """Redacted pre-push findings and transport-independent failure reports."""
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
 REPORT_PREFIX = 'CUTTLE_PUSH_REPORT='
+_exception_lock = threading.Lock()
 
 
 def finding(hook, rule, commit='', file='', line=None, **details):
@@ -124,7 +128,6 @@ def apply_scanner_exceptions(findings, policy_path):
     Changing a commit, blob, line, rule, or scanner invalidates the exception.
     The committed source is verified rather than trusting scanner previews.
     """
-    import hashlib
     policy = json.loads(Path(policy_path).read_text(encoding="utf-8"))
     if not isinstance(policy, dict) or policy.get('version') != 1 or not isinstance(policy.get('exceptions'), list):
         raise ValueError('Invalid scanner exception policy')
@@ -164,6 +167,61 @@ def apply_scanner_exceptions(findings, policy_path):
                 break
         (approved if allowed else retained).append(hit)
     return retained, approved
+
+
+def approve_scanner_exception(cwd, hit, reason):
+    """Record an owner-reviewed finding against verified committed source.
+
+    The project policy is tracked configuration. Never accept client-provided
+    digests or widen an exception to an entire file, rule, or scanner.
+    """
+    if not isinstance(hit, dict) or hit.get('hook') not in ('secret-patterns', 'gitleaks'):
+        raise ValueError('Only source scanner findings can be allowed; path and database checks cannot')
+    commit, file, line = hit.get('commit'), hit.get('file'), hit.get('line')
+    end = hit.get('end_line') if hit.get('end_line') is not None else line
+    rule = hit.get('rule')
+    if (not isinstance(commit, str) or not re.fullmatch(r'[0-9a-f]{40}', commit) or
+        not isinstance(file, str) or not file or '\x00' in file or
+        Path(file).is_absolute() or '..' in Path(file).parts or
+        type(line) is not int or line < 1 or type(end) is not int or end < line or
+        not isinstance(rule, str) or not rule.strip() or len(rule) > 200):
+        raise ValueError('The finding must identify an exact commit, file, line range, scanner and rule')
+    if not isinstance(reason, str) or not 3 <= len(reason.strip()) <= 1000:
+        raise ValueError('Enter a review reason between 3 and 1000 characters')
+    repo = Path(cwd).resolve()
+    policy_path = repo / '.cuttle/scripts/git-hooks/scanner-exceptions.json'
+    if not policy_path.is_file() or not policy_path.resolve().is_relative_to(repo):
+        raise ValueError('This repository has no supported scanner exception policy')
+    try:
+        subprocess.run(['git', 'merge-base', '--is-ancestor', commit, 'HEAD'], cwd=repo,
+                       capture_output=True, check=True, timeout=10)
+        spec = commit + ':' + file
+        blob = subprocess.check_output(['git', 'rev-parse', spec], cwd=repo, timeout=10, text=True).strip()
+        source = subprocess.check_output(['git', 'show', spec], cwd=repo, timeout=10).splitlines()
+        if end > len(source):
+            raise ValueError('The finding line range is outside the committed file')
+        entry = dict(commit=commit, file=file, blob=blob, line=line,
+                     line_sha256=hashlib.sha256(source[line - 1]).hexdigest(),
+                     checks={hit['hook']: rule}, end_lines={hit['hook']: end}, reason=reason.strip())
+    except subprocess.SubprocessError:
+        raise ValueError('The flagged source could not be verified in this branch') from None
+    with _exception_lock:
+        # Validate existing policy through the same owner used by the hook.
+        apply_scanner_exceptions([], policy_path)
+        policy = json.loads(policy_path.read_text(encoding='utf-8'))
+        if entry not in policy['exceptions']:
+            policy['exceptions'].append(entry)
+            fd, name = tempfile.mkstemp(prefix='.scanner-exceptions-', dir=policy_path.parent)
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                    json.dump(policy, stream, indent=2)
+                    stream.write('\n')
+                os.chmod(name, policy_path.stat().st_mode & 0o777)
+                os.replace(name, policy_path)
+            finally:
+                Path(name).unlink(missing_ok=True)
+    return {'policy_file': '.cuttle/scripts/git-hooks/scanner-exceptions.json'}
+
 
 def push_failure(stdout, stderr):
     """Prefer the hook's structured reason over Git's generic stderr footer."""

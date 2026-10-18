@@ -58,7 +58,12 @@ CEILINGS = {
     # api.shared_media, api.mobile_companion, agent_router.supervised,
     # agent_harness, agents/<id>/routes.py and settings/providers owners;
     # chat_endpoint lanes moved to api.chat_turn_workflow / api.chat_coordinator.
-    "src/api/web_chat_api.py": 5106,
+    # 2026-10-15: CLI health probe delegates to its executable owner so saved
+    # wrappers also govern diagnostic launches.
+    # 2026-10-18: allow headroom for explicit feature blueprint registrations.
+    # Domain logic still belongs in owned modules; do not compress registration
+    # code merely to fit the ceiling.
+    "src/api/web_chat_api.py": 5200,
 }
 NET_GROWTH_LIMIT = 150
 TRAILER = "Composition-Root-Growth:"

@@ -263,6 +263,7 @@
             const ext = /wav/.test(type) ? 'wav' : (/mp4/.test(type) ? 'mp4' : (/ogg/.test(type) ? 'ogg' : 'webm'));
             form.append('audio', clip.blob, 'phrase.' + ext);
             form.append('duration_ms', String(clip.durationMs));
+            if (host.sessionId?.()) form.append('session_id', String(host.sessionId()));
             form.append('language', (root.navigator && root.navigator.language) || '');
             if (context) form.append('prompt', context);
             const r = await host.fetch('/api/voice-stt/transcribe', {

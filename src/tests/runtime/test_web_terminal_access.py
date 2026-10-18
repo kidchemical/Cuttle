@@ -146,3 +146,37 @@ def test_destroy_session_removes_registry_entry():
     assert _registry_get('CH-GONE') is None
     sess.detach.assert_called_once()
     sess.close.assert_called_once()
+
+
+def test_project_cwd_only_for_registered_projects(tmp_path, monkeypatch):
+    """IDE terminals start in a registered project folder; anything else is refused."""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+
+    class _PM:
+        def get_projects(self):
+            return [{"id": 1, "name": "P", "path": str(proj)}]
+
+        def get_current_project(self):
+            return None
+
+    monkeypatch.setattr("managers.project_manager.project_manager", _PM())
+    assert web_terminal.resolve_project_cwd(str(proj)) == str(proj.resolve())
+    assert web_terminal.resolve_project_cwd(str(other)) is None
+    assert web_terminal.resolve_project_cwd("") is None
+    argv, cwd, _env = web_terminal._resolve_shell_preset('bash', str(proj))
+    assert cwd == str(proj)
+    assert web_terminal._resolve_shell_preset('bash')[1] == str(web_terminal._REPO_ROOT)
+
+
+def test_attach_or_create_passes_cwd_to_new_session():
+    created = MagicMock()
+    created.start.return_value = None
+    with patch.object(web_terminal, '_PtySession', return_value=created) as ctor:
+        sess, resumed, err = _attach_or_create_session(
+            'ide-1', 'bash', 80, 24, MagicMock(), MagicMock(), '/projects/demo',
+        )
+    assert err is None and resumed is False and sess is created
+    assert ctor.call_args.args == ('ide-1', 'bash', 80, 24, '/projects/demo')

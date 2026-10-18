@@ -70,3 +70,34 @@ def test_exception_rejects_wrong_content_digest(tmp_path):
     policy.write_text(json.dumps(data), encoding="utf-8")
     hit = {'hook': 'secret-patterns', 'rule': 'private key', 'commit': entry['commit'], 'file': entry['file'], 'line': entry['line']}
     assert apply_scanner_exceptions([hit], policy) == ([hit], [])
+
+
+def test_saved_exception_roundtrip_is_exact_and_does_not_store_source(tmp_path, monkeypatch):
+    from core.git_push_diagnostics import approve_scanner_exception, apply_scanner_exceptions
+    def git(*args):
+        return subprocess.check_output(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.com',
+                                        '-c', 'commit.gpgsign=false', *args], cwd=tmp_path, text=True).strip()
+    git('init', '-q')
+    (tmp_path / 'shortcuts.js').write_text('first line\nkeyboard shortcut value\nthird line\n', encoding='utf-8')
+    git('add', '.')
+    git('commit', '-qm', 'fixture')
+    commit = git('rev-parse', 'HEAD')
+    policy = tmp_path / '.cuttle/scripts/git-hooks/scanner-exceptions.json'
+    policy.parent.mkdir(parents=True)
+    policy.write_text(json.dumps({'version': 1, 'exceptions': []}), encoding='utf-8')
+    hit = dict(hook='gitleaks', rule='generic-api-key', commit=commit, file='shortcuts.js', line=2, end_line=3)
+    monkeypatch.chdir(tmp_path)
+    approve_scanner_exception(tmp_path, hit, 'Keyboard shortcut false positive')
+    approve_scanner_exception(tmp_path, hit, 'Keyboard shortcut false positive')
+    assert len(json.loads(policy.read_text())['exceptions']) == 1
+    assert 'keyboard shortcut value' not in policy.read_text()
+    assert apply_scanner_exceptions([hit], policy) == ([], [hit])
+    for altered in [dict(hit, end_line=4), dict(hit, line=1), dict(hit, rule='another-rule')]:
+        assert apply_scanner_exceptions([altered], policy) == ([altered], [])
+    before = policy.read_bytes()
+    for altered in [dict(hit, hook='path-policy'), dict(hit, hook='sqlite-secrets'), dict(hit, line=50), dict(hit, commit='HEAD')]:
+        with pytest.raises(ValueError):
+            approve_scanner_exception(tmp_path, altered, 'Reviewed fixture')
+    with pytest.raises(ValueError):
+        approve_scanner_exception(tmp_path, hit, '')
+    assert policy.read_bytes() == before

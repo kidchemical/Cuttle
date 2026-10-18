@@ -239,10 +239,13 @@ OAUTH_CONFIGS = {
 @auth_bp.route('/oauth/status', methods=['GET'])
 def oauth_status():
     """Which OAuth providers are usable (public — reveals nothing secret)."""
+    from api.experimental import is_enabled
+
     return jsonify({
         'success': True,
         'providers': {
-            name: {'configured': _oauth_configured(name)}
+            name: {'configured': _oauth_configured(name),
+                   'enabled': is_enabled('google_signin') if name == 'google' else True}
             for name in OAUTH_CONFIGS
         },
     })
@@ -784,6 +787,26 @@ def oauth_callback(provider):
 
 # ==================== Session Management ====================
 
+def _attach_parsed_composer_selection(sessions):
+    """Parse the raw ``composer_selection`` JSON column for list responses.
+
+    The history sidebar renders each row's agent/model/effort chip from this
+    shared snapshot, so any device (phone included) gets the rich label without
+    first opening the chat. ``chat_sessions.composer_selection`` is stored as a
+    JSON string (``cs.*``); expose it as a dict here, ``None`` when absent.
+    """
+    for s in sessions or []:
+        raw = s.get('composer_selection')
+        if isinstance(raw, str) and raw:
+            try:
+                s['composer_selection'] = json.loads(raw)
+            except (TypeError, ValueError):
+                s['composer_selection'] = None
+        elif not isinstance(raw, dict):
+            s['composer_selection'] = None
+    return sessions
+
+
 @auth_bp.route('/sessions', methods=['GET'])
 def get_chat_sessions():
     """Get all chat sessions for current user.
@@ -816,6 +839,8 @@ def get_chat_sessions():
             sessions = db.get_user_chat_sessions(user['id']) + db.get_archived_chat_sessions(user['id'])
         else:
             sessions = db.get_user_chat_sessions(user['id'])
+
+        _attach_parsed_composer_selection(sessions)
 
         # Mark chats that still have an in-flight reply (history spinner after refresh).
         try:
@@ -893,6 +918,7 @@ def search_chat_sessions():
             })
 
         sessions = db.search_user_chats(user['id'], query)
+        _attach_parsed_composer_selection(sessions)
         try:
             from api import chat_delivery as _chat_delivery
             from api.chat_live_status import active_live_session_ids as _active_live_ids
@@ -1427,6 +1453,7 @@ def get_session_messages(session_id):
             'followups': followup_state['followups'],
             'followup_revision': followup_state['revision'],
             'attention': db.get_attention(session_id, user['id']),
+            'action_forms': db.get_action_form_state(session_id),
             'composer_selection': db.get_composer_selection(session_id, user['id']),
             'display_name': session.get('display_name') or '',
             'avatar': session.get('avatar') or '',

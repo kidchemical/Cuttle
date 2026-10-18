@@ -37,11 +37,12 @@
     border-radius: var(--page-card-radius);
     background: var(--panel-hover);
     text-align: center;
-    opacity: 0.62;
-    filter: saturate(0.35);
+    /* Keep the glass and text readable; dim only the locked trophy art. */
     transition: opacity var(--cuttle-transition-ms, 220ms) ease,
                 filter var(--cuttle-transition-ms, 220ms) ease;
 }
+
+.achievement-card:not(.is-unlocked) .achievement-icon { opacity: .62; filter: saturate(.35); }
 
 .achievement-card.is-unlocked {
     opacity: 1;

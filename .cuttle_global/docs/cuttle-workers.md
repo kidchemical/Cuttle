@@ -55,17 +55,23 @@ Connect Electron Client to the host at least once first (writes `desktop-config.
 
 ## Update channels (official vs host)
 
-A device updates toward one of two channels (`device_workers.update_source`; chip on
-the titlebar Update button; Settings → 📦 Cuttle updates):
+A source checkout with **Developer mode** on updates toward one of two channels
+(`device_workers.update_source` sets the preferred one; Settings → 📦 Cuttle updates →
+Preferred developer channel). Both are listed in the **Cuttle updates** modal that
+Settings → Check for updates and the titlebar Update button open:
 
 | Channel | Source | Mechanism |
 |---|---|---|
 | **OFFICIAL** | upstream git remote / published release | `git fetch` + `--ff-only` the configured upstream; packaged Clients use the GitHub release / host asar |
 | **HOST** (Scenario B) | the paired Cuttle PC's working tree | host serves a self-contained `git bundle` of its branch (`/api/desktop/git[/bundle]`, pinned HTTPS); Client fast-forwards from it — **no forge push needed** |
 
-- **Precedence:** one button normally (the configured channel's chip always shows).
-  Show both only when both channels are ahead **and diverge** — the user picks; there is
-  no silent default. `desktop_update_policy.updateChannels` owns this decision.
+- **Pick, then confirm.** The modal lists every channel (published release, GitHub
+  branch, Host, packaged desktop shell) with its state. One available channel is
+  preselected; with several, nothing is until the user picks. A checkout update always
+  shows a review step (repository path, branch, incoming commits) before it runs, then
+  asks before restarting. `desktop_update_policy.updatePlan` owns the channel decision;
+  `shell/shell_updates.js` owns the modal and the `/api/workers/self-update` call
+  (`defer_restart: true`). Programmatic `workers.self-update` is unchanged.
 - A source-checkout Client defaulting to HOST follows the Host's working tree, so a
   dev can edit the Host and push to LAN Clients without a GitHub round-trip. Release
   installs never offer HOST (there is no checkout to serve) — `updateSource: release`.

@@ -1185,17 +1185,54 @@ body.is-electron .split-group.split-vertical > .split-group {
     align-items: center;
     justify-content: center;
     padding: 0;
-    border: 1px solid var(--rail-border);
-    border-left: none;
-    border-radius: 0 10px 10px 0;
-    background: var(--rail-bg);
+    border: none;
+    background: transparent;
     color: var(--rail-icon);
     cursor: pointer;
-    box-shadow: 2px 0 12px rgba(0, 0, 0, 0.25);
 }
-.rail-expand-tab:hover {
+.rail-expand-tab::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 5px;
+    height: 28px;
+    border: 1px solid var(--rail-border);
+    border-left: none;
+    border-radius: 0 4px 4px 0;
+    background: var(--rail-bg);
+    opacity: 0.55;
+    transition: width 150ms ease, height 150ms ease, opacity 150ms ease;
+}
+.rail-expand-tab svg {
+    position: relative;
+    width: 14px;
+    height: 14px;
+    opacity: 0;
+    transition: opacity 150ms ease;
+}
+.rail-expand-tab:hover,
+.rail-expand-tab:focus-visible {
     color: var(--rail-icon-hover);
+}
+.rail-expand-tab:hover::before,
+.rail-expand-tab:focus-visible::before {
+    width: 26px;
+    height: 40px;
+    opacity: 1;
     background: var(--panel-hover);
+}
+.rail-expand-tab:hover svg,
+.rail-expand-tab:focus-visible svg {
+    opacity: 1;
+}
+@media (hover: none) {
+    .rail-expand-tab::before { width: 26px; height: 40px; opacity: 1; }
+    .rail-expand-tab svg { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .rail-expand-tab::before, .rail-expand-tab svg { transition: none; }
 }
 
 /* Resize handle between panes — always visible so splits are obvious */
@@ -2189,6 +2226,22 @@ body.light-mode .rail-logo-clickable[data-tooltip]::after {
 }
 
 /* Notifications popover (past toasts) */
+.notifications-slide-layer {
+    position: fixed;
+    inset: 0 0 0 var(--rail-width);
+    overflow: hidden;
+    z-index: 999997;
+    pointer-events: none;
+}
+
+/* Clip the slide at the blade edge so it emerges from behind the toolbar. */
+.notifications-slide-layer > .notifications-popover {
+    position: absolute;
+    left: 0;
+    max-width: calc(100% - 24px);
+    pointer-events: auto;
+}
+
 .notifications-popover {
     position: fixed;
     left: var(--rail-width);
@@ -2226,6 +2279,13 @@ body.light-mode .rail-logo-clickable[data-tooltip]::after {
 .notifications-popover-backdrop.notifications-popover-backdrop-visible {
     pointer-events: auto;
     background: rgba(0, 0, 0, 0.2);
+}
+
+/* Windowed Electron reserves space for its 36px titlebar. Fullscreen,
+   browser and mobile panels continue to fill the viewport from the top. */
+body.is-electron:not(.fullscreen) .notifications-slide-layer,
+body.is-electron:not(.fullscreen) .notifications-popover-backdrop {
+    top: 36px;
 }
 
 .notifications-popover-header {
@@ -2869,6 +2929,3 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
 .shell-win-btn.shell-win-update.is-busy .shell-win-update-spinner { display: inline-block; }
 .shell-win-btn.shell-win-update.is-busy .shell-win-update-icon { display: none; }
 @keyframes cuttle-win-spin { to { transform: rotate(360deg); } }
-
-/* Update confirmation uses the same shared modal surface as Account. */
-.update-restart-modal .auth-modal-subtitle strong { color: var(--text-primary, #fff); }

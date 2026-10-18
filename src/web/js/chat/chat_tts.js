@@ -31,6 +31,8 @@
      *          speakTextFor: Function, normalizeUsage: Function}} deps
      */
     function create(deps) {
+        const host = deps;
+        const notifyUsage = () => { if (deps.win.dispatchEvent && deps.win.Event) deps.win.dispatchEvent(new deps.win.Event('cuttle-voice-usage')); };
         const frameWin = deps.win;
         const frameDoc = frameWin.document;
         const fetchFn = deps.fetch;
@@ -213,7 +215,7 @@
                 const r = await fetchFn('/api/chat/tts', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: text }),
+                    body: JSON.stringify({ text: text, session_id:host.sessionId?.(), message_id:messageEl.dataset.messageId, query_id:messageEl.querySelector('.message-query-log-link')?.dataset.queryId }),
                 });
                 const d = await r.json().catch(() => ({}));
                 if (!r.ok || !d.success || !d.audio_base64) {
@@ -227,6 +229,8 @@
                 messageEl._cuttleTtsUrl = url;
                 messageEl._cuttleTtsSpoken = d.spoken_text || '';
                 messageEl._cuttleTtsSummarized = !!d.summarized;
+                messageEl._cuttleVoiceUsage = d.usage ? normalizeUsage(d.usage) : null;
+                notifyUsage();
                 applyTtsTranscriptLayout(messageEl, messageEl._cuttleTtsSpoken);
                 _playTtsUrl(btn, url, { summarized: !!d.summarized });
             } catch (e) {
@@ -298,7 +302,7 @@
             const r = await fetchFn('/api/chat/tts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: text }),
+                body: JSON.stringify({ text: text, session_id:host.sessionId?.(), message_id:messageEl.dataset.messageId, query_id:messageEl.querySelector('.message-query-log-link')?.dataset.queryId }),
             });
             const d = await r.json().catch(() => ({}));
             if (!r.ok || !d.success || !d.audio_base64) {
@@ -319,6 +323,7 @@
                 messageEl._cuttleVoiceUsage = null;
             }
             applyTtsTranscriptLayout(messageEl, messageEl._cuttleTtsSpoken);
+            notifyUsage();
             return {
                 url: messageEl._cuttleTtsUrl,
                 spoken: messageEl._cuttleTtsSpoken,

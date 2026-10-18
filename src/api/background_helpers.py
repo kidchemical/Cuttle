@@ -133,7 +133,9 @@ def validate(raw):
         if len(set(keys)) != len(keys): raise ValueError('Duplicate fallback executor')
         return result
     overrides = raw.get('tasks') or {}
-    if not isinstance(overrides, dict) or set(overrides) - set(TASKS): raise ValueError('Unknown background task')
+    # Keep pre-separation saved overrides readable without advertising or using
+    # them. Response processing now owns its executor chain independently.
+    if not isinstance(overrides, dict) or set(overrides) - (set(TASKS) | {'postprocessing'}): raise ValueError('Unknown background task')
     return {'chain': chain(raw.get('chain', [])),
             'tasks': {k: chain(v) for k,v in overrides.items() if v}}
 

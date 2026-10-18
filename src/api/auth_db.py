@@ -1752,6 +1752,16 @@ class AuthDatabase:
     def get_attention(self, session_id: int, user_id: int) -> Optional[Dict]:
         return self.get_attention_many(user_id, [session_id]).get(session_id)
 
+    def get_action_form_state(self, session_id: int) -> Dict:
+        """Host-owned per-form lifecycle snapshot for one chat (see api.action_form_state)."""
+        from api import action_form_state
+
+        conn = self._get_connection()
+        try:
+            return action_form_state.get_many(conn, int(session_id))
+        finally:
+            conn.close()
+
     def get_attention_many(self, user_id: int, ids: List[int]) -> Dict:
         from api.chat_attention import get_many
         conn = self._get_connection()
@@ -1907,9 +1917,16 @@ class AuthDatabase:
                 (content, int(message_id)),
             )
         affected = cursor.rowcount
+        from api import action_form_state
         from api.chat_attention import refresh
         session = conn.execute('SELECT chat_session_id FROM chat_messages WHERE id=?', (message_id,)).fetchone()
         if session:
+            # Sync this exact message's form rows: refresh() only re-indexes the
+            # chat's latest reply, and a locked old card must update the index too.
+            existing = conn.execute('SELECT content, metadata FROM chat_messages WHERE id=?', (int(message_id),)).fetchone()
+            if existing is not None:
+                action_form_state.sync_message(
+                    conn, session[0], int(message_id), existing['content'], existing['metadata'])
             refresh(conn, session[0])
         conn.commit()
         conn.close()

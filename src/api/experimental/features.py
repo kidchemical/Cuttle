@@ -20,6 +20,18 @@ from __future__ import annotations
 from api.experimental.flags import FlagSpec, register_flag
 
 register_flag(FlagSpec(
+    id="google_signin", label="Google sign-in",
+    description="Show Google sign-in and sign-up options, account linking, and Google photo controls on authentication and account screens.",
+    default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="response_postprocessing", label="Response post-processing",
+    description="Run a configurable API or restricted agent CLI pass on completed replies. Configure its own instructions, executor, model, effort and output in Agents settings.",
+    default=False, category="chat", risk="medium", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
     id="render_result_attachments", label="Render result attachments",
     description="Automatically save verified render previews and encoded videos to the originating chat for registered batches.",
     default=False, category="power", risk="low", since="0.0.0", needs_restart=False, context_bundle=True,
@@ -66,12 +78,28 @@ register_flag(FlagSpec(
     id="voice_narrator", label="Voice narrator",
     description="In voice mode, Cuttle speaks a quick acknowledgment as soon as you send, then short spoken updates on what the agent is doing until the reply is ready. Uses gpt-4o-mini plus your chat speech voice (OpenAI key required).",
     default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
+    conflicts=("voice_live", "voice_realtime"),
+))
+
+register_flag(FlagSpec(
+    id="voice_live", label="Voice: GPT-Live",
+    description="Full-duplex GPT-Live conversation that delegates project work to this chat's Cuttle agent. Requires an OpenAI API key. Voice sessions are billed by duration, including silence; agent usage is separate.",
+    default=False, category="chat", risk="medium", since="0.0.0", needs_restart=False,
+    exclusive_group="voice_input",
+))
+
+register_flag(FlagSpec(
+    id="voice_realtime", label="Voice: OpenAI Realtime",
+    description="Microphone and spoken conversation over OpenAI Realtime, with project requests handed to the selected chat agent. Requires an OpenAI API key and WebRTC microphone support. Uses token-based audio billing.",
+    default=False, category="chat", risk="medium", since="0.0.0", needs_restart=False,
+    exclusive_group="voice_input",
 ))
 
 register_flag(FlagSpec(
     id="voice_server_stt", label="Voice: server transcription",
     description="Voice mode records continuously and transcribes each phrase on the server (OpenAI) instead of the browser speech recognizer. Removes the Android chime between pauses and works in browsers without Web Speech; phrases appear about a second after you stop talking.",
     default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
+    exclusive_group="voice_input",
 ))
 
 register_flag(FlagSpec(
@@ -83,6 +111,12 @@ register_flag(FlagSpec(
 register_flag(FlagSpec(
     id="test_lab", label="Test Lab",
     description="Inspect recognized test suites in registered projects, run a selected suite on demand, and review recent results in Apps → Test Lab.",
+    default=False, category="ui", risk="medium", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="ide", label="IDE",
+    description="A Cursor-style code editor in Apps → IDE: Monaco editing of registered projects with explorer, tabs, quick open, find in files, source control diffs, an integrated terminal, and an AI chat panel bound to the project. Also adds an Editor button to file diffs.",
     default=False, category="ui", risk="medium", since="0.0.0", needs_restart=False,
 ))
 

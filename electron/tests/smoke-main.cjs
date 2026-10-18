@@ -77,6 +77,15 @@ const watchdog = setTimeout(() => { console.error('SMOKE_TIMEOUT'); app.exit(1);
   await app.whenReady();
   await until(() => BrowserWindow.getAllWindows().some(w => /app_shell\.html/.test(w.webContents.getURL())), 'shell window');
   const main = BrowserWindow.getAllWindows().find(w => /app_shell\.html/.test(w.webContents.getURL()));
+  if (process.platform === 'linux' && process.env.DISPLAY) {
+    // Inspect the real X11 window: decoding an icon alone misses WM_CLASS bugs.
+    const handle = main.getNativeWindowHandle();
+    const xid = '0x' + handle.readUInt32LE(0).toString(16);
+    const properties = cp.execFileSync('xprop', ['-id', xid, 'WM_CLASS', '_NET_WM_ICON'], {encoding:'utf8'});
+    assert.match(properties, new RegExp('WM_CLASS\\(STRING\\) = "cuttle-' + mode + '", "cuttle-' + mode + '"'));
+    assert(!properties.includes('_NET_WM_ICON:  not found.'), 'Linux window must publish its mascot icon');
+    assert.match(properties, /_NET_WM_ICON\(CARDINAL\)/);
+  }
   await until(() => main.webContents.executeJavaScript('!!window.electron?.desktop'), 'real preload bridge');
   const config = await main.webContents.executeJavaScript('window.electron.desktop.getConfig()');
   assert.equal(config.clientMode, mode === 'client');

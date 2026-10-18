@@ -47,6 +47,18 @@ def test_electron_owner_holds_chrome_and_zoom():
     assert "root.CuttleShellElectron = {" in owner
 
 
+def test_electron_owner_persists_zoom_across_reload():
+    owner = ELECTRON_JS.read_text(encoding="utf-8")
+    # webFrame zoom is frame-scoped and resets on reload; the owner stores it
+    # per shell origin and re-applies it on startup.
+    assert "const ZOOM_STORAGE_KEY = 'cuttle.shell.zoomPercent';" in owner
+    assert "function readPersistedZoomPercent()" in owner
+    assert "function persistZoomPercent(pct)" in owner
+    assert "function restorePersistedZoom()" in owner
+    assert "restorePersistedZoom();" in owner
+    assert "persistZoomPercent(resolved);" in owner
+
+
 def test_shell_delegates_electron_chrome_and_zoom():
     page = SHELL_JS.read_text(encoding="utf-8")
     # The space-menu titlebar hide scheduling moved to the Spaces owner (5C).

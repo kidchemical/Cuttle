@@ -36,9 +36,13 @@ def _shell_prelude():
     hideable_start = source.index("const HIDEABLE_FOOTER_IDS =")
     hideable = source[hideable_start: source.index("\n", hideable_start)]
     footer_ids = _extract(source, "const RAIL_FOOTER_APP_IDS =", "];") + "];"
+    # getAppsList gates experimental apps (Test Lab, Achievements, Gizmos,
+    # Agent Feed) behind their flags; default them off for the harness.
+    experimental_apps = _extract(source, "const EXPERIMENTAL_RAIL_APPS =", "\n        };") + "\n        };"
+    enabled_flags = _extract(source, "let enabledFlags =", "\n")
+    rail_fn = _extract(source, "function railAppEnabled(id)", "\n        }") + "\n        }"
     get_apps = _extract(source, "function getAppsList()", "function broadcastAppsList")
-    # getAppsList reads the shell's agent-feed flag; default it off for the harness.
-    return "\n".join(["let agentFeedEnabled = false;", order, locked, hideable, footer_ids, get_apps])
+    return "\n".join([experimental_apps, enabled_flags, rail_fn, order, locked, hideable, footer_ids, get_apps])
 
 
 SHELL_STUB = """
@@ -108,6 +112,46 @@ assert.equal(byId['nav-git'].page, '/git_graph_page.html');
 assert.equal(byId['nav-git'].pinned, false);
 const labels = apps.map(a => a.label);
 assert.deepEqual(labels, [...labels].sort((a, b) => a.localeCompare(b)));
+"""
+    subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
+
+
+@node_only
+def test_experimental_apps_are_gated_in_apps_list():
+    """Test Lab (and every experimental app) is absent from Apps while its flag is off."""
+    import subprocess
+
+    script = "const assert = require('node:assert/strict');\n"
+    script += _shell_prelude() + "\n"
+    script += """
+function makeBtn(id, page) {
+    return { dataset: { id, tooltip: id, page },
+        querySelector: () => ({ outerHTML: '<svg></svg>' }),
+        closest: () => null };
+}
+const BUTTONS = {
+    'nav-chat': makeBtn('nav-chat', '/chat_page.html'),
+    'nav-test-lab': makeBtn('nav-test-lab', '/test_lab_page.html'),
+    'nav-achievements': makeBtn('nav-achievements', '/achievements_page.html'),
+    'nav-ide': makeBtn('nav-ide', '/ide_page.html'),
+};
+function getColumnEl() {
+    return { querySelector: (sel) => {
+        const m = /data-id="([^"]+)"/.exec(sel);
+        return m ? (BUTTONS[m[1]] || null) : null;
+    } };
+}
+const ids = () => getAppsList().map(a => a.id);
+enabledFlags = new Set();
+assert.ok(!ids().includes('nav-test-lab'), 'Test Lab hidden while flag off');
+assert.ok(!ids().includes('nav-achievements'), 'Achievements hidden while flag off');
+assert.ok(ids().includes('nav-chat'), 'non-experimental app still listed');
+enabledFlags = new Set(['test_lab']);
+assert.ok(ids().includes('nav-test-lab'), 'Test Lab listed once its flag is on');
+assert.ok(!ids().includes('nav-achievements'), 'Achievements stays gated independently');
+assert.ok(!ids().includes('nav-ide'), 'IDE hidden while its flag is off');
+enabledFlags = new Set(['ide']);
+assert.ok(ids().includes('nav-ide'), 'IDE listed once its flag is on');
 """
     subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
 

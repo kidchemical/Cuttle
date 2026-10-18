@@ -37,6 +37,20 @@
         "secret-patterns": "private key"
       },
       "reason": "HTML textarea placeholder containing only the PEM header, no key material"
+    },
+    {
+      "commit": "cf9f258b2ca68a3a281ad974a2c9375158a9b2fc",
+      "file": "src/web/js/ide/ide_page.js",
+      "blob": "14d736f697d11b017aea93091a2461c7021807a2",
+      "line": 1023,
+      "line_sha256": "6e9a54a96ac9af76c078666fc108323a261a57ea1c0a789b9634aa8eac9f9fc6",
+      "checks": {
+        "gitleaks": "generic-api-key"
+      },
+      "end_lines": {
+        "gitleaks": 1023
+      },
+      "reason": "keyboard shortcut; not an api key"
     }
   ]
 }

@@ -5,7 +5,8 @@
 decorators over 52 unique paths, counted from the AST at 2026-10-11,
 branch `refactor/work`). The monolith refactor (Phases 1–6) moved the
 chat page, shell and backend route families into owners; the ceiling gate
-`src/tests/quality/test_composition_root_growth.py` now pins 5,106 lines.
+`src/tests/quality/test_composition_root_growth.py` allows 5,200 lines to leave
+room for explicit feature blueprint registrations; domain logic stays in owners.
 **Audience:** agents and humans about to change Flask/chat/settings/workers.
 
 Cuttle’s Flask **app object** lives here. Many product surfaces already have their own modules; this file is still the **composition root** (blueprints, HTML, chat-turn HTTP).

@@ -313,6 +313,45 @@ def test_api_calls_merge_into_usage_groups(tmp_path: Path, monkeypatch):
     assert out["totals"]["turns"] == 3  # 1 outcome turn + 2 API calls
 
 
+def _seed_voice_calls(db: Path) -> None:
+    provider_usage.record_call(
+        provider="openai", operation="realtime_session", model="gpt-realtime-2.1",
+        task="realtime", success=True, recorded_at=NOW, cost=0.5, db_path=db,
+        usage={"input_tokens": 600, "output_tokens": 1200, "total_tokens": 1800},
+    )
+    provider_usage.record_call(
+        provider="openai", operation="speech_generation", model="gpt-4o-mini-tts",
+        task="tts", success=True, recorded_at=NOW, cost=0.02, db_path=db,
+    )
+    provider_usage.record_call(
+        provider="openai", operation="audio_transcription", model="gpt-4o-mini-transcribe",
+        task="stt", success=True, recorded_at=NOW, cost=0.003, db_path=db,
+    )
+    provider_usage.record_call(
+        provider="openai", operation="text_generation", model="gpt-4o-mini",
+        task="background:titles", success=True, recorded_at=NOW, cost=0.001, db_path=db,
+    )
+
+
+def test_voice_source_filter_isolates_voice_calls(tmp_path: Path, monkeypatch):
+    from api import model_pricing
+
+    monkeypatch.setattr(model_pricing, "estimate_cost_usd", lambda *a, **kw: None)
+    pdb = tmp_path / "provider_calls.db"
+    _seed_voice_calls(pdb)
+    kw = {"range_id": "1d", "tz_offset_minutes": 0,
+          "db_path": tmp_path / "outcomes.db", "provider_db_path": pdb, "now": NOW}
+    voice = usage.cuttle_usage(source_id="voice", group_by="model", **kw)
+    labels = {g["label"] for g in voice["groups"]}
+    assert labels == {"gpt-realtime-2.1", "gpt-4o-mini-tts", "gpt-4o-mini-transcribe"}
+    assert voice["totals"]["cost_usd"] == pytest.approx(0.523)
+    assert voice["totals"]["turns"] == 3
+    # The same rows still appear under the broad API source.
+    api_only = usage.cuttle_usage(source_id="api", group_by="model", **kw)
+    assert "gpt-realtime-2.1" in {g["label"] for g in api_only["groups"]}
+    assert usage.SOURCES[-1] == {"id": "voice", "name": "Voice"}
+
+
 def test_api_source_filter_isolates_provider_calls(tmp_path: Path, monkeypatch):
     from api import model_pricing
 

@@ -174,7 +174,14 @@ service; Flask serialize/SSE transport stays in the route.
 `api.chat_attention` owns persisted reply/read watermarks, manual unread and
 latest-question attention in that database. AuthDatabase updates attention in
 the message transaction and auth routes expose revisioned snapshots/read
-acknowledgments. `api.chat_followups` owns shared queue transactions/revisions
+acknowledgments. `api.chat_attention` reads awaiting-input from
+`api.action_form_state` — the host-owned, one-row-per-`(session, form)` lifecycle
+index (message-scoped status/kind/restart id/generation) synced from the message
+in the same write. `api.action_forms.reconcile_restart_forms` (triggered by the
+`/api/flask/restart/status` poll every client already makes) terminalizes restart
+cards whose restart is superseded or finished, so history/dots/spinners agree
+across devices without client-side generation inference; messages GET exposes the
+snapshot as `action_forms`. `api.chat_followups` owns shared queue transactions/revisions
 and retryable take receipts; AuthDatabase injects its private connection.
 Activity SSE is a wake signal; snapshots and periodic recovery supply truth.
 
@@ -283,6 +290,18 @@ locked atomic persistence. `<home>/config/settings.json` owns server preferences
 `schema_version: 1` marks the storage schema, independently of the release SemVer.
 No `/api/settings` routes live on the Flask root.
 
+`api.chat_preferences` owns shared/per-agent chat prompt preferences and
+final-response processor configuration. The harness kernel applies prompts to
+each normal execution (including resumes). `api.response_postprocessing` runs
+the opt-in `response_postprocessing` experimental pass via restricted
+`background_helpers` before claimed sync/stream persistence and delivery;
+`chat_coordinator` also applies it to unclaimed compatibility turns.
+Its executor chain is stored in `response_postprocessing.chain`, independently
+of Background helpers preferences; the shared helper engine and picker provide
+API/CLI capabilities. `chat_messages.js` owns the collapsed original-reply
+disclosure and processed copy text. `settings_chat_preferences.js` owns the General/Agents editors. Behavior and
+settings contracts: [Chat prompts](../../.cuttle/docs/chat-prompts.md).
+
 **Direct model APIs:** `api.model_providers` owns validated provider manifests,
 account-scoped discovery, shared raw models.dev metadata, capability provenance,
 and operation-specific adapters under `<provider>/`. It executes typed
@@ -300,6 +319,25 @@ narrator effort preferences are stored per provider/model. `tts_providers` is a
 settings compatibility/cost facade, with no vendor transport. Contract:
 `src/api/model_providers/ADDING_A_PROVIDER.md`; agent CLI:
 `.cuttle/docs/model-providers.md`.
+
+**Realtime voice (experimental):** `api.voice_realtime` owns OpenAI Realtime
+session configuration and owner-only ephemeral credential issuance, mounted
+under the existing voice API as `/api/voice-stt/realtime/session`.
+`chat_voice_realtime.js` owns the WebRTC/audio/data-channel lifetime;
+`chat_voice.js` composes its overlay callbacks and selected-agent handoff using
+the existing chat submit/steer/queue capabilities. `voice_realtime` defaults
+off. No alternative chat execution route is introduced. Runbook:
+`.cuttle/docs/experimental-features.md`.
+
+**GPT-Live voice (experimental):** `api.voice_live` owns durable session,
+transcript and delegation receipts; `model_providers.openai.live` owns the SDK
+transport. Delegation uses the existing authenticated chat submission surface,
+steering and follow-up owners. `shell_voice.js` owns voice across disposable
+Space/chat iframes; `chat_voice_live.js` owns Live protocol and `chat_voice.js`
+its presenter. `chat_session_usage.js` merges persisted agent metadata and
+voice ledger records for all chat usage displays. `FlagSpec` compatibility
+metadata gates conflicting experiments atomically. Android's `LiveVoiceAudio`
+streams duplex PCM through the same session owner for LAN HTTP WebViews.
 
 **Local model preference:** retired with the old `RuntimeConfig`
 (`bot_config.json` / `runtime_config.json`). `core.local_llm.resolve_local_model`
@@ -358,7 +396,7 @@ arguments or injected host interfaces):
 | `pending_changes_panel.js` (`CuttlePendingChangesPanel`) | standalone periodic scans and explicit panel refresh/actions; embedded panes use existing shell per-project polling hub | `app_shell.js` owns periodic shared scans; page project reconciliation reports path through `reportProjectToShell`; no duplicate embedded interval |
 | `chat_generation.js` (`CuttleChatGeneration`) | busy-lock `{loading, localSessionId, seq}` + token-scoped release, sync cadence, detached-poll classes, session-open flags, the send PREPARE decision (`prepareSend`: control-lane classification + sticky/slash meta + pending typing badge as one pure record), the send SUBMIT decision (`planSubmit`: outbound request body + origin binding + SSE-vs-JSON / control-lane-JSON-only transport policy; `classifySubmitFailure`: abort / control-recover / retry-JSON fallback); one sync-claim state `{inFlight, startedAt, seq}` through `createSyncState`, `claimSync`, `isSyncCurrent`, `finishSync` | timers, transport, voice, running-flag paint |
 | `chat_voice.js` (`CuttleChatVoice`) + `chat_voice_segments.js` (pure phrase bubbles) + `chat_voice_stars.js` (overlay canvas) + `chat_voice_narrator.js` (narration pacing + `/api/voice-narrator` transport) + `chat_voice_recorder.js` (pure pause detector + phrase upload to `/api/voice-stt`; audio from the Android app's `NativeMic` bridge when present, else browser MediaRecorder on secure origins) | voice-mode state, overlay DOM, Web Speech recognition (pauses restart listening; only a mic tap or hold-release sends), removable phrase bubbles kept across screen lock, talking while the agent works (sends steer the live turn, else queue; a reply that lands mid-speech waits), mic permission, spoken-reply sequencing incl. replies pending after the overlay closes; experimental `voice_narrator` acknowledgment + progress/heartbeat lines (server owner `api.voice_narrator`; narration never speaks over the user or the final reply); experimental `voice_server_stt` chime-free recording engine (server owner `api.voice_stt`) | `create(host)` capabilities: compose/send/steer/queue, last assistant bubble, TTS speech/playback from `CuttleChatTts` (shared with bubble speaker buttons); generation start/end + status hooks; voice `submit` is a thin caller of the shared `processMessage` turn interface (chat_generation busy-lock) — same lifecycle as text chat, no second execution path |
-| `chat_messages.js` (`CuttleChatMessages`) | records/windowing, display dispatch as pure functions | transcript DOM paint, sync/poll, session restore, streaming orchestration, leaf renderers |
+| `chat_messages.js` (`CuttleChatMessages`) | records/windowing, display dispatch as pure functions; server message reordering over explicit transcript/live nodes (`reorderMessageNode`) preserves control exchanges after live activity | transcript DOM paint, sync/poll, session restore, streaming orchestration, leaf renderers |
 | `chat_action_forms.js` (`CuttleChatActionForms`) | pure card model/watch interpretation (`isExplicitActionFormCancelOption`, `actionFormHasSideEffect`, `isWatchFormAction`, `cardWatchBind`, `normalizeWatchBars` formatting transforms, restart-link helpers) plus card HTML/render planning (`renderActionFormCardHtml`, `renderWatchBarsHtml`, job-agnostic `renderWatchGridHtml` — no render target, no DOM) | card DOM/button/watch wiring moved to `chat_action_cards` (`CuttleChatActionCards`, plan C2 done), never into this pure module |
 | `chat_markdown.js` | markdown/block composition (pure) | page render orchestration |
 | `chat_media.js` (`CuttleChatMedia`) | media thumb HTML + poster fallback, the shared lightbox (gallery, fit/actual/zoom/pan/pinch, sidecar captions via `/api/shared-media/meta`, download) and the image Copy/Save menu, with all their state; pure helpers (`mediaKindFromUrl`, `isSafeMediaSrc`, `mediaDownloadUrl`, …) on the namespace, `create({win, escapeHtmlInline, clamp, hostTeardownSignal})` → per-frame controller. The lightbox mounts on the host (shell) document; host listeners ride `hostTeardownSignal` | one `create` + `bind()` in init, `window.CuttleMediaThumbFallback` export, `formatMessage` calls `buildMediaThumbHtml` |
@@ -385,7 +423,9 @@ cache convention interpretation and footer markup. The page delegates rendering;
 Pure today: `chat_action_forms` model/watch interpretation + card HTML planning,
 `chat_messages`/`chat_markdown` planning, turn/stop/queue/generation
 decisions. Effects live in `chat_activate` helpers, the
-`chat_action_cards` controller, `chat_usage_live.start`, and the page —
+`chat_action_cards` controller, `chat_usage_live.start`, the generation owner's
+per-send `createSendActivity` (injected activity effects and reply placement),
+the messages owner's explicit-node ordering helper, and the page —
 do not describe all frontend modules as pure.
 
 **Experimental feature UI:** `api.experimental` owns rollout flags, and Settings
@@ -394,6 +434,17 @@ surfaces: Achievements uses `/achievements_page.html` (page blueprint in
 `api.achievements.routes`, `achievements_page.js` presentation), registered as a
 stashed App in the shell. New features generally start experimental; surface
 selection and exceptions are documented in `.cuttle/docs/experimental-features.md`.
+
+**IDE (experimental):** `api.ide.service` owns workspace resolution (registered
+projects/checkouts via the Git allowlist), path confinement, atomic etag-checked
+writes, search/replace and committed content; `api.ide.routes` is owner-only
+transport. The page `ide_page.js` composes `src/web/js/ide/` owners (pure
+`ide_model`, Monaco/textarea `ide_editor`, explorer, search, quick input,
+terminal over `api.web_terminal` with a project `cwd`, and `ide_chat`, which hosts
+the real chat page — AI edits go through that chat's send path, never a new
+execution lane). Source Control reuses `CuttlePendingChangesPanel`; the shared
+`CuttleDiffModal` offers **Editor** for text files while the flag is on.
+Runbook: `.cuttle/docs/experimental-features.md` (IDE App).
 
 **Gizmos (experimental):** live UI objects outside chat bubbles (widgets stay
 inside bubbles). `api.gizmos` owns types (`catalog`), normalized vendor plan
@@ -438,6 +489,7 @@ singleton, DOM, frames, and persistence effects.
 | `shell/shell_spaces.js` (`CuttleShellSpaces`) over `spaces/*` | Spaces tab-strip UI, drag/drop, group menus (5C) | singleton, frame fan-out, persistence |
 | `shell/shell_rail.js` (`CuttleShellRail`) | rail customization, apps list, edit mode, jobs/mesh chip split (5E) | `getAppsList` global delegate, pane-mount re-apply |
 | `shell/shell_electron.js` (`CuttleShellElectron`) | Electron titlebar chrome, zoom HUD + per-frame zoom binder (5F) | zoom postMessage forwarding, space-menu hide scheduling |
+| `shell/shell_updates.js` (`CuttleShellUpdates`) over `shell/desktop_update_policy.js` (`updatePlan`, pure) and `api.updates` | the Cuttle updates modal: channel snapshot (`/api/settings/updates`), titlebar Update button, pick → confirm → apply (release download, checkout fast-forward via `/api/workers/self-update`, packaged shell), restart prompt; opened by `cuttle-open-updates` postMessage | nothing (`shell_electron` reports desktop config / mesh rev / asar offer) |
 | `shell/shell_mobile.js` | mobile-client detection, LAN APK update rail/modal, SSH approval modal (5F) | shared click handler, account-panel sync, frame-retry spine |
 
 **Pane tree (not yet separated):** `snapshotLayoutTree` serializes the
@@ -523,3 +575,9 @@ For harnesses, integrations, surfaces, or agent operations, also read:
 - Never kill Flask from an agent it hosts; use daemon `/restart`.
 - Action-form recovery: HMAC on persisted specs (`action_forms` / `project_actions`).
 - Electron sandbox: no automatic `--no-sandbox`.
+
+Host-local agent executable/wrapper overrides are owned by
+`api.agent_harness.cli_paths`; each bundled discovery function consults that
+owner before its legacy environment/install discovery. Settings → Agents and
+`/api/settings/agent-adapters` configure the host-local `agent_cli_paths` key.
+Wrapper contract and rollout rationale: [Agent CLI paths](../../.cuttle/docs/agent-cli-paths.md).

@@ -394,6 +394,38 @@ class ProjectManager:
             """, (project_id,)).fetchone()
         return self._project_record(row) if row else None
 
+    def previous_project_paths(self, project_id: int, selected_path: str) -> List[str]:
+        """Recorded locations for a move into this project's current host folder.
+
+        The registry audit log supplies provenance; chat snapshots and arbitrary
+        client paths cannot authorize moving a native agent conversation.
+        """
+        project = self.get_project(project_id)
+        if (not project or project['archived'] or not project['available']
+                or Path(selected_path).resolve() != Path(project['path']).resolve()):
+            return []
+        with self.get_db_connection() as conn:
+            rows = conn.execute(
+                "SELECT details FROM project_history WHERE project_id = ? "
+                "AND action IN ('created', 'updated') ORDER BY id DESC", (project_id,)
+            ).fetchall()
+        paths = []
+        for (raw,) in rows:
+            details = json.loads(raw or '{}')
+            candidates = details.get('paths', [])
+            if 'path' in details:
+                candidates = [details['path'], *candidates]
+            for candidate in candidates:
+                if not isinstance(candidate, str):
+                    continue
+                path = Path(candidate).expanduser()
+                if not path.is_absolute():
+                    continue  # Foreign-host paths must never resolve under cwd.
+                normalized = str(path.resolve())
+                if normalized != str(Path(selected_path).resolve()) and normalized not in paths:
+                    paths.append(normalized)
+        return paths
+
     def switch_to_project(self, project_id: int) -> bool:
         """Switch to a specific project"""
         import time

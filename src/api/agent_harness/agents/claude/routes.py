@@ -68,6 +68,10 @@ def api_claude_models():
                 "id": preferred,
                 "label": claude_model_label(preferred),
                 "description": "Custom model id pinned for this chat",
+                # A pinned model the live CLI catalog omits (e.g. a model that
+                # only exists in the manifest) still needs its per-model
+                # ``efforts`` here, or the chat chip/palette derive no levels.
+                "efforts": claude_efforts_for_model(preferred),
                 "current": True,
             })
         return jsonify({

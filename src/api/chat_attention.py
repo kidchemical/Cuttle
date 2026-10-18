@@ -3,16 +3,24 @@
 AuthDatabase supplies its connection; updates share the message transaction.
 Reply ids, not client clocks, order reads. Idle/running stays owned by delivery
 and live status, so restarting Flask cannot leave a persistent running flag.
+
+Per-card lifecycle truth lives in ``api.action_form_state`` (one durable row per
+session/form). This module reads that index for "awaiting input" so a card locked
+on one client, or a restart that already finished, is never reported blue again.
+The content parser below is the legacy fallback for rows written before the
+index existed (and for the first read of any message).
 """
 from __future__ import annotations
 
 import json
 import re
 
+from api import action_form_state
+
 _CARDS = re.compile(r'<cuttle_action_form(?:_pending)?\b([^>]*)>(.*?)</cuttle_action_form(?:_pending)?\s*>', re.I | re.S)
 
 
-def awaiting_input(content: str) -> bool:
+def awaiting_input(content: str, *, restart_generation: int | None = None) -> bool:
     """Only the current assistant turn's unlocked interactive cards need input."""
     for attrs, body in _CARDS.findall(content or ''):
         try:
@@ -20,6 +28,15 @@ def awaiting_input(content: str) -> bool:
         except (TypeError, ValueError):
             continue
         if not isinstance(spec, dict) or spec.get('locked') or re.search(r'\blocked=["\']1["\']', attrs):
+            continue
+        group = str(spec.get('restartFormGroup') or spec.get('id') or '')
+        if not group:
+            match = re.search(r'\bid=["\']([^"\']+)["\']', attrs)
+            group = match[1] if match else ''
+        epoch = re.fullmatch(r'flask-restart-g(\d+)', group, re.I)
+        if epoch and restart_generation is not None and restart_generation > int(epoch[1]):
+            # Linked controllers lock on the client after a restart, even when
+            # the restart was requested from a different chat/device.
             continue
         # Watch/restart execution is running work, separately from a question.
         if spec.get('watch') or spec.get('restartId'):
@@ -53,6 +70,7 @@ def ensure_schema(conn) -> None:
         reply_error INTEGER NOT NULL DEFAULT 0, awaiting_input INTEGER NOT NULL DEFAULT 0,
         manual_unread INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0,
         legacy_imported INTEGER NOT NULL DEFAULT 0)''')
+    action_form_state.ensure_schema(conn)
     if not existed:
         # Upgrade baseline: don't light up every historical chat as unread.
         for row in conn.execute('SELECT id FROM chat_sessions').fetchall():
@@ -67,7 +85,14 @@ def refresh(conn, session_id: int) -> None:
     user = conn.execute("SELECT MAX(id) FROM chat_messages WHERE chat_session_id=? AND role='user'", (session_id,)).fetchone()[0] or 0
     reply_id = reply['id'] if reply else 0
     error = int(is_error(reply['content'], reply['metadata'])) if reply else 0
-    awaiting = int(bool(reply and reply_id > user and awaiting_input(reply['content'])))
+    awaiting = 0
+    if reply and reply_id > user:
+        # Keep the host index in lockstep with this reply, then read truth from it.
+        action_form_state.sync_message(conn, session_id, reply_id, reply['content'], reply['metadata'])
+        if action_form_state.has_message(conn, session_id, reply_id):
+            awaiting = int(action_form_state.awaiting_input(conn, session_id, reply_id))
+        else:
+            awaiting = int(awaiting_input(reply['content']))
     conn.execute('''UPDATE chat_attention SET reply_id=?, reply_error=?, awaiting_input=?,
         revision=revision+1 WHERE session_id=? AND (reply_id!=? OR reply_error!=? OR awaiting_input!=?)''',
         (reply_id, error, awaiting, session_id, reply_id, error, awaiting))
@@ -88,7 +113,25 @@ def get_many(conn, user_id: int, ids: list[int]) -> dict:
     marks = ','.join('?' for _ in ids)
     rows = conn.execute(f'''SELECT a.* FROM chat_attention a JOIN chat_sessions s ON s.id=a.session_id
         WHERE s.user_id=? AND s.is_active=1 AND s.id IN ({marks})''', [user_id, *ids]).fetchall()
-    return {r['session_id']: snapshot(r) for r in rows}
+    result = {r['session_id']: snapshot(r) for r in rows}
+    awaiting = [r for r in rows if r['awaiting_input']]
+    if awaiting:
+        marks = ','.join('?' for _ in awaiting)
+        replies = conn.execute(f'SELECT id, chat_session_id, content FROM chat_messages WHERE id IN ({marks})',
+                               [r['reply_id'] for r in awaiting]).fetchall()
+        from api.flask_restart import live_flask_generation
+        generation = live_flask_generation()
+        for reply in replies:
+            sid = reply['chat_session_id']
+            # Host index is authoritative when it has this reply; otherwise fall
+            # back to parsing the stored content (legacy rows, first read).
+            if action_form_state.has_message(conn, sid, reply['id']):
+                result[sid]['awaitingInput'] = action_form_state.awaiting_input(
+                    conn, sid, reply['id'], generation)
+            else:
+                result[sid]['awaitingInput'] = awaiting_input(
+                    reply['content'], restart_generation=generation)
+    return result
 
 
 def mark(conn, session_id: int, user_id: int, data: dict) -> dict | None:
@@ -110,6 +153,5 @@ def mark(conn, session_id: int, user_id: int, data: dict) -> dict | None:
         through = min(through, row['reply_id'])
         conn.execute('''UPDATE chat_attention SET read_id=MAX(read_id,?), manual_unread=0,
             legacy_imported=1, revision=revision+1 WHERE session_id=? AND (read_id<? OR manual_unread=1 OR legacy_imported=0)''', (through, session_id, through))
-    result = snapshot(conn.execute('SELECT * FROM chat_attention WHERE session_id=?', (session_id,)).fetchone())
     conn.commit()
-    return result
+    return get_many(conn, user_id, [session_id]).get(session_id)

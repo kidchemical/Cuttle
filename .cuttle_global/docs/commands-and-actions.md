@@ -46,6 +46,20 @@ type: discord.post       # or shell
 # run: python .cuttle/scripts/do_thing.py
 ```
 
+### Action `type` handlers
+
+`type` selects a handler:
+
+- **`shell` / `run` / `script`** — built into Cuttle (`api.project_actions`).
+- **Service ops** — external side effects dispatched through the registry in
+  `src/api/service_ops/`. Each op implements the `ServiceOp` protocol
+  (`id`, `action_types`, `available()`, `execute()`) and owns the real behavior in
+  its own module (bundled: `discord.post` → `api.discord_ops.post`). List them with
+  `python -m api.service_ops list`. A project/machine can drop in an op via
+  `<home>/personal/service_ops/*.py` or `CUTTLE_SERVICE_OPS_DIR` (a module exposing
+  `build_op()`), so adding a new external target needs no edit to `project_actions`.
+
+
 ## Native `/branch` (project git branch)
 
 A global native control command (registered in

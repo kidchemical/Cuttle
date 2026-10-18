@@ -103,3 +103,26 @@ def test_oauth_redirect_uses_https_base(monkeypatch):
     assert auth_api._oauth_redirect_uri("google") == (
         "https://127.0.0.1:8080/api/auth/callback/google"
     )
+
+
+def test_public_oauth_status_resolves_google_rollout(monkeypatch):
+    from flask import Flask
+    from api.auth_api import auth_bp
+    from api.experimental import set_enabled
+
+    monkeypatch.delenv('CUTTLE_EXPERIMENTAL', raising=False)
+    monkeypatch.setenv('GOOGLE_CLIENT_ID', 'test-client')
+    monkeypatch.setenv('GOOGLE_CLIENT_SECRET', 'test-secret')
+    app = Flask(__name__)
+    app.register_blueprint(auth_bp)
+    client = app.test_client()
+
+    def status():
+        return client.get('/api/auth/oauth/status').get_json()['providers']['google']
+
+    set_enabled('google_signin', False)
+    assert status() == {'configured': True, 'enabled': False}
+    set_enabled('google_signin', True)
+    assert status() == {'configured': True, 'enabled': True}
+    monkeypatch.setenv('CUTTLE_EXPERIMENTAL', '0')
+    assert status() == {'configured': True, 'enabled': False}

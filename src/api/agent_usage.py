@@ -633,8 +633,7 @@ def _hermes_argv() -> Optional[List[str]]:
     except Exception:
         exe = None
     if not exe:
-        # Fall back to PATH name.
-        return ["hermes"]
+        return None
     return [exe]
 
 

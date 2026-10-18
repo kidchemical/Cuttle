@@ -302,6 +302,11 @@
     border-color: color-mix(in srgb, var(--accent-color, #3b82f6) 50%, var(--border-color));
 }
 
+.pending-changes-editor-btn { display: none; flex-shrink: 0; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--border-color); border-radius: 6px; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.has-ide-editors .pending-changes-editor-btn { display: inline-flex; }
+.pending-changes-editor-btn:hover:not(:disabled) { color: var(--accent-color); border-color: var(--accent-color); background: color-mix(in srgb, var(--accent-color) 10%, transparent); }
+.pending-changes-editor-btn:disabled { opacity: .4; cursor: default; }
+
 .pending-changes-file {
     flex: 1;
     min-width: 0;

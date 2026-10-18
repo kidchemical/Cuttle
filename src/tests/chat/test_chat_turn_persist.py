@@ -93,6 +93,34 @@ def test_persist_user_turn_attaches_badge_and_project():
     assert row["metadata"]["project_name"] == "Cuttle"
 
 
+def test_native_restart_control_id_survives_user_and_assistant_persistence():
+    from api import chat_turn_persist as persist
+
+    db = FakeDB()
+    request = {'message': '/restart', 'session_id': 11, 'control_request_id': 'control-restart-1'}
+    persist.persist_auth_user_message(
+        db, 11, '/restart', request_data=request, project_merge_fn=_merge_fn)
+    saver = persist.make_assistant_saver(chat_session_id=11, **_saver_deps(db, request))
+    saver({'success': True, 'response': 'Restart control form', 'native_command': '/restart'})
+    assert [row['role'] for row in db.rows] == ['user', 'assistant']
+    for row in db.rows:
+        assert row['metadata']['control_request_id'] == 'control-restart-1'
+        assert row['metadata']['native_command'] == '/restart'
+
+
+def test_normal_agent_turn_does_not_inherit_untrusted_control_id():
+    from api import chat_turn_persist as persist
+
+    db = FakeDB()
+    request = {'message': '/cursor explain /restart', 'control_request_id': 'not-a-control'}
+    persist.persist_auth_user_message(
+        db, 11, request['message'], request_data=request, project_merge_fn=_merge_fn)
+    saver = persist.make_assistant_saver(chat_session_id=11, **_saver_deps(db, request))
+    saver({'success': True, 'response': 'Explanation', 'type': 'cursor'})
+    for row in db.rows:
+        assert 'control_request_id' not in (row['metadata'] or {})
+
+
 def test_persist_user_turn_keeps_existing_chips_and_note_text():
     from api import chat_turn_persist as persist
 
@@ -273,6 +301,32 @@ def test_stream_harness_lane_delivers_sse_and_persists_both_rows(sse_env):
     roles = [(r["session"], r["role"]) for r in db.rows]
     assert roles == [(777, "user"), (777, "assistant")]
     assert chat_delivery.is_busy(777) is False
+
+
+@pytest.mark.parametrize('stream', [False, True])
+def test_restart_route_persists_control_identity_without_finishing_agent(sse_env, monkeypatch, stream):
+    from api import chat_delivery, flask_restart
+
+    wca, db = sse_env
+    monkeypatch.setattr(wca, 'require_owner', lambda: (dict(USER), None))
+    monkeypatch.setattr(flask_restart, 'status_snapshot', lambda **kwargs: {'status': {}, 'active_work': {}})
+    monkeypatch.setattr(wca, '_run_pinned_harness_turn', lambda *args, **kwargs: pytest.fail('Restart invoked an agent'))
+    chat_delivery.try_begin(777)
+    try:
+        client = wca.app.test_client()
+        client.set_cookie('session_token', 'tok-seam')
+        response = client.post('/api/chat', json={
+            'message': '/restart status', 'session_id': 777, 'stream': stream,
+            'control_request_id': 'native-control-route',
+        })
+        assert response.status_code == 200
+        response.get_data()  # Drain the SSE generator as well as JSON.
+        assert [row['role'] for row in db.rows] == ['user', 'assistant']
+        for row in db.rows:
+            assert row['metadata']['control_request_id'] == 'native-control-route'
+        assert chat_delivery.is_busy(777)
+    finally:
+        chat_delivery.end(777)
 
 
 

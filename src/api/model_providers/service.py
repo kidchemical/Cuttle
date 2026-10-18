@@ -130,6 +130,13 @@ def _record_call(provider_id: str, operation: str, model: str, task: str,
         elif result is not None:
             raw = getattr(result, "usage", None)
             usage = dict(raw) if isinstance(raw, dict) else {}
+        from api.voice_usage import current_context
+        attribution = current_context()
+        if attribution.get("query_id"):
+            usage["query_id"] = attribution["query_id"]
+        session_id = session_id if session_id is not None else attribution.get("session_id")
+        if attribution and operation == "text_generation":
+            task = "voice:narration"
         provider_usage.record_call(
             provider=provider_id, operation=operation, model=model, task=task,
             session_id=session_id, success=not error and result is not None,
@@ -137,6 +144,7 @@ def _record_call(provider_id: str, operation: str, model: str, task: str,
             latency_ms=(time.time() - start) * 1000.0,
             usage=usage or None,
             cost=cost,
+            message_id=attribution.get("message_id"),
         )
     except Exception:
         pass
@@ -227,7 +235,8 @@ def synthesize_speech(provider_id: str, request: SpeechRequest, *, usage_task: s
 
 
 def transcribe(provider_id: str, request: TranscriptionRequest, *, usage_task: str = "",
-               session_id=None) -> str:
+               session_id=None, usage: dict | None = None,
+               usage_cost: float | None = None) -> str:
     manifest, adapter, _ = _operation(provider_id, "audio_transcription", request.model)
     start = time.time()
     try:
@@ -237,7 +246,7 @@ def transcribe(provider_id: str, request: TranscriptionRequest, *, usage_task: s
                      session_id, start, error=True)
         raise
     _record_call(provider_id, "audio_transcription", request.model, usage_task,
-                 session_id, start, result={"usage": {}})
+                 session_id, start, result={"usage": dict(usage or {})}, cost=usage_cost)
     return text
 
 

@@ -3,7 +3,7 @@
 Remap stored Cuttle project paths after a move (drive letter, UNC share, folder rename).
 
 Updates (in the per-user Cuttle home, ``core.runtime_paths.cuttle_home``):
-  - db/projects.db  (registered projects)
+  - db/projects.db  (ordered locations through ProjectManager)
   - db/cuttle_auth.db  (chat_sessions.project_path, chat_messages.project_path)
   - config/settings.json  (starred_project.path, when set)
 
@@ -122,6 +122,8 @@ class Change:
     label: str
     old: str
     new: str
+    project_id: int | None = None
+    paths: list[str] | None = None
 
 
 def scan_projects(rules: list[PathRule]) -> list[Change]:
@@ -130,11 +132,15 @@ def scan_projects(rules: list[PathRule]) -> list[Change]:
     conn = sqlite3.connect(PROJECTS_DB)
     conn.row_factory = sqlite3.Row
     out: list[Change] = []
-    for row in conn.execute("select id, name, path from projects order by id"):
-        old = row["path"] or ""
-        new = remap_path(old, rules)
-        if new and new != old:
-            out.append(Change("projects.db", f"project {row['id']} {row['name']!r}", old, new))
+    for row in conn.execute("select id, name, path, config from projects order by id"):
+        config = json.loads(row['config'] or '{}')
+        paths = config.get('paths') or [row['path'] or '']
+        updated = [remap_path(path, rules) or path for path in paths]
+        if updated != paths:
+            out.append(Change(
+                "projects.db", f"project {row['id']} {row['name']!r}",
+                json.dumps(paths), json.dumps(updated), project_id=row['id'], paths=updated,
+            ))
     conn.close()
     return out
 
@@ -185,15 +191,14 @@ def apply_projects(changes: list[Change], dry_run: bool) -> int:
     touched = [c for c in changes if c.store == "projects.db"]
     if not touched or dry_run:
         return len(touched)
-    conn = sqlite3.connect(PROJECTS_DB)
+    from managers.project_manager import ProjectManager
+
+    manager = ProjectManager(str(PROJECTS_DB))
     for c in touched:
-        pid = c.label.split()[1]
-        conn.execute(
-            "update projects set path = ?, updated_at = CURRENT_TIMESTAMP where id = ?",
-            (c.new, int(pid)),
-        )
-    conn.commit()
-    conn.close()
+        if c.project_id is None or c.paths is None:
+            raise ValueError('Registry changes require a project id and ordered paths.')
+        if not manager.update_project(c.project_id, paths=c.paths):
+            raise ValueError(f'Project {c.project_id} is no longer registered.')
     return len(touched)
 
 

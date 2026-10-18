@@ -75,3 +75,18 @@ def test_lost_take_response_reuses_receipt_with_fresh_remaining_queue(tmp_path):
     assert retry['revision'] == db.get_followup_state(sid, uid)['revision']
     assert [x['id'] for x in db.get_followup_queue(sid, uid)] == ['later']
     assert db.mutate_followups(sid, uid + 100, 'take', claim_id='lost-response') is None
+
+
+def test_voice_claim_takes_only_its_paused_request(tmp_path):
+    db = AuthDatabase(tmp_path / 'auth.db')
+    uid = db.create_user('voice-queue@local', 'Voice', 'local', password='x')
+    sid = db.create_chat_session(uid, 'Voice queue')
+    db.set_followup_queue(sid, uid, [
+        {'id': 'ordinary', 'content': 'Other work'},
+        {'id': 'voice:one', 'content': 'Voice work', 'paused': True},
+        {'id': 'paused', 'content': 'Held work', 'paused': True},
+    ])
+    claim = db.mutate_followups(sid, uid, 'take_one', 'voice:one', claim_id='voice:one')
+    assert [row['id'] for row in claim['taken']] == ['voice:one']
+    assert [row['id'] for row in db.get_followup_queue(sid, uid)] == ['ordinary', 'paused']
+    assert db.mutate_followups(sid, uid, 'take_one', 'voice:one', claim_id='voice:one')['taken'] == claim['taken']

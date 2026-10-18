@@ -483,7 +483,7 @@
 
     /** A delayed status snapshot from a turn whose reply already painted. */
     function liveStatusPredatesReply(live, reply) {
-        if (!live || !reply) return false;
+        if (!live || !reply || reply.controlRequestId) return false;
         if (live.query_id && reply.queryId) {
             return String(live.query_id) === String(reply.queryId);
         }

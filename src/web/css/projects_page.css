@@ -3,9 +3,9 @@ body[data-page="projects"] {
     --project-text: var(--text-primary, #e2e8f0);
     --project-muted: var(--text-secondary, #a0aec0);
     --project-accent: var(--accent-color, #8b5cf6);
-    --project-panel: var(--bg-secondary, #1e1e2e);
+    --project-panel: var(--page-card-bg);
     --project-canvas: color-mix(in srgb, var(--bg-secondary, #1e1e2e) 96%, var(--project-text) 4%);
-    --project-border: color-mix(in srgb, var(--project-text) 12%, transparent);
+    --project-border: var(--border-color);
     --project-subtle: color-mix(in srgb, var(--project-text) 4%, transparent);
 }
 body[data-page="projects"] { color: var(--project-text); font-size: 14px; line-height: 1.5; }
@@ -166,3 +166,11 @@ dialog .actions { justify-content: flex-end; margin-top: 20px; }
     .detail-header .actions { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) { button, .button { transition: none; } }
+
+/* Sidebar and detail navigation need the same readable backing as tab panels. */
+.projects-app .project-sidebar { padding: 14px; border: var(--page-card-border); }
+.projects-app .detail-header { padding: 16px; border: var(--page-card-border); }
+.projects-app .tabs { padding: 0 16px; border: var(--page-card-border); }
+.projects-app #detail > .empty { border: var(--page-card-border); }
+/* Dialogs sit above panels and need an opaque backing. */
+body[data-page="projects"] dialog { background: rgb(from var(--bg-secondary) r g b / 1); }

@@ -35,6 +35,9 @@ def persist_auth_user_message(
     if chat_session_id is None or not message_text:
         return
     try:
+        from api.chat_metadata import native_control_metadata
+
+        metadata = dict(metadata or {}, **native_control_metadata(request_data, message=message_text))
         metadata = project_merge_fn(metadata, request_data, chat_session_id)
         db.add_message(chat_session_id, 'user', message_text, metadata=metadata or None)
     except Exception as e:
@@ -177,6 +180,12 @@ def make_assistant_saver(
         if str(nonlocal_res.get('ui') or '').strip().lower() == 'system':
             return
         asst_meta = assistant_meta_fn(nonlocal_res)
+        from api.chat_metadata import native_control_metadata
+
+        asst_meta = dict(asst_meta or {}, **native_control_metadata(
+            request_data, native_command=nonlocal_res.get('native_command')))
+        if isinstance(nonlocal_res.get('postprocessing'), dict):
+            asst_meta = dict(asst_meta or {}, postprocessing=nonlocal_res['postprocessing'])
         if isinstance(nonlocal_res.get('routing_badge'), dict):
             asst_meta = dict(asst_meta or {}, routing_badge=nonlocal_res['routing_badge'])
         asst_meta = project_merge_fn(

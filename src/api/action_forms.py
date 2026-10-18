@@ -1134,6 +1134,8 @@ def mark_action_form_consumed_in_history(
     selected: List[str],
     toast: str = "",
     spec_patch: Optional[Dict[str, Any]] = None,
+    drop_keys: Optional[List[str]] = None,
+    message_id: Optional[int] = None,
 ) -> bool:
     """
     Persist one-shot lock: patch the assistant message HTML/JSON so refresh
@@ -1160,9 +1162,15 @@ def mark_action_form_consumed_in_history(
         from api.auth_db import get_auth_db
 
         db = get_auth_db()
-        msgs = db.find_messages_containing(
-            int(s), form_id, role="assistant", limit=5
-        )
+        if message_id is not None:
+            # Target one exact occurrence: shared restart ids can appear in
+            # several bubbles of the same chat, and reconcile must settle each.
+            exact = db.get_message_by_id(int(message_id))
+            msgs = [exact] if exact else []
+        else:
+            msgs = db.find_messages_containing(
+                int(s), form_id, role="assistant", limit=5
+            )
         if not msgs:
             return False
         # One bubble can hold several cards: patch the block whose tag id
@@ -1200,6 +1208,10 @@ def mark_action_form_consumed_in_history(
             # e.g. restartId — lets a reloaded card resume live status.
             for key, value in (spec_patch or {}).items():
                 parsed[str(key)] = value
+            # A terminal restart card must stop advertising a live restart id,
+            # else a reloaded card keeps following an already-finished restart.
+            for key in (drop_keys or []):
+                parsed.pop(str(key), None)
             body = "\n" + json.dumps(parsed, ensure_ascii=False) + "\n"
         patched = f"<cuttle_action_form_pending{attrs}>{body}</cuttle_action_form_pending>"
         new_content = content[: match.start()] + patched + content[match.end() :]
@@ -1294,6 +1306,86 @@ def patch_action_form_watch_in_history(
     except Exception as e:
         print(f"[CHAT] action form watch snapshot persist failed: {e}", flush=True)
         return False
+
+
+_RECONCILE_TOASTS = {
+    "superseded": "Flask already restarted",
+    "finished": "Flask restarted",
+    "failed": "Restart failed",
+}
+
+
+def reconcile_restart_forms(
+    *,
+    live_generation: Optional[int] = None,
+    status: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Terminalize restart cards whose restart is over (host-owned reconcile).
+
+    Restart controllers share an id per Flask generation and are locked by each
+    client from local generation inference. That left the persisted history
+    (and every other device) still showing an unlocked/locked-elsewhere card,
+    which is why a chat stayed blue or a finished card kept spinning.
+
+    This runs from the status endpoint every client already polls, settles the
+    card in history, and drops its live ``restartId``. It is idempotent: rows
+    already terminal leave the candidate set.
+    """
+    try:
+        from api import action_form_state
+        from api.auth_db import get_auth_db
+
+        conn = get_auth_db()._get_connection()
+        try:
+            affected = action_form_state.superseded_restart_forms(
+                conn, live_generation=live_generation, status=status
+            )
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[CHAT] restart form reconcile scan failed: {e}", flush=True)
+        return 0
+    if not affected:
+        return 0
+    changed = 0
+    seen: set = set()
+    for row in affected:
+        key = (row["session_id"], row.get("message_id"), row["form_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            ok = mark_action_form_consumed_in_history(
+                session_id=f"db_session_{row['session_id']}",
+                form_id=row["form_id"],
+                selected=[],
+                toast=_RECONCILE_TOASTS.get(row.get("reason"), "Flask already restarted"),
+                drop_keys=["restartId", "pending"],
+                message_id=row.get("message_id"),
+            )
+            if ok:
+                changed += 1
+            else:
+                # Content is gone/edited beyond the block: still terminalize the
+                # index so this card is not retried on every poll.
+                try:
+                    from api import action_form_state
+                    from api.auth_db import get_auth_db
+
+                    conn2 = get_auth_db()._get_connection()
+                    try:
+                        action_form_state.force_terminal(
+                            conn2, row["session_id"], row.get("message_id") or 0, row["form_id"]
+                        )
+                        conn2.commit()
+                    finally:
+                        conn2.close()
+                    changed += 1
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[CHAT] restart form reconcile patch failed: {e}", flush=True)
+    return changed
 
 
 def _is_flask_restart_form_id(form_id: Optional[str]) -> bool:
@@ -1612,6 +1704,11 @@ def execute_action_form_submission(
     auxiliary = len(runs) == 1 and bool(runs[0].get("auxiliary"))
     if auxiliary:
         lock, reusable = "none", True
+    if (len(runs) == 1 and runs[0].get("action") == "flask.restart"
+            and str((runs[0].get("params") or {}).get("mode") or "").lower() == "status"):
+        # The native status path bypasses recipe replay settings. Reading
+        # status must leave the restart chooser available for a later request.
+        lock, reusable = "none", True
 
     # Malformed form (checked items with no post body) — never post a guess.
     blocked = next((str(r.get("blocked")) for r in runs if r.get("blocked")), "")
@@ -1731,7 +1828,12 @@ def execute_action_form_submission(
                 from api.action_replay import claim, duplicate_result, key, release_rejected
                 restart_mode = str(run_params.get("mode") or "graceful").strip().lower()
                 # Shared controller generations coalesce copies across chats.
-                receipt_key = key(f"form:{form_id}:{restart_mode}", action, "", "" if _is_flask_restart_form_id(form_id) else session_id)
+                receipt_id = f"form:{form_id}:{restart_mode}"
+                shared_controller = _is_flask_restart_form_id(form_id)
+                if shared_controller:
+                    from api.flask_restart import restart_dispatch_scope
+                    receipt_id += ':' + restart_dispatch_scope()
+                receipt_key = key(receipt_id, action, "", "" if shared_controller else session_id)
                 if restart_mode != "status" and not claim(receipt_key):
                     res = duplicate_result()
                     all_ok = False

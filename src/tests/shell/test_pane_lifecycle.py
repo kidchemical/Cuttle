@@ -63,6 +63,57 @@ assert.equal(calls.length, count, 'same-page navigation is a no-op');
     subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
 
 
+def test_space_switch_reuses_live_frame_for_same_existing_chat():
+    """A space switch onto the same existing chat must not reload its frame.
+
+    Reloading destroyed the chat page's state (voice mode, streams) for no gain;
+    an existing chat's composer draft is keyed by chat id, not by space. Blank
+    new chats still reload so their per-space draft scope is re-read.
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("node"):
+        return
+    source = (SHELL / "shell_panes.js").read_text(encoding="utf-8")
+    script = r'''
+const assert = require('node:assert/strict');
+const calls = [];
+const state = { page: '/chat_page.html?chat=7' };
+global.window = {};
+''' + source + r'''
+const api = window.CuttleShellPanes.create({
+  win: { location: { origin: 'https://cuttle.test', href: 'https://cuttle.test/', pathname: '/', search: '', hash: '' }, history: { replaceState: () => {} } },
+  doc: { addEventListener() {}, documentElement: { style: { setProperty() {} }, classList: { toggle() {} } }, querySelectorAll() { return []; } },
+  fetch() {}, setTimeout, clearTimeout, URL, URLSearchParams, AbortController,
+  getSplitColumns: () => [], getLiveFrame: () => null, findColumnIndexForSource: () => 0,
+  columnState: new Map(), chatSurfaceKind: () => null, broadcastToFrames() {}, getColumnEl: () => null,
+  getSplitColumnCount: () => 1, pauseAllShellPaneStreams() {}, pauseShellFrameStreams() {},
+  stampComposerDraftScope() {}, withCacheBust: (x) => x, attachFrameLoadListener() {},
+  localStorage: { getItem: () => null }, isSplitDiscardedEl: () => false, isCuttleMobileShell: () => false,
+  withRememberedChat: (_i, page) => page, rememberChatHandleFromPage() {}, getState: () => state,
+  pushShellBackEntry: (page) => calls.push(['back', page]), setState: (_i, page) => { state.page = page; calls.push(['state', page]); },
+  storagePageKey: 'shell_page', sessionStorage: { setItem: () => {}, getItem: () => null },
+  updateColumnUI: () => calls.push(['ui']), persistSplitLayout: () => calls.push(['persist']),
+  desktopCfg: null,
+});
+api.replaceFrameInPlace = (...a) => { calls.push(['inPlace', ...a]); return {}; };
+api.replaceFrame = (...a) => { calls.push(['replace', ...a]); return {}; };
+api.attachFrameLoadListener = () => {};
+// A real navigation calls setState; the reuse path returns before any effect.
+const navs = () => calls.filter((x) => x[0] === 'state').length;
+api.navigate(0, '/chat_page.html?chat=7', { force: true });
+assert.equal(navs(), 0, 'same existing chat is reused, not reloaded');
+assert.equal(state.page, '/chat_page.html?chat=7');
+api.navigate(0, '/chat_page.html?chat=8', { force: true });
+assert.equal(navs(), 1, 'a different chat navigates');
+state.page = '/chat_page.html?new=1';
+api.navigate(0, '/chat_page.html?new=1', { force: true });
+assert.equal(navs(), 2, 'a blank new chat still navigates for its per-space draft');
+'''
+    subprocess.run(["node", "-"], input=script, text=True, encoding="utf-8", check=True)
+
+
 def test_frame_lifetime_contracts_are_characterized():
     source = (SHELL / "app_shell.js").read_text(encoding="utf-8")
     owner = (SHELL / "shell_panes.js").read_text(encoding="utf-8")

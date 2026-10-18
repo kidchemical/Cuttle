@@ -38,6 +38,12 @@ _STDOUT_LIMIT = 16 * 1024 * 1024
 
 
 def claude_executable() -> Optional[str]:
+    from api.agent_harness.cli_paths import cli_path_override
+
+    configured, override = cli_path_override("claude")
+    if configured:
+        return override
+
     override = (os.getenv("CLAUDE_CLI_PATH") or "").strip()
     if override and os.path.isfile(override):
         return override
@@ -55,6 +61,35 @@ def claude_executable() -> Optional[str]:
         if npm.is_file():
             return str(npm)
     return None
+
+
+def claude_cli_health() -> bool:
+    """Legacy health probe through the selected executable; never bypass a wrapper."""
+    import subprocess
+    from api.agent_harness.cli_paths import cli_path_override
+
+    configured, override = cli_path_override("claude")
+    if configured and not override:
+        return False
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    try:
+        result = subprocess.run(
+            [override if configured else (claude_executable() or "claude"), "--version"],
+            env=agent_cli_env(), capture_output=True, text=True, timeout=3,
+            creationflags=flags,
+        )
+        return result.returncode == 0
+    except Exception:
+        if configured:
+            return False
+        try:
+            result = subprocess.run(
+                ["wsl", "which", "claude"], env=agent_cli_env(),
+                capture_output=True, text=True, timeout=5, creationflags=flags,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
 
 
 def _default_timeout() -> float:

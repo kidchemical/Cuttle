@@ -311,7 +311,7 @@
         if (userIdx >= 0) {
             for (let i = userIdx + 1; i < messages.length; i++) {
                 const m = messages[i];
-                if (m && m.role === 'assistant' && String(m.content || '').trim()) {
+                if (isAgentReply(m) && String(m.content || '').trim()) {
                     return m;
                 }
             }
@@ -319,7 +319,7 @@
         }
         for (let i = messages.length - 1; i >= 0; i--) {
             const m = messages[i];
-            if (!m || m.role !== 'assistant' || !String(m.content || '').trim()) continue;
+            if (!isAgentReply(m) || !String(m.content || '').trim()) continue;
             if (fns.alreadyOnScreen('assistant', m.content)) return null;
             // A cancelled row is never painted, so it stays "unseen" forever
             // and would otherwise be re-recovered on later turns.
@@ -413,11 +413,20 @@
     // ---------- Sync per-message exactly-once classification (pure) ----------
 
     function parseControlRequestId(msg) {
+        if (!msg) return null;
         let meta = msg.metadata;
         if (typeof meta === 'string') {
             try { meta = JSON.parse(meta); } catch (_) { meta = {}; }
         }
-        return (meta && meta.control_request_id) || null;
+        return msg.control_request_id || msg.controlRequestId || (meta && meta.control_request_id) || null;
+    }
+
+    function isAgentReply(msg) {
+        return !!(msg && msg.role === 'assistant' && !parseControlRequestId(msg));
+    }
+
+    function agentTranscript(messages) {
+        return Array.isArray(messages) ? messages.filter((msg) => !parseControlRequestId(msg)) : messages;
     }
 
     /**
@@ -446,6 +455,9 @@
         if (crid) {
             const matched = fns.findControlClaim(crid, msg.role);
             if (matched) return { decision: 'claim-control', matched: matched, crid: crid };
+            // A control reply is independent of the agent turn. Never adopt
+            // its bubble, treat it as completion, or suppress it after Stop.
+            return { decision: 'append' };
         }
         if (msg.role === 'assistant' && fns.isCancelledText(msg.content)) {
             return { decision: 'skip-cancelled' };
@@ -966,6 +978,9 @@
         recoverChatResultWithRetries: recoverChatResultWithRetries,
         consumeParkedChatResult: consumeParkedChatResult,
         classifyServerMessage: classifyServerMessage,
+        isAgentReply: isAgentReply,
+        agentTranscript: agentTranscript,
+        parseControlRequestId: parseControlRequestId,
         decideStaleHeal: decideStaleHeal,
         recoverAfterStreamDetach: recoverAfterStreamDetach,
         recoverAfterTransportFailure: recoverAfterTransportFailure,

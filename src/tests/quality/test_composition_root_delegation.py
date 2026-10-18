@@ -27,6 +27,7 @@ APP_SHELL = SHELL_DIR / "app_shell.js"
 
 # (owner file, namespace, root call-site needle)
 CHAT_OWNERS = (
+    ("chat_session_usage.js", "CuttleChatSessionUsage", "CuttleChatSessionUsage.create("),
     ("chat_media.js", "CuttleChatMedia", "CuttleChatMedia.create("),
     ("chat_tts.js", "CuttleChatTts", "CuttleChatTts.create("),
     ("chat_transcript_nav.js", "CuttleChatTranscriptNav", "CuttleChatTranscriptNav.create("),
@@ -67,6 +68,7 @@ CHAT_OWNERS = (
 
 # (owner file, namespace, root call-site needle)
 SHELL_OWNERS = (
+    ("shell_voice.js", "CuttleShellVoice", "CuttleShellVoice.create("),
     ("shell_electron.js", "CuttleShellElectron", "CuttleShellElectron."),
     ("shell_rail.js", "CuttleShellRail", "CuttleShellRail.create("),
     ("shell_panes.js", "CuttleShellPanes", "CuttleShellPanes.create("),

@@ -116,8 +116,38 @@ function _setAuthRequiredGate(on) {
     if (close) close.hidden = _authRequiredGate;
 }
 
+// Public OAuth status exposes the effective rollout state before login too.
+let _googleSignInEnabled = false;
+let _oauthStatusRevision = 0;
+
+async function refreshGoogleSignInUi() {
+    const revision = ++_oauthStatusRevision;
+    let data = null;
+    try {
+        const response = await fetch('/api/auth/oauth/status', { credentials: 'include', cache: 'no-store' });
+        if (response.ok) data = await response.json();
+    } catch (_) { /* failed resolution hides the experiment */ }
+    if (revision !== _oauthStatusRevision) return;
+    _googleSignInEnabled = data?.providers?.google?.enabled === true;
+    document.querySelectorAll('.auth-oauth-block').forEach(block => {
+        block.style.display = _googleSignInEnabled ? '' : 'none';
+        _refreshOauthAvailability(block, data);
+    });
+    const link = document.getElementById('userMenuLinkGoogle');
+    if (link) link.hidden = !_userCanLinkGoogle(currentUser);
+    window.dispatchEvent(new CustomEvent('cuttle-google-signin-changed'));
+}
+
+window.addEventListener('focus', refreshGoogleSignInUi);
+window.addEventListener('message', (event) => {
+    if (event.origin === window.location.origin && event.data?.type === 'cuttle-experimental-flags-changed') {
+        refreshGoogleSignInUi();
+    }
+});
+document.addEventListener('DOMContentLoaded', refreshGoogleSignInUi);
+
 function _userCanLinkGoogle(user) {
-    if (!user) return false;
+    if (!_googleSignInEnabled || !user) return false;
     const provider = user.auth_provider || 'local';
     const linked = !!(user.google_linked || user.provider_user_id);
     if (linked) return false;
@@ -137,6 +167,8 @@ window.CuttleAuth = {
     userAvatarInitials: (user) => userAvatarInitials(user),
     userAvatarInnerHtml: (user, opts) => userAvatarInnerHtml(user, opts),
     userCanLinkGoogle: (user) => _userCanLinkGoogle(user),
+    googleSignInEnabled: () => _googleSignInEnabled,
+    refreshGoogleSignInUi,
 };
 
 function _authChangedDetail() {
@@ -569,11 +601,12 @@ function _authOauthBlock(dividerText) {
         a.innerHTML = b.svg + '<span>' + b.label + '</span>';
         list.appendChild(a);
     });
-    _refreshOauthAvailability(list);
-    return _el('div', null, [
+    const block = _el('div', { className: 'auth-oauth-block' }, [
         _el('div', { className: 'auth-divider' }, [_el('span', { text: dividerText })]),
         list,
     ]);
+    block.style.display = 'none';
+    return block;
 }
 
 /**
@@ -582,31 +615,23 @@ function _authOauthBlock(dividerText) {
  * button stays visible but inert, with setup guidance instead of a raw
  * backend error after the click.
  */
-function _refreshOauthAvailability(listEl) {
-    if (!listEl || typeof fetch !== 'function') return;
-    fetch('/api/auth/oauth/status', { credentials: 'include' })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => {
-            const providers = (data && data.providers) || {};
-            Array.from(listEl.querySelectorAll('[data-oauth-provider]')).forEach((a) => {
-                const p = a.getAttribute('data-oauth-provider');
-                const st = providers[p];
-                if (st && st.configured === false) {
-                    a.classList.add('auth-oauth-unavailable');
-                    a.setAttribute('aria-disabled', 'true');
-                    a.title = 'Not set up on this server — add the client ID and secret to Cuttle\'s .env';
-                    a.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        showAuthError(
-                            'Google login is not set up on this server yet. ' +
-                            'Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to Cuttle\'s .env, ' +
-                            'restart Flask, then try again — or continue with a local account or as guest.'
-                        );
-                    });
-                }
-            });
-        })
-        .catch(() => { /* leave buttons enabled; server explains on click */ });
+function _refreshOauthAvailability(listEl, data) {
+    const providers = data?.providers || {};
+    listEl.querySelectorAll('[data-oauth-provider]').forEach(a => {
+        const status = providers[a.getAttribute('data-oauth-provider')];
+        const unavailable = status?.configured !== true;
+        a.classList.toggle('auth-oauth-unavailable', unavailable);
+        a.setAttribute('aria-disabled', String(unavailable));
+        a.title = unavailable ? "Not set up on this server — add the client ID and secret to Cuttle's .env" : '';
+        a.onclick = unavailable ? (event) => {
+            event.preventDefault();
+            showAuthError(
+                'Google login is not set up on this server yet. ' +
+                'Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to Cuttle\'s .env, ' +
+                'restart Flask, then try again — or continue with a local account or as guest.'
+            );
+        } : null;
+    });
 }
 
 function _hostWantsOauth(host) {
@@ -743,6 +768,7 @@ function openAuthModal(tab = 'login') {
     const modal = document.getElementById('authModal');
     if (modal) {
         _setAuthCredentialFieldsArmed(true);
+        refreshGoogleSignInUi();
         modal.classList.add('active');
         if (typeof window.cuttleSyncMobileServerRows === 'function') {
             try { window.cuttleSyncMobileServerRows(); } catch (_) {}

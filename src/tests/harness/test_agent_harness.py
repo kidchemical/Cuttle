@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import api.agent_harness.catalog as catalog
 from api.agent_harness.catalog import (
     get_agent,
@@ -305,10 +307,17 @@ def test_normalize_chat_session_id():
     assert normalize_chat_session_id("  ") is None
 
 
-def test_kernel_filters_unsupported_execute_kwargs(monkeypatch, tmp_path):
+@pytest.mark.parametrize('configured,resumed', [(False, False), (True, False), (True, True)])
+def test_kernel_filters_unsupported_execute_kwargs(monkeypatch, tmp_path, configured, resumed):
     """Kernel must not pass cancel_event to adapters that do not accept it."""
     from api.agent_harness import kernel
     from api.agent_harness.types import AgentManifest, AgentResult
+    from managers import settings_manager as sm
+
+    private = sm.SettingsManager(str(tmp_path / 'settings.json'))
+    monkeypatch.setattr(sm, '_settings_manager', private)
+    if configured:
+        private.set_setting('chat_prompts', {'global': 'Be concise', 'agents': {'opencode': 'Explain changes', 'codex': 'Other agent'}})
 
     seen: dict = {}
 
@@ -320,7 +329,7 @@ def test_kernel_filters_unsupported_execute_kwargs(monkeypatch, tmp_path):
             return project_path or "."
 
         def load_resume(self, cwd, chat_session_id):
-            return None
+            return 'resume-test' if resumed else None
 
         def save_resume(self, cwd, chat_session_id, cli_session_id):
             pass
@@ -389,7 +398,12 @@ def test_kernel_filters_unsupported_execute_kwargs(monkeypatch, tmp_path):
         project_path=str(tmp_path),
     )
     assert out.get("success") is True
-    assert seen.get("prompt") == "Reply pong"
+    if configured:
+        assert 'Be concise' in seen['prompt'] and 'Explain changes' in seen['prompt']
+        assert 'Other agent' not in seen['prompt']
+        assert seen['prompt'].endswith('Reply pong')
+    else:
+        assert seen.get("prompt") == "Reply pong"
     # Raises TypeError if kernel passes cancel_event without filtering.
 
 
@@ -1092,4 +1106,3 @@ def test_kernel_rejects_adapter_cwd_from_another_project(tmp_path, monkeypatch):
     assert out.get("response") == "pong"
     assert Path(seen["cwd"]).resolve() == demo.resolve()
     assert Path(seen["cwd"]).resolve() != Path(os.getcwd()).resolve()
-

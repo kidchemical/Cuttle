@@ -1,18 +1,32 @@
 /* Gizmos (experimental flag `gizmos`): meter component + shell docks/popover.
    Shared by app_shell.html, gizmos_page.html and gizmo_popout.html. */
 
+/* Theme tokens. The shell popover renders meter rows outside `.gizmo`, so it
+   carries the same set. Pages define --text-primary/secondary; the shell only
+   defines the rail and panel tokens, hence the fallbacks. Lines are a translucent
+   ink of the text color: visible on every theme without a hard dark edge. */
+:is(.gizmo, .shell-gizmo-popover) {
+    --gz-text: var(--text-primary, var(--rail-icon-hover, #c9d1d9));
+    --gz-dim: var(--text-secondary, var(--rail-icon, #8b949e));
+    --gz-color: var(--gz-dim);
+    --gz-track: color-mix(in srgb, var(--gz-text) 14%, transparent);
+    --gz-border: color-mix(in srgb, var(--gz-text) 20%, transparent);
+    --gz-border-strong: color-mix(in srgb, var(--gz-text) 30%, transparent);
+    --gz-divider: color-mix(in srgb, var(--gz-text) 12%, transparent);
+    --gz-surface: var(--bg-secondary, var(--panel-bg, #161b22));
+    --gz-hover: color-mix(in srgb, var(--gz-text) 8%, transparent);
+    --gz-ok: #3fb950;
+    --gz-warning: #d29922;
+    --gz-error: #f85149;
+}
 .gizmo {
-    --gz-color: #8b949e;
-    --gz-track: rgba(255, 255, 255, 0.10);
-    --gz-text: var(--rail-icon-hover, #c9d1d9);
-    --gz-dim: var(--rail-icon, #8b949e);
     color: var(--gz-text);
     font: 500 11px/1.25 system-ui, -apple-system, "Segoe UI", sans-serif;
     box-sizing: border-box;
 }
-.gizmo.tone-ok { --gz-color: #3fb950; }
-.gizmo.tone-low { --gz-color: #d29922; }
-.gizmo.tone-critical, .gizmo.tone-blocked { --gz-color: #f85149; }
+.gizmo.tone-ok { --gz-color: var(--gz-ok); }
+.gizmo.tone-low { --gz-color: var(--gz-warning); }
+.gizmo.tone-critical, .gizmo.tone-blocked { --gz-color: var(--gz-error); }
 .gizmo.is-stale { opacity: 0.75; }
 
 .gizmo-bar {
@@ -48,12 +62,12 @@
     gap: 6px;
     height: 22px;
     padding: 0 9px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid var(--gz-border);
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--gz-hover);
     white-space: nowrap;
 }
-.gizmo--titlebar:hover { background: rgba(255, 255, 255, 0.09); }
+.gizmo--titlebar:hover { background: color-mix(in srgb, var(--gz-text) 14%, transparent); border-color: var(--gz-border-strong); }
 
 /* Blade bar: ring */
 .gizmo--rail {
@@ -90,12 +104,12 @@
     flex-direction: column;
     gap: 6px;
     padding: 9px 11px;
-    border: 1px solid var(--rail-border, #1c2333);
+    border: 1px solid var(--gz-border);
     border-radius: 10px;
-    background: rgba(13, 17, 23, 0.92);
+    background: var(--gz-surface);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
-.gizmo--float { width: 220px; backdrop-filter: blur(8px); }
+.gizmo--float { width: 220px; -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
 .gizmo--popout { height: 100%; border-radius: 0; border: none; box-shadow: none; background: transparent; padding: 8px 10px; }
 .gizmo--card { box-shadow: none; }
 .gizmo-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
@@ -103,26 +117,32 @@
 .gizmo-head .gizmo-value { font-size: 14px; }
 .gizmo-bar--main { width: 100%; height: 6px; }
 .gizmo-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 10.5px; }
-.gizmo-stale { color: #d29922; text-transform: uppercase; font-size: 9px; letter-spacing: 0.06em; }
+.gizmo-stale { color: var(--gz-warning); text-transform: uppercase; font-size: 9px; letter-spacing: 0.06em; }
 
-.gizmo-rows { display: grid; gap: 5px; margin-top: 2px; }
-.gizmo-row {
+/* Rows share one column grid (subgrid) so every window's bar lines up. */
+.gizmo-rows {
     display: grid;
     grid-template-columns: minmax(56px, auto) 1fr 38px minmax(72px, auto);
+    gap: 5px 8px;
+    margin-top: 2px;
+}
+.gizmo-row {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
     align-items: center;
-    gap: 8px;
     font-size: 11px;
 }
 .gizmo-row .gizmo-bar { --gz-color: inherit; width: 100%; }
-.gizmo-row.tone-ok { --gz-color: #3fb950; }
-.gizmo-row.tone-low { --gz-color: #d29922; }
-.gizmo-row.tone-critical, .gizmo-row.tone-blocked { --gz-color: #f85149; }
-.gizmo-row.tone-unknown { --gz-color: #8b949e; }
+.gizmo-row.tone-ok { --gz-color: var(--gz-ok); }
+.gizmo-row.tone-low { --gz-color: var(--gz-warning); }
+.gizmo-row.tone-critical, .gizmo-row.tone-blocked { --gz-color: var(--gz-error); }
+.gizmo-row.tone-unknown { --gz-color: var(--gz-dim); }
 .gizmo-row .gizmo-bar-fill { background: var(--gz-color); }
 .gizmo-row.is-active .gizmo-row-label { font-weight: 700; }
-.gizmo-row-label { color: var(--gz-text, #c9d1d9); white-space: nowrap; }
+.gizmo-row-label { color: var(--gz-text); white-space: nowrap; }
 .gizmo-row-value { text-align: right; font-variant-numeric: tabular-nums; color: var(--gz-color); font-weight: 650; }
-.gizmo-row-reset { color: var(--gz-dim, #8b949e); font-size: 10.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.gizmo-row-reset { color: var(--gz-dim); font-size: 10.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* ── Shell docks ─────────────────────────────────────────────────────── */
 .shell-gizmo { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
@@ -175,40 +195,54 @@ body.gizmo-dragging .shell-titlebar { box-shadow: inset 0 0 0 1px rgba(102, 126,
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     padding: 12px;
-    border: 1px solid var(--panel-border, #2a2a3e);
+    border: 1px solid var(--gz-border);
     border-radius: 10px;
-    background: var(--panel-bg, #16213e);
-    color: var(--rail-icon-hover, #c9d1d9);
+    background: var(--gz-surface);
+    background: rgb(from var(--gz-surface) r g b / 1);
+    color: var(--gz-text);
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
     font: 12px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 .shell-gizmo-popover[hidden] { display: none; }
 .gizmo-detail { display: grid; gap: 8px; }
 .gizmo-detail-title { font-weight: 700; font-size: 13px; }
-.gizmo-detail-status { color: #f85149; font-weight: 600; }
-.gizmo-detail-notes, .gizmo-detail-meta, .gizmo-detail-empty { color: var(--rail-icon, #8b949e); font-size: 11px; }
+.gizmo-detail-status { color: var(--gz-error); font-weight: 600; }
+.gizmo-detail-notes, .gizmo-detail-meta, .gizmo-detail-empty { color: var(--gz-dim); font-size: 11px; }
 .shell-gizmo-popover-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
-.shell-gizmo-popover-field span { color: var(--rail-icon, #8b949e); }
-.shell-gizmo-popover-field select,
-.shell-gizmo-popover button {
+.shell-gizmo-popover-field span { color: var(--gz-dim); }
+body .shell-gizmo-popover-field select,
+body .shell-gizmo-popover button {
     font: inherit;
     color: inherit;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: color-mix(in srgb, var(--gz-text) 4%, transparent);
+    border: 1px solid var(--gz-border-strong);
     border-radius: 6px;
     padding: 4px 8px;
     cursor: pointer;
 }
-/* The popover is a dark surface; without a dark color-scheme the native
-   <option> list renders light-on-light (the option text inherits the light
-   select color). Bind the popup to the theme's base class. */
+/* Native option lists follow the active theme base. */
 .shell-gizmo-popover-field select { color-scheme: dark; }
-.shell-gizmo-popover-field option { background: var(--panel-bg, #16213e); color: var(--rail-icon-hover, #c9d1d9); }
+.shell-gizmo-popover-field option { background: var(--panel-bg, #16213e); color: var(--gz-text); }
 body.light-mode .shell-gizmo-popover-field select { color-scheme: light; }
-body.light-mode .shell-gizmo-popover-field option { background: var(--panel-bg, #fafafc); color: #1f2430; }
-.shell-gizmo-popover-section { margin-top: 12px; margin-bottom: 6px; color: var(--rail-icon, #8b949e); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+body.light-mode .shell-gizmo-popover-field option { background: var(--bg-secondary, #fafafc); color: var(--text-primary, #1f2430); }
+.shell-gizmo-popover-section { margin-top: 12px; margin-bottom: 6px; color: var(--gz-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
 .shell-gizmo-popover-docks { display: flex; flex-wrap: wrap; gap: 6px; }
-.shell-gizmo-popover button:hover { background: rgba(255, 255, 255, 0.12); }
+.shell-gizmo-popover button:hover { background: color-mix(in srgb, var(--gz-text) 14%, transparent); }
 .shell-gizmo-popover button.is-current { border-color: var(--rail-active-border, #667eea); background: var(--rail-active-bg, rgba(102, 126, 234, 0.15)); }
-.shell-gizmo-popover-actions { display: flex; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
-.shell-gizmo-popover-actions .is-danger { margin-left: auto; color: #f85149; border-color: rgba(248, 81, 73, 0.4); }
+.shell-gizmo-popover-actions { display: flex; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--gz-divider); }
+.shell-gizmo-popover-actions .is-danger { margin-left: auto; color: var(--gz-error); border-color: color-mix(in srgb, var(--gz-error) 50%, transparent); }
+
+/* Light-base themes need deeper status inks as well as visible meter tracks. */
+body.light-mode :is(.gizmo, .shell-gizmo-popover) {
+    --gz-ok: #1a7f37;
+    --gz-warning: #805900;
+    --gz-error: #c62828;
+}
+/* Dark-theme drop shadows read as a grey smear on light bases. */
+body.light-mode .gizmo--float { box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12); }
+body.light-mode .shell-gizmo-popover { box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16); }
+.gizmo--float, .gizmo--card { background: color-mix(in srgb, var(--gz-surface) 90%, transparent); }
+.shell-gizmo:focus-visible, .shell-gizmo-popover :is(button, select):focus-visible {
+    outline: 2px solid var(--accent-color, #667eea);
+    outline-offset: 2px;
+}

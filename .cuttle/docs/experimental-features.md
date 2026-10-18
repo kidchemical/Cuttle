@@ -10,6 +10,13 @@ Achievements is **opt-in and off by default**. The flag-management API is always
 
 ## Turning things on/off
 
+**Response post-processing:** flag `response_postprocessing` (default off).
+Its instructions, append/replace behavior, API/CLI, model, effort and fallback
+chain are configured together in Settings → Agents → Response post-processing,
+independently of Background helpers.
+Details and teardown owners: [chat-prompts.md](chat-prompts.md). The global kill
+switch also disables the pass.
+
 **UI**: Settings → 🧪 **Experimental** tab. Rows are rendered from the registry,
 so anything listed there is a real flag on the server.
 
@@ -31,6 +38,24 @@ Use the daemon-owned Flask restart action after changing the process environment
 ```bash
 cd src && ../.venv/bin/python -m api.experimental list   # must run with src on the path
 ```
+
+---
+
+## Google sign-in
+
+Flag `google_signin` (default off), labeled **Google sign-in** in Settings →
+Experimental. Shows Google options in sign-in/sign-up forms, account linking,
+photo refresh, and the legacy account menu. Disabled or unresolved flags hide
+these controls and Google-specific account prompts. Local sign-in, guest access,
+logout, existing linked identities and saved avatars remain available.
+
+The public `/api/auth/oauth/status` reports the effective flag before login;
+shared `auth.js` owns UI availability and the account panel consumes it. Changes
+refresh in place on Experimental settings notifications, focus and modal open.
+OAuth credentials are still required. This flag gates UI visibility; existing
+OAuth endpoints are unchanged. Tests: `auth/test_oauth_link_account.py` and
+`e2e/test_google_signin_gate.py`. Teardown: remove the flag row, status field,
+shared availability controller and account visibility gates.
 
 ---
 
@@ -100,8 +125,16 @@ Choose the surface that fits the feature:
 
 Keep feature logic in its owned API package and expose library/agent CLI verbs
 when agents should operate it. Gate behavior with the registry flag; respect the
-process kill switch. A discoverable App may show a disabled state with a link to
-Experimental settings, while its functionality remains gated.
+process kill switch. **Disabled experiments must also hide their feature UI**:
+headings, settings panels, controls, picker options, and navigation entries.
+Start those surfaces hidden before flags load; unknown or failed flag resolution
+keeps them hidden. Use the server's effective flag state, including the kill
+switch and conflicts, and update visibility after in-page flag changes. Preserve
+saved preferences when hiding a feature. Backend-only gating is incomplete.
+
+A discoverable App may show a disabled state with a link to Experimental settings
+only when the feature's documented product design explicitly calls for that
+exception; it must expose no operating controls while disabled.
 
 ## Adding a new experimental feature
 
@@ -116,11 +149,38 @@ independent; packaged source presence does not imply operational availability.
 1. Add one row in `src/api/experimental/features.py`, normally default-off.
 2. Gate behavior with `api.experimental.is_enabled("your_flag")`.
 3. Put feature UI in its own appropriate surface, following the design practice
-   above. Register an App with the shell's canonical rail catalog if appropriate;
-   start it stashed so it appears in Apps and can be pinned by the user.
+   above, and hide it while disabled. Register an App with the shell's canonical
+   rail catalog if appropriate; start it stashed so it appears in Apps and can
+   be pinned by the user.
 4. The generic Experimental tab and flag CLI automatically read the registry.
    Do not add a feature-specific toggle route or bespoke block to that tab.
-5. Document agent operations, tests, and teardown in the feature owner.
+5. Test both execution and UI with the flag off, on, and forced off by
+   `CUTTLE_EXPERIMENTAL=0`. UI tests must cover initial loading/failure (no flash
+   of controls), in-page enable/disable, and retained settings after re-enable.
+6. Document agent operations, tests, and teardown in the feature owner.
+
+### Compatibility rules
+
+`FlagSpec(exclusive_group="name")` declares alternative experiments that must
+not run together. `FlagSpec(conflicts=("other_flag",))` declares individual
+incompatibilities; the relation is symmetric, so declare each pair once.
+The generic Experimental page shows which enabled experiment blocks a toggle.
+Blocked and paused switches are gray and disabled. A warning tooltip next to
+the info tooltip names the conflicts. A paused feature has a **Turn off** button
+to clear its saved preference while its switch remains disabled.
+API and CLI enables reject conflicting combinations; the check runs under the
+shared settings lock, including concurrent writers. Existing manually edited
+or older conflicting configurations pause every participant until the user
+disables the conflicting choice. No preference is silently discarded.
+
+GPT-Live, Realtime and server transcription share `voice_input`. The standalone
+voice narrator conflicts with Live and Realtime, which own their spoken output.
+Server transcription and the narrator remain compatible. Flags determine
+availability; Voice settings determine which available conversation engine runs.
+Settings → Voice keeps stock **Spoken replies** (bubble play button and standard
+voice chat) always visible. The 🧪 **Voice conversation** section, with its engine
+selector and engine settings, renders only while GPT-Live or Realtime is enabled.
+Loading the tab never writes the engine; only choosing one does.
 
 ## Achievements App
 
@@ -143,7 +203,8 @@ remain available independently of this flag.
 
 ## Test Lab App
 
-The Test Lab tile stays visible in Apps while disabled; enable the `test_lab`
+The Test Lab tile and pinned icon are hidden while disabled; its direct page
+and operation routes also reject disabled access. Enable the `test_lab`
 flag in Experimental settings to use it. Select a registered
 project to inspect its recognized test suites and recent run history. Test Lab
 does not execute tests during discovery; choose **Run suite** or **Run all
@@ -151,6 +212,200 @@ tests** to start them. Runs are bounded to 20 minutes, use the project's local
 Python environment when present, and keep their recent output in the Cuttle
 home database. Discovery supports pytest files, npm `test` scripts, Go modules,
 and Rust Cargo packages. Only the owner can inspect projects or start runs.
+
+## IDE App
+
+The workspace follows Cuttle's theme, including live palette changes and the
+shell video background through glass panels. Monaco and the integrated terminal
+use the same palette; the nested chat receives shell appearance updates too.
+
+Flag `ide` (default off). Open **Apps → IDE** (stashed; pin it to the blade
+bar), or use the pencil in a pending-changes row / **Editor** in a commit file
+diff: text files that still exist open in the IDE at that file; binary and
+deleted files get no button. A pending-changes pencil reuses the IDE already
+open in the current space (keeping its tabs and unsaved edits) or splits one
+beside the source pane; it never switches to an IDE in another space. While
+disabled the tile, rail icon and editor buttons are hidden and the page and
+`/api/ide/*` answer 403.
+
+What it does (VS Code / Cursor parity, scoped to registered projects and
+registered worktree checkouts — the same allowlist as the Git routes):
+
+- Monaco editor (pinned `monaco-editor` from jsDelivr, like xterm/highlight.js);
+  offline it falls back to a plain text editor with the same tabs and saving.
+- Compact **File / Edit / View / Go / Terminal / AI** menu bar plus a visible
+  **Save** button (Ctrl+S, Ctrl+Alt+S for all). Menu items run the same command
+  registry as the palette and disable when no file is open; keyboard navigation
+  covers the menu bar and popups.
+- Explorer (lazy tree, git colors, ignored files dimmed, drag to move,
+  context menu, new/rename/delete), preview/pinned tabs, breadcrumbs,
+  Ctrl+P quick open (`:line`, `>` commands, `@` symbols), Ctrl+Shift+P command
+  palette, find/replace in files (ripgrep when installed, else Python),
+  quick-diff gutter against HEAD, Source Control via the shared pending-changes
+  strip (commit/ignore) with a Monaco diff editor.
+- Integrated terminal (Ctrl+`): the existing localhost-only PTY terminal,
+  started in the project folder (`cwd` must resolve to a registered project).
+- AI: a side panel hosting the real chat page in a chat bound to the project
+  (Ctrl+I). Ctrl+L adds the selection to its composer; Ctrl+K sends an inline
+  edit request through that chat's normal send path, so the starred agent or
+  the router runs it — there is no second execution route. When the agent
+  writes the file, the IDE shows **Review / Keep / Undo**. Opt-in
+  **✦ Tab** completions use the API completion providers (`api.llm_complete`,
+  never a CLI helper chain) and cost a small request per pause while typing.
+
+Files: saves are atomic and optimistic (`etag`); if the file changed on disk,
+the save is refused with **Compare / Overwrite disk / Load disk version**.
+Clean open files follow disk changes as one undoable edit. Unsaved buffers
+survive reloads (browser localStorage, per project, 4 MB cap). `.git/` is
+read-only; symlinks cannot escape the project. Only the owner can use the API.
+
+Owners: `api.ide.service` (workspace resolution, path confinement, file,
+search and git-content operations), `api.ide.routes` (transport);
+client `src/web/js/ide/` — `ide_model.js` (`CuttleIdeModel`, pure),
+`ide_api.js` (transport), `ide_theme.js` (Cuttle palette bridge),
+`ide_editor.js` (Monaco/textarea engine), `ide_menubar.js` (compact menus),
+`ide_navigation.js` (deep-link/request queue), `ide_explorer.js`,
+`ide_search.js`, `ide_quick.js`, `ide_terminal.js`,
+`ide_chat.js`, composed by `ide_page.js`. The shell opens files through
+`shell_panes.js` (`cuttle-open-editor` / `cuttle-ide-ready`), while
+`pending_changes_panel.js` gates the pencil on the `ide` flag. Tests:
+`src/tests/ide/`, `src/tests/e2e/test_ide_app.py` (offline engine;
+`CUTTLE_IDE_E2E_MONACO=1` for a deliberate Monaco smoke run). Teardown: drop
+the flag row, `api/ide/`, its entry in the experimental-Apps registration loop
+in `web_chat_api.py`, `ide_page.html`, `css/ide_page.css`, `js/ide/`, the
+`nav-ide` rail entry (`app_shell.html`, `shell_rail.js`, `apps_page.js`,
+`app_shell.js` title), the pending-changes pencil and Editor button in
+`diff_modal.js`, the editor bridge in `shell_panes.js`, and the optional `cwd`
+in `api.web_terminal`.
+
+## GPT-Live voice
+
+Flag `voice_live` (default off): Settings → Experimental → **Voice: GPT-Live**.
+After enabling it, Settings → Voice offers GPT-Live as the recommended conversation
+engine, `gpt-live-1`, its supported voice catalog, and an idle timeout (150 seconds
+by default; 0 keeps the connection open continuously). Other voice input
+experiments and the standalone narrator must be disabled first. A **Preview
+voice** button plays the selected voice through OpenAI text-to-speech without
+opening a billable session (`POST /api/voice-stt/live/preview`, cached 7 days).
+Only voices TTS also speaks (`PREVIEW_VOICES` in `api.voice_live.settings`) can be
+previewed; Live-only voices disable the button and say why.
+
+The voice session uses client delegation to the chat's selected Cuttle agent.
+The server observes transcripts, claims delegation IDs once, and submits work
+through the existing authenticated chat transport. Steerable running turns
+receive steering; other turns use the shared durable follow-up queue. A speech
+interruption does not cancel agent work. Approvals still require the chat's
+confirmation controls. Voice results use short speakable appends; private
+reasoning and UI markup are not forwarded as spoken results.
+
+The shell owns the microphone/speaker connection, independently of disposable
+chat iframes. Switching Spaces preserves the originating chat and exposes a
+compact return/mute/end control. Returning to the chat reattaches its voice
+presentation. Backgrounding or locking the app closes voice while agent work
+can continue in chat. Muting keeps the duration meter active.
+
+OpenAI bills $0.05 per active minute, by the second, including silence and
+agent waiting. WebRTC initialization bills 15 seconds provisionally; running
+usage replaces that amount rather than adding it again. The server records
+cumulative duration checkpoints and finalization in the existing provider
+ledger. Usage appears in the composer, voice view and Cuttle Usage's Voice
+filter; the dashboard includes a Voice duration metric. Per-message speech
+costs are attributed to their bubble when a message/query identity is available.
+Unknown or unconfirmed finalization remains distinct from a verified zero.
+
+Owners: `api.voice_live` (sessions/delegation/transcript receipts),
+`model_providers.openai.live` (provider transport), `voice_usage` and provider
+usage (pricing/ledger), `shell_voice.js` (connection lifetime),
+`chat_voice_live.js` (Live protocol), `chat_voice.js` (presentation), and
+`chat_session_usage.js` (durable usage presentation). Settings are under
+`/api/settings/voice-chat`; session routes are `/api/voice-stt/live/sessions`.
+Owner auth and chat ownership are required; credentials remain on the server.
+Provider audio recording storage is off. Reconnects seed bounded saved text
+history. No ambiguous paid create/delegation request is blindly retried.
+
+Secure browsers use WebRTC. The updated Capacitor Android app can stream native
+24 kHz mono PCM through its authenticated host socket when LAN HTTP cannot use
+`getUserMedia`. Native capture/playback owns permissions, audio focus, echo
+handling, bounded queues and shutdown. Older APKs do not expose that bridge;
+they need the updated app for Live on HTTP. Realtime uses the same native Android
+transport when LAN HTTP cannot use WebRTC; an unavailable engine is reported
+explicitly.
+
+Tests use fake providers and private state; real microphone/model-access and
+physical-device audio quality require a deliberate smoke test.
+
+## OpenAI Realtime voice
+
+Flag `voice_realtime` (default off), in Settings → Experimental →
+**Voice: OpenAI Realtime**. It enhances the existing voice overlay. When enabled,
+it becomes available in the Voice conversation-engine selector. It conflicts
+with Live, server transcription and the standalone narrator. The process kill switch
+`CUTTLE_EXPERIMENTAL=0` also disables it.
+
+Tap the microphone to connect, speak naturally, and tap again to disconnect.
+Semantic voice activity detection sends turns automatically and supports
+interrupting spoken replies. The shell owns the live connection across Space
+switches; ending voice or backgrounding the shell closes it. An open connection rechecks the flag every
+10 seconds and closes when disabled. Failed connections show an error; tap to
+retry. Unsupported WebRTC clients retain the established voice input engine.
+
+OpenAI `gpt-realtime-2.1` handles live input/output audio. On a secure origin the
+browser connects over WebRTC: the owner-authenticated `POST
+/api/voice-stt/realtime/session` mints a 60-second ephemeral credential using the
+existing OpenAI provider key, and no long-lived key is sent to the browser. The
+response has `Cache-Control: no-store`; secrets are not persisted or logged.
+Custom `OPENAI_BASE_URL` proxies are rejected for this feature. Input
+transcription uses `gpt-4o-mini-transcribe`; spoken output uses Realtime's `marin`
+voice, independently of the existing chat TTS preference.
+
+**Preview voice** in its settings makes one real Realtime call with the selected
+model and voice (`POST /api/voice-stt/realtime/preview`, owner-only, flag-gated):
+text in, one spoken sentence out as WAV. It costs about $0.002 on the mini model,
+is recorded in the provider ledger, and is cached with the other voice clips for
+7 days. Owner `api/voice_realtime/preview.py`; tests `src/tests/chat/test_voice_preview.py`.
+
+The Capacitor Android app loads the UI over LAN HTTP, where the page has no
+secure context and cannot open WebRTC. There the same `POST
+/api/voice-stt/realtime/session` is called with `transport: "native"`: Cuttle
+mints no credential and instead owns a server-side OpenAI Realtime **WebSocket**,
+returning only an opaque voice id. The app streams 24 kHz mono PCM over its
+authenticated host socket (`/api/voice-stt/realtime/sessions/<id>/socket`) and
+the server translates events to the shared `session.*` wire protocol
+(`api/voice_realtime/service.py`). Delegation, task steering/queueing and usage
+pricing run on the server. The native bridge (`realtimeVoiceStart/Mute/Stop`) is
+delivered by the updated APK; older APKs fall back to the established voice input
+engine.
+
+The live companion can converse directly. Its `ask_cuttle_agent` function hands
+project work and context questions to the ordinary chat submitter, preserving
+the sticky agent, router, chat persistence and execution ownership. Completed
+agent replies return as tool outputs and are spoken by Realtime. A running
+steerable agent receives steering; its eventual reply is fed back to the live
+session. Other running agents receive a queued follow-up; the server correlates
+the queued request and its eventual reply before returning the result. Closing
+voice does not cancel already submitted chat work.
+
+Live small-talk transcripts are displayed only in the voice overlay; agent
+handoffs are persisted through the existing chat path. A new live session does
+not automatically receive the full chat history; it can ask the chat agent for
+context. Audio usage is priced with its frozen model/transcription settings and
+recorded using idempotent provider event receipts. It contributes to durable
+chat totals and the dashboard. Secure browsers use WebRTC; the Android app uses
+the native host-socket transport described above.
+
+Owners: `api.voice_realtime` (session config/credential issuance and the native
+`service.py` WebSocket bridge), `chat_voice_realtime.js` (WebRTC + native
+connection, audio, events and tool lifecycle), `chat_voice.js` (overlay and chat
+handoff composition), `apps/mobile/.../LiveVoiceAudio.java` (native duplex PCM).
+Routes are mounted as a child blueprint of the existing voice API. No Electron
+code or new execution lane is required.
+
+Protocol references: [OpenAI WebRTC](https://developers.openai.com/api/docs/guides/voice-webrtc),
+[Realtime conversations](https://developers.openai.com/api/docs/guides/realtime-conversations).
+Validation uses mocked providers, WebRTC, native sockets and microphone devices;
+a real account and microphone smoke test is required to establish live model
+access and audio quality. Tests: `src/tests/chat/test_voice_realtime.py` and
+`src/tests/chat/test_voice_realtime_native.py`.
 
 ## Voice narrator
 

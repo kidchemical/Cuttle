@@ -25,7 +25,7 @@ ICON_CLIENT="$ROOT/src/img/cuttle-mascot_square.png"
 [[ -f "$ICON_HOST" ]] || ICON_HOST="$ICON_CLIENT"
 
 write_entry() {
-    local file="$1" name="$2" exec="$3" icon="$4" comment="$5"
+    local file="$1" name="$2" exec="$3" icon="$4" comment="$5" wmclass="${6:-}"
     cat > "$file" <<EOF
 [Desktop Entry]
 Type=Application
@@ -38,11 +38,12 @@ Terminal=false
 Categories=Utility;
 StartupNotify=true
 EOF
+    [[ -z "$wmclass" ]] || printf 'StartupWMClass=%s\n' "$wmclass" >> "$file"
     chmod +x "$file"
 }
 
-write_entry "$APPS/cuttle-host.desktop"   "Cuttle Host"   "$HOST_LAUNCH"   "$ICON_HOST"   "Start Cuttle Host (daemon + app on this PC)"
-write_entry "$APPS/cuttle-client.desktop" "Cuttle Client" "$CLIENT_LAUNCH" "$ICON_CLIENT" "Start Cuttle Client (connect to a Host)"
+write_entry "$APPS/cuttle-host.desktop"   "Cuttle Host"   "$HOST_LAUNCH"   "$ICON_HOST"   "Start Cuttle Host (daemon + app on this PC)" "cuttle-host"
+write_entry "$APPS/cuttle-client.desktop" "Cuttle Client" "$CLIENT_LAUNCH" "$ICON_CLIENT" "Start Cuttle Client (connect to a Host)" "cuttle-client"
 write_entry "$APPS/cuttle-daemon.desktop" "Cuttle Daemon" "\"$PY\" \"$DAEMON\"" "$ICON_CLIENT" "Start the Cuttle daemon only (no app)"
 
 for name in cuttle-host cuttle-client cuttle-daemon; do

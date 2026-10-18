@@ -401,6 +401,56 @@
         };
     }
 
+    // --- Cross-device history chips --------------------------------------------
+    // The server stores each session's shared next-turn `composer_selection`
+    // (agent + model + effort label). A device that has never opened the chat
+    // (phone) has no local prefs, so index the list payload and fall back to it
+    // — otherwise those rows show only the bare title slash token. The cache is
+    // keyed on the sessions array identity, so a fresh fetch rebuilds itself.
+    let _serverSelectionByList = null;
+    function serverSelectionIndex(sessions) {
+        const arr = Array.isArray(sessions) ? sessions : [];
+        if (_serverSelectionByList && _serverSelectionByList.arr === arr) return _serverSelectionByList.map;
+        const map = new Map();
+        arr.forEach((s) => {
+            if (s && s.id != null) map.set(String(s.id), s.composer_selection || null);
+        });
+        _serverSelectionByList = { arr: arr, map: map };
+        return map;
+    }
+
+    function _selectionObject(raw) {
+        if (typeof raw === 'string') {
+            try { return JSON.parse(raw); } catch (_) { return null; }
+        }
+        return (raw && typeof raw === 'object') ? raw : null;
+    }
+
+    /**
+     * History-sidebar chip objects for one session. Local prefs win while they
+     * are the freshest thing this device knows (including an explicit badge
+     * removal); otherwise fall back to the server's shared selection.
+     * `parts` = { prefs, sessions, sessionId }.
+     */
+    function historyStickyChipsFor(parts) {
+        const p = parts || {};
+        let source;
+        if (p.prefs && (Array.isArray(p.prefs.stickyChips) || p.prefs.stickyCleared)) {
+            source = Array.isArray(p.prefs.stickyChips) ? p.prefs.stickyChips : [];
+        } else {
+            const raw = p.sessionId == null || p.sessionId === '' ? null : String(p.sessionId);
+            const bare = raw ? raw.replace(/^db_session_/, '') : null;
+            const sel = bare ? _selectionObject(serverSelectionIndex(p.sessions).get(bare)) : null;
+            source = (sel && Array.isArray(sel.stickyChips)) ? sel.stickyChips : [];
+        }
+        return (Array.isArray(source) ? source : []).map((c) => ({
+            label: c.label || String(c.prefix || '').replace(/^\//, '').trim() || 'cmd',
+            meta: String(c.prefix || c.meta || '').replace(/\s+$/, '') || c.label,
+            category: c.category || 'command',
+            prefix: c.prefix,
+        })).filter((c) => c.meta);
+    }
+
     const api = {
         draftWithSharedAgent,
         draftChips,
@@ -423,6 +473,7 @@
         enhanceResponsePlan,
         enhanceInputInvalidated,
         sharedSelectionPrefsPatch,
+        historyStickyChipsFor,
     };
 
     const ns = (root.CuttleChatComposer = root.CuttleChatComposer || {});

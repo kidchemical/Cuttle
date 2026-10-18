@@ -4,16 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gizmo - Cuttle</title>
-    <link rel="stylesheet" href="/css/gizmos.css?v=20261006gizmos1">
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
+    <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="/css/gizmos.css?v=20261015gzTokens">
     <style>
-        html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1117; color: #c9d1d9; }
+        html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg-secondary); color: var(--text-primary); }
         body { -webkit-app-region: drag; app-region: drag; user-select: none; }
         #gizmoPopout { height: 100%; }
         .popout-actions { position: fixed; top: 4px; right: 4px; display: flex; gap: 2px; opacity: 0; transition: opacity .15s ease; -webkit-app-region: no-drag; app-region: no-drag; }
         body:hover .popout-actions { opacity: 1; }
-        .popout-actions button { width: 20px; height: 20px; padding: 0; border: none; border-radius: 4px; background: rgba(255,255,255,.08); color: #c9d1d9; font: 12px/20px system-ui, sans-serif; cursor: pointer; }
-        .popout-actions button:hover { background: rgba(255,255,255,.18); }
-        .popout-message { padding: 10px; font: 12px system-ui, sans-serif; color: #8b949e; }
+        .popout-actions button { width: 20px; height: 20px; padding: 0; border: none; border-radius: 4px; background: var(--panel-hover, color-mix(in srgb, var(--text-primary) 8%, transparent)); color: var(--text-primary); font: 12px/20px system-ui, sans-serif; cursor: pointer; }
+        .popout-actions button:hover { background: color-mix(in srgb, var(--text-primary) 18%, transparent); }
+        .popout-message { padding: 10px; font: 12px system-ui, sans-serif; color: var(--text-secondary); }
         .gizmo--popout .gizmo-head { padding-right: 46px; }
     </style>
 </head>

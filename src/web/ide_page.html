@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDE - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
+    <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="/css/pending_changes.css?v=20261018menus">
+    <link rel="stylesheet" href="/css/diff_modal.css?v=20261017ideEdit">
+    <link rel="stylesheet" href="/css/ide_page.css?v=20261018compact">
+</head>
+<body class="ide-body" data-page="ide">
+    <div class="ide-notice" id="ideNotice" role="status" aria-live="polite" hidden></div>
+
+    <div class="ide-app" id="ideApp" hidden>
+        <header class="ide-titlebar">
+            <div class="ide-title-left">
+                <span class="ide-app-name">Editor</span>
+                <label class="ide-sr" for="ideWorkspace">Project</label>
+                <select id="ideWorkspace" class="ide-workspace" aria-label="Project"></select>
+            </div>
+            <button type="button" class="ide-command-center" id="ideCommandCenter" title="Go to file (Ctrl+P) · Commands (Ctrl+Shift+P)">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <span id="ideCommandCenterLabel">Search files</span>
+                <kbd>Ctrl P</kbd>
+            </button>
+            <nav class="ide-activity" aria-label="Views">
+                <button type="button" class="ide-activity-btn" data-view="explorer" title="Explorer (Ctrl+Shift+E)" aria-label="Explorer">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></button>
+                <button type="button" class="ide-activity-btn" data-view="search" title="Search (Ctrl+Shift+F)" aria-label="Search">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button>
+                <button type="button" class="ide-activity-btn" data-view="scm" title="Source control (Ctrl+Shift+G)" aria-label="Source control">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-6 3-11 5.5"/></svg>
+                    <span class="ide-activity-badge" id="ideScmBadge" hidden></span></button>
+            </nav>
+            <div class="ide-title-right">
+                <button type="button" class="ide-icon-btn" data-cmd="view.sidebar" title="Toggle primary sidebar (Ctrl+B)" aria-label="Toggle sidebar">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button>
+                <button type="button" class="ide-icon-btn" data-cmd="view.panel" title="Toggle terminal (Ctrl+`)" aria-label="Toggle terminal">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 14h18"/></svg></button>
+                <button type="button" class="ide-icon-btn ide-ai-btn" data-cmd="view.chat" title="Toggle AI chat (Ctrl+I)" aria-label="Toggle AI chat">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></button>
+            </div>
+        </header>
+
+        <nav class="ide-menubar" id="ideMenubar" aria-label="Editor commands"></nav>
+
+        <div class="ide-main" id="ideMain">
+            <aside class="ide-sidebar" id="ideSidebar">
+                <section class="ide-view" data-view-panel="explorer">
+                    <div class="ide-view-header">
+                        <span class="ide-view-title" id="ideExplorerTitle">Explorer</span>
+                        <span class="ide-view-actions">
+                            <button type="button" class="ide-icon-btn" data-cmd="file.new" title="New file" aria-label="New file">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 11v6M9 14h6"/></svg></button>
+                            <button type="button" class="ide-icon-btn" data-cmd="file.newFolder" title="New folder" aria-label="New folder">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h6l2 2h10v10H3z"/><path d="M12 12v5M9.5 14.5h5"/></svg></button>
+                            <button type="button" class="ide-icon-btn" data-cmd="explorer.refresh" title="Refresh" aria-label="Refresh explorer">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
+                            <button type="button" class="ide-icon-btn" data-cmd="explorer.collapse" title="Collapse folders" aria-label="Collapse folders">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 14 5-5 5 5"/><path d="M5 19h14"/></svg></button>
+                        </span>
+                    </div>
+                    <div class="ide-tree" id="ideTree" role="tree" tabindex="0" aria-label="Files"></div>
+                </section>
+                <section class="ide-view" data-view-panel="search" hidden>
+                    <div class="ide-view-header"><span class="ide-view-title">Search</span></div>
+                    <div class="ide-search" id="ideSearch"></div>
+                </section>
+                <section class="ide-view" data-view-panel="scm" hidden>
+                    <div class="ide-view-header">
+                        <span class="ide-view-title">Source Control</span>
+                        <span class="ide-view-actions">
+                            <button type="button" class="ide-icon-btn" data-cmd="scm.refresh" title="Refresh" aria-label="Refresh source control">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
+                        </span>
+                    </div>
+                    <div class="ide-scm-branch" id="ideScmBranch"></div>
+                    <div class="ide-scm"><div class="pending-changes-host" id="ideScmHost" aria-label="Pending git changes"></div></div>
+                    <p class="ide-scm-empty" id="ideScmEmpty" hidden>No pending changes.</p>
+                </section>
+            </aside>
+            <div class="ide-resizer is-vertical" data-resize="sidebar" role="separator" aria-orientation="vertical" aria-label="Resize sidebar"></div>
+
+            <div class="ide-center">
+                <div class="ide-tabs" id="ideTabs" role="tablist" aria-label="Open editors"></div>
+                <div class="ide-crumbs" id="ideCrumbs" aria-label="Breadcrumbs"></div>
+                <div class="ide-banner" id="ideBanner" role="status" hidden></div>
+                <div class="ide-inline-edit" id="ideInlineEdit" hidden>
+                    <div class="ide-inline-edit-head"><span class="ide-inline-edit-badge">✦ Edit with AI</span><span id="ideInlineEditTarget"></span></div>
+                    <textarea id="ideInlineEditText" rows="2" placeholder="Describe the change… (Enter to send, Shift+Enter for a newline, Esc to cancel)" spellcheck="true"></textarea>
+                    <div class="ide-inline-edit-actions">
+                        <span class="ide-inline-edit-hint">Sent to this project's AI chat; the agent edits the file and you review the change here.</span>
+                        <button type="button" id="ideInlineEditCancel">Cancel</button>
+                        <button type="button" id="ideInlineEditSend" class="is-primary">Send</button>
+                    </div>
+                </div>
+                <div class="ide-editor-stack">
+                    <div class="ide-editor" id="ideEditor"></div>
+                    <div class="ide-diff-view" id="ideDiffView" hidden>
+                        <div class="ide-diff-toolbar">
+                            <span class="ide-diff-title" id="ideDiffTitle"></span>
+                            <span class="ide-diff-actions" id="ideDiffActions"></span>
+                        </div>
+                        <div class="ide-diff" id="ideDiff"></div>
+                    </div>
+                    <div class="ide-preview" id="idePreview" hidden></div>
+                    <div class="ide-welcome" id="ideWelcome">
+                        <div class="ide-welcome-inner">
+                            <span class="ide-welcome-mark" aria-hidden="true">⌘</span>
+                            <h2>Your project, in Cuttle</h2>
+                            <p>Open a file to start. Your agents are right here when you need them.</p>
+                            <dl class="ide-shortcuts">
+                                <dt>Go to file</dt><dd><kbd>Ctrl</kbd><kbd>P</kbd></dd>
+                                <dt>Show all commands</dt><dd><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>P</kbd></dd>
+                                <dt>Find in files</dt><dd><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>F</kbd></dd>
+                                <dt>Edit with AI</dt><dd><kbd>Ctrl</kbd><kbd>K</kbd></dd>
+                                <dt>Add selection to chat</dt><dd><kbd>Ctrl</kbd><kbd>L</kbd></dd>
+                                <dt>Toggle AI chat</dt><dd><kbd>Ctrl</kbd><kbd>I</kbd></dd>
+                                <dt>Toggle terminal</dt><dd><kbd>Ctrl</kbd><kbd>`</kbd></dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+                <div class="ide-resizer is-horizontal" data-resize="panel" role="separator" aria-orientation="horizontal" aria-label="Resize panel" hidden></div>
+                <section class="ide-panel" id="idePanel" hidden aria-label="Terminal">
+                    <div class="ide-panel-header">
+                        <span class="ide-panel-title">Terminal</span>
+                        <div class="ide-term-tabs" id="ideTermTabs"></div>
+                        <span class="ide-view-actions">
+                            <button type="button" class="ide-icon-btn" data-cmd="terminal.new" title="New terminal (Ctrl+Shift+`)" aria-label="New terminal">+</button>
+                            <button type="button" class="ide-icon-btn" data-cmd="terminal.kill" title="Kill terminal" aria-label="Kill terminal">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
+                            <button type="button" class="ide-icon-btn" data-cmd="view.panel" title="Hide panel" aria-label="Hide panel">×</button>
+                        </span>
+                    </div>
+                    <div class="ide-panel-body" id="ideTermBody"></div>
+                </section>
+            </div>
+
+            <div class="ide-resizer is-vertical" data-resize="chat" role="separator" aria-orientation="vertical" aria-label="Resize chat" hidden></div>
+            <aside class="ide-chat" id="ideChat" hidden aria-label="AI chat">
+                <div class="ide-view-header">
+                    <span class="ide-view-title">✦ AI Chat</span>
+                    <span class="ide-view-actions">
+                        <button type="button" class="ide-icon-btn" data-cmd="chat.new" title="New chat" aria-label="New chat">+</button>
+                        <button type="button" class="ide-icon-btn" data-cmd="view.chat" title="Hide chat" aria-label="Hide chat">×</button>
+                    </span>
+                </div>
+                <div class="ide-chat-body" id="ideChatBody"></div>
+            </aside>
+        </div>
+
+        <footer class="ide-status" id="ideStatus">
+            <button type="button" class="ide-status-item" id="ideStatusBranch" data-cmd="view.scm" title="Source control"></button>
+            <span class="ide-status-item" id="ideStatusMsg"></span>
+            <span class="ide-status-spacer"></span>
+            <button type="button" class="ide-status-item" id="ideStatusPos" data-cmd="editor.gotoLine" title="Go to line"></button>
+            <span class="ide-status-item" id="ideStatusIndent"></span>
+            <span class="ide-status-item" id="ideStatusEncoding"></span>
+            <button type="button" class="ide-status-item" id="ideStatusEol" data-cmd="editor.eol" title="Change end of line sequence"></button>
+            <button type="button" class="ide-status-item" id="ideStatusLang" data-cmd="editor.language" title="Change language mode"></button>
+            <button type="button" class="ide-status-item" id="ideStatusTab" data-cmd="ai.completions" title="AI tab completions (Cuttle completion provider)"></button>
+            <span class="ide-status-item" id="ideStatusEngine" hidden></span>
+        </footer>
+    </div>
+
+    <div class="ide-quick" id="ideQuick" hidden></div>
+    <div class="ide-menu" id="ideMenu" role="menu" hidden></div>
+    <dialog class="ide-dialog" id="ideDialog">
+        <form method="dialog">
+            <p id="ideDialogText"></p>
+            <div class="ide-dialog-actions" id="ideDialogActions"></div>
+        </form>
+    </dialog>
+
+    <script src="/js/shared/toast.js"></script>
+    <script src="/js/shared/optional_cdn.js?v=20260926cdnQueue"></script>
+    <script src="/js/git/pending_changes_panel.js?v=20261018menus"></script>
+    <script src="/js/git/diff_modal.js?v=20261018menus"></script>
+    <script src="/js/ide/ide_model.js?v=20261017ide1"></script>
+    <script src="/js/ide/ide_api.js?v=20261017ide1"></script>
+    <script src="/js/ide/ide_theme.js?v=20261018minimap"></script>
+    <script src="/js/ide/ide_editor.js?v=20261018menus"></script>
+    <script src="/js/ide/ide_quick.js?v=20261017ide1"></script>
+    <script src="/js/ide/ide_menubar.js?v=20261018menus"></script>
+    <script src="/js/ide/ide_navigation.js?v=20261018menus"></script>
+    <script src="/js/ide/ide_explorer.js?v=20261017ide1"></script>
+    <script src="/js/ide/ide_search.js?v=20261017ide1"></script>
+    <script src="/js/ide/ide_terminal.js?v=20261018cuttleTheme"></script>
+    <script src="/js/ide/ide_chat.js?v=20261018cuttleTheme"></script>
+    <script src="/js/ide/ide_page.js?v=20261018menus"></script>
+</body>
+</html>

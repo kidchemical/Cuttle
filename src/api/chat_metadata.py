@@ -16,6 +16,22 @@ from __future__ import annotations
 from typing import Optional
 
 
+def native_control_metadata(request_data, *, message=None, native_command=None) -> dict:
+    """Keep native restart exchanges separate from a concurrently running agent."""
+    if native_command is None and message:
+        from api.flask_restart import parse_restart_slash
+
+        if parse_restart_slash(message) is not None:
+            native_command = '/restart'
+    if native_command != '/restart':
+        return {}
+    meta = {'native_command': native_command}
+    cid = (request_data or {}).get('control_request_id')
+    if isinstance(cid, str) and cid.strip():
+        meta['control_request_id'] = cid.strip()
+    return meta
+
+
 def routing_badge_from_router(router: dict) -> Optional[dict]:
     """Compact display evidence from the recorded routing result, never prose inference."""
     if not isinstance(router, dict) or not router.get('note'):

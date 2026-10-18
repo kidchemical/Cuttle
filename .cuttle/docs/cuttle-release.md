@@ -113,6 +113,15 @@ build Client updates; update every device from the release. Source-checkout
 Hosts may still build an `app.asar` for their Clients, which accept it only over
 the Host's pinned HTTPS identity. Linux Clients never swap in place.
 
+**Updates UI.** Settings → 📦 Cuttle updates has one **Check for updates**
+button; it and the titlebar Update button open the same modal (pick a channel →
+confirm → restart prompt). `api.updates` reports the install kind: a **release**
+install (no `.git`) only ever sees the published-release channel (download).
+A **source** checkout also gets **Developer mode** (machine setting
+`updates.developer_mode`, default on for checkouts, toggled in that Settings
+section — it is a persona, not an Experimental flag), which adds the GitHub
+branch and Host channels plus the preferred-channel and phone-APK rows.
+
 ## Android phone app (Capacitor) APK
 
 The phone app is **not** a mesh worker and does not use the desktop Update
@@ -126,8 +135,8 @@ button/Settings device channel. It updates itself from an APK the host serves:
   (`CUTTLE_MOBILE_AUTO_REBUILD=1`), otherwise publish a matching signed APK:
   `python -m api.mobile_android_update publish --apk PATH` (also `status`,
   `rebuild [--force]`).
-- Settings → 📦 Cuttle updates → **Phone app (Android / Capacitor)** shows the
-  served APK (version/code/hash, building/failed) and has an owner-only
+- Settings → 📦 Cuttle updates → **Phone app (Android / Capacitor)** (Developer
+  mode only) shows the served APK (version/code/hash, building/failed) and has an owner-only
   **Rebuild phone app (APK)** button (`POST /api/mobile/android/rebuild`) that
   re-runs Gradle `assembleDebug`.
 - **Release rule:** when phone sources change, republish the APK so phones are

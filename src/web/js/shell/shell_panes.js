@@ -27,6 +27,57 @@
         const frameTitleObservers = new Map();
         const shellBackStack = [];
         let applyingShellHistory = false;
+        const readyEditors = new WeakSet();
+        const editorRequests = new WeakMap();
+
+        function editorColumn(col) {
+            const idx = Number(col.dataset.column);
+            try { return new URL(getState(idx).page || '', window.location.origin).pathname === '/ide_page.html'; }
+            catch (_) { return false; }
+        }
+        function sendEditorRequests(frameWindow) {
+            if (!readyEditors.has(frameWindow)) return;
+            const requests = editorRequests.get(frameWindow) || [];
+            editorRequests.delete(frameWindow);
+            requests.forEach(page => frameWindow.postMessage({ type: 'cuttle-ide-open-file', page }, window.location.origin));
+        }
+        function openEditor(source, page) {
+            const url = new URL(page, window.location.origin);
+            if (url.origin !== window.location.origin || url.pathname !== '/ide_page.html') return;
+            const cols = getSplitColumns(); // Live panes only: other spaces are not candidates.
+            const sourceCol = cols.find(col => getLiveFrame(Number(col.dataset.column))?.contentWindow === source);
+            if (source !== window && !sourceCol) return;
+            const candidates = cols.filter(editorColumn);
+            const target = candidates.find(col => {
+                const saved = new URL(getState(Number(col.dataset.column)).page, window.location.origin);
+                return saved.searchParams.get('path') === url.searchParams.get('path');
+            }) || candidates[0];
+            if (!target) {
+                const anchor = sourceCol || getColumnEl(focusedColumnIdx) || cols[0];
+                host.splitPane(anchor, 'horizontal', url.pathname + url.search);
+                const opened = getSplitColumns().find(col => !cols.includes(col) && editorColumn(col));
+                if (opened) setFocusedColumn(Number(opened.dataset.column));
+                return;
+            }
+            if (target.classList.contains('pane-collapsed')) host.revealPane(target);
+            const idx = Number(target.dataset.column);
+            setFocusedColumn(idx);
+            const frameWindow = getLiveFrame(idx)?.contentWindow;
+            if (!frameWindow) return;
+            const pending = editorRequests.get(frameWindow) || [];
+            pending.push(url.pathname + url.search);
+            editorRequests.set(frameWindow, pending);
+            sendEditorRequests(frameWindow);
+        }
+        if (typeof window.addEventListener === 'function') window.addEventListener('message', e => {
+            if (e.origin !== window.location.origin) return;
+            if (e.data?.type === 'cuttle-open-editor' && typeof e.data.page === 'string') {
+                try { openEditor(e.source, e.data.page); } catch (err) { console.warn('[IDE] Could not open editor', err); }
+            } else if (e.data?.type === 'cuttle-ide-ready') {
+                const col = getSplitColumns().find(c => getLiveFrame(Number(c.dataset.column))?.contentWindow === e.source);
+                if (col && editorColumn(col)) { readyEditors.add(e.source); sendEditorRequests(e.source); }
+            }
+        });
 
         function uiAnimationsEnabled() {
             try { if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false; } catch (_) {}
@@ -177,6 +228,12 @@
             rememberChatHandleFromPage(colIdx, page);
             const state = getState(colIdx);
             if (state.page === page && !(opts && opts.force)) return;
+            // A space switch (force) that lands this pane on the same existing
+            // chat reuses the live frame: a reload would destroy the page's
+            // state (voice mode, streams) for no gain — an existing chat's
+            // composer draft is keyed by chat id, not by space. Blank/new chats
+            // still reload so their per-space draft scope is re-read.
+            if (opts && opts.force && shellPagesEqual(state.page, page) && !isShellNewChatPage(page)) return;
             console.log('[App Shell] Navigating to:', page);
             if (colIdx === 0 && !applyingShellHistory && !(opts && opts.history === 'none')) pushShellBackEntry(state.page);
             setState(colIdx, page);

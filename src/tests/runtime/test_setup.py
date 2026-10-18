@@ -1,4 +1,4 @@
-"""Windows setup flow with fake installers; no downloads or live services."""
+"""Guided setup flow with fake installers; no downloads or live services."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-from scripts import setup_windows as setup
+from scripts import setup_cuttle as setup
 
 
 @pytest.fixture
@@ -41,6 +41,7 @@ def install(monkeypatch, tmp_path):
         return ""
 
     monkeypatch.setattr(setup, "run", run)
+    monkeypatch.setattr(setup, "current_platform", lambda: setup.WINDOWS)
     return root, calls, run
 
 
@@ -177,7 +178,7 @@ def test_powershell_entry_passes_options_and_exit_code(tmp_path, exit_code):
     script = """
 $ErrorActionPreference = 'Stop'
 function global:py.exe {
-    if (($args -join '|') -notmatch '-3\\|.*setup_windows.py\\|--browser\\|--no-launch') { throw 'Incorrect setup arguments' }
+    if (($args -join '|') -notmatch '-3\\|.*setup_cuttle.py\\|--browser\\|--no-launch') { throw 'Incorrect setup arguments' }
     Write-Output 'setup helper invoked'
     $global:LASTEXITCODE = __EXIT_CODE__
 }
@@ -193,3 +194,127 @@ exit $LASTEXITCODE
     )
     assert result.returncode == exit_code, result.stdout + result.stderr
     assert "setup helper invoked" in result.stdout
+
+
+@pytest.fixture
+def linux_install(monkeypatch, tmp_path):
+    root = tmp_path / "checkout with spaces"
+    (root / "electron").mkdir(parents=True)
+    (root / "electron" / "package.json").write_text(json.dumps({"engines": {"node": ">=22.12.0"}}))
+    calls = []
+    monkeypatch.setattr(setup.shutil, "which", lambda name: name)
+    monkeypatch.setattr(setup.sys, "version_info", (3, 12, 0))
+    monkeypatch.setattr(setup.sys, "maxsize", 2**63 - 1)
+    monkeypatch.setattr(setup, "current_platform", lambda: setup.LINUX)
+    monkeypatch.setattr(setup, "sandbox_problem", lambda binary: "")
+
+    def run(argv, cwd, *, capture=False):
+        calls.append((argv, cwd))
+        if argv == ["node", "--version"]:
+            return "v22.12.0"
+        if "venv" in argv:
+            python = root / ".venv" / "bin" / "python"
+            python.parent.mkdir(parents=True)
+            python.touch()
+        if argv == ["npm", "ci"]:
+            installer = root / "electron/node_modules/electron/install.js"
+            installer.parent.mkdir(parents=True, exist_ok=True)
+            installer.touch()
+        if argv[0] == "node" and argv[-1].endswith("install.js"):
+            binary = root / "electron/node_modules/electron/dist/electron"
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            binary.touch()
+        return ""
+
+    monkeypatch.setattr(setup, "run", run)
+    return root, calls, run
+
+
+def test_linux_fresh_setup_launches_host_through_launcher(linux_install):
+    root, calls, _ = linux_install
+    setup.setup(root, browser=False, no_launch=False, launch_only=False)
+    commands = [argv for argv, _ in calls]
+    assert commands[2][0] == str(root / ".venv/bin/python")
+    assert ["npm", "ci"] in commands
+    assert commands[-1] == [str(root / ".cuttle/scripts/launch-cuttle-host.sh")]
+    assert not (root / ".env").exists()
+
+
+def test_linux_browser_delegates_to_daemon(linux_install):
+    root, calls, _ = linux_install
+    setup.setup(root, browser=True, no_launch=False, launch_only=False)
+    assert calls[-1][0] == [str(root / ".venv/bin/python"), str(root / "src/scripts/cuttle_daemon.py"), "--browser"]
+
+
+def test_linux_missing_node_offers_browser_flag(linux_install, monkeypatch):
+    root, calls, _ = linux_install
+    monkeypatch.setattr(setup.shutil, "which", lambda name: None if name == "node" else name)
+    with pytest.raises(RuntimeError, match="--browser"):
+        setup.setup(root, browser=False, no_launch=True, launch_only=False)
+    assert calls == []
+
+
+def test_linux_unusable_sandbox_blocks_launch_but_not_install(linux_install, monkeypatch):
+    root, calls, _ = linux_install
+    monkeypatch.setattr(setup, "sandbox_problem", lambda binary: "sudo chmod 4755 helper")
+    setup.setup(root, browser=False, no_launch=True, launch_only=False)
+    with pytest.raises(RuntimeError, match="sudo chmod 4755"):
+        setup.setup(root, browser=False, no_launch=False, launch_only=False)
+    assert not any("launch-cuttle-host.sh" in argv[0] for argv, _ in calls)
+
+
+def test_linux_failed_venv_removes_partial_env_and_names_apt_package(linux_install, monkeypatch):
+    root, calls, fake_run = linux_install
+
+    def run(argv, cwd, **kwargs):
+        if "venv" in argv:
+            (root / ".venv" / "bin").mkdir(parents=True)
+            raise subprocess.CalledProcessError(1, argv)
+        return fake_run(argv, cwd, **kwargs)
+
+    monkeypatch.setattr(setup, "run", run)
+    with pytest.raises(RuntimeError, match=r"apt install python3\.12-venv"):
+        setup.setup(root, browser=True, no_launch=True, launch_only=False)
+    assert not (root / ".venv").exists()
+
+
+def test_sandbox_problem_follows_kernel_restrictions_and_opt_out(tmp_path, monkeypatch):
+    binary = tmp_path / "dist" / "electron"
+    binary.parent.mkdir()
+    (binary.parent / "chrome-sandbox").touch()
+    flags = {"/proc/sys/kernel/apparmor_restrict_unprivileged_userns": "1"}
+    monkeypatch.setattr(setup, "_read_flag", lambda path, default: flags.get(path, default))
+    monkeypatch.delenv("CUTTLE_ELECTRON_NO_SANDBOX", raising=False)
+    monkeypatch.setattr(setup, "_nosuid", lambda path: False)
+    assert "sudo chown root:root" in setup.sandbox_problem(binary)
+    monkeypatch.setattr(setup, "_nosuid", lambda path: True)
+    assert "nosuid filesystem" in setup.sandbox_problem(binary)
+    assert "sudo" not in setup.sandbox_problem(binary)
+    monkeypatch.setenv("CUTTLE_ELECTRON_NO_SANDBOX", "1")
+    assert setup.sandbox_problem(binary) == ""
+    monkeypatch.delenv("CUTTLE_ELECTRON_NO_SANDBOX")
+    flags.clear()
+    assert setup.sandbox_problem(binary) == ""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell entry")
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_shell_entry_passes_options_and_exit_code(tmp_path, exit_code):
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is required")
+    root = tmp_path / "checkout with spaces"
+    (root / "src" / "scripts").mkdir(parents=True)
+    shutil.copyfile(setup.ROOT / "setup_linux.sh", root / "setup_linux.sh")
+    # Fake setup helper: no install runs.
+    (root / "src" / "scripts" / "setup_cuttle.py").write_text(
+        f"import sys\nprint('setup helper invoked', sys.argv[1:])\nraise SystemExit({exit_code})\n"
+    )
+    (root / ".venv" / "bin").mkdir(parents=True)
+    (root / ".venv" / "bin" / "python").symlink_to(sys.executable)
+    result = subprocess.run(
+        [bash, str(root / "setup_linux.sh"), "--browser", "--no-launch"],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    assert "setup helper invoked ['--browser', '--no-launch']" in result.stdout

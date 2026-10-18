@@ -25,6 +25,7 @@ const splitContainer = document.getElementById('splitContainer');
 
 // ── Restore rail & active page from session ──────────────────
 const STORAGE_PAGE = 'shell_page';
+const shellVoice = CuttleShellVoice.create({win:window, navigate:sid=>navigate(0,'/chat_page.html?chat='+encodeURIComponent(sid))});
 const STORAGE_RAIL = 'shell_rail_collapsed';
 const STORAGE_SPLITS = 'shell_split_count';
 /** Durable multi-pane layout (survives browser/Electron close). */
@@ -785,6 +786,7 @@ const PAGE_TITLES = {
     '/achievements_page.html': 'Achievements',
     '/gizmos_page.html': 'Gizmos',
     '/test_lab_page.html': 'Test Lab',
+    '/ide_page.html': 'IDE',
     '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',
     '/query_log.html': 'Query log',
@@ -929,6 +931,7 @@ paneController = CuttleShellPanes.create({
     withRememberedChat, rememberChatHandleFromPage, getState,
     setState, storagePageKey: STORAGE_PAGE,
     updateColumnUI, persistSplitLayout, sessionStorage,
+    splitPane: splitLeafColumn, revealPane: col => setPaneCollapsed(col, false),
     desktopCfg: CuttleShellElectron.getDesktopConfig(),
     spacesActivity: CuttleSpaces,
     refreshParkedPaneTitle,
