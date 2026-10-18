@@ -13,47 +13,131 @@
     'use strict';
     const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g,
         c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
+    function canAllow(f) {
+        return ['gitleaks', 'secret-patterns'].includes(f.hook) && f.commit && f.file && f.line;
+    }
     function render(report) {
         const findings = Array.isArray(report.findings) ? report.findings : [];
-        return '<h2 id="push-report-title">Push blocked by pre-push checks</h2>' +
-            '<p>' + esc(report.summary || 'The pre-push secret hook blocked this push.') + '</p>' +
-            '<p>No changes were sent by this rejected ref update. Flagged values are redacted. ' +
-            'Review the original commit locally before deciding how to resolve each finding.</p>' +
-            '<p><strong>' + findings.length + ' findings · ' + new Set(findings.map(f => f.file).filter(Boolean)).size + ' files</strong></p>' +
-            findings.map((f, index) => '<details open style="border:1px solid #555;border-radius:8px;margin:10px 0;padding:12px">' +
-                '<summary><strong>' + esc(f.file || 'Inspection failure') + '</strong>' + (f.line ? ':' + esc(f.line) : '') + ' — ' + esc(f.hook) + '</summary>' +
-                '<p>' + esc(f.rule) + '</p><p>Commit: <code style="user-select:all">' + esc(f.commit || 'Unknown') + '</code></p>' +
+        return '<section class="push-report-card">' +
+            '<header class="push-report-header"><div><span class="push-report-eyebrow">PUSH REVIEW</span>' +
+            '<h2 id="push-report-title">Push needs your review</h2>' +
+            '<p>' + findings.length + ' findings · ' + new Set(findings.map(f => f.file).filter(Boolean)).size + ' files</p></div>' +
+            '<button type="button" class="push-report-close" data-push-close aria-label="Dismiss push review">×</button></header>' +
+            '<div class="push-report-body"><p class="push-report-summary">' + esc(report.summary || 'The pre-push secret hook blocked this push.') + '</p>' +
+            '<p class="push-report-muted">Flagged values are hidden. Review the commit diff, then allow a false positive with a reason. ' +
+            'Each exception applies only to the exact committed source and scanner rule.</p>' +
+            findings.map((f, index) => '<details open class="push-report-finding" data-push-finding="' + index + '">' +
+                '<summary><strong>' + esc(f.file || 'Inspection failure') + '</strong>' + (f.line ? ':' + esc(f.line) : '') +
+                '<span class="push-report-badge">' + esc(f.hook) + '</span></summary>' +
+                '<div class="push-report-finding-body"><p class="push-report-rule">' + esc(f.rule) + '</p>' +
+                '<p class="push-report-meta">Commit: <code>' + esc(f.commit || 'Unknown') + '</code></p>' +
                 (f.table ? '<p>Table: <code>' + esc(f.table) + '</code> · column: <code>' + esc(f.column) + '</code> · row position: ' + esc(f.row) + '</p>' : '') +
+                '<pre class="push-report-preview">' + esc(f.line || (f.table ? 'DB' : '—')) + '  ' + esc(f.preview || '[No source value shown]') + '</pre>' +
+                '<div class="push-report-actions">' +
                 (f.file && f.commit ? '<button type="button" data-push-diff="' + index + '">View flagged commit diff</button>' : '') +
-                '<pre style="overflow:auto;background:#242428;padding:12px;border-left:3px solid #d77"><span style="color:#aaa">' + esc(f.line || (f.table ? 'DB' : '—')) + '</span>  ' + esc(f.preview || '[No source value shown]') + '</pre></details>').join('') +
-            (report.warnings || []).map(w => '<p>Warning: ' + esc(w) + '</p>').join('');
+                (canAllow(f) ? '<button type="button" class="push-report-allow" data-push-allow="' + index + '">Allow this finding</button>' : '') + '</div>' +
+                (canAllow(f) ? '<form class="push-report-review" data-push-review="' + index + '" hidden>' +
+                    '<label for="push-review-reason-' + index + '">Why is this safe to allow?</label>' +
+                    '<textarea id="push-review-reason-' + index + '" name="reason" required minlength="3" maxlength="1000" rows="2" placeholder="For example: keyboard shortcut text, not a credential"></textarea>' +
+                    '<p class="push-report-muted">This saves a reviewable exception in the project’s scanner policy.</p>' +
+                    '<div class="push-report-actions"><button type="submit" class="push-report-primary">Save exception</button>' +
+                    '<button type="button" data-push-cancel="' + index + '">Cancel</button></div></form>' :
+                    '<p class="push-report-muted">This check cannot be allowed from the report.</p>') +
+                '<p class="push-report-status" role="status" aria-live="polite"></p></div></details>').join('') +
+            (report.warnings || []).map(w => '<p class="push-report-warning">Warning: ' + esc(w) + '</p>').join('') +
+            '</div><footer class="push-report-footer"><span class="push-report-muted">After resolving the findings, retry your push.</span>' +
+            '<button type="button" data-push-close>Close</button></footer></section>';
+    }
+    function stylesheet(win, name) {
+        const doc = win.document;
+        if (doc.querySelector('link[data-push-style="' + name + '"]')) return;
+        const link = doc.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = '/css/' + name + '.css?v=20261018pushReview';
+        link.dataset.pushStyle = name;
+        doc.head.appendChild(link);
+    }
+    function modalWindow() {
+        try { if (root.top && root.top.document) return root.top; } catch (_) {}
+        return root;
+    }
+    function diffViewer(win) {
+        if (win.CuttleDiffModal) return Promise.resolve(win.CuttleDiffModal);
+        if (!win._cuttlePushDiffLoader) {
+            stylesheet(win, 'diff_modal');
+            win._cuttlePushDiffLoader = new Promise((resolve, reject) => {
+                const script = win.document.createElement('script');
+                script.src = '/js/git/diff_modal.js?v=20261018menus';
+                script.onload = () => resolve(win.CuttleDiffModal);
+                script.onerror = () => { win._cuttlePushDiffLoader = null; script.remove(); reject(new Error('Could not open the diff viewer')); };
+                win.document.head.appendChild(script);
+            });
+        }
+        return win._cuttlePushDiffLoader;
     }
     function show(report, context) {
         if (!report || !Array.isArray(report.findings)) return false;
         context = context || {};
-        const prior = root.document.getElementById('cuttle-push-report');
+        const win = modalWindow();
+        const doc = win.document;
+        stylesheet(win, 'git_push_report');
+        const prior = doc.getElementById('cuttle-push-report');
         if (prior) prior.close();
-        const focus = root.document.activeElement;
-        const dialog = root.document.createElement('dialog');
+        const focus = doc.activeElement;
+        const dialog = doc.createElement('dialog');
         dialog.id = 'cuttle-push-report';
+        dialog.className = 'push-report-modal';
         dialog.setAttribute('aria-labelledby', 'push-report-title');
-        dialog.style.cssText = 'width:min(950px,90vw);max-height:85vh;overflow:auto;background:var(--bg-secondary,#202024);color:var(--text-primary,#eee);border:1px solid #666;border-radius:12px;padding:24px;font-family:system-ui,sans-serif;box-shadow:0 12px 60px #0008';
-        dialog.innerHTML = '<button type="button" style="float:right">Close</button>' + render(report);
-        dialog.querySelectorAll('button').forEach(button => {
-            button.style.cssText = 'padding:7px 12px;border:1px solid #777;border-radius:6px;background:#34343b;color:#eee;cursor:pointer';
-        });
-        dialog.querySelector('button').addEventListener('click', () => dialog.close());
+        dialog.innerHTML = render(report);
+        dialog.querySelectorAll('[data-push-close]').forEach(button => button.addEventListener('click', () => dialog.close()));
+        dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
         dialog.querySelectorAll('[data-push-diff]').forEach(button => {
             const f = report.findings[Number(button.dataset.pushDiff)];
-            button.disabled = !context.projectPath || !root.CuttleDiffModal;
-            button.addEventListener('click', () => root.CuttleDiffModal.open({
-                projectPath: context.projectPath, repoRoot: context.repoRoot || context.projectPath,
-                file: f.file, files: report.findings.filter(item => item.commit === f.commit).map(item => item.file),
-                commitHash: f.commit,
-            }));
+            button.disabled = !context.projectPath;
+            button.addEventListener('click', async () => {
+                try {
+                    const viewer = await diffViewer(win);
+                    viewer.open({
+                        projectPath: context.projectPath, repoRoot: context.repoRoot || context.projectPath,
+                        file: f.file, files: report.findings.filter(item => item.commit === f.commit).map(item => item.file),
+                        commitHash: f.commit,
+                    });
+                } catch (error) { button.closest('details').querySelector('[role="status"]').textContent = error.message; }
+            });
+        });
+        dialog.querySelectorAll('[data-push-allow]').forEach(button => {
+            const index = Number(button.dataset.pushAllow);
+            const form = dialog.querySelector('[data-push-review="' + index + '"]');
+            const status = form.parentElement.querySelector('[role="status"]');
+            button.disabled = !context.projectPath;
+            button.addEventListener('click', () => { form.hidden = false; button.hidden = true; form.elements.reason.focus(); });
+            form.querySelector('[data-push-cancel]').addEventListener('click', () => { form.hidden = true; button.hidden = false; button.focus(); });
+            form.addEventListener('submit', async event => {
+                event.preventDefault();
+                const submit = form.querySelector('[type="submit"]');
+                submit.disabled = true;
+                status.textContent = 'Saving exception…';
+                status.classList.remove('is-error');
+                try {
+                    const response = await root.fetch('/api/git/push-exceptions', {
+                        method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({path: context.projectPath, repo_root: context.repoRoot || context.projectPath,
+                            finding: report.findings[index], reason: form.elements.reason.value.trim()}),
+                    });
+                    const data = await response.json();
+                    if (!response.ok || !data.success) throw new Error(data.error || 'Could not save the exception');
+                    form.hidden = true;
+                    button.hidden = false;
+                    button.disabled = true;
+                    button.textContent = 'Allowed';
+                    status.textContent = 'Exception saved. Retry your push and include the policy change in your next commit.';
+                    button.closest('details').classList.add('is-allowed');
+                } catch (error) { status.textContent = error.message; status.classList.add('is-error'); }
+                finally { submit.disabled = false; }
+            });
         });
         dialog.addEventListener('close', () => { dialog.remove(); if (focus && focus.isConnected) focus.focus(); }, {once:true});
-        root.document.body.appendChild(dialog);
+        doc.body.appendChild(dialog);
         dialog.showModal();
         return true;
     }

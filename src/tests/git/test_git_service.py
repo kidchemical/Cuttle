@@ -101,6 +101,7 @@ def test_git_routes_auth_matrix(tmp_path, monkeypatch):
     for method, path, payload in [
         ("POST", "/api/git/pull", {}),
         ("POST", "/api/git/push", {}),
+        ("POST", "/api/git/push-exceptions", {}),
         ("POST", "/api/git/branch", {"action": "create", "branch": "x"}),
         ("POST", "/api/git/commit", {"message": "x", "path": str(repo)}),
         ("POST", "/api/git/ignore", {"path": "f"}),
@@ -360,6 +361,28 @@ def test_push_failure_exposes_hook_report_and_prefers_hook_summary(tmp_path, mon
     assert 'secret-patterns' in data['error']
     assert data['push_report']['findings'][0]['file'] == 'test.py'
     assert data['push_report']['findings'][0]['commit'] == 'abc'
+
+
+def test_push_exception_route_scopes_repo_and_saves_verified_source(tmp_path, monkeypatch):
+    import json
+    repo = _init_repo(tmp_path / 'exception-repo')
+    policy = repo / '.cuttle/scripts/git-hooks/scanner-exceptions.json'
+    policy.parent.mkdir(parents=True)
+    policy.write_text(json.dumps({'version': 1, 'exceptions': []}), encoding='utf-8')
+    ctx = _ctx(tmp_path, monkeypatch, repo)
+    hit = dict(hook='gitleaks', rule='generic-api-key', commit=_git('rev-parse', 'HEAD', cwd=repo).stdout.strip(), file='a.txt', line=1, end_line=1)
+    payload = dict(path=str(repo), finding=hit, reason='Reviewed fixture')
+    assert ctx['anon'].post('/api/git/push-exceptions', json=payload, environ_base=LAN).status_code == 401
+    assert ctx['guest'].post('/api/git/push-exceptions', json=payload, environ_base=LAN).status_code == 403
+    response = ctx['client'].post('/api/git/push-exceptions', json=dict(payload, repo_root=str(tmp_path)), environ_base=LAN)
+    assert response.status_code == 400
+    assert json.loads(policy.read_text())['exceptions'] == []
+    response = ctx['client'].post('/api/git/push-exceptions', json=payload, environ_base=LAN)
+    assert response.status_code == 200, response.json
+    entry = json.loads(policy.read_text())['exceptions'][0]
+    assert entry['commit'] == hit['commit'] and entry['checks'] == {'gitleaks': 'generic-api-key'}
+    response = ctx['client'].post('/api/git/push-exceptions', json=dict(payload, finding=dict(hit, hook='sqlite-secrets')), environ_base=LAN)
+    assert response.status_code == 400
 
 
 def test_working_branch_tracks_existing_origin_without_resetting_local_commits(tmp_path):
