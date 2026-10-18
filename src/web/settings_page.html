@@ -40,10 +40,6 @@
             <!-- General is the pre-activation panel: if the tab script fails to
                  load, the page still renders its settings instead of nothing. -->
             <section class="settings-panel active" id="panel-general" role="tabpanel" aria-labelledby="tab-general" tabindex="0">
-            <div class="settings-group" id="sharedSystemPromptSettings">
-                <h3 class="settings-title">System prompt <span class="settings-scope" data-scope="server">All chats</span></h3>
-                <div id="sharedSystemPromptEditor"></div>
-            </div>
             <div class="settings-group" id="cuttleReleaseSettings">
                 <h3 class="settings-title">📦 Cuttle updates <span class="settings-scope" data-scope="server">This server checkout</span><button type="button" class="cuttle-info" data-tooltip="Check for updates lists every channel this install can use and what each would change. Nothing installs until you pick a channel and confirm it. The titlebar Update button opens the same window." aria-label="About 📦 Cuttle updates">i</button></h3>
                 <div class="setting-item setting-item--stack">
@@ -173,6 +169,10 @@
                         </label>
                     </div>
                 </div>
+            </div>
+            <div class="settings-group" id="sharedSystemPromptSettings">
+                <h3 class="settings-title">System prompt <span class="settings-scope" data-scope="server">All chats</span></h3>
+                <div id="sharedSystemPromptEditor"></div>
             </div>
             </section>
 
