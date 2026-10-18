@@ -6510,6 +6510,34 @@ pre.has-code-copy:hover .code-copy-btn,
     margin: 10px 0;
 }
 
+.response-original-block {
+    border-left: 3px solid var(--accent, #58a6ff);
+    padding: 8px 12px;
+    background: rgba(127, 127, 127, 0.08);
+    border-radius: 0 8px 8px 0;
+}
+
+.response-original-content {
+    margin-top: 8px;
+    padding-left: 12px;
+    border-left: 2px solid color-mix(in srgb, var(--accent, #58a6ff) 48%, transparent);
+    font-style: italic;
+}
+
+.response-original-content pre,
+.response-original-content code {
+    font-style: normal;
+}
+
+.response-postprocessed-label {
+    margin: 12px 0 4px;
+    color: var(--text-secondary);
+    font-size: 0.72em;
+    font-weight: 700;
+    letter-spacing: 0.045em;
+    text-transform: uppercase;
+}
+
 .response-original-block > summary,
 .tool-block > summary,
 .thinking-block > summary {
