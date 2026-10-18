@@ -28,7 +28,7 @@ def _isolate_muse(tmp_path: Path, monkeypatch) -> Path:
     home = tmp_path / "muse-home"
     (home / ".local" / "share" / "muse" / "sessions").mkdir(parents=True)
     monkeypatch.setattr(store, "_map_file", lambda: tmp_path / "muse_map.json")
-    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(store, "muse_data_home", lambda: home / ".local" / "share" / "muse")
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     monkeypatch.setenv("MUSE_MODEL", "muse-spark-1.3")
     monkeypatch.setenv("CUTTLE_AGENT_STEER", "0")
@@ -129,7 +129,7 @@ def _isolate_cursor(tmp_path: Path, monkeypatch) -> Path:
     home = tmp_path / "cursor-home"
     (home / ".cursor" / "projects").mkdir(parents=True)
     monkeypatch.setattr(store, "_map_file", lambda: tmp_path / "cursor_map.json")
-    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(store, "_cursor_transcript_root", lambda: home / ".cursor" / "projects")
     monkeypatch.setattr(
         "api.agent_harness.agent_defaults.get_starred_model", lambda _aid: None
     )

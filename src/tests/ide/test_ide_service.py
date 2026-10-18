@@ -34,8 +34,8 @@ def _git(cwd: Path, *args: str) -> None:
 def ws(tmp_path, monkeypatch):
     root = tmp_path / "proj"
     (root / "src").mkdir(parents=True)
-    (root / "src" / "app.py").write_text("def hello():\n    return 'hi'\n", encoding="utf-8")
-    (root / "README.md").write_text("# Demo\nhello world\n", encoding="utf-8")
+    (root / "src" / "app.py").write_bytes(b"def hello():\n    return 'hi'\n")
+    (root / "README.md").write_bytes(b"# Demo\nhello world\n")
     (root / "build").mkdir()
     (root / "build" / "out.txt").write_text("hello build\n", encoding="utf-8")
     (root / ".gitignore").write_text("build/\n", encoding="utf-8")
@@ -121,7 +121,7 @@ def test_write_requires_matching_etag(ws):
     assert (ws / "README.md").read_text(encoding="utf-8") == "# New\n"
     assert saved["etag"] != f["etag"]
     # An agent rewrote the file after we loaded it: the stale etag conflicts.
-    (ws / "README.md").write_text("agent edit\n", encoding="utf-8")
+    (ws / "README.md").write_bytes(b"agent edit\n")
     with pytest.raises(service.Conflict) as info:
         service.write_file(ws, "README.md", "mine\n", etag=saved["etag"])
     assert info.value.current["etag"] == service.etag_for(b"agent edit\n")
@@ -134,11 +134,13 @@ def test_write_preserves_mode_encoding_and_never_creates_silently(ws):
     script = ws / "run.sh"
     script.write_bytes(b"\xef\xbb\xbfecho hi\r\n")
     script.chmod(0o755)
+    # Windows exposes different permission bits; preserve what the OS supports.
+    original_mode = script.stat().st_mode & 0o777
     f = service.read_file(ws, "run.sh")
     assert f["encoding"] == "utf-8-bom" and f["eol"] == "crlf" and f["content"] == "echo hi\r\n"
     service.write_file(ws, "run.sh", "echo bye\r\n", etag=f["etag"], encoding=f["encoding"])
     assert script.read_bytes() == b"\xef\xbb\xbfecho bye\r\n"
-    assert script.stat().st_mode & 0o777 == 0o755
+    assert script.stat().st_mode & 0o777 == original_mode
     with pytest.raises(service.NotFound):
         service.write_file(ws, "new.txt", "x")
     service.write_file(ws, "new.txt", "x", create=True)

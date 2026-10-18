@@ -70,7 +70,7 @@ console.log(JSON.stringify(out));
 
 @node_only
 def test_ide_model():
-    proc = subprocess.run(["node", "-e", HARNESS], capture_output=True, text=True,
+    proc = subprocess.run(["node", "-e", HARNESS], capture_output=True, text=True, encoding="utf-8",
                           env={**os.environ, "MODEL": str(MODEL)}, check=True)
     out = json.loads(proc.stdout)
     assert out["previewReplaced"] == ["b.py"]
