@@ -546,7 +546,8 @@
             });
             doc.addEventListener('pointerdown', (e) => {
                 if (!railEditing) return;
-                if (e.target.closest('.icon-rail, .rail-add-picker')) return;
+                // Keep edit controls interactive, but let blank rail space dismiss.
+                if (e.target.closest('.rail-item, .rail-panel-toggle, .rail-add-slot, .rail-logo, .rail-pane-grip, .rail-add-picker')) return;
                 setRailEditing(false);
             });
             doc.addEventListener('click', (e) => {

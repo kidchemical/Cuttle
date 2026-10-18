@@ -322,6 +322,45 @@ def test_split_toolbars_inherit_shared_configuration(browser, static_server, mou
         context.close()
 
 
+@pytest.mark.parametrize("pane", [0, 1])
+@pytest.mark.parametrize("blank_area", [".icon-rail", ".rail-items", ".rail-footer"])
+def test_blank_toolbar_click_exits_edit_mode(browser, static_server, pane, blank_area):
+    world = ShellWorld()
+    context, page, errors, blocked = _open(
+        browser, static_server, world, seed=V1_FLAT)
+    try:
+        _load_shell(page, static_server)
+        page.wait_for_function("document.querySelectorAll('.split-column').length === 2")
+        icon = page.locator('.split-column').nth(pane).locator(
+            '.rail-items [data-id="nav-chat"]')
+        icon.hover()
+        page.mouse.down()
+        page.wait_for_function("document.querySelectorAll('.icon-rail.rail-editing').length === 2")
+        page.mouse.up()
+        # Clicking an editable icon must keep edit mode active.
+        icon.click(force=True)
+        assert page.locator('.icon-rail.rail-editing').count() == 2
+        # Find actual exposed background, excluding buttons and their children.
+        point = page.locator('.split-column').nth(pane).locator(blank_area).evaluate(
+            """el => {
+                const r = el.getBoundingClientRect();
+                for (let y = r.top + 1; y < r.bottom; y += 2) {
+                    for (let x = r.left + 1; x < r.right; x += 2) {
+                        if (document.elementFromPoint(x, y) === el) return {x, y};
+                    }
+                }
+                return null;
+            }""")
+        assert point, f"No exposed background in {blank_area}"
+        page.mouse.click(point["x"], point["y"])
+        assert page.locator('.icon-rail.rail-editing').count() == 0
+        assert page.locator('.rail-edit-scrim:not([hidden])').count() == 0
+        assert not errors
+        _assert_blocked_api_free(blocked)
+    finally:
+        context.close()
+
+
 def test_update_restart_popup_uses_shared_account_modal_surface(browser, static_server):
     world = ShellWorld()
     context, page, errors, blocked = _open(browser, static_server, world)
