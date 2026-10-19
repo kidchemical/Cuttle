@@ -110,7 +110,10 @@ def finish(baseline):
 
 
 def record_step(qid,tool_id):
-    """Best-effort edit-class completion for vendors without native patches."""
+    """Best-effort edit-class completion for vendors without native patches.
+
+    Returns ``{'repo_root', 'paths'}`` for a step that changed files, else None.
+    """
     import hashlib
     from .writer import record
     baseline=None
@@ -130,3 +133,6 @@ def record_step(qid,tool_id):
             'text':patch,'source':'snapshot','repo_root':baseline['repo_root'],
             'tool_id':str(tool_id),'overlap':sorted(baseline['overlap']),
             'ambiguous':bool(baseline['overlap']),'skipped':current['skipped']})
+        names=git(baseline['repo_root'],'diff','--no-renames','--name-only','-z',previous,current['tree'])
+        return {'repo_root':baseline['repo_root'],'paths':[p for p in names.split('\0') if p]}
+    return None

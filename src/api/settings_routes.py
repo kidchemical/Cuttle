@@ -588,6 +588,30 @@ def update_git_auto_commit_setting():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# --- agent review commit policy (backend: api.agent_review.service) --------
+
+@settings_bp.route('/settings/agent-review', methods=['GET'])
+@authenticated_required
+def get_agent_review_setting():
+    """Committing files with unreviewed agent changes: ``warn`` (default) or ``keep``."""
+    from api.agent_review.service import commit_policy
+    return jsonify({'success': True, 'commit_policy': commit_policy()})
+
+
+@settings_bp.route('/settings/agent-review', methods=['POST'])
+@owner_required
+def update_agent_review_setting():
+    """Body: { commit_policy: "warn" | "keep" }."""
+    from api.agent_review.service import ReviewError, commit_policy, set_commit_policy
+    data = request.get_json(silent=True) or {}
+    try:
+        if not set_commit_policy(str(data.get('commit_policy') or '')):
+            return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+    except ReviewError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    return jsonify({'success': True, 'commit_policy': commit_policy()})
+
+
 # --- timeouts (backend: managers.settings_manager) -------------------------
 
 @settings_bp.route('/settings/timeouts', methods=['GET'])

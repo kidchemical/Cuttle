@@ -46,7 +46,10 @@ def test_successful_routing_still_says_routed():
     assert routing_never_ran(decision) is False
 
 
-def test_fallback_note_does_not_claim_routing():
+def test_fallback_note_does_not_claim_routing(monkeypatch):
+    # Text-note path; the default-on router chip replaces the note with a badge.
+    import api.experimental
+    monkeypatch.setattr(api.experimental, "is_enabled", lambda flag_id: flag_id != "router_selection_chip")
     from api.agent_router.dispatch import _annotate_result
     from api.agent_router.engine import actionable_router_hint, routing_never_ran
     from api.agent_router.types import (

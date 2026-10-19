@@ -22,6 +22,13 @@ voice_stt_bp.register_blueprint(voice_usage_bp)
 _DISABLED = {"success": False, "disabled": True, "error": "Server transcription is disabled"}
 
 
+@voice_stt_bp.route("/status", methods=["GET"])
+@authenticated_required
+def status():
+    """Voice mode picks its input engine from this: no key → browser speech."""
+    return jsonify(success=True, enabled=voice_stt.is_enabled(), configured=voice_stt.configured())
+
+
 @voice_stt_bp.route("/transcribe", methods=["POST"])
 @authenticated_required
 @attributed_call

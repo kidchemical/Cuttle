@@ -250,7 +250,10 @@ class ToolActivityLog:
             if any(part in name.lower() for part in ("edit", "write", "patch", "bash", "shell", "exec")):
                 try:
                     from api.agent_events.snapshots import record_step
-                    record_step(current_query_id(), f"{self.source_id}:{key}")
+                    from api.agent_review.service import note_agent_paths
+                    step = record_step(current_query_id(), f"{self.source_id}:{key}")
+                    if step:
+                        note_agent_paths(current_query_id(), step["paths"])
                 except Exception:
                     import logging
                     logging.getLogger(__name__).exception("Step snapshot unavailable")
@@ -266,3 +269,10 @@ class ToolActivityLog:
             self.native_edit_tools.add(str(tool_id))
         record_agent_edit(f'{self.source_id}:{tool_id}:edit:{path}', path, patch,
                           change=change, source=source, tool_id=f'{self.source_id}:{tool_id}')
+        try:
+            from api.agent_review.service import note_agent_edit
+            from api.query_events import current_query_id
+            note_agent_edit(current_query_id(), path)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Agent review hook unavailable")

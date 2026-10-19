@@ -342,6 +342,17 @@
                         </label>
                     </div>
                 </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Committing unreviewed agent changes</strong><button type="button" class="cuttle-info" data-tooltip="With Agent review on (Settings → Experimental), committing a file whose agent changes you have not kept or undone keeps them. Warn first asks before committing (with a Don&#x27;t ask again option); Keep and commit skips the question." aria-label="About committing unreviewed agent changes">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <select id="agentReviewCommitPolicy" class="setting-input" onchange="saveAgentReviewCommitPolicy()" aria-label="Committing unreviewed agent changes">
+                            <option value="warn">Warn first</option>
+                            <option value="keep">Keep and commit</option>
+                        </select>
+                    </div>
+                </div>
             </div>
 
             <div class="settings-group" id="timeoutsSettings">
@@ -2235,6 +2246,40 @@
             }
         }
 
+        async function loadAgentReviewSetting() {
+            const select = document.getElementById('agentReviewCommitPolicy');
+            if (!select) return;
+            try {
+                const r = await fetch('/api/settings/agent-review');
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Failed to load');
+                select.value = d.commit_policy === 'keep' ? 'keep' : 'warn';
+            } catch (e) {
+                (window.showToast || alert)('Could not load the agent review setting: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function saveAgentReviewCommitPolicy() {
+            const select = document.getElementById('agentReviewCommitPolicy');
+            if (!select) return;
+            const next = select.value;
+            try {
+                const r = await fetch('/api/settings/agent-review', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ commit_policy: next }),
+                });
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Save failed');
+                (window.showToast || alert)(next === 'keep'
+                    ? 'Commits now keep unreviewed agent changes without asking'
+                    : 'Commits with unreviewed agent changes ask first', 'info');
+            } catch (e) {
+                (window.showToast || alert)('Failed to update the agent review setting: ' + (e.message || e), 'error');
+                loadAgentReviewSetting();
+            }
+        }
+
         async function loadTimeoutsSettings() {
             try {
                 const r = await fetch('/api/settings/timeouts');
@@ -2845,6 +2890,7 @@
                     loadAgentCatalog();
                     loadCompletionProviders();
                     loadGitAutoCommitSetting();
+                    loadAgentReviewSetting();
                     loadTimeoutsSettings();
                 });
                 tabs.register('providers', function () {
@@ -2865,6 +2911,7 @@
                 window.CuttleSettingsReleases.mount(document.getElementById('cuttleReleaseSettings'));
                 loadAgentCatalog();
                 loadGitAutoCommitSetting();
+                loadAgentReviewSetting();
                 loadCompletionProviders();
                 loadTimeoutsSettings();
                 loadChatTtsSettings();

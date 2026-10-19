@@ -1,5 +1,8 @@
 /* Shared file-diff popup. Owns markup, rendering, navigation and desktop opening.
  * Pages pass an explicit project/repo snapshot; pending and commit diffs use one UI.
+ * Pending files with unreviewed agent changes (CuttleAgentReview, flag
+ * `agent_review`) open in "Agent changes" mode: unified hunks against the
+ * pre-turn baseline with per-hunk Keep / Undo; "Working tree" is the git diff.
  */
 (function (global) {
     'use strict';
@@ -55,7 +58,15 @@
                             <span class="pending-diff-modal-stats" data-diff="stats"></span>
                             <span class="git-diff-commit" data-diff="source"></span>
                             <button type="button" class="pending-diff-editor-btn" data-diff="editor" title="Open this file in the Cuttle IDE" hidden>Editor</button>
-                            <div class="pending-diff-view-toggle" role="group" aria-label="Diff view mode">
+                            <div class="pending-diff-view-toggle pending-diff-source-toggle" data-diff="sourceToggle" role="group" aria-label="Diff source" hidden>
+                                <button type="button" class="pending-diff-view-btn" data-diff-source="agent" aria-pressed="true" title="Agent changes since the turn started, with Keep / Undo">✦ Agent changes</button>
+                                <button type="button" class="pending-diff-view-btn" data-diff-source="git" aria-pressed="false" title="Working tree against HEAD">Working tree</button>
+                            </div>
+                            <span class="pending-diff-review-actions" data-diff="reviewActions" hidden>
+                                <button type="button" class="pending-diff-review-btn is-undo" data-review-file="undo" title="Undo every agent change in this file">Undo file</button>
+                                <button type="button" class="pending-diff-review-btn is-keep" data-review-file="keep" title="Keep every agent change in this file">Keep file</button>
+                            </span>
+                            <div class="pending-diff-view-toggle" data-diff="viewToggle" role="group" aria-label="Diff view mode">
                                 <button type="button" class="pending-diff-view-btn" data-diff-view="split" aria-pressed="true" title="Separate Added and Removed sections">Split</button>
                                 <button type="button" class="pending-diff-view-btn" data-diff-view="unified" aria-pressed="false" title="Preserve hunk line order (adds and removes interleaved)">Unified</button>
                             </div>
@@ -87,6 +98,15 @@
             if (e.target === modal) close();
             const view = e.target.closest('[data-diff-view]');
             if (view) { writeViewMode(view.dataset.diffView); if (lastData) render(lastData); }
+            const source = e.target.closest('[data-diff-source]');
+            if (source && state && source.dataset.diffSource !== state.source) {
+                state.source = source.dataset.diffSource;
+                loadFile(state.file, { source: state.source });
+            }
+            const hunkAct = e.target.closest('[data-review-hunk]');
+            if (hunkAct) reviewAct(hunkAct.dataset.reviewKind, [hunkAct.dataset.reviewHunk]);
+            const fileAct = e.target.closest('[data-review-file]');
+            if (fileAct) reviewAct(fileAct.dataset.reviewFile, null);
             const more = e.target.closest('[data-pending-diff-more], [data-pending-diff-all]');
             if (more && state) {
                 const full = more.hasAttribute('data-pending-diff-all');
@@ -226,6 +246,84 @@
     }
 
 
+    // ── agent review mode ───────────────────────────────────────────
+    function reviewClient() { return global.CuttleAgentReview || null; }
+    function setReviewChrome(agentMode, hasReview) {
+        el('sourceToggle').hidden = !hasReview;
+        el('reviewActions').hidden = !agentMode;
+        el('viewToggle').hidden = agentMode;
+        modal.querySelectorAll('[data-diff-source]').forEach((btn) => {
+            btn.setAttribute('aria-pressed', String((btn.dataset.diffSource === 'agent') === agentMode));
+        });
+    }
+    function renderReview(entry, review) {
+        lastData = null;
+        const ra = reviewClient();
+        el('title').textContent = state.file;
+        const letter = entry.change === 'added' ? 'A' : entry.change === 'deleted' ? 'D' : 'M';
+        el('status').textContent = letter;
+        el('status').dataset.status = entry.change === 'added' ? 'added' : entry.change === 'deleted' ? 'deleted' : 'modified';
+        el('stats').innerHTML = (entry.additions ? '<span class="pending-changes-add">' + esc(formatStat(entry.additions, '+')) + '</span>' : '')
+            + (entry.deletions ? '<span class="pending-changes-del">' + esc(formatStat(entry.deletions, '-')) + '</span>' : '');
+        el('loading').hidden = true;
+        syncEditorButton({ success: true, status: letter });
+        const hunks = ra.unifiedHunks(review, 3);
+        el('empty').hidden = hunks.length > 0;
+        el('hunks').hidden = !hunks.length;
+        if (!hunks.length) { el('empty').textContent = 'All agent changes in this file are reviewed'; el('hunks').innerHTML = ''; return; }
+        el('hunks').innerHTML = (review.live ? '<div class="pending-diff-review-live">✦ The agent is still editing this file; changes update live.</div>' : '')
+            + (review.mixed ? '<div class="pending-diff-review-note">Some of your own edits sit inside agent changes and are shown with them.</div>' : '')
+            + hunks.map((h) => '<section class="pending-diff-hunk is-review">'
+                + '<div class="pending-diff-hunk-header"><span>' + esc(h.header) + '</span>'
+                + '<span class="pending-diff-hunk-actions">'
+                + '<button type="button" class="pending-diff-review-btn is-undo" data-review-kind="undo" data-review-hunk="' + esc(h.id) + '" title="Undo this change (rewrites the file)">Undo</button>'
+                + '<button type="button" class="pending-diff-review-btn is-keep" data-review-kind="keep" data-review-hunk="' + esc(h.id) + '" title="Keep this change">Keep</button>'
+                + '</span></div>'
+                + '<div class="pending-diff-lines">' + h.lines.map(renderDiffLineHTML).join('') + '</div>'
+                + '</section>').join('');
+    }
+    /** Agent mode for a pending file under review; false → fall back to the git diff. */
+    async function loadReview(requestState, token) {
+        const ra = reviewClient();
+        if (!ra || requestState.commitHash) return false;
+        const entry = await ra.entry(requestState.projectPath, requestState.repoRoot, requestState.file).catch(() => null);
+        if (token !== generation) return true;
+        if (!entry) { setReviewChrome(false, false); return false; }
+        if (requestState.source === 'git') { setReviewChrome(false, true); return false; }
+        const review = await ra.detail(requestState.projectPath, entry.path).catch(() => null);
+        if (token !== generation) return true;
+        if (!review) { setReviewChrome(false, false); return false; }
+        state.review = { entry: entry, detail: review };
+        state.source = 'agent';
+        setReviewChrome(true, true);
+        renderReview(entry, review);
+        return true;
+    }
+    async function reviewAct(kind, hunkIds) {
+        const ra = reviewClient();
+        const snapshot = state;
+        if (!ra || !snapshot || !snapshot.review) return;
+        const entry = snapshot.review.entry;
+        if (kind === 'undo' && !hunkIds) {
+            const answer = await ra.confirmDialog({
+                title: 'Undo agent changes?',
+                text: entry.change === 'added' ? 'The agent created ' + snapshot.file + '. Undoing deletes the file.'
+                    : 'Revert every agent change in ' + snapshot.file + ' on disk. Your own edits stay.',
+                confirm: entry.change === 'added' ? 'Delete file' : 'Undo changes',
+            });
+            if (!answer.ok || state !== snapshot) return;
+        }
+        const body = { path: entry.path };
+        if (hunkIds) body.hunks = hunkIds;
+        if (kind === 'undo' && hunkIds) body.etag = snapshot.review.detail.etag;
+        try {
+            await ra.act(kind, snapshot.projectPath, body);
+        } catch (err) {
+            toast((err && err.conflict) ? 'This change moved; refreshed' : 'Agent review: ' + ((err && err.message) || err));
+        }
+        if (state === snapshot) loadFile(snapshot.file, { source: 'agent' });
+    }
+
     function render(data) {
         lastData = data;
         const mode = readViewMode();
@@ -284,7 +382,12 @@
         el('empty').hidden = true;
         el('hunks').hidden = true;
         el('hunks').innerHTML = '';
+        state.review = null;
+        setReviewChrome(false, false);
         updateNavigation();
+        // Agent mode wins when the file is under review; the git request still
+        // goes out now so ordering and cancellation stay per request.
+        const reviewing = requestState.commitHash ? Promise.resolve(false) : loadReview(requestState, token).catch(() => false);
         try {
             const qs = new URLSearchParams({ path: requestState.projectPath, file: requestState.file, context: '3', max_lines: String(requestState.maxLines) });
             if (requestState.repoRoot) qs.set('repo_root', requestState.repoRoot);
@@ -292,11 +395,11 @@
             const endpoint = requestState.commitHash ? '/api/git/commit/' + encodeURIComponent(requestState.commitHash) + '/file-diff' : '/api/git/pending-diff';
             const response = await fetch(endpoint + '?' + qs, { credentials: 'include', cache: 'no-store', signal: signal });
             const data = await response.json().catch(() => null);
-            if (token !== generation) return;
+            if (token !== generation || await reviewing || token !== generation) return;
             if (!response.ok || !data || !data.success) throw new Error((data && data.error) || ('HTTP ' + response.status));
             render(data);
         } catch (err) {
-            if (token !== generation) return;
+            if (token !== generation || await reviewing || token !== generation) return;
             const message = signal.aborted ? 'Diff request timed out' : (err && err.message) || 'Could not load diff';
             render({ path: requestState.file, hunks: [], message: message });
             toast(message);
@@ -358,7 +461,8 @@
         if (!isOpen()) { returnFocus = document.activeElement; modal.showModal(); }
         state = { projectPath: String(options.projectPath), repoRoot: options.repoRoot || null,
             commitHash: options.commitHash || null, files: files, file: String(options.file),
-            full: !!options.full, maxLines: options.full ? 100000 : Math.max(50, Math.min(Number(options.maxLines) || 300, 100000)) };
+            full: !!options.full, maxLines: options.full ? 100000 : Math.max(50, Math.min(Number(options.maxLines) || 300, 100000)),
+            source: options.source || null, review: null };
         el('close').focus();
         return loadFile(state.file);
     }

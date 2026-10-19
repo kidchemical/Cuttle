@@ -65,6 +65,7 @@
         }
         function render() {
             const decorations = host.getDecorations();
+            const marks = host.getReviewMarks ? host.getReviewMarks() : { files: {}, dirs: {} };
             const active = host.getActive();
             rows = flatten();
             if (!rows.length) {
@@ -75,6 +76,7 @@
                 if (r.loading) return '<div class="ide-tree-row is-loading" style="--depth:' + r.depth + '">Loading…</div>';
                 const e = r.entry;
                 const letter = e.type === 'dir' ? (decorations.dirs[e.path] ? '•' : '') : (decorations.files[e.path] || '');
+                const reviewed = e.type === 'dir' ? (marks.dirs[e.path] || 0) : ((marks.files[e.path] || {}).hunks || 0);
                 const cls = ['ide-tree-row', 'is-' + e.type];
                 if (e.type === 'dir' && expanded.has(e.path)) cls.push('is-open');
                 if (e.ignored) cls.push('is-ignored');
@@ -84,6 +86,7 @@
                 return '<div class="' + cls.join(' ') + '" role="treeitem" tabindex="-1" draggable="true" data-row="' + i + '" data-path="' + esc(e.path) + '" style="--depth:' + r.depth + '"'
                     + (e.type === 'dir' ? ' aria-expanded="' + expanded.has(e.path) + '"' : '') + ' title="' + esc(e.path) + '">'
                     + iconHtml(e) + '<span class="ide-tree-name">' + esc(e.name) + (e.symlink ? ' <span class="ide-tree-link">↗</span>' : '') + '</span>'
+                    + (reviewed ? '<span class="ide-tree-review" title="' + reviewed + ' agent change' + (reviewed === 1 ? '' : 's') + ' to review">✦</span>' : '')
                     + (letter ? '<span class="ide-tree-git">' + esc(letter) + '</span>' : '') + '</div>';
             }).join('');
         }

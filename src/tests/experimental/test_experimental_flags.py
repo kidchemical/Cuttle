@@ -88,12 +88,13 @@ def test_achievements_flag_is_opt_in():
     assert flags.get_flag("achievements").default is False
 
 
-@pytest.mark.parametrize("flag_id,button_ids", [
-    ("composer_attach_button", ("attachButton", "welcomeAttachButton")),
-    ("composer_prompt_enhance", ("enhanceButton", "welcomeEnhanceButton")),
+@pytest.mark.parametrize("flag_id,button_ids,default", [
+    ("composer_attach_button", ("attachButton", "welcomeAttachButton"), True),
+    ("composer_prompt_enhance", ("enhanceButton", "welcomeEnhanceButton"), False),
 ])
-def test_composer_buttons_are_opt_in(flag_id, button_ids):
-    assert flags.get_flag(flag_id).default is False
+def test_composer_buttons_are_flag_gated(flag_id, button_ids, default):
+    # Markup stays hidden until the client resolves the flag, even when default on.
+    assert flags.get_flag(flag_id).default is default
     html = (Path(__file__).resolve().parents[2] / "web" / "chat_page.html").read_text(encoding="utf-8")
     for button_id in button_ids:
         tag = html.split(f'id="{button_id}"', 1)[1].split(">", 1)[0]

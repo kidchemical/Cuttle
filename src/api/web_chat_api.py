@@ -310,6 +310,12 @@ except Exception as _ide_err:
     print(f"[IDE] Failed to register routes: {_ide_err}")
 
 try:
+    from api.agent_review.routes import agent_review_bp
+    app.register_blueprint(agent_review_bp)
+except Exception as _agent_review_err:
+    print(f"[agent_review] routes unavailable: {_agent_review_err}", flush=True)
+
+try:
     from api.agent_events.routes import bp as agent_events_bp
     app.register_blueprint(agent_events_bp)
 except Exception as exc:

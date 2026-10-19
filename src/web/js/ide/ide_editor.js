@@ -1,7 +1,9 @@
 /* IDE App — editor engine. Owns the Monaco lifetime (CDN load, models per
  * open file, view state, dirty tracking, diff editor, gutter decorations,
  * inline completions) behind one small interface, with a plain textarea
- * engine when Monaco cannot load (offline). The page never touches Monaco. */
+ * engine when Monaco cannot load (offline). The page never touches Monaco.
+ * Agent review (`setReview`) renders CuttleIdeReviewModel.layout() items:
+ * added lines, removed lines as read-only zones, Keep / Undo per hunk. */
 (function (root) {
     'use strict';
 
@@ -84,7 +86,118 @@
         }
         function entry(path) { return models.get(path) || null; }
 
-        editor.onDidChangeModelContent(() => { if (current) host.onChange(current); });
+        // ── agent review: inline hunks (layout from CuttleIdeReviewModel) ──
+        let review = null; // {path, decos, zoneIds, widgets}
+        function clearReview() {
+            if (!review) return;
+            const r = review;
+            review = null;
+            r.decos.clear();
+            editor.changeViewZones((acc) => r.zoneIds.forEach((id) => acc.removeZone(id)));
+            r.widgets.forEach((w) => editor.removeContentWidget(w));
+        }
+        function removedZone(lines) {
+            const font = editor.getOption(monaco.editor.EditorOption.fontInfo);
+            const node = document.createElement('div');
+            node.className = 'ide-review-removed';
+            node.style.fontFamily = font.fontFamily;
+            node.style.fontSize = font.fontSize + 'px';
+            node.style.lineHeight = font.lineHeight + 'px';
+            node.style.tabSize = String(editor.getModel().getOptions().tabSize);
+            lines.forEach((text) => {
+                const row = document.createElement('div');
+                row.className = 'ide-review-removed-line';
+                row.textContent = text || ' ';
+                node.appendChild(row);
+            });
+            return node;
+        }
+        /** Gutter beside removed lines: red like the lines, a "−" per line. */
+        function removedMargin(count) {
+            const font = editor.getOption(monaco.editor.EditorOption.fontInfo);
+            const node = document.createElement('div');
+            node.className = 'ide-review-removed-margin';
+            node.style.lineHeight = font.lineHeight + 'px';
+            node.style.fontSize = font.fontSize + 'px';
+            node.innerHTML = '<div class="ide-review-removed-sign">−</div>'.repeat(count);
+            return node;
+        }
+        function actionWidget(item, marker, handlers, keys) {
+            const node = document.createElement('div');
+            node.className = 'ide-review-actions';
+            node.dataset.hunk = item.id;
+            node.innerHTML = '<button type="button" class="is-keep" data-review="keep" title="Keep this change (' + keys.keep + ')">Keep</button>'
+                + '<button type="button" class="is-undo" data-review="undo" title="Undo this change (' + keys.undo + ')">Undo</button>';
+            // Keep Monaco from treating the click as a cursor move.
+            node.addEventListener('mousedown', (e) => e.stopPropagation());
+            node.addEventListener('click', (e) => {
+                const b = e.target.closest('[data-review]');
+                if (b && handlers[b.dataset.review]) handlers[b.dataset.review](item.id);
+            });
+            const BELOW = monaco.editor.ContentWidgetPositionPreference.BELOW;
+            const ABOVE = monaco.editor.ContentWidgetPositionPreference.ABOVE;
+            return {
+                getId: () => 'cuttle.review.' + item.id,
+                getDomNode: () => node,
+                getPosition: () => {
+                    // A deletion at the very top has no line above it.
+                    if (!item.actionAfter) return { position: { lineNumber: 1, column: 1 }, preference: [ABOVE] };
+                    // Follows edits above the hunk through its tracked marker.
+                    const range = marker();
+                    return range ? { position: { lineNumber: range.endLineNumber, column: 1 }, preference: [BELOW] } : null;
+                },
+            };
+        }
+        function applyReview(path, items, handlers, keys) {
+            clearReview();
+            const model = editor.getModel();
+            if (!path || path !== current || !model || !items || !items.length) return;
+            const last = model.getLineCount();
+            const clamp = (n) => Math.min(Math.max(1, n), last);
+            const green = 'rgba(46, 160, 67, 0.75)';
+            const red = 'rgba(248, 81, 73, 0.75)';
+            const ruler = (color) => ({ color: color, position: monaco.editor.OverviewRulerLane.Full });
+            const minimap = (color) => ({ color: color, position: monaco.editor.MinimapPosition.Gutter });
+            const decos = [];
+            const markerIndex = [];
+            items.forEach((item) => {
+                if (item.added) {
+                    decos.push({ range: new monaco.Range(clamp(item.added.start), 1, clamp(item.added.end), 1), options: {
+                        isWholeLine: true, className: 'ide-review-added', marginClassName: 'ide-review-added-margin',
+                        linesDecorationsClassName: 'ide-review-gutter-added',
+                        overviewRuler: ruler(green), minimap: minimap(green),
+                    } });
+                }
+                // Marker on the line the actions hang under; it moves with edits.
+                const line = clamp(item.actionAfter || 1);
+                markerIndex.push(decos.length);
+                decos.push({ range: new monaco.Range(line, 1, line, 1), options: Object.assign({
+                    isWholeLine: true, stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+                }, item.added ? {} : { overviewRuler: ruler(red), minimap: minimap(red), linesDecorationsClassName: 'ide-review-gutter-removed' }) });
+            });
+            const collection = editor.createDecorationsCollection(decos);
+            const zoneIds = [];
+            editor.changeViewZones((acc) => {
+                items.forEach((item) => {
+                    if (item.removed.length) {
+                        zoneIds.push(acc.addZone({ afterLineNumber: Math.min(item.zoneAfter, last), heightInLines: item.removed.length,
+                            domNode: removedZone(item.removed), marginDomNode: removedMargin(item.removed.length), ordinal: 0 }));
+                    }
+                    // Room for the Keep / Undo widget under the hunk.
+                    const spacer = document.createElement('div');
+                    spacer.className = 'ide-review-spacer';
+                    zoneIds.push(acc.addZone({ afterLineNumber: Math.min(item.actionAfter, last), heightInPx: 28, domNode: spacer, ordinal: 1 }));
+                });
+            });
+            const widgets = items.map((item, i) => actionWidget(item, () => collection.getRange(markerIndex[i]), handlers, keys));
+            widgets.forEach((w) => editor.addContentWidget(w));
+            review = { path: path, decos: collection, zoneIds: zoneIds, widgets: widgets };
+        }
+
+        editor.onDidChangeModelContent(() => {
+            if (review) review.widgets.forEach((w) => editor.layoutContentWidget(w));
+            if (current) host.onChange(current);
+        });
         editor.onDidChangeCursorSelection(() => host.onCursor());
 
         const api = {
@@ -103,6 +216,7 @@
                     models.set(path, e);
                 }
                 if (current && current !== path && entry(current)) entry(current).viewState = editor.saveViewState();
+                if (current !== path) clearReview();
                 current = path;
                 editor.setModel(e.model);
                 editor.updateOptions({ readOnly: !!(opts && opts.readOnly) });
@@ -113,6 +227,7 @@
             current: () => current,
             detach() {
                 if (current && entry(current)) entry(current).viewState = editor.saveViewState();
+                clearReview();
                 current = null;
                 editor.setModel(null);
             },
@@ -145,7 +260,7 @@
                 const wasCurrent = current === from;
                 const viewState = wasCurrent ? editor.saveViewState() : e.viewState;
                 const model = monaco.editor.createModel(e.model.getValue(), languageFor(to), uriFor(to));
-                if (wasCurrent) editor.setModel(model);
+                if (wasCurrent) { clearReview(); editor.setModel(model); }
                 e.model.dispose();
                 models.delete(from);
                 // A dirty buffer stays dirty under its new name until saved.
@@ -221,6 +336,9 @@
                 if (!decorations) decorations = editor.createDecorationsCollection(decos);
                 else decorations.set(decos);
             },
+            /** Inline agent review for the shown file; `items` null clears it. */
+            setReview(path, items, handlers, keys) { applyReview(path, items, handlers || {}, keys || { keep: '', undo: '' }); },
+            reviewPath: () => (review ? review.path : null),
             showDiff(original, modified, opts) {
                 const o = opts || {};
                 if (!diffEditor) {
@@ -372,6 +490,8 @@
                 else if (action === 'undo' || action === 'redo') document.execCommand(action);
             },
             setGutter() {},
+            setReview() {},
+            reviewPath: () => null,
             showDiff(original, modified) {
                 note.innerHTML = '';
                 const pre = (label, text) => {

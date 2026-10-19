@@ -435,6 +435,21 @@ surfaces: Achievements uses `/achievements_page.html` (page blueprint in
 stashed App in the shell. New features generally start experimental; surface
 selection and exceptions are documented in `.cuttle/docs/experimental-features.md`.
 
+**Agent review (experimental):** `api.agent_review` owns per-hunk Keep / Undo
+of agent edits for every surface. `hunks` is pure (no Cuttle imports);
+`service` owns the persistent review state (`<home>/agent_review/`), folding
+user edits into baselines, and the Undo file writes; `routes` / `__main__` are
+transport. Inputs are hooks, not polling: `agent_harness.kernel` (turn
+start/finish over the `agent_events` snapshot trees) and
+`agent_harness.activity` (native edits, step snapshots). Surfaces (IDE,
+Pending Changes, diff modal, chat) read `/api/agent-review/*` and never keep
+their own copy. In the IDE, `CuttleIdeReview` (controller) over
+`CuttleIdeReviewModel` (pure) owns the stream, Keep/Undo and review bar;
+`ide_editor.js` `setReview` renders hunks; `ide_page.js` only wires it. The
+Git surfaces share `CuttleAgentReview` (`js/git/agent_review_client.js`):
+the Pending Changes strip and diff modal call it for badges, Keep/Undo and the
+commit guard (policy setting via `settings_routes` → `agent_review.service`). Runbook: `.cuttle/docs/experimental-features.md` (Agent review).
+
 **IDE (experimental):** `api.ide.service` owns workspace resolution (registered
 projects/checkouts via the Git allowlist), path confinement, atomic etag-checked
 writes, search/replace and committed content; `api.ide.routes` is owner-only

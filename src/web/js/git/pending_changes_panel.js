@@ -56,6 +56,7 @@
             + '<span class="pending-changes-meta" data-pc="meta"></span>'
             + '<span class="pending-changes-stats" data-pc="stats" aria-hidden="true"></span>'
             + '</button>'
+            + '<button type="button" class="pending-changes-review-chip" data-pc="review" hidden></button>'
             + '<button type="button" class="pending-changes-commit-btn pending-changes-commit-quick" data-pc="commitQuick" title="Auto-suggest a message and commit">Commit</button>'
             + '</div>'
             + '<div class="pending-changes-body" data-pc="body" hidden>'
@@ -425,6 +426,10 @@
             let avoidMessages = [];
             let commitEditMode = false;
             let bound = false;
+            // Agent review (CuttleAgentReview, flag `agent_review`): repo-relative path → entry.
+            let reviewMap = {};
+            const unsubscribeReview = global.CuttleAgentReview
+                ? global.CuttleAgentReview.subscribe(function () { applyReview(); }) : function () {};
 
             function qs(role) {
                 return panelEl.querySelector('[data-pc="' + role + '"]');
@@ -749,13 +754,17 @@
                 }
             }
 
-            async function submitCommit() {
+            async function submitCommit(opts) {
                 if (!currentProject() || !currentProject().path) {
                     setStatus('No project selected', true);
                     return;
                 }
                 if (!effectiveCount()) {
                     setStatus('Select at least one file to commit', true);
+                    return;
+                }
+                if (!(opts && opts.reviewGuarded) && !(await guardReviewedCommit())) {
+                    setStatus('Commit cancelled', false);
                     return;
                 }
                 const ta = qs('commitMessage');
@@ -825,6 +834,7 @@
                     (window.showToast || function () {})('Select at least one file to commit', 'error');
                     return;
                 }
+                if (!(await guardReviewedCommit())) return;
                 quickCommitInFlight = true;
                 pendingChangesSuppressFocusRefreshUntil = Date.now() + 8000;
                 const quickBtn = qs('commitQuick');
@@ -841,7 +851,7 @@
                         return;
                     }
                     if (quickBtn) quickBtn.textContent = 'Committing…';
-                    await submitCommit();
+                    await submitCommit({ reviewGuarded: true });
                 } finally {
                     quickCommitInFlight = false;
                     if (quickBtn) quickBtn.textContent = 'Commit';
@@ -881,6 +891,97 @@
                     onAfterIgnore();
                 } catch (e) {
                     (window.showToast || function () {})((e && e.message) || 'Ignore failed', 'error');
+                }
+            }
+
+            async function applyReview() {
+                const ra = global.CuttleAgentReview;
+                const project = currentProject();
+                if (!ra || !project || !project.path) return;
+                reviewMap = ra.forRepo(await ra.listing(project.path), repoRoot);
+                decorateReview();
+            }
+            function decorateReview() {
+                const list = qs('list');
+                let files = 0;
+                let hunks = 0;
+                if (list) list.querySelectorAll('.pending-changes-row[data-rel-path]').forEach(function (row) {
+                    const rel = row.getAttribute('data-rel-path') || '';
+                    const r = reviewMap[rel];
+                    row.classList.toggle('has-review', !!r);
+                    row.querySelectorAll('[data-review-el]').forEach(function (n) { n.remove(); });
+                    if (!r) return;
+                    const n = r.hunks;
+                    const what = n + ' unreviewed agent change' + (n === 1 ? '' : 's');
+                    const badge = document.createElement('span');
+                    badge.className = 'pending-changes-review-badge' + (r.live ? ' is-live' : '');
+                    badge.dataset.reviewEl = '1';
+                    badge.title = what + (r.live ? ' (agent still editing)' : '');
+                    badge.textContent = '\u2726 ' + n;
+                    const file = row.querySelector('.pending-changes-file');
+                    if (file) file.after(badge);
+                    const keep = document.createElement('button');
+                    keep.type = 'button';
+                    keep.className = 'pending-changes-review-keep';
+                    keep.dataset.reviewEl = '1';
+                    keep.dataset.relPath = rel;
+                    keep.title = 'Keep ' + what;
+                    keep.setAttribute('aria-label', 'Keep agent changes in ' + rel);
+                    keep.textContent = '\u2713';
+                    const undo = document.createElement('button');
+                    undo.type = 'button';
+                    undo.className = 'pending-changes-review-undo';
+                    undo.dataset.reviewEl = '1';
+                    undo.dataset.relPath = rel;
+                    undo.title = 'Undo ' + what + ' (rewrites the file)';
+                    undo.setAttribute('aria-label', 'Undo agent changes in ' + rel);
+                    undo.textContent = '\u21BA';
+                    const before = row.querySelector('.pending-changes-editor-btn') || null;
+                    row.insertBefore(undo, before);
+                    row.insertBefore(keep, undo);
+                    files += 1;
+                    hunks += n;
+                });
+                const chip = qs('review');
+                if (chip) {
+                    chip.hidden = !files;
+                    chip.textContent = files ? '\u2726 Review ' + hunks : '';
+                    chip.title = files ? hunks + ' unreviewed agent change' + (hunks === 1 ? '' : 's') + ' in '
+                        + files + ' file' + (files === 1 ? '' : 's') + ' — open the first' : '';
+                }
+            }
+            async function reviewAction(kind, rel) {
+                const ra = global.CuttleAgentReview;
+                const project = currentProject();
+                const r = reviewMap[rel];
+                if (!ra || !project || !r) return;
+                if (kind === 'undo') {
+                    const answer = await ra.confirmDialog({
+                        title: 'Undo agent changes?',
+                        text: r.change === 'added'
+                            ? 'The agent created ' + rel + '. Undoing deletes the file.'
+                            : 'Revert ' + r.hunks + ' agent change' + (r.hunks === 1 ? '' : 's') + ' in ' + rel + ' on disk. Your own edits stay.',
+                        confirm: r.change === 'added' ? 'Delete file' : 'Undo changes',
+                    });
+                    if (!answer.ok) return;
+                }
+                try {
+                    await ra.act(kind, project.path, { path: r.path });
+                    (window.showToast || function () {})((kind === 'undo' ? 'Undid' : 'Kept') + ' agent changes in ' + rel, 'success');
+                } catch (e) {
+                    (window.showToast || function () {})((e && e.message) || 'Agent review failed', 'error');
+                }
+            }
+            /** Committing accepts agent changes; policy `warn` asks first. */
+            async function guardReviewedCommit() {
+                const ra = global.CuttleAgentReview;
+                const project = currentProject();
+                if (!ra || !project || !project.path) return true;
+                try {
+                    return await ra.guardCommit({ projectPath: project.path, repoRoot: repoRoot, paths: includedPaths() });
+                } catch (e) {
+                    (window.showToast || function () {})((e && e.message) || 'Could not check agent review', 'error');
+                    return false;
                 }
             }
 
@@ -999,6 +1100,8 @@
                 if (toggle) toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
                 updateSelectionChrome();
                 if (!bound) bind();
+                decorateReview();
+                applyReview();
             }
 
             function bind() {
@@ -1008,6 +1111,13 @@
                 if (list) {
                     list.addEventListener('click', function (e) {
                         const t = e.target;
+                        const reviewBtn = t && t.closest ? t.closest('.pending-changes-review-keep, .pending-changes-review-undo') : null;
+                        if (reviewBtn) {
+                            e.preventDefault(); e.stopPropagation();
+                            reviewAction(reviewBtn.classList.contains('pending-changes-review-undo') ? 'undo' : 'keep',
+                                reviewBtn.getAttribute('data-rel-path') || '');
+                            return;
+                        }
                         const editorBtn = t && t.closest ? t.closest('.pending-changes-editor-btn') : null;
                         if (editorBtn) {
                             e.preventDefault(); e.stopPropagation();
@@ -1104,6 +1214,15 @@
                         setCommitFormVisible(opening);
                     });
                 }
+                const reviewChip = qs('review');
+                if (reviewChip) {
+                    reviewChip.addEventListener('click', function (e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const first = filesSnapshot.find(function (p) { return reviewMap[p]; });
+                        if (first) onOpenDiff(first, { repoRoot: repoRoot, review: true });
+                    });
+                }
                 const commitQuick = qs('commitQuick');
                 if (commitQuick) {
                     commitQuick.addEventListener('click', function (e) {
@@ -1182,6 +1301,7 @@
                 setChip: setChip,
                 getFiles: function () { return filesSnapshot.slice(); },
                 destroy: function () {
+                    unsubscribeReview();
                     try { panelEl.remove(); } catch (_) {}
                 },
             };

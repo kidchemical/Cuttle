@@ -41,6 +41,14 @@ def is_enabled() -> bool:
     return flag_enabled(FLAG_ID)
 
 
+def configured() -> bool:
+    """True when the transcription provider has credentials (an OpenAI key)."""
+    from api.model_providers.catalog import get_provider
+
+    provider = get_provider("openai")
+    return bool(provider and provider.configured())
+
+
 def file_extension(mime: str) -> str:
     base = str(mime or "").split(";", 1)[0].strip().lower()
     return _EXTENSIONS.get(base, "webm")

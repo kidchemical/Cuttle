@@ -260,6 +260,66 @@ def test_tap_listens_through_pauses_and_sends_only_on_second_tap():
 
 
 @node_only
+def test_unavailable_speech_service_stops_instead_of_looping():
+    # Electron/Chromium expose SpeechRecognition without Google's backend:
+    # every session fails with `network`. That must stop, not restart forever.
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  const toasts = [];
+  host.toast = (msg) => toasts.push(msg);
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(recs.length, 1);
+  recs[0].onerror({ error: 'network' });
+  recs[0].onend && recs[0].onend();
+  await sleep(250);
+  assert.strictEqual(recs.length, 1, 'no restart after a fatal recognizer error');
+  assert.ok(toasts.some((t) => /server transcription/.test(t)), toasts.join('|'));
+  // A fresh tap tries again.
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(recs.length, 2);
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_instantly_ending_recognizer_gives_up_but_silence_keeps_listening():
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  voice.enter();
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  // Sessions that die immediately with no words: capped.
+  for (let i = 0; i < 10; i += 1) {
+    const rec = recs[recs.length - 1];
+    rec.onend();
+    await sleep(150);
+  }
+  assert.strictEqual(recs.length, 6, 'stops after 6 instant empty sessions');
+  // Fresh tap; a silent user's sessions last seconds and never hit the cap.
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  const realNow = Date.now;
+  let t = realNow();
+  Date.now = () => t;
+  try {
+    for (let i = 0; i < 10; i += 1) {
+      const rec = recs[recs.length - 1];
+      t += 8000;
+      rec.onerror({ error: 'no-speech' });
+      rec.onend();
+      await sleep(150);
+    }
+  } finally { Date.now = realNow; }
+  assert.strictEqual(recs.length, 6 + 1 + 10, 'silence keeps listening');
+  assert.deepStrictEqual(submitted, []);
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
 def test_pending_reply_still_speaks_after_leaving_overlay_mid_run():
     _node(CONTROLLER_HARNESS + r"""
 (async () => {
@@ -502,6 +562,39 @@ def test_server_engine_records_without_speech_recognizer():
   assert.strictEqual(flushes, 1, 'send flushes the phrase in progress');
   assert.deepStrictEqual(submitted, ['first part second part']);
   assert.match(document.getElementById('voiceModeHint').textContent, /Server transcription$/);
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_server_engine_without_openai_key_falls_back_to_browser_speech():
+    # Server transcription is default on, but a fresh install has no key: use
+    # browser speech (Chrome/Edge), and name the key where that is unavailable.
+    _node(CONTROLLER_HARNESS + r"""
+(async () => {
+  let starts = 0;
+  const toasts = [];
+  host.toast = (msg) => toasts.push(msg);
+  R.missingSupport = () => [];
+  R.create = () => ({ start: async () => { starts += 1; }, stop: async () => {},
+    resetContext() {}, isRunning: () => false, pending: () => 0 });
+  const narrate = host.fetch;
+  host.fetch = async (url, opts) => url === '/api/voice-stt/status'
+    ? { ok: true, json: async () => ({ success: true, enabled: true, configured: false }) }
+    : narrate(url, opts);
+  flagsOn = ['voice_server_stt'];
+  voice.enter();
+  await sleep(5);
+  assert.match(document.getElementById('voiceModeHint').textContent, /needs an OpenAI API key/);
+  mic.dispatch('click', ev(mic));
+  await sleep(5);
+  assert.strictEqual(starts, 0, 'no server recording without a key');
+  assert.strictEqual(recs.length, 1, 'browser speech runs instead');
+  // Electron: Chromium without a speech backend.
+  recs[0].onerror({ error: 'network' });
+  await sleep(250);
+  assert.strictEqual(recs.length, 1);
+  assert.ok(toasts.some((t) => /OpenAI API key/.test(t)), toasts.join('|'));
 })().catch((e) => { console.error(e); process.exit(1); });
 """)
 

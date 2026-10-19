@@ -13,10 +13,12 @@ def test_voice_engines_conflict_but_standard_narration_is_compatible(_isolated_a
     assert flags.is_enabled("voice_narrator")
     with pytest.raises(flags.FlagConflictError) as caught:
         flags.set_enabled("voice_live", True)
-    assert set(caught.value.conflicts) == {"voice_server_stt", "voice_narrator"}
-    flags.set_enabled("voice_server_stt", False)
+    assert set(caught.value.conflicts) == {"voice_narrator"}
     flags.set_enabled("voice_narrator", False)
     flags.set_enabled("voice_live", True)
+    # Server transcription (default on) is the fallback input engine, not a
+    # conversation engine: it never pauses Live or Realtime.
+    assert flags.is_enabled("voice_server_stt") and flags.is_enabled("voice_live")
     with pytest.raises(flags.FlagConflictError):
         flags.set_enabled("voice_realtime", True)
     with pytest.raises(flags.FlagConflictError):

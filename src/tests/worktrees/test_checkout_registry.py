@@ -95,9 +95,10 @@ def test_audit_history_logged_when_projects_table_present(tmp_path):
     assert "h" in row[1]
 
 
-def test_flag_registered_and_off_by_default():
+def test_flag_registered_and_on_by_default():
     from api.experimental import get_flag
     from api.worktrees import is_worktrees_enabled
 
     assert get_flag("worktrees") is not None
-    assert is_worktrees_enabled() is False
+    assert get_flag("worktrees").default is True
+    assert is_worktrees_enabled() is True
