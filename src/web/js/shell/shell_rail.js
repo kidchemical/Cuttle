@@ -24,6 +24,7 @@
         // Must list every `.rail-item[data-id]` in the main rail, in canonical order (matches app_shell.html).
         const CANONICAL_RAIL_ITEM_ORDER = [
             'nav-chat',
+            'nav-ide',
             'nav-editor',
             'nav-git',
             'nav-jobs',
@@ -33,7 +34,6 @@
             'nav-agent-feed',
             'nav-gizmos',
             'nav-test-lab',
-            'nav-ide',
             'nav-projects',
             'nav-apps',
         ];
@@ -47,8 +47,8 @@
         // not page apps, but the Apps grid still lists them so they can be re-pinned.
         const HIDEABLE_FOOTER_IDS = new Set(['nav-workspace']);
         // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-        const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-ide', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
-        // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
+        const DEFAULT_RAIL_HIDDEN = ['nav-editor', 'nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
+        // Bump only for saved-layout migrations; fresh-install defaults do not migrate user pins.
         const RAIL_LAYOUT_VERSION = 11;
 
         const DEFAULT_LAYOUT = {
