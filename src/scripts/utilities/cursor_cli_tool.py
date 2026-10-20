@@ -112,11 +112,6 @@ def _resolve_cursor_agent_argv() -> Optional[List[str]]:
     then arrive at the agent as a cut-off first line. Spawning ``node.exe`` +
     ``index.js`` directly preserves the full prompt through CreateProcess.
     """
-    from api.agent_harness.cli_paths import cli_path_override
-
-    configured, override = cli_path_override("cursor")
-    if configured:
-        return [override] if override else None
     override = (os.environ.get("CURSOR_CLI_PATH") or "").strip()
     if override:
         return [override] if os.path.isfile(override) else None
@@ -145,11 +140,6 @@ def _resolve_cursor_agent_cli() -> Optional[str]:
     Callers that *spawn* the agent should use ``_resolve_cursor_agent_argv()`` so
     multiline prompts are not truncated by ``agent.cmd``'s ``%*`` forwarding.
     """
-    from api.agent_harness.cli_paths import cli_path_override
-
-    configured, override = cli_path_override("cursor")
-    if configured:
-        return override
     env_override = (os.environ.get("CURSOR_CLI_PATH") or "").strip()
     if env_override:
         return env_override if os.path.isfile(env_override) else None

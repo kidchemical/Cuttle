@@ -1,8 +1,7 @@
 """Stale CLI resume must start a fresh session, not fail the turn.
 
-Sandbox cutovers, repo moves, and CLI pruning strand mapped resume UUIDs
-with no session data behind them on the host (bwrap cutover residual:
-recent Muse/Cursor chats whose old Podman IDs never land on host). The
+Repo moves and CLI session pruning can strand mapped resume UUIDs
+with no session data behind them on the host. The
 muse/cursor adapters drop such dead bindings pre-turn and note the fresh
 start in the reply. Also covers the cursor cost-estimate ordering fix
 (``reported`` must be resolved before ``attach_estimated_cost`` sees it).

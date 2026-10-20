@@ -497,12 +497,6 @@ def _hermes_subprocess_env() -> Dict[str, str]:
 
 def hermes_executable() -> Optional[str]:
     """Locate the hermes CLI: env override -> PATH -> standard Windows install path."""
-    from api.agent_harness.cli_paths import cli_path_override
-
-    configured, override = cli_path_override("hermes")
-    if configured:
-        return override
-
     override = (os.getenv("HERMES_CLI_PATH") or "").strip()
     if override and os.path.isfile(override):
         return override

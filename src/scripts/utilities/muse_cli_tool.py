@@ -414,12 +414,6 @@ def _which_muse_native() -> Optional[str]:
       2. Well-known Meta install under ``%LOCALAPPDATA%\\Programs\\muse``
       3. ``PATH`` via ``shutil.which`` (launchers resolve to their binary)
     """
-    from api.agent_harness.cli_paths import cli_path_override
-
-    configured, override = cli_path_override("muse")
-    if configured:
-        return override
-
     override = (os.getenv("MUSE_CLI_PATH") or "").strip()
     if override:
         resolved = _resolve_native_muse_path(override)

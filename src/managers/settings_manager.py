@@ -52,7 +52,6 @@ class SettingsManager:
             "starred_slash_commands": [],
             "starred_project": None,
             # Host-local executable/wrapper paths; blank uses CLI discovery.
-            "agent_cli_paths": {},
             "chat_prompts": {},
             "response_postprocessing": {
                 "enabled": False, "mode": "append",

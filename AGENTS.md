@@ -98,7 +98,7 @@ The web UI is vanilla JS served by Flask at port 8080. Key files:
 
 ### Settings & Routing
 
-`<home>/config/settings.json` + `src/managers/settings_manager.py` handle starred slash agents, sandbox mode, and LAN/auth settings.
+`<home>/config/settings.json` + `src/managers/settings_manager.py` handle starred slash agents and LAN/auth settings.
 
 ### Ownership (stabilization, Phase 7)
 

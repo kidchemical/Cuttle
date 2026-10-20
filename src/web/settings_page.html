@@ -873,7 +873,6 @@
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
     <script src="/js/settings/settings_releases.js?v=20261018updateCenter"></script>
     <script src="/js/settings/settings_storage.js?v=20261007"></script>
-    <script src="/js/settings/settings_agent_cli_paths.js?v=20261015paths"></script>
     <script src="/js/settings/settings_chat_preferences.js?v=20261016separateProcessor"></script>
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261011menuPosition2"></script>
@@ -1224,11 +1223,6 @@
                 }
                 // CLI-managed keys belong to the CLI, not Cuttle's API-key form.
                 if (actions.childNodes.length) detail.appendChild(actions);
-                const cliPath = window.CuttleSettingsAgentCliPaths.create(
-                    agent, adapterConfig && (adapterConfig.cli_paths || {})[agent.id],
-                    data => { adapterConfig.cli_paths = data.cli_paths; }
-                );
-                if (cliPath) detail.appendChild(cliPath);
                 const promptEditor = chatPreferences.agentEditor(agent, adapterConfig && adapterConfig.system_prompts);
                 if (promptEditor) detail.appendChild(promptEditor);
                 const config = agent.available ? agentConfigSection(agent, adapterConfig) : null;

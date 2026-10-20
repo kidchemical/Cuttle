@@ -591,12 +591,7 @@ For harnesses, integrations, surfaces, or agent operations, also read:
 - Action-form recovery: HMAC on persisted specs (`action_forms` / `project_actions`).
 - Electron sandbox: no automatic `--no-sandbox`.
 
-Host-local agent executable/wrapper overrides are owned by
-`api.agent_harness.cli_paths`; each bundled discovery function consults that
-owner before its legacy environment/install discovery. Settings → Agents and
-`/api/settings/agent-adapters` configure the host-local `agent_cli_paths` key.
-Wrapper contract and rollout rationale: [Agent CLI paths](../../.cuttle/docs/agent-cli-paths.md).
-Linux native CLI resource scopes are owned by `api.agent_harness.resource_scope`,
-attached through `scripts.utilities.agent_process.attach_to_chat_run` (also
-without a chat id). `agent_resource_limits` is machine-local settings state;
-limits and native-wrapper recovery are documented in that same runbook.
+Linux CLI resource limits are owned by `api.agent_harness.resource_scope`,
+attached through `scripts.utilities.agent_process.attach_to_chat_run`.
+This optional machine-local policy is disabled by default. Configuration and
+platform support: [Agent resource limits](../../.cuttle/docs/agent-resource-limits.md).

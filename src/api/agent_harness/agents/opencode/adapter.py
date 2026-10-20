@@ -379,12 +379,6 @@ def list_opencode_palette_models(
 
 
 def opencode_executable() -> Optional[str]:
-    from api.agent_harness.cli_paths import cli_path_override
-
-    configured, override = cli_path_override("opencode")
-    if configured:
-        return override
-
     return which_preferring_native(
         ("opencode",),
         env_var="OPENCODE_CLI_PATH",

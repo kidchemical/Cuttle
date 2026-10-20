@@ -14,13 +14,13 @@ import time
 
 SCHEMA_VERSION = 1
 MACHINE_KEYS = frozenset({
-    "device_workers", "discovery", "agent_cli_paths", "agent_resource_limits", "updates",
+    "device_workers", "discovery", "agent_resource_limits", "updates",
 })
 UI_KEYS = frozenset({"ui_layout", "shell_workspaces"})
 RETIRED_KEYS = frozenset({
     "version", "default_pipeline", "factory_default_pipeline", "auto_start_default",
     "last_opened_pipeline", "recent_pipelines", "user_preferences", "sandbox",
-    "pipeline_limits",
+    "pipeline_limits", "agent_cli_paths",
 })
 _locks: dict[str, threading.RLock] = {}
 _locks_guard = threading.Lock()

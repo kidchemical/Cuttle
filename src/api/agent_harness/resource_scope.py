@@ -1,6 +1,6 @@
 """Per-run systemd resource scopes for agent CLIs (Linux user manager).
 
-Every spawned agent CLI moves into its own transient user scope
+When explicitly enabled, a spawned agent CLI moves into its own transient user scope
 (``cuttle-agent-<cli>-<pid>.scope`` in ``cuttle-agents.slice``) with memory
 and task limits. A runaway turn is throttled or OOM-killed inside its scope;
 the aggregate agent slice also has soft and hard memory ceilings. These
@@ -8,9 +8,9 @@ limits reduce host memory pressure; they do not guarantee OS stability.
 
 Uses systemd's own D-Bus API through ``busctl`` (ships with systemd), so there
 is no Python dependency. Best effort: off Linux, or with no reachable user
-manager, CLIs run exactly as before. This is resource isolation, not a
-sandbox — the CLI still runs natively as the user.
+manager, CLIs run exactly as before. The CLI retains its native execution environment.
 
+Opt in with machine setting ``agent_resource_limits: {"enabled": true}``.
 Off switch: ``CUTTLE_AGENT_SCOPES=0`` or the machine setting
 ``agent_resource_limits: {"enabled": false}``. Limits apply to new launches.
 """
@@ -27,7 +27,7 @@ import time
 SLICE = "cuttle-agents.slice"
 SETTING_KEY = "agent_resource_limits"
 DEFAULTS = {
-    "enabled": True,
+    "enabled": False,
     "memory_high": "6G",       # per CLI: reclaim/throttle above this
     "memory_max": "8G",        # per CLI: hard cap, kernel OOM inside the scope only
     "memory_swap_max": "512M",
@@ -75,7 +75,7 @@ def resolve_limits(raw, env=None, total_memory: int | None = None) -> dict | Non
     if str(env.get("CUTTLE_AGENT_SCOPES", "")).strip().lower() in ("0", "false", "off", "no"):
         return None
     merged = {**DEFAULTS, **(raw if isinstance(raw, dict) else {})}
-    if not merged.get("enabled", True):
+    if merged.get("enabled") is not True:
         return None
     return {
         "memory_high": parse_size(merged.get("memory_high"), total_memory),
@@ -114,12 +114,12 @@ def start_scope_argv(unit: str, pids: list[int], limits: dict, description: str)
     return argv + ["0"]
 
 
-def slice_argv(limits: dict) -> list[str] | None:
-    props = [(prop, str(int(limits[key]))) for key, prop in (
-        ("slice_memory_high", "MemoryHigh"), ("slice_memory_max", "MemoryMax"),
-    ) if limits.get(key) is not None]
-    if not props:
-        return None
+def slice_argv(limits: dict) -> list[str]:
+    # UINT64_MAX is systemd's infinity value; explicitly clear prior ceilings.
+    props = [
+        (prop, str(int(limits[key])) if limits.get(key) is not None else str((1 << 64) - 1))
+        for key, prop in (("slice_memory_high", "MemoryHigh"), ("slice_memory_max", "MemoryMax"))
+    ]
     return ["busctl", "--user", "call", "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
             "org.freedesktop.systemd1.Manager", "SetUnitProperties", "sba(sv)",
             SLICE, "true", str(len(props)),
@@ -258,7 +258,9 @@ def confine(proc) -> bool:
     False means isolation was disabled or unavailable. This does not change the
     executable, environment, credentials, filesystem, network or vendor protocol.
     """
-    if not sys.platform.startswith("linux") or proc is None or not shutil.which("busctl"):
+    if (not sys.platform.startswith("linux") or proc is None
+            or not os.path.isfile("/sys/fs/cgroup/cgroup.controllers")
+            or not shutil.which("busctl")):
         return False
     if _load_limits() is None:
         return False
@@ -266,7 +268,7 @@ def confine(proc) -> bool:
         pid = int(getattr(proc, "pid", 0) or 0)
     except (TypeError, ValueError):
         return False
-    if pid <= 1:
+    if pid <= 1 or pid == os.getpid():
         return False
     with _lock:
         if pid in _confined:

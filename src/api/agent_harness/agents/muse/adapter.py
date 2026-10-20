@@ -360,8 +360,8 @@ class Adapter:
             # historic session/starred pins mean "no pin" (omit the flag).
             effort, effort_source = None, SOURCE_NONE
 
-        # A resume UUID with no session log behind it (sandbox cutover, repo
-        # move, CLI pruning) would fail the turn instead of resuming. Drop
+        # A resume UUID with no session log behind it (repo moves or CLI
+        # session pruning) would fail the turn instead of resuming. Drop
         # the dead binding first so this turn starts fresh with a notice.
         fresh_notice: Optional[str] = None
         if resume:
