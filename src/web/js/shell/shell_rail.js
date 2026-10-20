@@ -19,6 +19,46 @@
         const getColumnEl = host.getColumnEl;
         const broadcastToFrames = host.broadcastToFrames;
         const fetchImpl = (url, opts) => win.fetch(url, opts);
+        const collapseBindings = new WeakSet();
+
+        // Collapse belongs to each viewport, independently of shared app pins.
+        // The shell supplies its pane-state map and layout persistence boundary.
+        function applyCollapsed(colIdx, collapsed) {
+            const column = getColumnEl(colIdx);
+            if (!column) return;
+            const state = host.getState(colIdx);
+            state.railCollapsed = !!collapsed;
+            column.classList.toggle('rail-collapsed', state.railCollapsed);
+            const toggle = column.querySelector('.rail-panel-toggle');
+            const label = state.railCollapsed ? 'Show sidebar' : 'Collapse sidebar';
+            toggle?.setAttribute('data-tooltip', label);
+            toggle?.setAttribute('aria-label', label);
+            toggle?.setAttribute('aria-expanded', String(!state.railCollapsed));
+            host.onRailCollapsed?.(colIdx, state.railCollapsed);
+        }
+
+        function restoreCollapsed(column, node) {
+            // Old layouts have no preference. Use the device default rather
+            // than inheriting the previously active Space's column-0 state.
+            const collapsed = typeof node.railCollapsed === 'boolean'
+                ? node.railCollapsed : !!win.matchMedia?.('(max-width: 768px)').matches;
+            applyCollapsed(Number(column.dataset.column), collapsed);
+        }
+
+        function bindCollapseControls(column) {
+            if (collapseBindings.has(column)) return;
+            collapseBindings.add(column);
+            column.querySelector('.rail-panel-toggle')?.addEventListener('click', () => {
+                if (interactionLocked()) return;
+                const idx = Number(column.dataset.column);
+                applyCollapsed(idx, !host.getState(idx).railCollapsed);
+                host.persistSplitLayout();
+            });
+            column.querySelector('.rail-expand-tab')?.addEventListener('click', () => {
+                applyCollapsed(Number(column.dataset.column), false);
+                host.persistSplitLayout();
+            });
+        }
 
         // ── Default UI layout order (used when no saved layout) ─────────
         // Must list every `.rail-item[data-id]` in the main rail, in canonical order (matches app_shell.html).
@@ -750,6 +790,9 @@
         });
 
         return {
+            applyCollapsed,
+            restoreCollapsed,
+            bindCollapseControls,
             // Layout + persistence.
             applyLayoutToColumn,
             applyLayoutToAllColumns,
