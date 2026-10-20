@@ -793,12 +793,8 @@ def _run_cursor_agent_stream_segment(
         bufsize=1,
         env=_cursor_agent_subprocess_env(),
     )
-    if chat_session_id is not None:
-        try:
-            from api.chat_run_registry import attach_process
-            attach_process(chat_session_id, proc)
-        except Exception:
-            pass
+    from scripts.utilities.agent_process import attach_to_chat_run
+    attach_to_chat_run(chat_session_id, proc)
 
     lines_q: "_queue.Queue" = _queue.Queue()
     stderr_chunks: List[str] = []

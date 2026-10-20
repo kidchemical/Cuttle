@@ -1072,13 +1072,9 @@ class MuseCliTool:
                 env=agent_cli_env(),
                 limit=_STDOUT_LINE_LIMIT,
             )
-            # Register with chat_run_registry so Stop can cancel the native process
-            if chat_session_id:
-                try:
-                    from api.chat_run_registry import attach_process
-                    attach_process(chat_session_id, proc)
-                except Exception:
-                    pass
+            # Resource scope + chat_run_registry so Stop can cancel the native process
+            from scripts.utilities.agent_process import attach_to_chat_run
+            attach_to_chat_run(chat_session_id, proc)
 
             async def _pump_stderr() -> None:
                 try:

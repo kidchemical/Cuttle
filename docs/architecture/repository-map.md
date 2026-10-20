@@ -596,3 +596,7 @@ Host-local agent executable/wrapper overrides are owned by
 owner before its legacy environment/install discovery. Settings → Agents and
 `/api/settings/agent-adapters` configure the host-local `agent_cli_paths` key.
 Wrapper contract and rollout rationale: [Agent CLI paths](../../.cuttle/docs/agent-cli-paths.md).
+Linux native CLI resource scopes are owned by `api.agent_harness.resource_scope`,
+attached through `scripts.utilities.agent_process.attach_to_chat_run` (also
+without a chat id). `agent_resource_limits` is machine-local settings state;
+limits and native-wrapper recovery are documented in that same runbook.

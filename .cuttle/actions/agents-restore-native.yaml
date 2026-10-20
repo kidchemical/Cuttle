@@ -1,0 +1,10 @@
+name: agents.restore-native
+title: Restore native agent CLIs
+description: >-
+  Clear saved agent executable overrides, enable systemd resource limits and
+  verify a native child process and its descendants in a limited user scope.
+  Does not restart Flask, launch a model turn, or stop running agents.
+type: shell
+run_posix: .venv/bin/python .cuttle/scripts/restore-native-agents.py --apply
+workdir: .
+timeout: 45

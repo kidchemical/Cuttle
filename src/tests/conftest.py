@@ -346,6 +346,12 @@ def _no_live_steer_servers(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_live_agent_scopes(monkeypatch):
+    """Spawned test CLIs must not create real systemd user scopes on the dev host."""
+    monkeypatch.setenv("CUTTLE_AGENT_SCOPES", "0")
+
+
+@pytest.fixture(autouse=True)
 def _fresh_router_quota(monkeypatch):
     """Out-of-usage cooldowns and budget snapshots are process-global; one
     test's quota failure must not reroute every later routed turn."""
