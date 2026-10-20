@@ -231,6 +231,31 @@ def _reconcile(store: ReviewStore, conn, row: Dict[str, Any]) -> Optional[Dict[s
     if state == "skip":
         return None
     row = dict(row, current=disk, current_bytes=data)
+    # Commits outside the guarded UI (or a late turn-finish hook) can leave
+    # review rows behind. Accept only exact committed working-tree content;
+    # staged-only changes and later agent edits must remain reviewable.
+    if not _is_live(store, conn, row["last_query_id"]):
+        head = _git(row["repo_root"], "rev-parse", "--verify", "HEAD")
+        if head.returncode == 0:
+            committed_state, committed = _at_tree(
+                row["repo_root"], head.stdout.decode("ascii").strip(), row["rel_path"])
+            if committed_state != "skip" and committed == disk:
+                store.close_review(conn, row["repo_root"], row["rel_path"])
+                store.bump(conn)
+                return None
+            if committed_state != "skip":
+                # A partial commit may accept some hunks while others remain.
+                # Match both their original location and exact content; hunk
+                # ids alone are insufficient when identical edits repeat.
+                def signature(h):
+                    return (h["old_start"], tuple(h["removed"]), tuple(h["added"]))
+                accepted = {signature(h) for h in H.compute(row["baseline"], committed)}
+                ids = [h["id"] for h in H.compute(row["baseline"], disk) if signature(h) in accepted]
+                if ids:
+                    baseline = H.keep(row["baseline"], disk, ids)
+                    store.update_review(conn, row["repo_root"], row["rel_path"], baseline=baseline)
+                    row.update(baseline=baseline)
+                    store.bump(conn)
     if not _is_live(store, conn, row["last_query_id"]) and disk != row["last_agent"]:
         baseline, conflicts = H.fold(row["baseline"], row["last_agent"], disk)
         mixed = row["mixed"] or conflicts > 0

@@ -30,6 +30,8 @@
                 if (!root.CuttleOptionalCdn) return resolve(false);
                 root.CuttleOptionalCdn.loadTerminalExtras(() => resolve(!!(root.Terminal && root.FitAddon)));
             });
+            // A failed load is not cached, so the next spawn retries.
+            libsReady.then((ok) => { if (!ok) libsReady = null; });
             return libsReady;
         }
         async function pickShell() {
@@ -125,7 +127,7 @@
         async function spawn(opts) {
             if (!workspace) throw new Error('Open a project first');
             const ok = await loadLibs();
-            if (!ok) throw new Error('Terminal needs xterm.js from the CDN (unavailable offline)');
+            if (!ok) throw new Error('Terminal could not load xterm.js from the CDN');
             const shell = (opts && opts.shell) || await pickShell();
             counter += 1;
             const id = (opts && opts.id) || ('ide' + Date.now().toString(36) + counter);

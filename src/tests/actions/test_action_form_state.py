@@ -142,6 +142,23 @@ def test_reconcile_keeps_fresh_card_open_after_earlier_healthy_restart():
     assert db.get_action_form_state(sid)[str(reply)]['flask-restart-g1']['status'] == action_form_state.STATUS_OPEN
 
 
+def test_reconcile_ignores_status_from_an_earlier_daemon_lifetime():
+    """The durable restart status survives a daemon restart; generations reset.
+
+    A healthy restart recorded at generation 3 by a previous daemon must not lock
+    a fresh card in the new daemon's generation 1.
+    """
+    db, uid, sid = _db()
+    reply = db.add_message(sid, 'assistant', _restart_card())
+    changed = reconcile_restart_forms(
+        live_generation=1,
+        status={'state': 'healthy', 'generation': 3, 'restart_id': 'old-daemon-restart'},
+    )
+    assert changed == 0
+    assert 'locked="1"' not in db.get_message_by_id(reply)['content']
+    assert db.get_action_form_state(sid)[str(reply)]['flask-restart-g1']['status'] == action_form_state.STATUS_OPEN
+
+
 def test_shared_restart_id_in_two_bubbles_is_indexed_and_reconciled_per_message():
     """flask-restart-gN is reused in every bubble of a generation; each is its own row."""
     db, uid, sid = _db()
