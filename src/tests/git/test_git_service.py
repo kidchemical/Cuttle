@@ -209,6 +209,38 @@ def test_git_branch_lifecycle_and_validation(tmp_path, monkeypatch):
     assert _git("branch", "--show-current", cwd=repo).stdout.strip() == "main"
 
 
+def test_git_branches_scoped_to_picked_repo_in_multi_repo_project(tmp_path, monkeypatch):
+    """A project path holding sibling repos: repo_root picks which one the
+    composer modal's Branch list/switch talks to; outsiders are rejected."""
+    parent = tmp_path / "Blender"
+    a = _init_repo(parent / "A")
+    b = _init_repo(parent / "B")
+    _git("branch", "only-in-b", cwd=b)
+    ctx = _ctx(tmp_path, monkeypatch, parent)
+    c = ctx["client"]
+
+    res = c.get("/api/git/repos?project_id=1", environ_base=LAN)
+    assert res.status_code == 200, res.get_json()
+    assert {Path(r["repo_root"]).name for r in res.get_json()["repos"]} == {"A", "B"}
+
+    res = c.get(f"/api/git/branches?project_id=1&repo_root={b}", environ_base=LAN)
+    assert res.status_code == 200, res.get_json()
+    assert "only-in-b" in {x["name"] for x in res.get_json()["data"]}
+    res = c.get(f"/api/git/branches?project_id=1&repo_root={a}", environ_base=LAN)
+    assert "only-in-b" not in {x["name"] for x in res.get_json()["data"]}
+
+    outsider = _init_repo(tmp_path / "elsewhere")
+    res = c.get(f"/api/git/branches?project_id=1&repo_root={outsider}", environ_base=LAN)
+    assert res.status_code == 400
+
+    res = c.post("/api/git/branch", json={
+        "action": "switch", "branch": "only-in-b", "project_id": 1, "repo_root": str(b),
+    }, environ_base=LAN)
+    assert res.status_code == 200, res.get_json()
+    assert _git("branch", "--show-current", cwd=b).stdout.strip() == "only-in-b"
+    assert _git("branch", "--show-current", cwd=a).stdout.strip() == "main"
+
+
 def test_git_pull_push_local_remote(tmp_path, monkeypatch):
     bare = tmp_path / "remote.git"
     _git("init", "--bare", str(bare), cwd=tmp_path)

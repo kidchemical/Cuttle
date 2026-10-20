@@ -56,6 +56,21 @@ const ctrl = A.create({});
 out.api = Object.keys(ctrl).sort();
 out.branchEmpty = A.branchFor('no-such-path');
 
+// repoChoice: Repository selector only for 2+ repos; remembered pick wins
+// while still detected, else the first (server default) work tree.
+const two = [
+  { repo_root: '/p/A', label: 'A', branch: 'master' },
+  { repo_root: '/p/B', label: 'B', branch: 'dev' },
+];
+out.repoOne = A.repoChoice([two[0]], '');
+out.repoTwo = A.repoChoice(two, '/p/B');
+out.repoStale = A.repoChoice(two, '/p/gone');
+out.repoNone = A.repoChoice([], '');
+// Chip label: the picked repo's branch, else the merged label.
+out.labelPicked = A.activeRepoBranchLabel(two, '/p/B');
+out.labelMerged = A.activeRepoBranchLabel(two, '');
+out.labelSingle = A.activeRepoBranchLabel([two[1]], '/p/A');
+
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -90,6 +105,16 @@ def test_helper_outputs():
     assert out["badBuild"] == []
     assert [e["id"] for e in out["entries"]] == ["cursor", "codex"]
     assert out["entries"][0]["prefix"] == "/cursor "
+    assert out["repoOne"]["show"] is False
+    assert out["repoNone"] == {"show": False, "options": [], "selected": ""}
+    assert out["repoTwo"]["show"] is True
+    assert out["repoTwo"]["selected"] == "/p/B"
+    assert [o["value"] for o in out["repoTwo"]["options"]] == ["/p/A", "/p/B"]
+    assert out["repoTwo"]["options"][1]["label"] == "B  (dev)"
+    assert out["repoStale"]["selected"] == "/p/A"
+    assert out["labelPicked"] == "dev"
+    assert out["labelMerged"] == "master +1"
+    assert out["labelSingle"] == "dev"
 
 
 @node_only
