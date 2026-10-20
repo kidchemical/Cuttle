@@ -353,7 +353,7 @@ def test_commit_policy_setting_and_revision_routes(http, repo):
 @pytest.mark.parametrize('kind', ['modified', 'added', 'deleted', 'crlf'])
 def test_committing_agent_edits_closes_stale_reviews(repo, kind):
     if kind == 'crlf':
-        (repo / '.gitattributes').write_text('app.py text eol=crlf\n')
+        (repo / '.gitattributes').write_text('app.py text eol=crlf\n', encoding='utf-8', newline='')
         _git(repo, 'add', '.gitattributes')
         _git(repo, 'commit', '-qm', 'attributes')
     path = 'new.py' if kind == 'added' else 'app.py'
@@ -372,13 +372,13 @@ def test_committing_agent_edits_closes_stale_reviews(repo, kind):
 
 def test_staging_and_unrelated_commits_do_not_accept_agent_edits(repo):
     snap = start(repo, 'pending')
-    (repo / 'app.py').write_text('unreviewed\n')
-    (repo / 'new.py').write_text('new unreviewed\n')
+    (repo / 'app.py').write_text('unreviewed\n', encoding='utf-8', newline='')
+    (repo / 'new.py').write_text('new unreviewed\n', encoding='utf-8', newline='')
     end(snap, 'pending')
     assert set(files(repo)) == {'app.py', 'new.py'}
     _git(repo, 'add', 'app.py')
     assert set(files(repo)) == {'app.py', 'new.py'}
-    (repo / 'other.txt').write_text('unrelated\n')
+    (repo / 'other.txt').write_text('unrelated\n', encoding='utf-8', newline='')
     _git(repo, 'add', 'other.txt')
     _git(repo, 'commit', '-qm', 'unrelated', '--', 'other.txt')
     assert set(files(repo)) == {'app.py', 'new.py'}
@@ -386,13 +386,13 @@ def test_staging_and_unrelated_commits_do_not_accept_agent_edits(repo):
 
 def test_newer_agent_edits_remain_reviewable_after_commit(repo):
     snap = start(repo, 'first')
-    (repo / 'app.py').write_text('accepted\n')
+    (repo / 'app.py').write_text('accepted\n', encoding='utf-8', newline='')
     end(snap, 'first')
     _git(repo, 'add', '-A')
     _git(repo, 'commit', '-qm', 'accept first turn')
     assert files(repo) == {}
     snap = start(repo, 'second')
-    (repo / 'app.py').write_text('new pending edit\n')
+    (repo / 'app.py').write_text('new pending edit\n', encoding='utf-8', newline='')
     end(snap, 'second')
     assert review(repo)['current'] == 'new pending edit\n'
     assert review(repo)['baseline'] == 'accepted\n'
@@ -400,13 +400,13 @@ def test_newer_agent_edits_remain_reviewable_after_commit(repo):
 
 def test_partial_commit_accepts_only_committed_hunks(repo):
     snap = start(repo, 'partial')
-    (repo / 'app.py').write_text('ONE\ntwo\nthree\nfour\nFIVE\n')
+    (repo / 'app.py').write_text('ONE\ntwo\nthree\nfour\nFIVE\n', encoding='utf-8', newline='')
     end(snap, 'partial')
     assert review(repo)['hunks'] == 2
-    (repo / 'app.py').write_text('ONE\ntwo\nthree\nfour\nfive\n')
+    (repo / 'app.py').write_text('ONE\ntwo\nthree\nfour\nfive\n', encoding='utf-8', newline='')
     _git(repo, 'add', 'app.py')
     _git(repo, 'commit', '-qm', 'accept first hunk')
-    (repo / 'app.py').write_text('ONE\ntwo\nthree\nfour\nFIVE\n')
+    (repo / 'app.py').write_text('ONE\ntwo\nthree\nfour\nFIVE\n', encoding='utf-8', newline='')
     r = review(repo)
     assert r['hunks'] == 1
     assert r['baseline'] == 'ONE\ntwo\nthree\nfour\nfive\n'
