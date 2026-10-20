@@ -9,6 +9,9 @@ Two things every agent CLI needs and used to get wrong independently:
   so the UI shows an idle chat while the CLI is still running.
 * **Tree kill** — these CLIs spawn helper children (Codex starts
   `codex-code-mode-host`); killing only the parent orphans them.
+* **Resource scope** — registration also attaches the CLI to its own limited
+  systemd scope (``api.agent_harness.resource_scope``), outside the host unit,
+  when the Linux user manager is available.
 * **Interruptible drain** — wall-clock ``communicate()`` / ``wait()`` that
   discards buffered stdout on timeout loses work the CLI already streamed.
   ``run_interruptible`` keeps partials and uses an activity-aware deadline.
@@ -24,8 +27,17 @@ from typing import Any, Callable, List, Optional
 
 
 def attach_to_chat_run(chat_session_id: Optional[str], proc) -> None:
-    """Register a spawned CLI with the chat run registry (best effort)."""
-    if not chat_session_id or proc is None:
+    """Confine a spawned CLI to its own resource scope and register it with
+    the chat run registry (both best effort)."""
+    if proc is None:
+        return
+    try:
+        from api.agent_harness.resource_scope import confine
+
+        confine(proc)
+    except Exception:
+        pass
+    if not chat_session_id:
         return
     try:
         from api.chat_run_registry import attach_process

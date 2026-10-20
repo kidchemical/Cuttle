@@ -242,8 +242,8 @@ class Adapter:
             kernel_model=model,
         )
 
-        # A resume UUID with no transcript behind it (sandbox cutover, repo
-        # move, CLI pruning) would fail the turn instead of resuming. Drop
+        # A resume UUID with no transcript behind it (repo moves or CLI
+        # session pruning) would fail the turn instead of resuming. Drop
         # the dead binding first so this turn starts fresh with a notice.
         # The tool below re-resolves the binding from the map, so clearing
         # here is enough to suppress `--resume`.

@@ -285,14 +285,15 @@ def _client(tmp_path, monkeypatch):
     return ctx
 
 
-def test_flag_registered_default_off(monkeypatch):
+def test_flag_registered_default_on(monkeypatch):
     monkeypatch.delenv("CUTTLE_EXPERIMENTAL", raising=False)
     spec = next(f for f in flags.flags_payload()["flags"] if f["id"] == "ide")
-    assert spec["default"] is False and spec["enabled"] is False
+    assert spec["default"] is True and spec["enabled"] is True
 
 
 def test_routes_disabled_while_flag_off(ws, tmp_path, monkeypatch):
     monkeypatch.delenv("CUTTLE_EXPERIMENTAL", raising=False)
+    flags.set_enabled("ide", False)
     client = _client(tmp_path, monkeypatch)["client"]
     res = client.get("/api/ide/tree", query_string={"root": str(ws)})
     assert res.status_code == 403 and res.get_json()["disabled"] is True

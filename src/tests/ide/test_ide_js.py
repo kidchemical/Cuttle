@@ -104,16 +104,37 @@ def test_ide_model():
     assert out["hl"] == "<b>a&lt;</b>b"
 
 
-def test_rail_entry_is_stashed_flag_gated_and_migrated():
+def test_rail_entry_is_pinned_flag_gated_and_migrated():
     html = (WEB / "app_shell.html").read_text(encoding="utf-8")
     assert 'id="nav-ide"' in html and 'data-page="/ide_page.html"' in html
     rail = (WEB / "js" / "shell" / "shell_rail.js").read_text(encoding="utf-8")
     assert "'nav-ide'" in rail.split("const CANONICAL_RAIL_ITEM_ORDER")[1].split("];")[0]
-    assert "'nav-ide'" in rail.split("const DEFAULT_RAIL_HIDDEN =")[1].split(";")[0]
+    assert "'nav-ide'" not in rail.split("const DEFAULT_RAIL_HIDDEN =")[1].split(";")[0]
     assert "'nav-ide': 'ide'" in rail.split("const EXPERIMENTAL_RAIL_APPS")[1].split("};")[0]
     assert "version >= 10 ? ['nav-ide']" in rail
     shell = (WEB / "js" / "shell" / "app_shell.js").read_text(encoding="utf-8")
     assert "'/ide_page.html': 'IDE'" in shell
+
+
+@node_only
+def test_default_rail_pins_ide_second_and_preserves_saved_layouts():
+    script = r"""
+const assert = require('node:assert/strict');
+require(process.env.RAIL);
+const rail = globalThis.CuttleShellRail.create({win: {}});
+const defaults = rail.CANONICAL_RAIL_ITEM_ORDER.filter(id => !rail.DEFAULT_RAIL_HIDDEN.includes(id));
+assert.deepEqual(defaults.slice(0, 2), ['nav-chat', 'nav-ide']);
+assert(!defaults.includes('nav-editor'), 'Router starts unpinned');
+// Fresh defaults must not force new pins onto an existing current layout.
+const saved = {layout_version: rail.RAIL_LAYOUT_VERSION,
+               rail_items: ['nav-chat', 'nav-editor', 'nav-apps'], rail_hidden: ['nav-ide']};
+const migrated = rail.migrateUILayout(saved);
+assert.equal(migrated.changed, false);
+assert.deepEqual(migrated.layout.rail_items, saved.rail_items);
+assert.deepEqual(migrated.layout.rail_hidden, saved.rail_hidden);
+"""
+    subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True,
+                   encoding="utf-8", env={**os.environ, "RAIL": str(WEB / "js/shell/shell_rail.js")})
 
 
 def test_diff_modal_editor_button_is_gated():

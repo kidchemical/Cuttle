@@ -198,6 +198,17 @@
         }
 
         /** A silent fallback to the chiming browser recognizer is undiagnosable on a phone. */
+        /** Server transcription needs an OpenAI key; unknown status keeps the server engine. */
+        async function serverTranscriptionConfigured() {
+            try {
+                const r = await host.fetch('/api/voice-stt/status', { cache: 'no-store', credentials: 'include' });
+                const d = await r.json();
+                return !(r.ok && d && d.success && d.configured === false);
+            } catch (_) {
+                return true;
+            }
+        }
+
         function showEngine(wantServer, missing) {
             const hint = byId('voiceModeHint');
             if (hint) {
@@ -205,6 +216,7 @@
                 const label = engine === 'live' ? 'GPT-Live · tap the orb to connect/disconnect' : engine === 'realtime' ? 'OpenAI Realtime · tap the orb to connect/disconnect'
                     : engine === 'server'
                     ? (Recorder.sourceKind() === 'native' ? 'Server transcription (app mic)' : 'Server transcription')
+                    : serverKeyMissing ? 'Browser speech — server transcription needs an OpenAI API key'
                     : (wantServer ? 'Browser speech — server transcription needs ' + missing.join(', ') : '');
                 hint.textContent = label ? hint.dataset.base + ' · ' + label : hint.dataset.base;
             }
@@ -749,6 +761,7 @@
             host.stopSpeech();
             wantListening = true;
             closing = false;
+            emptyRestarts = 0;
             setPhase('idle', 'Checking microphone…');
 
             if (engine === 'server') {
@@ -785,6 +798,23 @@
             beginRecognition(Ctor);
         }
 
+        // Errors a restart cannot fix. Chromium builds without Google's speech
+        // service (Electron, Chromium) expose the API but fail every session
+        // with `network`; restarting on that just loops start/stop forever.
+        const FATAL_RECOGNITION_ERRORS = {
+            'network': 'Browser speech recognition is unavailable here — enable Voice: server transcription in Settings → Experimental, or use Chrome/Edge',
+            'language-not-supported': 'Browser speech recognition does not support this language',
+            'audio-capture': 'No microphone found — tap mic to retry',
+        };
+        // Back-to-back sessions that die within a second without a word. A
+        // silent user's session lasts seconds (`no-speech`), and any result
+        // resets the count, so only a broken recognizer reaches the cap.
+        const MAX_EMPTY_RESTARTS = 6;
+        const EMPTY_SESSION_MS = 1000;
+        let emptyRestarts = 0;
+        // Server transcription is on but has no OpenAI key: browser speech runs instead.
+        let serverKeyMissing = false;
+
         function restartSoon(Ctor, ms) {
             setTimeout(() => {
                 if (wantListening && active && phase === 'listening' && !recognition) {
@@ -807,7 +837,11 @@
             rec.maxAlternatives = 1;
             Segments.beginSession(phrases);
 
+            let heard = false;
+            const startedAt = Date.now();
             rec.onresult = function (event) {
+                heard = true;
+                emptyRestarts = 0;
                 Segments.applyResults(phrases, event.results);
                 renderPhrases();
                 if (phase === 'listening') setStatus(listeningText());
@@ -827,6 +861,16 @@
                     settlePhase();
                     return;
                 }
+                if (FATAL_RECOGNITION_ERRORS[err]) {
+                    wantListening = false;
+                    const message = err === 'network' && serverKeyMissing
+                        ? 'Voice input here needs an OpenAI API key — add one in Settings → Providers'
+                        : FATAL_RECOGNITION_ERRORS[err];
+                    host.toast(message, 'error');
+                    stopRecognition();
+                    settlePhase(message);
+                    return;
+                }
                 setStatus('Could not hear that — try again');
             };
             rec.onend = function () {
@@ -838,6 +882,13 @@
                 renderPhrases();
                 if (document.hidden) {
                     pauseListening();
+                    return;
+                }
+                const empty = !heard && Date.now() - startedAt < EMPTY_SESSION_MS;
+                emptyRestarts = empty ? emptyRestarts + 1 : 0;
+                if (emptyRestarts >= MAX_EMPTY_RESTARTS) {
+                    wantListening = false;
+                    settlePhase('Speech recognition keeps stopping — tap mic to retry');
                     return;
                 }
                 restartSoon(Ctor, 120);
@@ -1202,7 +1253,12 @@
                     if (!active) return;
                 }
                 const missing = wantServer ? Recorder.missingSupport() : [];
-                engine = wantServer && !missing.length ? 'server' : 'webspeech';
+                serverKeyMissing = false;
+                if (wantServer && !missing.length) {
+                    serverKeyMissing = !(await serverTranscriptionConfigured());
+                    if (!active) return;
+                }
+                engine = wantServer && !missing.length && !serverKeyMissing ? 'server' : 'webspeech';
                 if (on.has('voice_live') && selected !== 'tts' && Live?.supported()) {
                     engine='live';narratorOn=false;
                     try {

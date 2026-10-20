@@ -433,11 +433,6 @@
 }
 .agent-default-chip { display:inline-flex; align-items:center; border:1px solid #4b9b72; background:color-mix(in srgb, #4b9b72 20%, transparent); color:#78d49e; border-radius:999px; padding:2px 8px; font-size:11px; font-weight:700; }
 .agent-config-actions { display:flex; gap:8px; margin-top:10px; }
-.agent-cli-path { display:grid; gap:6px; margin-top:8px; padding-top:8px; border-top:1px solid var(--border-color); }
-.agent-cli-path label { display:grid; gap:6px; font-size:0.8rem; }
-.agent-cli-path .setting-input { width:100%; min-width:0; box-sizing:border-box; }
-.agent-cli-path .agent-config-actions { margin-top:0; flex-wrap:wrap; }
-.agent-cli-path-env { overflow-wrap:anywhere; }
 .agent-subagent-config { display:grid; gap:6px; border-top:1px solid var(--border-color, rgba(255,255,255,.1)); padding-top:8px; margin-top:4px; }
 
 .toggle-switch.is-disabled {
@@ -685,6 +680,7 @@ body.compact-shell-page .settings-title {
     margin: 0 0 12px;
 }
 body.compact-shell-page .setting-item {
+    border-bottom: 0;
     gap: 18px;
     padding-block: 14px;
 }
@@ -717,7 +713,6 @@ body.compact-shell-page .setting-control input.setting-input {
 }
 .settings-disclosure {
     margin-block: 12px;
-    border-top: 1px solid var(--border-color);
     padding-top: 8px;
 }
 .settings-disclosure > summary {

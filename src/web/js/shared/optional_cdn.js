@@ -108,6 +108,34 @@
             'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css',
             'xterm-css'
         );
+        // The xterm bundles are UMD: with an AMD loader on the page (Monaco in the
+        // IDE) they call define() instead of setting window globals, so load them
+        // through that loader and publish the globals ourselves.
+        var amdRequire = window.require;
+        if (typeof window.define === 'function' && window.define.amd &&
+                amdRequire && typeof amdRequire.config === 'function') {
+            if (window.Terminal && window.FitAddon) {
+                if (typeof cb === 'function') cb();
+                return;
+            }
+            amdRequire.config({
+                paths: {
+                    'cuttle-xterm': 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min',
+                    'cuttle-xterm-fit': 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min',
+                    'cuttle-xterm-links': 'https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min',
+                },
+            });
+            amdRequire(['cuttle-xterm', 'cuttle-xterm-fit', 'cuttle-xterm-links'], function (xterm, fit, links) {
+                window.Terminal = xterm && xterm.Terminal;
+                window.FitAddon = fit;
+                window.WebLinksAddon = links;
+                if (typeof cb === 'function') cb();
+            }, function (err) {
+                try { console.warn('[Cuttle] optional CDN failed (offline?): xterm', err); } catch (_) {}
+                if (typeof cb === 'function') cb();
+            });
+            return;
+        }
         var pending = 3;
         function done() {
             pending -= 1;

@@ -221,6 +221,44 @@ body.ide-resizing iframe { pointer-events: none; }
 .monaco-editor .ide-gutter-deleted { border-left: 0; margin-left: 2px; }
 .monaco-editor .ide-gutter-deleted::after { content: ''; position: absolute; bottom: -4px; left: 0; border: 4px solid transparent; border-left-color: var(--git-d); }
 
+/* ── agent review (CuttleIdeReview) ─────────────────────────────── */
+/* Unified-diff look (same palette as the diff modal): whole lines tinted
+ * green/red across the gutter, removed text tinted red. */
+.ide-body { --review-add: rgba(46, 160, 67, 0.24); --review-add-edge: #2ea043; --review-del: rgba(248, 81, 73, 0.24); --review-del-edge: #f85149; --review-del-text: #ffb1af; }
+body.ide-body.light-mode { --review-add: rgba(46, 160, 67, 0.2); --review-del: rgba(248, 81, 73, 0.17); --review-del-text: #82071e; }
+.monaco-editor .ide-review-added, .monaco-editor .ide-review-added-margin { background: var(--review-add); }
+.monaco-editor .ide-review-gutter-added { border-left: 3px solid var(--review-add-edge); margin-left: 3px; }
+.monaco-editor .ide-review-gutter-removed { border-left: 0; margin-left: 2px; }
+.monaco-editor .ide-review-gutter-removed::after { content: ''; position: absolute; bottom: -4px; left: 0; border: 4px solid transparent; border-left-color: var(--review-del-edge); }
+.ide-review-removed { background: var(--review-del); color: var(--review-del-text); white-space: pre; overflow: hidden; pointer-events: none; user-select: none; }
+.ide-review-removed-line { padding-left: 0; }
+.ide-review-removed-margin { background: var(--review-del); box-shadow: inset 3px 0 0 var(--review-del-edge); color: var(--review-del-text); font-family: var(--ide-mono, ui-monospace, monospace); text-align: right; padding-right: 10px; box-sizing: border-box; pointer-events: none; user-select: none; }
+.ide-review-removed-sign { opacity: 0.85; }
+.ide-review-actions { display: inline-flex; flex-wrap: nowrap; width: max-content !important; white-space: nowrap; gap: 4px; margin-top: 3px; padding: 2px; border-radius: 6px; background: var(--ide-surface-2); border: 1px solid var(--ide-border); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); z-index: 5; }
+.ide-review-actions button { height: 20px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: var(--ide-text); font: 600 11px/20px system-ui, sans-serif; cursor: pointer; }
+.ide-review-actions button.is-keep { background: color-mix(in srgb, var(--review-add-edge) 85%, transparent); color: #fff; }
+.ide-review-actions button.is-keep:hover { background: var(--review-add-edge); }
+.ide-review-actions button.is-undo:hover { background: color-mix(in srgb, var(--review-del-edge) 22%, transparent); }
+.ide-review-bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 6px; max-width: calc(100% - 28px); padding: 5px 6px 5px 10px; border: 1px solid var(--ide-border); border-radius: 10px; background: color-mix(in srgb, var(--ide-surface-2) 92%, transparent); backdrop-filter: blur(12px); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); font-size: 12px; white-space: nowrap; }
+.ide-review-bar[hidden] { display: none; }
+.ide-review-bar-icon { color: var(--ide-accent); }
+.ide-review-bar-title { font-weight: 600; }
+.ide-review-bar-meta, .ide-review-bar-file { color: var(--ide-muted, color-mix(in srgb, var(--ide-text) 65%, transparent)); overflow: hidden; text-overflow: ellipsis; }
+.ide-review-bar-file:empty { display: none; }
+.ide-review-bar-file::before { content: '·'; margin-right: 6px; }
+.ide-review-bar-group { display: inline-flex; }
+.ide-review-bar button { height: 24px; padding: 0 9px; border: 1px solid var(--ide-border); border-radius: 6px; background: var(--ide-surface); color: var(--ide-text); cursor: pointer; font-size: 12px; }
+.ide-review-bar-group button { padding: 0 8px; font-size: 14px; line-height: 1; }
+.ide-review-bar-group button:first-child { border-radius: 6px 0 0 6px; }
+.ide-review-bar-group button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
+.ide-review-bar button:hover { border-color: var(--ide-accent); }
+.ide-review-bar button.is-primary { background: var(--review-add-edge); border-color: var(--review-add-edge); color: #fff; }
+.ide-review-bar button[hidden] { display: none; }
+.ide-tree-review { color: var(--ide-accent); font-size: 10px; margin-left: 4px; flex: 0 0 auto; }
+.ide-status-review { color: var(--ide-accent); font-weight: 600; }
+.ide-status-review.is-live { animation: ide-review-pulse 1.6s ease-in-out infinite; }
+@keyframes ide-review-pulse { 50% { opacity: 0.45; } }
+
 /* ── panel (terminal) ──────────────────────────────────────── */
 .ide-panel { display: flex; flex-direction: column; height: var(--ide-panel-h, 240px); background: var(--ide-surface); flex: 0 0 auto; min-height: 0; }
 .ide-panel-header { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 6px 0 11px; flex: 0 0 auto; }

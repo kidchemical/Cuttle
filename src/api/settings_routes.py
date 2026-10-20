@@ -92,7 +92,7 @@ SETTING_FAMILIES = (
      "backend": "api.updates (install kind, Developer mode key 'updates', checkout status over api.releases)",
      "validator": "set_developer_mode", "read": "owner", "write": "owner"},
     {"name": "agent-adapters", "routes": ["GET/POST /settings/agent-adapters"],
-     "backend": "api.agent_harness.cli_paths (key 'agent_cli_paths') + steer (key 'agent_steer') + catalog (key 'agent_harness'); "
+     "backend": "api.agent_harness.steer (key 'agent_steer') + catalog (key 'agent_harness'); "
                 "model/effort defaults read here, written via POST /agent-defaults/<id>",
      "validator": "validate_agent_adapters_update", "read": "authenticated", "write": "owner"},
     {"name": "timeouts", "routes": ["GET/POST /settings/timeouts"],
@@ -230,18 +230,12 @@ def validate_completion_providers_update(data: dict) -> tuple[bool, str, dict]:
 
 
 def validate_agent_adapters_update(data: dict) -> tuple[bool, str, dict]:
-    """Validate executable paths, steering, subagent defaults and drop-in opt-in."""
+    """Validate steering, subagent defaults and drop-in opt-in."""
     from api.agent_harness.steer import STEERABLE_AGENTS
 
     if not isinstance(data, dict):
         return False, 'Body must be a JSON object', {}
     clean: dict = {}
-    if 'cli_paths' in data:
-        from api.agent_harness.cli_paths import validate_cli_paths
-        try:
-            clean['cli_paths'] = validate_cli_paths(data['cli_paths'])
-        except ValueError as exc:
-            return False, str(exc), {}
     steer = data.get('steer')
     if steer is not None:
         if not isinstance(steer, dict) or not steer:
@@ -588,6 +582,30 @@ def update_git_auto_commit_setting():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# --- agent review commit policy (backend: api.agent_review.service) --------
+
+@settings_bp.route('/settings/agent-review', methods=['GET'])
+@authenticated_required
+def get_agent_review_setting():
+    """Committing files with unreviewed agent changes: ``warn`` (default) or ``keep``."""
+    from api.agent_review.service import commit_policy
+    return jsonify({'success': True, 'commit_policy': commit_policy()})
+
+
+@settings_bp.route('/settings/agent-review', methods=['POST'])
+@owner_required
+def update_agent_review_setting():
+    """Body: { commit_policy: "warn" | "keep" }."""
+    from api.agent_review.service import ReviewError, commit_policy, set_commit_policy
+    data = request.get_json(silent=True) or {}
+    try:
+        if not set_commit_policy(str(data.get('commit_policy') or '')):
+            return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+    except ReviewError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    return jsonify({'success': True, 'commit_policy': commit_policy()})
+
+
 # --- timeouts (backend: managers.settings_manager) -------------------------
 
 @settings_bp.route('/settings/timeouts', methods=['GET'])
@@ -679,7 +697,6 @@ def update_developer_mode():
 
 def _agent_adapters_payload() -> dict:
     from api.chat_preferences import prompts
-    from api.agent_harness.cli_paths import describe_cli_paths
     from api.agent_harness.agent_defaults import get_starred_effort, get_starred_model
     from api.agent_harness.catalog import (
         list_agents,
@@ -697,7 +714,6 @@ def _agent_adapters_payload() -> dict:
             for aid in list_agents()
         },
         'steer': steer_settings(),
-        'cli_paths': describe_cli_paths(),
         'subagents': get_settings_manager().get_setting('agent_subagent_defaults') or {},
         'steer_env_disabled': steer_env_disabled(),
         'allow_project_adapters': project_adapters_setting(),
@@ -708,7 +724,7 @@ def _agent_adapters_payload() -> dict:
 @settings_bp.route('/settings/agent-adapters', methods=['GET'])
 @authenticated_required
 def get_agent_adapters_setting():
-    """Per-agent executable paths, starred defaults, steering and drop-in opt-in."""
+    """Per-agent starred defaults, steering and drop-in opt-in."""
     try:
         return jsonify(_agent_adapters_payload())
     except Exception as e:
@@ -718,18 +734,15 @@ def get_agent_adapters_setting():
 @settings_bp.route('/settings/agent-adapters', methods=['POST'])
 @owner_required
 def update_agent_adapters_setting():
-    """Body: optional cli_paths, steer, subagents and allow_project_adapters patches."""
+    """Body: optional steer, subagents and allow_project_adapters patches."""
     try:
         ok, message, clean = validate_agent_adapters_update(request.get_json(silent=True))
         if not ok:
             return jsonify({'success': False, 'error': message}), 400
         from api.agent_harness.catalog import set_project_adapters_allowed
         from api.agent_harness.steer import set_steer_enabled
-        from api.agent_harness.cli_paths import save_cli_paths
         from managers.settings_manager import get_settings_manager
 
-        if 'cli_paths' in clean:
-            save_cli_paths(clean['cli_paths'])
         for agent, value in (clean.get('steer') or {}).items():
             if not set_steer_enabled(agent, value):
                 return jsonify({'success': False, 'error': 'Failed to save settings'}), 500

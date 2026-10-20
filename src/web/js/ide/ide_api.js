@@ -1,5 +1,6 @@
 /* IDE App — HTTP transport over /api/ide (owner api.ide.routes) plus the
- * existing Git pending-changes and experimental-flag reads it composes.
+ * existing Git pending-changes, agent-review and experimental-flag reads it
+ * composes.
  * Every call resolves to the parsed JSON body or throws an Error carrying
  * `status`, `conflict` and `current` from the server. */
 (function (root) {
@@ -45,6 +46,11 @@
             original: (rootPath, file) => get('original', { root: rootPath, file: file }).then((d) => d.original),
             complete: (rootPath, o, opts) => post('complete', Object.assign({ root: rootPath }, o), opts),
             rawUrl: (rootPath, file) => '/api/ide/raw?' + qs({ root: rootPath, file: file }),
+            // Agent review (owner api.agent_review.routes).
+            reviewFiles: (rootPath) => call('GET', '/api/agent-review/files?' + qs({ root: rootPath })),
+            reviewFile: (rootPath, path) => call('GET', '/api/agent-review/file?' + qs({ root: rootPath, path: path })).then((d) => d.review),
+            reviewAct: (kind, rootPath, o) => call('POST', '/api/agent-review/' + (kind === 'undo' ? 'undo' : 'keep'), Object.assign({ root: rootPath }, o || {})),
+            reviewStreamUrl: () => '/api/agent-review/stream',
             pending: (rootPath, opts) => call('GET', '/api/git/pending-changes?' + qs({ path: rootPath }), undefined, opts),
             reveal: (absPath) => call('POST', '/api/fs/reveal', { path: absPath }),
             openDefault: (absPath) => call('POST', '/api/fs/open', { path: absPath }),

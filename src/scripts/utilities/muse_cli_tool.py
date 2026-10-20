@@ -414,12 +414,6 @@ def _which_muse_native() -> Optional[str]:
       2. Well-known Meta install under ``%LOCALAPPDATA%\\Programs\\muse``
       3. ``PATH`` via ``shutil.which`` (launchers resolve to their binary)
     """
-    from api.agent_harness.cli_paths import cli_path_override
-
-    configured, override = cli_path_override("muse")
-    if configured:
-        return override
-
     override = (os.getenv("MUSE_CLI_PATH") or "").strip()
     if override:
         resolved = _resolve_native_muse_path(override)
@@ -1072,13 +1066,9 @@ class MuseCliTool:
                 env=agent_cli_env(),
                 limit=_STDOUT_LINE_LIMIT,
             )
-            # Register with chat_run_registry so Stop can cancel the native process
-            if chat_session_id:
-                try:
-                    from api.chat_run_registry import attach_process
-                    attach_process(chat_session_id, proc)
-                except Exception:
-                    pass
+            # Resource scope + chat_run_registry so Stop can cancel the native process
+            from scripts.utilities.agent_process import attach_to_chat_run
+            attach_to_chat_run(chat_session_id, proc)
 
             async def _pump_stderr() -> None:
                 try:

@@ -2,7 +2,8 @@
  * Gathers the owners (CuttleIdeEditor / Explorer / Search / Quick /
  * Terminal / Chat over CuttleIdeModel + CuttleIdeApi) and owns only the
  * page lifetimes they share: the workspace, open documents (disk sync,
- * conflicts, agent-change review, hot exit), layout and keybindings. */
+ * conflicts, hot exit), layout and keybindings. Per-hunk agent review is
+ * CuttleIdeReview's (flag `agent_review`); the page only calls into it. */
 (function () {
     'use strict';
 
@@ -163,6 +164,7 @@
     const explorer = window.CuttleIdeExplorer.create({
         el: $('ideTree'), model: M, api: api,
         getDecorations: () => decorations,
+        getReviewMarks: () => review.marks(),
         getActive: () => tabs.active,
         onOpen: (path, o) => openFile(path, o),
         onContext: (entry, e) => showContextMenu(entry, e),
@@ -192,6 +194,27 @@
         frameHost: $('ideChatBody'),
         savedSession: () => wsState.chatSession,
         onSession: (id) => { wsState.chatSession = id; saveWsState(); },
+    });
+    const review = window.CuttleIdeReview.create({
+        api: api, barEl: $('ideReviewBar'), statusEl: $('ideStatusReview'),
+        editor: () => editor,
+        activePath: () => (tabs.active && docs.has(tabs.active) && docs.get(tabs.active).kind === 'text' && $('ideDiffView').hidden ? tabs.active : null),
+        isDirty: (path) => isDirty(path),
+        save: (path) => save(path),
+        adoptDisk: (path) => adoptDisk(path),
+        followDisk: () => pollOpenFiles(),
+        openFile: (path) => openFile(path, { preview: false }),
+        reveal: (line) => editor.reveal(line),
+        confirm: confirmAction,
+        isHidden: () => document.hidden,
+        toast: toast, fail: fail,
+        onChange: () => {
+            // Inline review replaces the whole-file "changed on disk" banner.
+            docs.forEach((doc, path) => { if (review.has(path)) { doc.review = null; doc.agentPending = false; } });
+            renderTabs();
+            renderBanner();
+            explorer.render();
+        },
     });
 
     // ── workspaces ──────────────────────────────────────────────────
@@ -229,6 +252,7 @@
         chat.setWorkspace(ws);
         search.reset();
         mountScm();
+        review.setWorkspace(ws.path);
         await explorer.reset(ws.path, wsState.expanded);
         renderTabs();
         await restoreHotExit();
@@ -335,6 +359,7 @@
         renderCrumbs();
         renderStatus();
         explorer.render();
+        review.applyActive();
     }
     async function openFile(path, opts) {
         if (!ws) return;
@@ -401,6 +426,7 @@
             renderBanner();
             persistHotExit();
             scheduleGitRefresh();
+            review.refresh();
             return true;
         } catch (err) {
             if (err.conflict) {
@@ -486,12 +512,27 @@
                 editor.setValue(path, disk.content, { saved: true });
                 doc.etag = disk.etag;
                 doc.savedText = disk.content;
-                doc.review = { before: doc.review ? doc.review.before : before, after: disk.content, at: Date.now() };
+                doc.review = review.has(path) ? null : { before: doc.review ? doc.review.before : before, after: disk.content, at: Date.now() };
                 doc.agentPending = false;
             }
             if (tabs.active === path) { renderBanner(); updateGutter(); }
             renderTabs();
         }
+    }
+    /** A clean buffer takes the disk copy silently (Keep / Undo, agent writes under review). */
+    async function adoptDisk(path) {
+        const doc = docs.get(path);
+        if (!ws || !doc || doc.kind !== 'text' || isDirty(path)) return;
+        let disk;
+        try { disk = await api.read(ws.path, path); } catch (err) {
+            if (err && err.status === 404 && !doc.deleted) { doc.deleted = true; renderTabs(); if (tabs.active === path) renderBanner(); }
+            return;
+        }
+        if (disk.content == null) return;
+        if (disk.content !== editor.getValue(path)) editor.setValue(path, disk.content, { saved: true });
+        Object.assign(doc, { etag: disk.etag, savedText: disk.content, review: null, deleted: false });
+        editor.markSaved(path);
+        if (tabs.active === path) updateGutter();
     }
     function startWatching() {
         clearInterval(watchTimer);
@@ -509,17 +550,18 @@
         const doc = docs.get(tabs.active);
         const el = $('ideBanner');
         if (!doc) return hideBanner();
+        const inline = review.has(doc.path);
         let html = '';
         if (doc.conflict) {
             html = '<span class="ide-banner-icon is-warn">!</span><span>This file changed on disk while you have unsaved edits.</span>'
                 + '<button data-banner="compareDisk">Compare</button><button data-banner="overwrite">Overwrite disk</button><button data-banner="loadDisk">Load disk version</button>';
         } else if (doc.deleted) {
             html = '<span class="ide-banner-icon is-warn">!</span><span>This file was deleted on disk. Save to recreate it.</span><button data-banner="closeTab">Close</button>';
-        } else if (doc.review) {
+        } else if (doc.review && !inline) {
             const lines = M.lineDiff(doc.review.before, doc.review.after) || [];
             html = '<span class="ide-banner-icon is-ai">✦</span><span>Changed on disk' + (lines.length ? ' · ' + lines.length + ' change' + (lines.length === 1 ? '' : 's') : '') + '. Review the edit, keep it, or undo it.</span>'
                 + '<button data-banner="review">Review</button><button data-banner="keep" class="is-primary">Keep</button><button data-banner="undo">Undo</button>';
-        } else if (doc.agentPending) {
+        } else if (doc.agentPending && !inline) {
             html = '<span class="ide-banner-icon is-ai ide-spin">✦</span><span>Waiting for the agent to edit this file… changes appear here for review.</span><button data-banner="dismissAgent">Dismiss</button>';
         }
         el.hidden = !html;
@@ -581,6 +623,7 @@
         diffState = null;
         editor.hideDiff();
         if (tabs.active && docs.has(tabs.active) && docs.get(tabs.active).kind === 'text') editor.focus();
+        review.applyActive();
     }
     async function compareWithHead(path) {
         const p = path || tabs.active;
@@ -608,7 +651,8 @@
             const l = labels[t.path];
             return '<div class="' + cls.join(' ') + '" role="tab" draggable="true" aria-selected="' + (t.path === tabs.active) + '" data-path="' + esc(t.path) + '" title="' + esc(t.path) + '">'
                 + '<span class="ide-tab-name">' + esc(l.name) + '</span>' + (l.hint ? '<span class="ide-tab-hint">' + esc(l.hint) + '</span>' : '')
-                + (doc && doc.review ? '<span class="ide-tab-ai" title="Changed on disk — review">✦</span>' : '')
+                + (review.count(t.path) ? '<span class="ide-tab-ai" title="' + review.count(t.path) + ' agent change(s) to review">✦ ' + review.count(t.path) + '</span>'
+                    : doc && doc.review ? '<span class="ide-tab-ai" title="Changed on disk — review">✦</span>' : '')
                 + '<button type="button" class="ide-tab-close" data-close="' + esc(t.path) + '" aria-label="Close ' + esc(l.name) + '" title="Close (Ctrl+W)"></button></div>';
         }).join('');
         const active = $('ideTabs').querySelector('.is-active');
@@ -751,8 +795,8 @@
             return;
         }
         const rel = abs.slice(rootKey.length + 1);
-        // A new file has nothing to compare against: just open it.
-        if (decorations.files[rel] === 'U') { openFile(rel, { preview: true }); return; }
+        // A new file has nothing to compare against, and agent changes review inline: just open it.
+        if (decorations.files[rel] === 'U' || review.has(rel)) { openFile(rel, { preview: true }); return; }
         try {
             const original = await api.original(ws.path, rel);
             let current = '';
@@ -1030,6 +1074,14 @@
         { id: 'tabs.next', label: 'View: Next Editor', keys: 'Ctrl+Tab', run: () => cycleTab(1) },
         { id: 'tabs.prev', label: 'View: Previous Editor', keys: 'Ctrl+Shift+Tab', run: () => cycleTab(-1) },
         { id: 'workspace.switch', label: 'Project: Switch Project…', run: pickWorkspace },
+        { id: 'review.next', label: 'Agent Review: Next Change', keys: review.KEYS.next, run: () => review.next() },
+        { id: 'review.prev', label: 'Agent Review: Previous Change', keys: review.KEYS.prev, run: () => review.prev() },
+        { id: 'review.keep', label: 'Agent Review: Keep Change at Cursor', keys: review.KEYS.keep, run: () => review.keepAtCursor() },
+        { id: 'review.undo', label: 'Agent Review: Undo Change at Cursor', keys: review.KEYS.undo, run: () => review.undoAtCursor() },
+        { id: 'review.keepFile', label: 'Agent Review: Keep All Changes in File', run: () => review.keepFile() },
+        { id: 'review.undoFile', label: 'Agent Review: Undo All Changes in File', run: () => review.undoFile() },
+        { id: 'review.keepAll', label: 'Agent Review: Keep All Changes', run: () => review.keepAll() },
+        { id: 'review.undoAll', label: 'Agent Review: Undo All Changes…', run: () => review.undoAll() },
     ];
     const commandById = (id) => COMMANDS.find((c) => c.id === id);
     const menuBar = window.CuttleIdeMenubar.create({
@@ -1130,6 +1182,8 @@
         'ctrl+shift+g': () => runCommand('view.scm'), 'ctrl+i': () => toggleChat(), 'ctrl+l': () => addToChat(), 'ctrl+k': openInlineEdit,
         'ctrl+g': () => quickOpen(':'), 'ctrl+tab': () => cycleTab(1), 'ctrl+shift+tab': () => cycleTab(-1),
         'ctrl+pagedown': () => cycleTab(1), 'ctrl+pageup': () => cycleTab(-1), 'alt+z': () => runCommand('editor.wrap'), 'f5': runActiveFile,
+        'alt+]': () => review.next(), 'alt+[': () => review.prev(),
+        'ctrl+alt+y': () => review.keepAtCursor(), 'ctrl+alt+n': () => review.undoAtCursor(),
     };
     function keyId(e) {
         const k = e.key === ' ' ? 'space' : e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase();
@@ -1202,7 +1256,7 @@
         const d = e.data;
         if (!d || typeof d !== 'object' || !chat.isSource(e.source)) return;
         if (d.type === 'cuttle-chat-url' || d.type === 'cuttle-chat-session') chat.adoptSession(d.chatId || d.sessionId, e.source);
-        if (d.type === 'cuttle-pending-changes-refresh' || d.type === 'cuttle-pending-changes-changed') { pollOpenFiles(); scheduleGitRefresh(); explorer.refresh(); }
+        if (d.type === 'cuttle-pending-changes-refresh' || d.type === 'cuttle-pending-changes-changed') { pollOpenFiles(); scheduleGitRefresh(); explorer.refresh(); review.refresh(); }
         if (d.type === 'cuttle-navigate' && typeof d.page === 'string') {
             const url = new URL(d.page, location.origin);
             // "Editor" from a diff inside the side chat opens here, not a new IDE.
@@ -1267,7 +1321,8 @@
         applyLayout();
         applyCompletions();
         new MutationObserver(() => { editor.applyTheme(); terminal.applyTheme(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
-        window.addEventListener('focus', () => { pollOpenFiles(); explorer.refresh(); });
+        window.addEventListener('focus', () => { pollOpenFiles(); explorer.refresh(); review.refresh(); });
+        await review.init();
         document.addEventListener('visibilitychange', () => { if (!document.hidden) pollOpenFiles(); });
 
         // Deep link: ?path=<project or checkout>&file=<rel>[&repo_root=…][&line=N]

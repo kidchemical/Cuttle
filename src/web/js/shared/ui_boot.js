@@ -321,7 +321,7 @@
     }
 
     function normalizeTheme(theme) {
-        return THEME_BY_ID[theme] ? theme : 'dark';
+        return THEME_BY_ID[theme] ? theme : 'nord';
     }
 
     function themeBase(theme) {

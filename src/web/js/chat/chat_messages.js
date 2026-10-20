@@ -325,7 +325,8 @@
             const content = typeof d.formatMessage === 'function'
                 ? d.formatMessage(processed.original) : d.escapeHtmlInline(processed.original);
             thinkBlocks.push('<details class="response-original-block"><summary>Original response</summary>'
-                + '<div class="response-original-content">' + content + '</div></details>');
+                + '<div class="response-original-content">' + content + '</div></details>'
+                + '<div class="response-postprocessed-label">Post-processed response</div>');
             out = placeholder + '\n\n' + processed.response;
         }
         const pushThinkBlock = (content) => {

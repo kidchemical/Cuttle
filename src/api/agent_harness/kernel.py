@@ -888,6 +888,10 @@ def run_agent_web_command(
                 try:
                     from api.agent_events.snapshots import begin
                     line_baseline = begin(cwd, query_id)
+                    from api.agent_review.service import turn_started
+
+                    turn_started(line_baseline, query_id=query_id, chat_session_id=sid,
+                                 agent_id=manifest.id, model=model)
                 except Exception as exc:
                     print(f"[agent_events] snapshot start unavailable: {exc}", flush=True)
             except Exception:
@@ -950,6 +954,9 @@ def run_agent_web_command(
                             record("event", query_id, {"kind": "edit", **line_event})
                         except Exception as exc:
                             print(f"[agent_events] snapshot finish unavailable: {exc}", flush=True)
+                        from api.agent_review.service import turn_finished
+
+                        turn_finished(query_id, line_event)
                     from api.edit_attribution.recorder import record_run_deltas
 
                     record_run_deltas(

@@ -170,3 +170,12 @@ def test_sharing_retry_does_not_hide_other_errors(monkeypatch):
 
     with pytest.raises(OSError, match="disk error"):
         settings_storage._retry_sharing(operation)
+
+
+def test_removed_cli_path_setting_is_ignored_and_not_writable(tmp_path):
+    seed(tmp_path, {"agent_cli_paths": {"codex": "/obsolete/program"}})
+    storage = store(tmp_path)
+    storage.machine.write_text(json.dumps({"agent_cli_paths": {"claude": "/obsolete/program"}}))
+    assert "agent_cli_paths" not in storage.read()
+    with pytest.raises(ValueError, match="Not a writable setting"):
+        storage.update("agent_cli_paths", lambda _: {})

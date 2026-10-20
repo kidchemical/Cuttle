@@ -266,7 +266,7 @@ def _verbose_truncation_error(
 ) -> Optional[str]:
     """Refuse a cut-off ``models --verbose`` stream (CH-001353).
 
-    A sandbox pipe can truncate the CLI's large verbose stdout mid-object
+    A cut-off output stream can end the CLI's verbose stdout mid-object
     while the process still exits 0; the parser then silently drops the
     trailing partial block and the caller would cache a partial catalog
     (everything after the cut — e.g. DeepSeek entries — vanishes from the

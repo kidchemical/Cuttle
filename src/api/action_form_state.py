@@ -365,6 +365,12 @@ def superseded_restart_forms(
         status_gen = int(status_gen) if status_gen is not None and str(status_gen).strip() else None
     except (TypeError, ValueError):
         status_gen = None
+    if status_gen is not None and live_generation is not None and status_gen > int(live_generation):
+        # The durable status file outlives the daemon, whose generation counter
+        # restarts at 1. A status newer than the live Flask belongs to an earlier
+        # daemon lifetime, so its generation says nothing about current cards
+        # (it locked every fresh card as "Flask restarted" before any click).
+        status_gen = None
     terminal = state in _RESTART_TERMINAL_STATES and state != "healthy"
     healthy = state == "healthy"
     rows = conn.execute(

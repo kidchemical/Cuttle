@@ -38,12 +38,6 @@ _MODEL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 def dsh_argv() -> Optional[List[str]]:
     """Return argv prefix that launches dsh without a ``.cmd`` shim when possible."""
-    from api.agent_harness.cli_paths import cli_path_override
-
-    configured, override = cli_path_override("deepseek")
-    if configured:
-        return [override] if override else None
-
     found = which_preferring_native(("dsh",), env_var="DSH_CLI_PATH")
     if not found:
         return None

@@ -1,0 +1,52 @@
+/* Agent review on the Git surfaces (CuttleAgentReview): Pending Changes
+ * badges and row actions, diff-modal Keep / Undo, and the confirm dialog. */
+:root { --review-keep: #2ea043; --review-undo: #f85149; }
+
+.pending-changes-review-chip { flex-shrink: 0; height: 24px; padding: 0 9px; margin-right: 6px; border: 1px solid color-mix(in srgb, var(--accent-color) 55%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--accent-color) 14%, transparent); color: var(--accent-color); font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.pending-changes-review-chip:hover { background: color-mix(in srgb, var(--accent-color) 24%, transparent); }
+.pending-changes-review-chip[hidden] { display: none; }
+.pending-changes-review-badge { flex-shrink: 0; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--accent-color) 16%, transparent); color: var(--accent-color); font-size: 10px; font-weight: 600; line-height: 16px; }
+.pending-changes-review-badge.is-live { animation: cuttle-review-pulse 1.6s ease-in-out infinite; }
+.pending-changes-review-keep, .pending-changes-review-undo { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--border-color); border-radius: 6px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 14px; }
+.pending-changes-review-keep:hover { color: #fff; background: var(--review-keep); border-color: var(--review-keep); }
+.pending-changes-review-undo:hover { color: var(--review-undo); border-color: var(--review-undo); background: color-mix(in srgb, var(--review-undo) 12%, transparent); }
+@keyframes cuttle-review-pulse { 50% { opacity: 0.45; } }
+
+.pending-diff-source-toggle[hidden], .pending-diff-review-actions[hidden], [data-diff="viewToggle"][hidden] { display: none; }
+.pending-diff-review-actions { display: inline-flex; gap: 6px; }
+.pending-diff-review-btn { height: 24px; padding: 0 10px; border: 1px solid var(--border-color); border-radius: 6px; background: transparent; color: var(--text-primary); font-size: 12px; font-weight: 600; cursor: pointer; }
+.pending-diff-review-btn.is-keep { background: var(--review-keep); border-color: var(--review-keep); color: #fff; }
+.pending-diff-review-btn.is-keep:hover { filter: brightness(1.1); }
+.pending-diff-review-btn.is-undo:hover { color: var(--review-undo); border-color: var(--review-undo); }
+.pending-diff-hunk.is-review .pending-diff-hunk-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pending-diff-hunk-actions { display: inline-flex; gap: 6px; font-family: system-ui, sans-serif; }
+.pending-diff-hunk-actions .pending-diff-review-btn { height: 22px; padding: 0 9px; font-size: 11px; }
+.pending-diff-review-live, .pending-diff-review-note { margin: 0 0 8px; padding: 6px 10px; border-radius: 6px; font-size: 12px; color: var(--text-secondary); background: color-mix(in srgb, var(--accent-color) 10%, transparent); }
+
+.cuttle-review-dialog {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    box-sizing: border-box;
+    width: min(420px, calc(100vw - 32px));
+    max-width: none;
+    max-height: 90vh;
+    max-height: 90dvh;
+    overflow-y: auto;
+    padding: 32px 28px 28px;
+    border: 1px solid color-mix(in srgb, var(--accent-color, #8b5cf6) 30%, transparent);
+    border-radius: 20px;
+    background: linear-gradient(135deg,
+        color-mix(in srgb, var(--bg-secondary, #1e1e2e) 98%, transparent),
+        color-mix(in srgb, var(--bg-primary, #141423) 98%, transparent));
+    color: var(--text-primary, #e2e8f0);
+    box-shadow: 0 20px 60px color-mix(in srgb, var(--accent-color, #8b5cf6) 30%, transparent);
+}
+.cuttle-review-dialog::backdrop { background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(5px); }
+.cuttle-review-dialog h3 { margin: 0 0 12px; font-size: 18px; }
+.cuttle-review-dialog p { margin: 0 0 16px; line-height: 1.5; font-size: 13px; color: var(--text-secondary); }
+.cuttle-review-dialog ul { margin: 0 0 20px; overflow-wrap: anywhere; padding-left: 18px; font: 12px ui-monospace, monospace; color: var(--text-primary); }
+.cuttle-review-dialog-remember { display: flex; align-items: center; gap: 6px; margin-bottom: 24px; font-size: 12px; color: var(--text-secondary); }
+.cuttle-review-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.cuttle-review-dialog-actions button { min-height: 40px; padding: 8px 16px; border: 1px solid var(--border-color); border-radius: 10px; background: transparent; color: var(--text-primary); cursor: pointer; }
+.cuttle-review-dialog-actions button.is-primary { background: var(--accent-color, #8b5cf6); border-color: var(--accent-color, #8b5cf6); color: #fff; font-weight: 600; }

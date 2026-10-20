@@ -130,6 +130,7 @@ function snapshotLayoutTree(nodeEl) {
             id: nodeEl.dataset.leafId || newLeafId(),
             page,
             flex: nodeEl.style.flex || '',
+            railCollapsed: !!state?.railCollapsed,
         };
         if (state && state.paneCollapsed) entry.collapsed = true;
         if (entry.collapsed && nodeEl.dataset.restoreEdge) entry.restoreEdge = nodeEl.dataset.restoreEdge;
@@ -179,6 +180,7 @@ function flattenLayoutLeaves(node, out = []) {
             flex: node.flex || '',
             chat: node.chat,
             terminal: node.terminal,
+            railCollapsed: node.railCollapsed,
         });
         return out;
     }
@@ -209,6 +211,7 @@ function flatLayoutToTree(columns, orientation) {
             flex: c.flex || '',
             chat: c.chat,
             terminal: c.terminal,
+            railCollapsed: c.railCollapsed,
         };
     }
     return {
@@ -223,6 +226,7 @@ function flatLayoutToTree(columns, orientation) {
             flex: (c && c.flex) || '',
             chat: c && c.chat,
             terminal: c && c.terminal,
+            railCollapsed: c && c.railCollapsed,
         })),
     };
 }
@@ -828,26 +832,7 @@ function setState(colIdx, page) {
 }
 
 function applyRailCollapsed(colIdx, collapsed) {
-    const column = getColumnEl(colIdx);
-    if (!column) return;
-    const state = getState(colIdx);
-    state.railCollapsed = !!collapsed;
-    column.classList.toggle('rail-collapsed', state.railCollapsed);
-    const toggle = column.querySelector('.rail-panel-toggle');
-    if (toggle) {
-        toggle.setAttribute(
-            'data-tooltip',
-            state.railCollapsed ? 'Show sidebar' : 'Collapse sidebar'
-        );
-        toggle.setAttribute(
-            'aria-label',
-            state.railCollapsed ? 'Show sidebar' : 'Collapse sidebar'
-        );
-    }
-    if (colIdx === 0) {
-        railCollapsed = state.railCollapsed;
-        sessionStorage.setItem(STORAGE_RAIL, state.railCollapsed ? 'true' : 'false');
-    }
+    rail.applyCollapsed(colIdx, collapsed);
 }
 
 // ── Get the current live frame for a column ───────────────────
@@ -910,6 +895,12 @@ function broadcastToFrames(message, skipWindow) {
 // CuttleShellRail; app_shell wires it and keeps the pane-mount re-apply calls.
 const rail = CuttleShellRail.create({
     win: window, doc: document, getColumnEl, broadcastToFrames,
+    getState, persistSplitLayout,
+    onRailCollapsed: (idx, collapsed) => {
+        if (idx !== 0) return;
+        railCollapsed = collapsed;
+        sessionStorage.setItem(STORAGE_RAIL, String(collapsed));
+    },
 });
 // Capability for shell_mobile.js's APK-update rail button: it is created by the
 // mobile owner but must not fire while the shell is editing the rail or
@@ -1310,6 +1301,7 @@ function collapseSplitGroupIfNeeded(groupEl) {
                 built.clone.dataset.column = String(provisionalIdx);
                 setState(provisionalIdx, page);
                 mountNewLeafFrame(provisionalIdx, built.frame, built.mainEl, page);
+                applyRailCollapsed(provisionalIdx, !!st?.railCollapsed);
                 setupColumnListeners(provisionalIdx, built.clone);
                 rail.setupLayoutDragDrop(built.clone);
                 rail.applyLayoutToColumn(built.clone);
@@ -2190,6 +2182,7 @@ function mountLayoutTree(node, parentEl, opts) {
             rail.applyLayoutToColumn(col);
         }
         if (col && node.flex) col.style.flex = node.flex;
+        if (col) rail.restoreCollapsed(col, node);
         if (col && node.collapsed) setPaneCollapsed(col, true, { quiet: true, restoreEdge: node.restoreEdge });
         return;
     }
@@ -2413,7 +2406,7 @@ function setupColumnListeners(colIdx, colEl) {
     const els = getColumnElements(colEl);
     if (!els) return;
 
-    const { column, toggle } = els;
+    const { column } = els;
     ensureRailPaneGrip(column);
     rail.ensureRailEditScrim(column);
     observeRailHeight(column);
@@ -2496,20 +2489,9 @@ function setupColumnListeners(colIdx, colEl) {
         handleAccountClick(idx);
     });
 
-    // Sidebar toggle: collapse/expand the left blade (icon rail).
-    toggle?.addEventListener('click', () => {
-        if (rail.interactionLocked()) return;
-        const idx = parseInt(column.dataset.column, 10);
-        const state = getState(idx);
-        applyRailCollapsed(idx, !state.railCollapsed);
-    });
+    rail.bindCollapseControls(column);
     rail.setupRailCustomize(column);
     setupPaneReorder(column);
-
-    column.querySelector('.rail-expand-tab')?.addEventListener('click', () => {
-        const idx = parseInt(column.dataset.column, 10);
-        applyRailCollapsed(idx, false);
-    });
 }
 
 // Run setup for column 0 (existing)
@@ -3969,7 +3951,7 @@ function applyShellTheme(theme) {
 }
 
 function initializeShellTheme() {
-    const saved = localStorage.getItem('theme') || 'dark';
+    const saved = window.CuttleUiBoot.currentTheme();
     applyShellTheme(saved);
 }
 

@@ -46,13 +46,15 @@ register_flag(FlagSpec(
 register_flag(FlagSpec(
     id="router_selection_chip", label="Router selection chip",
     description="Show the selected agent and routing reason as a compact reply chip, including fallback and escalation.",
-    default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
+    # Default on: low-risk UI over a shipped capability.
+    default=True, category="chat", risk="low", since="0.0.0", needs_restart=False,
 ))
 
 register_flag(FlagSpec(
     id="subagent_fleet_cards", label="Sub-agent fleet cards",
     description="Show one card per sub-agent child chat under the parent reply: who ran it, live status, outcome (done, failed, cancelled, lost) and a one-line result.",
-    default=False, category="agents", risk="low", since="0.0.0", needs_restart=False,
+    # Default on: low-risk UI over a shipped capability.
+    default=True, category="agents", risk="low", since="0.0.0", needs_restart=False,
 ))
 
 register_flag(FlagSpec(
@@ -65,7 +67,8 @@ register_flag(FlagSpec(
 register_flag(FlagSpec(
     id="composer_attach_button", label="Composer attach button",
     description="Show the paperclip button in the chat composer for attaching an image or PDF (described to the agent by the vision pre-pass). It is the only way to attach files from chat.",
-    default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
+    # Default on: low-risk UI over a shipped capability.
+    default=True, category="chat", risk="low", since="0.0.0", needs_restart=False,
 ))
 
 register_flag(FlagSpec(
@@ -98,8 +101,11 @@ register_flag(FlagSpec(
 register_flag(FlagSpec(
     id="voice_server_stt", label="Voice: server transcription",
     description="Voice mode records continuously and transcribes each phrase on the server (OpenAI) instead of the browser speech recognizer. Removes the Android chime between pauses and works in browsers without Web Speech; phrases appear about a second after you stop talking.",
-    default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
-    exclusive_group="voice_input",
+    # Default on: the only voice input that works in the Electron app, whose
+    # Chromium has no browser speech backend. Without an OpenAI key, voice mode
+    # falls back to browser speech. Not in `voice_input`: Live and Realtime are
+    # conversation engines that take precedence when chosen in Voice settings.
+    default=True, category="chat", risk="low", since="0.0.0", needs_restart=False,
 ))
 
 register_flag(FlagSpec(
@@ -117,6 +123,14 @@ register_flag(FlagSpec(
 register_flag(FlagSpec(
     id="ide", label="IDE",
     description="A Cursor-style code editor in Apps → IDE: Monaco editing of registered projects with explorer, tabs, quick open, find in files, source control diffs, an integrated terminal, and an AI chat panel bound to the project. Also adds an Editor button to file diffs.",
+    # Default on: a core tool. Paths stay confined to allowlisted workspaces;
+    # the integrated terminal is localhost-only.
+    default=True, category="ui", risk="medium", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="agent_review", label="Agent review",
+    description="Cursor-style review of agent edits: each change an agent makes is tracked per hunk against what you had before the turn, so you can Keep or Undo it. Your own edits are never counted as agent changes. Shared by the IDE, Pending Changes, file diffs and chat.",
     default=False, category="ui", risk="medium", since="0.0.0", needs_restart=False,
 ))
 
@@ -142,7 +156,8 @@ register_flag(
 register_flag(FlagSpec(
     id="agent_feed", label="Agent Feed",
     description="Observe agent tool calls, edits and CLI-exposed thinking across chats. Uses the shared event store.",
-    default=False, category="agents", risk="low", since="0.0.0", needs_restart=False,
+    # Default on: read-only view over agent activity.
+    default=True, category="agents", risk="low", since="0.0.0", needs_restart=False,
 ))
 
 register_flag(FlagSpec(
@@ -158,5 +173,6 @@ register_flag(FlagSpec(
 register_flag(FlagSpec(
     id="worktrees", label="Worktrees",
     description="Run a chat in its own git worktree and branch instead of the shared checkout, so parallel chats cannot fight over one working tree. Default worktrees live under the Cuttle home; creating and removing one is a deliberate action.",
-    default=False, category="agents", risk="medium", since="0.0.0", needs_restart=False,
+    # Default on: only offers the option; each worktree is still created on purpose.
+    default=True, category="agents", risk="medium", since="0.0.0", needs_restart=False,
 ))

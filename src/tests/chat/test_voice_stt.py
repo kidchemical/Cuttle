@@ -59,9 +59,11 @@ def _post(client, data=b"OggS-audio", **form):
     return client.post("/api/voice-stt/transcribe", data=body, content_type="multipart/form-data")
 
 
-def test_flag_registered_default_off():
+def test_flag_registered_default_on_and_compatible_with_conversation_engines():
+    # Default on: the only voice input that works in the Electron app.
     spec = flags.get_flag("voice_server_stt")
-    assert spec is not None and spec.default is False
+    assert spec is not None and spec.default is True
+    assert flags.incompatible_flags("voice_server_stt") == []
 
 
 def test_clean_transcript_drops_short_silence_hallucinations():
@@ -92,8 +94,19 @@ def test_transcribe_falls_back_then_fails_closed(fake):
 
 
 def test_route_disabled_while_flag_off(client):
+    flags.set_enabled("voice_server_stt", False)
     r = _post(client)
     assert r.status_code == 200 and r.json["disabled"] is True
+
+
+def test_status_reports_whether_openai_key_is_configured(client, monkeypatch):
+    # Voice mode falls back to browser speech when no key is configured.
+    monkeypatch.setattr(voice_stt, "configured", lambda: False)
+    r = client.get("/api/voice-stt/status")
+    assert r.status_code == 200
+    assert r.json == {"success": True, "enabled": True, "configured": False}
+    monkeypatch.setattr(voice_stt, "configured", lambda: True)
+    assert client.get("/api/voice-stt/status").json["configured"] is True
 
 
 def test_route_transcribes_upload(client, fake):

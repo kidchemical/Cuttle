@@ -435,6 +435,21 @@ surfaces: Achievements uses `/achievements_page.html` (page blueprint in
 stashed App in the shell. New features generally start experimental; surface
 selection and exceptions are documented in `.cuttle/docs/experimental-features.md`.
 
+**Agent review (experimental):** `api.agent_review` owns per-hunk Keep / Undo
+of agent edits for every surface. `hunks` is pure (no Cuttle imports);
+`service` owns the persistent review state (`<home>/agent_review/`), folding
+user edits into baselines, and the Undo file writes; `routes` / `__main__` are
+transport. Inputs are hooks, not polling: `agent_harness.kernel` (turn
+start/finish over the `agent_events` snapshot trees) and
+`agent_harness.activity` (native edits, step snapshots). Surfaces (IDE,
+Pending Changes, diff modal, chat) read `/api/agent-review/*` and never keep
+their own copy. In the IDE, `CuttleIdeReview` (controller) over
+`CuttleIdeReviewModel` (pure) owns the stream, Keep/Undo and review bar;
+`ide_editor.js` `setReview` renders hunks; `ide_page.js` only wires it. The
+Git surfaces share `CuttleAgentReview` (`js/git/agent_review_client.js`):
+the Pending Changes strip and diff modal call it for badges, Keep/Undo and the
+commit guard (policy setting via `settings_routes` → `agent_review.service`). Runbook: `.cuttle/docs/experimental-features.md` (Agent review).
+
 **IDE (experimental):** `api.ide.service` owns workspace resolution (registered
 projects/checkouts via the Git allowlist), path confinement, atomic etag-checked
 writes, search/replace and committed content; `api.ide.routes` is owner-only
@@ -487,7 +502,7 @@ singleton, DOM, frames, and persistence effects.
 |---|---|---|
 | `shell/shell_panes.js` (`CuttleShellPanes`) | pane lifecycle: frame creation, navigation/back-stack, history, teardown, cross-pane hubs (5B) | pane maps (`columnState`, `paneSessionByColumn`), layout persistence |
 | `shell/shell_spaces.js` (`CuttleShellSpaces`) over `spaces/*` | Spaces tab-strip UI, drag/drop, group menus (5C) | singleton, frame fan-out, persistence |
-| `shell/shell_rail.js` (`CuttleShellRail`) | rail customization, apps list, edit mode, jobs/mesh chip split (5E) | `getAppsList` global delegate, pane-mount re-apply |
+| `shell/shell_rail.js` (`CuttleShellRail`) | rail customization, apps list, edit mode, jobs/mesh chip split (5E), per-viewport collapse controls and restoration | `getAppsList` global delegate, pane-mount re-apply; layout leaves serialize `railCollapsed` for independent Space/workspace restore |
 | `shell/shell_electron.js` (`CuttleShellElectron`) | Electron titlebar chrome, zoom HUD + per-frame zoom binder (5F) | zoom postMessage forwarding, space-menu hide scheduling |
 | `shell/shell_updates.js` (`CuttleShellUpdates`) over `shell/desktop_update_policy.js` (`updatePlan`, pure) and `api.updates` | the Cuttle updates modal: channel snapshot (`/api/settings/updates`), titlebar Update button, pick → confirm → apply (release download, checkout fast-forward via `/api/workers/self-update`, packaged shell), restart prompt; opened by `cuttle-open-updates` postMessage | nothing (`shell_electron` reports desktop config / mesh rev / asar offer) |
 | `shell/shell_mobile.js` | mobile-client detection, LAN APK update rail/modal, SSH approval modal (5F) | shared click handler, account-panel sync, frame-retry spine |
@@ -576,8 +591,7 @@ For harnesses, integrations, surfaces, or agent operations, also read:
 - Action-form recovery: HMAC on persisted specs (`action_forms` / `project_actions`).
 - Electron sandbox: no automatic `--no-sandbox`.
 
-Host-local agent executable/wrapper overrides are owned by
-`api.agent_harness.cli_paths`; each bundled discovery function consults that
-owner before its legacy environment/install discovery. Settings → Agents and
-`/api/settings/agent-adapters` configure the host-local `agent_cli_paths` key.
-Wrapper contract and rollout rationale: [Agent CLI paths](../../.cuttle/docs/agent-cli-paths.md).
+Linux CLI resource limits are owned by `api.agent_harness.resource_scope`,
+attached through `scripts.utilities.agent_process.attach_to_chat_run`.
+This optional machine-local policy is disabled by default. Configuration and
+platform support: [Agent resource limits](../../.cuttle/docs/agent-resource-limits.md).

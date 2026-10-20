@@ -68,7 +68,7 @@
     let projectionUserSet = false;
     let camSpeed = 1;
     let sweet = {
-        enabled: false,
+        enabled: true,
         kind: 'bang',
         shape: 'cube',
         scoreMin: 70,

@@ -19,11 +19,52 @@
         const getColumnEl = host.getColumnEl;
         const broadcastToFrames = host.broadcastToFrames;
         const fetchImpl = (url, opts) => win.fetch(url, opts);
+        const collapseBindings = new WeakSet();
+
+        // Collapse belongs to each viewport, independently of shared app pins.
+        // The shell supplies its pane-state map and layout persistence boundary.
+        function applyCollapsed(colIdx, collapsed) {
+            const column = getColumnEl(colIdx);
+            if (!column) return;
+            const state = host.getState(colIdx);
+            state.railCollapsed = !!collapsed;
+            column.classList.toggle('rail-collapsed', state.railCollapsed);
+            const toggle = column.querySelector('.rail-panel-toggle');
+            const label = state.railCollapsed ? 'Show sidebar' : 'Collapse sidebar';
+            toggle?.setAttribute('data-tooltip', label);
+            toggle?.setAttribute('aria-label', label);
+            toggle?.setAttribute('aria-expanded', String(!state.railCollapsed));
+            host.onRailCollapsed?.(colIdx, state.railCollapsed);
+        }
+
+        function restoreCollapsed(column, node) {
+            // Old layouts have no preference. Use the device default rather
+            // than inheriting the previously active Space's column-0 state.
+            const collapsed = typeof node.railCollapsed === 'boolean'
+                ? node.railCollapsed : !!win.matchMedia?.('(max-width: 768px)').matches;
+            applyCollapsed(Number(column.dataset.column), collapsed);
+        }
+
+        function bindCollapseControls(column) {
+            if (collapseBindings.has(column)) return;
+            collapseBindings.add(column);
+            column.querySelector('.rail-panel-toggle')?.addEventListener('click', () => {
+                if (interactionLocked()) return;
+                const idx = Number(column.dataset.column);
+                applyCollapsed(idx, !host.getState(idx).railCollapsed);
+                host.persistSplitLayout();
+            });
+            column.querySelector('.rail-expand-tab')?.addEventListener('click', () => {
+                applyCollapsed(Number(column.dataset.column), false);
+                host.persistSplitLayout();
+            });
+        }
 
         // ── Default UI layout order (used when no saved layout) ─────────
         // Must list every `.rail-item[data-id]` in the main rail, in canonical order (matches app_shell.html).
         const CANONICAL_RAIL_ITEM_ORDER = [
             'nav-chat',
+            'nav-ide',
             'nav-editor',
             'nav-git',
             'nav-jobs',
@@ -33,7 +74,6 @@
             'nav-agent-feed',
             'nav-gizmos',
             'nav-test-lab',
-            'nav-ide',
             'nav-projects',
             'nav-apps',
         ];
@@ -47,8 +87,8 @@
         // not page apps, but the Apps grid still lists them so they can be re-pinned.
         const HIDEABLE_FOOTER_IDS = new Set(['nav-workspace']);
         // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-        const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-ide', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
-        // Bump when defaults change; saved layouts below this version get DEFAULT_RAIL_HIDDEN merged in once.
+        const DEFAULT_RAIL_HIDDEN = ['nav-editor', 'nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
+        // Bump only for saved-layout migrations; fresh-install defaults do not migrate user pins.
         const RAIL_LAYOUT_VERSION = 11;
 
         const DEFAULT_LAYOUT = {
@@ -750,6 +790,9 @@
         });
 
         return {
+            applyCollapsed,
+            restoreCollapsed,
+            bindCollapseControls,
             // Layout + persistence.
             applyLayoutToColumn,
             applyLayoutToAllColumns,

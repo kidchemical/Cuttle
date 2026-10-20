@@ -30,12 +30,6 @@ from scripts.utilities.agent_process import (
 
 
 def antigravity_executable() -> Optional[str]:
-    from api.agent_harness.cli_paths import cli_path_override
-
-    configured, override = cli_path_override("antigravity")
-    if configured:
-        return override
-
     configured = (os.environ.get("AGY_CLI_PATH") or "").strip()
     if configured and os.path.isfile(configured):
         return configured

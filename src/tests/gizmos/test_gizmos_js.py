@@ -190,7 +190,7 @@ def test_shell_loads_gizmos_after_app_shell():
 def test_gizmos_app_starts_stashed_and_migrates_once():
     source = (WEB / "js" / "shell" / "shell_rail.js").read_text(encoding="utf-8")
     assert "'nav-gizmos'" in source.split("const CANONICAL_RAIL_ITEM_ORDER")[1].split("];")[0]
-    assert "const DEFAULT_RAIL_HIDDEN = ['nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-ide', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];" in source
+    assert "'nav-gizmos'" in source.split("const DEFAULT_RAIL_HIDDEN =")[1].split(";")[0]
     assert "const RAIL_LAYOUT_VERSION = 11;" in source
     start = source.index("function migrateUILayout(saved)")
     end = source.index("\n        }\n", start) + len("\n        }\n")

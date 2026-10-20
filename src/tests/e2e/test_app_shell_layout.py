@@ -154,8 +154,8 @@ class ShellWorld:
                       body=json.dumps(data))
 
 
-def _open(browser, static_server, world, seed=None):
-    context = browser.new_context(viewport={"width": 1280, "height": 800})
+def _open(browser, static_server, world, seed=None, touch=False):
+    context = browser.new_context(viewport={"width": 1280, "height": 800}, has_touch=touch)
     blocked = apply_request_guard(context, static_server)
     # The static fixture serves src/web/ as root while the live server also
     # serves src/img/ at /img/. Serve the REAL mascot bytes so the rail
@@ -432,6 +432,77 @@ def test_close_nested_pane_via_real_ui(browser, static_server):
                         "panes POST after close")
         _assert_blocked_api_free(blocked)
         assert errors == [], errors
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize('touch', [False, True], ids=['mouse', 'touch'])
+def test_rail_toggle_is_one_click_and_each_space_restores_its_own_state(browser, static_server, touch):
+    world = ShellWorld()
+    context, page, errors, blocked = _open(browser, static_server, world, seed=V1_FLAT, touch=touch)
+    try:
+        _load_shell(page, static_server)
+        page.wait_for_function("document.querySelectorAll('.split-column').length === 2")
+        first = page.locator('.split-column').nth(0)
+        second = page.locator('.split-column').nth(1)
+        # Repeated column setup must never make a single gesture toggle twice.
+        page.evaluate("rail.bindCollapseControls(getColumnEl(0))")
+        def activate(locator):
+            locator.tap() if touch else locator.click()
+        activate(first.locator('.rail-panel-toggle'))
+        assert 'rail-collapsed' in first.get_attribute('class')
+        assert 'rail-collapsed' not in second.get_attribute('class')
+        activate(first.locator('.rail-expand-tab'))
+        assert 'rail-collapsed' not in first.get_attribute('class')
+        activate(first.locator('.rail-panel-toggle'))
+        assert _snapshot(page)['children'][0]['railCollapsed'] is True
+        saved = json.loads(page.evaluate(f"localStorage.getItem('{LAYOUT_KEY}')"))
+        assert saved['root']['children'][0]['railCollapsed'] is True
+        assert saved['root']['children'][1]['railCollapsed'] is False
+        first_space = page.evaluate('() => spacesState.active')
+        _electron_titlebar(page)
+        page.locator('#shellSpacesAdd').click()
+        assert 'rail-collapsed' not in page.locator('.split-column').first.get_attribute('class')
+        new_space = page.evaluate('() => spacesState.active')
+        page.locator(f".shell-space-tab[data-space-id='{first_space}']").click()
+        assert 'rail-collapsed' in page.locator('.split-column').nth(0).get_attribute('class')
+        assert 'rail-collapsed' not in page.locator('.split-column').nth(1).get_attribute('class')
+        activate(page.locator('.split-column').nth(1).locator('.rail-panel-toggle'))
+        page.reload(wait_until='domcontentloaded')
+        page.wait_for_function("typeof window.snapshotLayoutTree === 'function'")
+        assert 'rail-collapsed' in page.locator('.split-column').nth(0).get_attribute('class')
+        assert 'rail-collapsed' in page.locator('.split-column').nth(1).get_attribute('class')
+        _electron_titlebar(page)
+        page.locator(f".shell-space-tab[data-space-id='{new_space}']").click()
+        assert 'rail-collapsed' not in page.locator('.split-column').first.get_attribute('class')
+        assert not errors
+        _assert_blocked_api_free(blocked)
+    finally:
+        context.close()
+
+
+def test_mobile_rail_taps_restore_explicit_expanded_preference(browser, static_server):
+    world = ShellWorld()
+    seed = {'version': 2, 'root': {'type': 'leaf', 'id': 'mobile',
+                                 'page': '/chat_page.html', 'railCollapsed': False}}
+    context, page, errors, blocked = _open(browser, static_server, world, seed=seed, touch=True)
+    try:
+        page.set_viewport_size({'width': 390, 'height': 844})
+        _load_shell(page, static_server)
+        column = page.locator('.split-column').first
+        assert 'rail-collapsed' not in column.get_attribute('class')
+        column.locator('.rail-panel-toggle').tap()
+        assert 'rail-collapsed' in column.get_attribute('class')
+        page.reload(wait_until='domcontentloaded')
+        page.wait_for_function("typeof window.snapshotLayoutTree === 'function'")
+        assert 'rail-collapsed' in column.get_attribute('class')
+        column.locator('.rail-expand-tab').tap()
+        assert 'rail-collapsed' not in column.get_attribute('class')
+        page.reload(wait_until='domcontentloaded')
+        page.wait_for_function("typeof window.snapshotLayoutTree === 'function'")
+        assert 'rail-collapsed' not in column.get_attribute('class')
+        assert not errors
+        _assert_blocked_api_free(blocked)
     finally:
         context.close()
 

@@ -32,9 +32,6 @@ class AgentWorld(IsolatedAPI):
         self.fail_save = False
         self.fail_load = False
         self.subagents = {}
-        self.cli_paths = {'missing': {'path': '', 'env_var': 'MISSING_CLI_PATH', 'env_path': '', 'error': ''}}
-        self.path_saves = []
-        self.fail_path_save = False
         self.prompts = {'global': '', 'agents': {}}
         self.processor = {'enabled': False, 'prompt': 'Give me a TLDR', 'mode': 'append', 'chain': []}
         self.executor_targets = [
@@ -97,16 +94,8 @@ class AgentWorld(IsolatedAPI):
             if route.request.method == "POST":
                 body = json.loads(route.request.post_data)
                 self.subagents.update(body.get("subagents", {}))
-                if 'cli_paths' in body:
-                    self.path_saves.append(body['cli_paths'])
-                    if self.fail_path_save:
-                        route.fulfill(status=400, content_type='application/json',
-                                      body=json.dumps({'success': False, 'error': 'Executable does not exist'}))
-                        return
-                    for agent, path in body['cli_paths'].items():
-                        self.cli_paths[agent]['path'] = path
             data = {"success": True, "defaults": {}, "steer": {}, "subagents": self.subagents,
-                    "cli_paths": self.cli_paths, "system_prompts": self.prompts}
+                    "system_prompts": self.prompts}
         elif path == "/api/settings/starred-slash":
             if route.request.method == "POST":
                 body = json.loads(route.request.post_data)
@@ -480,35 +469,6 @@ def test_dropin_declarations_render_as_text_on_phone(browser, static_server, mon
         expect(detail).to_contain_text('Declared SHA-256 files verified.')
         expect(detail).to_contain_text('<img src=x onerror=alert(1)>')
         assert detail.locator('img[src=x]').count() == 0
-        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
-    finally:
-        page.close()
-
-
-@pytest.mark.parametrize('width', [390, 1280])
-def test_missing_agent_wrapper_path_save_error_and_reset(browser, static_server, width):
-    world = AgentWorld()
-    page = open_settings(browser, static_server, world, width=width)
-    try:
-        card = page.locator('.agent-card[data-agent-id="missing"]')
-        card.locator('.agent-card-head').click()
-        path = card.get_by_role('textbox', name='CLI executable or wrapper', exact=False)
-        expect(path).to_be_visible()
-        path.fill('/home/user/wrappers/agent sandbox')
-        card.get_by_role('button', name='Save path', exact=True).click()
-        expect(card.locator('.agent-cli-path').get_by_role('status')).to_contain_text('Path saved for new launches.')
-        assert world.path_saves[-1] == {'missing': '/home/user/wrappers/agent sandbox'}
-        world.fail_path_save = True
-        path.fill('/missing/wrapper')
-        card.get_by_role('button', name='Save path', exact=True).click()
-        expect(card.locator('.agent-cli-path').get_by_role('status')).to_contain_text('Executable does not exist')
-        expect(path).to_have_value('/missing/wrapper')
-        expect(path).to_be_enabled()
-        world.fail_path_save = False
-        card.get_by_role('button', name='Use default', exact=True).click()
-        expect(card.locator('.agent-cli-path').get_by_role('status')).to_contain_text('Default discovery restored.')
-        expect(path).to_have_value('')
-        assert world.path_saves[-1] == {'missing': ''}
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
     finally:
         page.close()

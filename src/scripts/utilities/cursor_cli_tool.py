@@ -112,11 +112,6 @@ def _resolve_cursor_agent_argv() -> Optional[List[str]]:
     then arrive at the agent as a cut-off first line. Spawning ``node.exe`` +
     ``index.js`` directly preserves the full prompt through CreateProcess.
     """
-    from api.agent_harness.cli_paths import cli_path_override
-
-    configured, override = cli_path_override("cursor")
-    if configured:
-        return [override] if override else None
     override = (os.environ.get("CURSOR_CLI_PATH") or "").strip()
     if override:
         return [override] if os.path.isfile(override) else None
@@ -145,11 +140,6 @@ def _resolve_cursor_agent_cli() -> Optional[str]:
     Callers that *spawn* the agent should use ``_resolve_cursor_agent_argv()`` so
     multiline prompts are not truncated by ``agent.cmd``'s ``%*`` forwarding.
     """
-    from api.agent_harness.cli_paths import cli_path_override
-
-    configured, override = cli_path_override("cursor")
-    if configured:
-        return override
     env_override = (os.environ.get("CURSOR_CLI_PATH") or "").strip()
     if env_override:
         return env_override if os.path.isfile(env_override) else None
@@ -793,12 +783,8 @@ def _run_cursor_agent_stream_segment(
         bufsize=1,
         env=_cursor_agent_subprocess_env(),
     )
-    if chat_session_id is not None:
-        try:
-            from api.chat_run_registry import attach_process
-            attach_process(chat_session_id, proc)
-        except Exception:
-            pass
+    from scripts.utilities.agent_process import attach_to_chat_run
+    attach_to_chat_run(chat_session_id, proc)
 
     lines_q: "_queue.Queue" = _queue.Queue()
     stderr_chunks: List[str] = []

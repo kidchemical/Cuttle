@@ -173,9 +173,10 @@ shared settings lock, including concurrent writers. Existing manually edited
 or older conflicting configurations pause every participant until the user
 disables the conflicting choice. No preference is silently discarded.
 
-GPT-Live, Realtime and server transcription share `voice_input`. The standalone
-voice narrator conflicts with Live and Realtime, which own their spoken output.
-Server transcription and the narrator remain compatible. Flags determine
+GPT-Live and Realtime share `voice_input`. The standalone voice narrator
+conflicts with Live and Realtime, which own their spoken output. Server
+transcription is the default-on input engine, compatible with all of them: Live
+or Realtime take precedence when chosen in Voice settings. Flags determine
 availability; Voice settings determine which available conversation engine runs.
 Settings → Voice keeps stock **Spoken replies** (bubble play button and standard
 voice chat) always visible. The 🧪 **Voice conversation** section, with its engine
@@ -219,7 +220,7 @@ The workspace follows Cuttle's theme, including live palette changes and the
 shell video background through glass panels. Monaco and the integrated terminal
 use the same palette; the nested chat receives shell appearance updates too.
 
-Flag `ide` (default off). Open **Apps → IDE** (stashed; pin it to the blade
+Flag `ide` (default on). Open **Apps → IDE** (stashed; pin it to the blade
 bar), or use the pencil in a pending-changes row / **Editor** in a commit file
 diff: text files that still exist open in the IDE at that file; binary and
 deleted files get no button. A pending-changes pencil reuses the IDE already
@@ -249,7 +250,8 @@ registered worktree checkouts — the same allowlist as the Git routes):
   (Ctrl+I). Ctrl+L adds the selection to its composer; Ctrl+K sends an inline
   edit request through that chat's normal send path, so the starred agent or
   the router runs it — there is no second execution route. When the agent
-  writes the file, the IDE shows **Review / Keep / Undo**. Opt-in
+  writes the file, the IDE shows **Review / Keep / Undo** (per hunk, inline,
+  when **Agent review** is enabled; see below). Opt-in
   **✦ Tab** completions use the API completion providers (`api.llm_complete`,
   never a CLI helper chain) and cost a small request per pause while typing.
 
@@ -277,6 +279,116 @@ in `web_chat_api.py`, `ide_page.html`, `css/ide_page.css`, `js/ide/`, the
 `app_shell.js` title), the pending-changes pencil and Editor button in
 `diff_modal.js`, the editor bridge in `shell_panes.js`, and the optional `cwd`
 in `api.web_terminal`.
+
+## Agent review
+
+Flag `agent_review` (default off). Cursor-style **Keep / Undo** of agent
+edits, one hunk at a time. Agents still write to disk immediately; review is
+a layer on top. Shipped: the server core, the IDE, and the Git surfaces
+(Pending Changes strip, diff modal, commit guard). Still to come: the chat
+"Review changes" footer under each turn.
+
+Pending Changes (chat, Git page, IDE Source Control): rows with unreviewed
+agent changes show `✦ n` plus **✓ Keep** / **↺ Undo** (Undo asks first; an
+agent-created file is deleted). The header chip **✦ Review n** opens the first
+one. The diff modal opens such files in **✦ Agent changes** mode: unified hunks
+against the pre-turn baseline (same palette as the unified git diff) with
+Keep / Undo per hunk and Keep file / Undo file; **Working tree** switches to
+the usual HEAD diff. In the IDE's Source Control, reviewed files open in the
+editor with the inline review instead.
+
+Committing: a commit accepts what it commits, so committing files with
+unreviewed agent changes keeps them. Settings → Agents → Advanced → Git →
+**Committing unreviewed agent changes**: **Warn first** (default; the dialog
+lists the files, Cancel aborts, "Don't ask again" switches the setting) or
+**Keep and commit** (no question). Settings key `agent_review_commit_policy`
+(`warn` | `keep`), HTTP `GET/POST /api/settings/agent-review`. Commits made
+outside the strip (terminal, auto-commit) do not touch reviews: those files
+stay listed until kept or undone.
+
+In the IDE (Monaco): agent-added lines are green, removed lines show as red
+read-only blocks above them, and each hunk has **Keep** / **Undo** under it.
+Gutter, scrollbar and minimap mark every hunk. Tabs show `✦ n`, Explorer rows
+and folders get `✦`, the status bar shows the total (click: next change). A
+floating bar shows the totals ("Agent editing…" while a turn is live) with
+previous/next change, Keep/Undo file and Keep/Undo all (Undo all and undoing
+an agent-created file ask first). Shortcuts: `Alt+]` / `Alt+[` next/previous
+change (continues into the next file), `Ctrl+Alt+Y` keep and `Ctrl+Alt+N`
+undo the change at the cursor; all are in the command palette as
+"Agent Review: …". Changes appear live: the page listens to the review
+stream (polling every 4 s if the stream is unavailable), clean open buffers
+follow the agent's writes, and inline review replaces the whole-file
+"Changed on disk" banner for those files. Undo with unsaved edits saves them
+first. The offline plain editor gets the bar, badges and file-level actions
+but no inline hunks.
+
+How it works:
+
+- At turn start the agent_events snapshot (`refs/cuttle/turns/<qid>/start`)
+  gives every file's pre-turn content. A file the agent touches opens a review
+  whose **baseline** is that content; hunks are always baseline ↔ disk.
+- Live: native edit reports (Claude, Codex, OpenCode) and edit-class step
+  snapshots (DeepSeek, Antigravity) update reviews during the turn. Cursor,
+  Muse and Hermes report nothing mid-turn; the start→end turn diff at the end
+  catches their writes (and any shell writes) for every harness.
+- **Keep** moves the baseline (disk untouched). **Undo** rewrites the file on
+  disk (an agent-created file is deleted, an agent-deleted file restored).
+  Undo takes an optional `etag` and refuses a file that changed since it was
+  loaded. A review closes when baseline equals disk.
+- Your own edits never become agent hunks: whenever no agent turn is live,
+  changes since the agent's last write are folded into the baseline
+  (`hunks.fold`). Edits inside or touching an agent hunk stay in that hunk
+  and mark the review `mixed`. Edits made *during* a live turn to a file the
+  agent is editing count as the agent's.
+- Stacked turns keep the earliest unreviewed baseline. Kept files reopen in
+  the same turn only with new changes. Gitignored, binary, >2 MB, symlinked
+  and snapshot-skipped files are not reviewed; non-git workspaces get none.
+- State survives restarts: `<home>/agent_review/agent_review.sqlite3`.
+
+Agent ops (`root` is a registered project path; `--path` is relative to it):
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.agent_review list --root /path/to/project --json
+PYTHONPATH=src .venv/bin/python -m api.agent_review show --root /path/to/project --path src/app.py
+PYTHONPATH=src .venv/bin/python -m api.agent_review keep --root /path/to/project --path src/app.py --hunk <id>
+PYTHONPATH=src .venv/bin/python -m api.agent_review undo --root /path/to/project --path src/app.py
+```
+
+`undo` rewrites files; without `--path` it reverts every reviewed file under
+the root. Agents must confirm with the user (`cuttle_confirm`) before running
+it on files they did not just change.
+
+HTTP (owner-only, 403 while the flag is off): `GET /api/agent-review/files`,
+`GET /api/agent-review/file`, `POST /api/agent-review/keep|undo`
+(`{root, path|paths, hunks?, etag?}`), `GET /api/agent-review/stream` (SSE
+`revision` wake signal; refetch on change), `GET /api/agent-review/revision`
+(polling fallback).
+
+Owners: `api.agent_review.hunks` (pure diff/keep/undo/fold, no Cuttle
+imports), `store` (SQLite), `service` (turn hooks, reconcile, effects),
+`routes` / `__main__` (transport). Hook call sites: `agent_harness/kernel.py`
+(turn start/finish), `agent_harness/activity.py` (native edits, step
+snapshots). IDE client: `ide_review_model.js` (`CuttleIdeReviewModel`, pure
+layout/navigation/index), `ide_review.js` (`CuttleIdeReview` controller: stream,
+Keep/Undo, bar, status), `setReview` in `ide_editor.js` (Monaco zones,
+decorations, widgets); `ide_page.js` only wires call sites. Git surfaces:
+`js/git/agent_review_client.js` (`CuttleAgentReview`: transport, page-wide
+cache + one stream, commit guard, confirm dialog, pure `unifiedHunks`),
+consumed by `pending_changes_panel.js` and `diff_modal.js`; styles
+`css/agent_review.css`. Tests:
+`src/tests/agent_review/`, `src/tests/ide/test_ide_review_js.py`,
+`src/tests/e2e/test_ide_agent_review.py` (inline hunks with
+`CUTTLE_IDE_E2E_MONACO=1`), `src/tests/agent_review/test_git_client_js.py`,
+`src/tests/e2e/test_agent_review_git_surfaces.py`. Teardown: drop the flag row, `api/agent_review/`,
+its blueprint registration in `web_chat_api.py`, the three hook call sites,
+the `paths` return of `agent_events.snapshots.record_step`, the two IDE review
+scripts, `setReview` in `ide_editor.js`, the review call sites in
+`ide_page.js` / `ide_explorer.js` / `ide_api.js`, `#ideReviewBar` /
+`#ideStatusReview`, the agent-review block in `css/ide_page.css`,
+`agent_review_client.js` + `css/agent_review.css` (and their tags in
+`chat_page.html`, `git_graph_page.html`, `ide_page.html`), the review code in
+`pending_changes_panel.js` / `diff_modal.js`, the `/settings/agent-review`
+routes and the Settings → Git control.
 
 ## GPT-Live voice
 
@@ -427,8 +539,16 @@ narrator script and the `narrate*` calls in `chat_voice.js`.
 
 ## Voice server transcription
 
-Flag `voice_server_stt`. Voice mode records with the microphone instead of the
-browser speech recognizer, so Android stops chiming at every pause. Browsers
+Flag `voice_server_stt` (default on). Voice mode records with the microphone
+instead of the browser speech recognizer, so Android stops chiming at every
+pause, and voice works in the Electron app, whose Chromium exposes the speech
+API without a working backend. Engine choice on entering voice mode: an OpenAI
+key (`GET /api/voice-stt/status` → `configured`) selects server transcription;
+without one, browser speech runs (free in Chrome/Edge), and where browser speech
+fails with `network` (Electron) the overlay stops and names the missing key.
+Browser speech stops on unrecoverable errors (`network`, `audio-capture`,
+`language-not-supported`) and after 6 back-to-back sessions that end within a
+second without a word, instead of restarting forever. Browsers
 only allow mic recording on a secure origin, so the audio source is: the Cuttle
 Android app's native recorder (`NativeMic`, works over LAN HTTP, no setup), else
 the browser (HTTPS or localhost only), else the old recognizer — the voice hint

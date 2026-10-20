@@ -1,7 +1,7 @@
 """
 Claude Code CLI integration — non-interactive ``claude -p`` with streaming JSON.
 
-Runs against the real project cwd (no sandbox mirror). Resume uses
+Runs against the project cwd. Resume uses
 ``--resume <session_id>`` from ``claude_cli_session_store``.
 Steerable turns (``steerable=True``) take the prompt as ``--input-format
 stream-json`` on an open stdin, so ``api.agent_harness.steer`` can write
@@ -38,12 +38,6 @@ _STDOUT_LIMIT = 16 * 1024 * 1024
 
 
 def claude_executable() -> Optional[str]:
-    from api.agent_harness.cli_paths import cli_path_override
-
-    configured, override = cli_path_override("claude")
-    if configured:
-        return override
-
     override = (os.getenv("CLAUDE_CLI_PATH") or "").strip()
     if override and os.path.isfile(override):
         return override
@@ -64,24 +58,17 @@ def claude_executable() -> Optional[str]:
 
 
 def claude_cli_health() -> bool:
-    """Legacy health probe through the selected executable; never bypass a wrapper."""
+    """Legacy health probe through normal CLI discovery."""
     import subprocess
-    from api.agent_harness.cli_paths import cli_path_override
-
-    configured, override = cli_path_override("claude")
-    if configured and not override:
-        return False
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     try:
         result = subprocess.run(
-            [override if configured else (claude_executable() or "claude"), "--version"],
+            [claude_executable() or "claude", "--version"],
             env=agent_cli_env(), capture_output=True, text=True, timeout=3,
             creationflags=flags,
         )
         return result.returncode == 0
     except Exception:
-        if configured:
-            return False
         try:
             result = subprocess.run(
                 ["wsl", "which", "claude"], env=agent_cli_env(),
