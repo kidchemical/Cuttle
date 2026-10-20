@@ -50,7 +50,7 @@ process.stdout.write(JSON.stringify(out));
 def result():
     if shutil.which("node") is None:
         pytest.skip("node unavailable")
-    proc = subprocess.run(["node", "-e", HARNESS], capture_output=True, text=True, timeout=30,
+    proc = subprocess.run(["node", "-e", HARNESS], capture_output=True, text=True, encoding="utf-8", timeout=30,
                           env={**os.environ, "MODEL": str(MODEL)})
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)

@@ -36,10 +36,11 @@ def repo(tmp_path, monkeypatch):
     root = tmp_path / "proj"
     root.mkdir()
     _git(root, "init", "-q")
+    _git(root, "config", "core.autocrlf", "false")
     _git(root, "config", "user.name", "T")
     _git(root, "config", "user.email", "t@example.test")
-    (root / "app.py").write_text(ORIGINAL)
-    (root / ".gitignore").write_text("build/\n")
+    (root / "app.py").write_text(ORIGINAL, encoding="utf-8", newline="")
+    (root / ".gitignore").write_text("build/\n", encoding="utf-8", newline="")
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "init")
     return root.resolve()
@@ -65,7 +66,7 @@ def review(repo, path="app.py"):
 
 def test_live_native_edit_is_reviewable_before_the_turn_ends(repo):
     snap = start(repo, "q1")
-    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\nsix\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\nsix\n", encoding="utf-8", newline="")
     service.note_agent_edit("q1", str(repo / "app.py"))
     r = review(repo)
     assert r["live"] is True and r["baseline"] == ORIGINAL and r["hunks"] == 2
@@ -76,7 +77,7 @@ def test_live_native_edit_is_reviewable_before_the_turn_ends(repo):
 
 def test_keep_and_undo_per_hunk_then_review_closes(repo):
     snap = start(repo, "q1")
-    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\nsix\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\nsix\n", encoding="utf-8", newline="")
     end(snap, "q1")
     rename, append = [h["id"] for h in review(repo)["hunk_list"]]
     service.keep(repo, ["app.py"], [rename])
@@ -88,23 +89,54 @@ def test_keep_and_undo_per_hunk_then_review_closes(repo):
     assert review(repo) is None and files(repo) == {}
 
 
+@pytest.mark.parametrize("use_attributes", [False, True], ids=["autocrlf", "gitattributes"])
+def test_crlf_snapshot_baseline_preserves_separate_hunks_and_undo(repo, use_attributes):
+    if use_attributes:
+        (repo / ".gitattributes").write_bytes(b"app.py text eol=crlf\n")
+    else:
+        _git(repo, "config", "core.autocrlf", "true")
+    original = ORIGINAL.replace("\n", "\r\n").encode("utf-8")
+    (repo / "app.py").write_bytes(original)
+    snap = start(repo, "crlf")
+    (repo / "app.py").write_bytes(b"one\r\nTWO\r\nthree\r\nfour\r\nfive\r\nsix\r\n")
+    service.note_agent_edit("crlf", "app.py")
+    r = review(repo)
+    assert r["baseline"].encode("utf-8") == original
+    assert r["hunks"] == 2
+    rename, append = [h["id"] for h in r["hunk_list"]]
+    service.undo(repo, ["app.py"], [append])
+    assert (repo / "app.py").read_bytes() == b"one\r\nTWO\r\nthree\r\nfour\r\nfive\r\n"
+    service.undo(repo, ["app.py"], [rename])
+    assert (repo / "app.py").read_bytes() == original
+    end(snap, "crlf")
+    assert review(repo) is None
+
+
 def test_unreported_writes_are_caught_at_turn_end_ignored_and_preexisting_are_not(repo):
-    (repo / "app.py").write_text(ORIGINAL + "mine\n")  # user's uncommitted edit before the turn
+    (repo / "app.py").write_text(ORIGINAL + "mine\n", encoding="utf-8", newline="")  # user's uncommitted edit before the turn
     snap = start(repo, "q1")
     (repo / "build").mkdir()
-    (repo / "build" / "out.txt").write_text("artifact\n")
-    (repo / "notes.md").write_text("by a shell command\n")
+    (repo / "build" / "out.txt").write_text("artifact\n", encoding="utf-8", newline="")
+    (repo / "notes.md").write_text("by a shell command\n", encoding="utf-8", newline="")
     end(snap, "q1")
     found = files(repo)
     assert set(found) == {"notes.md"} and found["notes.md"]["change"] == "added"
 
 
+def test_failed_checkout_filter_does_not_mark_existing_baseline_absent(repo):
+    (repo / ".gitattributes").write_bytes(b"app.py filter=broken\n")
+    _git(repo, "config", "filter.broken.smudge", "exit 1")
+    _git(repo, "config", "filter.broken.required", "true")
+    assert service._at_tree(str(repo), "HEAD", "app.py") == ("skip", None)
+    assert (repo / "app.py").read_bytes() == ORIGINAL.encode("utf-8")
+
+
 def test_user_edits_between_turns_never_become_agent_hunks(repo):
     snap = start(repo, "q1")
-    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n", encoding="utf-8", newline="")
     end(snap, "q1")
     # The user edits a distant line in their own editor.
-    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nFIVE (mine)\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nFIVE (mine)\n", encoding="utf-8", newline="")
     r = review(repo)
     assert r["hunks"] == 1 and r["hunk_list"][0]["added"] == ["TWO\n"]
     assert r["baseline"] == "one\ntwo\nthree\nfour\nFIVE (mine)\n" and r["mixed"] is False
@@ -115,19 +147,19 @@ def test_user_edits_between_turns_never_become_agent_hunks(repo):
 
 def test_user_edit_inside_an_agent_hunk_stays_in_the_hunk(repo):
     snap = start(repo, "q1")
-    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n", encoding="utf-8", newline="")
     end(snap, "q1")
-    (repo / "app.py").write_text("one\nTWO!!\nthree\nfour\nfive\n")
+    (repo / "app.py").write_text("one\nTWO!!\nthree\nfour\nfive\n", encoding="utf-8", newline="")
     r = review(repo)
     assert r["mixed"] is True and r["hunk_list"][0]["added"] == ["TWO!!\n"]
 
 
 def test_stacked_turns_keep_the_earliest_baseline(repo):
     snap = start(repo, "q1")
-    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n", encoding="utf-8", newline="")
     end(snap, "q1")
     snap = start(repo, "q2")
-    (repo / "app.py").write_text("one\nTWO\nthree\nFOUR\nfive\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nFOUR\nfive\n", encoding="utf-8", newline="")
     service.note_agent_edit("q2", "app.py")
     end(snap, "q2")
     r = review(repo)
@@ -136,11 +168,11 @@ def test_stacked_turns_keep_the_earliest_baseline(repo):
 
 def test_kept_file_mid_turn_reopens_only_with_new_changes(repo):
     snap = start(repo, "q1")
-    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n", encoding="utf-8", newline="")
     service.note_agent_edit("q1", "app.py")
     service.keep(repo, ["app.py"])
     assert review(repo) is None
-    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nFIVE\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nFIVE\n", encoding="utf-8", newline="")
     service.note_agent_edit("q1", "app.py")
     r = review(repo)
     assert r["hunks"] == 1 and r["hunk_list"][0]["added"] == ["FIVE\n"]
@@ -150,7 +182,7 @@ def test_kept_file_mid_turn_reopens_only_with_new_changes(repo):
 
 def test_undo_created_file_deletes_it_and_deleted_file_is_restored(repo):
     snap = start(repo, "q1")
-    (repo / "new.py").write_text("print('hi')\n")
+    (repo / "new.py").write_text("print('hi')\n", encoding="utf-8", newline="")
     (repo / "app.py").unlink()
     end(snap, "q1")
     found = files(repo)
@@ -162,7 +194,7 @@ def test_undo_created_file_deletes_it_and_deleted_file_is_restored(repo):
 
 def test_stale_etag_and_stale_hunk_ids_are_conflicts(repo):
     snap = start(repo, "q1")
-    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n", encoding="utf-8", newline="")
     end(snap, "q1")
     r = review(repo)
     with pytest.raises(service.Conflict):
@@ -183,7 +215,7 @@ def test_paths_cannot_escape_and_unknown_files_are_not_found(repo):
 
 def test_state_survives_restart(repo):
     snap = start(repo, "q1")
-    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n", encoding="utf-8", newline="")
     end(snap, "q1")
     rev = service.revision()
     # A fresh store instance on the same file is what a Flask restart sees.
@@ -193,7 +225,7 @@ def test_state_survives_restart(repo):
 
 def test_step_snapshots_feed_live_paths(repo):
     snap = start(repo, "q1")
-    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n", encoding="utf-8", newline="")
     step = record_step("q1", "tool-1")
     assert step and step["paths"] == ["app.py"]
     service.note_agent_paths("q1", step["paths"])
@@ -204,8 +236,8 @@ def test_step_snapshots_feed_live_paths(repo):
 def test_workspace_subfolder_scopes_paths(repo):
     (repo / "pkg").mkdir()
     snap = start(repo, "q1")
-    (repo / "pkg" / "mod.py").write_text("x = 1\n")
-    (repo / "app.py").write_text("changed\n")
+    (repo / "pkg" / "mod.py").write_text("x = 1\n", encoding="utf-8", newline="")
+    (repo / "app.py").write_text("changed\n", encoding="utf-8", newline="")
     end(snap, "q1")
     sub = service.list_reviews(repo / "pkg")
     assert [f["path"] for f in sub["files"]] == ["mod.py"] and sub["files"][0]["rel_path"] == "pkg/mod.py"
@@ -214,7 +246,7 @@ def test_workspace_subfolder_scopes_paths(repo):
 def test_hooks_are_no_ops_while_flag_is_off(repo):
     flags.set_enabled("agent_review", False)
     snap = start(repo, "q1")
-    (repo / "app.py").write_text("changed\n")
+    (repo / "app.py").write_text("changed\n", encoding="utf-8", newline="")
     end(snap, "q1")
     flags.set_enabled("agent_review", True)
     assert files(repo) == {}
@@ -260,7 +292,7 @@ def test_routes_are_owner_only(http, repo):
 
 def test_routes_list_keep_undo_and_conflict(http, repo, tmp_path):
     snap = start(repo, "q1")
-    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\nsix\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\nsix\n", encoding="utf-8", newline="")
     end(snap, "q1")
     client = http["client"]
     listed = client.get("/api/agent-review/files", query_string={"root": str(repo)}).get_json()
@@ -287,7 +319,7 @@ def test_cli_list_show_keep(repo, monkeypatch, capsys):
     project = {"id": 7, "name": "Demo", "path": str(repo), "available": True}
     monkeypatch.setattr(ide_service, "_registered", lambda: ([project], project))
     snap = start(repo, "q1")
-    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n")
+    (repo / "app.py").write_text("one\nTWO\nthree\nfour\nfive\n", encoding="utf-8", newline="")
     end(snap, "q1")
     assert main(["list", "--root", str(repo), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["files"][0]["path"] == "app.py"
@@ -313,6 +345,6 @@ def test_commit_policy_setting_and_revision_routes(http, repo):
     client.set_cookie("session_token", http["token"])
     before = client.get("/api/agent-review/revision").get_json()["revision"]
     snap = start(repo, "q1")
-    (repo / "app.py").write_text("changed\n")
+    (repo / "app.py").write_text("changed\n", encoding="utf-8", newline="")
     end(snap, "q1")
     assert client.get("/api/agent-review/revision").get_json()["revision"] > before

@@ -127,9 +127,15 @@ def _read(repo_root: str, rel: str) -> Tuple[str, Optional[str], Optional[bytes]
 
 
 def _at_tree(repo_root: str, tree: str, rel: str) -> Tuple[str, Optional[str]]:
-    res = _git(repo_root, "cat-file", "blob", f"{tree}:{rel}")
+    # Snapshot blobs use Git's clean representation. Compare against the
+    # working-tree representation (including autocrlf / eol attributes), just
+    # like the bytes _read sees and Undo must restore.
+    res = _git(repo_root, "cat-file", "--filters", f"{tree}:{rel}")
     if res.returncode:
-        return "absent", None
+        # A failed checkout filter must not make Undo treat an existing file
+        # as newly created (and delete it). Only a missing blob is absent.
+        exists = _git(repo_root, "cat-file", "-e", f"{tree}:{rel}")
+        return ("skip", None) if exists.returncode == 0 else ("absent", None)
     text = _decode(res.stdout)
     return ("skip", None) if text is None else ("ok", text)
 
