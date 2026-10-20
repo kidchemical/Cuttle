@@ -680,6 +680,7 @@ body.compact-shell-page .settings-title {
     margin: 0 0 12px;
 }
 body.compact-shell-page .setting-item {
+    border-bottom: 0;
     gap: 18px;
     padding-block: 14px;
 }
@@ -712,7 +713,6 @@ body.compact-shell-page .setting-control input.setting-input {
 }
 .settings-disclosure {
     margin-block: 12px;
-    border-top: 1px solid var(--border-color);
     padding-top: 8px;
 }
 .settings-disclosure > summary {

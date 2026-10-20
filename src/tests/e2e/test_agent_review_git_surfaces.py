@@ -156,6 +156,15 @@ def test_commit_guard_warns_cancels_then_keeps_and_remembers(agent_turn, page, p
     page.click("[data-pc='commitSubmit']")
     page.wait_for_selector(".cuttle-review-dialog", timeout=8000)
     assert "src/app.py" in page.inner_text(".cuttle-review-dialog")
+    # Page resets must not move the native dialog into the top-left corner.
+    page.add_style_tag(content='* { margin: 0; }')
+    for width in (1300, 390):
+        page.set_viewport_size({"width": width, "height": 900})
+        box = page.locator(".cuttle-review-dialog").bounding_box()
+        assert abs(box["x"] + box["width"] / 2 - width / 2) < 2
+        assert abs(box["y"] + box["height"] / 2 - 450) < 2
+        assert box["width"] <= width - 32
+    page.set_viewport_size({"width": 1300, "height": 900})
     page.click(".cuttle-review-dialog button[value='']")
     page.wait_for_selector(".cuttle-review-dialog", state="detached")
     assert _commits(project) == before and service.list_reviews(project)["files"]

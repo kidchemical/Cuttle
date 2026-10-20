@@ -5956,7 +5956,7 @@ pre.has-code-copy:hover .code-copy-btn,
     font: inherit;
 }
 
-.pending-changes-toggle:hover {
+.pending-changes-header:hover {
     background: color-mix(in srgb, var(--bg-tertiary) 55%, transparent);
 }
 
@@ -6200,27 +6200,6 @@ pre.has-code-copy:hover .code-copy-btn,
     color: #f87171;
     border-color: color-mix(in srgb, #f87171 55%, var(--border-color));
     background: color-mix(in srgb, #f87171 12%, transparent);
-}
-
-.pending-changes-diff-btn {
-    flex-shrink: 0;
-    width: 28px;
-    height: 28px;
-    margin-right: 6px;
-    border: 1px solid var(--border-color, #334155);
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-secondary, #94a3b8);
-    font-size: 0.85rem;
-    font-weight: 700;
-    line-height: 1;
-    cursor: pointer;
-}
-
-.pending-changes-diff-btn:hover {
-    color: var(--text-primary, #e2e8f0);
-    background: color-mix(in srgb, var(--bg-tertiary) 70%, transparent);
-    border-color: color-mix(in srgb, var(--accent-color, #3b82f6) 50%, var(--border-color));
 }
 
 .pending-changes-file {

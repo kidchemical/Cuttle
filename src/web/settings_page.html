@@ -203,9 +203,7 @@
                         </label>
                     </div>
                 </div>
-                <details class="settings-disclosure" id="transitionDetails">
-<summary>Transition speed</summary>
-<div class="setting-item">
+                <div class="setting-item">
                     <div class="setting-label">
                         <strong>Transition Speed</strong><button type="button" class="cuttle-info" data-tooltip="How long the fade lasts when switching pages" aria-label="About Transition Speed">i</button>
                     </div>
@@ -215,7 +213,6 @@
                         <button class="control-button btn-start" onclick="saveUiTransitionMs()"><span class="emoji">💾</span> Save</button>
                     </div>
                 </div>
-</details>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Video Background</strong><button type="button" class="cuttle-info" data-tooltip="Play the wallpaper playlist behind the UI. Off keeps your playlist saved but stops playback." aria-label="About Video Background">i</button>
@@ -993,7 +990,7 @@
             const themeSelect = document.getElementById('themeSelect');
             const currentTheme = window.CuttleUiBoot
                 ? window.CuttleUiBoot.currentTheme()
-                : (localStorage.getItem('theme') || 'dark');
+                : (localStorage.getItem('theme') || 'nord');
             themeSelect.value = currentTheme;
         }
 
@@ -2465,7 +2462,7 @@
         function exportSettings() {
             const settings = {
                 agentName: localStorage.getItem('agentName') || 'Cuttle',
-                theme: localStorage.getItem('theme') || 'dark',
+                theme: window.CuttleUiBoot.currentTheme(),
                 videoBackgroundList: JSON.parse(localStorage.getItem('cuttleVideoBackgroundList') || '[]'),
                 videoBackgroundPlaylists: currentVideoPlaylistState().playlists,
                 videoBackgroundActivePlaylist: currentVideoPlaylistState().active,

@@ -23,12 +23,30 @@
 .pending-diff-hunk-actions .pending-diff-review-btn { height: 22px; padding: 0 9px; font-size: 11px; }
 .pending-diff-review-live, .pending-diff-review-note { margin: 0 0 8px; padding: 6px 10px; border-radius: 6px; font-size: 12px; color: var(--text-secondary); background: color-mix(in srgb, var(--accent-color) 10%, transparent); }
 
-.cuttle-review-dialog { max-width: 460px; padding: 18px 20px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-primary, #111); color: var(--text-primary); box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45); }
-.cuttle-review-dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
-.cuttle-review-dialog h3 { margin: 0 0 8px; font-size: 15px; }
-.cuttle-review-dialog p { margin: 0 0 10px; font-size: 13px; color: var(--text-secondary); }
-.cuttle-review-dialog ul { margin: 0 0 12px; padding-left: 18px; font: 12px ui-monospace, monospace; color: var(--text-primary); }
-.cuttle-review-dialog-remember { display: flex; align-items: center; gap: 6px; margin-bottom: 14px; font-size: 12px; color: var(--text-secondary); }
-.cuttle-review-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.cuttle-review-dialog-actions button { height: 30px; padding: 0 14px; border: 1px solid var(--border-color); border-radius: 7px; background: transparent; color: var(--text-primary); cursor: pointer; }
-.cuttle-review-dialog-actions button.is-primary { background: var(--review-keep); border-color: var(--review-keep); color: #fff; font-weight: 600; }
+.cuttle-review-dialog {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    box-sizing: border-box;
+    width: min(420px, calc(100vw - 32px));
+    max-width: none;
+    max-height: 90vh;
+    max-height: 90dvh;
+    overflow-y: auto;
+    padding: 32px 28px 28px;
+    border: 1px solid color-mix(in srgb, var(--accent-color, #8b5cf6) 30%, transparent);
+    border-radius: 20px;
+    background: linear-gradient(135deg,
+        color-mix(in srgb, var(--bg-secondary, #1e1e2e) 98%, transparent),
+        color-mix(in srgb, var(--bg-primary, #141423) 98%, transparent));
+    color: var(--text-primary, #e2e8f0);
+    box-shadow: 0 20px 60px color-mix(in srgb, var(--accent-color, #8b5cf6) 30%, transparent);
+}
+.cuttle-review-dialog::backdrop { background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(5px); }
+.cuttle-review-dialog h3 { margin: 0 0 12px; font-size: 18px; }
+.cuttle-review-dialog p { margin: 0 0 16px; line-height: 1.5; font-size: 13px; color: var(--text-secondary); }
+.cuttle-review-dialog ul { margin: 0 0 20px; overflow-wrap: anywhere; padding-left: 18px; font: 12px ui-monospace, monospace; color: var(--text-primary); }
+.cuttle-review-dialog-remember { display: flex; align-items: center; gap: 6px; margin-bottom: 24px; font-size: 12px; color: var(--text-secondary); }
+.cuttle-review-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.cuttle-review-dialog-actions button { min-height: 40px; padding: 8px 16px; border: 1px solid var(--border-color); border-radius: 10px; background: transparent; color: var(--text-primary); cursor: pointer; }
+.cuttle-review-dialog-actions button.is-primary { background: var(--accent-color, #8b5cf6); border-color: var(--accent-color, #8b5cf6); color: #fff; font-weight: 600; }

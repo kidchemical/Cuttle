@@ -3951,7 +3951,7 @@ function applyShellTheme(theme) {
 }
 
 function initializeShellTheme() {
-    const saved = localStorage.getItem('theme') || 'dark';
+    const saved = window.CuttleUiBoot.currentTheme();
     applyShellTheme(saved);
 }
 

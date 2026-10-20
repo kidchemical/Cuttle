@@ -1054,9 +1054,6 @@
                             '<button type="button" class="pending-changes-ignore-btn" data-rel-path="'
                             + path + '" title="Add to .gitignore (and untrack if needed)" aria-label="Ignore '
                             + path + '">Ig</button>';
-                        const diffBtn =
-                            '<button type="button" class="pending-changes-diff-btn" data-rel-path="'
-                            + path + '" title="View diff" aria-label="View diff for ' + path + '">Δ</button>';
                         const editorBtn = '<button type="button" class="pending-changes-editor-btn" data-rel-path="'
                             + path + '" title="' + (st === 'deleted' ? 'Deleted file has no working copy' : 'Open in Cuttle IDE')
                             + '" aria-label="Open ' + path + ' in Cuttle IDE"' + (st === 'deleted' ? ' disabled' : '') + '>'
@@ -1068,7 +1065,7 @@
                             '<li class="pending-changes-row'
                             + (included ? '' : ' is-excluded')
                             + '" data-rel-path="' + path + '">'
-                            + check + main + editorBtn + ignoreBtn + diffBtn + '</li>'
+                            + check + main + editorBtn + ignoreBtn + '</li>'
                         );
                     }).join('');
                     const moreN = unlistedCount();
@@ -1133,13 +1130,6 @@
                             e.preventDefault();
                             e.stopPropagation();
                             ignoreFile(ignoreBtn.getAttribute('data-rel-path') || '');
-                            return;
-                        }
-                        const diffBtn = t && t.closest ? t.closest('.pending-changes-diff-btn') : null;
-                        if (diffBtn) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            onOpenDiff(diffBtn.getAttribute('data-rel-path') || '', { repoRoot: repoRoot });
                             return;
                         }
                         const itemBtn = t && t.closest ? t.closest('.pending-changes-item') : null;
