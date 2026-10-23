@@ -45,7 +45,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("providers", help="registered knowledge-graph providers")
     sub.add_parser("status", help="graph inventory across registered projects")
     sub.add_parser("list", help="alias of status")
-    sub.add_parser("vault", help="print the Obsidian vault root")
+    sub.add_parser("vault", help="print the folder holding the per-project Obsidian vaults")
     _common(sub.add_parser("where", help="resolve the active graph for a path/project"))
 
     p_index = sub.add_parser("index", help="build/refresh a project graph")
@@ -71,9 +71,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_path.add_argument("target")
     _common(p_path)
 
-    _common(sub.add_parser("export", help="export a project graph to the vault"))
+    _common(sub.add_parser("export", help="regenerate a project's curated Obsidian vault"))
 
-    p_sync = sub.add_parser("sync", help="scaffold vault + export all known graphs")
+    p_sync = sub.add_parser("sync", help="regenerate the vaults of all indexed projects")
     p_sync.add_argument("--provider")
     p_sync.add_argument("--index", action="store_true", help="index missing projects first")
 

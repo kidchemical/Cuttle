@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from api.knowledge_graph.protocol import ExportResult, GraphStore, IndexResult
+from api.knowledge_graph.subsystems import community_labels
 
 DEFAULT_BUDGET = 1500
 DEFAULT_TIMEOUT = 60.0
@@ -29,7 +30,17 @@ DEFAULT_EXCLUDES = (
     "**/ThirdParty/**", "**/site-packages/**", "**/target/**", "**/obj/**",
     "**/.cache/**", "**/coverage/**", "**/.next/**", "**/Library/**",
     "**/Temp/**",
+    # Tests are a third of a typical repo's symbols and crowd architecture
+    # queries ("configuration" -> test_oauth_status_reports_configuration);
+    # agents find tests with grep. Per-project exclude.txt can't re-include.
+    "**/tests/**", "**/test/**", "**/Tests/**", "**/__tests__/**", "**/e2e/**",
+    "**/test_*.py", "**/*_test.py", "**/*_test.go", "**/*.test.*", "**/*.spec.*",
+    # Cuttle's scratch convention ({project}/temp). Graphify matches .gitignore
+    # case-sensitively, so a Unity "/Temp/" rule doesn't hide temp/ copies of
+    # the whole source tree.
+    "temp/**", "tmp/**",
 )
+LABELS = ".graphify_labels.json"
 
 
 class GraphifyError(RuntimeError):
@@ -54,6 +65,9 @@ def _run(args: List[str], *, cwd: Optional[str] = None,
         raise GraphifyError("graphify CLI not found — install with `uv tool install graphifyy`")
     env = dict(os.environ)
     env.setdefault("GRAPHIFY_QUERY_LOG_DISABLE", "1")
+    # Labels are regenerated deterministically on every index, so graphify's
+    # per-day graph snapshots (graphify-out/<date>/) would only pile up.
+    env.setdefault("GRAPHIFY_NO_BACKUP", "1")
     return subprocess.run([binary, *args], cwd=cwd, env=env, capture_output=True,
                           text=True, timeout=timeout)
 
@@ -63,17 +77,14 @@ def _artifact(store: GraphStore) -> Path:
 
 
 def _counts(store: GraphStore) -> dict:
+    # graphify's manifest also lists skipped media, so count files with symbols.
     counts = {"nodes": 0, "edges": 0, "code_files": 0}
     try:
         data = json.loads(_artifact(store).read_text(encoding="utf-8"))
-        counts["nodes"] = len(data.get("nodes") or [])
+        nodes = data.get("nodes") or []
+        counts["nodes"] = len(nodes)
         counts["edges"] = len(data.get("links") or [])
-    except (OSError, ValueError):
-        pass
-    try:
-        manifest = json.loads(store.sub("graphify-out", "manifest.json").read_text(encoding="utf-8"))
-        if isinstance(manifest, dict):
-            counts["code_files"] = len(manifest)
+        counts["code_files"] = len({n.get("source_file") for n in nodes if n.get("source_file")})
     except (OSError, ValueError):
         pass
     return counts
@@ -84,7 +95,14 @@ def _exclude_patterns(store: GraphStore) -> List[str]:
     env = (os.environ.get("CUTTLE_GRAPHIFY_EXCLUDE") or "").strip()
     if env:
         patterns += [p.strip() for p in env.replace(os.pathsep, ",").split(",") if p.strip()]
-    for path in (store.store_root / "exclude.txt", store.root / "exclude.txt"):
+    try:  # a CUTTLE_HOME inside the project must never index its own store
+        inside = store.store_root.resolve().relative_to(Path(store.execution_path).resolve())
+        patterns.append(f"{inside.as_posix()}/**")
+    except (ValueError, OSError):
+        pass
+    # machine-wide, per-project (all checkouts), per-checkout
+    for path in (store.store_root / "exclude.txt", store.root.parent / "exclude.txt",
+                 store.root / "exclude.txt"):
         try:
             for line in path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
@@ -130,6 +148,7 @@ class GraphifyProvider:
         if proc.returncode != 0:
             return IndexResult(ok=False, error=(proc.stderr or proc.stdout or "graphify extract failed").strip())
         stdout = proc.stdout or ""
+        self._label(store)
         return IndexResult(
             ok=True, artifact=self.artifact(store),
             meta={**_counts(store), "incremental": "incremental scan" in stdout,
@@ -182,22 +201,37 @@ class GraphifyProvider:
         return ExportResult(ok=True, project_dir=str(target_dir.parent),
                             graph_dir=str(target_dir), stdout=(proc.stdout or "").strip())
 
-    def report(self, store: GraphStore) -> Optional[str]:
-        """Human-readable architecture report (LLM-free) + refreshed graph.html.
+    def graph_data(self, store: GraphStore) -> Optional[dict]:
+        """The node-link graph (``nodes``/``links``) the curated wiki reads."""
+        try:
+            return json.loads(_artifact(store).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
 
-        Runs ``cluster-only --no-label`` (deterministic community ids, no naming
-        LLM); that drops graph.html, so the aggregated view is rebuilt after.
-        Returns the ``GRAPH_REPORT.md`` path, or None.
+    def _label(self, store: GraphStore) -> None:
+        """Name communities after their subsystem instead of ``Community N``.
+
+        Writes graphify's own ``.graphify_labels.json`` and lets ``cluster-only``
+        apply it to ``graph.json``. With a labels file present graphify takes its
+        reuse path (hub-naming any community that changed) and never calls an
+        LLM; without one it would auto-detect a paid backend, so the file is
+        always written first.
         """
-        if not self.artifact(store):
-            return None
-        proc = _run(["cluster-only", str(store.root), "--no-label", "--no-viz"],
-                    timeout=INDEX_TIMEOUT)
-        if proc.returncode != 0:
-            return None
-        _run(["export", "html", "--graph", str(_artifact(store)), "--node-limit", "1200"])
-        path = store.sub("graphify-out", "GRAPH_REPORT.md")
-        return str(path) if path.is_file() else None
+        graph = self.graph_data(store)
+        if not graph:
+            return
+        name = str(store.project.get("name") or "Project")
+        labels = community_labels(graph, project=name)
+        if not labels:
+            return
+        out = store.sub("graphify-out")
+        (out / LABELS).write_text(json.dumps({str(k): v for k, v in labels.items()},
+                                             ensure_ascii=False), encoding="utf-8")
+        (out / f"{LABELS}.sig").unlink(missing_ok=True)
+        try:
+            _run(["cluster-only", str(store.root), "--no-viz"], timeout=INDEX_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            pass
 
     def _version(self) -> str:
         try:

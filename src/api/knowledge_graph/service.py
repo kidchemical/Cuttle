@@ -8,12 +8,16 @@ and the Obsidian vault layout are decided here so every provider behaves the sam
 from __future__ import annotations
 
 import os
+import re
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from core.runtime_paths import cuttle_home
 
+from api.knowledge_graph.wiki import SUBSYSTEMS_DIR, render as render_wiki, write as write_wiki
 from api.knowledge_graph.catalog import (
     default_provider_id,
     get_provider,
@@ -37,7 +41,7 @@ from api.knowledge_graph.store import (
 
 VAULT_ENV = "CUTTLE_OBSIDIAN_VAULT"
 VAULT_NAME = "Cuttle Projects"
-VAULT_SUBDIRS = ("Architecture", "Decisions", "Notes", "Graphify")
+VAULT_SUBDIRS = ("Architecture", "Decisions", "Notes", SUBSYSTEMS_DIR)
 
 _CODE_EXTS = frozenset({
     ".py", ".pyi", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go", ".rs",
@@ -159,10 +163,11 @@ def node_path(ctx: ResolvedContext, source: str, target: str,
 
 
 # ---------------------------------------------------------------------------
-# Obsidian vault (provider-neutral layout; provider-owned export)
+# Obsidian vault (provider-neutral layout; curated wiki from the provider graph)
 # ---------------------------------------------------------------------------
 
 def vault_root(provider_id: Optional[str] = None) -> Path:
+    """Folder holding one self-contained Obsidian vault per project."""
     override = (os.environ.get(VAULT_ENV) or "").strip()
     if override:
         return Path(override).expanduser()
@@ -176,75 +181,109 @@ def _safe_name(name: str) -> str:
     return cleaned or "Project"
 
 
-def _ensure_vault_scaffold(vault: Path, projects: List[Dict[str, Any]]) -> List[str]:
-    created: List[str] = []
-    vault.mkdir(parents=True, exist_ok=True)
-    home_note = vault / f"{VAULT_NAME}.md"
-    if not home_note.exists():
-        lines = ["# Cuttle Projects", "",
-                 "Per-project notes; generated graph notes live in each project's `Graphify/`.",
-                 "", "## Projects", ""]
-        lines += [f"- [[{_safe_name(p.get('name') or 'Project')}]]" for p in projects]
-        home_note.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        created.append(str(home_note))
-    return created
+def project_vault(project: Dict[str, Any], provider_id: Optional[str] = None) -> Path:
+    return vault_root(provider_id) / _safe_name(project.get("name") or "Project")
 
 
 def _project_note(project: Dict[str, Any]) -> str:
     name = _safe_name(project.get("name") or "Project")
     path = project.get("resolved_path") or project.get("path") or ""
-    lines = [f"# {name}", "", f"- Repository: `{path}`",
-             f"- Project id: `{project.get('id')}`", "",
-             "Existing project documentation is the source of truth and is **linked**, not copied.",
-             "", "## Existing documentation"]
-    for rel in (".cuttle/docs", "docs/architecture", "docs", "README.md", "AGENTS.md"):
-        candidate = Path(path) / rel if path else None
-        if candidate and candidate.exists():
-            lines.append(f"- [[{rel}]] — `{candidate}`")
-    lines += ["", "## Graph", f"See [[{name} Graph Report]] and the `Graphify/` folder.",
-              "", "## Notes", "- (manual notes stay here; regeneration never touches them)", ""]
-    return "\n".join(lines)
+    return "\n".join([
+        f"# {name}", "", f"- Repository: `{path}`", f"- Project id: `{project.get('id')}`", "",
+        "Start at [[Overview]] — the generated subsystem map (`Architecture/`, `Subsystems/`).",
+        "Your own notes go in `Notes/` and `Decisions/`; regeneration never touches them.",
+        "", "## Notes", "",
+    ])
+
+
+# The pointer line older exports wrote into the (otherwise manual) project note.
+_LEGACY_GRAPH_LINE = re.compile(r"^See \[\[[^\]]*(Graph Report|GRAPH_REPORT)\]\].*$", re.M)
+
+
+def _ensure_project_vault(project: Dict[str, Any], project_dir: Path) -> None:
+    for sub in VAULT_SUBDIRS:
+        (project_dir / sub).mkdir(parents=True, exist_ok=True)
+    # Its own .obsidian makes each project an isolated vault (open the folder).
+    (project_dir / ".obsidian").mkdir(exist_ok=True)
+    note = project_dir / f"{_safe_name(project.get('name') or 'Project')}.md"
+    if not note.exists():
+        note.write_text(_project_note(project), encoding="utf-8")
+        return
+    text = note.read_text(encoding="utf-8")
+    if _LEGACY_GRAPH_LINE.search(text):  # only the one generated pointer line
+        note.write_text(_LEGACY_GRAPH_LINE.sub(
+            "Start at [[Overview]] — the generated subsystem map.", text), encoding="utf-8")
+
+
+def _archive_legacy_export(project_dir: Path) -> Optional[str]:
+    """Move the old per-node ``Graphify/`` export and copied graph report aside."""
+    legacy = [p for p in (project_dir / "Graphify",) if p.is_dir()]
+    legacy += sorted((project_dir / "Architecture").glob("* Graph Report.md"))
+    if not legacy:
+        return None
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    dest = cuttle_home() / "archive" / "knowledge-graph-legacy" / f"{project_dir.name}-{stamp}"
+    dest.mkdir(parents=True, exist_ok=True)
+    for path in legacy:
+        shutil.move(str(path), str(dest / path.name))
+    return str(dest)
+
+
+def _project_docs(root: str, *, limit: int = 400, max_bytes: int = 512_000) -> List[tuple]:
+    """Tracked Markdown docs ``(rel, abs, text)`` the wiki links to (never copies)."""
+    base = Path(root)
+    try:
+        out = subprocess.run(["git", "-C", str(base), "ls-files", "-z", "--", "*.md"],
+                             capture_output=True, text=True, timeout=15)
+        rels = [r for r in out.stdout.split("\0") if r] if out.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError):
+        rels = []
+    docs = []
+    for rel in sorted(rels):
+        if any(part in _SKIP_DIRS or part in ("tests", "test") for part in Path(rel).parts[:-1]):
+            continue
+        path = base / rel
+        try:
+            if path.stat().st_size > max_bytes:
+                continue
+            docs.append((rel, str(path), path.read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            continue
+        if len(docs) >= limit:
+            break
+    return docs
 
 
 def export_obsidian(ctx: ResolvedContext, *, provider_id: Optional[str] = None) -> Dict[str, Any]:
+    """Regenerate one project's curated vault: Overview + one note per subsystem."""
     provider = provider_for(provider_id)
     store = store_for(ctx, provider_id)
-    project_dir = vault_root(provider_id) / _safe_name(ctx.project.get("name") or "Project")
-    graph_dir = project_dir / "Graphify"
-    graph_dir.mkdir(parents=True, exist_ok=True)
-    for sub in VAULT_SUBDIRS:
-        (project_dir / sub).mkdir(parents=True, exist_ok=True)
-    note = project_dir / f"{_safe_name(ctx.project.get('name') or 'Project')}.md"
-    if not note.exists():
-        note.write_text(_project_note(ctx.project), encoding="utf-8")
-    result: ExportResult = provider.export(store, graph_dir)
+    project_dir = project_vault(ctx.project, provider_id)
+    _ensure_project_vault(ctx.project, project_dir)
+    graph_data = getattr(provider, "graph_data", None)
+    if not callable(graph_data):  # provider without a graph: its own export
+        result: ExportResult = provider.export(store, project_dir / "Graph")
+        return {"ok": result.ok, "vault": str(project_dir), "reason": result.reason,
+                "error": result.error, "stdout": result.stdout}
+    archived = _archive_legacy_export(project_dir)
+    graph = graph_data(store) if provider.is_indexed(store) else None
+    if not graph:
+        return {"ok": False, "vault": str(project_dir), "reason": "no graph indexed yet",
+                "archived": archived}
     name = _safe_name(ctx.project.get("name") or "Project")
-    report_written = None
-    gen_report = getattr(provider, "report", None)
-    if callable(gen_report):
-        try:
-            report_path = gen_report(store)
-        except Exception:
-            report_path = None
-        if report_path and Path(report_path).is_file():
-            import shutil
-
-            dest = project_dir / "Architecture" / f"{name} Graph Report.md"
-            shutil.copyfile(report_path, dest)
-            report_written = str(dest)
-    return {"ok": result.ok, "project_dir": result.project_dir or str(project_dir),
-            "graph_dir": result.graph_dir or str(graph_dir), "report": report_written,
-            "reason": result.reason, "error": result.error, "stdout": result.stdout}
+    notes = render_wiki(graph, project=name, meta=store.read_meta(),
+                        docs=_project_docs(ctx.execution_path))
+    stats = write_wiki(project_dir, notes)
+    return {"ok": True, "vault": str(project_dir), "notes": len(notes), **stats,
+            "archived": archived}
 
 
 def sync_obsidian(*, index_missing: bool = False,
                   provider_id: Optional[str] = None) -> Dict[str, Any]:
     from api.knowledge_graph.resolve import _projects
 
-    projects = _projects()
-    created = _ensure_vault_scaffold(vault_root(provider_id), projects)
     exported, skipped = [], []
-    for project in projects:
+    for project in _projects():
         if not (project.get("available") and (project.get("resolved_path") or project.get("path"))):
             continue
         ctx = resolve(project_id=project.get("id"))
@@ -260,7 +299,7 @@ def sync_obsidian(*, index_missing: bool = False,
         result = export_obsidian(ctx, provider_id=provider_id)
         exported.append({"project": project.get("name"),
                          **{k: v for k, v in result.items() if k != "stdout"}})
-    return {"ok": True, "vault": str(vault_root(provider_id)), "created": created,
+    return {"ok": True, "vault": str(vault_root(provider_id)),
             "providers": [p["id"] for p in provider_status()],
             "exported": exported, "skipped": skipped}
 

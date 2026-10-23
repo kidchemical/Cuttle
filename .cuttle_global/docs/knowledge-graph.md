@@ -60,34 +60,48 @@ PYTHONPATH=src .venv/bin/python -m api.knowledge_graph <verb> [--provider ID] [-
 | `index` (`--force`, `--all`) / `update` | build/refresh (incremental, local AST) / re-extract changed |
 | `query "…" [--budget N] [--refresh]` | scoped subgraph for a question (default 1500 tokens) |
 | `explain "X" [--all]` / `node-path A B` | one node's neighbors / shortest path |
-| `export` / `sync [--index]` / `vault` | Obsidian export / all / vault path |
+| `export` / `sync [--index]` / `vault` | regenerate one project's vault / all projects / vaults parent folder |
 
 ## Graphify provider specifics
 
 - Local only: indexing passes `--code-only` (tree-sitter AST, no API key). Docs/
   PDF/media would need a backend key and are skipped.
 - Excludes: `.gitignore` + `DEFAULT_EXCLUDES` (`node_modules`, `dist`, `.venv`,
-  `vendor`, `third_party`, Unity `Library/`/`Temp/`, …); add per-machine/per-project
-  globs in `<home>/graphify/exclude.txt` or `<home>/graphify/<project-key>/exclude.txt`,
-  or `CUTTLE_GRAPHIFY_EXCLUDE`. Nothing is written into a checkout.
+  `vendor`, `third_party`, Unity `Library/`/`Temp/`, tests (`tests/`, `test_*.py`,
+  `*.test.*`, …), and the scratch dirs `temp/`/`tmp/`); add globs in
+  `<home>/graphify/exclude.txt` (machine), `<home>/graphify/<project-key>/exclude.txt`
+  (project), `<project-key>/<checkout-key>/exclude.txt` (one checkout), or
+  `CUTTLE_GRAPHIFY_EXCLUDE`. Nothing is written into a checkout; graphify itself
+  never ingests `graphify-out/` or `.obsidian/`, and a `CUTTLE_HOME` inside a project
+  is excluded.
+- Community names: after each extract the adapter writes graphify's own
+  `.graphify_labels.json` (each community named after the subsystem most of its
+  members live in, e.g. `api › agent_router · RoutingDecision`) and runs
+  `cluster-only` to apply it. With a labels file present graphify never calls an
+  LLM; never run `graphify label` against a Cuttle store unless you want paid naming.
 - Incremental via graphify's manifest + AST cache; `--force` after refactors that
   delete code. Freshness = recorded HEAD vs current; no daemon/watcher.
 
 ## Obsidian vault
 
-`export`/`sync` write into
+Each project is its **own vault**: `export`/`sync` write a small curated wiki into
 `<home>/<store_root>/vault/Cuttle Projects/<Project>/` (`CUTTLE_OBSIDIAN_VAULT`
-overrides). Layout per project:
+overrides the parent folder). Open that project folder in Obsidian (*Open folder as
+vault*). It is built from the graph (`subsystems.py` → `wiki.py`), not graphify's
+per-node `export obsidian`:
 
-| Dir | Source |
+| Path | Source |
 |---|---|
-| `Architecture/<Project> Graph Report.md` | **generated** — deterministic god nodes, communities, surprising connections, import cycles (`graphify cluster-only`, no LLM) |
-| `Graphify/` | **generated** — the provider's Obsidian export (one note per node + community notes + `graph.canvas`) |
-| `Decisions/`, `Notes/`, `<Project>.md` | **manual** — never overwritten; regeneration only touches the two generated dirs |
+| `Architecture/Overview.md` | **generated** — subsystems by area, core abstractions, dependency diagram (Mermaid), links to the repo's design docs |
+| `Subsystems/<area › package>.md` | **generated** — one note per subsystem (directory; tiny dirs roll up, crowded flat dirs split by filename prefix): package docstring, depends-on / used-by links with reference counts, key symbols with `file:line`, modules with their docstrings, repo docs that mention it |
+| `Decisions/`, `Notes/`, `<Project>.md` | **manual** — never overwritten |
 
-`export`/`sync` regenerate the report + notes; a provider without a `report()`
-method still exports its notes. Plain Markdown — agents read it like any files;
-open in the GUI with Obsidian (*Open folder as vault*, or the launcher).
+Generated notes start with `generated: cuttle-knowledge-graph` in frontmatter;
+regeneration only rewrites or deletes files carrying that marker (so a hand-written
+note, even inside `Subsystems/`, survives) and skips unchanged files. Repo docs are
+linked (`file://`), never copied. Symbol-level detail stays in the graph for agents
+(`query`/`explain`). The first export moves an older per-node `Graphify/` folder and
+copied `* Graph Report.md` to `<home>/archive/knowledge-graph-legacy/`.
 
 ## New projects
 
