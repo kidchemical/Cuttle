@@ -38,21 +38,23 @@ authoritative — notes are a cache.
 Discover and retrieve through this CLI; do not browse the Obsidian vault:
 
 ```bash
-python -m api.knowledge_graph notes                         # which notes exist, current/stale?
+python -m api.knowledge_graph notes                         # summary.stale + current/stale list
 python -m api.knowledge_graph note "api › agent_router"     # explanation + citations
 ```
 
+- Preferred first read for architecture questions when `status` is `current`.
+  Then verify in source when a detail matters (`query` / `explain` / the cited file).
 - Returns the explanation and source references, not Obsidian formatting or
   symbol dumps. `approx_tokens` is a size hint; do not truncate a complete
   explanation just to save tokens.
 - If `status` is `stale`, `outdated_citations` is non-empty, or `warning` /
-  `missing_facts` is set, **do not treat the note as current**. Say so, then
-  verify in source or docs.
-- Then `query` / `explain` (and the cited files) for symbol-level detail or
-  anything the note omitted.
-- `notes`/`note` never call a model. Generating a new explanation is opt-in
-  (`enrich --subsystem … --via cli:claude`). Prototype coverage is still
-  per-subsystem, not every package.
+  `missing_facts` is set, **do not treat the note as current**. `notes` puts
+  stale titles in `stale` and `summary.stale` so they are easy to spot. Refresh
+  with an explicit `enrich` — nothing auto-generates.
+- `notes`/`note` never call a model. `enrich --subsystem … --via cli:claude`
+  (any `--model` the CLI accepts; opus is not required) or
+  `enrich --markdown-file path.md` (same citation / fact / fingerprint checks).
+  Prototype coverage is still per-subsystem, not every package.
 
 ## Query before you grep
 

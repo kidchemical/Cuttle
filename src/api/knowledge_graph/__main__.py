@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Any, List, Optional
 
 from api.knowledge_graph import catalog, service
@@ -86,6 +87,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_enrich.add_argument("--dry-run", action="store_true", help="assemble inputs only; no model call")
     p_enrich.add_argument("--show-prompt", action="store_true", help="include the assembled prompt")
     p_enrich.add_argument("--timeout", type=float, default=600.0)
+    p_enrich.add_argument("--markdown-file",
+                          help="commit this file through the same citation/fact/fingerprint "
+                               "checks as a model reply (no model call)")
 
     p_notes = sub.add_parser("notes", help="list enriched subsystem explanations (agent-facing)")
     _common(p_notes)
@@ -157,10 +161,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.cmd == "export":
             return _emit(service.export_obsidian(ctx, provider_id=provider_id))
         if args.cmd == "enrich":
+            markdown = None
+            if args.markdown_file:
+                path = Path(args.markdown_file)
+                try:
+                    markdown = path.read_text(encoding="utf-8")
+                except OSError as exc:
+                    return _emit({"ok": False, "error": f"cannot read --markdown-file: {exc}"})
             return _emit(service.enrich(
                 ctx, args.subsystem, via=args.via, model=args.model, effort=args.effort,
                 force=args.force, dry_run=args.dry_run, show_prompt=args.show_prompt,
-                timeout=args.timeout, provider_id=provider_id))
+                timeout=args.timeout, markdown=markdown, provider_id=provider_id))
         if args.cmd == "notes":
             return _emit(service.list_notes(ctx, provider_id=provider_id))
         if args.cmd == "note":

@@ -62,7 +62,7 @@ PYTHONPATH=src .venv/bin/python -m api.knowledge_graph <verb> [--provider ID] [-
 | `explain "X" [--all]` / `node-path A B` | one node's neighbors / shortest path |
 | `notes` / `note "api › …"` | list / retrieve **enriched** subsystem explanations (agent-facing; see below) |
 | `export` / `sync [--index]` / `vault` | regenerate one project's vault / all projects / vaults parent folder |
-| `enrich --subsystem S [--via cli:claude] [--model M] [--dry-run] [--force]` | **opt-in, prototype** — AI "How it works" section for one subsystem note (see below) |
+| `enrich --subsystem S [--via cli:claude] [--model M] [--markdown-file F] [--dry-run] [--force]` | **opt-in, prototype** — AI "How it works" section for one subsystem note (see below) |
 
 ## Graphify provider specifics
 
@@ -110,7 +110,8 @@ package itself; still opt-in, not every subsystem or project):
 
 ```bash
 python -m api.knowledge_graph enrich --subsystem "api › agent_router" --dry-run --show-prompt
-python -m api.knowledge_graph enrich --subsystem "api › agent_router" --via cli:claude --model opus
+python -m api.knowledge_graph enrich --subsystem "api › agent_router" --via cli:claude
+python -m api.knowledge_graph enrich --subsystem "api › agent_router" --markdown-file path.md
 ```
 
 - **Inputs, docs first:** a doc named after the subsystem (`docs/guides/AGENT_ROUTER.md`)
@@ -123,6 +124,12 @@ python -m api.knowledge_graph enrich --subsystem "api › agent_router" --via cl
 - **Executor:** `--via kind:target` (`cli:claude`, `cli:codex`, `api:openai`, …) or the
   *Knowledge wiki explanations* background-helper chain in Settings — never the
   generic default chain. Calls go through `api.background_helpers.generate`.
+  Opus is not required; pass any model the chosen CLI accepts (`--model haiku`,
+  a Mini API id, …) and compare `missing_facts` / citation support. There is no
+  scheduler: generation stays an explicit `enrich` run.
+- **One write path:** model output and `--markdown-file` both go through `save`,
+  which always re-assesses citations, required facts, and the current
+  fingerprint. There is no side door that can skip those checks.
 - **Citations, checked once after generation:** for each `[path:L123]` /
   `[doc.md#Heading]` Cuttle records whether the model was shown that line or section
   (*grounded*) and whether the cited code/section shares the claim's identifiers or
@@ -146,11 +153,17 @@ python -m api.knowledge_graph enrich --subsystem "api › agent_router" --via cl
   is re-run.
 - **Required facts:** a small per-subsystem checklist (Agent Router: cancellation is
   terminal; the `/api/chat` starred-agent entry path). Regenerations that omit a fact
-  are flagged; nothing auto-edits docs or code.
+  are flagged; nothing auto-edits docs or code. Keep this list tiny — it is a
+  safeguard, not a specification of the subsystem.
+- **Regeneration history:** each cache file keeps a short `history` of prior
+  generations (missing-fact ids + citation counts) and a `corrections` delta
+  (`fixed` / `still_missing` / `new`). `note` returns both so omissions can be
+  tracked over time without a separate store.
 - **Agent retrieval:** `notes` lists cached explanations with `current` / `stale` /
-  `orphaned`. `note "api › agent_router"` returns the explanation, discrepancies, and
-  source references — no Obsidian callouts, wikilinks, `file://` URIs, or symbol
-  dumps. `status`/`warning` call out a stale fingerprint, citations that no longer
+  `orphaned`, a `summary` count, and a `stale` title list (stale first). `note
+  "api › agent_router"` returns the explanation, discrepancies, and source
+  references — no Obsidian callouts, wikilinks, `file://` URIs, or symbol dumps.
+  `status`/`warning` call out a stale fingerprint, citations that no longer
   resolve, and missing required facts; never treat a note as current when those fire.
   Source code and documentation remain authoritative. For architecture questions,
   `note` is the preferred first retrieval when `status` is `current`; then

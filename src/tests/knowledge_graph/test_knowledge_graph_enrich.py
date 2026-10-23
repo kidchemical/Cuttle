@@ -223,6 +223,7 @@ def test_enrich_is_opt_in_cached_and_marks_stale(repo, tmp_path, monkeypatch):
 
     listed = service.list_notes(ctx)
     assert listed["ok"] and listed["notes"][0]["status"] == "stale"
+    assert listed["summary"]["stale"] == 1 and listed["stale"] == ["api › router"]
     retrieved = service.retrieve_note(ctx, "api › router")
     assert retrieved["ok"] and retrieved["status"] == "stale"
     assert "out of date" in retrieved["warning"].lower()
@@ -266,6 +267,64 @@ def test_agent_view_marks_outdated_citations_without_obsidian_chrome(repo):
     assert {f["id"] for f in flagged["missing_facts"]} == {
         "cancellation_is_terminal", "chat_entry_star"}
     assert "Required behavioral facts are missing" in flagged["warning"]
+
+
+def test_markdown_commit_uses_the_same_validation_as_model_enrich(repo, tmp_path, monkeypatch):
+    store = GraphStore("fake", tmp_path / "store", "demo", "primary", {"id": 1, "name": "Demo"},
+                       str(repo), None)
+    ctx = ResolvedContext({"id": 1, "name": "Demo", "path": str(repo)}, str(repo), None)
+    monkeypatch.setattr(service, "provider_for", lambda pid=None: _Provider())
+    monkeypatch.setattr(service, "store_for", lambda c, pid=None: store)
+    monkeypatch.setenv("CUTTLE_OBSIDIAN_VAULT", str(tmp_path / "vault"))
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    calls = []
+    import api.background_helpers as bg
+    monkeypatch.setattr(bg, "generate", lambda *a, **k: calls.append(1) or TextResult("nope", {}))
+
+    md = ("### Purpose\n`decide` hands the turn to `run_agent` [src/api/router/engine.py:L7].\n"
+          "### Fallback and failure behavior\nIt also manages billing quotas "
+          "[src/api/router/engine.py:L7].\n"
+          "### Documentation vs code\nNone found.\n")
+    out = service.enrich(ctx, "api › router", markdown=md)
+    assert not calls and out["status"] == "generated"
+    assert out["executor"]["target"] == "markdown"
+    assert out["citations"]["total"] == 2 and out["citations"]["supported"] == 1
+    assert out["citations"]["doubtful"][0]["ref"] == "src/api/router/engine.py:L7"
+    assert service.enrich(ctx, "api › router", via="cli:claude")["status"] == "unchanged"
+    assert not calls
+
+    again = service.enrich(ctx, "api › router", markdown=md + "\nDone.\n")
+    assert again["status"] == "generated" and not calls
+    retrieved = service.retrieve_note(ctx, "api › router")
+    assert retrieved["history"] and retrieved["history"][0]["citations"]["total"] == 2
+
+
+def test_commit_tracks_omission_corrections(repo, tmp_path):
+    inp = _input(repo)
+    inp.key = "src/api/agent_router"
+    store = tmp_path / "store"
+    first = enrich.save(store, inp, "### Purpose\nRoutes turns.\n",
+                        {"target": "markdown"}, {}, root=repo)
+    assert {f["id"] for f in first["missing_facts"]} == {
+        "cancellation_is_terminal", "chat_entry_star"}
+    complete = ("### Purpose\nCancellation is terminal: a [CANCELLED] result never escalates.\n"
+                "The star is applied server-side in /api/chat so starred agents still run.\n")
+    second = enrich.save(store, inp, complete, {"target": "markdown"}, {}, root=repo)
+    assert second["missing_facts"] == []
+    assert set(second["corrections"]["fixed"]) == {"cancellation_is_terminal", "chat_entry_star"}
+    assert second["history"][-1]["missing_facts"] == [
+        "cancellation_is_terminal", "chat_entry_star"]
+    assert second["fingerprint"] == inp.fingerprint
+
+
+def test_empty_markdown_is_rejected(repo, tmp_path, monkeypatch):
+    store = GraphStore("fake", tmp_path / "store", "demo", "primary", {"id": 1, "name": "Demo"},
+                       str(repo), None)
+    ctx = ResolvedContext({"id": 1, "name": "Demo", "path": str(repo)}, str(repo), None)
+    monkeypatch.setattr(service, "provider_for", lambda pid=None: _Provider())
+    monkeypatch.setattr(service, "store_for", lambda c, pid=None: store)
+    with pytest.raises(service.KnowledgeGraphError, match="empty"):
+        service.enrich(ctx, "api › router", markdown="   \n")
 
 
 def test_retrieve_missing_note_is_explicit(repo, tmp_path, monkeypatch):

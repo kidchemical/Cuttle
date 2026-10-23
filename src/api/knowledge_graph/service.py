@@ -361,10 +361,12 @@ def _executor_chain(via: Optional[str], model: Optional[str], effort: Optional[s
 def enrich(ctx: ResolvedContext, subsystem: str, *, via: Optional[str] = None,
            model: Optional[str] = None, effort: Optional[str] = None, force: bool = False,
            dry_run: bool = False, show_prompt: bool = False, timeout: float = 600.0,
-           provider_id: Optional[str] = None) -> Dict[str, Any]:
+           markdown: Optional[str] = None, provider_id: Optional[str] = None) -> Dict[str, Any]:
     """Write (or refresh) one subsystem's AI "How it works" section — opt-in.
 
     Skips the model call when the cached fingerprint still matches its inputs.
+    ``markdown`` (CLI ``--markdown-file``) commits supplied text through the
+    same citation / required-fact / fingerprint checks as a model reply.
     """
     store, graph, view, docs, name = _bundle(ctx, provider_id)
     sub = _find_subsystem(view, subsystem)
@@ -373,33 +375,43 @@ def enrich(ctx: ResolvedContext, subsystem: str, *, via: Optional[str] = None,
     result: Dict[str, Any] = {"ok": True, "subsystem": sub.title, **inp.stats}
     if show_prompt:
         result["system"], result["prompt"] = enrich_mod.SYSTEM, inp.prompt
-    if cached and cached.get("fingerprint") == inp.fingerprint and not force:
+    if markdown is None and cached and cached.get("fingerprint") == inp.fingerprint and not force:
         return {**result, "status": "unchanged", "generated_at": cached.get("generated_at")}
     if dry_run:
         return {**result, "status": "would_generate", "cached": bool(cached)}
 
-    from api import background_helpers
-    from api.model_providers.types import TextRequest
+    if markdown is not None:
+        text, usage = markdown, {}
+        executor: Dict[str, Any] = {"target": "markdown", "model": model or "", "effort": effort}
+    else:
+        from api import background_helpers
+        from api.model_providers.types import TextRequest
 
-    chain = _executor_chain(via, model, effort)
-    request = TextRequest(user=inp.prompt, system=enrich_mod.SYSTEM, max_tokens=4000,
-                          temperature=0.2, timeout=timeout)
-    reply = background_helpers.generate("wiki", request, chain=chain)
-    if reply is None or not reply.text.strip():
-        raise KnowledgeGraphError("no executor in the chain produced an explanation "
-                                  "(see the Cuttle log for the per-target failure)")
-    markdown = enrich_mod.clean_output(reply.text)
-    records = enrich_mod.assess_citations(markdown, Path(ctx.execution_path), inp)
-    usage = dict(reply.usage or {})
-    executor = {"target": f"{chain[0]['kind']}:{chain[0]['target']}" if len(chain) == 1
-                else (usage.get("agent") or "chain"),
-                "model": usage.get("model") or chain[0].get("model") or "",
-                "effort": chain[0].get("effort")}
-    entry = enrich_mod.save(store.root, inp, markdown, records, executor,
-                            {k: v for k, v in usage.items() if isinstance(v, (int, float, str))})
+        chain = _executor_chain(via, model, effort)
+        request = TextRequest(user=inp.prompt, system=enrich_mod.SYSTEM, max_tokens=4000,
+                              temperature=0.2, timeout=timeout)
+        reply = background_helpers.generate("wiki", request, chain=chain)
+        if reply is None or not reply.text.strip():
+            raise KnowledgeGraphError("no executor in the chain produced an explanation "
+                                      "(see the Cuttle log for the per-target failure)")
+        text = reply.text
+        usage = dict(reply.usage or {})
+        executor = {"target": f"{chain[0]['kind']}:{chain[0]['target']}" if len(chain) == 1
+                    else (usage.get("agent") or "chain"),
+                    "model": usage.get("model") or chain[0].get("model") or "",
+                    "effort": chain[0].get("effort")}
+    try:
+        entry = enrich_mod.save(
+            store.root, inp, text, executor,
+            {k: v for k, v in usage.items() if isinstance(v, (int, float, str))},
+            root=Path(ctx.execution_path))
+    except ValueError as exc:
+        raise KnowledgeGraphError(str(exc)) from exc
     exported = export_obsidian(ctx, provider_id=provider_id)
-    return {**result, "status": "generated", "citations": enrich_mod.citation_summary(records),
+    return {**result, "status": "generated",
+            "citations": enrich_mod.citation_summary(entry.get("citations") or []),
             "missing_facts": entry.get("missing_facts") or [],
+            "corrections": entry.get("corrections") or {},
             "executor": executor, "vault": exported.get("vault")}
 
 
@@ -425,7 +437,21 @@ def list_notes(ctx: ResolvedContext, *, provider_id: Optional[str] = None) -> Di
             "approx_tokens": max(1, len(str(entry.get("markdown") or "")) // 4),
             "missing_facts": [f["id"] for f in omitted],
         })
+    def _rank(note: Dict[str, Any]) -> tuple:
+        status = note.get("status")
+        return (0 if status == "stale" else 1 if status == "orphaned" else
+                2 if note.get("missing_facts") else 3, note.get("title") or "")
+    notes.sort(key=_rank)
+    summary = {
+        "total": len(notes),
+        "current": sum(1 for n in notes if n.get("status") == "current"),
+        "stale": sum(1 for n in notes if n.get("status") == "stale"),
+        "orphaned": sum(1 for n in notes if n.get("status") == "orphaned"),
+        "missing_facts": sum(1 for n in notes if n.get("missing_facts")),
+    }
     return {"ok": True, "project": ctx.project.get("name"), "notes": notes,
+            "summary": summary,
+            "stale": [n["title"] for n in notes if n.get("status") == "stale"],
             "authoritative": "Source code and documentation remain authoritative."}
 
 

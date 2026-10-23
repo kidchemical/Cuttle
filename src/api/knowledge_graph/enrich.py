@@ -23,6 +23,9 @@ never call a model. The pieces:
   instead of silently presented as current.
 - Cached as JSON beside the graph (``<store>/explanations/``); the raw model
   text and citation records are kept, links are rendered fresh each export.
+  :func:`save` is the only write: it always re-assesses citations, required
+  facts and the current fingerprint (including ``--markdown-file``). A short
+  ``history`` of prior regenerations tracks omissions and corrections.
 """
 
 from __future__ import annotations
@@ -596,15 +599,70 @@ def cached_keys(store_root: Path) -> List[Dict[str, Any]]:
     return entries
 
 
-def save(store_root: Path, inp: EnrichInput, markdown: str, records: List[Dict[str, Any]],
-         executor: Dict[str, Any], usage: Dict[str, Any]) -> Dict[str, Any]:
+HISTORY_LIMIT = 12
+
+
+def _fact_ids(value: Any) -> List[str]:
+    out = []
+    for item in value or []:
+        if isinstance(item, dict) and item.get("id"):
+            out.append(str(item["id"]))
+        elif isinstance(item, str):
+            out.append(item)
+    return out
+
+
+def _snapshot(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Compact prior-generation row (ids and counts, not the prose)."""
+    cites = entry.get("citations")
+    summary = citation_summary(cites) if isinstance(cites, list) else {}
+    ex = entry.get("executor") or {}
+    return {
+        "generated_at": entry.get("generated_at"),
+        "fingerprint": entry.get("fingerprint"),
+        "executor": {"target": ex.get("target"), "model": ex.get("model")},
+        "missing_facts": _fact_ids(entry.get("missing_facts")),
+        "citations": {"total": summary.get("total", 0),
+                      "grounded": summary.get("grounded", 0),
+                      "supported": summary.get("supported", 0)},
+    }
+
+
+def _corrections(previous: Optional[Dict[str, Any]], now_ids: List[str]) -> Dict[str, List[str]]:
+    prev = set(_fact_ids((previous or {}).get("missing_facts")))
+    now = set(now_ids)
+    return {"fixed": sorted(prev - now), "still_missing": sorted(prev & now), "new": sorted(now - prev)}
+
+
+def save(store_root: Path, inp: EnrichInput, markdown: str,
+         executor: Dict[str, Any], usage: Dict[str, Any], *, root: Path) -> Dict[str, Any]:
+    """Persist one explanation. Always re-assesses citations, facts, fingerprint.
+
+    ``root`` is the checkout used for citation checks. Callers cannot pass a
+    fingerprint or citation records — those come from ``inp`` and the text.
+    """
+    markdown = clean_output(markdown)
+    if not markdown:
+        raise ValueError("explanation is empty")
+    records = assess_citations(markdown, root, inp)
+    omitted = missing_facts(inp.key, markdown)
+    previous = load(store_root, inp.key)
+    history = list((previous or {}).get("history") or [])
+    if previous and previous.get("markdown"):
+        snap = _snapshot(previous)
+        if not history or history[-1].get("generated_at") != snap.get("generated_at"):
+            history.append(snap)
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_ids = [f["id"] for f in omitted]
     entry = {
         "version": PROMPT_VERSION, "key": inp.key, "title": inp.title,
         "fingerprint": inp.fingerprint,
-        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at": generated_at,
         "executor": executor, "usage": usage, "docs": inp.docs,
         "code_excerpts": inp.code_files, "citations": records, "markdown": markdown,
-        "missing_facts": missing_facts(inp.key, markdown),
+        "missing_facts": omitted,
+        "corrections": _corrections(previous, now_ids),
+        "history": history[-HISTORY_LIMIT:],
     }
     path = cache_path(store_root, inp.key)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -694,6 +752,8 @@ def agent_view(entry: Dict[str, Any], current_fingerprint: Optional[str], root: 
         "citations": counts,
         "outdated_citations": outdated,
         "missing_facts": omitted,
+        "corrections": dict(entry.get("corrections") or {}),
+        "history": list(entry.get("history") or [])[-HISTORY_LIMIT:],
         "authoritative": "Source code and documentation remain authoritative.",
     }
     warnings = []
