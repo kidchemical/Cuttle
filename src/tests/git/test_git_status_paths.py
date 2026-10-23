@@ -36,3 +36,44 @@ def test_rename_source_not_mistaken_for_destination():
     assert parse_status_z(' M first\0R  destination\0source\0?? a\nb\0') == {
         'first': ' M', 'destination': 'R ', 'a\nb': '??',
     }
+
+
+def test_oversized_file_digest_is_bounded(tmp_path, monkeypatch):
+    import io
+    from pathlib import Path
+    from api.agent_router.supervised.evidence import _file_content_digest
+
+    path = tmp_path / 'big.bin'
+    path.write_bytes(b'a' * 1000)
+    class CountingReader(io.BytesIO):
+        consumed = 0
+
+        def read(self, size=-1):
+            data = super().read(size)
+            self.consumed += len(data)
+            return data
+
+    reader = CountingReader(b'a' * 1000)
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'open', lambda *a, **k: reader)
+        assert _file_content_digest(path, limit=100)
+    assert reader.consumed == 100
+    first = _file_content_digest(path, limit=100)
+    path.write_bytes(b'a' * 1001)
+    second = _file_content_digest(path, limit=100)
+    assert first and second and first != second
+
+
+def test_oversized_file_digest_detects_same_size_tail_edits(tmp_path):
+    import os
+    from api.agent_router.supervised.evidence import _file_content_digest
+
+    path = tmp_path / 'big.bin'
+    path.write_bytes(b'a' * 1000)
+    first = _file_content_digest(path, limit=100)
+    stamp = path.stat().st_mtime_ns
+    with path.open('r+b') as f:
+        f.seek(999)
+        f.write(b'b')
+    os.utime(path, ns=(stamp, stamp + 1_000_000_000))
+    assert _file_content_digest(path, limit=100) != first

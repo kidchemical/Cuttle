@@ -111,9 +111,20 @@ def _file_content_digest(path: Path, *, limit: int = 2_000_000) -> Optional[str]
         if not path.is_file():
             return None
         h = hashlib.sha256()
+        info = path.stat()
+        size = info.st_size
+        remaining = size if not limit else min(size, limit)
         with path.open("rb") as f:
-            while chunk := f.read(65536):
+            while remaining > 0:
+                chunk = f.read(min(65536, remaining))
+                if not chunk:
+                    break
                 h.update(chunk)
+                remaining -= len(chunk)
+        # Oversized files use a bounded prefix plus metadata as a conservative
+        # change fingerprint. Size alone misses same-size edits beyond the prefix.
+        if limit and size > limit:
+            h.update(f":size:{size}:mtime:{info.st_mtime_ns}:ctime:{info.st_ctime_ns}".encode("ascii"))
         return h.hexdigest()
     except OSError:
         return None

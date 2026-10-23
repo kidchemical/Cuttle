@@ -68,13 +68,40 @@ def test_file_vanishing_between_status_and_add_is_skipped(tmp_path, monkeypatch)
     git(tmp_path,'init')
     git(tmp_path,'config','user.name','Test'); git(tmp_path,'config','user.email','test@example.test')
     (tmp_path/'kept.txt').write_text('kept\n')
+    for i in range(128):
+        (tmp_path/f'file-{i}.txt').write_text('keep\n')
     (tmp_path/'db.sqlite3-shm').write_text('transient\n')
     real = snapshots.git
-    def racing_git(root, *args, env=None):
-        if args[:1] == ('--literal-pathspecs',) and args[-1] == 'db.sqlite3-shm':
+    adds = []
+    def racing_git(root, *args, env=None, input=None):
+        if '--pathspec-from-file=-' in args:
+            adds.append(args)
             (tmp_path/'db.sqlite3-shm').unlink(missing_ok=True)
-        return real(root, *args, env=env)
+        return real(root, *args, env=env, input=input)
     monkeypatch.setattr(snapshots, 'git', racing_git)
     out = snapshots.snapshot(str(tmp_path), 'race', 'start')
     assert out['skipped'] == {'db.sqlite3-shm': 'vanished'}
     assert 'kept.txt' in real(tmp_path, 'ls-tree', '--name-only', out['tree'])
+    assert len(adds) <= 17
+
+
+def test_snapshot_stages_dirty_paths_in_one_git_call(tmp_path, monkeypatch):
+    import api.agent_events.snapshots as snapshots
+
+    git(tmp_path,'init')
+    git(tmp_path,'config','user.name','Test'); git(tmp_path,'config','user.email','test@example.test')
+    for i in range(25):
+        (tmp_path/f'f{i}.txt').write_text(f'{i}\n')
+    (tmp_path/'literal[1]\nfile.txt').write_text('literal\n')
+    real = snapshots.git
+    adds = []
+    def counting_git(root, *args, env=None, input=None):
+        if args[:1] == ('--literal-pathspecs',) and 'add' in args:
+            adds.append(args)
+        return real(root, *args, env=env, input=input)
+    monkeypatch.setattr(snapshots, 'git', counting_git)
+    out = snapshots.snapshot(str(tmp_path), 'batch', 'start')
+    assert len(adds) == 1
+    staged = real(tmp_path, 'ls-tree', '-r', '-z', '--name-only', out['tree']).split('\0')[:-1]
+    assert len(staged) == 26
+    assert 'literal[1]\nfile.txt' in staged

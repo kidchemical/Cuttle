@@ -12,8 +12,8 @@ _lock=threading.Lock()
 _active={}
 
 
-def git(root,*args,env=None):
-    result=subprocess.run(['git',*args],cwd=root,env=env,capture_output=True,timeout=30)
+def git(root,*args,env=None,input=None):
+    result=subprocess.run(['git',*args],cwd=root,env=env,capture_output=True,timeout=30,input=input)
     if result.returncode:
         raise RuntimeError(result.stderr.decode('utf-8',errors='replace')[:500])
     return result.stdout.decode('utf-8',errors='surrogateescape')
@@ -43,6 +43,7 @@ def snapshot(root,qid,phase,limit=2_000_000):
         # A staged rename removes its source from the user's index. Observe
         # deletions against our HEAD-based index too, or the old source survives.
         selected.update(p for p in git(root,'ls-files','--deleted','-z',env=env).split('\0') if p)
+        stage=[]
         for rel in sorted(selected):
             path=root/rel
             if path==scratch or scratch in path.parents:
@@ -53,14 +54,29 @@ def snapshot(root,qid,phase,limit=2_000_000):
                 with path.open('rb') as f:
                     if b'\0' in f.read(8192):
                         skipped[rel]='binary'; continue
+            stage.append(rel)
+        # Stage in one git process. One `git add` per dirty path turns a large
+        # dirty worktree (Unity asset imports, generated scenes) into thousands
+        # of process spawns and stalls every harness turn for minutes.
+        def stage_paths(rels):
+            payload=('\0'.join(rels)+'\0').encode('utf-8','surrogateescape')
             try:
-                git(root,'--literal-pathspecs','add','-A','--',rel,env=env)
+                git(root,'--literal-pathspecs','add','-A','--pathspec-from-file=-',
+                    '--pathspec-file-nul',env=env,input=payload)
             except RuntimeError as exc:
-                # Gone between status and add (lock files, SQLite -shm/-wal,
-                # build temp files): nothing to record, not a failed snapshot.
+                # A path can vanish between status and add (lock files, SQLite
+                # -shm/-wal, build temp files). Bisect failed batches so a
+                # single vanished file cannot restore thousands of git spawns.
                 if 'did not match any files' not in str(exc):
                     raise
-                skipped[rel]='vanished'
+                if len(rels)==1:
+                    skipped[rels[0]]='vanished'
+                else:
+                    middle=len(rels)//2
+                    stage_paths(rels[:middle])
+                    stage_paths(rels[middle:])
+        if stage:
+            stage_paths(stage)
         tree=git(root,'write-tree',env=env).strip()
         # Trees can be pinned directly: no synthetic author or commit needed.
         ref=f'refs/cuttle/turns/{qid}/{phase}'
