@@ -595,6 +595,11 @@ def summarize_opencode_error(raw: str, returncode: Optional[int] = None) -> str:
             "OpenCode needs provider authentication. Run `opencode auth login`. "
             "Configure credentials in OpenCode itself, then retry."
         )
+    if "usage limit" in low:
+        return (
+            f"OpenCode provider usage limit reached: {_compact(text)[:500]} "
+            "Pin another model (`/opencode model …`) or provider, then retry."
+        )
     if (
         "quota" in low
         or "rate limit" in low
@@ -605,10 +610,41 @@ def summarize_opencode_error(raw: str, returncode: Optional[int] = None) -> str:
             "OpenCode provider quota/credits exhausted. Sync another provider via "
             "`opencode auth login`, pin `/opencode model openai/gpt-4o-mini`, and retry."
         )
-    compact = re.sub(r"\s+", " ", text)
+    compact = _compact(text)
     if compact:
         return compact[:2000]
     return f"OpenCode failed (exit {returncode})." if returncode is not None else "OpenCode failed."
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+_LOG_ERROR_RE = re.compile(r'error\.error="((?:[^"\\]|\\.)*)"')
+# Provider failures OpenCode logs but never reports on stdout: `run` keeps the
+# process alive with no events, so the turn would otherwise sit silent until
+# the startup/idle watchdog fires with a misleading "stalled" message.
+_TERMINAL_PROVIDER_ERROR_RE = re.compile(
+    r"usage.?limit|quota|billing|credit balance|insufficient.?(funds|balance|credits)"
+    r"|subscribe to|unauthori[sz]ed|invalid.?api.?key|not authenticated",
+    re.I,
+)
+
+
+def opencode_terminal_log_error(line: str) -> Optional[str]:
+    """Return the provider error from a main-agent ``stream error`` log line.
+
+    Needs ``--print-logs --log-level ERROR``. Title/summary helpers
+    (``small=true``) are ignored; only non-retryable account/auth failures
+    count, so transient errors OpenCode retries itself never end the turn.
+    """
+    if 'message="stream error"' not in line or "small=true" in line:
+        return None
+    m = _LOG_ERROR_RE.search(line)
+    err = m.group(1) if m else ""
+    if not err or not _TERMINAL_PROVIDER_ERROR_RE.search(err):
+        return None
+    return re.sub(r"^AI_\w+:\s*", "", err).strip()
 
 
 def _handle_opencode_model_slash(
@@ -967,7 +1003,8 @@ class Adapter:
         )
 
         put_status(status_queue, "Calling OpenCode…")
-        cmd: List[str] = [exe, "run", "--format", "json", "--auto"]
+        # ERROR logs on stderr carry provider failures `run` never emits as events.
+        cmd: List[str] = [exe, "run", "--format", "json", "--auto", "--print-logs", "--log-level", "ERROR"]
         r = (resume or "").strip()
         if r:
             try:
@@ -1083,6 +1120,10 @@ class Adapter:
                             return
                         deadline.poke()
                         err_buf.append(chunk)
+                        if provider_error[0] is None:
+                            provider_error[0] = opencode_terminal_log_error(
+                                chunk.decode("utf-8", errors="replace")
+                            )
                 except Exception:
                     return
 
@@ -1096,6 +1137,7 @@ class Adapter:
 
             err_buf: List[bytes] = []
             out_buf: List[bytes] = []
+            provider_error: List[Optional[str]] = [None]
             stdin_task = asyncio.create_task(_feed_stdin())
             err_task = asyncio.create_task(_pump_err())
 
@@ -1118,6 +1160,11 @@ class Adapter:
                             output="[CANCELLED] OpenCode run was cancelled.",
                             model=mid,
                         )
+                    if provider_error[0]:
+                        timed_out = summarize_opencode_error(provider_error[0])
+                        put_status(status_queue, timed_out)
+                        await kill_process_tree(proc)
+                        break
                     if not out_buf and time.monotonic() - started_at >= startup_budget:
                         timed_out = (
                             f"startup stalled: no stdout for {startup_budget:g}s. "
@@ -1199,7 +1246,7 @@ class Adapter:
                 )[0]
                 return AgentResult(
                     success=False,
-                    error=f"OpenCode {timed_out}",
+                    error=timed_out if provider_error[0] else f"OpenCode {timed_out}",
                     output=partial,
                     model=mid,
                 )

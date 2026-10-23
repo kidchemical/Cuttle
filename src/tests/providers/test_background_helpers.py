@@ -263,3 +263,18 @@ def test_settings_routes_require_owner_and_round_trip(monkeypatch, tmp_path, iso
     assert client.get('/api/settings/background-helpers').get_json()['preferences']['chain'][0]['temperature'] == .5
     assert client.get('/api/settings/background-helpers/api/openai/models').status_code == 200
     assert client.post('/api/settings/background-helpers',json={'chain':body['chain'],'tasks':{'bad-task':body['chain']}}).status_code == 400
+
+
+def test_helper_reader_accepts_pretty_printed_json(tmp_path):
+    """``claude auth status --json`` prints indented JSON across lines."""
+    import sys
+    from api.agent_harness.helper import JsonProcess
+    script = ("import json; print('banner'); "
+              "print(json.dumps({'loggedIn': True, 'authMethod': 'claude.ai'}, indent=2)); "
+              "print(json.dumps({'type': 'result'}))")
+    process = JsonProcess([sys.executable, '-c', script], str(tmp_path), None, HelperRequest('x', timeout=20))
+    try:
+        assert process.next() == {'loggedIn': True, 'authMethod': 'claude.ai'}
+        assert process.next() == {'type': 'result'}
+    finally:
+        process.close()

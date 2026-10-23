@@ -14,6 +14,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from api.knowledge_graph.sources import first_paragraph, first_sentence
 from api.knowledge_graph.subsystems import (
     SEP, Subsystem, SubsystemView, build_view, is_file_node,
 )
@@ -43,11 +44,6 @@ def _frontmatter(**fields: Any) -> List[str]:
     return lines + ["---", ""]
 
 
-def _one_line(text: str, limit: int = 160) -> str:
-    text = " ".join(str(text).split())
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
-
-
 def _doc_link(doc: Doc) -> str:
     return f"[{doc[0]}]({Path(doc[1]).as_uri()})"
 
@@ -73,15 +69,25 @@ def _deps(counter, heading: str) -> List[str]:
     return lines + [""]
 
 
-def _subsystem_note(sub: Subsystem, docs: List[Doc]) -> str:
+def _subsystem_note(sub: Subsystem, docs: List[Doc],
+                    explanation: Optional[List[str]] = None) -> str:
+    """Prose first (summary, optional AI explanation, modules), then structure.
+
+    No ``# title``: Obsidian already shows the file name as the note's title.
+    """
     where = sub.key[:-2] + "*" if sub.key.endswith("_*") else (sub.key + "/" if sub.key else "(repository root)")
     lines = _frontmatter(path=where, files=len(sub.files), symbols=len(sub.symbols),
                          tags=["subsystem"])
-    lines += [f"# {sub.title}", ""]
     if sub.summary:
-        lines += [f"> {_one_line(sub.summary, 300)}", ""]
+        lines += [f"> {first_paragraph(sub.summary)}", ""]
     lines += [f"`{where}` · {len(sub.files)} files · {len(sub.symbols)} symbols · "
               "[[Overview]]", ""]
+    lines += explanation or []
+    lines += ["## Modules", ""]
+    for path in sub.files:
+        summary = sub.summaries.get(path)
+        lines.append(f"- `{path}`" + (f" — {first_sentence(summary)}" if summary else ""))
+    lines.append("")
     lines += _deps(sub.uses, "Depends on")
     lines += _deps(sub.used_by, "Used by")
     if sub.symbols:
@@ -89,11 +95,6 @@ def _subsystem_note(sub: Subsystem, docs: List[Doc]) -> str:
         for label, path, loc, degree in sub.symbols[:MAX_SYMBOLS]:
             lines.append(f"- `{label}` — `{path}{':' + loc if loc else ''}` ({degree} links)")
         lines.append("")
-    lines += ["## Modules", ""]
-    for path in sub.files:
-        summary = sub.summaries.get(path)
-        lines.append(f"- `{path}`" + (f" — {_one_line(summary)}" if summary else ""))
-    lines.append("")
     related = _docs_for(sub, docs)
     if related:
         lines += ["## Documented in", ""] + [f"- {_doc_link(d)}" for d in related] + [""]
@@ -109,11 +110,10 @@ def _overview(view: SubsystemView, project: str, meta: Dict[str, Any], docs: Lis
     symbols = sum(len(s.symbols) for s in subs.values())
     files = sum(len(s.files) for s in subs.values())
     lines = _frontmatter(project=project, subsystems=len(subs), tags=["overview"])
-    lines += [f"# {project} — architecture overview", ""]
     head = str(meta.get("head") or "")[:8]
     stamp = ", ".join(x for x in (f"`{head}`" if head else "", meta.get("branch") or "",
                                   meta.get("indexed_at") or "") if x)
-    lines += [f"{files} source files · {symbols} symbols · {len(subs)} subsystems"
+    lines += [f"**{project}** architecture · {files} source files · {symbols} symbols · {len(subs)} subsystems"
               + (f" — code graph at {stamp}" if stamp else "") + ".", "",
               "Generated from the code graph; regenerate with "
               "`python -m api.knowledge_graph export`. Write your own notes in "
@@ -126,7 +126,7 @@ def _overview(view: SubsystemView, project: str, meta: Dict[str, Any], docs: Lis
     for area in sorted(areas, key=lambda a: (-sum(len(s.files) for s in areas[a]), a)):
         lines += [f"### {area}", ""]
         for sub in sorted(areas[area], key=lambda s: s.title):
-            summary = f" — {_one_line(sub.summary, 110)}" if sub.summary else ""
+            summary = f" — {first_sentence(sub.summary, 140)}" if sub.summary else ""
             lines.append(f"- [[{sub.title}]] ({len(sub.files)} files){summary}")
         lines.append("")
 
@@ -161,11 +161,18 @@ def _overview(view: SubsystemView, project: str, meta: Dict[str, Any], docs: Lis
 
 
 def render(graph: Dict[str, Any], *, project: str, meta: Optional[Dict[str, Any]] = None,
-           docs: Optional[List[Doc]] = None) -> Dict[str, str]:
-    """``{vault-relative path: markdown}`` for one project's generated notes."""
-    view = build_view(graph, project)
+           docs: Optional[List[Doc]] = None, module_docs: Optional[Dict[str, str]] = None,
+           explanations: Optional[Dict[str, List[str]]] = None,
+           view: Optional[SubsystemView] = None) -> Dict[str, str]:
+    """``{vault-relative path: markdown}`` for one project's generated notes.
+
+    ``module_docs`` are full docstrings read from the checkout; ``explanations``
+    maps a subsystem title to its separately managed "How it works" block.
+    """
+    view = view or build_view(graph, project, module_docs)
     docs = list(docs or [])
-    notes = {f"{SUBSYSTEMS_DIR}/{sub.title}.md": _subsystem_note(sub, docs)
+    explanations = explanations or {}
+    notes = {f"{SUBSYSTEMS_DIR}/{sub.title}.md": _subsystem_note(sub, docs, explanations.get(sub.title))
              for sub in view.subsystems.values()}
     notes[OVERVIEW] = _overview(view, project, dict(meta or {}), docs)
     return notes

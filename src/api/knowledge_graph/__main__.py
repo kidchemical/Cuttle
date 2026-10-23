@@ -73,6 +73,27 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     _common(sub.add_parser("export", help="regenerate a project's curated Obsidian vault"))
 
+    p_enrich = sub.add_parser(
+        "enrich", help="opt-in: AI 'How it works' section for ONE subsystem note (prototype)")
+    _common(p_enrich)
+    p_enrich.add_argument("--subsystem", required=True,
+                          help='note title or path, e.g. "api › agent_router" or src/api/agent_router')
+    p_enrich.add_argument("--via", help="executor kind:target, e.g. cli:claude or api:openai "
+                                        "(default: the 'wiki' background-helper chain)")
+    p_enrich.add_argument("--model")
+    p_enrich.add_argument("--effort")
+    p_enrich.add_argument("--force", action="store_true", help="regenerate even if inputs are unchanged")
+    p_enrich.add_argument("--dry-run", action="store_true", help="assemble inputs only; no model call")
+    p_enrich.add_argument("--show-prompt", action="store_true", help="include the assembled prompt")
+    p_enrich.add_argument("--timeout", type=float, default=600.0)
+
+    p_notes = sub.add_parser("notes", help="list enriched subsystem explanations (agent-facing)")
+    _common(p_notes)
+
+    p_note = sub.add_parser("note", help="retrieve one enriched explanation (no Obsidian chrome)")
+    p_note.add_argument("subsystem")
+    _common(p_note)
+
     p_sync = sub.add_parser("sync", help="regenerate the vaults of all indexed projects")
     p_sync.add_argument("--provider")
     p_sync.add_argument("--index", action="store_true", help="index missing projects first")
@@ -135,6 +156,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             return _emit(service.update(ctx, provider_id=provider_id))
         if args.cmd == "export":
             return _emit(service.export_obsidian(ctx, provider_id=provider_id))
+        if args.cmd == "enrich":
+            return _emit(service.enrich(
+                ctx, args.subsystem, via=args.via, model=args.model, effort=args.effort,
+                force=args.force, dry_run=args.dry_run, show_prompt=args.show_prompt,
+                timeout=args.timeout, provider_id=provider_id))
+        if args.cmd == "notes":
+            return _emit(service.list_notes(ctx, provider_id=provider_id))
+        if args.cmd == "note":
+            return _emit(service.retrieve_note(ctx, args.subsystem, provider_id=provider_id))
         if args.cmd == "query":
             if getattr(args, "refresh", False):
                 store = service.store_for(ctx, provider_id)

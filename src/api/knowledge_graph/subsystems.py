@@ -170,7 +170,9 @@ def _safe(title: str) -> str:
     return "".join(c for c in title if c not in '<>:"/\\|?*#^[]').strip().lstrip(".") or "untitled"
 
 
-def build_view(graph: Dict[str, Any], project: str = "Project") -> SubsystemView:
+def build_view(graph: Dict[str, Any], project: str = "Project",
+               module_docs: Optional[Dict[str, str]] = None) -> SubsystemView:
+    """``module_docs`` (file -> full docstring) replaces graphify's truncated labels."""
     nodes = {str(n.get("id")): n for n in graph.get("nodes") or [] if n.get("id") is not None}
     links = graph.get("links") or graph.get("edges") or []
 
@@ -225,6 +227,10 @@ def build_view(graph: Dict[str, Any], project: str = "Project") -> SubsystemView
         if a and b and a != b:
             subsystems[a].uses[b] += 1
             subsystems[b].used_by[a] += 1
+
+    for path, doc in (module_docs or {}).items():
+        if path in file_to_title and doc:
+            subsystems[file_to_title[path]].summaries[path] = doc
 
     for sub in subsystems.values():
         sub.symbols.sort(key=lambda s: (-s[3], s[0]))

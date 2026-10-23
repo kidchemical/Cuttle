@@ -31,7 +31,7 @@ agent toolkit.
 | Live split panes | `python -m api.panes_cli` | `chat-history.md` |
 | Device mesh / workers | `python -m api.device_workers.cli` | `cuttle-workers.md` |
 | Context Compiler | `python -m api.cuttle_brain` | Brain / ADDING_AN_AGENT |
-| Per-project knowledge graphs | `python -m api.knowledge_graph` (providers, status, where, index, update, query, explain, export, sync) | `knowledge-graph.md` |
+| Per-project knowledge graphs | `python -m api.knowledge_graph` (providers, status, where, index, update, query, explain, notes, note, enrich, export, sync) | `knowledge-graph.md` |
 | Sub-agent child chats | `python -m api.subagents` | `subagents.md` |
 | Job watch bars | `python -m api.job_watch` | `action-forms.md` |
 | Unified Jobs ledger | `python -m api.jobs` (list, inflight, view, cancel, rerun, stats) | Jobs |

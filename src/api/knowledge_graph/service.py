@@ -17,6 +17,9 @@ from typing import Any, Dict, List, Optional
 
 from core.runtime_paths import cuttle_home
 
+import api.knowledge_graph.enrich as enrich_mod
+from api.knowledge_graph.sources import module_docstrings
+from api.knowledge_graph.subsystems import SubsystemView, build_view
 from api.knowledge_graph.wiki import SUBSYSTEMS_DIR, render as render_wiki, write as write_wiki
 from api.knowledge_graph.catalog import (
     default_provider_id,
@@ -271,11 +274,176 @@ def export_obsidian(ctx: ResolvedContext, *, provider_id: Optional[str] = None) 
         return {"ok": False, "vault": str(project_dir), "reason": "no graph indexed yet",
                 "archived": archived}
     name = _safe_name(ctx.project.get("name") or "Project")
-    notes = render_wiki(graph, project=name, meta=store.read_meta(),
-                        docs=_project_docs(ctx.execution_path))
+    view = _view(graph, name, ctx.execution_path)
+    docs = _project_docs(ctx.execution_path)
+    explanations = _explanations(store, view, graph, docs, ctx.execution_path, name)
+    notes = render_wiki(graph, project=name, meta=store.read_meta(), docs=docs, view=view,
+                        explanations={t: lines for t, (lines, _s) in explanations.items()})
     stats = write_wiki(project_dir, notes)
     return {"ok": True, "vault": str(project_dir), "notes": len(notes), **stats,
+            "explanations": {t: state for t, (_l, state) in explanations.items()},
             "archived": archived}
+
+
+def _view(graph: Dict[str, Any], name: str, root: str) -> SubsystemView:
+    files = {n.get("source_file") for n in graph.get("nodes") or [] if n.get("source_file")}
+    return build_view(graph, name, module_docstrings(Path(root), sorted(files)))
+
+
+def _bundle(ctx: ResolvedContext, provider_id: Optional[str] = None):
+    """Indexed graph + subsystem view + docs. Raises if nothing is indexed."""
+    provider = provider_for(provider_id)
+    store = store_for(ctx, provider_id)
+    graph_data = getattr(provider, "graph_data", None)
+    graph = graph_data(store) if callable(graph_data) and provider.is_indexed(store) else None
+    if not graph:
+        raise KnowledgeGraphError("no graph indexed yet; run `index` first")
+    name = _safe_name(ctx.project.get("name") or "Project")
+    view = _view(graph, name, ctx.execution_path)
+    docs = _project_docs(ctx.execution_path)
+    return store, graph, view, docs, name
+
+
+def _explanations(store: GraphStore, view: SubsystemView, graph: Dict[str, Any], docs,
+                  root: str, name: str) -> Dict[str, tuple]:
+    """Cached AI sections by subsystem title, each with ``current``/``stale``.
+
+    Only reads the cache and recomputes fingerprints (no model call); a stale
+    entry still renders, under an out-of-date banner.
+    """
+    by_key = {sub.key: sub for sub in view.subsystems.values()}
+    out: Dict[str, tuple] = {}
+    for entry in enrich_mod.cached_keys(store.root):
+        sub = by_key.get(entry.get("key"))
+        if sub is None:
+            continue
+        current = enrich_mod.build_input(view, graph, sub, Path(root), docs, name).fingerprint
+        state = "current" if current == entry.get("fingerprint") else "stale"
+        out[sub.title] = (enrich_mod.note_section(entry, current, Path(root)), state)
+    return out
+
+
+def _find_subsystem(view: SubsystemView, query: str):
+    q = query.strip().strip("/")
+    exact = [s for s in view.subsystems.values()
+             if q in (s.title, s.key, s.key.removeprefix("src/"))]
+    if exact:
+        return exact[0]
+    loose = [s for s in view.subsystems.values() if s.key.endswith("/" + q) or s.title.endswith(" " + q)]
+    if len(loose) == 1:
+        return loose[0]
+    names = sorted(s.title for s in (loose or view.subsystems.values()))[:12]
+    raise KnowledgeGraphError(f"subsystem {query!r} is {'ambiguous' if loose else 'unknown'}; "
+                              f"e.g. {names}")
+
+
+def _executor_chain(via: Optional[str], model: Optional[str], effort: Optional[str]) -> List[Dict[str, Any]]:
+    """``--via kind:target`` or the user's configured ``wiki`` background-helper chain.
+
+    Never the generic default chain: that one is tuned for one-line helpers.
+    """
+    if via:
+        kind, _, target = via.partition(":")
+        if kind not in ("api", "cli") or not target:
+            raise KnowledgeGraphError("--via must look like cli:claude or api:openai")
+        return [{"kind": kind, "target": target, "model": model or "", "effort": effort,
+                 "temperature": None, "auth": "subscription" if kind == "cli" else ""}]
+    from api import background_helpers
+
+    chain = (background_helpers.preferences().get("tasks") or {}).get("wiki") or []
+    if not chain:
+        raise KnowledgeGraphError(
+            "no executor: pass --via cli:claude (or api:openai …), or set the "
+            "'Knowledge wiki explanations' background helper in Settings")
+    return chain
+
+
+def enrich(ctx: ResolvedContext, subsystem: str, *, via: Optional[str] = None,
+           model: Optional[str] = None, effort: Optional[str] = None, force: bool = False,
+           dry_run: bool = False, show_prompt: bool = False, timeout: float = 600.0,
+           provider_id: Optional[str] = None) -> Dict[str, Any]:
+    """Write (or refresh) one subsystem's AI "How it works" section — opt-in.
+
+    Skips the model call when the cached fingerprint still matches its inputs.
+    """
+    store, graph, view, docs, name = _bundle(ctx, provider_id)
+    sub = _find_subsystem(view, subsystem)
+    inp = enrich_mod.build_input(view, graph, sub, Path(ctx.execution_path), docs, name)
+    cached = enrich_mod.load(store.root, sub.key)
+    result: Dict[str, Any] = {"ok": True, "subsystem": sub.title, **inp.stats}
+    if show_prompt:
+        result["system"], result["prompt"] = enrich_mod.SYSTEM, inp.prompt
+    if cached and cached.get("fingerprint") == inp.fingerprint and not force:
+        return {**result, "status": "unchanged", "generated_at": cached.get("generated_at")}
+    if dry_run:
+        return {**result, "status": "would_generate", "cached": bool(cached)}
+
+    from api import background_helpers
+    from api.model_providers.types import TextRequest
+
+    chain = _executor_chain(via, model, effort)
+    request = TextRequest(user=inp.prompt, system=enrich_mod.SYSTEM, max_tokens=4000,
+                          temperature=0.2, timeout=timeout)
+    reply = background_helpers.generate("wiki", request, chain=chain)
+    if reply is None or not reply.text.strip():
+        raise KnowledgeGraphError("no executor in the chain produced an explanation "
+                                  "(see the Cuttle log for the per-target failure)")
+    markdown = enrich_mod.clean_output(reply.text)
+    records = enrich_mod.assess_citations(markdown, Path(ctx.execution_path), inp)
+    usage = dict(reply.usage or {})
+    executor = {"target": f"{chain[0]['kind']}:{chain[0]['target']}" if len(chain) == 1
+                else (usage.get("agent") or "chain"),
+                "model": usage.get("model") or chain[0].get("model") or "",
+                "effort": chain[0].get("effort")}
+    entry = enrich_mod.save(store.root, inp, markdown, records, executor,
+                            {k: v for k, v in usage.items() if isinstance(v, (int, float, str))})
+    exported = export_obsidian(ctx, provider_id=provider_id)
+    return {**result, "status": "generated", "citations": enrich_mod.citation_summary(records),
+            "missing_facts": entry.get("missing_facts") or [],
+            "executor": executor, "vault": exported.get("vault")}
+
+
+def list_notes(ctx: ResolvedContext, *, provider_id: Optional[str] = None) -> Dict[str, Any]:
+    """Enriched subsystem notes an agent can retrieve, with freshness."""
+    store, graph, view, docs, name = _bundle(ctx, provider_id)
+    by_key = {sub.key: sub for sub in view.subsystems.values()}
+    notes = []
+    for entry in enrich_mod.cached_keys(store.root):
+        sub = by_key.get(entry.get("key"))
+        if sub is None:
+            notes.append({"title": entry.get("title"), "key": entry.get("key"),
+                          "status": "orphaned", "generated_at": entry.get("generated_at")})
+            continue
+        current = enrich_mod.build_input(view, graph, sub, Path(ctx.execution_path),
+                                         docs, name).fingerprint
+        stale = current != entry.get("fingerprint")
+        omitted = enrich_mod.missing_facts(sub.key, str(entry.get("markdown") or ""))
+        notes.append({
+            "title": sub.title, "key": sub.key,
+            "status": "stale" if stale else "current",
+            "generated_at": entry.get("generated_at"),
+            "approx_tokens": max(1, len(str(entry.get("markdown") or "")) // 4),
+            "missing_facts": [f["id"] for f in omitted],
+        })
+    return {"ok": True, "project": ctx.project.get("name"), "notes": notes,
+            "authoritative": "Source code and documentation remain authoritative."}
+
+
+def retrieve_note(ctx: ResolvedContext, subsystem: str, *,
+                  provider_id: Optional[str] = None) -> Dict[str, Any]:
+    """One enriched explanation, stripped of Obsidian formatting."""
+    store, graph, view, docs, name = _bundle(ctx, provider_id)
+    sub = _find_subsystem(view, subsystem)
+    entry = enrich_mod.load(store.root, sub.key)
+    if entry is None:
+        return {"ok": False, "status": "missing", "subsystem": sub.title, "key": sub.key,
+                "error": f"no enriched explanation for {sub.title!r}",
+                "hint": 'python -m api.knowledge_graph enrich --subsystem '
+                        f'"{sub.title}" --via cli:claude'}
+    current = enrich_mod.build_input(view, graph, sub, Path(ctx.execution_path),
+                                     docs, name).fingerprint
+    payload = enrich_mod.agent_view(entry, current, Path(ctx.execution_path))
+    return {"ok": True, **payload}
 
 
 def sync_obsidian(*, index_missing: bool = False,

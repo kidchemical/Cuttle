@@ -7,6 +7,7 @@ only turns that go silent (or run away chatty forever) get aborted.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -288,3 +289,41 @@ def test_opencode_stderr_chatter_cannot_hide_startup_stall(monkeypatch, tmp_path
     result = asyncio.run(oc.Adapter().execute('task', cwd=str(tmp_path), resume=None,
                                             model=None, timeout=3600))
     assert not result.success and 'startup stalled' in result.error
+
+
+_QUOTA_LOG = (
+    b'timestamp=2026-10-23T18:46:50.613Z level=ERROR run=6b95e239 message="stream error" '
+    b'providerID=opencode modelID=deepseek-v4.1-flash-free small=false agent=build mode=primary '
+    b'error.error="AI_APICallError: Free usage limit reached. Subscribe to OpenCode Go to keep going: https://opencode.ai/go"\n'
+)
+
+
+def test_opencode_provider_quota_log_fails_fast_instead_of_stalling(monkeypatch, tmp_path):
+    # OpenCode `run` logs the provider error but emits no stdout and never exits;
+    # the turn must fail now with the real reason, not after the startup watchdog.
+    from api.agent_harness.agents.opencode import adapter as oc
+    from api.agent_router.policy import classify_failure
+
+    proc = _Proc([])
+    proc.stdout = _Reader([], hang_after=0)
+    proc.stderr = _Reader([_QUOTA_LOG])
+    _patch_spawn(monkeypatch, oc, proc)
+    monkeypatch.setenv('CUTTLE_OPENCODE_STARTUP_TIMEOUT', '30')
+    started = time.monotonic()
+    result = asyncio.run(oc.Adapter().execute('task', cwd=str(tmp_path), resume=None,
+                                            model=None, timeout=3600))
+    assert time.monotonic() - started < 10
+    assert not result.success
+    assert 'usage limit reached' in result.error and 'stalled' not in result.error
+    kind, _ = classify_failure({'success': False, 'type': 'opencode_error', 'error': result.error})
+    assert kind == 'transport'  # never-ran failure → router may fall back
+
+
+def test_opencode_title_or_transient_log_errors_do_not_end_turn():
+    from api.agent_harness.agents.opencode import adapter as oc
+
+    assert oc.opencode_terminal_log_error(_QUOTA_LOG.decode()).startswith('Free usage limit reached')
+    assert oc.opencode_terminal_log_error(_QUOTA_LOG.decode().replace('small=false', 'small=true')) is None
+    assert oc.opencode_terminal_log_error(
+        'level=ERROR message="stream error" small=false error.error="AI_APICallError: socket hang up"'
+    ) is None
