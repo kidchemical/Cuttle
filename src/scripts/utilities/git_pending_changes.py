@@ -590,6 +590,28 @@ def _numstat_for_paths(
     return out
 
 
+def _filtered_paths(
+    root: str,
+    paths: List[str],
+    *,
+    timeout: float,
+    chunk_size: int = 100,
+) -> set:
+    """Paths with a clean filter (Git LFS). Diffing one runs the filter over the
+    whole working file — hundreds of MB for a video — on every UI poll."""
+    out: set = set()
+    for i in range(0, len(paths), max(1, chunk_size)):
+        chunk = paths[i : i + chunk_size]
+        r = git_run(["check-attr", "-z", "filter", "--", *chunk], root, timeout=timeout)
+        if r.returncode != 0:
+            continue
+        parts = (r.stdout or "").split("\0")
+        for j in range(0, len(parts) - 2, 3):
+            if parts[j + 2] not in ("unspecified", "unset", ""):
+                out.add(parts[j])
+    return out
+
+
 def _collect_pending_changes_locked(
     root: str,
     *,
@@ -651,10 +673,16 @@ def _collect_pending_changes_locked(
         # Full-repo numstat is O(dirty tree) and can exceed poll_timeout on large
         # Unity deletes. Path-limit when heavy or already truncating the UI list.
         heavy = total_pending > _HEAVY_STATUS_ROWS or truncated
-        if heavy:
+        # Filtered (LFS) files count as binary (0/0) without being diffed.
+        filtered = _filtered_paths(
+            root,
+            [str(f["path"]) for f in files if f["status"] != "untracked"],
+            timeout=poll_timeout,
+        )
+        if heavy or filtered:
             numstat = _numstat_for_paths(
                 root,
-                [str(f["path"]) for f in files],
+                [str(f["path"]) for f in files if str(f["path"]) not in filtered],
                 timeout=poll_timeout,
             )
         else:
