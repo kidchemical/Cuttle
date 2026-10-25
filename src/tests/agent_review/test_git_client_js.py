@@ -59,3 +59,58 @@ def test_unified_hunks_add_context_without_repeating_lines(result):
 
 def test_for_repo_matches_the_panel_repository_only(result):
     assert result["repo"] == [["sub/x.py"], [], []]
+
+
+FRAMES = r"""
+// Several shell panes (separate pages) on one origin share a lock manager and
+// a broadcast bus; only the lock holder may open the review stream.
+const fs = require('fs');
+const vm = require('vm');
+const src = fs.readFileSync(process.env.CLIENT, 'utf8');
+const waiters = [];
+let held = false;
+const locks = {request(name, cb) {
+  return new Promise((resolve) => {
+    const run = () => { held = true; Promise.resolve(cb()).then((v) => { held = false; resolve(v); const n = waiters.shift(); if (n) n(); }); };
+    if (held) waiters.push(run); else run();
+  });
+}};
+const bus = [];
+class BC { constructor() { bus.push(this); }
+  postMessage(data) { bus.filter((c) => c !== this).forEach((c) => c.onmessage && c.onmessage({data})); } close() {} }
+const streams = [];
+class ES { constructor(url) { this.url = url; streams.push(this); } close() { this.closed = true; } }
+const fetch = async () => ({ok: true, json: async () => ({flags: [{id: 'agent_review', enabled: true}]})});
+const frames = [];
+for (let i = 0; i < 4; i++) {
+  const win = {navigator: {locks}, BroadcastChannel: BC, EventSource: ES, fetch, document: {hidden: false},
+               setInterval: () => 1};
+  win.window = win;
+  vm.runInNewContext(src, Object.assign(win, {console, URLSearchParams, Promise, JSON, Map, Set, Date}));
+  const hits = [];
+  win.CuttleAgentReview.subscribe(() => hits.push(1));
+  frames.push(hits);
+}
+setTimeout(() => {
+  const open = streams.filter((s) => !s.closed).length;
+  streams[0].onmessage({data: JSON.stringify({revision: 1})});
+  streams[0].onmessage({data: JSON.stringify({revision: 2})});
+  const woke = frames.map((h) => h.length);
+  streams[0].onerror();  // leader's stream dies → the next frame takes the lock
+  setTimeout(() => {
+    process.stdout.write(JSON.stringify({open, woke, total: streams.length}));
+  }, 20);
+}, 20);
+"""
+
+
+def test_review_stream_is_shared_across_frames():
+    if shutil.which("node") is None:
+        pytest.skip("node unavailable")
+    proc = subprocess.run(["node", "-e", FRAMES], capture_output=True, text=True, timeout=30,
+                          env={**os.environ, "CLIENT": str(CLIENT)})
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["open"] == 1  # four panes, one connection
+    assert out["woke"] == [1, 1, 1, 1]  # revision change reached every pane
+    assert out["total"] == 2  # handover: a waiting pane opened the replacement

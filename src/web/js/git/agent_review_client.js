@@ -1,7 +1,7 @@
 /* Shared agent-review client for the Git surfaces (Pending Changes strip,
  * diff modal) on every page that hosts them. Owner of the truth is the
  * server (api.agent_review): this module is transport, a short page-wide
- * cache, one live wake signal per page, the commit guard and a pure
+ * cache, one live wake signal per origin, the commit guard and a pure
  * unified-row builder. Experimental flag `agent_review`; while it is off
  * every call resolves to "no review". */
 (function (global) {
@@ -12,7 +12,11 @@
     const listeners = new Set();
     const cache = new Map(); // project key → {at, promise}
     let flag = null;
+    const STREAM_LOCK = 'cuttle-agent-review-stream';
+    const REVISION_CHANNEL = 'cuttle-agent-review-revision';
     let source = null;
+    let channel = null;
+    let live = false;
     let pollTimer = null;
     let revision = null;
 
@@ -65,18 +69,42 @@
             call('GET', '/api/agent-review/revision').then((d) => onRevision(d.revision)).catch(() => {});
         }, POLL_MS);
     }
-    function ensureLive() {
-        if (source || pollTimer || !global.EventSource) { if (!global.EventSource) startPolling(); return; }
+    // One stream per origin, not per frame: every shell pane is its own page,
+    // and an EventSource per pane exhausted the browser's six HTTP/1.1
+    // connections per host, so later fetches (commit suggest, commit) queued
+    // forever. The Web Lock holder owns the stream and relays revisions over
+    // a BroadcastChannel; when its frame goes away the next waiter takes over.
+    function openStream(release) {
+        const done = () => { if (release) { release(); release = null; } };
+        if (!global.EventSource) { startPolling(); done(); return; }
         try {
             source = new global.EventSource('/api/agent-review/stream', { withCredentials: true });
             source.onmessage = (e) => {
-                try { onRevision(JSON.parse(e.data).revision); } catch (_) {}
+                let next;
+                try { next = JSON.parse(e.data).revision; } catch (_) { return; }
+                onRevision(next);
+                if (channel) { try { channel.postMessage({ revision: next }); } catch (_) {} }
             };
             source.onerror = () => {
                 if (source) { try { source.close(); } catch (_) {} source = null; }
                 startPolling();
+                done();
             };
-        } catch (_) { startPolling(); }
+        } catch (_) { startPolling(); done(); }
+    }
+    function ensureLive() {
+        if (live) return;
+        live = true;
+        const locks = global.navigator && global.navigator.locks;
+        if (!locks || typeof global.BroadcastChannel !== 'function') { openStream(null); return; }
+        try {
+            channel = new global.BroadcastChannel(REVISION_CHANNEL);
+            channel.onmessage = (e) => {
+                if (e.data && typeof e.data.revision === 'number') onRevision(e.data.revision);
+            };
+        } catch (_) { channel = null; openStream(null); return; }
+        locks.request(STREAM_LOCK, () => new Promise((release) => openStream(release)))
+            .catch(() => startPolling());
     }
     /** Called whenever reviews may have changed; returns an unsubscribe. */
     function subscribe(fn) {
