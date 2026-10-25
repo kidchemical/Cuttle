@@ -53,6 +53,10 @@ def test_tab_menu_offers_rename_color_group():
     assert ">Rename<" in src
     assert ">Set color<" in src
     assert ">Add to group<" in src
+    assert ">Set Project Override<" in src
+    assert ">Set Agent Override<" in src
+    assert "openOverridePicker(" in src
+    assert "pickerMode: 'defaults'" in src
     assert ">New group<" in src  # group submenu lists New group + existing groups
     assert ">Remove from group<" in src
     assert "hostEl.addEventListener('contextmenu'" in src
@@ -63,6 +67,8 @@ def test_group_bubble_edits_name_color_ungroup_delete():
     assert "function openSpaceGroupBubbleFor(" in src
     assert 'placeholder="Name group"' in src
     assert ">Ungroup<" in src
+    assert ">Set Project Override<" in src
+    assert ">Set Agent Override<" in src
     assert ">Delete group<" in src
     assert "Click again to confirm" in src  # delete is a two-step confirm
     assert "function dissolveSpaceGroup(" in src
@@ -194,15 +200,29 @@ def test_open_menu_pins_fullscreen_titlebar():
     assert "win.isSpaceCtxOpen = isSpaceCtxOpen;" in src
 
 
+def test_chat_page_loads_spaces_state_for_new_chat_defaults():
+    html = (Path(__file__).resolve().parents[3] / "src" / "web" / "chat_page.html").read_text(encoding="utf-8")
+    assert "spaces_state.js" in html
+    assert html.find("/js/spaces/spaces_state.js") < html.find("/js/chat/chat_page.js")
+    page = (Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "chat" / "chat_page.js").read_text(encoding="utf-8")
+    assert "readSpaceNewChatDefaults" in page
+    assert "cuttle-space-defaults" in page
+    session = (Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "chat" / "chat_session.js").read_text(encoding="utf-8")
+    apply_at = session.find("h.applyStarredSlashChips();")
+    create_null = session.find("session.create(null);")
+    assert apply_at > create_null > 0
+
+
 def test_spaces_scripts_load_before_shell():
     html = (Path(__file__).resolve().parents[3] / "src" / "web" / "app_shell.html").read_text(encoding="utf-8")
     idx = {}
-    for name in ("spaces_state.js", "spaces_groups.js", "spaces_order.js", "spaces_drop.js", "spaces_activity.js", "shell_spaces.js", "app_shell.js"):
+    for name in ("spaces_state.js", "spaces_groups.js", "spaces_order.js", "spaces_drop.js", "spaces_activity.js", "chat_chip_config.js", "shell_spaces.js", "app_shell.js"):
         pos = html.find(name)
         assert pos >= 0, name + " not loaded by app_shell.html"
         idx[name] = pos
-    for name in ("spaces_state.js", "spaces_groups.js", "spaces_order.js", "spaces_drop.js", "spaces_activity.js"):
+    for name in ("spaces_state.js", "spaces_groups.js", "spaces_order.js", "spaces_drop.js", "spaces_activity.js", "chat_chip_config.js"):
         assert idx[name] < idx["shell_spaces.js"], name + " must load before shell_spaces.js"
+    assert html.find("searchable_select.js") < idx["chat_chip_config.js"]
     assert idx["shell_spaces.js"] < idx["app_shell.js"]
 
 

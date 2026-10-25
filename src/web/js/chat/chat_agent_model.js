@@ -173,6 +173,38 @@
         return pins;
     }
 
+    /**
+     * Stamp a space/group agent override onto welcome-chat supplement
+     * pins. Dirty flags keep async starred defaults from replacing them.
+     * Returns true when anything was written.
+     */
+    function applyNewChatOverridePins(supplement, agent) {
+        const S = supplement;
+        const rec = agent || null;
+        if (!S || !rec) return false;
+        const id = String(rec.id || '').toLowerCase();
+        const model = String(rec.model || '').trim();
+        const effort = String(rec.effort || '').trim();
+        if (!id || (!model && !effort)) return false;
+        if (id === 'cursor') {
+            if (model) S.preferredModel = model;
+            return !!model;
+        }
+        if (DRAFT_PIN_AGENTS.indexOf(id) < 0) return false;
+        let wrote = false;
+        if (model) {
+            S[id + 'Model'] = model;
+            S[id + 'ModelDirty'] = true;
+            wrote = true;
+        }
+        if (effort) {
+            S[id + 'Effort'] = effort;
+            S[id + 'EffortDirty'] = true;
+            wrote = true;
+        }
+        return wrote;
+    }
+
     function draftSupplementPatch(pins) {
         const patch = {};
         DRAFT_PIN_AGENTS.forEach((agent) => {
@@ -433,6 +465,7 @@
         turnSlashFromMessages,
         shouldAdoptComposerSelection,
         draftOverrides,
+        applyNewChatOverridePins,
         draftSupplementPatch,
         sessionPin,
         starredAgentModel,

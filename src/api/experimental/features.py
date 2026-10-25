@@ -20,6 +20,12 @@ from __future__ import annotations
 from api.experimental.flags import FlagSpec, register_flag
 
 register_flag(FlagSpec(
+    id="agent_resource_limits", label="Agent resource limits",
+    description="Apply Linux memory and process limits to agent CLIs and their descendants, including build and render tools (6 GB soft / 8 GB hard per agent by default). Changes apply to new launches; running scopes keep their limits.",
+    default=False, category="agents", risk="medium", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
     id="google_signin", label="Google sign-in",
     description="Show Google sign-in and sign-up options, account linking, and Google photo controls on authentication and account screens.",
     default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,

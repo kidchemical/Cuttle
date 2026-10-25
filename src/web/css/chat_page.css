@@ -41,22 +41,6 @@
     --bubble-shadow: rgba(15, 23, 42, 0.08);
 }
 
-/* Light mode code blocks */
-.light-mode .message-content code {
-    background: #ececf1;
-    color: #1a1a2e;
-}
-
-.light-mode .message-content pre {
-    background: #ececf1;
-    border-color: #d9d9e3;
-}
-
-.light-mode .message.user .message-content code {
-    background: rgba(255, 255, 255, 0.3);
-    color: white;
-}
-
 /* Midnight Mode Variables */
 .midnight-mode {
     --bg-primary: #0a0a0f;
@@ -3009,8 +2993,8 @@ body.has-video-background .chat-restore-loader {
 }
 
 .system-message {
-    background: rgba(102, 126, 234, 0.1) !important;
-    border: 1px solid rgba(102, 126, 234, 0.3);
+    background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-secondary)) !important;
+    border: 1px solid color-mix(in srgb, var(--accent-color) 24%, var(--border-color));
     color: var(--text-primary) !important;
     text-align: center;
     padding: 8px 16px !important;
@@ -3061,6 +3045,29 @@ body.has-video-background .chat-restore-loader {
     object-position: center 42%;
     transform: none;
     display: block;
+}
+
+/* The default identity shares the rail's transparent full mascot. Custom
+   profile photos keep their circular frame and cover sizing. */
+.message.assistant .message-avatar:has(.assistant-avatar-img--mascot) {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    overflow: visible;
+}
+
+.message.assistant .message-avatar .assistant-avatar-img--mascot,
+.typing-orbit-core--glyph img.assistant-avatar-img--mascot,
+.subagent-fleet-avatar img.assistant-avatar-img--mascot {
+    object-fit: contain;
+    object-position: center;
+}
+
+.typing-orbit-core--glyph:has(.assistant-avatar-img--mascot),
+.subagent-fleet-avatar:has(.assistant-avatar-img--mascot) {
+    background: transparent;
+    border-radius: 0;
+    overflow: visible;
 }
 
 .message-content-wrapper {
@@ -3188,9 +3195,9 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
 .message-content blockquote {
     margin: 0.45em 0;
     padding: 0.45em 0.85em;
-    border-left: 3px solid var(--accent, #58a6ff);
-    background: rgba(127, 127, 127, 0.12);
-    border-radius: 0 8px 8px 0;
+    border-left: 3px solid var(--accent-color);
+    background: color-mix(in srgb, var(--accent-color) 7%, transparent);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
     color: inherit;
     opacity: 0.95;
 }
@@ -3307,18 +3314,20 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
     border: none;
     border-radius: 6px;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: color var(--dur-fast) var(--ease-out),
+                background var(--dur-fast) var(--ease-out),
+                transform var(--dur-fast) var(--ease-out);
     text-decoration: none;
 }
 
 .message-icon-btn:hover,
 .message-icon-btn:active {
     color: var(--accent-color);
-    background: rgba(102, 126, 234, 0.15);
+    background: color-mix(in srgb, var(--accent-color) 15%, transparent);
 }
 
 @keyframes message-ref-flash {
-    0% { box-shadow: 0 0 0 0 rgba(102, 126, 234, 0.55); background: rgba(102, 126, 234, 0.18); }
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color) 55%, transparent); background: color-mix(in srgb, var(--accent-color) 18%, transparent); }
     100% { box-shadow: 0 0 0 0 transparent; background: transparent; }
 }
 
@@ -3342,7 +3351,7 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
 
 .message-feedback-btn.is-on {
     color: var(--accent-color);
-    background: rgba(102, 126, 234, 0.15);
+    background: color-mix(in srgb, var(--accent-color) 15%, transparent);
 }
 
 .message-feedback-btn.is-on svg {
@@ -3357,7 +3366,7 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
 
 .message-tts-btn.is-playing {
     color: var(--accent-color);
-    background: rgba(102, 126, 234, 0.15);
+    background: color-mix(in srgb, var(--accent-color) 15%, transparent);
 }
 
 .message-tts-btn.is-loading {
@@ -3414,14 +3423,14 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
 .message-content h1,
 .message-header[class*="h1"] {
     font-size: 1.8em;
-    border-bottom: 2px solid rgba(102, 126, 234, 0.3);
+    border-bottom: 2px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
     padding-bottom: 8px;
     margin-top: 20px;
 }
 
 .message-content h2 {
     font-size: 1.5em;
-    border-bottom: 1px solid rgba(102, 126, 234, 0.2);
+    border-bottom: 1px solid color-mix(in srgb, var(--accent-color) 20%, transparent);
     padding-bottom: 6px;
     margin-top: 16px;
 }
@@ -3454,8 +3463,8 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
     overflow-x: auto;
     margin: 10px 0;
     border: 1px solid var(--border-color);
-    border-radius: 10px;
-    background: rgba(127, 127, 127, 0.06);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--text-primary) 3%, transparent);
 }
 
 .message-content table.message-table {
@@ -3470,7 +3479,7 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
 .message-content table.message-table td {
     padding: 8px 12px;
     border-bottom: 1px solid var(--border-color);
-    border-right: 1px solid rgba(127, 127, 127, 0.18);
+    border-right: 1px solid var(--border-color);
     vertical-align: top;
     overflow-wrap: normal;
     word-break: normal;
@@ -3485,7 +3494,7 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
     /* Unaligned GFM columns: line headers up with their cells (browser th
        default is centered). Explicit :---: / ---: alignment is inline style. */
     text-align: left;
-    background: rgba(127, 127, 127, 0.14);
+    background: color-mix(in srgb, var(--accent-color) 8%, transparent);
     font-weight: 600;
     color: var(--text-primary);
     white-space: nowrap;
@@ -3497,7 +3506,7 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
 }
 
 .message-content table.message-table tbody tr:nth-child(even) td {
-    background: rgba(127, 127, 127, 0.05);
+    background: color-mix(in srgb, var(--accent-color) 3%, transparent);
 }
 
 .message.user .message-content .message-table-wrap {
@@ -3555,25 +3564,28 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
 
 /* Code blocks — wrap long lines so bubbles never force page-wide horizontal scroll */
 .message-content code {
-    background: rgba(0, 0, 0, 0.15);
+    background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+    color: var(--text-primary);
     padding: 2px 6px;
-    border-radius: 4px;
-    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
     font-size: 0.9em;
     overflow-wrap: anywhere;
     word-break: break-word;
 }
 
 .message.user .message-content code {
-    background: rgba(255, 255, 255, 0.2);
+    background: color-mix(in srgb, currentColor 16%, transparent);
+    color: inherit;
 }
 
 .message-content pre {
-    background: rgba(0, 0, 0, 0.2);
-    padding: 12px;
-    border-radius: 8px;
-    margin: 10px 0;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    background: color-mix(in srgb, var(--bg-primary) 88%, var(--bg-secondary));
+    padding: var(--space-4);
+    border-radius: var(--radius-md);
+    margin: var(--space-3) 0;
+    border: 1px solid var(--border-color);
+    box-shadow: var(--edge-highlight);
     max-width: 100%;
     box-sizing: border-box;
     overflow-x: hidden;
@@ -3645,13 +3657,15 @@ pre.has-code-copy {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 6px;
-    background: rgba(0, 0, 0, 0.35);
-    color: var(--text-secondary, #bbb);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
     cursor: pointer;
     opacity: 0.55;
-    transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+    transition: opacity var(--dur-fast) var(--ease-out),
+                background var(--dur-fast) var(--ease-out),
+                color var(--dur-fast) var(--ease-out);
     user-select: none;
 }
 
@@ -3666,8 +3680,8 @@ pre.has-code-copy:hover .code-copy-btn,
 }
 
 .code-copy-btn:hover {
-    background: rgba(0, 0, 0, 0.55);
-    color: var(--text-primary, #fff);
+    background: var(--bg-hover);
+    color: var(--text-primary);
 }
 
 .code-copy-btn.is-copied {
@@ -3679,17 +3693,6 @@ pre.has-code-copy:hover .code-copy-btn,
     .code-copy-btn {
         opacity: 0.85;
     }
-}
-
-.light-mode .code-copy-btn {
-    background: rgba(255, 255, 255, 0.8);
-    border-color: #d9d9e3;
-    color: #555;
-}
-
-.light-mode .code-copy-btn:hover {
-    background: #fff;
-    color: #111;
 }
 
 /* Horizontal rule (markdown ---) — use text tone, not --border-color
@@ -3723,7 +3726,8 @@ pre.has-code-copy:hover .code-copy-btn,
     padding: 3px 10px 3px 8px;
     margin: 2px 2px;
     vertical-align: middle;
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
+    transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
     border: 1px solid var(--border-color, rgba(148, 163, 184, 0.35));
     background: rgba(148, 163, 184, 0.14);
     color: var(--text-primary, inherit);
@@ -3736,7 +3740,7 @@ pre.has-code-copy:hover .code-copy-btn,
 
 .message-content .md-link-chip:hover {
     border-color: var(--accent-color, #3b82f6);
-    background: rgba(59, 130, 246, 0.12);
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
 
 .message-content .md-link-chip--file {
@@ -4837,6 +4841,10 @@ pre.has-code-copy:hover .code-copy-btn,
 .slash-command-chip--project,
 .slash-command-chip[data-chip-index] {
     cursor: pointer;
+}
+
+.chip-config-modal-overlay {
+    z-index: 1000003;
 }
 
 .chip-config-modal {

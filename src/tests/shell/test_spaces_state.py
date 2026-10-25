@@ -25,12 +25,16 @@ const store = (data) => ({ getItem: () => data, setItem: () => {} });
 const dirty = {
   active: 's2', spaces: [
     { id: 's1', name: 'A', root: null },
-    { id: 's2', name: 'B', root: { type: 'leaf' }, groupId: 'g1', color: '#8ab4f8' },
-    { id: 's3', name: 'C', groupId: 'nope', color: 'not-a-color' },
+    { id: 's2', name: 'B', root: { type: 'leaf' }, groupId: 'g1', color: '#8ab4f8',
+      projectOverride: { id: 7, name: 'Demo', path: '/p/demo' },
+      agentOverride: { prefix: '/cursor ', label: 'Cursor Agent', category: 'cursor', id: 'cursor' } },
+    { id: 's3', name: 'C', groupId: 'nope', color: 'not-a-color',
+      projectOverride: {}, agentOverride: { label: 'missing prefix' } },
     { id: null },
   ],
   groups: [
-    { id: 'g1', name: 'Long name here', color: '#8ab4f8', collapsed: 1 },
+    { id: 'g1', name: 'Long name here', color: '#8ab4f8', collapsed: 1,
+      projectOverride: { id: 4, name: 'Cuttle' }, agentOverride: { prefix: '/nope' } },
     { id: 'g1', name: 'dupe' },
     null,
   ],
@@ -51,9 +55,27 @@ const plan1 = S.planSpaceClose({ active: 's1', spaces: [{ id: 's1' }] }, 's1');
 const plan2 = S.planSpaceClose({ active: 's1', spaces: [{ id: 's1' }, { id: 's2' }] }, 's1');
 const renamed = S.renameSpaceInState(st, added.id, '  Team  ');
 const renamedEmpty = S.renameSpaceInState(st, added.id, '   ');
+const inherit = S.resolveNewChatDefaults({
+  active: 's2',
+  spaces: [
+    { id: 's2', groupId: 'g1', projectOverride: { id: 7, name: 'Demo', path: '/p/demo' } },
+  ],
+  groups: [{ id: 'g1', agentOverride: { prefix: '/codex ', label: 'Codex', id: 'codex' } }],
+});
+const inheritGroup = S.resolveNewChatDefaults({
+  active: 's1',
+  spaces: [{ id: 's1', groupId: 'g1' }],
+  groups: [{ id: 'g1', projectOverride: { id: 4, name: 'Cuttle' },
+    agentOverride: { prefix: '/muse ', label: 'Muse Code', id: 'muse' } }],
+});
 process.stdout.write(JSON.stringify({ clean, roundTrip, bad, fallbackActive, added, addedName, plan1, plan2, renamed, renamedEmpty,
   names: S.nextSpaceName([{ name: 'Space 1' }, { name: 'space 2' }]),
-  colorOk: S.sanitizeColor('#8AB4F8'), colorBad: S.sanitizeColor('red') }));
+  colorOk: S.sanitizeColor('#8AB4F8'), colorBad: S.sanitizeColor('red'),
+  inherit, inheritGroup,
+  projOk: S.sanitizeProjectOverride({ id: 7, name: 'Demo', path: '/p' }),
+  projBad: S.sanitizeProjectOverride({}),
+  agentOk: S.sanitizeAgentOverride({ prefix: '/cursor', id: 'cursor' }),
+  agentBad: S.sanitizeAgentOverride({ label: 'x' }) }));
 """
 
 
@@ -74,11 +96,31 @@ def test_sanitize_keeps_valid_drops_invalid():
     assert [s["id"] for s in res["spaces"]] == ["s1", "s2", "s3"]
     assert res["spaces"][1]["groupId"] == "g1"
     assert res["spaces"][1]["color"] == "#8ab4f8"
+    assert res["spaces"][1]["projectOverride"]["id"] == 7
+    assert res["spaces"][1]["agentOverride"]["prefix"] == "/cursor "
     assert "groupId" not in res["spaces"][2]  # unknown group dropped
     assert "color" not in res["spaces"][2]  # arbitrary color dropped
+    assert "projectOverride" not in res["spaces"][2]
+    assert "agentOverride" not in res["spaces"][2]
     assert len(res["groups"]) == 1  # dupe + null removed
     assert res["groups"][0]["collapsed"] is True
+    assert res["groups"][0]["projectOverride"]["id"] == 4
+    assert res["groups"][0]["agentOverride"]["prefix"] == "/nope "
     assert res["active"] == "s2"
+
+
+@node_only
+def test_new_chat_defaults_inherit_space_then_group():
+    res = _run()
+    assert res["inherit"]["project"]["id"] == 7
+    assert res["inherit"]["agent"]["id"] == "codex"
+    assert res["inheritGroup"]["project"]["id"] == 4
+    assert res["inheritGroup"]["agent"]["id"] == "muse"
+    assert res["projOk"] == {"id": 7, "name": "Demo", "path": "/p"}
+    assert res["projBad"] is None
+    assert res["agentOk"]["prefix"] == "/cursor "
+    assert res["agentOk"]["id"] == "cursor"
+    assert res["agentBad"] is None
 
 
 @node_only

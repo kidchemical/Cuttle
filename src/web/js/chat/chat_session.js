@@ -665,7 +665,6 @@
 
         async function createNewChat() {
             if (session.current() != null) h.saveComposerDraft(session.current());
-            h.applyStarredSlashChips();
             chatRestoreAbandoned = true;
             h.clearChatRestoreVeil();
             h.storage.setItem('autoResumeSession', 'false');
@@ -700,6 +699,7 @@
             h.applySessionIdentity(null);
             h.setCurrentProject(null);
             h.setHubLiveStatusCache(null);
+            h.applyStarredSlashChips();
             h.reconcileChatProject();
             // Prior chat's Tasks strip must not stick on welcome / new chat.
             h.refreshChatWidgets();

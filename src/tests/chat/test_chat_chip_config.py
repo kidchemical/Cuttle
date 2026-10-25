@@ -70,6 +70,7 @@ out.repoNone = A.repoChoice([], '');
 out.labelPicked = A.activeRepoBranchLabel(two, '/p/B');
 out.labelMerged = A.activeRepoBranchLabel(two, '');
 out.labelSingle = A.activeRepoBranchLabel([two[1]], '/p/A');
+out.clearChoice = A.withClearChoice([{ value: '7', label: 'Demo' }]);
 
 process.stdout.write(JSON.stringify(out));
 """
@@ -115,6 +116,8 @@ def test_helper_outputs():
     assert out["labelPicked"] == "dev"
     assert out["labelMerged"] == "master +1"
     assert out["labelSingle"] == "dev"
+    assert out["clearChoice"][0] == {"value": "", "label": "None — use starred default"}
+    assert out["clearChoice"][1]["value"] == "7"
 
 
 @node_only

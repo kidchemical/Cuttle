@@ -121,6 +121,43 @@
             return true;
         }
 
+        function setSpaceProjectOverride(spaceId, proj) {
+            if (!CuttleSpaces.setSpaceProjectOverride(spacesState, spaceId, proj)) return false;
+            persistSpacesState();
+            notifySpaceDefaultsChanged({ type: 'space', id: spaceId });
+            return true;
+        }
+
+        function setSpaceAgentOverride(spaceId, agent) {
+            if (!CuttleSpaces.setSpaceAgentOverride(spacesState, spaceId, agent)) return false;
+            persistSpacesState();
+            notifySpaceDefaultsChanged({ type: 'space', id: spaceId });
+            return true;
+        }
+
+        function setGroupProjectOverride(gid, proj) {
+            if (!CuttleSpaces.setGroupProjectOverride(spacesState, gid, proj)) return false;
+            persistSpacesState();
+            notifySpaceDefaultsChanged({ type: 'group', id: gid });
+            return true;
+        }
+
+        function setGroupAgentOverride(gid, agent) {
+            if (!CuttleSpaces.setGroupAgentOverride(spacesState, gid, agent)) return false;
+            persistSpacesState();
+            notifySpaceDefaultsChanged({ type: 'group', id: gid });
+            return true;
+        }
+
+        /** Live panes only exist for the active space; skip unrelated tabs. */
+        function notifySpaceDefaultsChanged(target) {
+            const active = CuttleSpaces.getSpaceById(spacesState, spacesState.active);
+            if (!active) return;
+            if (target.type === 'space' && target.id !== active.id) return;
+            if (target.type === 'group' && active.groupId !== target.id) return;
+            broadcastToFrames({ type: 'cuttle-space-defaults' });
+        }
+
         /** Ungroup: dissolve the group, member spaces survive as plain tabs. */
         function dissolveSpaceGroup(gid) {
             if (!CuttleSpaces.dissolveGroup(spacesState, gid)) return false;
@@ -1122,7 +1159,7 @@
                 try { win.CuttleShellElectron.cancelTitlebarHide(); } catch (_) {}
             }
             const onDown = (e) => {
-                if (e.target && e.target.closest && e.target.closest('.shell-space-ctx, .shell-group-bubble')) return;
+                if (e.target && e.target.closest && e.target.closest('.shell-space-ctx, .shell-group-bubble, .chip-config-modal-overlay')) return;
                 closeSpaceCtxLayers();
             };
             const onKey = (e) => {
@@ -1171,6 +1208,186 @@
                 + '</div>';
         }
 
+        // Composer chip-config modal, reused for space/group new-chat overrides.
+        let overrideTarget = null;
+        let overrideChipConfig = null;
+        const overrideCatalog = { projects: [], agents: [], loading: null };
+
+        function overrideRecord(target) {
+            if (!target) return null;
+            return target.type === 'group'
+                ? CuttleSpaces.getGroupById(spacesState, target.id)
+                : CuttleSpaces.getSpaceById(spacesState, target.id);
+        }
+
+        function catalogSettingOptions(list) {
+            return (list || []).map((item) => {
+                if (item == null) return null;
+                if (typeof item === 'string' || typeof item === 'number') {
+                    const value = String(item);
+                    return { modelId: value, label: value };
+                }
+                const value = item.id || item.modelId || item.value;
+                if (value == null || String(value) === '') return null;
+                return { modelId: String(value), label: String(item.label || value) };
+            }).filter(Boolean);
+        }
+
+        function loadOverrideCatalog() {
+            if (overrideCatalog.loading) return overrideCatalog.loading;
+            overrideCatalog.loading = Promise.all([
+                fetchImpl('/api/projects', { credentials: 'include', cache: 'no-store' })
+                    .then((r) => r.json()).catch(() => null),
+                fetchImpl('/api/agents', { credentials: 'include', cache: 'no-store' })
+                    .then((r) => r.json()).catch(() => null),
+            ]).then(([pj, ag]) => {
+                overrideCatalog.projects = (pj && pj.success && Array.isArray(pj.data)) ? pj.data : [];
+                overrideCatalog.agents = (ag && ag.success && Array.isArray(ag.agents)) ? ag.agents : [];
+                overrideCatalog.loading = null;
+                return overrideCatalog;
+            });
+            return overrideCatalog.loading;
+        }
+
+        function overrideAgentEntries() {
+            const out = [];
+            const seen = {};
+            (overrideCatalog.agents || []).forEach((a) => {
+                if (!a || a.sticky === false || a.stickySession === false) return;
+                const id = String(a.id || '').toLowerCase();
+                if (!id || seen[id]) return;
+                seen[id] = true;
+                let prefix = String(a.prefix || a.slash || ('/' + id));
+                if (prefix.charAt(0) !== '/') prefix = '/' + prefix;
+                if (prefix.charAt(prefix.length - 1) !== ' ') prefix += ' ';
+                out.push({
+                    id,
+                    prefix,
+                    label: a.label || id,
+                    category: a.category || id,
+                });
+            });
+            return out;
+        }
+
+        function findOverrideProjectById(id) {
+            return (overrideCatalog.projects || []).find((p) => p && String(p.id) === String(id)) || null;
+        }
+
+        function resolveOverrideProject(raw) {
+            if (!raw) return null;
+            if (raw.id != null) {
+                const byId = findOverrideProjectById(raw.id);
+                if (byId) return byId;
+            }
+            const want = String(raw.path || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+            if (want) {
+                const byPath = (overrideCatalog.projects || []).find((p) => {
+                    const path = String((p && p.path) || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+                    return path && path === want;
+                });
+                if (byPath) return byPath;
+            }
+            if (raw.name) {
+                const wantName = String(raw.name).toLowerCase();
+                const byName = (overrideCatalog.projects || []).find(
+                    (p) => String((p && p.name) || '').toLowerCase() === wantName
+                );
+                if (byName) return byName;
+            }
+            return raw;
+        }
+
+        function writeOverrideProject(proj) {
+            const target = overrideTarget;
+            if (!target) return;
+            if (target.type === 'group') setGroupProjectOverride(target.id, proj);
+            else setSpaceProjectOverride(target.id, proj);
+        }
+
+        function writeOverrideAgent(agent) {
+            const target = overrideTarget;
+            if (!target) return;
+            if (target.type === 'group') setGroupAgentOverride(target.id, agent);
+            else setSpaceAgentOverride(target.id, agent);
+        }
+
+        function patchOverrideAgent(patch) {
+            const rec = overrideRecord(overrideTarget);
+            const prev = (rec && rec.agentOverride) || {};
+            writeOverrideAgent(Object.assign({}, prev, patch || {}));
+        }
+
+        function overrideAgentSpec(agentId) {
+            const id = String(agentId || '').toLowerCase();
+            if (!id) return null;
+            const row = (overrideCatalog.agents || []).find((a) => String((a && a.id) || '').toLowerCase() === id);
+            if (!row) return null;
+            const live = () => ((overrideRecord(overrideTarget) || {}).agentOverride || {});
+            const modelItems = catalogSettingOptions(row.models);
+            const effortItems = catalogSettingOptions(row.efforts);
+            const spec = {};
+            if (modelItems.length) {
+                spec.models = {
+                    build: () => modelItems,
+                    load: function () {},
+                    current: () => String(live().model || ''),
+                    set: (v) => patchOverrideAgent({ id, model: v }),
+                    repaint: function () {},
+                };
+            }
+            if (effortItems.length) {
+                spec.efforts = {
+                    build: () => effortItems,
+                    load: function () {},
+                    current: () => String(live().effort || ''),
+                    set: (v) => patchOverrideAgent({ id, effort: v }),
+                    repaint: function () {},
+                };
+            }
+            return (spec.models || spec.efforts) ? spec : null;
+        }
+
+        function ensureOverrideChipConfig() {
+            if (overrideChipConfig) return overrideChipConfig;
+            const Chip = win.CuttleChipConfig;
+            if (!Chip || typeof Chip.create !== 'function') return null;
+            overrideChipConfig = Chip.create({
+                pickerMode: 'defaults',
+                escapeHtml: escapeHtml,
+                getProjects: () => overrideCatalog.projects,
+                getCurrentProject: () => {
+                    const rec = overrideRecord(overrideTarget);
+                    return resolveOverrideProject(rec && rec.projectOverride);
+                },
+                isProjectStarred: () => false,
+                findProjectById: findOverrideProjectById,
+                setChatProject: writeOverrideProject,
+                getAgentEntries: overrideAgentEntries,
+                getAgentSpec: overrideAgentSpec,
+                applyAgent: writeOverrideAgent,
+                worktreesEnabled: () => false,
+            });
+            return overrideChipConfig;
+        }
+
+        function openOverridePicker(kind, target) {
+            overrideTarget = target;
+            closeSpaceCtxLayers();
+            const open = () => {
+                const ctrl = ensureOverrideChipConfig();
+                if (!ctrl) return;
+                const rec = overrideRecord(target);
+                if (kind === 'agent') {
+                    const agent = rec && rec.agentOverride;
+                    ctrl.openAgent(agent && (agent.id || '') || '');
+                } else {
+                    ctrl.openProject();
+                }
+            };
+            Promise.resolve(loadOverrideCatalog()).then(open).catch(open);
+        }
+
         function openSpaceTabMenu(x, y, spaceId) {
             const space = spacesState.spaces.find((s) => s && s.id === spaceId);
             if (!space) return;
@@ -1182,7 +1399,10 @@
             menu.setAttribute('aria-label', 'Space options');
             let html = '<button type="button" class="shell-space-ctx-item" role="menuitem" data-ctx-act="rename"><span>Rename</span></button>'
                 + '<button type="button" class="shell-space-ctx-item has-sub" role="menuitem" data-ctx-act="color" aria-haspopup="menu"><span>Set color</span></button>'
-                + '<button type="button" class="shell-space-ctx-item has-sub" role="menuitem" data-ctx-act="group" aria-haspopup="menu"><span>Add to group</span></button>';
+                + '<button type="button" class="shell-space-ctx-item has-sub" role="menuitem" data-ctx-act="group" aria-haspopup="menu"><span>Add to group</span></button>'
+                + '<div class="shell-space-ctx-sep" aria-hidden="true"></div>'
+                + '<button type="button" class="shell-space-ctx-item" role="menuitem" data-ctx-act="project-override"><span>Set Project Override</span></button>'
+                + '<button type="button" class="shell-space-ctx-item" role="menuitem" data-ctx-act="agent-override"><span>Set Agent Override</span></button>';
             if (space.groupId && spaceGroupById(space.groupId)) {
                 html += '<div class="shell-space-ctx-sep" aria-hidden="true"></div>'
                     + '<button type="button" class="shell-space-ctx-item" role="menuitem" data-ctx-act="remove-group"><span>Remove from group</span></button>';
@@ -1287,6 +1507,14 @@
                     if (act === 'group') { e.stopPropagation(); openSubFor(btn, buildGroupSub); return; }
                     e.preventDefault();
                     e.stopPropagation();
+                    if (act === 'project-override') {
+                        openOverridePicker('project', { type: 'space', id });
+                        return;
+                    }
+                    if (act === 'agent-override') {
+                        openOverridePicker('agent', { type: 'space', id });
+                        return;
+                    }
                     closeSpaceCtxLayers();
                     if (act === 'rename') startSpaceRename(id);
                     else if (act === 'remove-group') removeSpaceFromGroup(id);
@@ -1308,6 +1536,10 @@
                 + ' placeholder="Name group" aria-label="Group name"'
                 + ' value="' + escapeHtml(group.name || '').replace(/"/g, '&quot;') + '">'
                 + spaceCtxSwatchesHtml(group.color)
+                + '<div class="shell-group-overrides">'
+                + '<button type="button" class="shell-group-btn" data-group-act="project-override">Set Project Override</button>'
+                + '<button type="button" class="shell-group-btn" data-group-act="agent-override">Set Agent Override</button>'
+                + '</div>'
                 + '<div class="shell-group-actions">'
                 + '<button type="button" class="shell-group-btn" data-group-act="ungroup">Ungroup</button>'
                 + '<button type="button" class="shell-group-btn shell-group-btn-danger" data-group-act="delete">Delete group</button>'
@@ -1352,6 +1584,14 @@
                 if (!btn) return;
                 e.preventDefault();
                 e.stopPropagation();
+                if (btn.dataset.groupAct === 'project-override') {
+                    openOverridePicker('project', { type: 'group', id: gid });
+                    return;
+                }
+                if (btn.dataset.groupAct === 'agent-override') {
+                    openOverridePicker('agent', { type: 'group', id: gid });
+                    return;
+                }
                 if (btn.dataset.groupAct === 'ungroup') {
                     closeSpaceCtxLayers();
                     dissolveSpaceGroup(gid);

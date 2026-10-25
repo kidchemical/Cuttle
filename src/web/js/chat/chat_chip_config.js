@@ -59,6 +59,17 @@
      * as `<select>` options. Strips the builder's `(current)` suffix and
      * the `Effort ` label prefix. Pure.
      */
+    /**
+     * Prepend a clear/none choice for defaults pickers (space/group
+     * overrides). Pure; `value: ''` is the sentinel the modal treats as clear.
+     */
+    function withClearChoice(options, noneLabel) {
+        return [{
+            value: '',
+            label: noneLabel || 'None — use starred default',
+        }].concat(options || []);
+    }
+
     function agentSettingOptions(spec, kind) {
         const setting = spec && spec[kind];
         if (!setting || typeof setting.build !== 'function') return [];
@@ -265,7 +276,7 @@
         function ensureModal() {
             if (modalEl && modalEl.isConnected) return modalEl;
             const overlay = document.createElement('div');
-            overlay.className = 'auth-modal-overlay';
+            overlay.className = 'auth-modal-overlay chip-config-modal-overlay';
             overlay.id = 'chipConfigModal';
             overlay.innerHTML =
                 '<div class="auth-modal chip-config-modal" role="dialog" aria-modal="true">' +
@@ -435,15 +446,20 @@
         }
 
         function openProject() {
+            const defaultsMode = h.pickerMode === 'defaults';
             const projects = h.getProjects ? (h.getProjects() || []) : [];
             const current = h.getCurrentProject ? h.getCurrentProject() : null;
             const isStarred = typeof h.isProjectStarred === 'function' ? h.isProjectStarred : () => false;
-            const projOptions = projects.map((p) => ({
+            let projOptions = projects.map((p) => ({
                 value: String(p && p.id != null ? p.id : ''),
                 label: ((p && isStarred(p)) ? '★ ' : '') + ((p && p.name) || ('Project ' + (p && p.id))),
             })).filter((o) => o.value !== '');
             const curId = current && current.id != null ? String(current.id) : '';
-            const wtEnabled = typeof h.worktreesEnabled === 'function' && h.worktreesEnabled();
+            if (defaultsMode) {
+                projOptions = withClearChoice(projOptions);
+            }
+            const wtEnabled = !defaultsMode
+                && typeof h.worktreesEnabled === 'function' && h.worktreesEnabled();
             const currentCheckout = h.getChatCheckout ? (h.getChatCheckout() || '') : '';
             const mode = currentCheckout ? 'worktree' : 'local';
             const defBranch = h.defaultWorktreeBranch ? h.defaultWorktreeBranch() : '';
@@ -465,11 +481,19 @@
                     '</div>';
             }
 
+            if (defaultsMode) {
+                // Defaults pickers are project identity only: branch/worktree
+                // stay per-chat (switching here would mutate the shared checkout).
+                fields = selectHtml('chipConfigProject', 'Project', projOptions, curId, false);
+            }
+
             openModal(
                 'Working project',
-                wtEnabled
-                    ? 'Local = shared checkout. Worktree = an isolated branch for this chat.'
-                    : 'Choose the project and branch for this chat.',
+                defaultsMode
+                    ? 'Choose the project for new chats in this tab or group.'
+                    : (wtEnabled
+                        ? 'Local = shared checkout. Worktree = an isolated branch for this chat.'
+                        : 'Choose the project and branch for this chat.'),
                 fields,
                 (el) => {
                     const projSel = el.querySelector('#chipConfigProject');
@@ -507,13 +531,18 @@
                     };
 
                     projSel.addEventListener('change', () => {
+                        if (defaultsMode && !projSel.value) {
+                            if (h.setChatProject) h.setChatProject(null);
+                            return;
+                        }
                         const proj = h.findProjectById ? h.findProjectById(projSel.value) : null;
                         if (proj && h.setChatProject) h.setChatProject(proj);
                         if (newBranchInput && h.defaultWorktreeBranch) {
                             newBranchInput.value = h.defaultWorktreeBranch();
                         }
-                        sync();
+                        if (!defaultsMode) sync();
                     });
+                    if (defaultsMode) return;
                     if (modeSel) {
                         modeSel.addEventListener('change', () => {
                             if (currentMode() === 'local' && h.setChatCheckout) h.setChatCheckout(null);
@@ -529,9 +558,11 @@
                             if (typeof h.refreshBranch === 'function') h.refreshBranch();
                         });
                     }
-                    branchSel.addEventListener('change', () => {
-                        if (branchSel.value) switchBranch(branchSel.value, branchSel, projSel.value, repoRoot());
-                    });
+                    if (branchSel) {
+                        branchSel.addEventListener('change', () => {
+                            if (branchSel.value) switchBranch(branchSel.value, branchSel, projSel.value, repoRoot());
+                        });
+                    }
                     if (wtSel) {
                         wtSel.addEventListener('change', () => {
                             if (wtSel.value === '__new__') {
@@ -572,10 +603,12 @@
         }
 
         function openAgent(agentId) {
+            const defaultsMode = h.pickerMode === 'defaults';
             const entries = h.getAgentEntries ? (h.getAgentEntries() || []) : [];
             const id = String(agentId || '').toLowerCase();
-            const spec = h.getAgentSpec ? h.getAgentSpec(id) : null;
-            const agentOptions = entries.map((e) => ({ value: e.id, label: e.label }));
+            const spec = id && h.getAgentSpec ? h.getAgentSpec(id) : null;
+            let agentOptions = entries.map((e) => ({ value: e.id, label: e.label }));
+            if (defaultsMode) agentOptions = withClearChoice(agentOptions);
             let fields = selectHtml('chipConfigAgent', 'Agent', agentOptions, id, !agentOptions.length);
             let modelOpts = [];
             let effortOpts = [];
@@ -591,7 +624,9 @@
             }
             openModal(
                 'Agent',
-                'Choose the agent, model, and effort for this chat.',
+                defaultsMode
+                    ? 'Choose the agent, model, and effort for new chats in this tab or group.'
+                    : 'Choose the agent, model, and effort for this chat.',
                 fields,
                 (el) => {
                     const agentSel = el.querySelector('#chipConfigAgent');
@@ -604,6 +639,11 @@
                         if (typeof h.rerenderChips === 'function') h.rerenderChips();
                     };
                     agentSel.addEventListener('change', () => {
+                        if (defaultsMode && !agentSel.value) {
+                            if (h.applyAgent) h.applyAgent(null);
+                            openAgent('');
+                            return;
+                        }
                         const entry = entries.find((e) => e.id === agentSel.value);
                         if (entry && h.applyAgent) h.applyAgent(entry);
                         openAgent(agentSel.value);
@@ -703,7 +743,7 @@
     }
 
     const api = {
-        create, stickyAgentEntries, agentSettingOptions, branchFor, refreshBranch,
+        create, stickyAgentEntries, agentSettingOptions, withClearChoice, branchFor, refreshBranch,
         repoChoice, activeRepoBranchLabel,
     };
 

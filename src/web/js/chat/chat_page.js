@@ -3104,18 +3104,44 @@
         return CuttleChatSlash.starredStickyChips(readStarredSlashPrefixes());
     }
 
+    /** Space/group new-chat defaults for the active tab (null = use starred). */
+    function readSpaceNewChatDefaults() {
+        try {
+            if (!window.CuttleSpaces || typeof window.CuttleSpaces.loadSpacesState !== 'function') {
+                return { project: null, agent: null };
+            }
+            const state = window.CuttleSpaces.loadSpacesState(localStorage);
+            return window.CuttleSpaces.resolveNewChatDefaults(state) || { project: null, agent: null };
+        } catch (_) {
+            return { project: null, agent: null };
+        }
+    }
+
     /** Apply globally starred sticky agent chips (new chat / welcome only). */
     function applyStarredSlashChips() {
         // In-memory only: currentSessionId may still be the chat we are leaving,
         // whose own "badge removed" choice must survive.
         stickyAgentClearedPending = false;
-        const chips = getStarredStickyChips();
+        const space = readSpaceNewChatDefaults();
+        const overrideChip = space.agent && space.agent.prefix
+            ? {
+                prefix: space.agent.prefix,
+                label: space.agent.label || space.agent.prefix,
+                category: space.agent.category || space.agent.id || 'command',
+            }
+            : null;
+        const chips = overrideChip ? [overrideChip] : getStarredStickyChips();
         slashCtx.welcome.chips = chips.slice();
         slashCtx.chat.chips = chips.slice();
         hideSlashMenu('welcome');
         hideSlashMenu('chat');
         renderSlashChips('welcome', document.getElementById('welcomeChatInput'));
         renderSlashChips('chat', document.getElementById('chatInput'));
+        if (overrideChip) {
+            try {
+                CuttleChatAgentModel.applyNewChatOverridePins(slashPaletteSupplement, space.agent);
+            } catch (_) {}
+        }
     }
 
     function normalizeStarredProjectPath(path) {
@@ -6361,6 +6387,7 @@
             prefs: mergedPrefs,
             stored,
             starred: readStarredProject(),
+            spaceProject: readSpaceNewChatDefaults().project,
         });
         const proj = decided.proj;
         const hadStored = decided.hadStored;
@@ -11192,12 +11219,12 @@ function downloadTranscriptMarkdown(text, sessionId) {
     function profileAvatarInnerHtml(avatar) {
         const a = String(avatar || '').trim();
         if (!a || a.toLowerCase() === 'cuttle') {
-            return '<img src="/img/cuttle-avatar.png?v=3" alt="" class="assistant-avatar-img">';
+            return '<img src="/img/cuttle-mascot.png" alt="" class="assistant-avatar-img assistant-avatar-img--mascot">';
         }
         const looksUrl = /^https?:\/\//i.test(a) || (a.charAt(0) === '/' && a.charAt(1) !== '/');
         if (looksUrl) {
             if (!CuttleChatMedia.isSafeMediaSrc(a)) {
-                return '<img src="/img/cuttle-avatar.png?v=3" alt="" class="assistant-avatar-img">';
+                return '<img src="/img/cuttle-mascot.png" alt="" class="assistant-avatar-img assistant-avatar-img--mascot">';
             }
             return '<img src="' + escapeHtmlInline(a) + '" alt="" class="assistant-avatar-img">';
         }
@@ -13020,6 +13047,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 }
                 if (e.data.type === 'cuttle-pending-changes-changed') {
                     if (pendingChangesCtl) pendingChangesCtl.onInvalidated(e.data.path, e.data.data);
+                }
+                if (e.data.type === 'cuttle-space-defaults') {
+                    // Only welcome / unsaved new chats pick up a tab override.
+                    if (session.current()) return;
+                    applyStarredSlashChips();
+                    currentProject = null;
+                    reconcileChatProject();
                 }
             });
             document.addEventListener('pointerdown', function () {
