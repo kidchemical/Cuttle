@@ -1860,6 +1860,7 @@ html.cuttle-anim .split-column.pane-drop-target > .pane-drop-overlay {
     width: 18px;
     height: 18px;
     flex-shrink: 0;
+    transition: transform var(--dur-base, 0.2s) var(--ease-spring, ease);
 }
 
 .rail-item:hover {
@@ -1867,12 +1868,28 @@ html.cuttle-anim .split-column.pane-drop-target > .pane-drop-overlay {
     color: var(--rail-icon-hover);
 }
 
+/* Icon micro-motion: a small springy lift on hover, a press on click. */
+.rail-item:hover svg {
+    transform: scale(1.1);
+}
+
+.rail-item:active svg {
+    transform: scale(0.92);
+    transition-duration: var(--dur-fast, 0.12s);
+}
+
 /* Active page indicator */
 .rail-item.active {
     background: var(--rail-active-bg);
     color: var(--accent);
-    box-shadow: inset 3px 0 0 var(--accent);
+    box-shadow:
+        inset 3px 0 0 var(--accent),
+        0 0 18px -6px color-mix(in srgb, var(--accent) 70%, transparent);
     border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.rail-item.active svg {
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 55%, transparent));
 }
 
 /* Tooltip (rail icons + logo add/close).
@@ -1894,17 +1911,18 @@ html.cuttle-anim .split-column.pane-drop-target > .pane-drop-overlay {
     border-radius: 4px;
     pointer-events: none;
     opacity: 0;
-    transition: opacity 0.15s ease;
+    transform: translate(-4px, -50%);
+    transition: opacity var(--dur-fast, 0.15s) var(--ease-out, ease), transform var(--dur-base, 0.15s) var(--ease-out, ease);
     z-index: 100;
     border: 1px solid var(--rail-border);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    box-shadow: var(--shadow-2, 0 4px 12px rgba(0,0,0,0.2));
 }
 
 .rail-items .rail-item::after {
     position: fixed;
     left: var(--rail-tip-left, 0);
     top: var(--rail-tip-top, 0);
-    transform: translateY(-50%);
+    transform: translate(-4px, -50%);
 }
 body.light-mode .rail-item::after,
 body.light-mode .rail-logo-clickable[data-tooltip]::after {
@@ -1914,6 +1932,7 @@ body.light-mode .rail-logo-clickable[data-tooltip]::after {
 .rail-item:hover::after,
 .rail-logo-clickable[data-tooltip]:hover::after {
     opacity: 1;
+    transform: translate(0, -50%);
 }
 
 /* Account button — signed-out vs signed-in */

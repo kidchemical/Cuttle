@@ -206,7 +206,7 @@
         }
 
         body {
-            font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: var(--font-sans, 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif);
             background: var(--bg-primary);
             background-repeat: no-repeat;
             background-attachment: fixed;
@@ -1500,7 +1500,8 @@
             height: 20px;
             background: white;
             border-radius: 50%;
-            transition: all 0.3s ease;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            transition: transform var(--dur-slow, 0.3s) var(--ease-spring, ease);
         }
         
         .toggle-switch.active::after {
@@ -1515,7 +1516,8 @@
             height: 20px;
             background: white;
             border-radius: 50%;
-            transition: all 0.3s ease;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            transition: transform var(--dur-slow, 0.3s) var(--ease-spring, ease);
         }
         
         .toggle-switch.active .slider {
