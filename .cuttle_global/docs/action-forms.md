@@ -57,6 +57,11 @@ Options are **id + label only**. **Omit `action` entirely.**
   `- question: answer` line **per field**; unanswered fields come back as
   `(no answer)` / `(none)` so every question is accounted for.
 - Cancel never resumes the agent.
+- **Copy an example below; don't mix shapes.** `choice`/`multi` take top-level
+  `options` (`id` + `label`); `form` takes `fields` (each field's own `options`
+  use `value` + `label`). The server infers the mode from the body when they
+  disagree, but a card it still can't read (bad JSON, no options/fields) shows
+  as a "could not render" notice instead of a card.
 
 **Custom answers are built in.** Every Q&A card that resumes the agent
 automatically renders an `Or type your own answer…` input with a Send button,

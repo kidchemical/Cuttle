@@ -5240,7 +5240,7 @@
         const lastAgentChipIndex = agentChipIndexes.length ? agentChipIndexes[agentChipIndexes.length - 1] : -1;
         const chipsHtml = chips.length
             ? ('<span class="slash-chips-inline">'
-                + chips.map((c, i) => '<span class="history-agent-chip' + (composerChipAgentId(c) ? ' is-agent-chip' : '') + (i === lastAgentChipIndex ? ' is-last-agent-chip' : '') + '">' + slashCommandChipHistoryHtml(
+                + chips.map((c, i) => '<span class="history-agent-chip' + (composerChipAgentId(c) ? ' is-agent-chip' : ' is-command-chip') + (i === lastAgentChipIndex ? ' is-last-agent-chip' : '') + '">' + slashCommandChipHistoryHtml(
                     c.label,
                     c.meta || c.prefix || c.label,
                     c.category
@@ -6596,7 +6596,7 @@
         const popover = document.getElementById('chatHistoryDisplayFilters');
         if (!button || !popover) return;
         const key = 'chatHistoryDisplayFilters';
-        const defaults = { project: true, worktree: true, branch: true, agent: true, allAgents: false };
+        const defaults = { project: false, worktree: true, branch: true, agent: true, allAgents: false, commands: false };
         let prefs = defaults;
         try { prefs = Object.assign({}, defaults, JSON.parse(localStorage.getItem(key) || '{}')); } catch (_) {}
         const apply = () => {
@@ -6605,6 +6605,7 @@
             document.body.classList.toggle('history-hide-branch', !prefs.branch);
             document.body.classList.toggle('history-hide-agents', !prefs.agent);
             document.body.classList.toggle('history-last-agent-only', prefs.agent && !prefs.allAgents);
+            document.body.classList.toggle('history-hide-commands', !prefs.commands);
             popover.querySelectorAll('[data-history-display-pref]').forEach((input) => {
                 input.checked = !!prefs[input.dataset.historyDisplayPref];
             });

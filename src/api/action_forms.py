@@ -122,9 +122,8 @@ def normalize_action_form_spec(
     if not isinstance(spec, dict):
         return None
 
-    mode = str(spec.get("mode") or "choice").strip().lower()
-    if mode not in _VALID_MODE:
-        mode = "choice"
+    raw_mode = str(spec.get("mode") or "choice").strip().lower()
+    mode = raw_mode if raw_mode in _VALID_MODE else "choice"
     lock = str(spec.get("lock") or "form").strip().lower()
     if lock not in _VALID_LOCK:
         lock = "form"
@@ -227,6 +226,33 @@ def normalize_action_form_spec(
     param_map = {str(k): str(v) for k, v in param_map.items()}
     submit_params = submit.get("params") if isinstance(submit.get("params"), dict) else {}
     submit_params = dict(submit_params)
+
+    # The body's shape decides the mode; ``mode`` is only a hint. Agents
+    # regularly pair one mode with another mode's body, and rejecting the card
+    # leaves raw JSON in the reply.
+    if mode in ("choice", "multi") and not options and fields:
+        mode = "form"
+    elif mode == "form" and options and not fields and not submit_action and not buttons:
+        mode = "choice"
+    elif mode == "form" and not fields and not options and not submit_action and not buttons:
+        # Empty form = "click when ready": one button that answers the agent.
+        mode = "choice"
+        options = [{"id": "continue", "label": str(
+            spec.get("submitLabel") or spec.get("submit_label") or "Continue").strip() or "Continue",
+            "action": None, "params": {}, "lock": None}]
+    elif mode != "form" and not options and not fields and submit_action:
+        # Bare `{"action": "flask.restart", "mode": "graceful"}`: the top-level
+        # mode was the action's own parameter.
+        params = dict(submit_params) or (
+            dict(spec["params"]) if isinstance(spec.get("params"), dict) else {})
+        if raw_mode not in _VALID_MODE:
+            params.setdefault("mode", raw_mode)
+        if content and "content" not in params:
+            params["content"] = content
+        options = [{"id": submit_action, "label": str(spec.get("submitLabel") or title),
+                    "action": submit_action, "params": params, "lock": None}]
+        submit_action = None
+        submit_params = {}
 
     if mode in ("choice", "multi") and not options:
         return None
@@ -594,6 +620,22 @@ def merge_qa_resume_specs(specs: List[Dict[str, Any]]) -> Dict[str, Any]:
     return merged
 
 
+def _unrenderable_form_notice(text: str, start: int, end: int) -> str:
+    """Replace a card that cannot render with a readable notice, not raw JSON.
+
+    A tag inside a fenced code block is an example and stays verbatim.
+    """
+    block = text[start:end]
+    if len(re.findall(r"^\s*(?:```|~~~)", text[:start], re.MULTILINE)) % 2:
+        return block
+    body = _FORM_CLOSE_RE.sub("", _FORM_OPEN_RE.sub("{", block, count=1)).strip()
+    return (
+        "> ⚠️ Cuttle could not render this form (invalid JSON, or no "
+        "`options` / `fields`). Spec: `.cuttle_global/docs/action-forms.md`.\n\n"
+        f"```json\n{body}\n```"
+    )
+
+
 def rewrite_action_forms(
     text: str,
     *,
@@ -613,12 +655,13 @@ def rewrite_action_forms(
     for m in _FORM_OPEN_RE.finditer(text):
         brace = m.start(1)
         raw, json_end = _decode_leading_json_object(text, brace)
-        if raw is None:
-            continue
-        close_m = _FORM_CLOSE_RE.search(text, json_end)
+        close_m = _FORM_CLOSE_RE.search(text, json_end if raw is not None else brace)
         if not close_m:
             continue
-        spec = normalize_action_form_spec(raw, project_path=effective_path or "")
+        spec = (
+            normalize_action_form_spec(raw, project_path=effective_path or "")
+            if raw is not None else None
+        )
         found.append((m.start(), close_m.end(), spec))
 
     qa_idx = [i for i, (_, _, s) in enumerate(found) if s and is_qa_resume_spec(s)]
@@ -639,7 +682,9 @@ def rewrite_action_forms(
             last = end
             continue
         if not spec:
-            out_parts.append(text[start:end])
+            notice = _unrenderable_form_notice(text, start, end)
+            out_parts.append(notice)
+            count += notice != text[start:end]
             last = end
             continue
         if effective_path:

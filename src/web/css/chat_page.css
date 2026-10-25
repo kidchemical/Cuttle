@@ -869,6 +869,7 @@ body.history-hide-worktree .chat-history .history-worktree-mark { display: none 
 body.history-hide-branch .chat-history .slash-command-chip--project .slash-chip-seg--branch { display: none !important; }
 body.history-hide-agents .chat-history .history-agent-chip.is-agent-chip { display: none !important; }
 body.history-last-agent-only .chat-history .history-agent-chip.is-agent-chip:not(.is-last-agent-chip) { display: none !important; }
+body.history-hide-commands .chat-history .history-agent-chip.is-command-chip { display: none !important; }
 
 /* Search input + close button share one row */
 .chat-history-panel-top {
