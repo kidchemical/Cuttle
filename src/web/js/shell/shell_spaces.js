@@ -303,6 +303,37 @@
             scheduleSpaceActivityPoll(true);
         }
 
+        /** Saved-workspace payload: every space + group, with the active space's
+         *  live layout folded in (its stored `root` is stale while it is live). */
+        function exportSnapshot() {
+            const snap = JSON.parse(JSON.stringify(spacesState));
+            const current = snap.spaces.find((s) => s.id === snap.active);
+            if (current) current.root = snapshotLayout();
+            return snap;
+        }
+
+        /** Replace all spaces/groups from a saved workspace and mount its active
+         *  space. Returns false (state untouched) when the payload is invalid. */
+        function importSnapshot(data) {
+            const clean = CuttleSpaces.sanitizeLoadedData(data);
+            if (!clean) return false;
+            spacesState.active = clean.active;
+            spacesState.spaces = clean.spaces;
+            spacesState.groups = clean.groups;
+            persistSpacesState();
+            renderSpaceTabs();
+            clearLastChatColumn(0);
+            persistLastChatHandles();
+            const target = CuttleSpaces.getSpaceById(spacesState, spacesState.active);
+            applySpaceRoot((target && target.root) || defaultSpaceRoot());
+            hideOutgoingSpaceFrames();
+            broadcastUsageLiveWake();
+            syncActiveSpaceTab();
+            syncSpaceActivityTabs();
+            scheduleSpaceActivityPoll(true);
+            return true;
+        }
+
         function renameSpace(id, name) {
             if (!CuttleSpaces.renameSpaceInState(spacesState, id, name)) return;
             persistSpacesState();
@@ -1911,6 +1942,8 @@
             switchSpace,
             addSpace,
             closeSpace,
+            exportSnapshot,
+            importSnapshot,
             visibleActiveChatIds: visibleActiveSpaceChatIds,
             syncActivityTabs: syncSpaceActivityTabs,
             refreshLocalState: refreshSpaceActivityLocalState,

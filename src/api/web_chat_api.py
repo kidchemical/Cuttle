@@ -1994,6 +1994,18 @@ _SHELL_WORKSPACE_COLUMNS_MAX = 12
 _SHELL_PAGE_SAFE_RE = re.compile(r'^/[A-Za-z0-9_./-]+\.html(?:[?#][^\s]*)?$')
 
 
+_SHELL_WORKSPACE_SPACES_MAX_BYTES = 256 * 1024
+
+
+def _normalize_shell_workspace_spaces(raw):
+    """Spaces (tabs + groups) snapshot; the client sanitizes fields on load."""
+    if not isinstance(raw, dict) or not isinstance(raw.get('spaces'), list) or not raw['spaces']:
+        return None
+    if len(json.dumps(raw)) > _SHELL_WORKSPACE_SPACES_MAX_BYTES:
+        return None
+    return raw
+
+
 def _normalize_shell_orientation(raw) -> str:
     return 'vertical' if str(raw or '').strip().lower() == 'vertical' else 'horizontal'
 
@@ -2064,6 +2076,11 @@ def _public_shell_workspace(item: dict) -> dict:
     root = item.get('root')
     if isinstance(root, dict):
         out['root'] = root
+    spaces = item.get('spaces')
+    if isinstance(spaces, dict):
+        out['spaces'] = spaces
+        n = len(spaces.get('spaces') or [])
+        out['summary'] = f"{n} space{'s' if n != 1 else ''} · {out['summary']}"
     return out
 
 
@@ -2089,6 +2106,9 @@ def _load_shell_workspaces() -> list:
         root = item.get('root')
         if isinstance(root, dict):
             entry['root'] = root
+        spaces = _normalize_shell_workspace_spaces(item.get('spaces'))
+        if spaces:
+            entry['spaces'] = spaces
         out.append(entry)
     return out
 
@@ -4507,6 +4527,7 @@ def api_shell_workspaces():
         columns = _normalize_shell_workspace_columns(data.get('columns'))
         orientation = _normalize_shell_orientation(data.get('orientation'))
         root = data.get('root') if isinstance(data.get('root'), dict) else None
+        spaces = _normalize_shell_workspace_spaces(data.get('spaces'))
         name = str(data.get('name') or 'Workspace').strip()[:80] or 'Workspace'
         if name.lower() == 'default':
             return jsonify({
@@ -4534,6 +4555,10 @@ def api_shell_workspaces():
             match['root'] = root
         elif 'root' in match:
             match.pop('root', None)
+        if spaces is not None:
+            match['spaces'] = spaces
+        else:
+            match.pop('spaces', None)
         match['updated_at'] = now
         # Most recently saved first
         items = [match] + [x for x in items if x.get('id') != match.get('id')]
