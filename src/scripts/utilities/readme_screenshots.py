@@ -1,10 +1,13 @@
 """Capture README screenshots (WebP) of the running web UI into docs/media/.
 
 Signs in as the reusable Cuttle Demo guest (so no real chats appear), seeds demo chats with
-fake content, captures them in the light theme at 2x, frames each capture as a
+fake content, captures them in the Light theme at 2x, frames each capture as a
 landing-page style promo (see readme_promo.py), then soft-deletes the demo chats.
+The IDE shot runs against a throwaway demo project (readme_demo_ide.py).
 
-    .venv/bin/python src/scripts/utilities/readme_screenshots.py [--base URL] [--keep] [--raw]
+    .venv/bin/python src/scripts/utilities/readme_screenshots.py [--base URL] [--keep] [--site DIR]
+
+``--site DIR`` also writes the unframed captures the product site uses into DIR.
 
 Needs a running Flask (default https://127.0.0.1:8080), Playwright Chromium, and
 network access to Google Fonts (Inter) for the frame typography.
@@ -30,22 +33,25 @@ from api.fixture_accounts import fixture_browser_auth  # noqa: E402
 from api.chat_widgets import rewrite_assistant_text_widgets  # noqa: E402
 from api.project_actions import prepare_assistant_text_for_actions  # noqa: E402
 
+import readme_demo_ide as demo_ide  # noqa: E402
 import readme_promo as promo  # noqa: E402
 
 OUT = REPO / "docs" / "media"
 RAW = REPO / "temp" / "readme_raw"
-# Lavender Dream: a light theme whose purple accents match the brand.
-THEME = "lavender"
+THEME = "light"
 SCALE = 2
 VIEWPORT = {"width": 1440, "height": 900}
 CHAT_VIEWPORT = {"width": 1180, "height": 900}
 DASH_VIEWPORT = {"width": 1280, "height": 860}
 PHONE_VIEWPORT = {"width": 390, "height": 844}
 DEMO_PROJECT = {"project_name": "Demo App", "project_path": "/home/demo/demo-app"}
+DASH_PAGE = "/dashboards_page.html?d=model-benchmarks"
+# Unframed width per capture on the product site (--site).
+SITE_WIDTHS = {"hero": 2200, "phone": 780, "chat-hero": 1800, "chat-charts": 1800, "dashboards": 2000, "ide": 2200}
 
-# Keeps the capture about the demo: the install's real git state and stray
-# hover tooltips are not part of the product shot.
-CAPTURE_CSS = ".pending-changes-host{display:none!important}"
+# Keeps the capture about the demo: the install's real git state, the
+# jump-to-latest button and stray hover tooltips are not part of the product shot.
+CAPTURE_CSS = ".pending-changes-host,.chat-jump-bottom{display:none!important}"
 CAPTURE_INIT = """(() => {
   localStorage.setItem('theme', '%s');
   localStorage.setItem('cuttleVideoBackgroundEnabled', '0');
@@ -206,6 +212,10 @@ FRAMES = {
         palette="sky", eyebrow="Model benchmarks", label="BENCHMARKS &nbsp;/&nbsp; 05",
         headline="Know which model <em>earns its cost.</em>",
         sub="Cost, pass rate, and speed for every provider, in one interactive 3D view."),
+    "ide": promo.Frame(
+        palette="lilac", eyebrow="Built-in IDE", label="IDE &nbsp;/&nbsp; 06",
+        headline="The editor you know, <em>with every agent in it.</em>",
+        sub="Chat, inline edits, and Keep or Undo on every agent change, driven by any harness."),
 }
 
 
@@ -254,19 +264,45 @@ def capture_hero(browser, auth_state: dict, base: str, chats: dict) -> Image.Ima
     seed = rg.shell_seed([("Build", rg.group("horizontal", [
         rg.leaf(chats["hero"], flex="1.05 1 0%"), rg.leaf(chats["review"], flex="0.95 1 0%")]))])
     page = rg.open_shell(browser, auth_state, base, seed, scale=SCALE)
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(6000)
+    scroll_chats_top(page)
     return capture(page, "hero")
 
 
 def capture_dashboards(browser, auth_state: dict, base: str) -> Image.Image:
     import readme_gifs as rg
 
-    seed = rg.shell_seed([("Benchmarks", rg.leaf(page="/dashboards_page.html"))])
+    seed = rg.shell_seed([("Benchmarks", rg.leaf(page=DASH_PAGE))])
     page = rg.open_shell(browser, auth_state, base, seed, viewport=DASH_VIEWPORT, scale=SCALE)
-    dash = next(f for f in page.frames if "dashboards_page" in f.url)
-    dash.get_by_text("Model Benchmarks", exact=True).first.click()
-    page.wait_for_timeout(3500)
+    page.wait_for_timeout(6000)
+    scroll_to_chart(page)
     return capture(page, "dashboards")
+
+
+SCROLL_TO_CHART = """() => {
+    const plot = document.querySelector('.js-plotly-plot');
+    if (!plot) return;
+    const sc = [...document.querySelectorAll('*')].find((e) => e.scrollHeight > e.clientHeight + 40
+        && getComputedStyle(e).overflowY.match(/auto|scroll/)) || document.scrollingElement;
+    sc.scrollTop += plot.getBoundingClientRect().top - 150;
+}"""
+
+
+def scroll_to_chart(page) -> None:
+    """Bring the 3D chart into view; the filters above it fill the first screen."""
+    for frame in page.frames:
+        if "dashboards_page" in frame.url:
+            frame.evaluate(SCROLL_TO_CHART)
+    page.wait_for_timeout(1500)
+
+
+def capture_ide(browser, auth_state: dict, base: str, chats: dict) -> Image.Image:
+    import readme_gifs as rg
+
+    root = demo_ide.materialize(RAW / "demo-app")
+    seed = rg.shell_seed([("Code", rg.leaf(page=demo_ide.page_url(root)))], demo_ide.seed(root, chats["hero"]))
+    page = rg.open_shell(browser, auth_state, base, seed, scale=SCALE, ide_root=root, settle=7)
+    return capture(page, "ide", park=(20, 640))
 
 
 def save_framed(composer: promo.Composer, name: str, shot: Image.Image, phone: Image.Image | None = None) -> None:
@@ -287,10 +323,25 @@ def reframe(browser) -> None:
                         Image.open(phone) if name == "hero" and phone.exists() else None)
 
 
+def export_site(site: Path) -> None:
+    """Unframed, width-capped WebP copies of the raw captures for the product site."""
+    site.mkdir(parents=True, exist_ok=True)
+    for name, width in SITE_WIDTHS.items():
+        src = RAW / f"{name}.png"
+        if not src.exists():
+            continue
+        shot = Image.open(src).convert("RGB")
+        if shot.width > width:
+            shot = shot.resize((width, round(shot.height * width / shot.width)), Image.LANCZOS)
+        shot.save(site / f"{name}.webp", quality=86, method=6)
+        print(f"wrote {site / f'{name}.webp'} {shot.size}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--base", default="https://127.0.0.1:8080")
     ap.add_argument("--keep", action="store_true", help="Leave the demo chats in place")
+    ap.add_argument("--site", type=Path, help="Also write unframed captures for the product site here")
     ap.add_argument("--reframe", action="store_true",
                     help=f"Re-frame the last raw captures in {RAW.relative_to(REPO)} (no Flask needed)")
     args = ap.parse_args()
@@ -301,6 +352,8 @@ def main() -> int:
             browser = p.chromium.launch()
             reframe(browser)
             browser.close()
+        if args.site:
+            export_site(args.site)
         return 0
 
     db = get_auth_db()
@@ -320,7 +373,10 @@ def main() -> int:
                 capture(open_chat(browser, auth_state, args.base, chats["hero"], top=False), "chat-hero")
                 capture(open_chat(browser, auth_state, args.base, chats["cost"]), "chat-charts")
                 capture_dashboards(browser, auth_state, args.base)
+                capture_ide(browser, auth_state, args.base, chats)
                 reframe(browser)
+                if args.site:
+                    export_site(args.site)
             finally:
                 browser.close()
                 if not args.keep:

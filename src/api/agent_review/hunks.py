@@ -9,6 +9,8 @@ while other hunks in the same file are kept or undone.
 from __future__ import annotations
 
 import hashlib
+import threading
+from collections import OrderedDict
 from difflib import SequenceMatcher
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -21,8 +23,57 @@ def _lines(text: Text) -> List[str]:
     return text.splitlines(keepends=True) if text else []
 
 
+_OPS_CACHE: "OrderedDict[Tuple[bytes, bytes], List[Tuple[str, int, int, int, int]]]" = OrderedDict()
+_OPS_CACHE_MAX = 256
+_OPS_LOCK = threading.Lock()
+
+
+def _digest(lines: Sequence[str]) -> bytes:
+    return hashlib.blake2b("".join(lines).encode("utf-8", "surrogateescape"), digest_size=16).digest()
+
+
 def _ops(a: Sequence[str], b: Sequence[str]):
-    return SequenceMatcher(None, a, b, autojunk=False).get_opcodes()
+    """Opcodes for ``a`` → ``b``, memoized by content.
+
+    The common prefix/suffix is trimmed before ``SequenceMatcher`` runs: it is
+    superlinear on long repetitive files (a 54k-line Unity scene took 2s+ per
+    call, starving every Flask request of the GIL), while agent edits usually
+    touch a small window. Adjacent equal blocks are merged so callers see the
+    same contiguous opcode shape as an untrimmed diff.
+    """
+    key = (_digest(a), _digest(b))
+    with _OPS_LOCK:
+        hit = _OPS_CACHE.get(key)
+        if hit is not None:
+            _OPS_CACHE.move_to_end(key)
+            return list(hit)
+    n = min(len(a), len(b))
+    pre = 0
+    while pre < n and a[pre] == b[pre]:
+        pre += 1
+    suf = 0
+    while suf < n - pre and a[len(a) - 1 - suf] == b[len(b) - 1 - suf]:
+        suf += 1
+    out: List[Tuple[str, int, int, int, int]] = []
+
+    def add(tag: str, i1: int, i2: int, j1: int, j2: int) -> None:
+        if i1 == i2 and j1 == j2:
+            return
+        if tag == "equal" and out and out[-1][0] == "equal":
+            out[-1] = ("equal", out[-1][1], i2, out[-1][3], j2)
+        else:
+            out.append((tag, i1, i2, j1, j2))
+
+    add("equal", 0, pre, 0, pre)
+    mid = SequenceMatcher(None, a[pre:len(a) - suf], b[pre:len(b) - suf], autojunk=False)
+    for tag, i1, i2, j1, j2 in mid.get_opcodes():
+        add(tag, i1 + pre, i2 + pre, j1 + pre, j2 + pre)
+    add("equal", len(a) - suf, len(a), len(b) - suf, len(b))
+    with _OPS_LOCK:
+        _OPS_CACHE[key] = out
+        if len(_OPS_CACHE) > _OPS_CACHE_MAX:
+            _OPS_CACHE.popitem(last=False)
+    return list(out)
 
 
 def _changes(a: Sequence[str], b: Sequence[str]) -> List[Tuple[str, Tuple[int, int, int, int, str]]]:

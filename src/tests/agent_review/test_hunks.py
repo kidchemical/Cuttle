@@ -72,3 +72,18 @@ def test_fold_leaves_edits_inside_agent_hunks_in_the_hunk():
 def test_fold_is_a_no_op_without_user_changes():
     assert H.fold(BASE, AGENT, AGENT) == (BASE, 0)
     assert H.fold(None, "x\n", None) == (None, 1)
+
+
+def test_large_repetitive_file_with_one_edit_diffs_fast():
+    # Unity scenes are tens of thousands of near-identical YAML lines; an
+    # untrimmed SequenceMatcher took seconds here and starved Flask's GIL.
+    import time
+    block = "--- !u!4 &1\nTransform:\n  m_Father: {fileID: 0}\n  m_Children: []\n"
+    base = block * 15000
+    cur = base[:len(base) // 2] + "  m_Name: Agent\n" + base[len(base) // 2:]
+    started = time.perf_counter()
+    hunks = H.compute(base, cur)
+    assert time.perf_counter() - started < 1.0
+    assert [(h["old_count"], h["new_count"], h["added"]) for h in hunks] == [(0, 1, ["  m_Name: Agent\n"])]
+    assert H.undo(base, cur, [hunks[0]["id"]]) == base
+    assert H.keep(base, cur, [hunks[0]["id"]]) == cur

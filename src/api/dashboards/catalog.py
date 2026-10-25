@@ -11,6 +11,8 @@ DASHBOARDS: List[Dict[str, Any]] = [
         "blurb": "Switch between DeepSWE, SWE-bench Verified, and Aider Polyglot, with an aggregate model view.",
         "status": "live",
         "href": "/dashboards_page.html?d=model-benchmarks",
+        # Public leaderboards only: any signed-in account may read it.
+        "public": True,
     },
     {
         "id": "cuttle-performance",

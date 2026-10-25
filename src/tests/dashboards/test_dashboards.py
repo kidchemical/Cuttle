@@ -191,7 +191,7 @@ def test_flask_routes(tmp_path: Path, monkeypatch, owner_session):
     app = Flask(__name__)
     app.register_blueprint(dashboards_bp)
     client = app.test_client()
-    assert client.get("/api/dashboards").status_code == 401  # owner-only
+    assert client.get("/api/dashboards").status_code == 401  # signed-in only
     owner_session.sign_in(client)
     hub = client.get("/api/dashboards").get_json()
     assert hub["dashboards"][0]["id"] == "model-benchmarks"
@@ -200,6 +200,32 @@ def test_flask_routes(tmp_path: Path, monkeypatch, owner_session):
     body = client.get("/api/dashboards/model-benchmarks").get_json()
     assert body["stats"]["configs"] == 2
     assert body["rows"][0]["model"] == "gpt-6-astra"
+
+
+def test_guest_sees_only_public_dashboards(tmp_path: Path, monkeypatch, owner_session):
+    from api.dashboards import benchmarklist as bl
+
+    monkeypatch.setattr(deepswe, "default_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(deepswe, "get_json", _fetcher)
+    monkeypatch.setattr(bl, "get_json", _fetcher)
+    forced = []
+    real_fetch = deepswe.fetch_and_cache
+    monkeypatch.setattr(deepswe, "fetch_and_cache",
+                        lambda **kw: forced.append(kw.get("force")) or real_fetch(**kw))
+    db = owner_session.db
+    guest_id = db.create_user("guest@local", "Guest", "guest", password="x")
+    app = Flask(__name__)
+    app.register_blueprint(dashboards_bp)
+    client = app.test_client()
+    client.set_cookie("session_token", db.create_auth_session(guest_id))
+
+    hub = client.get("/api/dashboards").get_json()
+    assert [d["id"] for d in hub["dashboards"]] == ["model-benchmarks"]
+    body = client.get("/api/dashboards/model-benchmarks?refresh=1").get_json()
+    assert body["rows"][0]["model"] == "gpt-6-astra"
+    assert forced == [False]  # guests cannot force a refetch
+    for private in ("cuttle-performance", "cuttle-usage", "cuttle-context", "cuttle-jobs"):
+        assert client.get(f"/api/dashboards/{private}").status_code == 403
 
 
 def test_cli_list(capsys):

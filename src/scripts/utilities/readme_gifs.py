@@ -1,12 +1,15 @@
 """Record README demo animations (animated WebP) of the running web UI into docs/media/.
 
-    .venv/bin/python src/scripts/utilities/readme_gifs.py [customize] [multiplex] [--keep]
+    .venv/bin/python src/scripts/utilities/readme_gifs.py [customize] [multiplex] [--keep] [--site DIR]
 
-Signs in as the reusable Cuttle Demo guest, seeds demo chats, drives the app shell with a
-drawn cursor, and records frames from the Chrome DevTools screencast. Every
-non-GET API call from the page is stubbed, so the demo cannot change real
-settings, wallpapers, or the pane map agents read. Frames are pasted into the
-same landing-page frame as the stills (readme_promo.py).
+Signs in as the reusable Cuttle Demo guest and seeds demo chats. ``multiplex`` drives
+the app shell with a drawn cursor and records frames from the Chrome DevTools
+screencast; ``customize`` is a cursor-free showcase of themes, each with a matching
+video wallpaper and a different layout, crossfaded. Every non-GET API call from the
+page is stubbed, so the demo cannot change real settings, wallpapers, or the pane
+map agents read. Frames are pasted into the same landing-page frame as the stills
+(readme_promo.py). ``--site DIR`` also writes the unframed WebM clips and posters
+the product site uses.
 """
 from __future__ import annotations
 
@@ -24,6 +27,7 @@ from PIL import Image
 from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import readme_demo_ide as demo_ide  # noqa: E402
 import readme_screenshots as rs  # noqa: E402
 
 promo = rs.promo
@@ -44,6 +48,8 @@ FRAMES = {
         sub="Ask any agent to reshape Cuttle for your workflow. Themes and wallpapers are just the start."),
 }
 
+SITE_CLIPS = ("multiplex", "customize")
+
 DEMO_VIDEOS = [
     "https://www.youtube.com/watch?v=hOgVAYpHPCc",
     "https://www.youtube.com/watch?v=0WQTZvunC2Q",
@@ -52,12 +58,29 @@ DEMO_VIDEOS = [
     "https://www.youtube.com/watch?v=Lj497ZMwhhc",
     "https://www.youtube.com/watch?v=CRwHmYJA0M8",
 ]
-THEME_STEPS = ["sakura", "synthwave", "paper", "matrix", rs.THEME]
+
+
+def _yt(video_id: str) -> str:
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
+# Theme, a wallpaper that matches it, and a layout (see showcase_layouts).
+SHOWCASE = [
+    ("matrix", _yt("CRwHmYJA0M8"), "chat_trio"),     # Matrix code rain
+    ("synthwave", _yt("1ORXYnZ4msE"), "ide_review"),  # neon cyberpunk anime
+    ("sakura", _yt("ZSqqbU0XwyI"), "chat_dash"),     # pink glow anime
+    ("nord", _yt("Wcz7umVITmc"), "chat_review"),     # cozy blue anime
+    ("rgb", _yt("KM9ptQ2Tz3s"), "dash_full"),        # multicolored explosions
+    ("lavender", _yt("aIF9tr6PO-8"), "chat_trio2"),  # purple sorceress anime
+    ("graphite", _yt("9vntypeV5QU"), "quad"),        # black-and-white topographic map
+    ("mint", _yt("Su09sacFipo"), "chat_dash_v"),     # green wind-magic anime
+]
+SHOWCASE_HOLD, SHOWCASE_FADE, SHOWCASE_FPS = 2.6, 0.5, 24
 
 OVERLAY_JS = r"""
 (() => {
   if (location.port !== '8080') return;
-  const hideCss = '.pending-changes-host{display:none!important}';
+  const hideCss = '.pending-changes-host,.chat-jump-bottom{display:none!important}';
   const addStyle = (css) => { const s = document.createElement('style'); s.textContent = css; document.head.appendChild(s); };
   const onReady = (fn) => document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', fn) : fn();
   onReady(() => addStyle(hideCss));
@@ -320,21 +343,39 @@ def shell_seed(spaces: list[tuple[str, dict]], extra: dict | None = None) -> dic
     return seed
 
 
-def open_shell(browser, auth_state: dict, base: str, seed: dict, viewport: dict = VIEWPORT, scale: float = 1):
+def wallpaper_seed(url: str, opacity: int = 20) -> dict:
+    """localStorage for one looping wallpaper; ``opacity`` is the theme overlay (lower shows more video)."""
+    return {
+        "cuttleVideoBackgroundEnabled": "1",
+        "cuttleVideoBackgroundList": json.dumps([url]),
+        "cuttleVideoBackgroundPlaylists": json.dumps({"default": [url]}),
+        "cuttleVideoBackgroundActivePlaylist": "default",
+        "cuttleVideoBackgroundOpacity": str(opacity),
+        "cuttleVideoBackgroundBlendTarget": "theme",
+        "cuttleVideoBackgroundDuration": "600",
+    }
+
+
+def open_shell(browser, auth_state: dict, base: str, seed: dict, viewport: dict = VIEWPORT, scale: float = 1,
+               *, video: str | None = None, ide_root: Path | None = None, settle: float = 3):
     ctx = browser.new_context(ignore_https_errors=True, viewport=viewport, storage_state=auth_state,
                               device_scale_factor=scale)
     ctx.route("**/api/**", lambda route: route.fulfill(json={"success": True})
               if route.request.method != "GET" else route.continue_())
     # Keep the real install's wallpaper playlists out of the capture.
+    videos = [video] if video else DEMO_VIDEOS
     demo_wallpaper = {"success": True, "video_background": {
-        "playlists": {"default": DEMO_VIDEOS}, "active_playlist": "default", "urls": DEMO_VIDEOS,
-        "duration": 600, "opacity": 40, "enabled": True}}
+        "playlists": {"default": videos}, "active_playlist": "default", "urls": videos,
+        "duration": 600, "opacity": 20 if video else 40, "enabled": True}}
     ctx.route("**/api/settings/video-background", lambda route: route.fulfill(json=demo_wallpaper)
               if route.request.method == "GET" else route.fulfill(json={"success": True}))
+    if ide_root is not None:
+        demo_ide.install_routes(ctx, ide_root)
     ctx.add_init_script(OVERLAY_JS.replace("__SEED__", json.dumps(seed)))
     page = ctx.new_page()
-    page.goto(f"{base}/", wait_until="networkidle")
-    page.wait_for_timeout(3000)
+    # A streaming wallpaper keeps the network busy, so it never goes idle.
+    page.goto(f"{base}/", wait_until="load" if video else "networkidle")
+    page.wait_for_timeout(int(settle * 1000))
     for frame in page.frames:
         try:
             frame.evaluate(rs.SCROLL_CHAT_TOP)
@@ -347,48 +388,74 @@ def backdrop(browser, scene: str):
     return promo.Composer(browser).backdrop(FRAMES[scene], VIEWPORT["width"] / VIEWPORT["height"])
 
 
+def showcase_layouts(chats: dict, ide_root: Path) -> dict:
+    ide = lambda flex="": leaf(page=demo_ide.page_url(ide_root), flex=flex)  # noqa: E731
+    dash = lambda flex="": leaf(page=rs.DASH_PAGE, flex=flex)  # noqa: E731
+    return {
+        "chat_trio": group("horizontal", [leaf(chats["hero"], flex="1.2 1 0%"), leaf(chats["standup"]),
+                                          leaf(chats["render"])]),
+        "ide_review": group("horizontal", [ide("1.55 1 0%"), leaf(chats["review"], flex="0.65 1 0%")]),
+        "chat_dash": group("horizontal", [leaf(chats["cost"], flex="0.9 1 0%"), dash("1.1 1 0%")]),
+        "chat_review": group("horizontal", [leaf(chats["hero"]), leaf(chats["review"])]),
+        "dash_full": group("vertical", [dash("1.3 1 0%"), leaf(chats["standup"], flex="0.7 1 0%")]),
+        "chat_trio2": group("horizontal", [leaf(chats["cost"], flex="1.2 1 0%"), leaf(chats["review"]),
+                                           leaf(chats["standup"])]),
+        "quad": group("horizontal", [group("vertical", [leaf(chats["hero"]), leaf(chats["render"])]),
+                                     group("vertical", [leaf(chats["cost"]), leaf(chats["review"])])]),
+        "chat_dash_v": group("horizontal", [leaf(chats["review"], flex="0.8 1 0%"),
+                                            group("vertical", [dash(), leaf(chats["standup"])], flex="1.2 1 0%")]),
+    }
+
+
 def record_customize(browser, auth_state: dict, base: str, chats: dict) -> None:
-    seed = shell_seed(
-        [("Build", group("horizontal", [
-            leaf(page="/settings_page.html", flex="0.85 1 0%"), leaf(chats["hero"], flex="1.15 1 0%")]))],
-        {
-            "cuttleVideoBackgroundEnabled": "1",
-            "cuttleVideoBackgroundList": json.dumps(DEMO_VIDEOS),
-            "cuttleVideoBackgroundOpacity": "40",
-            "cuttleVideoBackgroundBlendTarget": "black",
-            "cuttleVideoBackgroundDuration": "600",
-        },
-    )
-    page = open_shell(browser, auth_state, base, seed)
-    settings = next(f for f in page.frames if "settings_page" in f.url)
-    settings.evaluate("document.getElementById('themeSelect').scrollIntoView({block: 'start'}); scrollBy(0, -56)")
-    page.wait_for_timeout(6000)
+    """One settled still per showcase scene (no cursor, no settings clicks), crossfaded into a loop."""
+    ide_root = demo_ide.materialize(rs.RAW / "demo-app")
+    layouts = showcase_layouts(chats, ide_root)
+    stills: list[Image.Image] = []
+    for theme, video, layout in SHOWCASE:
+        uses_ide = layout.startswith("ide")
+        extra = {**wallpaper_seed(video), **(demo_ide.seed(ide_root, chat_open=False) if uses_ide else {})}
+        seed = shell_seed([(theme.title(), layouts[layout])], extra)
+        seed["theme"] = theme
+        page = open_shell(browser, auth_state, base, seed, video=video,
+                          ide_root=ide_root if uses_ide else None, settle=4)
+        page.evaluate("document.getElementById('demo-cursor')?.remove()")
+        page.mouse.move(-10, -10)
+        page.wait_for_timeout(11000)  # let the wallpaper load and get past its first frames
+        for frame in page.frames:
+            try:
+                frame.evaluate(rs.SCROLL_CHAT_TOP)
+            except Exception:
+                pass
+        stills.append(Image.open(io.BytesIO(page.screenshot())).convert("RGB"))
+        page.context.close()
+        print(f"scene {theme} ({layout})")
 
-    demo = Demo(page)
-    rec = Recorder(page, fps=10)
-    select = settings.locator("#themeSelect")
-    play_buttons = settings.locator(".video-play-btn")
+    fps = SHOWCASE_FPS
+    hold, fade = round(SHOWCASE_HOLD * fps), round(SHOWCASE_FADE * fps)
+    video_frames: list[Image.Image] = []
+    for i, im in enumerate(stills):
+        nxt = stills[(i + 1) % len(stills)]
+        video_frames += [im] * hold
+        video_frames += [Image.blend(im, nxt, (k + 1) / (fade + 1)) for k in range(fade)]
+    write_webm(rs.RAW / "customize.webm", video_frames, fps)
 
-    rec.start()
-    demo.caption("Themes and video wallpapers, applied live")
-    demo.wait(2.2)
-    rec.stop()
-    for i, theme in enumerate(THEME_STEPS):
-        btn = play_buttons.nth((i + 1) % len(DEMO_VIDEOS)).bounding_box()
-        rec.start()
-        demo.click(btn["x"] + btn["width"] / 2, btn["y"] + btn["height"] / 2)
-        demo.wait(0.3)
-        rec.stop()
-        demo.wait(5.5)
-        box = select.bounding_box()
-        rec.start()
-        demo.click(box["x"] + box["width"] * 0.6, box["y"] + box["height"] / 2)
-        select.select_option(theme)
-        demo.wait(1.6)
-        rec.stop()
-    rec.save(OUT / "customize.webp", crossfade=3, quality=58, backdrop=backdrop(browser, "customize"),
-             raw_video=rs.RAW / "customize.webm")
-    page.context.close()
+    # README animation: same scenes at a lower frame rate, framed like the stills.
+    bd = backdrop(browser, "customize")
+    anim_fps, anim_fade = 10, 4
+    images, durations = [], []
+    for i, im in enumerate(stills):
+        nxt = stills[(i + 1) % len(stills)]
+        images.append(bd.compose(im))
+        durations.append(int(SHOWCASE_HOLD * 1000))
+        for k in range(anim_fade):
+            images.append(bd.compose(Image.blend(im, nxt, (k + 1) / (anim_fade + 1))))
+            durations.append(round(1000 / anim_fps))
+    path = OUT / "customize.webp"
+    images[0].save(path, save_all=True, append_images=images[1:], duration=durations, loop=0,
+                   quality=58, method=4)
+    print(f"wrote {path.relative_to(rs.REPO)} — {len(images)} frames, {sum(durations) / 1000:.1f}s, "
+          f"{path.stat().st_size // 1024} KB")
 
 
 def record_multiplex(browser, auth_state: dict, base: str, chats: dict) -> None:
@@ -470,6 +537,7 @@ def main() -> int:
     ap.add_argument("scenes", nargs="*", metavar="scene", help=f"any of {', '.join(SCENES)} (default: all)")
     ap.add_argument("--base", default="https://127.0.0.1:8080")
     ap.add_argument("--keep", action="store_true", help="Leave the demo chats in place")
+    ap.add_argument("--site", type=Path, help="Also write the unframed WebM clips and posters for the product site")
     args = ap.parse_args()
     unknown = set(args.scenes) - set(SCENES)
     if unknown:
@@ -493,7 +561,27 @@ def main() -> int:
                 if not args.keep:
                     for sid in chats.values():
                         db.delete_chat_session(sid, user_id)
+    if args.site:
+        export_site(args.site, args.scenes or SCENES)
     return 0
+
+
+def export_site(site: Path, scenes) -> None:
+    """Copy the raw clips and write a poster for each (multiplex: a settled frame mid-clip)."""
+    import shutil
+
+    site.mkdir(parents=True, exist_ok=True)
+    for name in scenes:
+        clip = rs.RAW / f"{name}.webm"
+        if name not in SITE_CLIPS or not clip.exists():
+            continue
+        shutil.copy(clip, site / clip.name)
+        poster = rs.RAW / f"{name}-poster.png"
+        at = "14" if name == "multiplex" else "0"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", at, "-i", str(clip), "-frames:v", "1", str(poster)],
+                       check=True)
+        Image.open(poster).save(site / f"{name}-poster.webp", quality=86, method=6)
+        print(f"wrote {site / clip.name} and {name}-poster.webp")
 
 
 if __name__ == "__main__":
