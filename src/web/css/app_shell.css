@@ -219,6 +219,165 @@ body.is-electron.fullscreen .shell-zoom-hud {
     opacity: 1;
 }
 
+/* Host/Client connection popup (shell_connection.js) */
+.shell-connection-modal {
+    max-width: 440px;
+}
+
+.shell-connection-modal .auth-modal-header {
+    margin-bottom: 18px;
+}
+
+.shell-connection-role {
+    margin: 0 0 10px;
+}
+
+.shell-connection-role[data-role="client"] {
+    border-color: rgba(88, 166, 255, 0.5);
+    color: #9ecbff;
+}
+
+.shell-connection-info {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 14px;
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 13px;
+}
+
+.shell-connection-info dt {
+    color: #a0aec0;
+    white-space: nowrap;
+}
+
+.shell-connection-info dd {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    color: #e2e8f0;
+}
+
+.shell-connection-value {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    overflow-wrap: anywhere;
+    user-select: text;
+}
+
+.shell-connection-copy {
+    margin-left: auto;
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: transparent;
+    color: #cbd5e1;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.shell-connection-copy:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.shell-connection-warning {
+    margin: 0 0 14px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: #fcd34d;
+}
+
+.shell-connection-switch {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.shell-connection-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #a0aec0;
+}
+
+.shell-connection-row {
+    display: flex;
+    gap: 8px;
+}
+
+.shell-connection-input {
+    flex: 1;
+    min-width: 0;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #e2e8f0;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 14px;
+    outline: none;
+}
+
+.shell-connection-input:focus {
+    border-color: rgba(139, 92, 246, 0.7);
+}
+
+.shell-connection-connect {
+    width: auto;
+    flex-shrink: 0;
+}
+
+.shell-connection-saved-list {
+    display: grid;
+    gap: 6px;
+    margin-top: 6px;
+    max-height: 160px;
+    overflow-y: auto;
+}
+
+.shell-connection-saved-entry {
+    text-align: left;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    padding: 7px 10px;
+    background: transparent;
+    color: #e2e8f0;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.shell-connection-saved-entry small {
+    display: block;
+    color: #a0aec0;
+    margin-top: 2px;
+}
+
+.shell-connection-saved-entry:hover:not(:disabled) {
+    border-color: rgba(139, 92, 246, 0.6);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.shell-connection-saved-entry:disabled,
+#shellConnectionLocal:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.shell-connection-status {
+    min-height: 16px;
+    margin: 0;
+    font-size: 12px;
+    color: #a0aec0;
+    text-align: center;
+}
+
+.shell-connection-status.is-error {
+    color: #fca5a5;
+}
+
 .shell-titlebar-workers {
     margin-left: 6px;
     border: 1px solid rgba(63, 185, 80, 0.45);
