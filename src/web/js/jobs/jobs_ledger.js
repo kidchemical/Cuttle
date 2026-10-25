@@ -16,6 +16,7 @@ window.CuttleJobsLedger = (function () {
         failed: 'failed',
         cancelled: 'cancelled',
         expired: 'expired',
+        leftover: 'leftover',
     };
 
     function esc(s) {
@@ -61,7 +62,7 @@ window.CuttleJobsLedger = (function () {
         const links = job.links || {};
         const status = STATUS_LABELS[job.status] || job.status || 'unknown';
         return {
-            kind: job.kind === 'mesh' ? 'mesh' : 'run',
+            kind: job.kind === 'mesh' || job.kind === 'leftover' ? job.kind : 'run',
             id: job.id,
             shortId: job.short_id || String(job.id || '').slice(0, 8),
             label: job.label || meta.type || 'job',
@@ -73,6 +74,7 @@ window.CuttleJobsLedger = (function () {
             model: meta.model || '',
             cost: meta.cost != null ? fmtCost(meta.cost) : '',
             detail: (meta.error && String(meta.error)) || meta.detail || '',
+            cmdline: meta.cmdline || '',
             chatLink: links.chat || null,
             queryLogLink: links.query_log || null,
             meshLink: links.mesh || null,
@@ -96,7 +98,7 @@ window.CuttleJobsLedger = (function () {
         if (row.actions.indexOf('cancel') >= 0) {
             parts.push(
                 '<button type="button" class="jobs-pager-btn" data-job-cancel="' + esc(row.id) + '"' +
-                ' data-job-kind="' + esc(row.kind) + '">Stop</button>'
+                ' data-job-kind="' + esc(row.kind) + '">' + (row.kind === 'leftover' ? 'Terminate' : 'Stop') + '</button>'
             );
         }
         if (row.actions.indexOf('rerun') >= 0) {
@@ -175,6 +177,28 @@ window.CuttleJobsLedger = (function () {
         return rows;
     }
 
+    /** Leftover processes: still alive after their agent turn finished. */
+    function renderLeftovers(jobs) {
+        return (jobs || []).map(display).map(function (r) {
+            const chat = r.chatLink
+                ? '<a href="' + esc(r.chatLink) + '" class="hist-pr">' + esc(r.detail) + '</a>'
+                : esc(r.detail);
+            return '<div class="job-card leftover" title="' + esc(r.cmdline) + '">' +
+                '<div class="job-main">' +
+                '<div class="job-row-top">' +
+                '<div class="job-title-compact"><span class="job-name">' + esc(r.label) + '</span>' + statusPill(r.status) + '</div>' +
+                '</div>' +
+                '<div class="job-meta">' +
+                '<span>left running by a finished turn</span>' +
+                '<span>' + chat + '</span>' +
+                '<span>started ' + esc(r.when) + '</span>' +
+                '</div>' +
+                '</div>' +
+                '<div class="job-actions">' + actionButtons(r) + '</div>' +
+                '</div>';
+        }).join('');
+    }
+
     /** Compact one-line summary (detail telemetry lives in the Dashboards page). */
     function renderSummary(stats) {
         stats = stats || {};
@@ -193,6 +217,7 @@ window.CuttleJobsLedger = (function () {
     return {
         display: display,
         renderRunning: renderRunning,
+        renderLeftovers: renderLeftovers,
         renderTable: renderTable,
         renderSummary: renderSummary,
         fmtDuration: fmtDuration,

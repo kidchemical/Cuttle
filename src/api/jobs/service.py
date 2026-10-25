@@ -3,6 +3,7 @@
 Control dispatches to the real owners (never mutating them here):
   - cancel run   -> chat_run_registry.cancel_session_runs(session)
   - cancel mesh  -> device_workers store cancel_job
+  - cancel leftover -> chat_run_registry.terminate_leftover(pid)
   - rerun mesh   -> device_workers store submit_job with the original spec
 
 Telemetry aggregates the same ledger the list reads, so the page and any
@@ -67,6 +68,16 @@ def cancel_job(kind: str, job_id: str) -> Dict[str, Any]:
         if not job:
             raise JobNotCancellableError(f"mesh job {job_id} not found or not cancellable")
         return {"success": True, "kind": "mesh", "id": job_id, "result": job}
+    if kind == "leftover":
+        from api.chat_run_registry import terminate_leftover
+
+        try:
+            result = terminate_leftover(job_id)
+        except LookupError as e:
+            raise JobNotFoundError(str(e))
+        except PermissionError as e:
+            raise JobNotCancellableError(str(e))
+        return {"success": True, "kind": "leftover", "id": job_id, "result": result}
     raise JobNotFoundError(f"unknown job kind {kind}")
 
 

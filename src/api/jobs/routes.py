@@ -52,7 +52,11 @@ def inflight_route():
     """Live in-flight jobs for the shell badge / running-now (same shape as the
     retired /api/executing-jobs so the badge consumer stays compatible)."""
     jobs = ledger.inflight()
-    return jsonify(executing_jobs=[{k: v for k, v in j.items() if k in ("kind", "id", "short_id", "label", "status", "started_at")} for j in jobs])
+    return jsonify(
+        executing_jobs=[{k: v for k, v in j.items() if k in ("kind", "id", "short_id", "label", "status", "started_at")} for j in jobs],
+        # Not counted by the running badge: detached processes from finished turns.
+        leftover_processes=ledger.leftovers(),
+    )
 
 
 @jobs_bp.get("/stats")

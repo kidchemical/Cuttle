@@ -146,6 +146,12 @@ body.light-mode .cuttle-tooltip {
 .cuttle-tooltip.is-wrap {
     white-space: normal;
     text-align: left;
+    overflow-wrap: anywhere;
+}
+
+/* Long unbreakable tokens (file paths, URLs): grow rather than overflow. */
+.cuttle-tooltip.is-wide {
+    max-width: min(720px, calc(100vw - 16px));
 }
 
 .cuttle-tooltip[hidden] {

@@ -828,7 +828,7 @@
         activeEl = null;
         if (!tipEl) return;
         tipEl.hidden = true;
-        tipEl.classList.remove('is-visible', 'is-wrap');
+        tipEl.classList.remove('is-visible', 'is-wrap', 'is-wide');
         tipEl.textContent = '';
     }
 
@@ -847,6 +847,9 @@
         tip.textContent = text;
         var wrap = text.length > 42 || (text.indexOf(' ') >= 0 && text.length > 28);
         tip.classList.toggle('is-wrap', wrap);
+        // Paths / URLs have no spaces to wrap at — widen instead of clipping.
+        var longest = text.split(/\s+/).reduce(function (n, w) { return Math.max(n, w.length); }, 0);
+        tip.classList.toggle('is-wide', longest > 40);
         tip.hidden = false;
         tip.classList.remove('is-visible');
         tip.style.left = '0px';

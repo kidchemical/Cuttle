@@ -223,6 +223,38 @@ def inflight() -> List[Dict[str, Any]]:
     return jobs
 
 
+def leftovers() -> List[Dict[str, Any]]:
+    """Processes finished agent turns left running (not in flight, not busy).
+
+    Separate from inflight() so the shell running badge never counts them.
+    """
+    from api.chat_run_registry import list_leftovers
+
+    out: List[Dict[str, Any]] = []
+    for rec in list_leftovers():
+        sid = rec.get("session_id") or ""
+        handle = f"CH-{int(sid):06d}" if str(sid).isdigit() else str(sid)
+        out.append(
+            {
+                "kind": "leftover",
+                "id": str(rec["pid"]),
+                "short_id": str(rec["pid"]),
+                "label": rec.get("name") or str(rec["pid"]),
+                "status": "leftover",
+                "started_at": rec.get("create_time"),
+                "detached_at": rec.get("detached_at"),
+                "origin": {"chat_session_id": sid},
+                "meta": {
+                    "detail": (f"from {handle} · " if handle else "") + f"pid {rec['pid']}",
+                    "cmdline": rec.get("cmdline") or "",
+                },
+                "links": {"chat": f"/chat_page.html?session={sid}" if sid else None},
+                "actions": job_actions("leftover", "leftover"),
+            }
+        )
+    return out
+
+
 def get_job(kind: str, job_id: str) -> Optional[Dict[str, Any]]:
     """One unified job by source kind (for deep-line control lookups)."""
     if kind == "run":

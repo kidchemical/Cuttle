@@ -33,6 +33,7 @@
         .status-pill.cancelled { background: rgba(148, 163, 184, 0.25); color: #94a3b8; }
         .status-pill.failed { background: rgba(248, 113, 113, 0.18); color: #f87171; }
         .status-pill.expired { background: rgba(148, 163, 184, 0.25); color: #94a3b8; }
+        .status-pill.leftover { background: rgba(250, 204, 21, 0.18); color: #facc15; }
         .running-now-empty, .jobs-empty, .jobs-loading {
             font-size: 12px; color: var(--text-secondary); padding: 18px 14px;
             border-radius: 8px; background: var(--section-bg); border: 1px dashed var(--border-color);
@@ -133,6 +134,7 @@
             background: var(--section-bg); border: 1px solid var(--border-color);
         }
         .job-card.running { border-left: 3px solid var(--success-border); }
+        .job-card.leftover { border-left: 3px solid #facc15; }
         .job-main { flex: 1; min-width: 0; }
         .job-row-top {
             display: flex; align-items: center; justify-content: space-between; gap: 10px;

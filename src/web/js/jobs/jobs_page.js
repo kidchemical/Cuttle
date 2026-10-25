@@ -9,6 +9,7 @@
 
 let recentJobs = [];
 let runningJobs = [];
+let leftoverJobs = [];
 let jobsStats = null;
 let pollTimer = null;
 
@@ -38,6 +39,7 @@ async function loadJobs() {
         const idata = await ir.json().catch(() => ({}));
         recentJobs = jdata.jobs || [];
         runningJobs = idata.executing_jobs || [];
+        leftoverJobs = idata.leftover_processes || [];
         renderJobs();
         renderRunningJobs();
     } catch (e) {
@@ -63,7 +65,9 @@ function renderSummary() {
 function renderRunningJobs() {
     const el = document.getElementById('runningJobsList');
     if (!el) return;
-    setHtmlIfChanged(el, window.CuttleJobsLedger.renderRunning(runningJobs));
+    const L = window.CuttleJobsLedger;
+    const running = runningJobs.length || !leftoverJobs.length ? L.renderRunning(runningJobs) : '';
+    setHtmlIfChanged(el, running + L.renderLeftovers(leftoverJobs));
 }
 
 function renderJobs() {
@@ -87,7 +91,7 @@ async function cancelUnifiedJob(kind, jobId) {
         });
         const data = await r.json().catch(function () { return {}; });
         if (!r.ok || !data.success) throw new Error(data.error || ('HTTP ' + r.status));
-        if (window.showToast) window.showToast('Stopped ' + jid.slice(0, 8), 'success');
+        if (window.showToast) window.showToast((k === 'leftover' ? 'Terminated pid ' : 'Stopped ') + jid.slice(0, 8), 'success');
         await loadAll();
     } catch (e) {
         if (window.showToast) window.showToast(String(e.message || e), 'error');

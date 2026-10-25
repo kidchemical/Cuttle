@@ -18,9 +18,15 @@ _lock = threading.Lock()
 #   cancel: threading.Event,
 #   procs: list[Popen],
 #   pids: set[int],  # root + descendants snapshotted for orphan sweep
+#   pid_ctimes: dict[int, float],  # create_time when first seen (PID-reuse guard)
 #   query_ids: set[str],
 # }
 _runs: Dict[str, Dict[str, Any]] = {}
+# pid -> {pid, name, cmdline, create_time, session_id, detached_at}
+# Processes a *finished* turn left running (compiler servers, build daemons,
+# nohup'd servers). They no longer make the chat busy or block a when-idle
+# restart; Jobs lists them and can terminate them (identity-checked).
+_leftovers: Dict[int, Dict[str, Any]] = {}
 # session_key -> watch job ids (survive after the kick subprocess exits)
 _session_jobs: Dict[str, set] = {}
 
@@ -36,6 +42,7 @@ def _new_entry() -> Dict[str, Any]:
         "cancel": threading.Event(),
         "procs": [],
         "pids": set(),
+        "pid_ctimes": {},
         "query_ids": set(),
     }
 
@@ -88,6 +95,7 @@ def begin_run(session_id, query_id: Optional[str] = None) -> threading.Event:
             entry["query_ids"].add(str(query_id))
         entry["procs"] = []
         entry["pids"] = set()
+        entry["pid_ctimes"] = {}
         entry["cancel"] = threading.Event()
         for k in keys:
             _runs[k] = entry
@@ -158,12 +166,9 @@ def attach_process(session_id, proc) -> None:
         if proc not in entry["procs"]:
             entry["procs"].append(proc)
         if pid:
-            try:
-                entry["pids"].add(int(pid))
-            except (TypeError, ValueError):
-                pass
+            _remember_pid(entry, pid)
             for child in list_descendant_pids(pid):
-                entry["pids"].add(int(child))
+                _remember_pid(entry, child)
 
 
 def track_pid(session_id, pid) -> None:
@@ -187,7 +192,7 @@ def track_pid(session_id, pid) -> None:
             entry = _new_entry()
             for k in keys:
                 _runs[k] = entry
-        entry.setdefault("pids", set()).add(pid_i)
+        _remember_pid(entry, pid_i)
 
 
 def session_tracked_pids(session_id) -> List[int]:
@@ -342,26 +347,166 @@ def _prune_dead_procs(entry: Dict[str, Any]) -> None:
             pid_i = None
         if pid_i is None or pid_i <= 1 or not _proc_alive(proc):
             continue
-        pids.add(pid_i)
+        _remember_pid(entry, pid_i)
         for child in list_descendant_pids(pid_i):
-            try:
-                pids.add(int(child))
-            except (TypeError, ValueError):
-                pass
+            _remember_pid(entry, child)
     live = []
     for proc in list(entry.get("procs") or []):
         if _proc_alive(proc):
             live.append(proc)
     entry["procs"] = live
+    ctimes = entry.setdefault("pid_ctimes", {})
     alive_pids: Set[int] = set()
     for pid in list(entry.get("pids") or ()):
         try:
             pid_i = int(pid)
         except (TypeError, ValueError):
             continue
-        if pid_alive(pid_i):
+        if pid_alive(pid_i) and _same_process(pid_i, ctimes.get(pid_i)):
             alive_pids.add(pid_i)
     entry["pids"] = alive_pids
+    entry["pid_ctimes"] = {p: t for p, t in ctimes.items() if p in alive_pids}
+
+
+def _process_info(pid) -> Optional[Dict[str, Any]]:
+    """Identity of a live, non-zombie process, or None."""
+    try:
+        import psutil
+
+        p = psutil.Process(int(pid))
+        with p.oneshot():
+            if p.status() == psutil.STATUS_ZOMBIE:
+                return None
+            try:
+                cmdline = " ".join(p.cmdline() or [])
+            except Exception:
+                cmdline = ""
+            return {
+                "pid": int(pid),
+                "name": p.name() or str(pid),
+                "cmdline": cmdline[:500],
+                "create_time": float(p.create_time()),
+            }
+    except Exception:
+        return None
+
+
+def _same_process(pid: int, create_time: Optional[float]) -> bool:
+    """False when ``pid`` now belongs to a different process than recorded."""
+    if create_time is None:
+        return True
+    info = _process_info(pid)
+    return bool(info) and abs(info["create_time"] - create_time) < 0.01
+
+
+def _remember_pid(entry: Dict[str, Any], pid) -> None:
+    try:
+        pid_i = int(pid)
+    except (TypeError, ValueError):
+        return
+    if pid_i <= 1:
+        return
+    entry.setdefault("pids", set()).add(pid_i)
+    ctimes = entry.setdefault("pid_ctimes", {})
+    if pid_i not in ctimes:
+        info = _process_info(pid_i)
+        if info:
+            ctimes[pid_i] = info["create_time"]
+
+
+def _detach_leftovers(entry: Dict[str, Any], session_id) -> None:
+    """Move a finished turn's surviving PIDs out of the busy set (caller holds _lock)."""
+    try:
+        from api.session_keys import bare_chat_session_id
+
+        bare = bare_chat_session_id(session_id) or str(session_id)
+    except Exception:
+        bare = str(session_id)
+    ctimes = entry.get("pid_ctimes") or {}
+    now = time.time()
+    for pid in list(entry.get("pids") or ()):
+        info = _process_info(pid)
+        if not info:
+            continue
+        recorded = ctimes.get(pid)
+        if recorded is not None and abs(info["create_time"] - recorded) >= 0.01:
+            continue
+        _leftovers[int(pid)] = {**info, "session_id": bare, "detached_at": now}
+    entry["pids"] = set()
+    entry["pid_ctimes"] = {}
+
+
+def list_leftovers() -> List[Dict[str, Any]]:
+    """Processes finished turns left running, newest first (dead/reused dropped)."""
+    with _lock:
+        rows = list(_leftovers.values())
+    out: List[Dict[str, Any]] = []
+    for rec in rows:
+        if _same_process(rec["pid"], rec["create_time"]):
+            out.append(dict(rec))
+        else:
+            with _lock:
+                if _leftovers.get(rec["pid"]) is rec:
+                    _leftovers.pop(rec["pid"], None)
+    out.sort(key=lambda r: r.get("detached_at") or 0, reverse=True)
+    return out
+
+
+def terminate_leftover(pid) -> Dict[str, Any]:
+    """Terminate one listed leftover and its children.
+
+    Raises LookupError when ``pid`` is not a listed leftover (or has exited /
+    been reused), PermissionError when it is a protected process. Leftovers are
+    usually re-parented away from Flask, so the descendant-only rule in
+    ``kill_pid_tree`` cannot apply; the recorded create_time is the guard.
+    """
+    try:
+        pid_i = int(pid)
+    except (TypeError, ValueError):
+        raise LookupError(f"not a process id: {pid}")
+    with _lock:
+        rec = _leftovers.get(pid_i)
+    if not rec or not _same_process(pid_i, rec["create_time"]):
+        with _lock:
+            _leftovers.pop(pid_i, None)
+        raise LookupError(f"process {pid_i} is no longer running")
+    try:
+        from api.process_kill_safety import is_forbidden_kill_target
+
+        if is_forbidden_kill_target(pid_i):
+            raise PermissionError(f"process {pid_i} is protected")
+    except ImportError:
+        pass
+    try:
+        from api.cuttle_managed_process_guard import list_managed_python_pids
+
+        if pid_i in list_managed_python_pids():
+            raise PermissionError(f"process {pid_i} is a Cuttle-managed process")
+    except ImportError:
+        pass
+    import psutil
+
+    try:
+        root = psutil.Process(pid_i)
+        procs = [root] + root.children(recursive=True)
+    except psutil.NoSuchProcess:
+        procs = []
+    for p in procs:
+        try:
+            p.terminate()
+        except psutil.Error:
+            pass
+    _gone, alive = psutil.wait_procs(procs, timeout=5)
+    for p in alive:
+        try:
+            p.kill()
+        except psutil.Error:
+            pass
+    if alive:
+        psutil.wait_procs(alive, timeout=3)
+    with _lock:
+        _leftovers.pop(pid_i, None)
+    return {"pid": pid_i, "name": rec["name"], "terminated": len(procs)}
 
 
 def end_run(session_id, query_id: Optional[str] = None, proc=None) -> None:
@@ -388,6 +533,10 @@ def end_run(session_id, query_id: Optional[str] = None, proc=None) -> None:
         # without the Popen handle — leaving dead procs used to pin the registry
         # entry forever and make cancel/history think the chat was still running.
         _prune_dead_procs(entry)
+        if not entry["procs"] and not entry["query_ids"] and entry.get("pids"):
+            # The turn is over and its own CLI has exited; whatever is still
+            # alive detached on purpose (e.g. VBCSCompiler). Not work in flight.
+            _detach_leftovers(entry, session_id)
         if not entry["procs"] and not entry.get("pids"):
             for k in keys:
                 _runs.pop(k, None)
