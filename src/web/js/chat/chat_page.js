@@ -2045,7 +2045,7 @@
         try {
             const serverSessions = (window.CuttleAuth && window.CuttleAuth.getSessions
                 && window.CuttleAuth.getSessions()) || [];
-            return serverSessions.find((x) => sessionIdsEqual(x.id, sessionId)) || null;
+            return CuttleChatActivity.findSessionById(serverSessions, sessionId);
         } catch (_) {
             return null;
         }
@@ -2056,7 +2056,7 @@
         try {
             const serverSessions = (window.CuttleAuth && window.CuttleAuth.getSessions
                 && window.CuttleAuth.getSessions()) || [];
-            return serverSessions.some((x) => sessionIdsEqual(x.id, sessionId));
+            return !!CuttleChatActivity.findSessionById(serverSessions, sessionId);
         } catch (_) {
             return false;
         }
@@ -2151,7 +2151,7 @@
         }
         if (isAuthMode()) {
             const serverSessions = (window.CuttleAuth.getSessions && window.CuttleAuth.getSessions()) || [];
-            const s = serverSessions.find((x) => sessionIdsEqual(x.id, sessionId));
+            const s = CuttleChatActivity.findSessionById(serverSessions, sessionId);
             return !!(s && Number(s.starred));
         }
         try {
