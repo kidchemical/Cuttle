@@ -113,6 +113,9 @@ except ImportError as e:
     print(f"Warning: Pairing modules not available: {e}")
 
 app = Flask(__name__)
+# gzip text responses; registered first so it runs after every other hook.
+from api import http_compression  # noqa: E402
+http_compression.install(app)
 # Restrict CORS to known-safe origins (+ LAN IP when lan_access_enabled).
 try:
     from api.lan_access import build_cors_origins

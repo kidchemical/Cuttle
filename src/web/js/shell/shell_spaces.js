@@ -1014,16 +1014,34 @@
             try { return await activityBroker.sessions(); } catch (_) { return null; }
         }
 
+        // Last full list + its validator. Every activity pulse re-reads the
+        // list; an unchanged list answers 304 instead of re-sending ~1 MB.
+        // Managed by hand: Chromium never HTTP-caches a self-signed Host.
+        let activitySessionsEtag = null, activitySessionsRows = null, activitySessionsUser = null;
+
         async function loadActivitySessions() {
             const controller = new win.AbortController();
             const timeout = win.setTimeout(() => controller.abort(), 6000);
+            const user = getAuthUserId();
+            if (user !== activitySessionsUser) {
+                activitySessionsEtag = null;
+                activitySessionsRows = null;
+                activitySessionsUser = user;
+            }
+            const headers = activitySessionsEtag && activitySessionsRows
+                ? { 'If-None-Match': activitySessionsEtag } : {};
             try {
                 const r = await fetchImpl('/api/auth/sessions', {
-                    cache: 'no-store', credentials: 'same-origin', signal: controller.signal,
+                    cache: 'no-store', credentials: 'same-origin', signal: controller.signal, headers,
                 });
+                if (r.status === 304 && activitySessionsRows) return activitySessionsRows;
                 if (!r.ok) return null;
                 const data = await r.json().catch(() => null);
-                return data && data.success && Array.isArray(data.sessions) ? data.sessions : null;
+                const rows = data && data.success && Array.isArray(data.sessions) ? data.sessions : null;
+                const etag = r.headers && typeof r.headers.get === 'function' ? r.headers.get('ETag') : null;
+                activitySessionsEtag = rows && etag ? etag : null;
+                activitySessionsRows = rows && etag ? rows : null;
+                return rows;
             } catch (_) {
                 return null;
             } finally {

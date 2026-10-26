@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from api.project_commands import (
     build_agent_prompt,
     find_project_command,
     list_project_commands,
+    resolve_command_run,
     try_expand_message_project_command,
 )
 
@@ -51,6 +53,37 @@ def test_nested_source_commands_dir(tmp_path: Path):
     )
     cmds = list_project_commands(str(tmp_path))
     assert any(c["name"] == "deploy" for c in cmds)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX recipe rewrite; Windows runs `run`")
+def test_shell_command_uses_sh_sibling_of_ps1_on_posix(tmp_path: Path):
+    scripts = tmp_path / ".cuttle" / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "ship.sh").write_text("echo ok\n", encoding="utf-8")
+    _write_cmd(
+        tmp_path,
+        "ship",
+        "",
+        "---\nname: ship\nexecute: shell\n"
+        "run: powershell -NoProfile -File .cuttle/scripts/ship.ps1 -Action deploy\n---\n",
+    )
+    recipe = resolve_command_run(find_project_command(str(tmp_path), "ship"))
+    assert recipe.startswith("bash ")
+    assert "ship.sh" in recipe and recipe.endswith("-Action deploy")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="run_posix is the POSIX recipe; Windows runs `run`")
+def test_shell_command_prefers_run_posix(tmp_path: Path):
+    _write_cmd(
+        tmp_path,
+        "ship",
+        "",
+        "---\nname: ship\nrun: powershell -File nope.ps1\nrun_posix: echo posix-ok\n---\n",
+    )
+    cmd = find_project_command(str(tmp_path), "ship")
+    assert resolve_command_run(cmd) == "echo posix-ok"
+    expanded = try_expand_message_project_command("/ship", str(tmp_path))
+    assert expanded and expanded["action"] == "shell"
 
 
 def test_expand_with_cursor_sticky(tmp_path: Path):

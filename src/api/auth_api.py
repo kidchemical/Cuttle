@@ -877,11 +877,16 @@ def get_chat_sessions():
             for s in sessions:
                 s['discord_participants'] = []
 
-        return jsonify({
+        # Activity pulses re-read this list while most pulses change nothing
+        # in it; a body-hash validator lets the shell broker get a 304.
+        response = jsonify({
             'success': True,
             'sessions': sessions
         })
-        
+        response.add_etag()
+        response.headers['Cache-Control'] = 'no-cache, private'
+        return response.make_conditional(request)
+
     except Exception as e:
         print(f"Get sessions error: {e}")
         return jsonify({
