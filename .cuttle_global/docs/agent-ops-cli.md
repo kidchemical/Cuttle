@@ -33,6 +33,7 @@ agent toolkit.
 | Context Compiler | `python -m api.cuttle_brain` | Brain / ADDING_AN_AGENT |
 | Per-project knowledge graphs | `python -m api.knowledge_graph` (providers, status, where, index, update, query, explain, notes, note, enrich, export, sync) | `knowledge-graph.md` |
 | Sub-agent child chats | `python -m api.subagents` | `subagents.md` |
+| Git worktrees + a chat's active worktree (chip) | `python -m api.worktrees` (list, create, adopt, bind, show, remove, orphans, reconcile) | [Worktrees](#worktrees) below |
 | Job watch bars | `python -m api.job_watch` | `action-forms.md` |
 | Unified Jobs ledger | `python -m api.jobs` (list, inflight, view, cancel, rerun, stats) | Jobs |
 | Dashboards / Model Benchmarks | `python -m api.dashboards` | `dashboards.md` |
@@ -81,6 +82,32 @@ $env:PYTHONPATH = "src"
 Use PowerShell backticks for multiline continuation and single-quoted JSON
 arguments; POSIX examples use backslashes for continuation.
 
+
+## Worktrees
+
+A chat's worktree chip is its `checkout_uid`, and the chat's turns run in that
+checkout. A plain `git worktree add` is unregistered, so Cuttle cannot bind it
+and the chip never moves. When the user asks to "create/use a worktree", use
+the CLI. `--bind` and `--chat` default to your own chat
+(`CUTTLE_CHAT_SESSION_ID`):
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.worktrees create --project-id N --branch dev/feature --bind
+PYTHONPATH=src .venv/bin/python -m api.worktrees adopt /path/from/git-worktree-add --project-id N --bind
+PYTHONPATH=src .venv/bin/python -m api.worktrees bind CHECKOUT_UID [--chat CH-…]
+PYTHONPATH=src .venv/bin/python -m api.worktrees bind --local          # back to the primary checkout
+PYTHONPATH=src .venv/bin/python -m api.worktrees show [--chat CH-…]
+```
+
+- The project id is on the chat (`show`). A checkout from another project is
+  refused.
+- The binding applies from the chat's **next** turn. In the current turn, keep
+  working in the worktree path from the JSON output (`cd` / `git -C`).
+- If you bind a chat that is neither yours nor one of your sub-agent chats, the
+  bind still succeeds but returns a `warning` (also printed on stderr). Tell
+  the user which chat you changed.
+- The open chat's chip updates on its next message sync. A persisted
+  `🌿 Worktree:` note records the change in that chat.
 
 ## Projects registry
 

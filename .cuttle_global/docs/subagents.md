@@ -162,20 +162,22 @@ transcript unless the user asks.
 
 ## Git worktrees for children
 
-Cuttle does not create worktrees. If you give children isolated checkouts, the
-parent that creates a worktree owns removing it. Nothing else cleans them up, so
-forgotten ones pile up by the gigabyte.
+Create worktrees with `python -m api.worktrees create`, not raw `git worktree
+add`: registered checkouts can be bound to a chat, so its chip and turns follow
+them ([agent-ops-cli.md → Worktrees](agent-ops-cli.md#worktrees)). Bind a child
+with `bind CHECKOUT_UID --chat <child CH->` (no warning: it is your child).
+If you give children isolated checkouts, the parent that creates a worktree owns
+removing it. Nothing else cleans them up, so forgotten ones pile up by the
+gigabyte.
 
-- Create under `{project}/temp/worktrees/<parent CH-handle>-<slug>`, never
-  elsewhere, so they are findable and gitignored.
 - Before your final reply, remove each worktree you created whose work is
-  committed (or that the user discarded): check `git -C <path> status
-  --porcelain` is empty, then `git worktree remove <path>`, then
-  `git worktree prune`. Delete a branch you created for it once it is merged.
+  committed (or that the user discarded) with `python -m api.worktrees remove
+  CHECKOUT_UID`. It refuses dirty checkouts and deletes the worktree's branch,
+  so only remove after the branch is merged or discarded.
 - Never `--force`-remove a worktree with uncommitted changes. Keep it, and list
   its path and why in the parent reply so the user can decide.
-- `git worktree list` is the audit; anything under `temp/worktrees/` whose
-  parent chat is finished is a leftover.
+- `python -m api.worktrees list --project-id N` is the audit. Register a
+  leftover plain-git worktree with `adopt` before cleaning it up.
 
 ## Shell environment
 

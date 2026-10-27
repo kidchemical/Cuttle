@@ -452,7 +452,7 @@
             const isStarred = typeof h.isProjectStarred === 'function' ? h.isProjectStarred : () => false;
             let projOptions = projects.map((p) => ({
                 value: String(p && p.id != null ? p.id : ''),
-                label: ((p && isStarred(p)) ? '★ ' : '') + ((p && p.name) || ('Project ' + (p && p.id))),
+                label: ((p && isStarred(p)) ? '★ ' : '') + ((p && (p.display_name || p.name)) || ('Project ' + (p && p.id))),
             })).filter((o) => o.value !== '');
             const curId = current && current.id != null ? String(current.id) : '';
             if (defaultsMode) {

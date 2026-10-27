@@ -13,6 +13,7 @@ throwaway scripts.
 - Workers mesh → `python -m api.device_workers.cli` (see `cuttle-workers.md`)
 - Context compile → `python -m api.cuttle_brain`
 - Sub-agent child chats → `python -m api.subagents` (see `subagents.md`)
+- Worktrees / a chat's active worktree → `python -m api.worktrees create --bind` / `bind`, never raw `git worktree add` (see `agent-ops-cli.md` → Worktrees)
 - Dashboards / Model Benchmarks → `python -m api.dashboards` (see `dashboards.md`)
 - Jev judgments → `python -m api.jev` (see `jev.md`)
 - Pattern / how to extend → `agent-ops-cli.md`

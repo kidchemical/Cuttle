@@ -50,6 +50,19 @@ eq(project.resolveCheckoutBinding({ prefs: { checkoutUid: '' }, stored: stale })
 eq(project.resolveCheckoutBinding({ serverSession: { checkout_uid: 'old' }, prefs: stale }),
     { uid: 'old', path: '/old' }, 'matching offline path retained');
 
+// --- server-side binding changes (agent `python -m api.worktrees bind`) ---
+eq(worktrees.observeSessionCheckout('9', { checkout_uid: null }), false, 'first payload is the baseline');
+eq(worktrees.observeSessionCheckout('9', { checkout_uid: null }), false, 'unchanged server binding');
+eq(worktrees.observeSessionCheckout('9', {
+    checkout_uid: 'agent', checkout: { checkout_uid: 'agent', path: '/wt/agent', branch: 'dev/agent' },
+}), true, 'server rebind is a change');
+eq(worktrees.checkoutForUid('agent').path, '/wt/agent', 'payload checkout remembered without a probe');
+eq(worktrees.observeSessionCheckout('9', {}), false, 'payload without checkout_uid ignored');
+eq(project.hydratedSessionSnapshot('9', { project_id: 1, checkout_uid: 'agent' }),
+    { id: '9', project_id: 1, project_name: undefined, project_path: undefined, checkout_uid: 'agent' },
+    'snapshot carries checkout_uid');
+eq(project.hydratedSessionSnapshot('9', { checkout_uid: 'x' }), null, 'no project → no snapshot');
+
 (async () => {
     global.fetch = async () => ({ status: 200, json: async () => ({
         worktrees: [{ checkout_uid: 'new', path: '/new', branch: 'refactor/work' }],

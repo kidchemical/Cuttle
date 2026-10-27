@@ -362,6 +362,21 @@
         return { uid, path: local ? String(local.checkout_path || local.checkoutPath) : '' };
     }
 
+    /** Session-project snapshot from a messages payload (null when it has no project). */
+    function hydratedSessionSnapshot(authSid, data) {
+        if (!data || (data.project_id == null && !data.project_path && !data.project_name)) return null;
+        const snapshot = {
+            id: authSid,
+            project_id: data.project_id,
+            project_name: data.project_name,
+            project_path: data.project_path,
+        };
+        if (Object.prototype.hasOwnProperty.call(data, 'checkout_uid')) {
+            snapshot.checkout_uid = data.checkout_uid;
+        }
+        return snapshot;
+    }
+
     function currentProjectPathKey(proj) {
         return proj && proj.path ? String(proj.path) : '';
     }
@@ -391,8 +406,24 @@
         });
     }
 
+    /**
+     * Label for project chips/badges: the registry entry's optional display
+     * name, else the project name. Saved chat snapshots carry only
+     * {id, name, path}, so the registry is looked up by id (path/name when
+     * the snapshot has no id) to pick up renames and display names.
+     */
+    function projectChipLabel(proj, projects) {
+        if (!proj) return '';
+        const reg = (proj.id != null)
+            ? findProjectById(projects, proj.id)
+            : (findProjectByPath(projects, proj.path) || findProjectByName(projects, proj.name));
+        const display = String((reg && reg.display_name) || proj.display_name || '').trim();
+        return display || proj.name || (reg && reg.name) || 'Project';
+    }
+
     const api = {
         normalizeProjectPath,
+        projectChipLabel,
         findProjectById,
         findProjectByName,
         findProjectByPath,
@@ -406,6 +437,7 @@
         rebindProjectToRegistry,
         applyOutboundProjectToRequest,
         resolveCheckoutBinding,
+        hydratedSessionSnapshot,
         currentProjectPathKey,
         effectiveGitPath,
         pendingChangesProject,

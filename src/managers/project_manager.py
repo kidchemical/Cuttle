@@ -21,7 +21,8 @@ from managers.project_locations import check_paths, validate_paths, require_proj
 
 
 def _validated_project_changes(kwargs):
-    allowed = {'name', 'description', 'tags', 'paths', 'path', 'repo_url', 'archived', 'default_branch'}
+    allowed = {'name', 'display_name', 'description', 'tags', 'paths', 'path', 'repo_url', 'archived',
+               'default_branch'}
     if set(kwargs) - allowed:
         raise ValueError('Unsupported project setting.')
     values = dict(kwargs)
@@ -31,9 +32,13 @@ def _validated_project_changes(kwargs):
         values['paths'] = [values.pop('path')]
     if 'paths' in values:
         values['paths'] = validate_paths(values['paths'])
-    for field in ('name', 'description', 'repo_url'):
+    for field in ('name', 'display_name', 'description', 'repo_url'):
         if field in values and not isinstance(values[field], str):
             raise ValueError(f'{field} must be text.')
+    if 'display_name' in values:
+        values['display_name'] = values['display_name'].strip()
+        if len(values['display_name']) > 60:
+            raise ValueError('Display name must be 60 characters or fewer.')
     if len(values.get('description', '')) > 4000 or len(values.get('repo_url', '')) > 2048:
         raise ValueError('Description or repository URL is too long.')
     if 'name' in values:
@@ -365,7 +370,8 @@ class ProjectManager:
             'created_at': row[6], 'updated_at': row[7], 'last_accessed': row[8],
             'is_active': bool(row[9]), 'config': config,
             'archived': bool(config.get('archived', False)),
-            'default_branch': config.get('default_branch', ''), **health,
+            'default_branch': config.get('default_branch', ''),
+            'display_name': config.get('display_name', ''), **health,
         }
 
     def get_projects(self, include_archived=False) -> List[Dict[str, Any]]:
@@ -484,7 +490,7 @@ class ProjectManager:
             config = json.loads(row[0]) if row[0] else {}
             fields, args = [], []
             for key, value in values.items():
-                if key in ('paths', 'repo_url', 'archived', 'default_branch'):
+                if key in ('paths', 'repo_url', 'archived', 'default_branch', 'display_name'):
                     config[key] = value
                     if key == 'paths':
                         fields.append('path = ?')

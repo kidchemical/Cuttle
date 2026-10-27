@@ -83,6 +83,50 @@ def create_worktree(
         raise
 
 
+def adopt_worktree(
+    *,
+    project_id: int,
+    primary_path: str,
+    path: str,
+    db_path_override: Optional[Path] = None,
+) -> Checkout:
+    """Register an existing git worktree of the project (no git or file changes).
+
+    For checkouts made with plain ``git worktree add``. The path must be a
+    linked worktree git lists for the project's repository — never the primary
+    checkout or an arbitrary directory. Already-registered paths return their row.
+    """
+    target = os.path.normcase(os.path.abspath(str(path or "")))
+    primary = os.path.normcase(os.path.abspath(str(primary_path or "")))
+    if not str(path or "").strip():
+        raise WorktreeError("path is required.")
+    if target == primary:
+        raise WorktreeError("That is the project's primary checkout, not a worktree.")
+    try:
+        entries = git_service.worktree_list(primary_path)
+    except GitError as exc:
+        raise WorktreeError(str(exc)) from exc
+    entry = next(
+        (e for e in entries
+         if os.path.normcase(os.path.abspath(e.get("path") or "")) == target),
+        None,
+    )
+    if entry is None:
+        raise WorktreeError("Not a git worktree of this project (see `git worktree list`).")
+    if entry.get("bare") or entry.get("prunable"):
+        raise WorktreeError("That worktree is bare or prunable; it cannot be adopted.")
+    existing = registry.checkout_for_path(entry["path"], db_path_override=db_path_override)
+    if existing is not None:
+        if int(existing.project_id) != int(project_id):
+            raise WorktreeError("That path is registered to a different project.")
+        return existing
+    return registry.create_checkout(
+        int(project_id), entry["path"], branch=entry.get("branch"),
+        git_worktree_name=os.path.basename(entry["path"].rstrip("/\\")) or None,
+        state="ready", db_path_override=db_path_override,
+    )
+
+
 def list_worktrees(
     project_id: Optional[int] = None,
     *,

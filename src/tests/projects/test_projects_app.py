@@ -250,6 +250,22 @@ def test_default_working_branch_is_persistent_scoped_and_clearable(registry, tmp
     assert restored.default_branch_for_path(str(folder)) == ''
 
 
+def test_display_name_is_optional_persistent_and_clearable(registry):
+    from managers.project_manager import ProjectManager
+    pm, pid, _ = registry
+    assert pm.get_project(pid)['display_name'] == ''
+    pm.update_project(pid, display_name='  Short  ')
+    restored = ProjectManager(pm.db_path)
+    assert restored.get_project(pid)['display_name'] == 'Short'
+    assert restored.get_project(pid)['config']['display_name'] == 'Short'
+    restored.update_project(pid, display_name='')
+    assert restored.get_project(pid)['display_name'] == ''
+    with pytest.raises(ValueError):
+        restored.update_project(pid, display_name='x' * 61)
+    with pytest.raises(ValueError):
+        restored.update_project(pid, display_name=None)
+
+
 @pytest.mark.parametrize('branch', [None, [], '-dev', 'HEAD', '@{-1}', 'dev..old', 'dev.lock', 'dev branch', 'dev\x00bad', 'x'*241])
 def test_invalid_default_branch_rejects_entire_update(registry, branch):
     pm, pid, _ = registry

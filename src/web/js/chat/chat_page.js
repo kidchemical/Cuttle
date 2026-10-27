@@ -3902,7 +3902,7 @@
     function projectChipHtml(proj, opts) {
         opts = opts || {};
         if (!proj || !(proj.name || proj.path)) return '';
-        const safe = escapeHtmlInline(proj.name || 'Project');
+        const safe = escapeHtmlInline(CuttleChatProject.projectChipLabel(proj, projects));
         const pathBit = (opts.composer && effectiveGitPath()) || proj.path || proj.name || '';
         const starred = isProjectStarred(proj);
         const showBranch = !!opts.composer || !!opts.header || !!opts.history;
@@ -7371,7 +7371,10 @@
                 setLastSeenServerMessageId: function (v) { lastSeenServerMessageId = v; },
                 setDeferOpenChatGeneratingFromSessions: function (v) { deferOpenChatGeneratingFromSessions = v; },
                 getLastHydratedSessionProject: function () { return lastHydratedSessionProject; },
-                setLastHydratedSessionProject: function (v) { lastHydratedSessionProject = v; },
+                setLastHydratedSessionProject: function (v) {
+                    lastHydratedSessionProject = v;
+                    if (v) CuttleChatWorktrees.observeSessionCheckout(v.id, v);
+                },
             });
         }
         return _sessionLoader;
@@ -8602,6 +8605,10 @@
             // Keep badges truthful on incremental syncs too (same seeding as open).
             hydrateAgentSelectionFromSessionData(data, session.current());
             applySessionIdentity(data);
+            if (CuttleChatWorktrees.observeSessionCheckout(authSid, data)) {
+                lastHydratedSessionProject = CuttleChatProject.hydratedSessionSnapshot(authSid, data);
+                reconcileChatProject();
+            }
             if (data.session_name) {
                 rememberChatSessionTitle(session.current(), data.session_name);
                 updateChatSessionTitle(session.current());

@@ -418,6 +418,7 @@
                             };
                             if (Object.prototype.hasOwnProperty.call(data, 'checkout_uid')) {
                                 projectSnapshot.checkout_uid = data.checkout_uid;
+                                projectSnapshot.checkout = data.checkout || null;
                             }
                             setLastHydratedSessionProject(projectSnapshot);
                         }

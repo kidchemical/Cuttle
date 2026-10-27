@@ -787,6 +787,17 @@ def oauth_callback(provider):
 
 # ==================== Session Management ====================
 
+def _bound_checkout_summary(checkout_uid):
+    """Path/branch of a chat's bound worktree, so clients need no registry probe."""
+    if not checkout_uid:
+        return None
+    try:
+        from api.worktrees.chat_binding import checkout_summary
+        return checkout_summary(checkout_uid)
+    except Exception:
+        return None
+
+
 def _attach_parsed_composer_selection(sessions):
     """Parse the raw ``composer_selection`` JSON column for list responses.
 
@@ -1455,6 +1466,7 @@ def get_session_messages(session_id):
             'project_name': session.get('project_name'),
             'project_path': session.get('project_path'),
             'checkout_uid': session.get('checkout_uid'),
+            'checkout': _bound_checkout_summary(session.get('checkout_uid')),
             'followups': followup_state['followups'],
             'followup_revision': followup_state['revision'],
             'attention': db.get_attention(session_id, user['id']),
