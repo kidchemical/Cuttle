@@ -1,4 +1,5 @@
 import subprocess
+import sys
 from api.agent_events.snapshots import begin,finish
 
 
@@ -92,7 +93,8 @@ def test_snapshot_stages_dirty_paths_in_one_git_call(tmp_path, monkeypatch):
     git(tmp_path,'config','user.name','Test'); git(tmp_path,'config','user.email','test@example.test')
     for i in range(25):
         (tmp_path/f'f{i}.txt').write_text(f'{i}\n')
-    (tmp_path/'literal[1]\nfile.txt').write_text('literal\n')
+    special = 'literal[1] file.txt' if sys.platform == 'win32' else 'literal[1]\nfile.txt'
+    (tmp_path/special).write_text('literal\n')
     real = snapshots.git
     adds = []
     def counting_git(root, *args, env=None, input=None):
@@ -104,4 +106,4 @@ def test_snapshot_stages_dirty_paths_in_one_git_call(tmp_path, monkeypatch):
     assert len(adds) == 1
     staged = real(tmp_path, 'ls-tree', '-r', '-z', '--name-only', out['tree']).split('\0')[:-1]
     assert len(staged) == 26
-    assert 'literal[1]\nfile.txt' in staged
+    assert special in staged

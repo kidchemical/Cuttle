@@ -61,7 +61,7 @@ def repo(tmp_path):
     for rel, text in FILES.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
     return root
@@ -97,9 +97,11 @@ def test_inputs_prioritise_docs_and_fingerprint_tracks_only_real_inputs(repo):
     again = enrich.build_input(view, graph, sub, repo, docs, "Demo")
     assert again.fingerprint == inp.fingerprint
 
-    (repo / "src/api/harness/kernel.py").write_text('"""Kernel."""\n\n\nclass Kernel:\n    pass\n')
+    (repo / "src/api/harness/kernel.py").write_text('"""Kernel."""\n\n\nclass Kernel:\n    pass\n',
+                                                    encoding="utf-8")
     assert enrich.build_input(view, graph, sub, repo, docs, "Demo").fingerprint == inp.fingerprint
-    (repo / "src/api/router/engine.py").write_text(FILES["src/api/router/engine.py"] + "# edit\n")
+    (repo / "src/api/router/engine.py").write_text(FILES["src/api/router/engine.py"] + "# edit\n",
+                                                   encoding="utf-8")
     assert enrich.build_input(view, graph, sub, repo, docs, "Demo").fingerprint != inp.fingerprint
 
 
@@ -136,11 +138,13 @@ def test_citations_follow_moved_code_and_flag_changed_code(repo):
     md = "`decide` hands the turn to `run_agent` [src/api/router/engine.py:L7]."
     recs = enrich.assess_citations(md, repo, inp)
     engine = repo / "src/api/router/engine.py"
-    engine.write_text(engine.read_text().replace("from api.harness.run import run_agent",
-                                                 "import os\nfrom api.harness.run import run_agent"))
+    engine.write_text(engine.read_text(encoding="utf-8").replace(
+        "from api.harness.run import run_agent", "import os\nfrom api.harness.run import run_agent"),
+        encoding="utf-8")
     out, counts = enrich.render_citations(md, repo, recs)
     assert counts["moved"] == 1 and "[src/api/router/engine.py:L8](" in out
-    engine.write_text(engine.read_text().replace("return run_agent(turn)", "return None"))
+    engine.write_text(engine.read_text(encoding="utf-8").replace("return run_agent(turn)", "return None"),
+                      encoding="utf-8")
     out, counts = enrich.render_citations(md, repo, recs)
     assert counts["outdated"] == 1 and "`src/api/router/engine.py:L7` ⚠" in out
 
@@ -194,7 +198,7 @@ def test_enrich_is_opt_in_cached_and_marks_stale(repo, tmp_path, monkeypatch):
     # plain export never calls a model and renders no AI section
     note = tmp_path / "vault" / "Demo" / "Subsystems" / "api › router.md"
     service.export_obsidian(ctx)
-    assert not calls and enrich.BEGIN not in note.read_text()
+    assert not calls and enrich.BEGIN not in note.read_text(encoding="utf-8")
 
     assert service.enrich(ctx, "api/router", via="cli:claude", dry_run=True)["status"] == "would_generate"
     with pytest.raises(service.KnowledgeGraphError, match="no executor"):
@@ -206,7 +210,7 @@ def test_enrich_is_opt_in_cached_and_marks_stale(repo, tmp_path, monkeypatch):
     assert out["citations"]["total"] == 3 and out["citations"]["supported"] == 3
     assert calls == [("wiki", [{"kind": "cli", "target": "claude", "model": "opus", "effort": None,
                                 "temperature": None, "auth": "subscription"}])]
-    text = note.read_text()
+    text = note.read_text(encoding="utf-8")
     assert enrich.BEGIN in text and "Out of date" not in text
     assert text.index("## How it works") < text.index("## Documentation vs code") < text.index(enrich.END)
     assert text.index(enrich.END) < text.index("## Modules")
@@ -215,9 +219,10 @@ def test_enrich_is_opt_in_cached_and_marks_stale(repo, tmp_path, monkeypatch):
     assert service.enrich(ctx, "api › router", via="cli:claude")["status"] == "unchanged"
     assert len(calls) == 1                              # unchanged inputs: no second call
 
-    (repo / "src/api/router/engine.py").write_text(FILES["src/api/router/engine.py"] + "# edit\n")
+    (repo / "src/api/router/engine.py").write_text(FILES["src/api/router/engine.py"] + "# edit\n",
+                                                   encoding="utf-8")
     service.export_obsidian(ctx)
-    stale = note.read_text()
+    stale = note.read_text(encoding="utf-8")
     assert "Out of date" in stale and "hands the turn" in stale
     assert len(calls) == 1                              # export never regenerates
 

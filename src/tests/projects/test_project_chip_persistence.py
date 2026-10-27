@@ -139,6 +139,7 @@ let lastHydratedSessionProject = {{
 }};
 function isAuthMode() {{ return true; }}
 function readStarredProject() {{ return null; }}
+function readSpaceNewChatDefaults() {{ return {{ project: null, agent: null }}; }}
 function findProjectById(id) {{ return CuttleChatProject.findProjectById(projects, id); }}
 function findDefaultProject() {{ return CuttleChatProject.findDefaultProject(projects, readStarredProject()); }}
 function projectFieldsFromServerSession(s) {{ return CuttleChatProject.projectFieldsFromServerSession(s); }}
