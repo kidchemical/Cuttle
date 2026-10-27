@@ -3,7 +3,8 @@
 
 Params: CUTTLE_PARAM_MODE (status|push), CUTTLE_PARAM_REMOTE, CUTTLE_PARAM_BRANCH,
 CUTTLE_PARAM_TAG (push exactly this one existing local tag instead of the branch),
-CUTTLE_PARAM_PATH (optional project cwd). Never --force, never --tags/--all: other
+CUTTLE_PARAM_PATH (optional project cwd; defaults to the chat project, then this
+checkout). Never --force, never --tags/--all: other
 local tags may point at history that must stay private.
 """
 from __future__ import annotations
@@ -28,7 +29,7 @@ def _env(*names: str) -> str:
 
 
 def _resolve_cwd() -> Path:
-    raw = _env("CUTTLE_PARAM_PATH", "CUTTLE_PARAM_REPO_ROOT")
+    raw = _env("CUTTLE_PARAM_PATH", "CUTTLE_PARAM_REPO_ROOT", "CUTTLE_CHAT_PROJECT_PATH")
     if raw:
         p = Path(raw)
         try:

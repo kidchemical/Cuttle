@@ -122,7 +122,7 @@ channels:                   # alias → id (for discord.post)
 Shell actions receive:
 
 - stdin = confirm body (`content`)
-- env `CUTTLE_ACTION`, `CUTTLE_ACTION_CONTENT`, `CUTTLE_ACTION_PARAMS_JSON`, `CUTTLE_PROJECT_PATH`
+- env `CUTTLE_ACTION`, `CUTTLE_ACTION_CONTENT`, `CUTTLE_ACTION_PARAMS_JSON`, `CUTTLE_PROJECT_PATH` (action owner), `CUTTLE_CHAT_PROJECT_PATH` (chat's project)
 - env `CUTTLE_SESSION_ID` (the chat the **card** was rendered in, not whatever chat
   the client had open) and one `CUTTLE_PARAM_<KEY>` per scalar
   param — `{"params":{"mode":"when-idle"}}` becomes `CUTTLE_PARAM_MODE=when-idle`

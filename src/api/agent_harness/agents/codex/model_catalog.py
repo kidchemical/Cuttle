@@ -1,8 +1,8 @@
-"""Codex model catalog — ``codex debug models`` (+ optional remote refresh).
+"""Codex model catalog — live ``codex debug models`` with an offline fallback.
 
-Normal loads prefer a short in-process cache, then ``codex debug models --bundled``.
-``refresh=True`` runs ``codex debug models`` (no ``--bundled``) so Codex can pull
-its remote catalog. Falls back to the soft-known list when the CLI is missing.
+Normal loads prefer a short in-process cache. On a cache miss they read the
+current CLI catalog, which can be newer than the catalog bundled with the CLI.
+If the CLI is unavailable, fall back to the soft-known manifest snapshot.
 """
 
 from __future__ import annotations
@@ -105,15 +105,13 @@ def _run_codex_debug_models(*, refresh: bool) -> Tuple[List[Dict[str, Any]], Opt
     if not exe:
         return [], "Codex CLI not found"
     cmd = [exe, "debug", "models"]
-    if not refresh:
-        cmd.append("--bundled")
     try:
         r = subprocess.run(
             cmd,
-                env=agent_cli_env(),
+            env=agent_cli_env(),
             capture_output=True,
             text=True,
-            timeout=90 if refresh else 45,
+            timeout=90,
         )
     except Exception as exc:
         return [], str(exc)[:200]
@@ -193,7 +191,7 @@ def list_codex_catalog_models(*, refresh: bool = False) -> Dict[str, Any]:
 
     live, err = _run_codex_debug_models(refresh=refresh)
     if live:
-        source = "cli_refresh" if refresh else "cli_bundled"
+        source = "cli_refresh" if refresh else "cli_live"
         _CATALOG_CACHE = (now, list(live), source, None)
         return {
             "models": [dict(m) for m in live],
