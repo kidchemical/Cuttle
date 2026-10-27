@@ -8,7 +8,8 @@
     <title>Cuttle</title>
     <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
     <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
-    <link rel="stylesheet" href="/css/app_shell.css?v=20261011sharedModal1">
+    <link rel="stylesheet" href="/css/app_shell.css?v=20261025connPopup2">
+    <link rel="stylesheet" href="/css/searchable_select.css?v=20261011attachedMenus">
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
     <link rel="stylesheet" href="/css/video_background.css?v=20260927blendTarget">
     <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
@@ -414,6 +415,34 @@
     </section>
 </div>
 
+<!-- Electron titlebar Host/Client badge: connection info + switch host
+     (js/shell/shell_connection.js). Stays in the shell; no navigation. -->
+<div class="auth-modal-overlay" id="shellConnectionModal" hidden role="dialog" aria-modal="true" aria-labelledby="shellConnectionTitle" aria-describedby="shellConnectionSubtitle">
+    <section class="auth-modal logout-confirm-modal shell-connection-modal">
+        <button type="button" class="auth-modal-close" data-connection-close aria-label="Close">×</button>
+        <div class="auth-modal-header">
+            <h2 class="auth-modal-title" id="shellConnectionTitle">Connect to Cuttle</h2>
+            <span class="logout-confirm-role shell-connection-role" id="shellConnectionRole"></span>
+            <p class="auth-modal-subtitle" id="shellConnectionSubtitle"></p>
+        </div>
+        <dl class="shell-connection-info" id="shellConnectionInfo"></dl>
+        <p class="shell-connection-warning" id="shellConnectionWarning" hidden></p>
+        <div class="shell-connection-switch">
+            <label class="shell-connection-label" for="shellConnectionHostInput">Connect to another host</label>
+            <div class="shell-connection-row">
+                <input type="text" id="shellConnectionHostInput" class="shell-connection-input" spellcheck="false" autocomplete="off" placeholder="192.168.x.x or host:port">
+                <button type="button" class="logout-confirm-btn logout-confirm-submit shell-connection-connect" id="shellConnectionConnect">Connect</button>
+            </div>
+            <div class="shell-connection-saved" id="shellConnectionSaved" hidden>
+                <div class="shell-connection-label">Saved servers</div>
+                <div class="shell-connection-saved-list" id="shellConnectionSavedList"></div>
+            </div>
+            <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="shellConnectionLocal">This PC hosts Cuttle</button>
+            <p class="shell-connection-status" id="shellConnectionStatus" role="status" aria-live="polite"></p>
+        </div>
+    </section>
+</div>
+
 <script src="/js/shared/toast.js?v=20260921voiceMic"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
 <script src="/js/shared/net_debug.js?v=20260810c"></script>
@@ -423,8 +452,8 @@
 <script src="/js/shared/modal.js?v=20261011modal1"></script>
 <script src="/js/shell/desktop_update_policy.js?v=20261018updateCenter"></script>
 <script src="/js/chat/chat_find.js?v=20260819find"></script>
-<script src="/js/spaces/spaces_state.js?v=20260930spaces1"></script>
-<script src="/js/spaces/spaces_groups.js?v=20260930spaces1"></script>
+<script src="/js/spaces/spaces_state.js?v=20261025spaceov1"></script>
+<script src="/js/spaces/spaces_groups.js?v=20261025spaceov1"></script>
 <script src="/js/spaces/spaces_order.js?v=20260930spaces1"></script>
 <script src="/js/spaces/spaces_drop.js?v=20260930spaces1"></script>
     <script src="/js/shared/session_prefs.js?v=20261008sync"></script>
@@ -436,10 +465,13 @@
 <script src="/js/shell/whats_new.js?v=20261008whatsNew"></script>
 <script src="/js/shell/account_panel.js?v=20261018googleGate"></script>
 <script src="/js/shell/shell_updates.js?v=20261018updateCenter"></script>
-<script src="/js/shell/shell_electron.js?v=20261018updateCenter"></script>
+<script src="/js/shell/shell_connection.js?v=20261025connPopup"></script>
+<script src="/js/shell/shell_electron.js?v=20261025connPopup"></script>
 <script src="/js/shell/shell_mobile.js?v=20261011shell5f"></script>
 <script src="/js/shell/shell_panes.js?v=20261018menus"></script>
-<script src="/js/shell/shell_spaces.js?v=20261011spaces5c"></script>
+<script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
+<script src="/js/chat/chat_chip_config.js?v=20261025spaceov1"></script>
+<script src="/js/shell/shell_spaces.js?v=20261025spaceov1"></script>
 <script src="/js/shell/shell_rail.js?v=20261017ide1"></script>
 <script src="/js/chat/chat_voice_receipts.js?v=20261012live2"></script>
 <script src="/js/chat/chat_voice_realtime.js?v=20261013rtsurvive"></script>

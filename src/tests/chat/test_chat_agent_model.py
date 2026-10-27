@@ -201,6 +201,7 @@ def test_page_delegates_agent_model_decisions_to_owned_module():
         assert adapter in src, f"page adapter {adapter} must stay (same signature)"
     # Page-kept adapter that calls the pure model directly.
     assert "CuttleChatAgentModel.sessionPin" in src
+    assert "CuttleChatAgentModel.applyNewChatOverridePins" in src
     # Page delegates the starred/capability/label decisions to the controller.
     for delegated in (
         "agentControls.starredAgentModel(agentId)",
@@ -513,3 +514,28 @@ process.stdout.write(JSON.stringify({ pins, restored }));
         'codexEffort': 'high', 'codexEffortDirty': True,
         'hermesEffort': 'none', 'hermesEffortDirty': True,
     }
+
+
+@node_only
+def test_apply_new_chat_override_pins():
+    script = """
+const A = require(process.env.MOD_JS);
+const S = { preferredModel: 'auto', museModel: '', museModelDirty: false, museEffort: '', museEffortDirty: false };
+const cursor = A.applyNewChatOverridePins(S, { id: 'cursor', model: 'composer-2' });
+const muse = A.applyNewChatOverridePins(S, { id: 'muse', model: 'spark', effort: 'high' });
+const skip = A.applyNewChatOverridePins(S, { id: 'muse' });
+process.stdout.write(JSON.stringify({ cursor, muse, skip, S }));
+"""
+    import os
+    proc = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8",
+                          env={**os.environ, "MOD_JS": str(MOD_JS)}, timeout=10)
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["cursor"] is True
+    assert result["muse"] is True
+    assert result["skip"] is False
+    assert result["S"]["preferredModel"] == "composer-2"
+    assert result["S"]["museModel"] == "spark"
+    assert result["S"]["museModelDirty"] is True
+    assert result["S"]["museEffort"] == "high"
+    assert result["S"]["museEffortDirty"] is True

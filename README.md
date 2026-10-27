@@ -56,7 +56,9 @@ The codebase is set up so an agent can do that well:
   </tr>
 </table>
 
-<img src="docs/media/customize.webp" alt="Make it yours, one prompt at a time: open source Cuttle switching themes and video wallpapers live while a chat updates" width="100%">
+<img src="docs/media/ide.webp" alt="The editor you know, with every agent in it: the built-in IDE showing an agent's edits with Keep or Undo per hunk and the project chat beside the editor" width="100%">
+
+<img src="docs/media/customize.webp" alt="Make it yours, one prompt at a time: Matrix, Synthwave, Sakura, Nordic, RGB, Lavender, Graphite, and Mint themes, each with a matching video wallpaper and a different pane layout" width="100%">
 
 <sub>All media uses demo data. See [Regenerating README media](#regenerating-readme-media).</sub>
 
@@ -68,11 +70,12 @@ The codebase is set up so an agent can do that well:
 | **Chat** | Web UI, Electron desktop (Host + LAN Client), and Android app over one history. Streamed progress notes, pinned **Tasks** lists, clickable **action forms** for questions and approvals, image and PDF attachments with a vision pre-pass, and mid-turn steering for Codex, Muse Code, and Claude Code. |
 | **Agents** | `/cursor`, `/codex`, `/claude`, `/muse`, `/hermes`, `/deepseek`, `/opencode`, `/antigravity`, and more from a shared harness catalog ([`src/api/agent_harness/agents/`](src/api/agent_harness/agents/)). Star one as the default for new chats. |
 | **Agent router** | Classifies each turn on clean sessions and picks a harness per lane (default Cursor Auto). Falls back only when an agent never ran (quota, auth, missing CLI); a task that ran and failed, or was stopped, is terminal. Starred or sticky agents bypass it. |
+| **IDE** | A Cursor-style editor for registered projects: Monaco tabs, quick open, find in files, source control, a terminal, and an AI chat panel any harness can drive, with `Ctrl+K` inline edits, opt-in Tab completions, and opt-in Keep / Undo review of agent hunks. |
 | **Workspace** | Split any pane horizontally or vertically, drag to resize, and keep a separate layout per space. 13 built-in themes, a custom theme, and YouTube or video wallpapers behind the whole UI. |
 | **Sub-agents** | Fan a task out into real child chats across harnesses, then synthesize one reply ([`python -m api.subagents`](.cuttle_global/docs/subagents.md)). |
 | **Cuttle Workers** | A multi-device LAN mesh: file copy, shell recipes, a Blender render farm with work stealing, and self-update for every client. |
 | **Dashboards** | Model Benchmarks (cost vs. pass rate vs. duration), Jev performance tracking, and per-agent cost. |
-| **Projects** | Every registered project owns a `.cuttle/` tree of commands, rules, actions, and docs, compiled into each agent turn by the Context Compiler (Cuttle Brain). |
+| **Projects** | Every registered project owns a `.cuttle/` tree of commands, rules, actions, and docs, compiled into each new agent session by the Context Compiler (Cuttle Brain), with only what changed sent on resume. |
 | **Local models** | Configure local inference in your agent CLI; user-managed endpoints can also serve router and completion helpers. |
 | **Agent ops CLIs** | Agents drive Cuttle through `python -m api.<module>` verbs (chats, widgets, Discord, workers, brain) instead of raw SQL ([`agent-ops-cli.md`](.cuttle_global/docs/agent-ops-cli.md)). |
 
@@ -277,12 +280,12 @@ prevents subsequent model retries and tool calls.
 With Cuttle running, capture the stills and animations against demo chats (a throwaway guest account; nothing real is shown or changed):
 
 ```bash
-.venv/bin/python src/scripts/utilities/readme_screenshots.py   # hero, chat, charts, dashboards
-.venv/bin/python src/scripts/utilities/readme_gifs.py          # multiplex, customize
+.venv/bin/python src/scripts/utilities/readme_screenshots.py   # hero, phone, chat, charts, dashboards, IDE
+.venv/bin/python src/scripts/utilities/readme_gifs.py          # multiplex, customize (theme showcase)
 .venv/bin/python src/scripts/utilities/readme_screenshots.py --reframe   # restyle the last captures only
 ```
 
-Captures use the Lavender Dream light theme at 2x and are framed by [`readme_promo.py`](src/scripts/utilities/readme_promo.py) (gradient backdrop, window chrome, headline, and caption).
+Captures use the Light theme at 2x and are framed by [`readme_promo.py`](src/scripts/utilities/readme_promo.py) (gradient backdrop, window chrome, headline, and caption). The IDE shot runs against a throwaway demo project ([`readme_demo_ide.py`](src/scripts/utilities/readme_demo_ide.py)), and the customize animation is a cursor-free showcase of themes with matching wallpapers. Add `--site <dir>` to either script to also write the unframed images, clips, and posters the product site uses.
 
 ## Security notes
 

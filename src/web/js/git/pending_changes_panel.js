@@ -51,7 +51,7 @@
             + '<div class="pending-changes-header">'
             + '<button type="button" class="pending-changes-toggle" data-pc="toggle" aria-expanded="false">'
             + '<span class="pending-changes-chevron" aria-hidden="true"></span>'
-            + '<span class="pending-changes-title">Pending changes</span>'
+            + '<span class="pending-changes-title"><span class="pending-changes-title-lead">Pending </span>changes</span>'
             + '<span class="pending-changes-repo-chip" data-pc="chip" hidden></span>'
             + '<span class="pending-changes-meta" data-pc="meta"></span>'
             + '<span class="pending-changes-stats" data-pc="stats" aria-hidden="true"></span>'
@@ -519,12 +519,12 @@
                     if (!listed && !totalCount) meta.textContent = '';
                     else if (truncated && totalCount > listed) {
                         meta.textContent = effective === totalCount
-                            ? ('· ' + totalCount + ' files')
-                            : ('· ' + effective + '/' + totalCount + ' selected');
+                            ? (totalCount + ' files')
+                            : (effective + '/' + totalCount + ' selected');
                     } else if (includedVisible.length === listed) {
-                        meta.textContent = '· ' + listed + ' file' + (listed === 1 ? '' : 's');
+                        meta.textContent = listed + ' file' + (listed === 1 ? '' : 's');
                     } else {
-                        meta.textContent = '· ' + includedVisible.length + '/' + listed + ' selected';
+                        meta.textContent = includedVisible.length + '/' + listed + ' selected';
                     }
                 }
                 if (submitBtn) {
@@ -936,16 +936,18 @@
                     undo.title = 'Undo ' + what + ' (rewrites the file)';
                     undo.setAttribute('aria-label', 'Undo agent changes in ' + rel);
                     undo.textContent = '\u21BA';
-                    const before = row.querySelector('.pending-changes-editor-btn') || null;
-                    row.insertBefore(undo, before);
-                    row.insertBefore(keep, undo);
+                    const actions = row.querySelector('.pending-changes-row-actions') || row;
+                    actions.insertBefore(undo, actions.firstChild);
+                    actions.insertBefore(keep, undo);
                     files += 1;
                     hunks += n;
                 });
                 const chip = qs('review');
                 if (chip) {
                     chip.hidden = !files;
-                    chip.textContent = files ? '\u2726 Review ' + hunks : '';
+                    chip.innerHTML = files
+                        ? '\u2726 <span class="pending-changes-review-chip-label">Review </span>' + hunks
+                        : '';
                     chip.title = files ? hunks + ' unreviewed agent change' + (hunks === 1 ? '' : 's') + ' in '
                         + files + ' file' + (files === 1 ? '' : 's') + ' — open the first' : '';
                 }
@@ -1010,7 +1012,7 @@
                 const stats = qs('stats');
                 const branchEl = qs('branch');
                 const list = qs('list');
-                if (meta) meta.textContent = '· ' + nFiles + ' file' + (nFiles === 1 ? '' : 's');
+                if (meta) meta.textContent = nFiles + ' file' + (nFiles === 1 ? '' : 's');
                 if (stats) {
                     const a = formatStat(adds, '+');
                     const d = formatStat(dels, '-');
@@ -1024,9 +1026,12 @@
                         || (currentProject() && currentProject().name)
                         || '';
                     const worktree = currentProject() && currentProject().worktree;
-                    branchEl.textContent = worktree
-                        ? ('\uD83C\uDF3F ' + (br || 'worktree'))
-                        : [name, br].filter(Boolean).join(' · ');
+                    branchEl.innerHTML = worktree
+                        ? escapeHtmlInline('\uD83C\uDF3F ' + (br || 'worktree'))
+                        : [
+                            name ? '<span class="pending-changes-branch-project">' + escapeHtmlInline(name) + '</span>' : '',
+                            br ? '<span class="pending-changes-branch-name">' + escapeHtmlInline(br) + '</span>' : '',
+                        ].join('');
                     branchEl.title = String(repoRoot || '') + (br ? ' (' + br + ')' : '');
                 }
                 if (list) {
@@ -1045,7 +1050,13 @@
                         const badge =
                             '<span class="pending-changes-badge" data-status="'
                             + escapeHtmlInline(st) + '">' + statusBadge(st) + '</span>';
-                        const fileSpan = '<span class="pending-changes-file" title="' + path + '">' + path + '</span>';
+                        const slash = rawPath.lastIndexOf('/');
+                        const fileSpan = '<span class="pending-changes-file" title="' + path + '">'
+                            + (slash >= 0
+                                ? '<span class="pending-changes-file-dir">' + escapeHtmlInline(rawPath.slice(0, slash + 1)) + '</span>'
+                                : '')
+                            + '<span class="pending-changes-file-name">' + escapeHtmlInline(rawPath.slice(slash + 1)) + '</span>'
+                            + '</span>';
                         const check =
                             '<input type="checkbox" class="pending-changes-include" data-rel-path="'
                             + path + '" ' + (included ? 'checked ' : '')
@@ -1065,7 +1076,9 @@
                             '<li class="pending-changes-row'
                             + (included ? '' : ' is-excluded')
                             + '" data-rel-path="' + path + '">'
-                            + check + main + editorBtn + ignoreBtn + '</li>'
+                            + check + main
+                            + '<span class="pending-changes-row-actions">' + editorBtn + ignoreBtn + '</span>'
+                            + '</li>'
                         );
                     }).join('');
                     const moreN = unlistedCount();

@@ -61,6 +61,25 @@ def _resolve_optional_repo_cwd(path, project_id):
     return resolve_repo_cwd(current_project), None
 
 
+def _scope_repo_root(cwd, repo_root):
+    """Narrow a project cwd to one discovered work tree when ``repo_root`` is set.
+
+    Projects whose path holds several sibling repos (e.g. ``Dev/Blender/A``,
+    ``Dev/Blender/B``) pick one via the composer modal's Repository selector.
+    Returns ``(cwd, error)``; no ``repo_root`` keeps ``cwd`` unchanged.
+    """
+    if not (repo_root or '').strip():
+        return cwd, None
+    try:
+        from scripts.utilities.git_pending_changes import resolve_allowed_repo_root
+    except ImportError:
+        from utilities.git_pending_changes import resolve_allowed_repo_root  # type: ignore
+    try:
+        return resolve_allowed_repo_root(cwd, repo_root.strip()), None
+    except ValueError as e:
+        return None, str(e)
+
+
 @git_bp.route('/git/status', methods=['GET'])
 @authenticated_required
 def git_status():
@@ -1004,7 +1023,8 @@ def git_commit_file_diff(commit_hash):
 def git_branches():
     """Get Git branches
 
-    Query: ``path=…`` and/or ``project_id=…`` (optional; per-chat project).
+    Query: ``path=…`` and/or ``project_id=…`` (optional; per-chat project),
+    optional ``repo_root=…`` (one work tree of a multi-repo project).
     """
     try:
         from api.git_service import GitError, list_branches
@@ -1019,6 +1039,8 @@ def git_branches():
                 return jsonify({'success': False, 'error': 'Invalid project_id'}), 400
 
         cwd, cwd_err = _resolve_optional_repo_cwd(path, project_id)
+        if not cwd_err:
+            cwd, cwd_err = _scope_repo_root(cwd, request.args.get('repo_root'))
         if cwd_err:
             return jsonify({'success': False, 'error': cwd_err}), 400
 
@@ -1349,7 +1371,7 @@ def git_branch():
     """Create, switch, or delete branches
 
     Body: ``action``, ``branch``, optional ``path``/``project_id`` (per-chat
-    project resolution).
+    project resolution), optional ``repo_root`` (multi-repo project).
     """
     try:
         from api.git_service import GitError, branch_operation
@@ -1372,6 +1394,8 @@ def git_branch():
                 return jsonify({'success': False, 'error': 'Invalid project_id'}), 400
 
         cwd, cwd_err = _resolve_optional_repo_cwd(path, project_id)
+        if not cwd_err:
+            cwd, cwd_err = _scope_repo_root(cwd, data.get('repo_root'))
         if cwd_err:
             return jsonify({'success': False, 'error': cwd_err}), 400
         action = data['action']

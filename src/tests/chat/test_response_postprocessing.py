@@ -56,6 +56,7 @@ def test_disabled_never_executes(settings, monkeypatch, disable):
     {'success': False}, {'response': ''}, {'response': '[CANCELLED] stopped'},
     {'ui': 'system'}, {'skip_history_persist': True}, {'coordinator_response_message_id': 8},
     {'response': '<cuttle_action_form>{}</cuttle_action_form>'},
+    {'response': 'Prose <cuttle_action_form>{"unclosed": true}'},
     {'response': 'x' * (pp.MAX_RESPONSE_CHARS + 1)},
 ])
 def test_non_chat_and_interactive_outputs_never_execute(settings, extra):
@@ -63,6 +64,27 @@ def test_non_chat_and_interactive_outputs_never_execute(settings, extra):
     original = body['response']
     pp.process_result(body)
     assert body['response'] == original
+
+
+@pytest.mark.parametrize('mode', ['append', 'replace'])
+def test_interactive_cards_ride_through_after_processed_prose(settings, monkeypatch, mode):
+    settings.set_setting('response_postprocessing', {**cp.processor_preferences(), 'mode': mode})
+    form = '<cuttle_action_form>{"id": "f1", "options": [{"label": "a > b"}]}</cuttle_action_form>'
+    confirm = '<cuttle_confirm action="git.push" />'
+    seen = []
+    def generate(task, request, **kw):
+        seen.append(request.user)
+        return TextResult('TLDR')
+    monkeypatch.setattr(bg, 'generate', generate)
+    body = {'success': True, 'response': 'Long answer\n\n' + form + '\n\nMore detail\n' + confirm}
+    original = body['response']
+    pp.process_result(body)
+    assert seen == ['Long answer\n\nMore detail']
+    assert body['response'].endswith('TLDR\n\n' + form + '\n\n' + confirm)
+    if mode == 'append':
+        assert body['response'].startswith('<cuttle_original_response>"Long answer\\n\\nMore detail"')
+    assert body['postprocessing']['status'] == 'completed'
+    assert body['postprocessing']['original_response'] == original
 
 
 @pytest.mark.parametrize('outcome', [None, TextResult(''), TextResult('<cuttle_confirm action="x">'), RuntimeError('secret')])

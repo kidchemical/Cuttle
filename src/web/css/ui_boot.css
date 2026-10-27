@@ -8,6 +8,7 @@
    ================================================================ */
 
 @import url("safe_area.css");
+@import url("design_tokens.css?v=20261025polish");
 @import url("themes.css?v=20260923themes");
 
 :root {
@@ -127,9 +128,9 @@ body.light-mode {
     white-space: nowrap;
     pointer-events: none;
     opacity: 0;
-    transform: translateZ(0);
-    transition: opacity 0.15s ease;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    transform: translateY(2px) scale(0.98);
+    transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-base) var(--ease-out);
+    box-shadow: var(--shadow-2);
 }
 
 html.light-mode .cuttle-tooltip,
@@ -139,11 +140,18 @@ body.light-mode .cuttle-tooltip {
 
 .cuttle-tooltip.is-visible {
     opacity: 1;
+    transform: none;
 }
 
 .cuttle-tooltip.is-wrap {
     white-space: normal;
     text-align: left;
+    overflow-wrap: anywhere;
+}
+
+/* Long unbreakable tokens (file paths, URLs): grow rather than overflow. */
+.cuttle-tooltip.is-wide {
+    max-width: min(720px, calc(100vw - 16px));
 }
 
 .cuttle-tooltip[hidden] {

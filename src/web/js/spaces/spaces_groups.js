@@ -124,6 +124,52 @@
         return true;
     }
 
+    function _writeProjectOverride(record, proj, sanitize) {
+        const clean = sanitize(proj);
+        if (clean) record.projectOverride = clean;
+        else delete record.projectOverride;
+        return true;
+    }
+
+    function _writeAgentOverride(record, agent, sanitize) {
+        const clean = sanitize(agent);
+        if (clean) record.agentOverride = clean;
+        else delete record.agentOverride;
+        return true;
+    }
+
+    /** Set or clear a space's project override. Returns false when missing. */
+    function setSpaceProjectOverride(state, spaceId, proj) {
+        const S = _state();
+        const space = S.getSpaceById(state, spaceId);
+        if (!space) return false;
+        return _writeProjectOverride(space, proj, S.sanitizeProjectOverride);
+    }
+
+    /** Set or clear a space's agent override. Returns false when missing. */
+    function setSpaceAgentOverride(state, spaceId, agent) {
+        const S = _state();
+        const space = S.getSpaceById(state, spaceId);
+        if (!space) return false;
+        return _writeAgentOverride(space, agent, S.sanitizeAgentOverride);
+    }
+
+    /** Set or clear a group's project override. Returns false when missing. */
+    function setGroupProjectOverride(state, gid, proj) {
+        const S = _state();
+        const group = S.getGroupById(state, gid);
+        if (!group) return false;
+        return _writeProjectOverride(group, proj, S.sanitizeProjectOverride);
+    }
+
+    /** Set or clear a group's agent override. Returns false when missing. */
+    function setGroupAgentOverride(state, gid, agent) {
+        const S = _state();
+        const group = S.getGroupById(state, gid);
+        if (!group) return false;
+        return _writeAgentOverride(group, agent, S.sanitizeAgentOverride);
+    }
+
     /** Ungroup: dissolve the group, member spaces survive as plain tabs. */
     function dissolveGroup(state, gid) {
         const S = _state();
@@ -181,6 +227,10 @@
         renameGroup,
         setGroupColor,
         setSpaceColor,
+        setSpaceProjectOverride,
+        setSpaceAgentOverride,
+        setGroupProjectOverride,
+        setGroupAgentOverride,
         dissolveGroup,
         toggleGroupCollapsed,
         moveGroupBefore,

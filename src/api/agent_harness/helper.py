@@ -63,6 +63,9 @@ class JsonProcess:
     def _read(self):
         try:
             total = 0
+            # A pretty-printed document (``claude auth status --json``) spans lines;
+            # collect from a line opening with "{" until the whole text parses.
+            pending = b""
             while not self.stopped.is_set():
                 raw = self.proc.stdout.readline(1048577)
                 total += len(raw)
@@ -71,8 +74,16 @@ class JsonProcess:
                 if not raw: return
                 try:
                     event = json.loads(raw)
+                    pending = b""
                 except ValueError:
-                    continue
+                    if not pending and not raw.lstrip().startswith(b"{"):
+                        continue
+                    pending += raw
+                    try:
+                        event = json.loads(pending)
+                    except ValueError:
+                        continue
+                    pending = b""
                 if isinstance(event, dict): self._put(event)
         finally:
             self._put(None)

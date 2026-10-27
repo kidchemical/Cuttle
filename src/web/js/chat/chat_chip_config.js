@@ -17,6 +17,9 @@
 
    `CuttleChipConfig.branchFor(path)` / `refreshBranch(path, onChange,
    force)` are module-scoped (the cache is shared, not per-compose).
+   Projects whose path holds 2+ sibling repos get a Repository selector
+   in the project modal (hidden otherwise); the pick is remembered per
+   project path and scopes the Branch list/switch and the chip label.
    Pure decision helpers (registry → agent menu entries, palette items
    → select options) are exported and node-testable; DOM/fetch only run
    inside `create` or the branch helpers.
@@ -56,6 +59,17 @@
      * as `<select>` options. Strips the builder's `(current)` suffix and
      * the `Effort ` label prefix. Pure.
      */
+    /**
+     * Prepend a clear/none choice for defaults pickers (space/group
+     * overrides). Pure; `value: ''` is the sentinel the modal treats as clear.
+     */
+    function withClearChoice(options, noneLabel) {
+        return [{
+            value: '',
+            label: noneLabel || 'None — use starred default',
+        }].concat(options || []);
+    }
+
     function agentSettingOptions(spec, kind) {
         const setting = spec && spec[kind];
         if (!setting || typeof setting.build !== 'function') return [];
@@ -103,6 +117,54 @@
         return readPersistedBranch(path);
     }
 
+    // Active repo per project path, for project paths that hold several
+    // sibling repos (e.g. Dev/Blender/{A,B}). Picked in the project modal's
+    // Repository selector, which only appears when 2+ repos are detected.
+    const REPO_LS_PREFIX = 'cuttle.chipRepo.';
+    function readActiveRepo(projectPath) {
+        if (!projectPath) return '';
+        try {
+            return (root.localStorage && root.localStorage.getItem(REPO_LS_PREFIX + projectPath)) || '';
+        } catch (_) {
+            return '';
+        }
+    }
+    function writeActiveRepo(projectPath, repoRoot) {
+        if (!projectPath) return;
+        try {
+            if (!root.localStorage) return;
+            if (repoRoot) root.localStorage.setItem(REPO_LS_PREFIX + projectPath, repoRoot);
+            else root.localStorage.removeItem(REPO_LS_PREFIX + projectPath);
+        } catch (_) {}
+    }
+
+    // Pure: /api/git/repos list + remembered pick → Repository selector state.
+    // `show` only when 2+ repos; `selected` is the remembered repo when it is
+    // still detected, else the first (the server's default work tree).
+    function repoChoice(repos, persisted) {
+        const list = (repos || []).filter((r) => r && r.repo_root);
+        const options = list.map((r) => ({
+            value: String(r.repo_root),
+            label: String(r.label || r.repo_root) + (r.branch ? '  (' + r.branch + ')' : ''),
+        }));
+        const want = String(persisted || '');
+        const selected = options.some((o) => o.value === want)
+            ? want
+            : (options.length ? options[0].value : '');
+        return { show: options.length > 1, options, selected };
+    }
+
+    // Pure: chip branch label — the active repo's branch when the project has
+    // several repos and one is picked, else the merged label.
+    function activeRepoBranchLabel(repos, persisted) {
+        const list = repos || [];
+        if (list.length > 1 && persisted) {
+            const hit = list.find((r) => r && String(r.repo_root) === String(persisted));
+            if (hit) return String(hit.branch || '').trim();
+        }
+        return distinctBranchLabel(list);
+    }
+
     function distinctBranchLabel(repos) {
         const branches = (repos || [])
             .map((r) => String((r && r.branch) || '').trim())
@@ -131,7 +193,8 @@
             });
             const data = await resp.json().catch(() => null);
             const repos = (data && data.success && Array.isArray(data.repos)) ? data.repos : [];
-            const branch = distinctBranchLabel(repos);
+            const projPath = (data && data.project && data.project.path) || path;
+            const branch = activeRepoBranchLabel(repos, readActiveRepo(projPath));
             branchCache = { path, branch, at: Date.now() };
             writePersistedBranch(path, branch);
             if (branch !== prev && typeof onChange === 'function') onChange();
@@ -213,7 +276,7 @@
         function ensureModal() {
             if (modalEl && modalEl.isConnected) return modalEl;
             const overlay = document.createElement('div');
-            overlay.className = 'auth-modal-overlay';
+            overlay.className = 'auth-modal-overlay chip-config-modal-overlay';
             overlay.id = 'chipConfigModal';
             overlay.innerHTML =
                 '<div class="auth-modal chip-config-modal" role="dialog" aria-modal="true">' +
@@ -267,13 +330,14 @@
             return el;
         }
 
-        async function loadBranches(sel, projectId) {
+        async function loadBranches(sel, projectId, repoRoot) {
             if (!sel) return;
             sel.disabled = true;
             sel.innerHTML = '<option value="">Loading…</option>';
             try {
                 const qs = new URLSearchParams();
                 if (projectId != null && String(projectId) !== '') qs.set('project_id', String(projectId));
+                if (repoRoot) qs.set('repo_root', repoRoot);
                 const resp = await fetch(
                     '/api/git/branches' + (qs.toString() ? '?' + qs.toString() : ''),
                     { credentials: 'include', cache: 'no-store' }
@@ -294,6 +358,39 @@
                 sel.innerHTML = '<option value="">Could not load branches</option>';
                 sel.disabled = true;
             }
+        }
+
+        // Fill the Repository selector; hide it unless the project path holds
+        // 2+ repos. Resolves to the active repo root ('' = project default).
+        async function loadRepos(sel, projectId) {
+            if (!sel) return '';
+            sel._projectPath = '';
+            let repos = [];
+            try {
+                const qs = new URLSearchParams();
+                if (projectId != null && String(projectId) !== '') qs.set('project_id', String(projectId));
+                const resp = await fetch('/api/git/repos' + (qs.toString() ? '?' + qs.toString() : ''), {
+                    credentials: 'include',
+                    cache: 'no-store',
+                });
+                const data = await resp.json().catch(() => null);
+                if (data && data.success) {
+                    repos = Array.isArray(data.repos) ? data.repos : [];
+                    sel._projectPath = (data.project && data.project.path) || '';
+                }
+            } catch (_) {
+                repos = [];
+            }
+            const choice = repoChoice(repos, readActiveRepo(sel._projectPath));
+            const field = sel.closest ? sel.closest('.chip-config-field') : null;
+            if (field) field.style.display = choice.show ? '' : 'none';
+            if (!choice.show) {
+                sel._repoRoot = '';
+                return '';
+            }
+            fillSelect(sel, choice.options, choice.selected);
+            sel._repoRoot = choice.selected;
+            return choice.selected;
         }
 
         async function loadWorktrees(sel, projectId, selectedUid) {
@@ -318,11 +415,12 @@
             fillSelect(sel, opts, selectedUid || '__new__');
         }
 
-        async function switchBranch(name, sel, projectId) {
+        async function switchBranch(name, sel, projectId, repoRoot) {
             if (!name) return;
             if (sel) sel.disabled = true;
             const current = h.getCurrentProject ? h.getCurrentProject() : null;
             const body = { action: 'switch', branch: name };
+            if (repoRoot) body.repo_root = repoRoot;
             if (projectId != null && String(projectId) !== '') body.project_id = projectId;
             else if (current && current.id != null) body.project_id = current.id;
             else if (current && current.path) body.path = current.path;
@@ -336,7 +434,7 @@
                 const data = await resp.json().catch(() => ({}));
                 if (!resp.ok || !data.success) {
                     toast((data && (data.error || data.message)) || 'Branch switch failed', 'error');
-                    loadBranches(sel, body.project_id);
+                    loadBranches(sel, body.project_id, repoRoot);
                     return;
                 }
                 toast(data.message || ('Switched to ' + name), 'success');
@@ -348,15 +446,20 @@
         }
 
         function openProject() {
+            const defaultsMode = h.pickerMode === 'defaults';
             const projects = h.getProjects ? (h.getProjects() || []) : [];
             const current = h.getCurrentProject ? h.getCurrentProject() : null;
             const isStarred = typeof h.isProjectStarred === 'function' ? h.isProjectStarred : () => false;
-            const projOptions = projects.map((p) => ({
+            let projOptions = projects.map((p) => ({
                 value: String(p && p.id != null ? p.id : ''),
                 label: ((p && isStarred(p)) ? '★ ' : '') + ((p && p.name) || ('Project ' + (p && p.id))),
             })).filter((o) => o.value !== '');
             const curId = current && current.id != null ? String(current.id) : '';
-            const wtEnabled = typeof h.worktreesEnabled === 'function' && h.worktreesEnabled();
+            if (defaultsMode) {
+                projOptions = withClearChoice(projOptions);
+            }
+            const wtEnabled = !defaultsMode
+                && typeof h.worktreesEnabled === 'function' && h.worktreesEnabled();
             const currentCheckout = h.getChatCheckout ? (h.getChatCheckout() || '') : '';
             const mode = currentCheckout ? 'worktree' : 'local';
             const defBranch = h.defaultWorktreeBranch ? h.defaultWorktreeBranch() : '';
@@ -368,6 +471,7 @@
                     { value: 'worktree', label: 'Worktree — isolated branch' },
                 ], mode);
             }
+            fields += selectHtml('chipConfigRepo', 'Repository', [], '', true);
             fields += selectHtml('chipConfigBranch', 'Branch', [], '', true);
             if (wtEnabled) {
                 fields += selectHtml('chipConfigWorktree', 'Worktree', [], '', true);
@@ -377,16 +481,26 @@
                     '</div>';
             }
 
+            if (defaultsMode) {
+                // Defaults pickers are project identity only: branch/worktree
+                // stay per-chat (switching here would mutate the shared checkout).
+                fields = selectHtml('chipConfigProject', 'Project', projOptions, curId, false);
+            }
+
             openModal(
                 'Working project',
-                wtEnabled
-                    ? 'Local = shared checkout. Worktree = an isolated branch for this chat.'
-                    : 'Choose the project and branch for this chat.',
+                defaultsMode
+                    ? 'Choose the project for new chats in this tab or group.'
+                    : (wtEnabled
+                        ? 'Local = shared checkout. Worktree = an isolated branch for this chat.'
+                        : 'Choose the project and branch for this chat.'),
                 fields,
                 (el) => {
                     const projSel = el.querySelector('#chipConfigProject');
                     const modeSel = el.querySelector('#chipConfigMode');
+                    const repoSel = el.querySelector('#chipConfigRepo');
                     const branchSel = el.querySelector('#chipConfigBranch');
+                    const repoRoot = () => (repoSel && repoSel._repoRoot) || '';
                     const wtSel = el.querySelector('#chipConfigWorktree');
                     const newBranchInput = el.querySelector('#chipConfigNewBranch');
                     const createBtn = el.querySelector('#chipConfigCreate');
@@ -404,10 +518,12 @@
                         const local = currentMode() !== 'worktree';
                         setVisible(branchSel, local);
                         setVisible(wtSel, !local);
+                        setVisible(repoSel, false); // loadRepos reveals it for 2+ repos
                         if (local) {
                             setVisible(newBranchInput, false);
                             setVisible(createBtn, false);
-                            loadBranches(branchSel, projSel.value);
+                            loadRepos(repoSel, projSel.value)
+                                .then((root_) => loadBranches(branchSel, projSel.value, root_));
                         } else {
                             loadWorktrees(wtSel, projSel.value, h.getChatCheckout ? h.getChatCheckout() : '')
                                 .then(toggleCreate);
@@ -415,22 +531,38 @@
                     };
 
                     projSel.addEventListener('change', () => {
+                        if (defaultsMode && !projSel.value) {
+                            if (h.setChatProject) h.setChatProject(null);
+                            return;
+                        }
                         const proj = h.findProjectById ? h.findProjectById(projSel.value) : null;
                         if (proj && h.setChatProject) h.setChatProject(proj);
                         if (newBranchInput && h.defaultWorktreeBranch) {
                             newBranchInput.value = h.defaultWorktreeBranch();
                         }
-                        sync();
+                        if (!defaultsMode) sync();
                     });
+                    if (defaultsMode) return;
                     if (modeSel) {
                         modeSel.addEventListener('change', () => {
                             if (currentMode() === 'local' && h.setChatCheckout) h.setChatCheckout(null);
                             sync();
                         });
                     }
-                    branchSel.addEventListener('change', () => {
-                        if (branchSel.value) switchBranch(branchSel.value, branchSel, projSel.value);
-                    });
+                    if (repoSel) {
+                        repoSel.addEventListener('change', () => {
+                            if (!repoSel.value) return;
+                            repoSel._repoRoot = repoSel.value;
+                            writeActiveRepo(repoSel._projectPath, repoSel.value);
+                            loadBranches(branchSel, projSel.value, repoSel.value);
+                            if (typeof h.refreshBranch === 'function') h.refreshBranch();
+                        });
+                    }
+                    if (branchSel) {
+                        branchSel.addEventListener('change', () => {
+                            if (branchSel.value) switchBranch(branchSel.value, branchSel, projSel.value, repoRoot());
+                        });
+                    }
                     if (wtSel) {
                         wtSel.addEventListener('change', () => {
                             if (wtSel.value === '__new__') {
@@ -471,10 +603,12 @@
         }
 
         function openAgent(agentId) {
+            const defaultsMode = h.pickerMode === 'defaults';
             const entries = h.getAgentEntries ? (h.getAgentEntries() || []) : [];
             const id = String(agentId || '').toLowerCase();
-            const spec = h.getAgentSpec ? h.getAgentSpec(id) : null;
-            const agentOptions = entries.map((e) => ({ value: e.id, label: e.label }));
+            const spec = id && h.getAgentSpec ? h.getAgentSpec(id) : null;
+            let agentOptions = entries.map((e) => ({ value: e.id, label: e.label }));
+            if (defaultsMode) agentOptions = withClearChoice(agentOptions);
             let fields = selectHtml('chipConfigAgent', 'Agent', agentOptions, id, !agentOptions.length);
             let modelOpts = [];
             let effortOpts = [];
@@ -490,7 +624,9 @@
             }
             openModal(
                 'Agent',
-                'Choose the agent, model, and effort for this chat.',
+                defaultsMode
+                    ? 'Choose the agent, model, and effort for new chats in this tab or group.'
+                    : 'Choose the agent, model, and effort for this chat.',
                 fields,
                 (el) => {
                     const agentSel = el.querySelector('#chipConfigAgent');
@@ -503,6 +639,11 @@
                         if (typeof h.rerenderChips === 'function') h.rerenderChips();
                     };
                     agentSel.addEventListener('change', () => {
+                        if (defaultsMode && !agentSel.value) {
+                            if (h.applyAgent) h.applyAgent(null);
+                            openAgent('');
+                            return;
+                        }
                         const entry = entries.find((e) => e.id === agentSel.value);
                         if (entry && h.applyAgent) h.applyAgent(entry);
                         openAgent(agentSel.value);
@@ -601,7 +742,10 @@
         return { openProject, openAgent, close, bindRow };
     }
 
-    const api = { create, stickyAgentEntries, agentSettingOptions, branchFor, refreshBranch };
+    const api = {
+        create, stickyAgentEntries, agentSettingOptions, withClearChoice, branchFor, refreshBranch,
+        repoChoice, activeRepoBranchLabel,
+    };
 
     const ns = (root.CuttleChipConfig = root.CuttleChipConfig || {});
     Object.assign(ns, api);

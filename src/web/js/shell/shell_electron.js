@@ -92,6 +92,8 @@
             label.textContent = `Cuttle ${ver}`;
         };
 
+        const connection = root.CuttleShellConnection || null;
+        let hostNetInfo = null;
         const applyHostChip = (cfg) => {
             if (!hostBtn) return;
             const role = typeof cuttleDesktopRole === 'function'
@@ -101,11 +103,14 @@
             hostBtn.hidden = false;
             hostBtn.dataset.role = role;
             hostBtn.textContent = isClient ? 'Client' : 'Host';
-            hostBtn.title = isClient
-                ? (`Connected to ${cfg && cfg.host ? cfg.host : 'remote Cuttle'} — click to change host`)
-                : 'This PC is running the Cuttle daemon — click to connect to another host';
+            hostBtn.title = connection
+                ? connection.badgeTooltip(cfg, hostNetInfo)
+                : (isClient ? `Connected to ${cfg && cfg.host ? cfg.host : 'remote Cuttle'}` : 'This PC is running the Cuttle daemon');
             if (cfg && cfg.packageVersion) applyTitleVersion(cfg.packageVersion);
         };
+        const fetchNetworkInfo = () => fetch('/api/network-info', { cache: 'no-store' })
+            .then((r) => (r.ok ? r.json() : null))
+            .catch(() => null);
         desktopCfg = { clientMode: false, host: '127.0.0.1' };
         applyHostChip(desktopCfg);
         // The titlebar Update button belongs to the update center
@@ -158,6 +163,13 @@
         ]).then(([cfg, status, desktopManifest]) => {
             desktopCfg = cfg || desktopCfg;
             applyHostChip(desktopCfg);
+            // Older Electron main processes do not report lanIps; ask the Host's Flask.
+            if (!desktopCfg.clientMode && !(Array.isArray(desktopCfg.lanIps) && desktopCfg.lanIps.length)) {
+                fetchNetworkInfo().then((net) => {
+                    hostNetInfo = net;
+                    applyHostChip(desktopCfg);
+                });
+            }
             const fromCfg = desktopCfg && desktopCfg.packageVersion;
             const fromApi = desktopManifest && desktopManifest.packageVersion;
             // Packaged Host Cuttle.exe bakes a stale package.json into app.asar.
@@ -186,8 +198,22 @@
             } catch (_) {}
         });
         api.desktop?.onUpdateAvailable?.(applyAsarUpdateBtn);
+        const connectionPopup = connection && api.desktop
+            ? connection.create({
+                api: api.desktop,
+                doc: document,
+                fetchNetworkInfo,
+                getConfig: () => desktopCfg,
+                onConfig: (cfg, net) => {
+                    desktopCfg = cfg || desktopCfg;
+                    if (net !== undefined) hostNetInfo = net;
+                    applyHostChip(desktopCfg);
+                },
+            })
+            : null;
         hostBtn?.addEventListener('click', () => {
-            if (typeof api.desktop?.showConnect === 'function') api.desktop.showConnect();
+            if (connectionPopup) connectionPopup.open();
+            else if (typeof api.desktop?.showConnect === 'function') api.desktop.showConnect();
         });
 
         const applyWorkersChip = (onlineRemote, totalRemote) => {

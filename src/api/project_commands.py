@@ -129,6 +129,10 @@ def _parse_command_file(path: Path, project_path: str) -> Optional[Dict[str, Any
     run = meta.get("run") or meta.get("shell") or None
     if run is not None:
         run = str(run).strip() or None
+    run_windows = str(meta.get("run_windows") or "").strip() or None
+    run_posix = str(
+        meta.get("run_posix") or meta.get("run_linux") or meta.get("run_unix") or ""
+    ).strip() or None
     workdir = str(meta.get("workdir") or meta.get("cwd") or "").strip() or None
     execute = str(meta.get("execute") or meta.get("mode") or "").strip().lower() or None
     if execute not in (None, "shell", "prompt", "agent"):
@@ -151,6 +155,8 @@ def _parse_command_file(path: Path, project_path: str) -> Optional[Dict[str, Any
         "description": description,
         "aliases": aliases,
         "run": run,
+        "run_windows": run_windows,
+        "run_posix": run_posix,
         "workdir": workdir,
         "execute": execute,
         "watch": watch,
@@ -274,6 +280,18 @@ def build_agent_prompt(cmd: Dict[str, Any], user_args: str = "") -> str:
     return "\n".join(parts).strip() + "\n"
 
 
+def resolve_command_run(cmd: Dict[str, Any]) -> Optional[str]:
+    """OS-specific ``run`` recipe (same rules as project actions: run_windows /
+    run_posix, and on POSIX ``powershell -File x.ps1`` → sibling ``x.py`` / ``x.sh``)."""
+    from api.project_actions import resolve_action_run
+
+    return resolve_action_run({
+        "raw": {"run_windows": cmd.get("run_windows"), "run_posix": cmd.get("run_posix")},
+        "run": cmd.get("run"),
+        "project_path": cmd.get("project_path"),
+    })
+
+
 def resolve_run_cwd(cmd: Dict[str, Any]) -> Path:
     root = Path(cmd.get("project_path") or ".").resolve()
     wd = cmd.get("workdir")
@@ -319,7 +337,7 @@ def run_project_command_shell(
     When ``session_id`` is set, the subprocess is registered with the chat run
     registry so Stop / ``/api/chat-cancel`` kills it (and any ``watch:`` job).
     """
-    recipe = cmd.get("run")
+    recipe = resolve_command_run(cmd)
     from api.experimental.context_bundles import executable_available
     if not executable_available(cmd, cmd.get("project_path")):
         return {"success": False, "error": "Feature command is unavailable."}
@@ -659,13 +677,14 @@ def try_expand_message_project_command(
 
     # execute: shell | prompt — default: shell when run-only; else prompt for the agent.
     execute = cmd.get("execute")
+    has_run = bool(cmd.get("run") or cmd.get("run_posix") or cmd.get("run_windows"))
     if not execute:
-        if cmd.get("run") and not (cmd.get("body") or "").strip():
+        if has_run and not (cmd.get("body") or "").strip():
             execute = "shell"
         else:
             execute = "prompt"
 
-    if execute == "shell" and cmd.get("run"):
+    if execute == "shell" and has_run:
         return {
             "action": "shell",
             "command": cmd,

@@ -58,12 +58,24 @@ const moveBefore = G.moveGroupBefore(s5, 'g', 'Y');
 const beforeOrder = s5.spaces.map(s => s.id);
 const moveIntoSelf = G.moveGroupBefore(s5, 'g', 'B');
 const moveMissing = G.moveGroupBefore(s5, 'g', 'missing');
+const ov = base();
+G.createGroupForSpace(ov, 'A', 'g1', '#e8eaed');
+const spaceProj = G.setSpaceProjectOverride(ov, 'A', { id: 7, name: 'Demo', path: '/p' });
+const spaceAgent = G.setSpaceAgentOverride(ov, 'A', { prefix: '/cursor ', id: 'cursor', label: 'Cursor Agent' });
+const groupProj = G.setGroupProjectOverride(ov, 'g1', { id: 4, name: 'Cuttle' });
+const groupAgent = G.setGroupAgentOverride(ov, 'g1', { prefix: '/codex ', id: 'codex' });
+const cleared = G.setSpaceProjectOverride(ov, 'A', null);
+const missing = G.setSpaceAgentOverride(ov, 'nope', { prefix: '/muse ' });
 process.stdout.write(JSON.stringify({ set1, set2, orderAfterJoin, toggleOff, stillHas,
   orderFirstStays, colorOk, colorAfterOk, colorBad, colorAfterBad, renamed, members, pruned,
   color: s1.groups.find((x) => x.id === 'g1').color,
   gname: s1.groups.find((x) => x.id === 'g1').name,
   collapseRefused, collapseOk, groupsLeft: s3.groups,
-  moveEnd, endOrder, moveBefore, beforeOrder, moveIntoSelf, moveMissing, movedState: s5 }));
+  moveEnd, endOrder, moveBefore, beforeOrder, moveIntoSelf, moveMissing, movedState: s5,
+  spaceProj, spaceAgent, groupProj, groupAgent, cleared, missing,
+  spaceHasProject: !!(ov.spaces.find((s) => s.id === 'A').projectOverride),
+  groupHasProject: ov.groups.find((g) => g.id === 'g1').projectOverride.id,
+  groupHasAgent: ov.groups.find((g) => g.id === 'g1').agentOverride.id }));
 """
 
 
@@ -124,6 +136,20 @@ def test_group_moves_include_hidden_and_separated_members():
     assert res['movedState']['active'] == 'A'
     assert res['movedState']['groups'][0]['collapsed'] is True
     assert [s['id'] for s in res['movedState']['spaces'] if s.get('groupId') == 'g'] == ['A', 'B']
+
+
+@node_only
+def test_project_and_agent_overrides():
+    res = _run()
+    assert res["spaceProj"] is True
+    assert res["spaceAgent"] is True
+    assert res["groupProj"] is True
+    assert res["groupAgent"] is True
+    assert res["cleared"] is True
+    assert res["missing"] is False
+    assert res["spaceHasProject"] is False  # null clears
+    assert res["groupHasProject"] == 4
+    assert res["groupHasAgent"] == "codex"
 
 
 @node_only

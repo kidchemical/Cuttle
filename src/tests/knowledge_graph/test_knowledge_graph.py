@@ -221,15 +221,36 @@ def test_graphify_provider_roundtrip(tmp_path, monkeypatch):
     again = service.index(ctx)
     assert again["meta"]["incremental"] is True
 
+    labels = {n.get("community_name") for n in service.provider_for().graph_data(store)["nodes"]}
+    assert labels and not any(str(v).startswith("Community ") for v in labels)
+
+    vault = tmp_path / "vault" / "Demo"
     export = service.export_obsidian(ctx)
-    assert export["ok"] is True
-    assert (tmp_path / "vault" / "Demo" / "Graphify").is_dir()
-    report = tmp_path / "vault" / "Demo" / "Architecture" / "Demo Graph Report.md"
-    assert report.is_file() and report.stat().st_size > 0
-    manual = tmp_path / "vault" / "Demo" / "Notes" / "n.md"
+    assert export["ok"] is True and export["vault"] == str(vault)
+    assert (vault / ".obsidian").is_dir()                       # its own vault
+    assert (vault / "Architecture" / "Overview.md").is_file()
+    assert [p.name for p in (vault / "Subsystems").iterdir()] == ["Demo (root).md"]  # 2 files roll up
+    assert not (vault / "Graphify").exists()
+    manual = vault / "Notes" / "n.md"
     manual.write_text("# mine\n")
     service.export_obsidian(ctx)
     assert manual.read_text() == "# mine\n"
+
+
+def test_export_archives_legacy_per_node_export(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    project = tmp_path / "vault" / "Demo"
+    (project / "Graphify").mkdir(parents=True)
+    (project / "Graphify" / "finalize().md").write_text("x")
+    (project / "Architecture").mkdir()
+    (project / "Architecture" / "Demo Graph Report.md").write_text("report")
+    (project / "Architecture" / "Mine.md").write_text("# mine\n")
+
+    dest = service._archive_legacy_export(project)
+    assert dest and (tmp_path / "home" / "archive") in Path(dest).parents
+    assert not (project / "Graphify").exists()
+    assert not (project / "Architecture" / "Demo Graph Report.md").exists()
+    assert (project / "Architecture" / "Mine.md").read_text() == "# mine\n"
 
 
 @pytest.mark.skipif(not _graphify_available(), reason="graphify CLI not installed")

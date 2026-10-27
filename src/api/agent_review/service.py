@@ -40,6 +40,7 @@ FLAG = "agent_review"
 MAX_BYTES = 2_000_000
 SCRATCH = "temp/agent-events"
 STALE_TURN_SEC = 12 * 3600
+_LS_TREE_CHUNK = 500
 
 
 class ReviewError(ValueError):
@@ -140,6 +141,38 @@ def _at_tree(repo_root: str, tree: str, rel: str) -> Tuple[str, Optional[str]]:
     return ("skip", None) if text is None else ("ok", text)
 
 
+def _tree_kinds(repo_root: str, tree: str, rels: Sequence[str]) -> Optional[Dict[str, str]]:
+    """``{rel: object type}`` for the rels present in ``tree``; None if git failed."""
+    kinds: Dict[str, str] = {}
+    rels = list(rels)
+    for i in range(0, len(rels), _LS_TREE_CHUNK):
+        res = _git(repo_root, "--literal-pathspecs", "ls-tree", "-z", tree, "--", *rels[i:i + _LS_TREE_CHUNK])
+        if res.returncode:
+            return None
+        for entry in res.stdout.decode("utf-8", "surrogateescape").split("\0"):
+            meta, sep, name = entry.partition("\t")
+            if sep:
+                kinds[name] = meta.split(" ")[1]
+    return kinds
+
+
+def _at_tree_many(repo_root: str, tree: str, rels: Sequence[str]) -> Dict[str, Tuple[str, Optional[str]]]:
+    """``_at_tree`` for many rels: one ls-tree, then a blob read only for files that exist."""
+    kinds = _tree_kinds(repo_root, tree, rels)
+    if kinds is None:
+        return {rel: _at_tree(repo_root, tree, rel) for rel in rels}
+    out: Dict[str, Tuple[str, Optional[str]]] = {}
+    for rel in rels:
+        kind = kinds.get(rel)
+        if kind is None:
+            out[rel] = ("absent", None)
+        elif kind != "blob":
+            out[rel] = ("skip", None)
+        else:
+            out[rel] = _at_tree(repo_root, tree, rel)
+    return out
+
+
 def _ignored(repo_root: str, rels: Sequence[str]) -> set:
     if not rels:
         return set()
@@ -198,7 +231,12 @@ def _guard(what: str):
 
 
 # ── liveness + reconcile ────────────────────────────────────────────
-def _is_live(store: ReviewStore, conn, query_id: Optional[str]) -> bool:
+def _is_live(store: ReviewStore, conn, query_id: Optional[str], cache: Optional[Dict[str, bool]] = None) -> bool:
+    if cache is not None:
+        key = str(query_id or "")
+        if key not in cache:
+            cache[key] = _is_live(store, conn, query_id)
+        return cache[key]
     turn = store.turn(conn, query_id) if query_id else None
     if not turn or turn["status"] != "running":
         return False
@@ -225,38 +263,61 @@ def _close_if_settled(store: ReviewStore, conn, row: Dict[str, Any], disk: Optio
     return True
 
 
-def _reconcile(store: ReviewStore, conn, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _probe(repo_root: str, rels: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+    """Disk + HEAD content per rel. Touches no DB, so callers run it outside the write lock."""
+    ignored = _ignored(repo_root, rels)
+    wanted = [rel for rel in rels if rel not in ignored]
+    head = _git(repo_root, "rev-parse", "--verify", "HEAD")
+    committed = (_at_tree_many(repo_root, head.stdout.decode("ascii").strip(), wanted)
+                 if head.returncode == 0 and wanted else {})
+    out = {}
+    for rel in rels:
+        if rel in ignored:
+            out[rel] = {"state": "ignored"}
+            continue
+        state, disk, data = _read(repo_root, rel)
+        out[rel] = {"state": state, "disk": disk, "data": data, "committed": committed.get(rel)}
+    return out
+
+
+def _reconcile(store: ReviewStore, conn, row: Dict[str, Any], probe: Optional[Dict[str, Any]] = None,
+               live: Optional[Dict[str, bool]] = None) -> Optional[Dict[str, Any]]:
     """Fold user edits since the agent last wrote; close settled reviews."""
-    state, disk, data = _read(row["repo_root"], row["rel_path"])
-    if state == "skip":
+    if probe is None:
+        probe = _probe(row["repo_root"], [row["rel_path"]])[row["rel_path"]]
+    if probe["state"] == "ignored":
+        # Files excluded after an agent turn must follow the same policy as
+        # files excluded at observation time. Closing review never alters disk.
+        store.close_review(conn, row["repo_root"], row["rel_path"])
+        store.bump(conn)
         return None
-    row = dict(row, current=disk, current_bytes=data)
+    if probe["state"] == "skip":
+        return None
+    disk = probe["disk"]
+    row = dict(row, current=disk, current_bytes=probe["data"])
     # Commits outside the guarded UI (or a late turn-finish hook) can leave
     # review rows behind. Accept only exact committed working-tree content;
     # staged-only changes and later agent edits must remain reviewable.
-    if not _is_live(store, conn, row["last_query_id"]):
-        head = _git(row["repo_root"], "rev-parse", "--verify", "HEAD")
-        if head.returncode == 0:
-            committed_state, committed = _at_tree(
-                row["repo_root"], head.stdout.decode("ascii").strip(), row["rel_path"])
-            if committed_state != "skip" and committed == disk:
-                store.close_review(conn, row["repo_root"], row["rel_path"])
+    if probe["committed"] is not None and not _is_live(store, conn, row["last_query_id"], live):
+        committed_state, committed = probe["committed"]
+        if committed_state != "skip" and committed == disk:
+            store.close_review(conn, row["repo_root"], row["rel_path"])
+            store.bump(conn)
+            return None
+        if committed_state != "skip":
+            # A partial commit may accept some hunks while others remain.
+            # Match both their original location and exact content; hunk
+            # ids alone are insufficient when identical edits repeat.
+            def signature(h):
+                return (h["old_start"], tuple(h["removed"]), tuple(h["added"]))
+            accepted = {signature(h) for h in H.compute(row["baseline"], committed)}
+            ids = [h["id"] for h in H.compute(row["baseline"], disk) if signature(h) in accepted]
+            if ids:
+                baseline = H.keep(row["baseline"], disk, ids)
+                store.update_review(conn, row["repo_root"], row["rel_path"], baseline=baseline)
+                row.update(baseline=baseline)
                 store.bump(conn)
-                return None
-            if committed_state != "skip":
-                # A partial commit may accept some hunks while others remain.
-                # Match both their original location and exact content; hunk
-                # ids alone are insufficient when identical edits repeat.
-                def signature(h):
-                    return (h["old_start"], tuple(h["removed"]), tuple(h["added"]))
-                accepted = {signature(h) for h in H.compute(row["baseline"], committed)}
-                ids = [h["id"] for h in H.compute(row["baseline"], disk) if signature(h) in accepted]
-                if ids:
-                    baseline = H.keep(row["baseline"], disk, ids)
-                    store.update_review(conn, row["repo_root"], row["rel_path"], baseline=baseline)
-                    row.update(baseline=baseline)
-                    store.bump(conn)
-    if not _is_live(store, conn, row["last_query_id"]) and disk != row["last_agent"]:
+    if not _is_live(store, conn, row["last_query_id"], live) and disk != row["last_agent"]:
         baseline, conflicts = H.fold(row["baseline"], row["last_agent"], disk)
         mixed = row["mixed"] or conflicts > 0
         store.update_review(conn, row["repo_root"], row["rel_path"], baseline=baseline, last_agent=disk, mixed=mixed)
@@ -268,6 +329,21 @@ def _reconcile(store: ReviewStore, conn, row: Dict[str, Any]) -> Optional[Dict[s
     return row
 
 
+def _reconcile_all(store: ReviewStore, conn, repo: str, rows: Sequence[Dict[str, Any]],
+                   probes: Dict[str, Dict[str, Any]], live: Dict[str, bool]) -> List[Dict[str, Any]]:
+    """Reconcile ``rows`` with probes taken before the lock; re-probe rows changed since."""
+    out = []
+    for snap in rows:
+        row = store.review(conn, repo, snap["rel_path"])
+        if row is None:
+            continue
+        probe = probes.get(snap["rel_path"]) if row["updated_at"] == snap["updated_at"] else None
+        row = _reconcile(store, conn, row, probe, live)
+        if row is not None:
+            out.append(row)
+    return out
+
+
 # ── harness hooks (never raise) ─────────────────────────────────────
 def turn_started(snapshot: Optional[Dict[str, Any]], *, query_id: str, chat_session_id: Any = None,
                  agent_id: Optional[str] = None, model: Optional[str] = None) -> None:
@@ -276,9 +352,11 @@ def turn_started(snapshot: Optional[Dict[str, Any]], *, query_id: str, chat_sess
     with _guard("turn_started"):
         root = _key(snapshot["repo_root"])
         store = _store()
+        with store.read() as conn:
+            rows = store.reviews(conn, root)
+        probes = _probe(root, [r["rel_path"] for r in rows])
         with store.tx() as conn:
-            for row in store.reviews(conn, root):
-                _reconcile(store, conn, row)
+            _reconcile_all(store, conn, root, rows, probes, {})
             store.add_turn(conn, query_id=str(query_id), repo_root=root, start_tree=snapshot["tree"],
                            skipped=dict(snapshot.get("skipped") or {}),
                            chat_session_id=None if chat_session_id in (None, "") else str(chat_session_id),
@@ -290,8 +368,10 @@ def _observe(store: ReviewStore, conn, turn: Dict[str, Any], rels: Iterable[str]
     root = turn["repo_root"]
     skip = set(turn["skipped"]) | set(skipped or {})
     wanted = sorted({r for r in (_norm_rel(x) for x in rels) if r and r not in skip})
-    wanted = [r for r in wanted if r not in _ignored(root, wanted)]
+    ignored = _ignored(root, wanted)
+    wanted = [r for r in wanted if r not in ignored]
     changed = 0
+    pending: List[Tuple[str, Optional[str], Any]] = []
     for rel in wanted:
         state, disk, _ = _read(root, rel)
         if state == "skip":
@@ -304,13 +384,17 @@ def _observe(store: ReviewStore, conn, turn: Dict[str, Any], rels: Iterable[str]
             _close_if_settled(store, conn, row, disk)
             changed += 1
             continue
-        base = store.settled(conn, turn["query_id"], rel)
+        pending.append((rel, disk, store.settled(conn, turn["query_id"], rel)))
+    at_start = _at_tree_many(root, turn["start_tree"], [rel for rel, _, base in pending if base is ABSENT])
+    opens = []
+    for rel, disk, base in pending:
         if base is ABSENT:
-            base_state, base = _at_tree(root, turn["start_tree"], rel)
+            base_state, base = at_start[rel]
             if base_state == "skip":
                 continue
-        if base == disk:
-            continue
+        if base != disk:
+            opens.append((rel, base, disk))
+    for rel, base, disk in opens:
         store.open_review(conn, repo_root=root, rel_path=rel, baseline=base, last_agent=disk,
                           query_id=turn["query_id"], chat_session_id=turn["chat_session_id"],
                           agent_id=turn["agent_id"])
@@ -415,18 +499,21 @@ def revision() -> int:
 def list_reviews(root: Path) -> Dict[str, Any]:
     repo, prefix = _scope(root)
     store = _store()
-    files = []
+    with store.read() as conn:
+        rows = [r for r in store.reviews(conn, repo) if _under(r["rel_path"], prefix)]
+    probes = _probe(repo, [r["rel_path"] for r in rows])
+    found = []
+    live: Dict[str, bool] = {}
     with store.tx() as conn:
-        for row in store.reviews(conn, repo):
-            if not _under(row["rel_path"], prefix):
-                continue
-            row = _reconcile(store, conn, row)
-            if row is None:
-                continue
-            item = _public(row, prefix, store.turns_for(conn, repo, row["rel_path"]))
-            item["live"] = _is_live(store, conn, row["last_query_id"])
-            files.append(item)
+        for row in _reconcile_all(store, conn, repo, rows, probes, live):
+            found.append((row, store.turns_for(conn, repo, row["rel_path"]),
+                          _is_live(store, conn, row["last_query_id"], live)))
         rev = conn.execute("SELECT value FROM meta WHERE key='revision'").fetchone()
+    files = []
+    for row, turns, is_live in found:
+        item = _public(row, prefix, turns)
+        item["live"] = is_live
+        files.append(item)
     return {"repo_root": repo, "files": files, "revision": int(rev["value"]) if rev else 0,
             "totals": {k: sum(f[k] for f in files) for k in ("hunks", "additions", "deletions")}}
 
@@ -466,9 +553,10 @@ def _act(root: Path, paths: Optional[Sequence[str]], ids: Optional[Sequence[str]
             rels = [r["rel_path"] for r in store.reviews(conn, repo) if _under(r["rel_path"], prefix)]
         else:
             rels = [_to_rel(prefix, p) for p in paths]
+        probes = _probe(repo, rels)
         for rel in rels:
             row = store.review(conn, repo, rel)
-            row = _reconcile(store, conn, row) if row else None
+            row = _reconcile(store, conn, row, probes[rel]) if row else None
             if row is None:
                 if paths is not None:
                     raise NotFound(f"No agent changes to review in {rel}")

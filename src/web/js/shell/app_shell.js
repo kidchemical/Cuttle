@@ -3067,6 +3067,7 @@ async function saveCurrentWorkspace() {
                 columns,
                 orientation: primaryOrientationFromTree(snapshotLayoutTree(splitContainer)),
                 root: snapshotLayoutTree(splitContainer),
+                spaces: shellSpaces.exportSnapshot(),
             }),
         });
         const data = await res.json().catch(() => ({}));
@@ -3090,13 +3091,16 @@ function loadWorkspace(ws) {
         return;
     }
     const columns = ws && ws.columns;
-    if (!applyWorkspaceColumns(columns, ws && ws.orientation, ws && ws.root)) {
+    // Spaces (tabs + groups) carry each space's layout; older saves are panes only.
+    const applied = (ws && ws.spaces && shellSpaces.importSnapshot(ws.spaces))
+        || applyWorkspaceColumns(columns, ws && ws.orientation, ws && ws.root);
+    if (!applied) {
         if (typeof window.showToast === 'function') window.showToast('Could not load workspace', 'error');
         return;
     }
     closeWorkspacePopover();
     if (typeof window.showToast === 'function') {
-        window.showToast('Loaded ' + (ws.name || 'workspace') + ' · ' + formatWorkspaceSummary(columns), 'success');
+        window.showToast('Loaded ' + (ws.name || 'workspace') + ' · ' + (ws.summary || formatWorkspaceSummary(columns)), 'success');
     }
 }
 

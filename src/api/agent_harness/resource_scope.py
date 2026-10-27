@@ -10,9 +10,10 @@ Uses systemd's own D-Bus API through ``busctl`` (ships with systemd), so there
 is no Python dependency. Best effort: off Linux, or with no reachable user
 manager, CLIs run exactly as before. The CLI retains its native execution environment.
 
-Opt in with machine setting ``agent_resource_limits: {"enabled": true}``.
-Off switch: ``CUTTLE_AGENT_SCOPES=0`` or the machine setting
-``agent_resource_limits: {"enabled": false}``. Limits apply to new launches.
+Opt in through Settings → Experimental → Agent resource limits (default off).
+Machine setting ``agent_resource_limits`` customizes ceilings only; its legacy
+``enabled`` field no longer activates limits. Off switches:
+``CUTTLE_AGENT_SCOPES=0`` or ``CUTTLE_EXPERIMENTAL=0``. Limits apply to new launches.
 """
 from __future__ import annotations
 
@@ -177,11 +178,17 @@ def _report(key: str, message: str) -> None:
 
 
 def _load_limits() -> dict | None:
+    from api.experimental import is_enabled
+
+    if not is_enabled(SETTING_KEY):
+        return None
     try:
         from managers.settings_manager import get_settings_manager
         raw = get_settings_manager().get_setting(SETTING_KEY)
     except Exception:
         raw = None
+    # The experimental flag owns activation, including for old machine configs.
+    raw = {**(raw if isinstance(raw, dict) else {}), "enabled": True}
     try:
         return resolve_limits(raw, total_memory=_total_memory())
     except ValueError as exc:

@@ -83,6 +83,39 @@ function saveDesktopConfig(patch) {
     return next;
 }
 
+/** This device's LAN IPv4 addresses, most likely reachable first. */
+function deviceLanIpv4s() {
+    const VIRTUAL_IFACE_RE = /^(lo|docker|br-|veth|virbr|vmnet|vboxnet|zt|tailscale|wg|utun|awdl|llw)|vEthernet|VirtualBox|VMware|Hyper-V|WSL|Loopback/i;
+    const rank = (ip) => {
+        if (ip.startsWith('192.168.')) return 0;
+        if (ip.startsWith('10.')) return 1;
+        if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return 2;
+        return 3;
+    };
+    const found = [];
+    try {
+        for (const [name, addrs] of Object.entries(os.networkInterfaces() || {})) {
+            if (VIRTUAL_IFACE_RE.test(name)) continue;
+            for (const a of addrs || []) {
+                const fam = a && (a.family === 'IPv4' || a.family === 4);
+                if (!fam || a.internal || !a.address || a.address.startsWith('169.254.')) continue;
+                if (!found.includes(a.address)) found.push(a.address);
+            }
+        }
+    } catch (_) {}
+    return found.sort((x, y) => rank(x) - rank(y));
+}
+
+/** True when the main window is showing a Cuttle server page (not connect.html / a loading page). */
+function isShowingCuttleUi() {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    try {
+        return /^https?:/i.test(String(mainWindow.webContents.getURL() || ''));
+    } catch (_) {
+        return false;
+    }
+}
+
 function applyDesktopTarget({ host, httpPort, httpsPort, clientMode }) {
     FLASK_HOST = host || '127.0.0.1';
     FLASK_HTTP_PORT = Number(httpPort) || DEFAULT_HTTP_PORT;
@@ -160,6 +193,10 @@ function applyConnectTarget({ host, httpPort, httpsPort, clientMode, policy }) {
 async function connectDesktopTarget(parsed) {
     const resolved = await probeAndResolve(parsed);
     if (!resolved.probe.ok) return resolved.probe;
+    const unchanged = CLIENT_MODE && isShowingCuttleUi()
+        && FLASK_HOST === parsed.host
+        && FLASK_HTTP_PORT === Number(resolved.httpPort)
+        && FLASK_HTTPS_PORT === Number(resolved.httpsPort);
     applyConnectTarget({
         host: parsed.host,
         httpPort: resolved.httpPort,
@@ -167,6 +204,7 @@ async function connectDesktopTarget(parsed) {
         clientMode: true,
         policy: resolved.policy,
     });
+    if (unchanged) return { ok: true, unchanged: true, host: parsed.host, scheme: resolved.policy.scheme };
     await loadCuttleUi();
     await startWorkerSidecar();
     return { ok: true, host: parsed.host, scheme: resolved.policy.scheme };
@@ -632,6 +670,7 @@ function publicDesktopConfig() {
         workerMode: cfg.workerMode !== false,
         workerId,
         hostname: String(os.hostname() || '').trim(),
+        lanIps: deviceLanIpv4s(),
         host: FLASK_HOST,
         httpPort: FLASK_HTTP_PORT,
         httpsPort: FLASK_HTTPS_PORT,
@@ -2107,6 +2146,10 @@ ipcMain.handle('desktop-connect-saved-host', async (_event, index) => {
     }
 });
 ipcMain.handle('desktop-use-local', async () => {
+    // Already hosting and showing the local UI: nothing to switch, so no reload.
+    if (!CLIENT_MODE && isShowingCuttleUi() && await waitForFlask(1, 0)) {
+        return { ok: true, unchanged: true };
+    }
     stopWorkerSidecar();
     // Local-Host ports come from the Python owner (api.server_ports), never
     // hardcoded defaults. Malformed config fails closed here — do not spawn

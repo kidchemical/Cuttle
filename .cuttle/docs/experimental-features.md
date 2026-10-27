@@ -10,6 +10,15 @@ Achievements is **opt-in and off by default**. The flag-management API is always
 
 ## Turning things on/off
 
+**Agent resource limits:** flag `agent_resource_limits` (default off).
+Applies Linux systemd memory/process limits to agent CLIs and descendants,
+including Unity/Blender builds and renders. The starting per-agent soft/hard
+memory limits are 6 GB / 8 GB, with a shared aggregate cap. Existing machine
+`agent_resource_limits.enabled` values do not opt users in; the flag owns activation.
+Toggles affect new launches without a restart; existing scopes retain their limits.
+Configuration, platform support and removal boundary:
+[agent-resource-limits.md](agent-resource-limits.md).
+
 **Response post-processing:** flag `response_postprocessing` (default off).
 Its instructions, append/replace behavior, API/CLI, model, effort and fallback
 chain are configured together in Settings → Agents → Response post-processing,

@@ -36,7 +36,7 @@ Do not ask “OK to push?” in prose. Example card (only emit the tagged JSON b
 </cuttle_action_form>
 ```
 
-Adjust `remote` / `branch` / `path` to the repo in the chat project chip. Never force-push from this action.
+Adjust `remote` / `branch` to the repo in the chat project chip. Omitted `path` means the chat's project; set it only to push a different checkout. Never force-push from this action.
 
 **Release tags:** push one tag with `"params":{"mode":"push","remote":"origin","tag":"vX.Y.Z"}`.
 It pushes only `refs/tags/vX.Y.Z` and refuses a tag that does not exist locally.

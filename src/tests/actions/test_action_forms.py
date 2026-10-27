@@ -387,6 +387,52 @@ def test_rewrite_multiple_forms_in_one_message(tmp_path: Path):
     assert "<cuttle_action_form>" not in out
 
 
+@pytest.mark.parametrize(
+    ("raw", "mode", "option_ids", "field_ids"),
+    [
+        # CH-001472-4: a choice card carrying form fields.
+        ({"mode": "choice", "resume": True, "fields": [
+            {"id": "scope", "type": "radio", "options": [{"value": "a", "label": "A"}]},
+            {"id": "extra", "type": "checkbox", "value": False}]},
+         "form", [], ["scope", "extra"]),
+        ({"mode": "form", "options": [{"id": "a", "label": "A"}]}, "choice", ["a"], []),
+        # Empty form used as a "click when ready" button.
+        ({"mode": "form", "resume": True, "submitLabel": "Ready", "fields": []},
+         "choice", ["continue"], []),
+    ],
+)
+def test_normalize_infers_mode_from_body_shape(raw, mode, option_ids, field_ids):
+    spec = normalize_action_form_spec(raw)
+    assert spec is not None
+    assert spec["mode"] == mode
+    assert [o["id"] for o in spec["options"]] == option_ids
+    assert [f["id"] for f in spec["fields"]] == field_ids
+    assert spec["resume"] is True
+
+
+def test_normalize_bare_restart_action_becomes_restart_chooser():
+    spec = normalize_action_form_spec({"action": "flask.restart", "mode": "graceful"})
+    assert spec is not None
+    assert spec["title"] == "Restart Flask (daemon-owned)"
+    graceful = [o for o in spec["options"] if o["params"].get("mode") == "graceful"]
+    assert graceful and graceful[0]["action"] == "flask.restart"
+
+
+def test_rewrite_unrenderable_form_shows_notice_not_raw_tag(tmp_path: Path):
+    clear_forms_for_tests()
+    text = (
+        "Pick:\n<cuttle_action_form>\n"
+        '{"title": "T", "mode": "choice", "options": [\n'
+        "</cuttle_action_form>\n"
+        "Example:\n```xml\n<cuttle_action_form>\n{\"mode\": \"form\", \"fields\": [ ... ]}\n"
+        "</cuttle_action_form>\n```\n"
+    )
+    out, n = rewrite_action_forms(text, session_id="db_session_bad", project_path=str(tmp_path))
+    assert n == 1
+    assert "could not render this form" in out
+    assert out.count("<cuttle_action_form>") == 1  # only the fenced example remains
+
+
 def test_rewrite_action_forms_pending(tmp_path: Path):
     clear_forms_for_tests()
     text = (

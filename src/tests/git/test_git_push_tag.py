@@ -39,10 +39,11 @@ def repo(tmp_path):
     return work, remote
 
 
-def _run(work: Path, **params: str) -> subprocess.CompletedProcess:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("CUTTLE_PARAM_")}
+def _run(work: Path, *, chat_project: bool = False, **params: str) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("CUTTLE_PARAM_") and k != "CUTTLE_CHAT_PROJECT_PATH"}
     env.update({f"CUTTLE_PARAM_{k.upper()}": v for k, v in params.items()})
-    env["CUTTLE_PARAM_PATH"] = str(work)
+    env["CUTTLE_CHAT_PROJECT_PATH" if chat_project else "CUTTLE_PARAM_PATH"] = str(work)
     return subprocess.run(
         [sys.executable, str(SCRIPT)], cwd=REPO_ROOT, env=env,
         capture_output=True, text=True, encoding="utf-8", timeout=60,
@@ -63,6 +64,28 @@ def test_missing_tag_is_refused(repo):
     assert result.returncode == 1
     assert "No local tag" in result.stdout
     assert _git(remote, "tag") == ""
+
+
+def test_pathless_card_pushes_the_chat_project(repo):
+    work, remote = repo
+    result = _run(work, chat_project=True, mode="push", remote="origin", branch="main")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _git(remote, "branch") == "main"
+
+
+def test_shell_actions_receive_the_chat_project(tmp_path):
+    from api import project_actions as actions
+
+    owner, chat = tmp_path / "install", tmp_path / "game"
+    folder = owner / ".cuttle" / "actions"
+    folder.mkdir(parents=True)
+    chat.mkdir()
+    (folder / "probe.yaml").write_text(
+        "name: test.probe\ntype: shell\nrun_posix: echo $CUTTLE_CHAT_PROJECT_PATH\n"
+        "run: echo %CUTTLE_CHAT_PROJECT_PATH%\n", encoding="utf-8")
+    action = {**actions.find_project_action(str(owner), "test.probe"),
+              "context_project_path": str(chat)}
+    assert str(chat) in actions._execute_shell(action, {})["response"]
 
 
 def test_option_shaped_tag_is_refused(repo):

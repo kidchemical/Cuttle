@@ -39,6 +39,7 @@
 .settings-tab.active {
     background: var(--accent-color);
     color: var(--text-inverse, #fff);
+    box-shadow: 0 4px 14px -6px color-mix(in srgb, var(--accent-color) 80%, transparent);
 }
 
 .settings-tab:focus-visible {
@@ -52,6 +53,7 @@
 
 .settings-panel.active {
     display: block;
+    animation: cuttle-rise-in var(--dur-slow) var(--ease-out) both;
 }
 
 /* Scope badge — settings live in two worlds (this browser vs the server), and

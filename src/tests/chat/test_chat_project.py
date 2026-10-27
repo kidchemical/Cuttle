@@ -59,6 +59,12 @@ out.storedIdWins = P.resolveChatProject(Object.assign({}, base, {
 out.keepUnsaved = P.resolveChatProject({ projects, currentSessionId: null,
   currentProject: EP, starred: null });
 out.defaultFallback = P.resolveChatProject(Object.assign({}, base, {}));
+out.spaceNewChat = P.resolveChatProject({ projects, currentSessionId: null,
+  currentProject: null, starred: { id: 4 }, spaceProject: { id: 7 } });
+out.spaceIgnoredForSession = P.resolveChatProject(Object.assign({}, base, {
+  starred: { id: 4 }, spaceProject: { id: 7 } }));
+out.keepUnsavedBeatsSpace = P.resolveChatProject({ projects, currentSessionId: null,
+  currentProject: CUTTLE, starred: { id: 4 }, spaceProject: { id: 7 } });
 out.backfillPath = P.resolveChatProject(Object.assign({}, base, {
   prefs: { projectId: 7, projectName: 'Escape Purgatory' } }));
 // stale name repaired from the live registry
@@ -138,6 +144,9 @@ def test_reconcile_priority_chain():
     # Unsaved new chat keeps the picked project instead of the default.
     assert res["keepUnsaved"] == {"proj": EP_OUT, "hadStored": False}
     assert res["defaultFallback"]["proj"]["id"] == 4
+    assert res["spaceNewChat"]["proj"]["id"] == 7
+    assert res["spaceIgnoredForSession"]["proj"]["id"] == 4
+    assert res["keepUnsavedBeatsSpace"]["proj"]["id"] == 4
     assert res["backfillPath"]["proj"]["path"] == "E:\\Projects\\DemoGame"
 
 

@@ -8,25 +8,33 @@ import api.dashboards.catalog as catalog
 import api.dashboards.context as context
 import api.dashboards.service as service
 import api.dashboards.usage as usage
-from api.http_authz import owner_required
+from api.http_authz import authenticated_required, current_user, is_owner_user
 
 dashboards_bp = Blueprint("dashboards", __name__, url_prefix="/api/dashboards")
 
 
 @dashboards_bp.route("", methods=["GET"])
 @dashboards_bp.route("/", methods=["GET"])
-@owner_required
+@authenticated_required
 def list_dashboards():
-    return jsonify(service.hub())
+    hub = service.hub()
+    if not is_owner_user(current_user()):
+        hub["dashboards"] = [d for d in hub["dashboards"] if d.get("public")]
+    return jsonify(hub)
 
 
 @dashboards_bp.route("/<dash_id>", methods=["GET"])
-@owner_required
+@authenticated_required
 def get_dashboard(dash_id: str):
     meta = catalog.get_dashboard(dash_id)
     if not meta:
         return jsonify({"success": False, "error": "unknown dashboard"}), 404
-    force = str(request.args.get("refresh") or "").lower() in ("1", "true", "yes")
+    # Personal dashboards read local turns, costs and projects; only public ones
+    # are open to other accounts, and only the owner can force a refetch.
+    owner = is_owner_user(current_user())
+    if not owner and not meta.get("public"):
+        return jsonify({"success": False, "error": "Owner privileges required."}), 403
+    force = owner and str(request.args.get("refresh") or "").lower() in ("1", "true", "yes")
     if dash_id == "model-benchmarks":
         source_id = (request.args.get("source") or "deepswe").strip().lower()
         return jsonify(service.model_benchmarks(force=force, source_id=source_id))

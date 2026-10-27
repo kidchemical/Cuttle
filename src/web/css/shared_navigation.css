@@ -120,7 +120,7 @@ html {
 }
 
 body {
-    font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: var(--font-sans, 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif);
     background: var(--bg-primary);
     /* Gradient is an image; default repeat + short body = visible vertical tiles. */
     background-repeat: no-repeat;

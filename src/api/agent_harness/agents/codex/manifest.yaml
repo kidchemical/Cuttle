@@ -7,10 +7,11 @@ auth_command: codex login
 sticky: true
 default_model: ""
 smoke_model: gpt-5.5
-# Snapshot from `codex-cli 0.159.3` → `codex debug models`. The model palette
+# Snapshot from `codex-cli 0.164.0` → `codex debug models`. The model palette
 # reads the installed CLI live; these entries are the verified offline fallback.
 models:
   - gpt-6.1-sol
+  - gpt-6.1-terra
   - gpt-6-astra
   - gpt-6-sol
   - gpt-6-luna
@@ -31,6 +32,7 @@ efforts:
   - ultra
 model_efforts:
   gpt-6.1-sol: [low, medium, high, xhigh, max, ultra]
+  gpt-6.1-terra: [low, medium, high, xhigh, max, ultra]
   gpt-6-astra: [low, medium, high, xhigh, max, ultra]
   gpt-6-sol: [low, medium, high, xhigh, max, ultra]
   gpt-6-luna: [low, medium, high, xhigh, max]

@@ -81,6 +81,16 @@ class ReviewStore:
         finally:
             conn.close()
 
+    @contextmanager
+    def read(self) -> Iterator[sqlite3.Connection]:
+        """Snapshot reads (WAL): never takes the write lock."""
+        conn = sqlite3.connect(self.path, timeout=10)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     # ── revision ────────────────────────────────────────────────────
     def revision(self) -> int:
         # Polled every second by the stream: a plain read, no write lock.

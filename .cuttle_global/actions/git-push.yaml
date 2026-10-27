@@ -4,7 +4,8 @@ description: >-
   Push the current branch after the user clicks this card. Agents must never
   run git push from the shell in Cuttle chat. Params: mode = status | push
   (default push); remote; branch; tag (push only that existing local tag,
-  e.g. a release tag; never --tags); path (project cwd, optional).
+  e.g. a release tag; never --tags); path (project cwd, optional; defaults
+  to the chat's project).
   Never force-pushes.
 type: shell
 replay:

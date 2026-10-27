@@ -443,6 +443,28 @@ def _warn_primary_port_conflicts() -> None:
         pass
 
 
+LOG_ROTATE_BYTES = 50 * 1024 * 1024
+LOG_ROTATE_KEEP = 3
+
+
+def _rotate_log(path: Path, max_bytes: int = LOG_ROTATE_BYTES, keep: int = LOG_ROTATE_KEEP) -> None:
+    """Shift ``path`` to ``path.1`` … ``path.<keep>`` once it passes ``max_bytes``.
+
+    Runs before a child opens the log: the child's stdout is a raw fd, so the
+    file can only be rotated between process starts.
+    """
+    try:
+        if not path.is_file() or path.stat().st_size < max_bytes:
+            return
+        for i in range(keep - 1, 0, -1):
+            older = path.with_name(f"{path.name}.{i}")
+            if older.exists():
+                os.replace(older, path.with_name(f"{path.name}.{i + 1}"))
+        os.replace(path, path.with_name(f"{path.name}.1"))
+    except OSError as exc:  # Windows: a handle from an earlier generation may still be open
+        print(f"[DAEMON] Log rotation skipped for {path.name}: {exc}")
+
+
 def start_flask() -> bool:
     """Start Flask web server."""
     global _flask_generation
@@ -467,6 +489,7 @@ def start_flask() -> bool:
     _flask_generation += 1
     env["CUTTLE_FLASK_GENERATION"] = str(_flask_generation)
     log_path = LOGS_DIR / "flask.log"
+    _rotate_log(log_path)
     logf = open(log_path, "a", encoding="utf-8")
     _process_log_handles.append(logf)
     logf.write(

@@ -1,0 +1,100 @@
+/* ================================================================
+   Cuttle design tokens + motion primitives
+
+   Imported by ui_boot.css, so every page (shell and framed) gets it.
+   ui_boot.css loads before page stylesheets, so everything here is a
+   default: page rules of equal specificity still win. Generic element
+   rules use :where() (zero specificity) for the same reason.
+
+   Palette stays where it is (page --bg-* / --text-* / --accent-* and
+   theme --t-* seeds in themes.css). This file owns scale, shape, depth
+   and motion — use these instead of new hardcoded px / ms / shadows.
+   ================================================================ */
+
+:root {
+    /* Type */
+    --font-sans: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    --font-mono: ui-monospace, 'Cascadia Code', 'Segoe UI Mono', Menlo, Consolas, monospace;
+
+    /* Spacing (4px grid) */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+
+    /* Shape */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 20px;
+    --radius-pill: 999px;
+
+    /* Depth: soft, layered shadows (ambient + key light) */
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.18), 0 1px 1px rgba(0, 0, 0, 0.08);
+    --shadow-2: 0 4px 12px -2px rgba(0, 0, 0, 0.28), 0 2px 4px -2px rgba(0, 0, 0, 0.16);
+    --shadow-3: 0 16px 40px -12px rgba(0, 0, 0, 0.45), 0 6px 14px -6px rgba(0, 0, 0, 0.25);
+    /* 1px top highlight that makes dark surfaces read as raised */
+    --edge-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+    /* Motion */
+    --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --dur-fast: 120ms;
+    --dur-base: 200ms;
+    --dur-slow: 360ms;
+
+    /* Focus */
+    --focus-ring-color: color-mix(in srgb, var(--accent-color, #667eea) 70%, transparent);
+    --focus-ring: 0 0 0 2px var(--focus-ring-color);
+}
+
+html.light-mode,
+body.light-mode {
+    --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 1px rgba(16, 24, 40, 0.04);
+    --shadow-2: 0 4px 12px -2px rgba(16, 24, 40, 0.1), 0 2px 4px -2px rgba(16, 24, 40, 0.06);
+    --shadow-3: 0 16px 40px -12px rgba(16, 24, 40, 0.18), 0 6px 14px -6px rgba(16, 24, 40, 0.08);
+    --edge-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+/* ── Shared keyframes ─────────────────────────────────────────── */
+@keyframes cuttle-rise-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: none; }
+}
+
+@keyframes cuttle-fade-in {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@keyframes cuttle-pop-in {
+    from { opacity: 0; transform: scale(0.96); }
+    to   { opacity: 1; transform: none; }
+}
+
+@keyframes cuttle-float {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-4px); }
+}
+
+/* ── Baseline focus ring (keyboard only) ──────────────────────── */
+:where(button, a, [role="button"], [tabindex], summary, select):focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────
+   Entrance/hover motion built on these tokens collapses to instant.
+   Pages keep owning their own spinners (a frozen spinner still has to
+   read as "busy"), so this does not blanket-kill every animation. */
+@media (prefers-reduced-motion: reduce) {
+    :root {
+        --dur-fast: 1ms;
+        --dur-base: 1ms;
+        --dur-slow: 1ms;
+    }
+}

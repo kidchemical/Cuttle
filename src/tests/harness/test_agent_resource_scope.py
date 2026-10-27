@@ -86,6 +86,53 @@ def test_disabled_scopes_never_contact_systemd(monkeypatch):
     assert rs.confine(type("P", (), {"pid": 1234})()) is False
 
 
+@pytest.mark.parametrize("legacy", [None, {"enabled": True}, {"enabled": False}])
+def test_experimental_default_blocks_even_legacy_opt_in(monkeypatch, legacy):
+    from api.experimental import flags_payload
+    from managers.settings_manager import get_settings_manager
+
+    monkeypatch.delenv("CUTTLE_EXPERIMENTAL", raising=False)
+    monkeypatch.delenv("CUTTLE_AGENT_SCOPES", raising=False)
+    assert get_settings_manager().set_setting(rs.SETTING_KEY, legacy)
+    row = next(f for f in flags_payload()["flags"] if f["id"] == rs.SETTING_KEY)
+    assert row["default"] is False and row["enabled"] is False
+    monkeypatch.setattr(rs.sys, "platform", "linux")
+    monkeypatch.setattr(rs.os.path, "isfile", lambda _: True)
+    monkeypatch.setattr(rs.shutil, "which", lambda _: "/usr/bin/busctl")
+    monkeypatch.setattr(rs, "_run", lambda _: pytest.fail("systemd contacted before opt-in"))
+    assert rs.confine(type("P", (), {"pid": 1234})()) is False
+
+
+@pytest.mark.parametrize("legacy", [None, {"enabled": True}, {"enabled": False}])
+def test_experimental_toggle_controls_new_launch_limits(monkeypatch, legacy):
+    from api.experimental import set_enabled
+    from managers.settings_manager import get_settings_manager
+
+    monkeypatch.delenv("CUTTLE_EXPERIMENTAL", raising=False)
+    monkeypatch.delenv("CUTTLE_AGENT_SCOPES", raising=False)
+    raw = {**(legacy or {}), "memory_max": "12G"}
+    assert get_settings_manager().set_setting(rs.SETTING_KEY, raw)
+    assert rs._load_limits() is None
+    set_enabled(rs.SETTING_KEY, True)
+    assert rs._load_limits()["memory_max"] == 12 * GiB
+    assert rs._load_limits()["memory_high"] == 6 * GiB
+    assert get_settings_manager().get_setting(rs.SETTING_KEY) == raw
+    set_enabled(rs.SETTING_KEY, False)
+    assert rs._load_limits() is None
+
+
+@pytest.mark.parametrize("switch", ["CUTTLE_EXPERIMENTAL", "CUTTLE_AGENT_SCOPES"])
+def test_experimental_resource_limits_respect_both_kill_switches(monkeypatch, switch):
+    from api.experimental import set_enabled
+
+    monkeypatch.delenv("CUTTLE_EXPERIMENTAL", raising=False)
+    monkeypatch.delenv("CUTTLE_AGENT_SCOPES", raising=False)
+    set_enabled(rs.SETTING_KEY, True)
+    assert rs._load_limits()["memory_max"] == 8 * GiB
+    monkeypatch.setenv(switch, "0")
+    assert rs._load_limits() is None
+
+
 def test_aggregate_limit_failure_is_reported_and_retried(monkeypatch):
     limits = rs.resolve_limits({"enabled": True}, env={}, total_memory=32 * GiB)
     monkeypatch.setattr(rs, "_load_limits", lambda: limits)

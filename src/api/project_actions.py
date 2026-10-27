@@ -901,6 +901,8 @@ def execute_inline_action(
     if resolved_path and not action.get("project_path"):
         action = dict(action)
         action["project_path"] = resolved_path
+    if project_path:
+        action = {**action, "context_project_path": project_path}
     action_type = str(action.get("type") or "").strip().lower()
     from api.action_replay import claim, duplicate_result, key, policy
     if cancel or policy(action.get("replay"), params) == "once":
@@ -1073,6 +1075,8 @@ def _execute_shell(
     env["CUTTLE_ACTION_CONTENT"] = str(params.get("content") or "")
     env["CUTTLE_ACTION_PARAMS_JSON"] = json.dumps(params, ensure_ascii=False)
     env["CUTTLE_PROJECT_PATH"] = str(root)
+    # Global actions run from the Cuttle install; this is the chat's project.
+    env["CUTTLE_CHAT_PROJECT_PATH"] = str(action.get("context_project_path") or root)
     env.update(_param_env_vars(params))
     if session_id:
         env["CUTTLE_SESSION_ID"] = str(session_id)

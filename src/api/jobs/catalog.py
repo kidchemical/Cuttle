@@ -17,6 +17,7 @@ STATUS_LABELS = {
     "failed": "failed",
     "cancelled": "cancelled",
     "expired": "expired",
+    "leftover": "leftover",
 }
 
 # Statuses that mean "work is not done yet" for the running-now view / badge.
@@ -47,4 +48,6 @@ def job_actions(kind: str, status: str) -> list:
             actions.append("cancel")
         if st in ("succeeded", "failed", "cancelled", "expired"):
             actions.append("rerun")
+    elif kind == "leftover":
+        actions.append("cancel")
     return actions

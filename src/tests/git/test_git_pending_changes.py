@@ -197,6 +197,47 @@ def test_heavy_collect_uses_path_limited_numstat(tmp_path: Path, monkeypatch):
     assert any(c[:3] == ["diff", "--numstat", "HEAD"] and "--" in c for c in calls)
 
 
+def test_collect_skips_numstat_for_filtered_lfs_paths(tmp_path: Path, monkeypatch):
+    """Diffing an LFS file re-runs its clean filter over the whole file (9s for a few videos)."""
+    from scripts.utilities import git_pending_changes as gpc
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        r = subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, check=False)
+        assert r.returncode == 0, r.stderr
+        return r
+
+    git("init")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    git("config", "filter.fake.clean", "cat")
+    git("config", "filter.fake.smudge", "cat")
+    (repo / ".gitattributes").write_text("*.webm filter=fake\n", encoding="utf-8")
+    (repo / "clip.webm").write_text("v1\n", encoding="utf-8")
+    (repo / "a.txt").write_text("one\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-m", "init")
+    (repo / "clip.webm").write_text("v2\n", encoding="utf-8")
+    (repo / "a.txt").write_text("one\ntwo\n", encoding="utf-8")
+
+    calls: list = []
+    real = gpc.git_run
+
+    def spy(args, cwd, timeout=20.0):
+        calls.append(list(args))
+        return real(args, cwd, timeout=timeout)
+
+    monkeypatch.setattr(gpc, "git_run", spy)
+    data = gpc.collect_pending_changes(str(repo))
+    by_path = {f["path"]: f for f in data["files"]}
+    assert by_path["a.txt"]["additions"] == 1
+    assert (by_path["clip.webm"]["additions"], by_path["clip.webm"]["deletions"]) == (0, 0)
+    numstats = [c for c in calls if c[:2] == ["diff", "--numstat"]]
+    assert numstats and all("--" in c and "clip.webm" not in c for c in numstats)
+
+
 def test_collect_pending_changes_temp_repo(tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()

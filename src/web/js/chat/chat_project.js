@@ -277,6 +277,11 @@
         if (!proj && !currentSessionId && currentProject) {
             proj = currentProject;
         }
+        // Space/group override beats the starred default, but only for
+        // welcome / unsaved new chats — existing sessions keep their cwd.
+        if (!proj && !currentSessionId && in_.spaceProject) {
+            proj = findDefaultProject(projects, in_.spaceProject);
+        }
         // Backfill path from the live registry when holding only id/name.
         if (proj && !proj.path && proj.id != null) {
             const byId = findProjectById(projects, proj.id);

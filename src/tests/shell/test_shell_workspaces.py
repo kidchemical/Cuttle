@@ -87,3 +87,39 @@ def test_workspace_api_save_list_replace_delete(workspace_settings, owner_sessio
 
     missing = client.delete(f"/api/shell/workspaces/{wid}")
     assert missing.status_code == 404
+
+
+def test_workspace_api_round_trips_spaces_and_groups(workspace_settings, owner_session):
+    from api import web_chat_api as w
+
+    client = w.app.test_client()
+    owner_session.sign_in(client)
+    spaces = {
+        "active": "sp_b",
+        "groups": [{"id": "sg_1", "name": "Work", "color": "#c58af9", "collapsed": False}],
+        "spaces": [
+            {"id": "sp_a", "name": "Docs", "groupId": "sg_1",
+             "root": {"type": "leaf", "page": "/chat_page.html?chat=5", "chat": "5"}},
+            {"id": "sp_b", "name": "Code", "groupId": "sg_1",
+             "root": {"type": "leaf", "page": "/chat_page.html?chat=6", "chat": "6"}},
+            {"id": "sp_c", "name": "Loose", "root": None},
+        ],
+    }
+    saved = client.post("/api/shell/workspaces", json={
+        "name": "Laptop",
+        "columns": [{"page": "/chat_page.html?chat=6", "flex": ""}],
+        "spaces": spaces,
+    }).get_json()
+    assert saved["workspace"]["spaces"] == spaces
+    assert saved["workspace"]["summary"].startswith("3 spaces · ")
+
+    listed = client.get("/api/shell/workspaces").get_json()["workspaces"]
+    assert listed[0]["spaces"] == spaces
+
+    # Re-saving without spaces (or with junk) drops the stale snapshot.
+    again = client.post("/api/shell/workspaces", json={
+        "name": "Laptop",
+        "columns": [{"page": "/chat_page.html", "flex": ""}],
+        "spaces": {"spaces": []},
+    }).get_json()
+    assert "spaces" not in again["workspace"]

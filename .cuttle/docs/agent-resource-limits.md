@@ -1,7 +1,15 @@
 # Agent process resource limits
 
 Optional Linux resource controls live in `api.agent_harness.resource_scope`.
-They are **disabled by default**. Cuttle launches installed vendor CLIs through
+They are **experimental and disabled by default**. Enable **Agent resource limits**
+in Settings → Experimental, or use:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.experimental set agent_resource_limits on
+PYTHONPATH=src .venv/bin/python -m api.experimental set agent_resource_limits off
+```
+
+Cuttle launches installed vendor CLIs through
 their existing adapters; resource controls do not change executable discovery,
 credentials, working directories, arguments or transport protocols.
 
@@ -23,7 +31,6 @@ into the existing settings object (preserve the file's schema and other keys):
 
 ```json
 "agent_resource_limits": {
-  "enabled": true,
   "memory_high": "6G",
   "memory_max": "8G",
   "memory_swap_max": "512M",
@@ -37,8 +44,10 @@ These are starting values for hosts that explicitly opt in, not universal
 workload recommendations. Account for build tools and other descendants as well
 as the agent itself. Percentages use physical host RAM, not available memory or
 a container's allowance. Choose smaller absolute limits in constrained hosts.
-Blank or `infinity` removes a memory ceiling. Set `enabled` to false or use
-`CUTTLE_AGENT_SCOPES=0` to stop attaching new launches.
+Blank or `infinity` removes a memory ceiling. The experimental flag is the only
+activation setting: the legacy machine `enabled` field is ignored, and existing
+machine configurations do not opt users in. Disable the flag, or use
+`CUTTLE_AGENT_SCOPES=0` / `CUTTLE_EXPERIMENTAL=0`, to stop attaching new launches.
 
 `MemoryHigh` requests reclaim/throttling; `MemoryMax` is a final ceiling that can
 terminate processes. Per-run scopes collect descendants; the shared

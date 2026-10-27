@@ -570,10 +570,48 @@
         return '';
     }
 
+    /* ---------- session list lookup ---------- */
+
+    // Session lists are replaced, never mutated, so one index per array is
+    // enough. History syncs look up every row against the full list; a linear
+    // find made that O(rows × sessions) and froze typing with ~1k chats.
+    const sessionIndexes = new WeakMap();
+
+    function sessionListIndex(list) {
+        let index = sessionIndexes.get(list);
+        if (index && index.length === list.length) return index;
+        index = { length: list.length, raw: new Map(), bare: new Map() };
+        list.forEach((s, i) => {
+            if (!s || s.id == null) return;
+            const raw = String(s.id);
+            if (!index.raw.has(raw)) index.raw.set(raw, i);
+            const bare = toAuthDbSessionId(s.id);
+            if (bare != null && !index.bare.has(String(bare))) index.bare.set(String(bare), i);
+        });
+        sessionIndexes.set(list, index);
+        return index;
+    }
+
+    /** First session in `list` whose id matches `sessionId` (sessionIdsEqual). */
+    function findSessionById(list, sessionId) {
+        if (!Array.isArray(list) || sessionId == null) return null;
+        const index = sessionListIndex(list);
+        const a = index.raw.get(String(sessionId));
+        const bare = toAuthDbSessionId(sessionId);
+        const b = bare != null ? index.bare.get(String(bare)) : undefined;
+        const i = a === undefined ? b : (b === undefined ? a : Math.min(a, b));
+        const hit = i === undefined ? null : list[i];
+        if (hit && sessionIdsEqual(hit.id, sessionId)) return hit;
+        if (i === undefined) return null;
+        sessionIndexes.delete(list); // rows changed under us: rescan once
+        return list.find((x) => x && sessionIdsEqual(x.id, sessionId)) || null;
+    }
+
     const api = {
         toAuthDbSessionId,
         canonicalizeChatSessionId,
         sessionIdsEqual,
+        findSessionById,
         formatChatDisplayId,
         sessionHasUnread,
         prefsHasUnreadFlag,

@@ -398,6 +398,85 @@ def test_newer_agent_edits_remain_reviewable_after_commit(repo):
     assert review(repo)['baseline'] == 'accepted\n'
 
 
+def test_bulk_new_files_remain_reviewable(repo):
+    snap = start(repo, 'import')
+    (repo / 'app.py').write_text('edited\n', encoding='utf-8', newline='')
+    for i in range(205):
+        (repo / f'asset{i}.bin.txt').write_text('x\n', encoding='utf-8', newline='')
+    end(snap, 'import')
+    assert set(files(repo)) == {'app.py'} | {f'asset{i}.bin.txt' for i in range(205)}
+
+
+@pytest.mark.parametrize('entrypoint', ['list', 'file', 'turn'])
+def test_newly_ignored_reviews_close_without_changing_disk(repo, entrypoint):
+    (repo / 'assets').mkdir()
+    snap = start(repo, 'generated')
+    asset = repo / 'assets' / 'generated.prefab'
+    asset.write_bytes(b'generated\n')
+    (repo / 'app.py').write_bytes(b'pending code\n')
+    end(snap, 'generated')
+    assert set(files(repo)) == {'app.py', 'assets/generated.prefab'}
+    # app.py remains tracked even if a new ignore pattern matches it.
+    (repo / '.gitignore').write_bytes(b'build/\nassets/\napp.py\n')
+    before = service.revision()
+    if entrypoint == 'file':
+        assert service.file_review(repo, 'assets/generated.prefab')['review'] is None
+    elif entrypoint == 'turn':
+        end(start(repo, 'next'), 'next')
+    assert set(files(repo)) == {'app.py'}
+    assert service.revision() > before
+    assert asset.read_bytes() == b'generated\n'
+    assert (repo / 'app.py').read_bytes() == b'pending code\n'
+
+
+def test_nested_files_keep_baseline_and_close_after_commit(repo):
+    path = repo / 'pkg' / 'nested' / 'mod.py'
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'original\n')
+    _git(repo, 'add', '-A')
+    _git(repo, 'commit', '-qm', 'nested file')
+    snap = start(repo, 'nested')
+    path.write_bytes(b'changed\n')
+    end(snap, 'nested')
+    assert review(repo, 'pkg/nested/mod.py')['baseline'] == 'original\n'
+    _git(repo, 'add', '-A')
+    _git(repo, 'commit', '-qm', 'accept nested change')
+    assert files(repo) == {}
+
+
+def test_listing_untracked_new_files_uses_constant_git_calls(repo, monkeypatch):
+    snap = start(repo, 'many')
+    for i in range(40):
+        (repo / f'new{i}.txt').write_text(f'{i}\n', encoding='utf-8', newline='')
+    end(snap, 'many')
+    calls = []
+    real = service._git
+    monkeypatch.setattr(service, '_git', lambda *a, **k: calls.append(a[1:]) or real(*a, **k))
+    assert len(files(repo)) == 40
+    assert len(calls) <= 4, calls
+
+
+def test_listing_probes_disk_and_git_outside_the_write_lock(repo, monkeypatch):
+    snap = start(repo, 'q1')
+    (repo / 'app.py').write_text('edited\n', encoding='utf-8', newline='')
+    end(snap, 'q1')
+    real = service._probe
+
+    def probe(*args, **kwargs):
+        import sqlite3
+        conn = sqlite3.connect(ReviewStore().path, timeout=0, isolation_level=None)
+        try:
+            conn.execute('BEGIN IMMEDIATE')  # raises "database is locked" if a writer holds it
+            conn.execute('ROLLBACK')
+        finally:
+            conn.close()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(service, '_probe', probe)
+    assert set(files(repo)) == {'app.py'}
+    start(repo, 'q2')
+
+
 def test_partial_commit_accepts_only_committed_hunks(repo):
     snap = start(repo, 'partial')
     (repo / 'app.py').write_text('ONE\ntwo\nthree\nfour\nFIVE\n', encoding='utf-8', newline='')

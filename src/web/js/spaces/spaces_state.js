@@ -7,10 +7,13 @@
 
    State shape:
      { active: <space id>,
-       spaces: [{ id, name, root, groupId?, color? }],
-       groups: [{ id, name, color, collapsed }] }
+       spaces: [{ id, name, root, groupId?, color?, projectOverride?, agentOverride? }],
+       groups: [{ id, name, color, collapsed, projectOverride?, agentOverride? }] }
    `root` is the inactive-space layout tree (or null). The active space's
    live layout is owned by the shell, not this module.
+   New-chat defaults: space override wins, else the tab's group, else the
+   starred project/agent. Existing sessions are unchanged. This is a Spaces
+   context-menu enhancement (color already ships), not an experimental flag.
    ================================================================ */
 (function (root) {
     'use strict';
@@ -52,6 +55,64 @@
         return hit ? hit.hex : null;
     }
 
+    /** Project identity for new chats in a space/group. Junk records drop. */
+    function sanitizeProjectOverride(raw) {
+        if (!raw || typeof raw !== 'object') return null;
+        const id = raw.id != null ? raw.id : (raw.projectId != null ? raw.projectId : null);
+        const path = String(raw.path || raw.projectPath || '').trim();
+        const name = String(raw.name || raw.projectName || '').trim();
+        if (id == null && !path && !name) return null;
+        const out = { name: name || 'Project' };
+        if (id != null && String(id) !== '') out.id = id;
+        if (path) out.path = path;
+        return out;
+    }
+
+    /** Sticky-agent identity for new chats in a space/group. Requires a prefix. */
+    function sanitizeAgentOverride(raw) {
+        if (!raw || typeof raw !== 'object') return null;
+        let prefix = String(raw.prefix || raw.slash || '').trim();
+        if (!prefix && raw.id) prefix = '/' + String(raw.id).trim();
+        if (!prefix) return null;
+        if (prefix.charAt(0) !== '/') prefix = '/' + prefix;
+        if (prefix.charAt(prefix.length - 1) !== ' ') prefix += ' ';
+        const out = {
+            prefix,
+            label: String(raw.label || prefix).trim() || prefix.trim(),
+            category: String(raw.category || raw.id || 'command'),
+        };
+        const id = String(raw.id || '').trim().toLowerCase();
+        if (id) out.id = id;
+        const model = String(raw.model || '').trim();
+        const effort = String(raw.effort || '').trim();
+        if (model) out.model = model;
+        if (effort) out.effort = effort;
+        return out;
+    }
+
+    function attachOverrides(entry, raw) {
+        const project = sanitizeProjectOverride(raw && raw.projectOverride);
+        const agent = sanitizeAgentOverride(raw && raw.agentOverride);
+        if (project) entry.projectOverride = project;
+        if (agent) entry.agentOverride = agent;
+        return entry;
+    }
+
+    /**
+     * New-chat project/agent for a space: the space's own override, else
+     * its group's, else null (caller falls through to starred defaults).
+     * Fields inherit independently.
+     */
+    function resolveNewChatDefaults(state, spaceId) {
+        const space = getSpaceById(state, spaceId || (state && state.active));
+        if (!space) return { project: null, agent: null };
+        const group = space.groupId ? getGroupById(state, space.groupId) : null;
+        return {
+            project: space.projectOverride || (group && group.projectOverride) || null,
+            agent: space.agentOverride || (group && group.agentOverride) || null,
+        };
+    }
+
     function getSpaceById(state, id) {
         if (!state || !id) return null;
         return (state.spaces || []).find((s) => s && s.id === id) || null;
@@ -81,12 +142,12 @@
             const cleanGroups = [];
             (Array.isArray(data.groups) ? data.groups : []).forEach((g) => {
                 if (!g || !g.id || groupById.has(String(g.id))) return;
-                const clean = {
+                const clean = attachOverrides({
                     id: String(g.id),
                     name: String(g.name || '').slice(0, MAX_GROUP_NAME),
                     color: sanitizeColor(g.color) || DEFAULT_COLOR,
                     collapsed: !!g.collapsed,
-                };
+                }, g);
                 groupById.set(clean.id, clean);
                 cleanGroups.push(clean);
             });
@@ -103,6 +164,7 @@
                     }
                     const color = sanitizeColor(s.color);
                     if (color) entry.color = color;
+                    attachOverrides(entry, s);
                     return entry;
                 });
             if (!spaces.length) return null;
@@ -195,6 +257,9 @@
         newSpaceId,
         newGroupId,
         sanitizeColor,
+        sanitizeProjectOverride,
+        sanitizeAgentOverride,
+        resolveNewChatDefaults,
         getSpaceById,
         getGroupById,
         createDefaultState,
