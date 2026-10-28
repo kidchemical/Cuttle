@@ -1004,3 +1004,61 @@ def test_list_live_for_parent_drops_stale_unattached(tmp_path: Path):
     assert recent.id in live           # freshly-finished, no bubble yet: synthesis window
     assert attached.id not in live     # terminal + bound to a bubble
     assert stale.id not in live        # terminal + unattached + old: dropped
+
+
+def _batch_with_child(db, owner, parent, *, lifetime="one_shot", title="Kid"):
+    from api.subagents import store
+    from api.subagents.types import ChildSpec
+
+    batch = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all", lifetime=lifetime)
+    child_sid = db.create_subagent_chat_session(owner, parent_session_id=parent, session_name=title)
+    child = store.insert_child(db, batch_id=batch.id, session_id=child_sid, sort_index=0,
+                               spec=ChildSpec(title=title, message="go"), prompt="go")
+    return batch, child
+
+
+def _age_child(db, child_id):
+    conn = db._get_connection()
+    conn.execute("UPDATE subagent_children SET finished_at = '2020-01-01 00:00:00' WHERE id = ?", (child_id,))
+    conn.commit()
+    conn.close()
+
+
+def test_open_batch_with_only_finished_children_stops_painting(tmp_path: Path):
+    """Regression (CH-001548): a batch left ``running`` after its only child died
+    painted that card on every later turn's working bubble, then vanished."""
+    from api.subagents import store
+
+    db, _db_path, owner, parent = _seed(tmp_path)
+    working, kid = _batch_with_child(db, owner, parent, title="Working")
+    store.update_child(db, kid.id, status="running")
+    dead, dead_kid = _batch_with_child(db, owner, parent, title="Dead")
+    store.update_child(db, dead_kid.id, status="failed", finished=True)
+    store.update_batch(db, dead.id, attach_message_id=99)
+    idle, idle_kid = _batch_with_child(db, owner, parent, lifetime="conversational", title="Idle")
+    store.update_child(db, idle_kid.id, status="done", finished=True)
+    just_done, just_kid = _batch_with_child(db, owner, parent, title="JustDone")
+    store.update_child(db, just_kid.id, status="done", finished=True)
+    old_open, old_kid = _batch_with_child(db, owner, parent, title="OldOpen")
+    store.update_child(db, old_kid.id, status="failed", finished=True)
+    _age_child(db, old_kid.id)
+    _age_child(db, idle_kid.id)
+
+    live = {b.id for b in store.list_live_for_parent(db, parent)}
+    assert working.id in live          # a child is running
+    assert just_done.id in live        # round just ended, unattached: synthesis window
+    assert dead.id not in live         # open, children finished, bound to a bubble
+    assert idle.id not in live         # idle conversational round, long finished
+    assert old_open.id not in live     # open, child died long ago
+
+
+def test_orphan_reconcile_closes_the_batch(tmp_path: Path, monkeypatch):
+    from api.subagents import service, store
+
+    db, _db_path, owner, parent = _seed(tmp_path)
+    batch, kid = _batch_with_child(db, owner, parent)
+    store.update_child(db, kid.id, status="running", owner_pid=999_999)
+    monkeypatch.setattr(store, "_pid_alive", lambda pid: False)
+    service._reconcile(db)
+    assert store.get_child(db, kid.id).status == "failed"
+    assert service._refresh(db, batch.id).status == "failed"

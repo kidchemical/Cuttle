@@ -113,9 +113,15 @@ def _reconcile(db, batch: Optional[BatchRecord] = None) -> None:
     if batch is not None and all(c.status in TERMINAL_CHILD for c in batch.children):
         return
     try:
-        store.reconcile_orphan_children(db)
+        orphans = store.reconcile_orphan_children(db)
     except Exception:
-        pass
+        return
+    # A batch whose last child just died must close too, or it reads as running.
+    for batch_id in {c.batch_id for c in map(lambda cid: store.get_child(db, cid), orphans) if c}:
+        try:
+            _finalize_if_complete(db, _refresh(db, batch_id))
+        except Exception:
+            pass
 
 
 def _finalize_if_complete(db, batch: BatchRecord) -> BatchRecord:
@@ -666,8 +672,6 @@ def public_parent_subagents(session_id: Any, *, db=None) -> List[Dict[str, Any]]
             for b in live for c in b.children
         ):
             _reconcile(db)
-            for b in live:
-                _finalize_if_complete(db, b)
             live = store.list_live_for_parent(db, int(sid))
         card = _launcher_fn()
         launchers: List[Dict[str, Any]] = []

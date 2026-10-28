@@ -233,7 +233,17 @@ _TERMINAL_UNATTACHED_GRACE_SEC = 900
 
 
 def _batch_age_sec(batch: BatchRecord) -> float:
-    raw = (batch.finished_at or batch.created_at or "").strip()
+    return _age_sec(batch.finished_at or batch.created_at)
+
+
+def _round_age_sec(batch: BatchRecord) -> float:
+    """Age of the batch's latest round: its newest child finish, else the batch."""
+    ends = [c.finished_at for c in batch.children if c.finished_at]
+    return _age_sec(max(ends)) if ends else _batch_age_sec(batch)
+
+
+def _age_sec(raw: Optional[str]) -> float:
+    raw = (raw or "").strip()
     if not raw:
         return 0.0
     try:
@@ -246,17 +256,20 @@ def _batch_age_sec(batch: BatchRecord) -> float:
 def list_live_for_parent(db, parent_session_id: int) -> List[BatchRecord]:
     """Batches that should paint extra orbs on the parent typing indicator.
 
-    Running batches always. A terminal batch that never bound a parent bubble
-    stays only briefly (the parent turn's synthesis window), so orbs last through
-    synthesis instead of vanishing the moment children complete — but a stale or
-    CLI-spawned batch (nothing will ever bind it) drops after the grace rather
-    than painting every later turn.
+    Batches with a child still working always. A batch whose children are all
+    finished (terminal, an idle conversational batch, or one left open when its
+    child died) stays only briefly if it never bound a parent bubble (the parent
+    turn's synthesis window), so orbs last through synthesis instead of vanishing
+    the moment children complete — but a stale or CLI-spawned batch (nothing will
+    ever bind it) drops after the grace rather than painting every later turn.
     """
     out: List[BatchRecord] = []
     for batch in list_batches_for_parent(db, parent_session_id):
-        if batch.status not in TERMINAL_BATCH:
+        working = batch.status not in TERMINAL_BATCH and (
+            not batch.children or any(c.status not in TERMINAL_CHILD for c in batch.children))
+        if working:
             out.append(batch)
-        elif not batch.attach_message_id and _batch_age_sec(batch) < _TERMINAL_UNATTACHED_GRACE_SEC:
+        elif not batch.attach_message_id and _round_age_sec(batch) < _TERMINAL_UNATTACHED_GRACE_SEC:
             out.append(batch)
     return out
 
