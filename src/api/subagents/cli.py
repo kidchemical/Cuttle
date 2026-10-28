@@ -439,20 +439,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     _ensure_src_on_path()
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
-    if getattr(args, "timeout", None) is None:
-        args.timeout = _resolve_wait_timeout()
+    if hasattr(args, "timeout"):
+        from api.agent_harness.timeouts import turn_budget
+
+        args.timeout = (
+            _resolve_wait_timeout() if args.timeout is None else turn_budget(args.timeout)
+        )
     return int(args.func(args) or 0)
 
 
 def _resolve_wait_timeout() -> float:
     """Default ``--wait`` supervision deadline (seconds).
 
-    Settings → Agents (``timeouts.subagent_wait_seconds``); falls back to
-    ``DEFAULT_TIMEOUT_SEC`` when settings are unreadable.
+    Settings → Agents (``timeouts.subagent_wait_seconds``; 0 = unlimited);
+    falls back to ``DEFAULT_TIMEOUT_SEC`` when settings are unreadable.
     """
     try:
+        from api.agent_harness.timeouts import turn_budget
         from managers.settings_manager import get_settings_manager
-        return float(get_settings_manager().get_timeouts()["subagent_wait_seconds"])
+        return turn_budget(get_settings_manager().get_timeouts()["subagent_wait_seconds"])
     except Exception:
         from api.subagents.types import DEFAULT_TIMEOUT_SEC
         return DEFAULT_TIMEOUT_SEC

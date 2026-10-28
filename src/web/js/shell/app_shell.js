@@ -790,6 +790,7 @@ const PAGE_TITLES = {
     '/achievements_page.html': 'Achievements',
     '/gizmos_page.html': 'Gizmos',
     '/test_lab_page.html': 'Test Lab',
+    '/secrets_page.html': 'Secrets',
     '/ide_page.html': 'IDE',
     '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',

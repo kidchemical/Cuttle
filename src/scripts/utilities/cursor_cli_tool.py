@@ -324,7 +324,8 @@ def _peel_cursor_final_answer(final_text: str, interim: List[str]) -> str:
 # Default wall-clock per agent -p segment (Cuttle-imposed, not Cursor CLI).
 _CURSOR_AGENT_TIMEOUT_DEFAULT = 3600.0
 _CURSOR_AGENT_TIMEOUT_MIN = 60.0
-_CURSOR_AGENT_TIMEOUT_MAX = 7200.0
+# Matches Settings → Agents (managers.settings_manager.TIMEOUT_MAX_SECONDS).
+_CURSOR_AGENT_TIMEOUT_MAX = 86400.0
 _CURSOR_AGENT_MAX_SEGMENTS_DEFAULT = 4
 _CURSOR_CONTINUE_PROMPT = (
     "Continue where you left off. Finish the task without repeating completed work."
@@ -480,7 +481,12 @@ def _cursor_reply_looks_incomplete(answer: str, tool_count: int = 0) -> bool:
 
 
 def _cursor_agent_timeout_sec(explicit: Optional[float] = None) -> float:
-    """Resolve per-segment timeout: explicit arg, else CUTTLE_CURSOR_AGENT_TIMEOUT_SEC, else 3600."""
+    """Resolve per-segment timeout: explicit arg, else CUTTLE_CURSOR_AGENT_TIMEOUT_SEC, else 3600.
+
+    0 / negative / the harness unlimited budget mean no segment limit.
+    """
+    from api.agent_harness.timeouts import UNLIMITED_TURN_SECONDS, is_unlimited
+
     if explicit is not None:
         try:
             val = float(explicit)
@@ -495,6 +501,8 @@ def _cursor_agent_timeout_sec(explicit: Optional[float] = None) -> float:
                 val = _CURSOR_AGENT_TIMEOUT_DEFAULT
         else:
             val = _CURSOR_AGENT_TIMEOUT_DEFAULT
+    if is_unlimited(val):
+        return UNLIMITED_TURN_SECONDS
     return max(_CURSOR_AGENT_TIMEOUT_MIN, min(_CURSOR_AGENT_TIMEOUT_MAX, val))
 
 

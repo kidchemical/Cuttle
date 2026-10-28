@@ -111,6 +111,22 @@ def _safe_json_loads(raw: str) -> Optional[Any]:
         return None
 
 
+_SECRET_FIELD_TYPES = ("secret", "secret_approval")
+
+
+def _secret_field_extras(f: Dict[str, Any]) -> Dict[str, Any]:
+    """Keys the secret-vault field types carry (owner: ``api.secret_vault.cards``)."""
+    if str(f.get("type") or "").strip().lower() not in _SECRET_FIELD_TYPES:
+        return {}
+    names = f.get("secrets") if isinstance(f.get("secrets"), list) else []
+    return {
+        "secret": str(f.get("secret") or "").strip()[:64],
+        "secrets": [str(n).strip()[:64] for n in names if str(n).strip()][:10],
+        "command": str(f.get("command") or "")[:500],
+        "value": "",  # never prefill a secret input
+    }
+
+
 def normalize_action_form_spec(
     spec: Any,
     *,
@@ -208,6 +224,7 @@ def normalize_action_form_spec(
                     "value": f.get("value", f.get("default", "")),
                     "line": str(f.get("line") or f.get("body") or "").strip(),
                     "options": f.get("options") if isinstance(f.get("options"), list) else [],
+                    **_secret_field_extras(f),
                     "lock": (
                         str(f.get("lock")).strip().lower()
                         if str(f.get("lock") or "").strip().lower() in _VALID_LOCK
@@ -931,7 +948,10 @@ def qa_form_answers(spec: Dict[str, Any], fields: Dict[str, Any]) -> List[Tuple[
         ftype = str(defn.get("type") or "text").lower()
         raw = fields.get(fid)
         labels = _opt_labels(defn)
-        if ftype == "checkboxes":
+        if ftype in _SECRET_FIELD_TYPES:
+            from api.secret_vault.cards import answer_text
+            answer = answer_text(ftype, raw, defn)
+        elif ftype == "checkboxes":
             picked = raw if isinstance(raw, list) else ([raw] if raw else [])
             answer = ", ".join(labels.get(str(v), str(v)) for v in picked) or "(none)"
         elif ftype in ("checkbox", "toggle"):

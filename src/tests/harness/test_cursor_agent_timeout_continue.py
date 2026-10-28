@@ -19,9 +19,20 @@ def test_timeout_sec_default_and_clamp(monkeypatch):
     assert _cursor_agent_timeout_sec() == 3600.0
     assert _cursor_agent_timeout_sec(900) == 900.0
     assert _cursor_agent_timeout_sec(10) == 60.0
-    assert _cursor_agent_timeout_sec(99999) == 7200.0
+    assert _cursor_agent_timeout_sec(7200) == 7200.0
+    assert _cursor_agent_timeout_sec(99999) == 86400.0
     monkeypatch.setenv("CUTTLE_CURSOR_AGENT_TIMEOUT_SEC", "1200")
     assert _cursor_agent_timeout_sec() == 1200.0
+
+
+def test_timeout_sec_unlimited(monkeypatch):
+    from api.agent_harness.timeouts import UNLIMITED_TURN_SECONDS
+
+    monkeypatch.delenv("CUTTLE_CURSOR_AGENT_TIMEOUT_SEC", raising=False)
+    assert _cursor_agent_timeout_sec(0) == UNLIMITED_TURN_SECONDS
+    assert _cursor_agent_timeout_sec(UNLIMITED_TURN_SECONDS) == UNLIMITED_TURN_SECONDS
+    monkeypatch.setenv("CUTTLE_CURSOR_AGENT_TIMEOUT_SEC", "0")
+    assert _cursor_agent_timeout_sec() == UNLIMITED_TURN_SECONDS
 
 
 def test_max_segments_default_and_clamp(monkeypatch):

@@ -20,6 +20,23 @@ from typing import Callable, Optional
 ABSOLUTE_MULTIPLIER = 4.0
 ABSOLUTE_MIN_EXTRA = 600.0
 
+# "No limit" as a finite budget: every adapter does deadline arithmetic and
+# passes the value to asyncio/threading waits, which reject float('inf').
+UNLIMITED_TURN_SECONDS = 10 * 365 * 86400.0
+
+
+def turn_budget(seconds: Optional[float]) -> float:
+    """Usable turn budget: ``None`` / ``<= 0`` (Settings "unlimited") → no limit."""
+    try:
+        value = float(seconds) if seconds is not None else 0.0
+    except (TypeError, ValueError):
+        value = 0.0
+    return value if value > 0 else UNLIMITED_TURN_SECONDS
+
+
+def is_unlimited(seconds: Optional[float]) -> bool:
+    return turn_budget(seconds) >= UNLIMITED_TURN_SECONDS
+
 
 class ActivityDeadline:
     """Expires when the turn goes silent for ``idle_timeout`` seconds.

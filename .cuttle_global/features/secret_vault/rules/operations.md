@@ -1,0 +1,1 @@
+Passwords, API keys, tokens or other secrets a command needs → `feature/secret_vault/docs/secret-vault.md`. Never ask for a secret in chat text and never print one; use `python -m api.secret_vault run`.

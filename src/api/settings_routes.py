@@ -157,6 +157,7 @@ def validate_timeouts_update(data: dict) -> tuple[bool, str, dict]:
     """Body: { agent_run_seconds?: int, subagent_wait_seconds?: int }.
 
     Bounds are shared with ``managers.settings_manager`` (one source).
+    0, null, or blank means unlimited and is stored as ``None``.
     At least one field is required; unknown fields are ignored.
     """
     from managers.settings_manager import TIMEOUT_MAX_SECONDS, TIMEOUT_MIN_SECONDS
@@ -166,13 +167,20 @@ def validate_timeouts_update(data: dict) -> tuple[bool, str, dict]:
     for key in ("agent_run_seconds", "subagent_wait_seconds"):
         if key not in data:
             continue
+        raw = data.get(key)
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            patch[key] = None
+            continue
         try:
-            value = int(data.get(key))
+            value = int(raw)
         except (TypeError, ValueError):
             return False, f"{key} must be an integer number of seconds", {}
+        if value == 0:
+            patch[key] = None
+            continue
         if not (TIMEOUT_MIN_SECONDS <= value <= TIMEOUT_MAX_SECONDS):
             return False, (
-                f"{key} must be between {TIMEOUT_MIN_SECONDS} and "
+                f"{key} must be 0 (unlimited) or between {TIMEOUT_MIN_SECONDS} and "
                 f"{TIMEOUT_MAX_SECONDS} seconds"
             ), {}
         patch[key] = value

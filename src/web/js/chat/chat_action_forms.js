@@ -492,6 +492,13 @@
                 const req = f.required ? '<span class="req">*</span>' : '';
                 const help = f.help ? `<div class="form-help">${esc(f.help)}</div>` : '';
                 const dis = controlsDisabled ? ' disabled' : '';
+                if (type === 'secret' || type === 'secret_approval') {
+                    const secretFields = root.CuttleChatSecretFields;
+                    return secretFields
+                        ? secretFields.renderFieldHtml(f, { fid, label, req, help, disabled: controlsDisabled, esc })
+                        : `<div class="form-field"><div class="form-label">${label}</div>` +
+                          `<div class="form-help">Secret fields are unavailable on this page. Refresh Cuttle.</div></div>`;
+                }
                 if (type === 'textarea') {
                     return `<div class="form-field"><label class="form-label">${label}${req}</label>` +
                         `<textarea class="form-textarea" data-field-id="${fid}" ${f.required ? 'required' : ''}${dis}>${esc(f.value ?? '')}</textarea>${help}</div>`;

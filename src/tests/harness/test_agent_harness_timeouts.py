@@ -327,3 +327,15 @@ def test_opencode_title_or_transient_log_errors_do_not_end_turn():
     assert oc.opencode_terminal_log_error(
         'level=ERROR message="stream error" small=false error.error="AI_APICallError: socket hang up"'
     ) is None
+
+
+def test_turn_budget_zero_or_missing_is_unlimited():
+    from api.agent_harness.timeouts import UNLIMITED_TURN_SECONDS, is_unlimited, turn_budget
+
+    for raw in (0, None, -5, "junk"):
+        assert turn_budget(raw) == UNLIMITED_TURN_SECONDS
+        assert is_unlimited(raw)
+    assert turn_budget(7200) == 7200.0 and not is_unlimited(7200)
+    # Long enough for any turn, still finite for asyncio/threading waits.
+    import threading
+    assert UNLIMITED_TURN_SECONDS < threading.TIMEOUT_MAX

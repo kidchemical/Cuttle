@@ -34,6 +34,8 @@ pywinpty>=3.0.5; sys_platform == "win32"
 # Auth and transport security
 bcrypt>=5.0.0
 cryptography>=50.0.2
+# OS keyring (Windows Credential Manager / macOS Keychain / Secret Service) for the experimental secret vault
+keyring>=25.0
 
 # Config parsing (agent catalogs, project commands/actions, dashboards)
 PyYAML>=6.0.3

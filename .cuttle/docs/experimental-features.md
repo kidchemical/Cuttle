@@ -223,6 +223,39 @@ Python environment when present, and keep their recent output in the Cuttle
 home database. Discovery supports pytest files, npm `test` scripts, Go modules,
 and Rust Cargo packages. Only the owner can inspect projects or start runs.
 
+## Secrets App (secret vault)
+
+Flag `secret_vault` (default off). Agents use passwords, API keys and other
+secrets in commands without seeing them. Open **Apps → Secrets** (stashed;
+hidden while the flag is off) to add or replace values, choose storage
+backends, set the approval policy (once per chat per secret by default, every
+use, or never), revoke approvals, and toggle output redaction. Agents ask for
+missing values with a chat card whose `secret` field PUTs straight to the
+vault. Approval cards (`secret_approval`) show the exact command.
+
+Owner `src/api/secret_vault/`. `core/` is stdlib-only and Cuttle-free:
+`backends` (OS keyring via the MIT `keyring` package, so Windows Credential
+Manager, macOS Keychain, Secret Service or KWallet; any CLI manager through
+argv templates, with presets for pass, secret-tool, 1Password `op`, Bitwarden
+`bw` and KeePassXC), `deliver` (env / 0600 temp file / stdin / askpass for
+ssh, sudo and git; never argv), `redact` (streaming, plus URL and base64
+forms), and `askpass` (refuses yes/no host-key prompts, retry cap).
+`service` keeps names, metadata and grants in `<home>/secret_vault/vault.json`
+(no values). `cards` builds chat cards, `routes` is owner-only transport with
+no value-returning route, and `__main__` holds the agent verbs (`status`,
+`list`, `request`, `run`, `grants`; there is deliberately no `get`). Client:
+`js/chat/chat_secret_fields.js` (`CuttleChatSecretFields`; inputs carry no
+`data-field-id`, so the generic collector never sees a value),
+`js/secret_vault/secrets_model.js` (pure) + `secrets_page.js`. Agent guidance
+is a context bundle: `.cuttle_global/features/secret_vault/`.
+
+Threat model: approval is enforced by Cuttle's CLI and is a consent record,
+not a sandbox against an agent running as the same OS user. Secrets stay out
+of transcripts, model context, provider logs, argv/process lists and command
+output. Tests: `src/tests/secret_vault/`. Teardown: see the
+`api/secret_vault/__init__.py` docstring. Turning the flag off keeps stored
+values in the keyring or manager and metadata in the Cuttle home.
+
 ## IDE App
 
 The workspace follows Cuttle's theme, including live palette changes and the

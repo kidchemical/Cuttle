@@ -6903,6 +6903,22 @@ button.cuttle-button.is-unselected {
     margin-bottom: 10px;
 }
 
+/* Secret-vault fields (chat_secret_fields.js) */
+.cuttle-secret-command {
+    margin: 6px 0 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--bg-tertiary, rgba(127, 127, 127, 0.12));
+    font-size: 0.82em;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.cuttle-secret-field .form-help code,
+.cuttle-secret-approval .form-help code {
+    font-size: 0.95em;
+}
+
 .cuttle-action-form-progress {
     margin: 0 0 12px;
     padding: 8px 10px;

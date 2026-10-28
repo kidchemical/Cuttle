@@ -24,6 +24,7 @@ agent toolkit.
 | Model API provider catalogs | `python -m api.model_providers` (list, models, inspect) | Cuttle `.cuttle/docs/model-providers.md` |
 | Background helper execution catalogs | `python -m api.background_helpers` (list, models, inspect; no inference) | Cuttle `.cuttle/docs/model-providers.md` |
 | Experimental flags | `python -m api.experimental` (list, get, set, reset) | Cuttle `.cuttle/docs/experimental-features.md` |
+| Secret vault (experimental `secret_vault`; use secrets without reading them) | `python -m api.secret_vault` (status, list, request, run) | `feature/secret_vault/docs/secret-vault.md` (loaded while enabled) |
 | Tasks gizmos | `python -m api.gizmos tasks` | `gizmos.md` |
 | Cuttle QA / promo accounts | `python -m api.fixture_accounts` | Cuttle project `.cuttle/docs/fixture-accounts.md` |
 | Discord reads | `python -m api.discord_cli` | `discord.md` (posts stay on `discord.post`) |

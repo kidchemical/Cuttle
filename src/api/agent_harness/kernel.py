@@ -602,11 +602,14 @@ def _resolve_agent_run_timeout() -> float:
     """Default turn budget: Settings → Agents (``timeouts.agent_run_seconds``).
 
     One source for every harness run that does not pass an explicit timeout;
-    falls back to 3600s if settings are unreadable.
+    0 (unlimited) becomes ``UNLIMITED_TURN_SECONDS``; falls back to 3600s if
+    settings are unreadable.
     """
+    from api.agent_harness.timeouts import turn_budget
+
     try:
         from managers.settings_manager import get_settings_manager
-        return float(get_settings_manager().get_timeouts()["agent_run_seconds"])
+        return turn_budget(get_settings_manager().get_timeouts()["agent_run_seconds"])
     except Exception:
         return 3600.0
 
@@ -640,6 +643,10 @@ def run_agent_web_command(
     """
     if timeout is None:
         timeout = _resolve_agent_run_timeout()
+    else:
+        from api.agent_harness.timeouts import turn_budget
+
+        timeout = turn_budget(timeout)
     pair = get_agent(agent_id, project_path=project_path)
     if not pair:
         return {

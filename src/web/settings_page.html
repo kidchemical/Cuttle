@@ -353,14 +353,14 @@
             </div>
 
             <div class="settings-group" id="timeoutsSettings">
-                <h3 class="settings-title"><span class="emoji">⏱️</span> Timeouts <span class="settings-scope" data-scope="server" title="Stored in this server's settings; applies to every chat it runs.">This server</span><button type="button" class="cuttle-info" data-tooltip="How long an agent turn may run, and how long Cuttle waits for a subagent round before cancelling its unfinished work. Raise these for long coding tasks." aria-label="About Timeouts">i</button></h3>
+                <h3 class="settings-title"><span class="emoji">⏱️</span> Timeouts <span class="settings-scope" data-scope="server" title="Stored in this server's settings; applies to every chat it runs.">This server</span><button type="button" class="cuttle-info" data-tooltip="How long an agent turn may run, and how long Cuttle waits for a subagent round before cancelling its unfinished work. Raise these for long coding tasks, or set 0 / leave blank for no limit." aria-label="About Timeouts">i</button></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Agent run limit</strong><button type="button" class="cuttle-info" data-tooltip="Maximum seconds for one agent turn before Cuttle stops the harness. Streaming CLIs treat this as an idle budget, so a productive turn keeps going." aria-label="About Agent run limit">i</button>
                     </div>
                     <div class="setting-control">
-                        <input type="number" id="agentRunTimeoutSeconds" class="setting-input" min="60" max="86400" step="60" inputmode="numeric" aria-label="Agent run limit in seconds">
-                        <span class="setting-description">seconds</span>
+                        <input type="number" id="agentRunTimeoutSeconds" class="setting-input" min="0" max="86400" step="60" inputmode="numeric" placeholder="Unlimited" aria-label="Agent run limit in seconds">
+                        <span class="setting-description">seconds (0 or blank = unlimited)</span>
                     </div>
                 </div>
                 <div class="setting-item">
@@ -368,8 +368,8 @@
                         <strong>Subagent supervision limit</strong><button type="button" class="cuttle-info" data-tooltip="How long a --wait subagent round may run before Cuttle cancels the work that has not finished." aria-label="About Subagent supervision limit">i</button>
                     </div>
                     <div class="setting-control">
-                        <input type="number" id="subagentWaitTimeoutSeconds" class="setting-input" min="60" max="86400" step="60" inputmode="numeric" aria-label="Subagent supervision limit in seconds">
-                        <span class="setting-description">seconds</span>
+                        <input type="number" id="subagentWaitTimeoutSeconds" class="setting-input" min="0" max="86400" step="60" inputmode="numeric" placeholder="Unlimited" aria-label="Subagent supervision limit in seconds">
+                        <span class="setting-description">seconds (0 or blank = unlimited)</span>
                     </div>
                 </div>
                 <div class="provider-picker">
@@ -2271,6 +2271,13 @@
             }
         }
 
+        /** 0 from the server is unlimited: show a blank field with the "Unlimited" placeholder. */
+        function showTimeoutValues(d, agentEl, subEl) {
+            const fmt = (v) => (v == null || Number(v) <= 0) ? '' : String(v);
+            if (agentEl) agentEl.value = fmt(d.agent_run_seconds);
+            if (subEl) subEl.value = fmt(d.subagent_wait_seconds);
+        }
+
         async function loadTimeoutsSettings() {
             try {
                 const r = await fetch('/api/settings/timeouts');
@@ -2278,8 +2285,7 @@
                 if (!d.success) throw new Error(d.error || 'Failed to load');
                 const agentEl = document.getElementById('agentRunTimeoutSeconds');
                 const subEl = document.getElementById('subagentWaitTimeoutSeconds');
-                if (agentEl && d.agent_run_seconds != null) agentEl.value = String(d.agent_run_seconds);
-                if (subEl && d.subagent_wait_seconds != null) subEl.value = String(d.subagent_wait_seconds);
+                showTimeoutValues(d, agentEl, subEl);
             } catch (e) {
                 (window.showToast || alert)('Could not load timeout settings: ' + (e.message || e), 'error');
             }
@@ -2289,13 +2295,10 @@
             const agentEl = document.getElementById('agentRunTimeoutSeconds');
             const subEl = document.getElementById('subagentWaitTimeoutSeconds');
             const statusEl = document.getElementById('timeoutsStatus');
+            // Blank or 0 = unlimited (the server stores it as null).
             const payload = {};
-            if (agentEl && agentEl.value !== '') payload.agent_run_seconds = parseInt(agentEl.value, 10);
-            if (subEl && subEl.value !== '') payload.subagent_wait_seconds = parseInt(subEl.value, 10);
-            if (!Object.keys(payload).length) {
-                if (statusEl) statusEl.textContent = 'Enter at least one timeout.';
-                return;
-            }
+            if (agentEl) payload.agent_run_seconds = agentEl.value === '' ? null : parseInt(agentEl.value, 10);
+            if (subEl) payload.subagent_wait_seconds = subEl.value === '' ? null : parseInt(subEl.value, 10);
             try {
                 const r = await fetch('/api/settings/timeouts', {
                     method: 'POST',
@@ -2304,8 +2307,7 @@
                 });
                 const d = await r.json();
                 if (!d.success) throw new Error(d.error || 'Save failed');
-                if (agentEl && d.agent_run_seconds != null) agentEl.value = String(d.agent_run_seconds);
-                if (subEl && d.subagent_wait_seconds != null) subEl.value = String(d.subagent_wait_seconds);
+                showTimeoutValues(d, agentEl, subEl);
                 if (statusEl) statusEl.textContent = '';
                 (window.showToast || alert)('Timeouts saved', 'info');
             } catch (e) {

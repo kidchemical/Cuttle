@@ -332,6 +332,13 @@ except Exception as _gizmos_err:
     print(f"[GIZMOS] Failed to register routes: {_gizmos_err}")
 
 try:
+    from api.secret_vault.routes import secret_vault_bp, secret_vault_pages_bp
+    app.register_blueprint(secret_vault_bp)
+    app.register_blueprint(secret_vault_pages_bp)
+except Exception as _secret_vault_err:
+    print(f"[SECRET VAULT] Failed to register routes: {_secret_vault_err}")
+
+try:
     from api.chat_vfx.routes import chat_vfx_bp
     app.register_blueprint(chat_vfx_bp)
 except Exception as _vfx_err:

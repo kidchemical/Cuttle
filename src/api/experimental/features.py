@@ -26,6 +26,12 @@ register_flag(FlagSpec(
 ))
 
 register_flag(FlagSpec(
+    id="secret_vault", label="Secret vault",
+    description="Let agents use passwords, API keys and other secrets in commands without seeing them. Values are entered in chat secret fields or the Secrets App, kept in the OS keyring or a password-manager CLI, injected through env/stdin/files/askpass (ssh, sudo, git), and redacted from output. Use needs your approval per chat by default.",
+    default=False, category="agents", risk="medium", since="0.0.0", needs_restart=False, context_bundle=True,
+))
+
+register_flag(FlagSpec(
     id="google_signin", label="Google sign-in",
     description="Show Google sign-in and sign-up options, account linking, and Google photo controls on authentication and account screens.",
     default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,

@@ -24,7 +24,7 @@ def test_mesh_rail_app_registered_and_stashed():
     order = shell.split("const CANONICAL_RAIL_ITEM_ORDER")[1].split("];")[0]
     assert "'nav-mesh'" in order
     assert "'nav-mesh'" in shell.split("const DEFAULT_RAIL_HIDDEN =")[1].split(";")[0]
-    assert "const RAIL_LAYOUT_VERSION = 11;" in shell
+    assert "const RAIL_LAYOUT_VERSION = 12;" in shell
     assert "'nav-mesh'" in APPS_JS.read_text(encoding="utf-8")
 
 

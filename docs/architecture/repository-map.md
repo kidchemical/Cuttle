@@ -461,6 +461,16 @@ execution lane). Source Control reuses `CuttlePendingChangesPanel`; the shared
 `CuttleDiffModal` offers **Editor** for text files while the flag is on.
 Runbook: `.cuttle/docs/experimental-features.md` (IDE App).
 
+**Secret vault (experimental):** `api.secret_vault` owns secret metadata,
+approvals and delivery. `core/` is host-independent (backends: keyring and
+command presets; delivery: env, file, stdin and askpass; redaction), and
+`service` is the Cuttle adapter (`<home>/secret_vault/`, values never stored
+there). Chat `secret` / `secret_approval` form fields render through
+`chat_secret_fields.js` and write straight to `/api/secret-vault/*`, never
+into form answers. Apps → Secrets is `secrets_page.js` over the pure
+`secrets_model.js`. Agent verbs: `python -m api.secret_vault`. Runbook:
+`.cuttle/docs/experimental-features.md` (Secrets App).
+
 **Gizmos (experimental):** live UI objects outside chat bubbles (widgets stay
 inside bubbles). `api.gizmos` owns types (`catalog`), normalized vendor plan
 usage (`usage`, reused from `api.agent_usage` fetchers), validation/placement
