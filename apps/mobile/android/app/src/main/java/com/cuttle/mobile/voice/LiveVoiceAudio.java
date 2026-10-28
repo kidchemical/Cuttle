@@ -12,8 +12,9 @@ import android.media.MediaRecorder;
 import android.media.audiofx.AcousticEchoCanceler;
 import android.util.Base64;
 import androidx.core.content.ContextCompat;
-import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -25,9 +26,14 @@ import org.json.JSONObject;
 /** Continuous duplex PCM for server-owned voice when LAN HTTP cannot use getUserMedia. */
 public final class LiveVoiceAudio {
     private static final int RATE = 24000;
+    // Providers stream replies faster than real time; the buffer must hold a
+    // whole reply. Bounded by audio duration, not chunk count (chunk sizes vary).
+    private static final long MAX_BUFFERED_BYTES = RATE * 2L * 180;
     private final String engine;
     private final Consumer<String> events;
-    private ArrayBlockingQueue<byte[]> playback = new ArrayBlockingQueue<>(40);
+    private LinkedBlockingQueue<byte[]> playback = new LinkedBlockingQueue<>();
+    private final AtomicLong buffered = new AtomicLong();
+    private volatile long clearEpoch;
     private final OkHttpClient client = new OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.SECONDS).pingInterval(20, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false).build();
@@ -63,7 +69,8 @@ public final class LiveVoiceAudio {
             old.cancel();
         }
         final long own = ++generation;
-        playback = new ArrayBlockingQueue<>(40);
+        playback = new LinkedBlockingQueue<>();
+        buffered.set(0);
         String url = base.replaceAll("/+$", "").replaceFirst("^https:", "wss:")
             .replaceFirst("^http:", "ws:") + "/api/voice-stt/" + engine + "/sessions/" + id + "/socket";
         closing = false; muted = false;
@@ -78,9 +85,13 @@ public final class LiveVoiceAudio {
                         if ("session.started".equals(type)) startAudio(context, own);
                         if ("session.output_audio.delta".equals(type) && running) {
                             byte[] pcm = Base64.decode(event.optString("delta"), Base64.DEFAULT);
-                            if (pcm.length <= RATE * 2 && pcm.length % 2 == 0) {
-                                if (!playback.offer(pcm)) { playback.poll(); playback.offer(pcm); }
+                            if (pcm.length <= RATE * 2 && pcm.length % 2 == 0
+                                    && buffered.get() + pcm.length <= MAX_BUFFERED_BYTES) {
+                                buffered.addAndGet(pcm.length);
+                                playback.offer(pcm);
                             }
+                        } else if ("session.output_audio.clear".equals(type)) {
+                            clearPlayback();
                         } else if (!"session.input_audio.append".equals(type)) events.accept(text);
                         if ("session.closed".equals(type)) { cleanup(); ws.close(1000, "Voice ended"); }
                     } catch (Exception exc) { fail("Could not process native voice audio."); }
@@ -124,7 +135,7 @@ public final class LiveVoiceAudio {
                 .setTransferMode(AudioTrack.MODE_STREAM).setBufferSizeInBytes(4800).build();
             recorder.startRecording(); speaker.play(); running = true;
             new Thread(() -> capture(own), "cuttle-live-capture").start();
-            ArrayBlockingQueue<byte[]> ownPlayback = playback;
+            LinkedBlockingQueue<byte[]> ownPlayback = playback;
             new Thread(() -> play(own, ownPlayback), "cuttle-live-playback").start();
         } catch (Exception exc) { fail("Native microphone or speaker is unavailable."); }
     }
@@ -149,20 +160,33 @@ public final class LiveVoiceAudio {
         }
     }
 
-    private void play(long own, ArrayBlockingQueue<byte[]> ownPlayback) {
+    private void play(long own, LinkedBlockingQueue<byte[]> ownPlayback) {
         while (running && generation == own) {
             try {
                 byte[] frame = ownPlayback.poll(200, TimeUnit.MILLISECONDS);
                 if (generation != own) break;
+                if (frame != null) buffered.addAndGet(-frame.length);
                 AudioTrack output = speaker;
                 if (frame == null || output == null) continue;
+                long epoch = clearEpoch;
                 int offset = 0;
-                while (running && generation == own && offset < frame.length) {
+                while (running && generation == own && epoch == clearEpoch && offset < frame.length) {
                     int written = output.write(frame, offset, frame.length-offset, AudioTrack.WRITE_BLOCKING);
                     if (written <= 0) break;
                     offset += written;
                 }
             } catch (Exception ignored) { break; }
+        }
+    }
+
+    /** Barge-in: drop the cancelled reply's queued and device-buffered audio. */
+    private synchronized void clearPlayback() {
+        clearEpoch++;
+        playback.clear();
+        buffered.set(0);
+        AudioTrack output = speaker;
+        if (output != null) {
+            try { output.pause(); output.flush(); output.play(); } catch (Exception ignored) {}
         }
     }
 

@@ -12,7 +12,7 @@ def test_voice_stays_bound_across_space_presenters_and_restores(browser):
     try:
         page.set_content('<html><head></head><body><iframe id="chatA"></iframe></body></html>')
         page.evaluate('''() => {
-            window.starts=[];window.stops=0;window.captionsA=[];window.captionsB=[];window.opened=[];
+            window.starts=[];window.stops=0;window.captionsA=[];window.captionsB=[];
             window.CuttleChatVoiceLive={create:host=>{
                 window.voiceHost=host;let live=false;
                 return {start:async context=>{starts.push(context.session_id);live=true;host.onStatus('Listening…');},
@@ -21,7 +21,7 @@ def test_voice_stays_bound_across_space_presenters_and_restores(browser):
         }''')
         page.add_script_tag(path=str(REPO / 'src/web/js/shell/shell_voice.js'))
         page.evaluate('''async () => {
-            window.runtime=CuttleShellVoice.create({win:window,navigate:id=>opened.push(id)});
+            window.runtime=CuttleShellVoice.create({win:window});
             window.detachA=runtime.attach(42,{onTranscript:(role,text)=>captionsA.push(text)});
             await runtime.start({session_id:42,engine:'live'});
             voiceHost.onTranscript('user','Inspect my project');
@@ -34,9 +34,7 @@ def test_voice_stays_bound_across_space_presenters_and_restores(browser):
         assert page.evaluate('runtime.isOpen(42)')
         assert not page.evaluate('runtime.isOpen(17)')
         assert page.evaluate('captionsB') == []
-        expect(page.locator('.shell-voice-controls')).to_contain_text('CH-000042')
-        page.locator('.shell-voice-controls button').first.click()
-        assert page.evaluate('opened') == [42]
+        expect(page.locator('.shell-voice-strip')).to_be_visible()
         page.evaluate('''async () => {
             window.restored=[];
             runtime.attach(42,{onTranscript:(role,text)=>restored.push(text)});
@@ -45,34 +43,126 @@ def test_voice_stays_bound_across_space_presenters_and_restores(browser):
         assert page.evaluate('starts') == [42]
         assert page.evaluate('restored') == ['Inspect my project', 'I am checking it.']
         page.get_by_role('button', name='End voice', exact=True).click()
-        expect(page.locator('.shell-voice-controls')).to_be_hidden()
+        expect(page.locator('.shell-voice-strip')).to_be_hidden()
         assert page.evaluate('stops') == 1
     finally:
         page.close()
 
 
-def test_shell_voice_controls_clear_phone_safe_area(browser):
-    """The floating Mute/End voice bar must sit above the home indicator."""
+SHELL_FIXTURE = '''<html class="{html_class}"><head></head><body>
+<div class="app-shell" id="appShell">
+  <div class="split-container split-horizontal" id="splitContainer">
+    <div class="split-column"><main class="shell-main" id="shellMain" style="flex:1"></main></div>
+  </div>
+  <div class="shell-voice-strip" id="shellVoiceStrip" hidden></div>
+</div>
+<div class="notifications-slide-layer">
+  <div class="notifications-popover notifications-popover-open" id="notificationsPopover"></div>
+</div>
+<div class="notifications-popover-backdrop notifications-popover-backdrop-visible"></div>
+<div class="notifications-popover workspace-popover notifications-popover-open" id="workspacePopover"></div>
+</body></html>'''
+
+
+def _open_shell_with_call(page, html_class='', safe_bottom='0px'):
+    page.set_content(SHELL_FIXTURE.replace('{html_class}', html_class))
+    page.add_style_tag(path=str(REPO / 'src/web/css/safe_area.css'))
+    page.add_style_tag(path=str(REPO / 'src/web/css/app_shell.css'))
+    page.evaluate('''safeBottom => {
+        document.documentElement.style.setProperty('--safe-area-inset-bottom', safeBottom);
+        window.stops=0;
+        window.CuttleChatVoiceLive={create:host=>{let live=false;return {
+            start:async()=>{live=true;host.onStatus('Listening…');},
+            stop:async()=>{stops++;live=false;host.onStatus('Disconnected');},
+            isOpen:()=>live,mute(){}};}};
+    }''', safe_bottom)
+    page.add_script_tag(path=str(REPO / 'src/web/js/shell/shell_voice.js'))
+    page.add_script_tag(path=str(REPO / 'src/web/js/shared/toast.js'))
+    page.evaluate('''async () => {
+        window.runtime=CuttleShellVoice.create({win:window,navigate(){}});
+        await runtime.start({session_id:7,engine:'live'});
+        showToast('Build finished', 'success', {duration: 60000});
+    }''')
+    page.locator('#shellVoiceStrip').wait_for(state='visible')
+
+
+def _strip_layout(page):
+    return page.evaluate('''() => {
+        const rect = sel => document.querySelector(sel).getBoundingClientRect();
+        const strip = rect('#shellVoiceStrip');
+        const end = document.querySelector('.shell-voice-end').getBoundingClientRect();
+        const hit = document.elementFromPoint(end.left + end.width / 2, end.top + end.height / 2);
+        return {
+            stripTop: strip.top, stripBottom: strip.bottom, viewport: innerHeight,
+            stripVar: getComputedStyle(document.documentElement).getPropertyValue('--shell-voice-strip-h').trim(),
+            paneBottom: rect('#splitContainer').bottom,
+            notifBottom: rect('#notificationsPopover').bottom,
+            workspaceBottom: rect('#workspacePopover').bottom,
+            toastBottom: rect('.cuttle-toast').bottom,
+            endHitIsEnd: !!(hit && hit.closest('.shell-voice-end')),
+            state: document.querySelector('#shellVoiceStrip').dataset.state,
+        };
+    }''')
+
+
+def test_voice_strip_docks_below_panes_and_overlays_stop_above_it(browser):
+    """Side panels, their backdrop and toasts must never cover End voice."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    try:
+        _open_shell_with_call(page)
+        box = _strip_layout(page)
+        assert box['stripBottom'] == box['viewport'], box
+        assert box['stripVar'] == f"{round(box['stripBottom'] - box['stripTop'])}px", box
+        assert box['paneBottom'] <= box['stripTop'] + 0.5, box
+        assert box['notifBottom'] <= box['stripTop'] + 0.5, box
+        assert box['workspaceBottom'] <= box['stripTop'] + 0.5, box
+        assert box['toastBottom'] <= box['stripTop'], box
+        assert box['endHitIsEnd'], box
+        assert box['state'] == 'live', box
+
+        strip = page.locator('#shellVoiceStrip')
+        assert strip.locator('button').count() == 2
+        assert strip.inner_text().strip() == '', 'call bar is icon-only: no handle or status text'
+        mute = page.get_by_role('button', name='Mute', exact=True)
+        for btn in (mute, page.get_by_role('button', name='End voice', exact=True)):
+            b = btn.bounding_box()
+            assert b['width'] == b['height'] == 56, b
+            assert btn.evaluate('el => getComputedStyle(el).borderRadius') == '50%'
+        mute.click()
+        assert mute.get_attribute('aria-pressed') == 'true'
+        assert strip.get_attribute('data-state') == 'muted'
+
+        page.get_by_role('button', name='End voice', exact=True).click()
+        expect(page.locator('#shellVoiceStrip')).to_be_hidden()
+        assert page.evaluate('stops') == 1
+        assert page.evaluate(
+            "getComputedStyle(document.documentElement).getPropertyValue('--shell-voice-strip-h').trim()"
+        ) == '0px'
+        assert page.evaluate(
+            "document.getElementById('notificationsPopover').getBoundingClientRect().bottom"
+        ) == 800
+    finally:
+        page.close()
+
+
+def test_voice_strip_clears_phone_nav_bar_and_stays_reachable(browser):
+    """Phone: the strip owns the bottom safe area and stays above full-width panels."""
     page = browser.new_page(viewport={"width": 390, "height": 844})
     try:
-        page.set_content('<html><head></head><body></body></html>')
-        page.evaluate('''() => {
-            document.documentElement.style.setProperty('--cuttle-safe-bottom', '34px');
-            document.documentElement.style.setProperty('--cuttle-safe-right', '24px');
-            window.CuttleChatVoiceLive={create:host=>({start:async()=>{host.onStatus('Listening…');},stop:async()=>{},isOpen:()=>true,mute(){}})};
-        }''')
-        page.add_script_tag(path=str(REPO / 'src/web/js/shell/shell_voice.js'))
-        page.evaluate('''async () => {
-            window.runtime=CuttleShellVoice.create({win:window,navigate(){}});
-            await runtime.start({session_id:7,engine:'live'});
-        }''')
-        page.locator('.shell-voice-controls').wait_for(state='visible')
-        box = page.evaluate('''() => {
-            const s=getComputedStyle(document.querySelector('.shell-voice-controls'));
-            return {bottom:s.bottom,right:s.right};
-        }''')
-        assert box['bottom'] == '50px', box
-        assert box['right'] == '40px', box
+        _open_shell_with_call(page, html_class='is-cuttle-mobile', safe_bottom='34px')
+        padding = page.evaluate(
+            "getComputedStyle(document.getElementById('shellVoiceStrip')).paddingBottom"
+        )
+        assert padding == '46px', padding
+        box = _strip_layout(page)
+        assert box['stripBottom'] == box['viewport'], box
+        assert box['notifBottom'] <= box['stripTop'] + 0.5, box
+        assert box['toastBottom'] <= box['stripTop'], box
+        assert box['endHitIsEnd'], box
+        notif_pad = page.evaluate(
+            "getComputedStyle(document.getElementById('notificationsPopover')).paddingBottom"
+        )
+        assert notif_pad == '0px', notif_pad
     finally:
         page.close()
 

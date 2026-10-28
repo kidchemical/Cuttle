@@ -53,15 +53,28 @@
     color: var(--text-secondary);
 }
 
-/* The session total is pinned just under the fixed session title
-   (.chat-session-title: top 14px + 32px tall, + safe-area on phones). */
-.voice-mode-overlay > #voiceModeSessionUsage {
+/* Session total and voice-connection pills are pinned just under the fixed
+   session title (.chat-session-title: top 14px + 32px tall, + safe-area on
+   phones) and stack vertically so they never overlap. */
+.voice-mode-usage-stack {
     position: absolute;
     top: calc(52px + var(--cuttle-safe-top, 0px));
     left: 50%;
     transform: translateX(-50%);
     z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    /* Absolute + left:50% would otherwise shrink-to-fit to half the overlay
+       and wrap the token counts. */
+    width: max-content;
     max-width: calc(100% - 32px);
+    pointer-events: none;
+}
+
+.voice-mode-usage-stack > .voice-mode-session-usage {
+    pointer-events: auto;
 }
 
 .voice-mode-session-usage[hidden] {
@@ -79,6 +92,11 @@
 
 .voice-mode-session-usage .message-usage {
     margin: 0;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Per-reply usage under the voice transcript bubble. */

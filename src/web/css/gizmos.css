@@ -190,8 +190,8 @@ body.gizmo-dragging .shell-titlebar { box-shadow: inset 0 0 0 1px rgba(102, 126,
     z-index: 999996;
     width: 300px;
     max-width: calc(100vw - 16px);
-    max-height: calc(100vh - 24px - var(--cuttle-safe-top, 0px) - var(--cuttle-safe-bottom, 0px));
-    max-height: calc(100dvh - 24px - var(--cuttle-safe-top, 0px) - var(--cuttle-safe-bottom, 0px));
+    max-height: calc(100vh - 24px - var(--cuttle-safe-top, 0px) - var(--cuttle-safe-bottom, 0px) - var(--shell-voice-strip-h, 0px));
+    max-height: calc(100dvh - 24px - var(--cuttle-safe-top, 0px) - var(--cuttle-safe-bottom, 0px) - var(--shell-voice-strip-h, 0px));
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     padding: 12px;

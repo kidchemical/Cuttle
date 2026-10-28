@@ -196,13 +196,37 @@
         if (!c) {
             c = document.createElement('div');
             c.id = 'cuttle-toast-container';
-            c.style.cssText = 'position:fixed;bottom:0;right:0;padding:24px;z-index:999998;pointer-events:none;display:flex;flex-direction:column;align-items:flex-end;gap:10px;';
+            c.style.cssText = 'position:fixed;bottom:var(--shell-voice-strip-h, 0px);right:0;padding:24px;z-index:999998;pointer-events:none;display:flex;flex-direction:column;align-items:flex-end;gap:10px;';
             document.body.appendChild(c);
         }
         return c;
     }
 
     let _notifSeq = 0;
+
+    // Same-origin page path only; the shell navigates a pane to it on click.
+    function safeSourcePage(page) {
+        if (typeof page !== 'string') return null;
+        const p = page.trim();
+        if (!/^\/(?!\/)/.test(p) || p.indexOf('\\') !== -1) return null;
+        return p;
+    }
+
+    // Where a toast fired from an iframe page came from, so the notifications
+    // panel can take the user back there. Chat panes resolve to their chat id.
+    function toastOrigin() {
+        try {
+            const url = new URL(window.location.href);
+            const chatId = url.searchParams.get('chat') || url.searchParams.get('session');
+            if (url.pathname.indexOf('chat_page.html') !== -1) {
+                return { sessionId: chatId || null, sourcePage: null };
+            }
+            url.searchParams.delete('msg');
+            return { sessionId: null, sourcePage: url.pathname + url.search };
+        } catch (_) {
+            return { sessionId: null, sourcePage: null };
+        }
+    }
 
     function pushNotificationHistory(message, variant, options) {
         const rec = {
@@ -213,7 +237,8 @@
             read: false,
             unread: !!(options && options.unread),
             kind: (options && options.kind) || null,
-            sessionId: (options && options.sessionId != null) ? String(options.sessionId) : null
+            sessionId: (options && options.sessionId != null) ? String(options.sessionId) : null,
+            sourcePage: safeSourcePage(options && options.sourcePage)
         };
         if (options && options.linkUrl) {
             rec.linkUrl = options.linkUrl;
@@ -365,6 +390,8 @@
         if (!message) return;
         options = options && typeof options === 'object' ? options : {};
         if (window.parent !== window) {
+            const origin = toastOrigin();
+            const sessionId = options.sessionId != null ? options.sessionId : origin.sessionId;
             window.parent.postMessage({
                 type: 'cuttle-toast',
                 message,
@@ -373,7 +400,8 @@
                 linkText: options.linkText,
                 actionId: options.actionId || null,
                 unread: !!options.unread,
-                sessionId: options.sessionId != null ? String(options.sessionId) : null,
+                sessionId: sessionId != null ? String(sessionId) : null,
+                sourcePage: options.sourcePage || origin.sourcePage,
                 kind: options.kind || null,
                 sticky: !!options.sticky,
                 progress: !!options.progress,
@@ -421,6 +449,7 @@
             const options = {
                 unread: !!unread,
                 sessionId: sessionId != null ? String(sessionId) : null,
+                sourcePage: e.data.sourcePage || null,
                 kind: kind || null,
                 actionId: actionId || null,
                 sticky: !!e.data.sticky,
@@ -445,6 +474,18 @@
     window.getCuttleNotificationHistory = function() { return notificationHistory.slice(); };
     window.getCuttleUnreadNotificationCount = countUnreadNotifications;
     window.markCuttleNotificationsRead = markNotificationsRead;
+    window.removeCuttleNotification = function(id) {
+        const idx = notificationHistory.findIndex((n) => n && String(n.id) === String(id));
+        if (idx === -1) return false;
+        notificationHistory.splice(idx, 1);
+        window.dispatchEvent(new CustomEvent('cuttle-notification-added', {
+            detail: {
+                count: notificationHistory.length,
+                unreadCount: countUnreadNotifications()
+            }
+        }));
+        return true;
+    };
     window.clearCuttleNotificationHistory = function() {
         notificationHistory.length = 0;
         window.dispatchEvent(new CustomEvent('cuttle-notification-added', {

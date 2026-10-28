@@ -151,11 +151,13 @@
             <div class="voice-mode-overlay" id="voiceModeOverlay" hidden aria-hidden="true">
                 <canvas class="voice-mode-stars" id="voiceModeStars" aria-hidden="true"></canvas>
                 <canvas class="voice-mode-wave-bg" id="voiceModeWaveBg" aria-hidden="true"></canvas>
-                <!-- Session total sits directly under the session title (pinned
-                     to the overlay top), not in the vertically centered stage. -->
-                <div class="voice-mode-session-usage" id="voiceModeSessionUsage" hidden></div>
-                <div class="voice-mode-stage">
+                <!-- Usage pills sit directly under the session title (pinned to
+                     the overlay top), stacked, not in the vertically centered stage. -->
+                <div class="voice-mode-usage-stack">
+                    <div class="voice-mode-session-usage" id="voiceModeSessionUsage" hidden></div>
                     <div class="voice-mode-session-usage" id="voiceModeConnectionUsage" hidden></div>
+                </div>
+                <div class="voice-mode-stage">
                     <button type="button" class="voice-mode-orbit-wrap voice-mode-mic-btn" id="voiceModeMicBtn" title="Tap to talk" aria-label="Tap to talk" aria-pressed="false">
                         <canvas class="voice-mode-wave-ring" id="voiceModeWaveRing" aria-hidden="true"></canvas>
                         <div class="typing-orbit voice-mode-orbit" aria-hidden="true">
@@ -423,7 +425,7 @@
          makes iPad Chrome show the key/card/pin autofill bar on the composer. -->
     
     <script src="/js/media/emoticons.js?v=20260807b"></script>
-    <script src="/js/shared/toast.js?v=20260921voiceMic"></script>
+    <script src="/js/shared/toast.js?v=20261028notifPanel"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
     <script src="/js/shared/net_debug.js?v=20260810c"></script>
     <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
@@ -434,7 +436,7 @@
     <script src="/js/gizmos/tasks_gizmo.js?v=20261007tasks1"></script>
     <script src="/js/git/agent_review_client.js?v=20261018review"></script>
     <script src="/js/shared/scroll_preserve.js?v=20261028poll"></script>
-    <script src="/js/git/pending_changes_panel.js?v=20261028poll"></script>
+    <script src="/js/git/pending_changes_panel.js?v=20261028poll2"></script>
     <script src="/js/git/git_push_report.js?v=20261018pushReview"></script>
     <script src="/js/git/diff_modal.js?v=20261018review"></script>
     <script src="/js/git/git_commit_viewer.js?v=20261001sharedDiff"></script>

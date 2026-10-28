@@ -244,6 +244,20 @@
         return inset;
     }
 
+    /* Parent chrome laid out below our frame (e.g. the docked voice-call
+       strip) already clears the nav bar; that distance is not ours to pad. */
+    function frameBottomGapPx() {
+        if (!framed) return 0;
+        try {
+            var el = window.frameElement;
+            var pw = window.parent;
+            if (!el || !pw || typeof el.getBoundingClientRect !== 'function') return 0;
+            var gap = (pw.innerHeight || 0) - el.getBoundingClientRect().bottom;
+            return gap > 0 ? gap : 0;
+        } catch (_) {}
+        return 0;
+    }
+
     function applySafeAreaInsets(optionalInsets) {
         if (!isCuttleMobileClient()) return;
         var insets = optionalInsets || resolveSafeAreaInsets();
@@ -251,7 +265,7 @@
         var normalized = {
             top: safeAreaPx(insets.top),
             right: safeAreaPx(insets.right),
-            bottom: safeAreaPx(insets.bottom),
+            bottom: safeAreaPx(Math.max(0, safeAreaParsePx(insets.bottom) - frameBottomGapPx())),
             left: safeAreaPx(insets.left)
         };
         if (syncShellFrameInset()) {

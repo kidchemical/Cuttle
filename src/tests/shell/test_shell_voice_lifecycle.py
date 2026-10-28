@@ -60,3 +60,44 @@ const api=win.CuttleShellVoice.create({win,navigate(){}});
         encoding="utf-8",
         timeout=30,
     )
+
+
+@node_only
+def test_shell_voice_mounts_in_strip_slot_and_publishes_height():
+    """The call strip docks in the shell slot; overlays read its height var."""
+    script = r"""
+const assert = require('assert');
+function el(){return {hidden:false,className:'',textContent:'',style:{},children:[],attrs:{},
+  setAttribute(k,v){this.attrs[k]=v;},append(...c){this.children.push(...c);},appendChild(c){this.children.push(c);return c;},
+  getBoundingClientRect(){return {height:this.hidden?0:41.2};}};}
+const rootVars={};
+const slot=el();
+const doc={head:el(),body:el(),createElement:()=>el(),addEventListener(){},hidden:false,
+  getElementById:id=>id==='shellVoiceStrip'?slot:null,
+  documentElement:{style:{setProperty(k,v){rootVars[k]=v;}}}};
+const win={document:doc,fetch:async()=>({ok:true,json:async()=>({success:true,flags:[]})}),
+  addEventListener(){},dispatchEvent(){},Event:function(){}};
+win.CuttleChatVoiceLive={create:host=>({start:async()=>{host.onStatus('Listening…');},stop:async()=>{},isOpen:()=>true,mute(){}})};
+globalThis.window=win;
+require(process.argv[1]);
+const api=win.CuttleShellVoice.create({win,navigate(){}});
+(async()=>{
+  assert.strictEqual(doc.body.children.length,0,'must not float a bar on <body>');
+  assert.strictEqual(slot.className,'shell-voice-strip');
+  assert.ok(slot.hidden,'hidden until a call starts');
+  await api.start({session_id:'7',engine:'live'});
+  assert.ok(!slot.hidden);
+  assert.strictEqual(rootVars['--shell-voice-strip-h'],'42px');
+  assert.strictEqual(slot.attrs['data-state'],'live');
+  await api.stop();
+  assert.ok(slot.hidden);
+  assert.strictEqual(rootVars['--shell-voice-strip-h'],'0px');
+})().catch(e=>{console.error(e);process.exit(1);});
+"""
+    subprocess.run(
+        ["node", "-e", script, str(SHELL_VOICE_JS)],
+        check=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )

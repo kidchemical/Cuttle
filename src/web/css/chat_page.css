@@ -4041,8 +4041,10 @@ pre.has-code-copy:hover .code-copy-btn,
     padding-left: 12px;
 }
 
+/* The status icon (spinner / attention dot) is absolutely positioned in the
+   first ~18px of the row; the sub-agent toggle must start after that slot. */
 .chat-history-item.has-subagents {
-    padding-left: 8px;
+    padding-left: 20px;
 }
 
 .history-subagent-group.is-collapsed > .history-subagent-children {
@@ -4060,9 +4062,9 @@ pre.has-code-copy:hover .code-copy-btn,
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
+    width: 18px;
     height: 22px;
-    margin-left: -2px;
+    margin-left: 0;
     padding: 0;
     border: none;
     border-radius: 6px;

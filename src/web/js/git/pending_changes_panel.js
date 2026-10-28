@@ -39,6 +39,10 @@
         el.scrollLeft = left;
     }
 
+    function setPolledText(el, text) {
+        if (el && el.textContent !== text) el.textContent = text;
+    }
+
     function defaultEsc(s) {
         return String(s == null ? '' : s)
             .replace(/&/g, '&amp;')
@@ -452,7 +456,7 @@
                 const chip = qs('chip');
                 if (!chip) return;
                 const text = label || repoBasename(repoRoot);
-                chip.textContent = text;
+                setPolledText(chip, text);
                 chip.title = String(repoRoot || '');
                 chip.hidden = !show;
             }
@@ -528,23 +532,23 @@
                 const effective = effectiveCount();
                 const unlisted = unlistedCount();
                 if (meta) {
-                    if (!listed && !totalCount) meta.textContent = '';
+                    if (!listed && !totalCount) setPolledText(meta, '');
                     else if (truncated && totalCount > listed) {
-                        meta.textContent = effective === totalCount
+                        setPolledText(meta, effective === totalCount
                             ? (totalCount + ' files')
-                            : (effective + '/' + totalCount + ' selected');
+                            : (effective + '/' + totalCount + ' selected'));
                     } else if (includedVisible.length === listed) {
-                        meta.textContent = listed + ' file' + (listed === 1 ? '' : 's');
+                        setPolledText(meta, listed + ' file' + (listed === 1 ? '' : 's'));
                     } else {
-                        meta.textContent = includedVisible.length + '/' + listed + ' selected';
+                        setPolledText(meta, includedVisible.length + '/' + listed + ' selected');
                     }
                 }
                 if (submitBtn) {
-                    submitBtn.textContent = 'Commit';
+                    setPolledText(submitBtn, 'Commit');
                     if (!suggestInFlight && !quickCommitInFlight) submitBtn.disabled = effective === 0;
                 }
                 if (quickBtn && !quickCommitInFlight) {
-                    quickBtn.textContent = 'Commit';
+                    setPolledText(quickBtn, 'Commit');
                     if (!suggestInFlight) quickBtn.disabled = effective === 0;
                 }
                 const list = qs('list');
@@ -1024,7 +1028,7 @@
                 const stats = qs('stats');
                 const branchEl = qs('branch');
                 const list = qs('list');
-                if (meta) meta.textContent = nFiles + ' file' + (nFiles === 1 ? '' : 's');
+                setPolledText(meta, nFiles + ' file' + (nFiles === 1 ? '' : 's'));
                 if (stats) {
                     const a = formatStat(adds, '+');
                     const d = formatStat(dels, '-');

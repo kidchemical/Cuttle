@@ -247,9 +247,31 @@
             background-repeat: no-repeat;
             pointer-events: none;
             z-index: -1;
-            animation: gradient-animation 8s ease infinite;
-            will-change: background-position, transform;
             opacity: var(--cuttle-bg-effect-blend, 1);
+        }
+        /* Drift: only layers that keep the 200% gradient size visibly move. The
+           light/midnight/synthwave backgrounds reset it via the shorthand; the custom
+           theme's glow (themes.css) outranks light/midnight and keeps it. Same motion
+           as animating background-position 0%→100% at 50%, but on a 2x layer moved by
+           transform so the compositor animates it instead of repainting every frame. */
+        :root:not(.theme-synthwave):not(.light-mode):not(.midnight-mode) body:not(.light-mode):not(.midnight-mode)::before,
+        :root.theme-custom:not(.theme-synthwave) body::before {
+            inset: auto;
+            left: 0;
+            top: -50%;
+            width: 200%;
+            height: 200%;
+            background-size: 100% 100%;
+            animation: gradient-animation 8s ease infinite;
+            will-change: transform;
+        }
+        html.cuttle-bg-paused body::before {
+            animation-play-state: paused;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            html body::before {
+                animation: none !important;
+            }
         }
         /* Light: soft highlights + pastel tints — avoids muddy purple-on-purple with --bg-primary */
         body.light-mode::before {
@@ -261,14 +283,11 @@
         }
         
         @keyframes gradient-animation {
-            0% {
-                background-position: 0% 50%;
+            0%, 100% {
+                transform: translate3d(0, 0, 0);
             }
             50% {
-                background-position: 100% 50%;
-            }
-            100% {
-                background-position: 0% 50%;
+                transform: translate3d(-50%, 0, 0);
             }
         }
         

@@ -73,6 +73,7 @@ SHELL_OWNERS = (
     ("shell_rail.js", "CuttleShellRail", "CuttleShellRail.create("),
     ("shell_panes.js", "CuttleShellPanes", "CuttleShellPanes.create("),
     ("shell_spaces.js", "CuttleShellSpaces", "CuttleShellSpaces.create("),
+    ("shell_notifications.js", "CuttleShellNotifications", "CuttleShellNotifications.create("),
 )
 
 # Owners that expose top-level globals instead of a namespace (external

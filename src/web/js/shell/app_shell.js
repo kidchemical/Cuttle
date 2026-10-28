@@ -25,7 +25,7 @@ const splitContainer = document.getElementById('splitContainer');
 
 // ── Restore rail & active page from session ──────────────────
 const STORAGE_PAGE = 'shell_page';
-const shellVoice = CuttleShellVoice.create({win:window, navigate:sid=>navigate(0,'/chat_page.html?chat='+encodeURIComponent(sid))});
+const shellVoice = CuttleShellVoice.create({win:window});
 const STORAGE_RAIL = 'shell_rail_collapsed';
 const STORAGE_SPLITS = 'shell_split_count';
 /** Durable multi-pane layout (survives browser/Electron close). */
@@ -2688,44 +2688,22 @@ window.addEventListener('cuttle-auth-changed', function (ev) {
     setShellAuthUser((ev.detail && ev.detail.user) || null);
 });
 
-// ── Notifications popover (past toasts) ─────────────────────────
-function getNotificationsPopover() {
-    return document.getElementById('notificationsPopover');
-}
-
-function isNotificationsPopoverOpen() {
-    const pop = getNotificationsPopover();
-    return pop && pop.classList.contains('notifications-popover-open');
-}
-
-function openNotificationsPopover() {
+// ── Notifications popover (past toasts) → shell_notifications.js ──
+const shellNotifications = CuttleShellNotifications.create({
+    win: window,
+    doc: document,
+    openChat: (sid) => openChatFromNotification(sid),
+    openPage: (page) => navigate(0, page),
+    closeOtherPopovers: () => closeWorkspacePopover(),
+    syncBackdrop: () => setWorkspaceBackdropVisible(false),
+});
+function isNotificationsPopoverOpen() { return shellNotifications.isOpen(); }
+function closeNotificationsPopover() { shellNotifications.close(); }
+function toggleNotificationsPopover() { shellNotifications.toggle(); }
+document.getElementById('notificationsPopoverBackdrop')?.addEventListener('click', () => {
+    closeNotificationsPopover();
     closeWorkspacePopover();
-    const pop = getNotificationsPopover();
-    const back = document.getElementById('notificationsPopoverBackdrop');
-    if (pop) pop.classList.add('notifications-popover-open');
-    if (back) back.classList.add('notifications-popover-backdrop-visible');
-    renderNotificationsList();
-}
-
-function closeNotificationsPopover() {
-    const pop = getNotificationsPopover();
-    const back = document.getElementById('notificationsPopoverBackdrop');
-    if (pop) pop.classList.remove('notifications-popover-open');
-    if (typeof setWorkspaceBackdropVisible === 'function') setWorkspaceBackdropVisible(false);
-    else if (back) back.classList.remove('notifications-popover-backdrop-visible');
-}
-
-function toggleNotificationsPopover() {
-    if (isNotificationsPopoverOpen()) closeNotificationsPopover();
-    else {
-        closeWorkspacePopover();
-        openNotificationsPopover();
-    }
-}
-
-function notificationUnreadIconHTML() {
-    return '<span class="notifications-unread-icon" title="Unread response" aria-label="Unread response"></span>';
-}
+});
 
 function openChatFromNotification(sessionId) {
     if (sessionId == null || sessionId === '') return;
@@ -2756,60 +2734,6 @@ function openChatFromNotification(sessionId) {
 }
 window.openChatFromNotification = openChatFromNotification;
 
-function renderNotificationsList() {
-    const listEl = document.getElementById('notificationsPopoverList');
-    const emptyEl = document.getElementById('notificationsPopoverEmpty');
-    if (!listEl || !emptyEl) return;
-    const history = typeof window.getCuttleNotificationHistory === 'function' ? window.getCuttleNotificationHistory() : [];
-    if (history.length === 0) {
-        listEl.innerHTML = '';
-        listEl.style.display = 'none';
-        emptyEl.style.display = 'block';
-        return;
-    }
-    emptyEl.style.display = 'none';
-    listEl.style.display = 'block';
-    const VARIANTS = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
-    listEl.innerHTML = history.map((n, i) => {
-        const icon = VARIANTS[n.variant] || 'ℹ';
-        const timeStr = n.time ? new Date(n.time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
-        const linkHtml = n.linkUrl ? ` <a href="${escapeHtml(n.linkUrl)}" target="_blank" rel="noopener" class="notifications-popover-item-link">${escapeHtml(n.linkText || 'View query log')}</a>` : '';
-        const isUnreadResponse = !!(n.unread && !n.read);
-        const unreadIcon = isUnreadResponse ? notificationUnreadIconHTML() : '';
-        const unreadClass = isUnreadResponse ? ' is-unread' : '';
-        const clickable = n.sessionId ? ' is-clickable' : '';
-        const sidAttr = n.sessionId ? ` data-session-id="${escapeHtml(String(n.sessionId))}"` : '';
-        const idAttr = n.id ? ` data-notif-id="${escapeHtml(String(n.id))}"` : '';
-        return `<div class="notifications-popover-item notifications-popover-item-${n.variant}${unreadClass}${clickable}" data-index="${i}"${idAttr}${sidAttr}><span class="notifications-popover-item-icon">${escapeHtml(icon)}</span><span class="notifications-popover-item-message">${escapeHtml(n.message)}${linkHtml}</span>${unreadIcon}<span class="notifications-popover-item-time">${escapeHtml(timeStr)}</span></div>`;
-    }).join('');
-
-    listEl.querySelectorAll('.notifications-popover-item').forEach((el) => {
-        el.addEventListener('click', (e) => {
-            if (e.target.closest('a')) return;
-            const notifId = el.dataset.notifId;
-            if (notifId && typeof window.markCuttleNotificationsRead === 'function') {
-                window.markCuttleNotificationsRead(notifId);
-            }
-            const sid = el.dataset.sessionId;
-            if (sid) openChatFromNotification(sid);
-            else {
-                renderNotificationsList();
-                updateNotificationsBadge();
-            }
-        });
-    });
-}
-
-function updateNotificationsBadge() {
-    const unreadCount = typeof window.getCuttleUnreadNotificationCount === 'function'
-        ? window.getCuttleUnreadNotificationCount()
-        : 0;
-    document.querySelectorAll('.rail-badge-notifications').forEach(badge => {
-        badge.textContent = String(unreadCount);
-        badge.style.display = unreadCount > 0 ? '' : 'none';
-    });
-}
-
 /** Chats with replies awaiting attention (unread/error dots), minus visible panes. */
 function chatUnreadCount() {
     try {
@@ -2828,24 +2752,6 @@ function updateChatUnreadBadge() {
     });
     broadcastToFrames({ type: 'cuttle-chat-unread', count });
 }
-
-(function setupNotificationsPopover() {
-    const back = document.getElementById('notificationsPopoverBackdrop');
-    const clearBtn = document.getElementById('notificationsClearBtn');
-    if (back) back.addEventListener('click', () => {
-        closeNotificationsPopover();
-        closeWorkspacePopover();
-    });
-    if (clearBtn) {
-        clearBtn.addEventListener('click', () => {
-            if (typeof window.clearCuttleNotificationHistory === 'function') window.clearCuttleNotificationHistory();
-            renderNotificationsList();
-            updateNotificationsBadge();
-        });
-    }
-    window.addEventListener('cuttle-notification-added', updateNotificationsBadge);
-    updateNotificationsBadge();
-})();
 
 // ── Workspace save / load (cross-device split + open chats) ─────
 function getWorkspacePopover() {

@@ -8,14 +8,14 @@
     <title>Cuttle</title>
     <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
     <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
-    <link rel="stylesheet" href="/css/app_shell.css?v=20261028poll">
+    <link rel="stylesheet" href="/css/app_shell.css?v=20261028callBar">
     <link rel="stylesheet" href="/css/searchable_select.css?v=20261011attachedMenus">
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
     <link rel="stylesheet" href="/css/video_background.css?v=20260927blendTarget">
     <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
     <link rel="stylesheet" href="/css/update_center.css?v=20261018updateCenter">
     <link rel="stylesheet" href="/css/git_push_report.css?v=20261018pushReview" data-push-style="git_push_report">
-    <link rel="stylesheet" href="/css/gizmos.css?v=20261015gzTokens">
+    <link rel="stylesheet" href="/css/gizmos.css?v=20261028voiceStrip">
 </head>
 <body>
 <!-- Electron-only custom titlebar (frameless window) -->
@@ -272,10 +272,12 @@
     <!-- end split-column 0 -->
     </div>
     <!-- end split-container -->
+    <!-- Active voice call strip (managed by shell_voice.js) -->
+    <div class="shell-voice-strip" id="shellVoiceStrip" hidden></div>
 </div>
 
 <!-- Toast container (managed by toast.js) -->
-<div id="cuttle-toast-container" style="position:fixed;bottom:0;right:0;padding:24px;z-index:999998;pointer-events:none;display:flex;flex-direction:column;align-items:flex-end;gap:10px;"></div>
+<div id="cuttle-toast-container" style="position:fixed;bottom:var(--shell-voice-strip-h, 0px);right:0;padding:24px;z-index:999998;pointer-events:none;display:flex;flex-direction:column;align-items:flex-end;gap:10px;"></div>
 
 <!-- Notifications panel (past toasts) -->
 <div class="notifications-slide-layer">
@@ -449,7 +451,7 @@
     </section>
 </div>
 
-<script src="/js/shared/toast.js?v=20260921voiceMic"></script>
+<script src="/js/shared/toast.js?v=20261028voiceStrip"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
 <script src="/js/shared/net_debug.js?v=20260810c"></script>
 <script src="/js/media/youtube_id.js"></script>
@@ -482,8 +484,9 @@
 <script src="/js/chat/chat_voice_receipts.js?v=20261012live2"></script>
 <script src="/js/chat/chat_voice_realtime.js?v=20261013rtsurvive"></script>
 <script src="/js/chat/chat_voice_live.js?v=20261012live2"></script>
-<script src="/js/shell/shell_voice.js?v=20261012safebar"></script>
-<script src="/js/shell/app_shell.js?v=20261028poll"></script>
+<script src="/js/shell/shell_voice.js?v=20261028callBar"></script>
+<script src="/js/shell/shell_notifications.js?v=20261028notifPanel"></script>
+<script src="/js/shell/app_shell.js?v=20261028callBar"></script>
 <script src="/js/gizmos/gizmos_model.js?v=20261007gizmos2"></script>
 <script src="/js/gizmos/gizmos_shell.js?v=20261007gizmos3"></script>
 </body>

@@ -1359,6 +1359,86 @@ body.is-electron .app-shell {
     height: 100%;
 }
 
+/* Active voice call: docked under the panes in the shell's flex column, so
+   panes shrink instead of being covered. Built by shell_voice.js. */
+.shell-voice-strip {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 40px;
+    padding: 12px 16px;
+    box-sizing: border-box;
+    background: var(--rail-bg);
+    border-top: 1px solid var(--rail-border);
+}
+
+.shell-voice-strip[hidden] {
+    display: none;
+}
+
+/* Call-screen controls: round mute toggle + red hang-up. */
+.shell-voice-btn {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: background var(--transition), color var(--transition), transform 0.1s ease;
+}
+
+.shell-voice-btn:active {
+    transform: scale(0.94);
+}
+
+.shell-voice-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+}
+
+.shell-voice-mute {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--rail-icon-hover);
+}
+
+.shell-voice-mute:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+body.light-mode .shell-voice-mute {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+body.light-mode .shell-voice-mute:hover {
+    background: rgba(0, 0, 0, 0.14);
+}
+
+/* Muted: inverted fill, like Android's active toggle. */
+.shell-voice-mute[aria-pressed="true"],
+body.light-mode .shell-voice-mute[aria-pressed="true"] {
+    background: #e6edf3;
+    color: #0d1117;
+}
+
+.shell-voice-end {
+    background: #e5484d;
+    color: #fff;
+}
+
+.shell-voice-end:hover {
+    background: #d13438;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .shell-voice-btn { transition: none; }
+    .shell-voice-btn:active { transform: none; }
+}
+
 .split-container.split-horizontal,
 .split-group.split-horizontal {
     flex-direction: row;
@@ -2522,10 +2602,11 @@ body.light-mode .rail-logo-clickable[data-tooltip]::after {
     background: var(--accent);
 }
 
-/* Notifications popover (past toasts) */
+/* Notifications popover (past toasts). Fixed side panels, their backdrop and
+   toasts end at --shell-voice-strip-h so an active call strip stays usable. */
 .notifications-slide-layer {
     position: fixed;
-    inset: 0 0 0 var(--rail-width);
+    inset: 0 0 var(--shell-voice-strip-h, 0px) var(--rail-width);
     overflow: hidden;
     z-index: 999997;
     pointer-events: none;
@@ -2543,7 +2624,7 @@ body.light-mode .rail-logo-clickable[data-tooltip]::after {
     position: fixed;
     left: var(--rail-width);
     top: 0;
-    bottom: 0;
+    bottom: var(--shell-voice-strip-h, 0px);
     width: 320px;
     max-width: calc(100% - var(--rail-width) - 24px);
     background: var(--panel-bg);
@@ -2566,7 +2647,7 @@ body.light-mode .rail-logo-clickable[data-tooltip]::after {
 
 .notifications-popover-backdrop {
     position: fixed;
-    inset: 0;
+    inset: 0 0 var(--shell-voice-strip-h, 0px) 0;
     background: transparent;
     z-index: 999996;
     pointer-events: none;
@@ -2614,6 +2695,43 @@ body.is-electron:not(.fullscreen) .notifications-popover-backdrop {
 .notifications-popover-clear:hover {
     color: var(--panel-text);
     background: var(--panel-hover);
+}
+
+.notifications-popover-clear:disabled {
+    opacity: 0.4;
+    cursor: default;
+    background: none;
+}
+
+.notifications-popover-item-dismiss {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    margin: -1px -6px 0 0;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    color: var(--panel-dim);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.notifications-popover-item:hover .notifications-popover-item-dismiss,
+.notifications-popover-item-dismiss:focus-visible {
+    opacity: 1;
+}
+
+.notifications-popover-item-dismiss:hover {
+    color: var(--panel-text);
+    background: var(--panel-hover);
+}
+
+@media (hover: none) {
+    .notifications-popover-item-dismiss { opacity: 1; }
 }
 
 .notifications-popover-list {
