@@ -22,6 +22,7 @@ import collections
 import hashlib
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -337,6 +338,14 @@ def _under(path: str, prefixes) -> bool:
     return any(path == p or path.startswith(p + os.sep) for p in prefixes)
 
 
+# Process-status files psutil reads to tell whether a turn's process is still
+# alive (Stop / reap). environ, cmdline, fd/ and mem stay denied: they can
+# expose another process's secrets.
+_PROC_STATUS_READ = re.compile(
+    r"^/proc/(?:stat|uptime|(?:\d+|self)/(?:stat|status|task/\d+/(?:stat|children)))$"
+)
+
+
 def check_file_event(event: str, args, *, read_roots, write_roots,
                      exact_write=()) -> None:
     """Pure policy: raise ShadowBlocked on deny, else return None.
@@ -361,7 +370,7 @@ def check_file_event(event: str, args, *, read_roots, write_roots,
                 return
             _note("file", f"write {path} mode={mode}")
             raise ShadowBlocked(f"shadow dev: write denied: {path}")
-        if _under(norm, read_roots):
+        if _under(norm, read_roots) or _PROC_STATUS_READ.match(os.fspath(path)):
             return
         _note("file", f"read {path}")
         raise ShadowBlocked(f"shadow dev: read denied: {path}")

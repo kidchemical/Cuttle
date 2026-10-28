@@ -283,6 +283,10 @@ def _vendor_cli_in_argv(args, fake_roots=()) -> str:
     # PATH is the one bundled inside ~/.local/share/cursor-agent (agent shells).
     if argv and Path(argv[0]).stem.lower() == "node" and any(a in ("-e", "--eval") for a in argv[1:]):
         return ""
+    # Agent shells put the CLI's bundled ripgrep first on PATH; it is a search
+    # tool, not an agent run.
+    if argv and Path(argv[0]).stem.lower() == "rg":
+        return ""
     for entry in argv[:2]:
         for part in Path(entry).parts:
             name = part.lower()

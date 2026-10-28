@@ -324,6 +324,14 @@ def test_file_policy_unit(tmp_path):
             "open", (str(tmp_path.parent / "outside.txt"), "w", 0), **kw)
     with pytest.raises(boot.ShadowBlocked):
         boot.check_file_event("open", ("/etc/hostname", "r", 0), **kw)
+    # psutil liveness reads (Stop / reap) pass; secret-bearing /proc files do not.
+    for proc_read in ("/proc/stat", "/proc/123/stat", "/proc/self/status",
+                      "/proc/123/task/123/children"):
+        boot.check_file_event("open", (proc_read, "r", 0), **kw)
+    for proc_secret in ("/proc/123/environ", "/proc/self/cmdline",
+                        "/proc/self/root/etc/hostname", "/proc/123/stat/../environ"):
+        with pytest.raises(boot.ShadowBlocked):
+            boot.check_file_event("open", (proc_secret, "r", 0), **kw)
     boot.check_file_event(
         "open", (str(r["snap"] / "a.py"), "r", 0), **kw)
     # os.open with mode None must not TypeError.

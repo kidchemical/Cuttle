@@ -924,7 +924,6 @@ def process_message_with_bot(
                 session_kind=session_kind or 'web_anon',
                 routing_key=routing_key or f'web_anon_{session_id}',
                 is_owner=is_owner, project_path=_legacy_proj or '',
-                run_kwargs=_ident_kw,
             ),
             io=_legacy_io, delivery=_chat_delivery,
             claim=False,

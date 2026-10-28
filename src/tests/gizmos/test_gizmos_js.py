@@ -286,8 +286,11 @@ def test_shell_popover_has_notify_action_and_viewport_clamp():
     assert "--cuttle-safe-" in src
     assert "visualViewport" in src
     assert "H - PAD - safe.bottom - ph" in src
+    # ...and clears an active voice call strip at the bottom edge, in JS and CSS.
+    assert "getPropertyValue('--shell-voice-strip-h')" in src
     css = (REPO / "src" / "web" / "css" / "gizmos.css").read_text(encoding="utf-8")
-    assert "max-height: calc(100dvh - 24px - var(--cuttle-safe-top, 0px) - var(--cuttle-safe-bottom, 0px));" in css
+    assert ("max-height: calc(100dvh - 24px - var(--cuttle-safe-top, 0px) - var(--cuttle-safe-bottom, 0px)"
+            " - var(--shell-voice-strip-h, 0px));") in css
 
 
 # ---------------------------------------------------------------------------
