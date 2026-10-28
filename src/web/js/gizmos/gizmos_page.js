@@ -68,12 +68,14 @@
     function renderList() {
         const box = $('gizmosList');
         if (!state.gizmos.length) {
-            box.innerHTML = '<h2>Your gizmos</h2><div class="gizmos-empty">No gizmos yet. Add a usage meter above, or ask an agent to run <code>python -m api.gizmos create usage_meter --agent codex</code>.</div>';
+            window.CuttleScroll.setHtml(box, '<h2>Your gizmos</h2><div class="gizmos-empty">No gizmos yet. Add a usage meter above, or ask an agent to run <code>python -m api.gizmos create usage_meter --agent codex</code>.</div>');
             return;
         }
         const now = Date.now();
         const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest('[data-gizmo-item]');
-        box.innerHTML = '<h2>Your gizmos</h2>' + state.gizmos.map(g => {
+        // Timer repaints (relative times, data refresh) must not rebuild an
+        // unchanged list or reset its scroll.
+        const changed = window.CuttleScroll.setHtml(box, '<h2>Your gizmos</h2>' + state.gizmos.map(g => {
             const cfg = g.config || {};
             const data = state.data.get(M.dataKey(g));
             const fields = g.type === 'usage_meter'
@@ -96,8 +98,8 @@
                 + '<button type="button" data-action="remove" class="gizmos-danger">Remove</button>'
                 + '<span class="gizmo-item-meta">' + esc(g.id) + ' · created by ' + esc(g.created_by || 'ui') + '</span>'
                 + '</div></article>';
-        }).join('');
-        if (focused) {
+        }).join(''));
+        if (changed && focused) {
             const again = box.querySelector('[data-gizmo-item="' + focused.dataset.gizmoItem + '"] [data-field="title"]');
             if (again) again.focus();
         }

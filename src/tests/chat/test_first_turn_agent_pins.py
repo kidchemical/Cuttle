@@ -195,6 +195,37 @@ def test_freeze_identity_chip_matches_cli_kwargs(
     assert kw["execute_kwargs"]["reasoning_effort"] in chip["meta"]
 
 
+def test_freeze_cursor_identity_reads_model_slash(tmp_path, monkeypatch):
+    """``/cursor /model grok …`` freezes Grok even when the session pin is Auto."""
+    monkeypatch.setattr(
+        "scripts.utilities.cursor_cli_session_store._map_file",
+        lambda: tmp_path / "cursor_cli_session_map.json",
+    )
+    monkeypatch.setattr(
+        "api.cursor_agent_commands.list_cursor_agent_models",
+        lambda: [{"id": "cursor-grok-4.6-high", "label": "Grok 4.6"}],
+    )
+    sid = 1567
+    msg = (
+        "/cursor /model cursor-grok-4.6-high "
+        "http://192.168.4.38:3000/issues/71\n\ncan you fix this?"
+    )
+    w._apply_request_agent_pins(sid, {}, msg)
+    ident = w._freeze_send_identity(sid, msg, {})
+    assert ident is not None
+    assert ident["agent"] == "cursor"
+    assert ident["model"] == "cursor-grok-4.6-high", ident
+    assert ident["model_source"] == "slash"
+
+    badge = w._user_badge_metadata(msg, sid, identity=ident)
+    chip = badge["slash_command"]["chips"][0]
+    assert "auto" not in chip["label"].lower()
+    assert "grok" in chip["label"].lower()
+    assert w._harness_identity_run_kwargs(ident)["model_override"] == (
+        "cursor-grok-4.6-high"
+    )
+
+
 def test_server_applies_pins_then_freezes_identity_for_badge_and_cli():
     """Pin apply → freeze → persist chip + harness execute_kwargs, in that order.
 
@@ -208,7 +239,9 @@ def test_server_applies_pins_then_freezes_identity_for_badge_and_cli():
     main = text.index(
         "# Authenticated chats: assign a DB session id before remaining slash-command"
     )
-    apply = text.index("_apply_request_agent_pins(chat_session_id, data)", main)
+    apply = text.index(
+        "_apply_request_agent_pins(chat_session_id, data, message_content)", main
+    )
     freeze = text.index("_freeze_send_identity(", main)
     persist_turn = text.index("def _persist_user_turn(sid):", main)
     delegation = text.index("persist_user_turn as _owned", persist_turn)

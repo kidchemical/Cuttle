@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from api.cursor_agent_commands import (
+    cursor_model_from_prompt,
     format_cursor_usage_markdown,
     handle_cursor_agent_slash,
     parse_cursor_agent_slash,
@@ -38,6 +39,22 @@ def test_parse_cursor_agent_slash_basic():
     assert parse_cursor_agent_slash("/usage now") == ("usage", "now")
     assert parse_cursor_agent_slash("hello") is None
     assert parse_cursor_agent_slash("/pipeline Foo") is None
+
+
+def test_cursor_model_from_prompt_reads_joined_cursor_chip():
+    """Composer sends ``/cursor /model <id> <body>`` — same shape as CH-001567."""
+    assert (
+        cursor_model_from_prompt(
+            "/cursor /model cursor-grok-4.6-high http://example/issues/71\n\nfix this"
+        )
+        == "cursor-grok-4.6-high"
+    )
+    assert cursor_model_from_prompt("/model cursor-grok-4.6-high what model?") == (
+        "cursor-grok-4.6-high"
+    )
+    assert cursor_model_from_prompt("/cursor hello") is None
+    assert cursor_model_from_prompt("/model refresh") is None
+    assert cursor_model_from_prompt("/cursor /model refresh") is None
 
 
 def test_peel_user_request_and_model_resolve():

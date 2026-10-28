@@ -61,10 +61,18 @@ def test_standalone_retains_periodic_pending_scan(browser, static_server):
         page.goto(static_server + '/chat_page.html?chat=42', wait_until='domcontentloaded')
         page.locator('#pendingChangesHost [data-pending-panel]').wait_for(state='visible')
         page.wait_for_timeout(1000)
+        page.evaluate('''() => {
+            window.pcChurn = 0;
+            new MutationObserver(m => { window.pcChurn += m.length; }).observe(
+                document.querySelector('#pendingChangesHost [data-pending-panel]'),
+                { childList: true, subtree: true, characterData: true });
+        }''')
         start = len(api.requests)
         page.wait_for_timeout(13000)
         polls = [r for r in api.requests[start:] if r['path'] == '/api/git/pending-changes']
         assert len(polls) == 1, polls
+        # Same data back: the poll must not rebuild the list (that resets scroll).
+        assert page.evaluate('window.pcChurn') == 0
         assert errors == []
     finally:
         context.close()

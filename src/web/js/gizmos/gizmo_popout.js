@@ -29,7 +29,7 @@
 
     function render() {
         if (!state.gizmo) return;
-        box.innerHTML = M.renderGizmoHtml(state.gizmo, state.data, 'popout', Date.now());
+        window.CuttleScroll.setHtml(box, M.renderGizmoHtml(state.gizmo, state.data, 'popout', Date.now()));
         document.title = state.gizmo.title + ' - Cuttle';
     }
 

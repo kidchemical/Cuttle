@@ -336,7 +336,16 @@ def user_badge_metadata(message_text: str, session_id, identity: Optional[dict] 
             meta += f' · effort {effort}'
         return {'slash_command': {'chips': [{'label': label, 'meta': meta, 'category': 'claude'}]}}
     # Cursor effort is baked into the model id.
-    model = ident_model if ident is not None else ''
+    # This-turn `/model <id>` (joined from the composer chip) must win: the
+    # session store is still Auto on a new chat until the adapter peels the
+    # slash, and freeze-identity used to skip Cursor entirely (CH-001567).
+    slash_model = ''
+    try:
+        from api.cursor_agent_commands import cursor_model_from_prompt
+        slash_model = str(cursor_model_from_prompt(text) or '').strip()
+    except Exception:
+        slash_model = ''
+    model = slash_model or (ident_model if ident is not None else '')
     try:
         if not model and sid:
             from scripts.utilities.cursor_cli_session_store import load_cursor_agent_options

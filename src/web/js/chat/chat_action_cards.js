@@ -1551,7 +1551,7 @@
             // Root-scoped scan: this controller settles only its own
             // root's cards. Generation semantics are unchanged.
             const cards = Array.from(chatRoot.querySelectorAll('.cuttle-action-form'))
-                .filter(isLinkedFlaskRestartCard);
+                .filter((card) => !card.__restartSettled && isLinkedFlaskRestartCard(card));
             if (!cards.length) return;
             let data = null;
             try {
@@ -1623,6 +1623,8 @@
                         collapseLockedActionForm(card, ['graceful'], 'Flask already restarted');
                         setActionFormCardProgress(card, 'Flask already restarted', 'ok');
                     }
+                    // Generations only grow: this card never needs another status poll.
+                    card.__restartSettled = true;
                     return;
                 }
                 if (inFlight && rid && (!currentFormId || !cardId || cardId === currentFormId
@@ -1660,7 +1662,7 @@
             if (linkPoll) return;
             try {
                 linkPoll = setInterval(() => {
-                    if (destroyed) return;
+                    if (destroyed || (typeof document !== 'undefined' && document.hidden)) return;
                     syncLinkedFlaskRestartCardsFromStatus().catch(() => {});
                     try { host.syncHistoryAwaiting(); } catch (_) {}
                 }, 2500);

@@ -2983,12 +2983,13 @@ body.light-mode .shell-page-loader-veil {
     border: 2.5px solid rgba(255, 255, 255, 0.18);
     border-top-color: rgba(255, 255, 255, 0.85);
     border-radius: 50%;
-    animation: shellPageSpin 0.7s linear infinite;
     opacity: 0;
     transition: opacity 120ms ease;
 }
 
+/* Animate only while visible: an infinite animation at opacity 0 still costs a frame tick. */
 .shell-page-loader.spinning .shell-page-spinner {
+    animation: shellPageSpin 0.7s linear infinite;
     opacity: 1;
 }
 
@@ -3022,7 +3023,8 @@ body.light-mode .shell-page-spinner {
     .shell-page-loader {
         transition: none !important;
     }
-    .shell-page-spinner {
+    .shell-page-spinner,
+    .shell-page-loader.spinning .shell-page-spinner {
         animation: none;
         border-top-color: rgba(255, 255, 255, 0.55);
         opacity: 0.7;

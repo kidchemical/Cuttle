@@ -14,8 +14,7 @@ let jobsStats = null;
 let pollTimer = null;
 
 function setHtmlIfChanged(el, html) {
-    if (!el) return;
-    if (el.innerHTML !== html) el.innerHTML = html;
+    window.CuttleScroll.setHtml(el, html);
 }
 
 function hideJobsSurface() {

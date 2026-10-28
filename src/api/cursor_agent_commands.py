@@ -52,6 +52,31 @@ def parse_cursor_agent_slash(prompt: str) -> Optional[Tuple[str, str]]:
     return m.group(1).lower(), (m.group(2) or "").strip()
 
 
+_CURSOR_PREFIX_RE = re.compile(r"^/cursor\b\s*", re.IGNORECASE)
+_CURSOR_MODEL_META = frozenset({"refresh", "reload", "sync"})
+
+
+def cursor_model_from_prompt(prompt: str) -> Optional[str]:
+    """This-turn ``/model <id>`` from a Cursor prompt (with or without ``/cursor``).
+
+    Composer chips join as ``/cursor /model cursor-grok-4.6-high <body>``. The
+    user-badge snapshot runs before the adapter peels that slash, so the badge
+    owner has to read the same token the CLI will. Catalog meta ids
+    (``refresh`` / ``reload`` / ``sync``) are not a model pin.
+    """
+    text = _CURSOR_PREFIX_RE.sub("", (prompt or "").strip(), count=1).strip()
+    parsed = parse_cursor_agent_slash(text)
+    if not parsed:
+        return None
+    cmd, args = parsed
+    if cmd != "model" or not args:
+        return None
+    model_id = args.split(None, 1)[0].strip()
+    if not model_id or model_id.lower() in _CURSOR_MODEL_META:
+        return None
+    return model_id
+
+
 def clear_cursor_agent_models_cache() -> None:
     """Drop the in-process `agent models` cache (next list re-runs the CLI)."""
     global _MODELS_CACHE

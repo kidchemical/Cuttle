@@ -363,6 +363,8 @@ function cuttleSyncMobileServerRows() {
         } catch (_) {}
     }
 
-    setInterval(poll, 2000);
+    // Rides the shell heartbeat (app_shell.js runShellHeartbeat): one cadence
+    // that slows down while the window is hidden, not a separate 2s timer.
+    window.__cuttleShellPollSshApproval = poll;
     setTimeout(poll, 800);
 })();

@@ -4,7 +4,7 @@
     const form=document.getElementById('feedFilters'),followButton=document.getElementById('feedFollow');
     const activeEl=document.getElementById('feedActive');
     let rows=[],filters={},following=true,pending=[],before=0,source,streamCursor=0;
-    let activeRuns=[],activeTimer=0;
+    let activeRuns=[],activeTimer=0,activeSig='';
     const expanded=new Map();
     const motion=window.matchMedia('(prefers-reduced-motion: reduce)');
     const animations=new Set();
@@ -115,7 +115,12 @@
     function renderActive() {
         if(!activeEl) return;
         activeEl.hidden=!activeRuns.length;
-        if(!activeRuns.length) return;
+        if(!activeRuns.length) {activeSig='';return;}
+        // The 5s poll must not rebuild an unchanged strip (restarts the orbit
+        // animations and drops hover/focus on End).
+        const sig=JSON.stringify(activeRuns.map(run=>[run.query_id,run.agent_id,run.chat_session_id]));
+        if(sig===activeSig && activeEl.childElementCount) return;
+        activeSig=sig;
         const fragment=document.createDocumentFragment();
         const title=node('h2','Active now');title.className='feed-active-title';fragment.append(title);
         for(const run of activeRuns) {

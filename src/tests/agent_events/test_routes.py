@@ -84,3 +84,61 @@ def test_active_feed_recovers_prior_boot_without_hiding_current_run(client):
     log=client.get('/api/agent-events/runs/orphan/log').get_json()
     assert log['executing'] is False
     assert log['capture_interrupted'] is True
+
+
+def test_log_sends_run_metadata_only_when_its_revision_is_stale(client):
+    store=EventStore(state_dir())
+    store.write_batch([('run','q',{'harness':{'agent_id':'codex'},'sent':{'text':'p'*20000,'chars':20000}}),
+                       ('event','q',{'kind':'tool','block_id':'one'})])
+    first=client.get('/api/agent-events/runs/q/log').get_json()
+    assert first['sent']['chars']==20000 and first['meta_rev'] and first['stream_cursor']>0
+    again=client.get('/api/agent-events/runs/q/log?meta_rev='+first['meta_rev']).get_json()
+    assert again['meta_omitted'] is True and 'sent' not in again and 'harness' not in again
+    assert again['executing'] is True and len(again['events'])==1
+    store.write_batch([('run','q',{'harness':{'agent_id':'codex'},'finished_at':2,'success':True})])
+    changed=client.get('/api/agent-events/runs/q/log?meta_rev='+first['meta_rev']).get_json()
+    assert 'meta_omitted' not in changed and changed['meta_rev']!=first['meta_rev']
+    assert changed['executing'] is False
+
+
+def _sse_messages(response):
+    buf=''
+    for chunk in response.response:
+        buf+=chunk.decode() if isinstance(chunk,bytes) else chunk
+        while '\n\n' in buf:
+            block,buf=buf.split('\n\n',1)
+            fields=dict(line.split(': ',1) for line in block.splitlines() if ': ' in line and not line.startswith(':'))
+            yield fields
+
+
+def test_run_log_stream_pushes_only_this_runs_deltas_then_ends(client,monkeypatch):
+    from api.agent_events import routes
+    monkeypatch.setattr(routes,'LOG_STREAM_POLL_SEC',0)
+    store=EventStore(state_dir())
+    store.write_batch([('run','q',{'harness':{'agent_id':'codex'},'sent':{'text':'big'}}),
+                       ('event','q',{'kind':'thinking','block_id':'a','text':'one'})])
+    first=client.get('/api/agent-events/runs/q/log').get_json()
+    store.write_batch([('event','q',{'kind':'thinking','block_id':'a','text':'one two'}),
+                       ('event','other',{'kind':'tool','block_id':'x'}),
+                       ('event','q',{'kind':'tool','block_id':'b'})])
+    resp=client.get(f"/api/agent-events/runs/q/log/stream?after={first['stream_cursor']}&meta_rev={first['meta_rev']}",
+                    buffered=False)
+    assert resp.mimetype=='text/event-stream'
+    messages=_sse_messages(resp)
+    import json
+    msg=next(messages)
+    data=json.loads(msg['data'])
+    assert [e['seq'] for e in data['events']]==[1,2]
+    assert data['events'][0]['rev']==2 and 'text' not in data['events'][0]
+    assert 'meta' not in data and data['executing'] is True
+    assert int(msg['id'])==data['cursor']
+    store.write_batch([('run','q',{'harness':{'agent_id':'codex'},'finished_at':3,'success':True})])
+    msg=next(messages)
+    data=json.loads(msg['data'])
+    assert data['executing'] is False and data['meta']['success'] is True
+    assert next(messages).get('event')=='end'
+    resp.close()
+
+
+def test_run_log_stream_unknown_run_is_404(client):
+    assert client.get('/api/agent-events/runs/missing/log/stream').status_code==404

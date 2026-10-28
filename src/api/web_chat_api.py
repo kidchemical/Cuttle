@@ -2459,19 +2459,25 @@ def _auth_session_id_is_absent(chat_session_id) -> bool:
     return s in ("", "anon", "null", "undefined", "none")
 
 
-def _apply_request_agent_pins(session_id, data) -> None:
+def _apply_request_agent_pins(session_id, data, message_text=None) -> None:
     """Pin first-turn model/effort from the chat POST before badge + agent run.
 
     The client cannot POST ``/api/<agent>/effort`` until it knows the session id.
     That mint happens inside this request, and the post-adopt client POST races
     both ``_user_badge_metadata`` and the harness execute — so new-chat picks
     must arrive on the chat body as ``agent_pins``.
+
+    Cursor also pins from this-turn ``/model <id>`` in ``message_text``: the
+    composer joins that chip into the body, and the adapter peels it only
+    after the user badge has already been snapshotted.
     """
-    if session_id is None or not isinstance(data, dict):
+    if session_id is None:
         return
+    if not isinstance(data, dict):
+        data = {}
     pins = data.get('agent_pins')
-    if not isinstance(pins, dict) or not pins:
-        return
+    if not isinstance(pins, dict):
+        pins = {}
 
     def _entry(agent: str) -> dict:
         raw = pins.get(agent)
@@ -2557,8 +2563,23 @@ def _apply_request_agent_pins(session_id, data) -> None:
     except Exception as exc:
         print(f"[CHAT] apply claude agent_pins failed: {exc}", flush=True)
 
+    try:
+        cursor = _entry('cursor')
+        cursor_model = str((cursor or {}).get('model') or '').strip()
+        if not cursor_model:
+            from api.cursor_agent_commands import cursor_model_from_prompt
+            cursor_model = str(cursor_model_from_prompt(message_text or '') or '').strip()
+        if cursor_model:
+            from api.agent_harness.cwd import resolve_harness_cwd
+            from scripts.utilities.cursor_cli_session_store import update_cursor_agent_options
+            update_cursor_agent_options(
+                resolve_harness_cwd(''), session_id, model=cursor_model
+            )
+    except Exception as exc:
+        print(f"[CHAT] apply cursor agent_pins failed: {exc}", flush=True)
 
-_HARNESS_IDENTITY_AGENTS = frozenset({'muse', 'hermes', 'opencode', 'codex', 'claude'})
+
+_HARNESS_IDENTITY_AGENTS = frozenset({'muse', 'hermes', 'opencode', 'codex', 'claude', 'cursor'})
 
 
 def _harness_agent_from_message(message_text: str) -> Optional[str]:
@@ -2613,6 +2634,11 @@ def _load_harness_session_model_effort(agent: str, session_id) -> tuple:
             )
             model = str(load_claude_model(sid) or '').strip()
             effort = str(load_claude_effort(sid) or '').strip()
+        elif aid == 'cursor':
+            from scripts.utilities.cursor_cli_session_store import load_cursor_agent_options
+            model = str(
+                (load_cursor_agent_options('', sid) or {}).get('model') or ''
+            ).strip()
     except Exception:
         return '', ''
     return model, effort
@@ -2644,13 +2670,30 @@ def _freeze_send_identity(session_id, message_text, data=None) -> Optional[dict]
     agent = _harness_agent_from_message(message_text)
     if agent not in _HARNESS_IDENTITY_AGENTS:
         return None
+
+    pin_model, pin_effort = _request_agent_pin(data, agent)
+    sess_model, sess_effort = _load_harness_session_model_effort(agent, session_id)
+    if agent == 'cursor':
+        from api.agent_harness.agents.cursor.adapter import _resolve_cursor_model
+        from api.cursor_agent_commands import cursor_model_from_prompt
+
+        slash = cursor_model_from_prompt(message_text)
+        model = _resolve_cursor_model(
+            slash_preferred=slash,
+            session_model=pin_model or sess_model or None,
+            kernel_model=None,
+        )
+        return {
+            'agent': 'cursor',
+            'model': (model or '').strip() or 'auto',
+            'effort': '',
+            'model_source': 'slash' if slash else ('pin' if pin_model else 'session'),
+            'effort_source': '',
+        }
     from api.agent_harness.agent_defaults import (
         resolve_effective_effort,
         resolve_effective_model,
     )
-
-    pin_model, pin_effort = _request_agent_pin(data, agent)
-    sess_model, sess_effort = _load_harness_session_model_effort(agent, session_id)
     # This send's composer pin beats a stale session pin (adopt/POST race).
     model, model_source = resolve_effective_model(
         agent,
@@ -3696,7 +3739,7 @@ def chat_endpoint():
             try:
                 # First-turn dirty picks arrive here — must pin before user-badge
                 # metadata and harness execute (post-adopt client POSTs race both).
-                _apply_request_agent_pins(chat_session_id, data)
+                _apply_request_agent_pins(chat_session_id, data, message_content)
             except Exception as _pin_err:
                 print(f"[CHAT] apply agent_pins failed: {_pin_err}", flush=True)
         if _auth_user and _created_new_session:

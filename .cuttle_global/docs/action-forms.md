@@ -178,6 +178,12 @@ path. Restart safety = short `id` (in-memory) + body JSON → client `data-spec`
 
 ## Watch / progress cards (long OS jobs only)
 
+Use a watch card proactively for a long-running OS job when a status producer
+can report its actual progress, even if the user did not request a bar. For
+multi-step agent work, use a Tasks gizmo (`gizmos.md`); a watch card is not a
+substitute for tracking the agent's steps. Short commands need no watch card.
+Do not invent percentages when progress is unknown.
+
 `__watch_resume__`, `__watch_park__`, `__watch_cancel__` are **only** for jobs with a
 `watch` block (status JSON + progress). Using them on a Q&A form shows a **progress bar**
 and is wrong.

@@ -88,6 +88,36 @@ def test_user_badge_snapshot_cursor_format(monkeypatch):
     assert chip["category"] == "cursor"
 
 
+def test_user_badge_snapshot_cursor_model_slash_beats_session_auto(monkeypatch):
+    """CH-001567: ``/cursor /model cursor-grok-4.6-high …`` must not snapshot Auto.
+
+    The session store is still Auto on a new chat; the adapter peels ``/model``
+    only after this badge is persisted. The snapshot has to read the same
+    token the CLI will.
+    """
+    from api import web_chat_api as w
+
+    monkeypatch.setattr(
+        "scripts.utilities.cursor_cli_session_store.load_cursor_agent_options",
+        lambda root, sid: {"model": "auto"},
+    )
+    monkeypatch.setattr(
+        "api.cursor_agent_commands.list_cursor_agent_models",
+        lambda: [{"id": "cursor-grok-4.6-high", "label": "Grok 4.6"}],
+    )
+    meta = w._user_badge_metadata(
+        "/cursor /model cursor-grok-4.6-high http://192.168.4.38:3000/issues/71\n\n"
+        "can you fix this?",
+        "1567",
+    )
+    chip = meta["slash_command"]["chips"][0]
+    assert chip["category"] == "cursor"
+    assert "auto" not in chip["label"].lower()
+    assert "grok" in chip["label"].lower()
+    assert "requested" in chip["meta"].lower()
+    assert "auto" not in chip["meta"].lower()
+
+
 def test_frontend_user_history_uses_stored_chips_without_live_enrichment():
     """addMessageToUI user branch must not call live-pin enrichers on stored chips."""
     from pathlib import Path

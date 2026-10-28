@@ -27,6 +27,18 @@
         });
     }
 
+    // Shared poll-safe swap (js/shared/scroll_preserve.js); pages that do not
+    // load it keep the old scroll-restoring swap.
+    function setPolledHtml(el, html) {
+        if (!el) return;
+        if (global.CuttleScroll) { global.CuttleScroll.setHtml(el, html); return; }
+        const top = el.scrollTop;
+        const left = el.scrollLeft;
+        el.innerHTML = html;
+        el.scrollTop = top;
+        el.scrollLeft = left;
+    }
+
     function defaultEsc(s) {
         return String(s == null ? '' : s)
             .replace(/&/g, '&amp;')
@@ -945,9 +957,9 @@
                 const chip = qs('review');
                 if (chip) {
                     chip.hidden = !files;
-                    chip.innerHTML = files
+                    setPolledHtml(chip, files
                         ? '\u2726 <span class="pending-changes-review-chip-label">Review </span>' + hunks
-                        : '';
+                        : '');
                     chip.title = files ? hunks + ' unreviewed agent change' + (hunks === 1 ? '' : 's') + ' in '
                         + files + ' file' + (files === 1 ? '' : 's') + ' — open the first' : '';
                 }
@@ -1016,9 +1028,9 @@
                 if (stats) {
                     const a = formatStat(adds, '+');
                     const d = formatStat(dels, '-');
-                    stats.innerHTML =
+                    setPolledHtml(stats,
                         (a ? '<span class="pending-changes-add">' + a + '</span>' : '')
-                        + (d ? '<span class="pending-changes-del">' + d + '</span>' : '');
+                        + (d ? '<span class="pending-changes-del">' + d + '</span>' : ''));
                 }
                 if (branchEl) {
                     const br = data.branch ? String(data.branch) : '';
@@ -1026,12 +1038,12 @@
                         || (currentProject() && currentProject().name)
                         || '';
                     const worktree = currentProject() && currentProject().worktree;
-                    branchEl.innerHTML = worktree
+                    setPolledHtml(branchEl, worktree
                         ? escapeHtmlInline('\uD83C\uDF3F ' + (br || 'worktree'))
                         : [
                             name ? '<span class="pending-changes-branch-project">' + escapeHtmlInline(name) + '</span>' : '',
                             br ? '<span class="pending-changes-branch-name">' + escapeHtmlInline(br) + '</span>' : '',
-                        ].join('');
+                        ].join(''));
                     branchEl.title = String(repoRoot || '') + (br ? ' (' + br + ')' : '');
                 }
                 if (list) {
@@ -1095,13 +1107,9 @@
                             + '+' + moreN + ' more (not listed)</span></li>'
                         );
                     }
-                    // Poll refreshes must not reset the user's scroll (see
-                    // js/shared/scroll_preserve.js for the shared equivalent).
-                    const listTop = list.scrollTop;
-                    const listLeft = list.scrollLeft;
-                    list.innerHTML = html;
-                    list.scrollTop = listTop;
-                    list.scrollLeft = listLeft;
+                    // Poll refreshes must neither rebuild an unchanged list
+                    // nor reset the user's scroll.
+                    setPolledHtml(list, html);
                 }
                 panelEl.classList.toggle('is-expanded', expanded);
                 const body = qs('body');

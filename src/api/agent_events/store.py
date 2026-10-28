@@ -214,6 +214,25 @@ class EventStore:
             row=conn.execute('SELECT * FROM runs WHERE query_id=?',(qid,)).fetchone()
         return {**dict(row),'metadata':json.loads(row['metadata'])} if row else None
 
+    def run_state(self, qid):
+        """(status, raw metadata JSON) without decoding, or None."""
+        with self.connection() as conn:
+            row=conn.execute('SELECT status,metadata FROM runs WHERE query_id=?',(qid,)).fetchone()
+        return (row['status'],row['metadata']) if row else None
+
+    def change_cursor(self):
+        with self.connection() as conn:
+            return conn.execute('SELECT COALESCE(MAX(id),0) FROM event_changes').fetchone()[0]
+
+    def run_changes(self, qid, after=0, limit=1000):
+        """Headers of one run's events revised after an event_changes cursor."""
+        with self.connection() as conn:
+            changes=conn.execute('''SELECT c.id,c.event_id,e.query_id FROM event_changes c
+                LEFT JOIN events e ON e.id=c.event_id WHERE c.id>? ORDER BY c.id LIMIT ?''',(after,limit)).fetchall()
+        ids=list(dict.fromkeys(r['event_id'] for r in changes if r['query_id']==qid))
+        return {'events':self.events(qid,event_ids=ids,limit=500) if ids else [],
+                'cursor':changes[-1]['id'] if changes else after}
+
     def active_runs(self):
         """Runs still executing (status='running'), oldest first, for the live strip."""
         with self.connection() as conn:

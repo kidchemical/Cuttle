@@ -4053,9 +4053,9 @@ async function runShellHeartbeat() {
     shellHeartbeatInFlight = true;
     try {
         const tasks = [pollUiToasts(), pollJobsBadge()];
-        if (typeof window.__cuttleShellPollWorkers === 'function') {
-            tasks.push(Promise.resolve(window.__cuttleShellPollWorkers()));
-        }
+        ['__cuttleShellPollWorkers', '__cuttleShellPollSshApproval'].forEach((hook) => {
+            if (typeof window[hook] === 'function') tasks.push(Promise.resolve(window[hook]()));
+        });
         if (paneController?.hasSessions()) {
             tasks.push(paneController?.pollLiveStatusHub());
         }
