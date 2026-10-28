@@ -79,7 +79,7 @@ def preserve_interrupted_turns(db, session_id, *, store=None, stopped_at=None):
                 continue
             status = 'cancelled' if run['status'] == 'running' else run['status']
             label = 'stopped' if status == 'cancelled' else 'interrupted' if status == 'interrupted' else 'failed'
-            when = datetime.fromtimestamp(run['started_at'], timezone.utc).isoformat(timespec='seconds')
+            when = datetime.fromtimestamp(run['started_at'], timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
             content = f'**Agent {label} before completion.** Recorded activity from {when} is preserved in the query log.'
             if any(writing):
                 content += '\n\nText captured before the turn ended:\n\n' + '\n\n'.join(filter(None, writing))
