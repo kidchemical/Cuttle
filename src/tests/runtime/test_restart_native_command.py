@@ -470,6 +470,31 @@ def test_existing_slash_commands_and_sticky_prefixes_still_work():
     assert apply_default_sticky_prefix("/restart status", None) == "/restart status"
 
 
+def test_new_chat_restart_mints_session_and_persists(owner_session, restart_paths, fake_work, monkeypatch):
+    """New-chat `/restart when-idle` must create a chat entry, not vanish."""
+    from api import flask_restart as fr
+    from api import web_chat_api as wca
+
+    monkeypatch.setattr(fr, "_ensure_when_idle_watcher", lambda: None)
+
+    client = owner_session.sign_in(wca.app.test_client())
+    resp = client.post(
+        "/api/chat",
+        json={"message": "/restart when-idle", "stream": False},
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body.get("session_id") is not None, body
+    sid = body["session_id"]
+    assert isinstance(sid, int)
+    # Chat entry exists and both bubbles persisted so refresh/history shows it.
+    msgs = owner_session.db.get_messages(sid)
+    kinds = [(m.get("sender") or m.get("role")) for m in msgs]
+    assert "user" in kinds, msgs
+    assert "assistant" in kinds, msgs
+    assert any("/restart" in (m.get("content") or m.get("message") or "") for m in msgs if (m.get("sender") or m.get("role")) == "user")
+
+
 def test_palette_still_lists_the_other_control_commands():
     src = CHAT_JS.read_text(encoding="utf-8")
     slash_src = SLASH_JS.read_text(encoding="utf-8")

@@ -3585,6 +3585,37 @@ def chat_endpoint():
                 "session_id": chat_session_id,
             }), 403
 
+        # Authenticated chats: assign a DB session id before native control
+        # lanes (/restart, /branch, supervised, /help) so a first message sent
+        # from a fresh viewport mints the chat, persists both bubbles, and
+        # returns a session id the client can adopt — otherwise the turn has
+        # no CH- handle and is lost on viewport switch.
+        _auth_user, chat_session_id, _created_new_session = _resolve_auth_chat_session(chat_session_id)
+        if _auth_user and chat_session_id is not None:
+            try:
+                # First-turn dirty picks arrive here — must pin before user-badge
+                # metadata and harness execute (post-adopt client POSTs race both).
+                _apply_request_agent_pins(chat_session_id, data, message_content)
+            except Exception as _pin_err:
+                print(f"[CHAT] apply agent_pins failed: {_pin_err}", flush=True)
+        if _auth_user and _created_new_session:
+            try:
+                _preview = ' '.join((message_content or '').split())
+                if _preview:
+                    get_auth_db().set_session_name(
+                        chat_session_id,
+                        (_preview[:60] + ('…' if len(_preview) > 60 else '')),
+                        auto=True,
+                    )
+            except Exception as _ne:
+                print(f"[CHAT] provisional session name failed: {_ne}")
+
+        if _auth_user and chat_session_id is not None:
+            try:
+                _stamp_auth_session_project(_auth_user, chat_session_id, data)
+            except Exception as _se:
+                print(f"[CHAT] stamp session project failed: {_se}", flush=True)
+
         # Native Cuttle control command. Handled before sticky/starred agent
         # prefixing, the router, and any agent dispatch so it never becomes a
         # model turn (and never registers as active work against itself).
@@ -3744,33 +3775,9 @@ def chat_endpoint():
             from api.chat_turn_workflow import help_response as _help_response
             return jsonify(_help_response(chat_session_id))
 
-        # Authenticated chats: assign a DB session id before remaining slash-command
-        # handlers so the first message (including /cursor) can update the URL immediately.
-        _auth_user, chat_session_id, _created_new_session = _resolve_auth_chat_session(chat_session_id)
-        if _auth_user and chat_session_id is not None:
-            try:
-                # First-turn dirty picks arrive here — must pin before user-badge
-                # metadata and harness execute (post-adopt client POSTs race both).
-                _apply_request_agent_pins(chat_session_id, data, message_content)
-            except Exception as _pin_err:
-                print(f"[CHAT] apply agent_pins failed: {_pin_err}", flush=True)
-        if _auth_user and _created_new_session:
-            try:
-                _preview = ' '.join((message_content or '').split())
-                if _preview:
-                    get_auth_db().set_session_name(
-                        chat_session_id,
-                        (_preview[:60] + ('…' if len(_preview) > 60 else '')),
-                        auto=True,
-                    )
-            except Exception as _ne:
-                print(f"[CHAT] provisional session name failed: {_ne}")
-
-        if _auth_user and chat_session_id is not None:
-            try:
-                _stamp_auth_session_project(_auth_user, chat_session_id, data)
-            except Exception as _se:
-                print(f"[CHAT] stamp session project failed: {_se}", flush=True)
+        # Session already minted above (before native control lanes) so the
+        # first message — including /restart, /branch, /help, /cursor — can
+        # update the URL immediately. No second mint here.
 
         # Resolve host locations once before execution. Owned validation fails closed;
         # pin the chosen cwd for all subsequent helpers in this request.
