@@ -3249,7 +3249,7 @@
                     || record;
                 setChatProject(live, { silent: true });
             } else {
-                currentProject = null;
+                assignChatProject(null);
                 reconcileChatProject();
             }
         } else {
@@ -6218,11 +6218,7 @@
                 proj = { id: byId.id, name: byId.name || proj.name, path: byId.path || proj.path || '' };
             }
         }
-        const prevProjectId = currentProject && currentProject.id != null ? String(currentProject.id) : '';
-        currentProject = proj || null;
-        const nextProjectId = currentProject && currentProject.id != null ? String(currentProject.id) : '';
-        // A different project starts fresh (Local); the chip can rebind a worktree.
-        if (prevProjectId !== nextProjectId) { currentCheckoutUid = ''; currentCheckoutPath = ''; }
+        assignChatProject(proj);
         reportProjectToShell(effectiveGitPath());
         if (session.current()) {
             rememberSessionProject(session.current(), proj);
@@ -6250,6 +6246,14 @@
             // Stick in the transcript (default system toast fades after 3s and is not saved).
             addSystemMessage(`📁 Project: ${proj.name}${pathBit}`, { persist: true });
         }
+    }
+
+    /** Sole writer of currentProject: a worktree checkout never outlives its project. */
+    function assignChatProject(proj) {
+        const kept = CuttleChatProject.checkoutAfterProjectChange(currentProject, proj, { uid: currentCheckoutUid,
+            path: currentCheckoutPath }, window.CuttleChatWorktrees && window.CuttleChatWorktrees.checkoutForUid);
+        currentProject = proj || null;
+        currentCheckoutUid = kept.uid; currentCheckoutPath = kept.path;
     }
 
     /** Bind this chat to a worktree checkout (null/empty = Local/primary). */
@@ -6392,17 +6396,16 @@
         });
         const proj = decided.proj;
         const hadStored = decided.hadStored;
-        currentProject = proj || null;
+        assignChatProject(proj);
         // Restore the chat's bound worktree checkout (server row, then prefs).
         // An unsaved new chat has no session row yet: keep the in-memory pick
         // instead of clearing it, or the chip snaps back to the primary branch.
         if (session.current()) {
             const checkout = CuttleChatProject.resolveCheckoutBinding({
-                serverSession, prefs: mergedPrefs, stored,
+                serverSession, prefs: mergedPrefs, stored, project: currentProject,
                 checkoutForUid: window.CuttleChatWorktrees && window.CuttleChatWorktrees.checkoutForUid,
             });
-            currentCheckoutUid = checkout.uid;
-            currentCheckoutPath = checkout.path;
+            currentCheckoutUid = checkout.uid; currentCheckoutPath = checkout.path;
         }
         reportProjectToShell(effectiveGitPath());
         // Stamp the default onto prefs so history grouping matches the cwd chip
@@ -6440,7 +6443,7 @@
         // Always re-bind path from the live projects list when we have an id/name.
         // Stale localStorage often keeps name "Escape Purgatory" with path Cuttle.
         const rebound = CuttleChatProject.rebindProjectToRegistry(currentProject, projects);
-        currentProject = rebound.proj;
+        assignChatProject(rebound.proj);
         if (rebound.changed && session.current()) persistProjectForCurrentSession();
         return currentProject;
     }
@@ -6448,38 +6451,6 @@
     function applyOutboundProjectToRequest(requestBody) {
         CuttleChatProject.applyOutboundProjectToRequest(
             requestBody, resolveOutboundProject(), currentCheckoutUid);
-    }
-    
-    async function switchChatProject() {
-        const select = document.getElementById('projectSelect');
-        const projectId = parseInt(select.value);
-        
-        if (!projectId) {
-            currentProject = null;
-            updateProjectDisplay();
-            return;
-        }
-        
-        try {
-            const response = await fetch(`/api/projects/${projectId}/switch`, {
-                method: 'POST'
-            });
-            const data = await response.json();
-            
-            if (data.success) {
-                currentProject = data.data;
-                updateProjectDisplay();
-                console.log(`Switched to project: ${currentProject.name}`);
-                
-                // Show a brief notification
-                addSystemMessage(`📁 Switched to project: ${currentProject.name}`);
-            } else {
-                throw new Error(data.error || 'Failed to switch project');
-            }
-        } catch (error) {
-            console.error('Error switching project:', error);
-            addSystemMessage(`❌ Failed to switch project: ${error.message}`);
-        }
     }
     
     function addSystemMessage(message, opts = {}) {
@@ -7400,7 +7371,7 @@
                 adoptFollowupQueue: adoptFollowupQueue,
                 applyHistorySubagentExpandState: () => historyPanel.applyHistorySubagentExpandState(),
                 applySessionIdentity: applySessionIdentity,
-                setCurrentProject: function (v) { currentProject = v; },
+                setCurrentProject: assignChatProject,
                 setHubLiveStatusCache: function (v) { hubLiveStatusCache = v; },
                 reconcileChatProject: reconcileChatProject,
                 refreshChatWidgets: refreshChatWidgets,
@@ -13068,7 +13039,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     // Only welcome / unsaved new chats pick up a tab override.
                     if (session.current()) return;
                     applyStarredSlashChips();
-                    currentProject = null;
+                    assignChatProject(null);
                     reconcileChatProject();
                 }
             });
@@ -13129,7 +13100,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
     window.sendWelcomeMessage = sendWelcomeMessage;
     window.handleWelcomeInputKeyDown = handleWelcomeInputKeyDown;
     window.autoResizeWelcomeTextarea = autoResizeWelcomeTextarea;
-    window.switchChatProject = switchChatProject;
     window.chatPageLoadSession = loadChatSession;
     window.loadChatSession = loadChatSession;
     window.chatPageNavigateToChatHandle = navigateToChatHandle;

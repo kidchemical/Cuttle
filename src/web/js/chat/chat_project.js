@@ -344,6 +344,33 @@
         if (uid) requestBody.checkout_uid = uid;
     }
 
+    /** Stable identity for "same project": registry id, else normalized path. */
+    function projectIdentity(proj) {
+        if (!proj) return '';
+        if (proj.id != null && String(proj.id) !== '') return 'id:' + String(proj.id);
+        const path = normalizeProjectPath(proj.path);
+        return path ? 'path:' + path : '';
+    }
+
+    /** False only when the registry places checkout `uid` in a different project. */
+    function checkoutBelongsTo(uid, proj, checkoutForUid) {
+        const registered = uid && checkoutForUid ? checkoutForUid(uid) : null;
+        if (!registered || registered.project_id == null || !proj || proj.id == null) return true;
+        return String(registered.project_id) === String(proj.id);
+    }
+
+    /**
+     * A worktree checkout belongs to exactly one project, so it lives only as
+     * long as the chat stays on that project: the checkout to keep when the
+     * chat's project goes from `prev` to `next` ({uid:'',path:''} = primary).
+     */
+    function checkoutAfterProjectChange(prev, next, checkout, checkoutForUid) {
+        const uid = String((checkout && checkout.uid) || '');
+        const same = projectIdentity(next) !== '' && projectIdentity(prev) === projectIdentity(next);
+        if (!uid || !same || !checkoutBelongsTo(uid, next, checkoutForUid)) return { uid: '', path: '' };
+        return { uid, path: String((checkout && checkout.path) || '') };
+    }
+
     /** Restore a checkout atomically; explicit server clears beat device prefs. */
     function resolveCheckoutBinding(opts) {
         const sources = [opts.serverSession, opts.prefs, opts.stored];
@@ -353,6 +380,7 @@
         const uid = source ? String((Object.prototype.hasOwnProperty.call(source, 'checkout_uid')
             ? source.checkout_uid : source.checkoutUid) || '').trim() : '';
         if (!uid) return { uid: '', path: '' };
+        if (!checkoutBelongsTo(uid, opts.project, opts.checkoutForUid)) return { uid: '', path: '' };
         const registered = opts.checkoutForUid ? opts.checkoutForUid(uid) : null;
         if (registered && registered.path) return { uid, path: String(registered.path) };
         // Legacy/offline storage is usable only for the SAME checkout ID.
@@ -436,6 +464,8 @@
         resolveChatProject,
         rebindProjectToRegistry,
         applyOutboundProjectToRequest,
+        projectIdentity,
+        checkoutAfterProjectChange,
         resolveCheckoutBinding,
         hydratedSessionSnapshot,
         currentProjectPathKey,

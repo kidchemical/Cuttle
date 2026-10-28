@@ -91,7 +91,7 @@ def _run_project_chip_js(script: str) -> dict:
     reconcile = _extract(
         src,
         "    /** Resolve the chat's project from the active session, falling back to the Cuttle default. */",
-        "    async function switchChatProject() {",
+        "    function addSystemMessage(message, opts = {}) {",
     )
     persist = _extract(
         src,
@@ -222,3 +222,119 @@ process.stdout.write(JSON.stringify({
     assert res["hydrated"]["project_path"] == EP["path"], res
     assert res["authRow"]["project_name"] == "Demo Game", res
     assert res["authRow"]["project_path"] == EP["path"], res
+
+
+# A worktree of the Demo Game project (the CH-001576 report: a Cuttle chat's
+# chip showed another project's `cuttle/issue-71` worktree).
+WT71 = {
+    "checkout_uid": "wt71",
+    "project_id": EP["id"],
+    "path": "/worktrees/demo/wt71",
+    "branch": "cuttle/issue-71",
+    "state": "ready",
+}
+
+NEW_CHAT_PRELUDE = f"""
+const registry = {{ wt71: {json.dumps(WT71)} }};
+window.CuttleChatWorktrees = {{ checkoutForUid: (uid) => registry[String(uid || '')] || null }};
+// The exact setter chat_page.js hands chat_session.js (createNewChat calls it).
+const hostSetCurrentProject = {{HOST_SETTER}};
+function startNewChat() {{
+    // chat_session.js createNewChat(): project steps, in order.
+    session.create(null);
+    hostSetCurrentProject(null);
+    reconcileChatProject();
+}}
+const ep = projects.find((p) => p.name === 'Demo Game');
+setChatProject(ep, {{ silent: true }});
+setChatCheckout(registry.wt71);
+const before = currentCheckoutUid;
+"""
+
+
+def _host_setter_expr() -> str:
+    src = CHAT_JS.read_text(encoding="utf-8")
+    marker = "setCurrentProject: "
+    head = src.index(marker) + len(marker)
+    return src[head:src.index(",\n", head)]
+
+
+def _run_new_chat(script: str) -> dict:
+    prelude = NEW_CHAT_PRELUDE.replace("{HOST_SETTER}", _host_setter_expr())
+    return _run_project_chip_js(prelude + script)
+
+
+@node_only
+def test_new_chat_on_another_project_drops_previous_worktree():
+    """CH-001576: a new Cuttle chat must not inherit a Demo Game worktree."""
+    res = _run_new_chat(
+        """
+startNewChat();
+const body = {};
+applyOutboundProjectToRequest(body);
+process.stdout.write(JSON.stringify({
+    before, project: currentProject && currentProject.name,
+    uid: currentCheckoutUid, path: currentCheckoutPath, body,
+}));
+"""
+    )
+    assert res["before"] == "wt71", res
+    assert res["project"] == "Cuttle", res
+    assert res["uid"] == "" and res["path"] == "", res
+    assert "checkout_uid" not in res["body"], res
+
+
+@node_only
+def test_new_chat_on_same_project_starts_on_primary_checkout():
+    """A new chat is a fresh chat: it never silently runs in the last chat's worktree."""
+    res = _run_new_chat(
+        """
+readStarredProject = () => ep;
+startNewChat();
+const body = {};
+applyOutboundProjectToRequest(body);
+process.stdout.write(JSON.stringify({
+    project: currentProject && currentProject.name, uid: currentCheckoutUid, body,
+}));
+"""
+    )
+    assert res["project"] == "Demo Game", res
+    assert res["uid"] == "", res
+    assert "checkout_uid" not in res["body"], res
+
+
+@node_only
+def test_worktree_picked_on_new_chat_survives_reconcile():
+    """A deliberate welcome-screen worktree pick still rides the first send."""
+    res = _run_new_chat(
+        """
+startNewChat();
+setChatProject(ep, { silent: true });
+setChatCheckout(registry.wt71);
+reconcileChatProject();
+const body = {};
+applyOutboundProjectToRequest(body);
+process.stdout.write(JSON.stringify({ uid: currentCheckoutUid, body }));
+"""
+    )
+    assert res["uid"] == "wt71", res
+    assert res["body"].get("checkout_uid") == "wt71", res
+
+
+@node_only
+def test_restored_binding_from_another_project_is_dropped():
+    """Stale device storage (e.g. written by the old leak) cannot rebind a foreign worktree."""
+    res = _run_new_chat(
+        """
+// Saved Cuttle chat 204 whose device prefs still carry the Demo Game worktree.
+session.adopt(204);
+authSessions[0] = { id: 204, project_id: 4, project_name: 'Cuttle', project_path: projects[0].path };
+updateSessionPrefs(204, { projectId: 4, projectPath: projects[0].path, projectName: 'Cuttle', checkoutUid: 'wt71', checkoutPath: '/worktrees/demo/wt71' });
+lastHydratedSessionProject = null;
+currentProject = null;
+reconcileChatProject();
+process.stdout.write(JSON.stringify({ project: currentProject && currentProject.name, uid: currentCheckoutUid }));
+"""
+    )
+    assert res["project"] == "Cuttle", res
+    assert res["uid"] == "", res

@@ -94,3 +94,50 @@ def test_stamp_updates_when_client_switches_project(monkeypatch):
         project_path=r"E:\Projects\DemoGame",
         checkout_uid=None,
     )
+
+
+def _stamp(stored, data, owners):
+    from api.chat_session_project import stamp_auth_session_project
+
+    db = MagicMock()
+    db.get_session_project.return_value = stored
+    stamp_auth_session_project(
+        {"id": 1}, 1576, data, db=db,
+        checkout_belongs=lambda uid, pid: owners.get(uid) == pid,
+    )
+    return db
+
+
+def test_stamp_refuses_a_checkout_from_another_project():
+    """CH-001576: a Cuttle chat must never persist a Demo Game worktree binding."""
+    db = _stamp(
+        {},
+        {"project_id": 4, "project_name": "Cuttle", "project_path": "/c", "checkout_uid": "wt71"},
+        {"wt71": 7},
+    )
+    db.set_session_project.assert_called_once_with(
+        1576, 1, project_id=4, project_name="Cuttle", project_path="/c", checkout_uid=None,
+    )
+
+
+def test_stamp_drops_stored_checkout_when_project_switches():
+    """Switching project without naming a checkout must not carry the old worktree over."""
+    db = _stamp(
+        {"project_id": 7, "project_name": "Demo Game", "project_path": "/d", "checkout_uid": "wt71"},
+        {"project_id": 4, "project_name": "Cuttle", "project_path": "/c"},
+        {"wt71": 7},
+    )
+    db.set_session_project.assert_called_once_with(
+        1576, 1, project_id=4, project_name="Cuttle", project_path="/c", checkout_uid=None,
+    )
+
+
+def test_stamp_keeps_a_checkout_of_the_same_project():
+    db = _stamp(
+        {},
+        {"project_id": 7, "project_name": "Demo Game", "project_path": "/d", "checkout_uid": "wt71"},
+        {"wt71": 7},
+    )
+    db.set_session_project.assert_called_once_with(
+        1576, 1, project_id=7, project_name="Demo Game", project_path="/d", checkout_uid="wt71",
+    )
