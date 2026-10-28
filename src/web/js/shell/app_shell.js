@@ -3473,6 +3473,8 @@ function setupPaneReorder(colEl) {
     let activated = false;
     let dropTarget = null;
     let dropBefore = true;
+    let activePointerId = null;
+    let captureEl = null;
     // Cross-space carry (hover→switch, drop→move/swap) lives in the Spaces
     // owner (shell_spaces.js); the within-space pane reorder below stays here.
     const paneDrop = shellSpaces.paneDrop;
@@ -3484,6 +3486,17 @@ function setupPaneReorder(colEl) {
         window.removeEventListener('blur', onBlurCancel, true);
     };
 
+    const releasePointerCapture = () => {
+        try {
+            if (captureEl && activePointerId !== undefined && activePointerId !== null
+                && typeof captureEl.hasPointerCapture === 'function'
+                && captureEl.hasPointerCapture(activePointerId)) {
+                captureEl.releasePointerCapture(activePointerId);
+            }
+        } catch (_) {}
+        captureEl = null;
+    };
+
     const finish = (upEvent, cancelled) => {
         if (!dragging) return;
         const wasActive = activated;
@@ -3491,6 +3504,8 @@ function setupPaneReorder(colEl) {
         const before = dropBefore;
         dragging = false;
         activated = false;
+        releasePointerCapture();
+        activePointerId = null;
         unbindWindow();
         grip.classList.remove('is-dragging');
         colEl.classList.remove('is-pane-dragging');
@@ -3512,6 +3527,7 @@ function setupPaneReorder(colEl) {
 
     const onMove = (e) => {
         if (!dragging) return;
+        if (e.pointerId !== activePointerId) return;
         // A grip press whose release was missed must never start a button-less
         // drag on the next hover — cancel it instead of committing anything.
         if (e.buttons === 0) { finish(null, true); return; }
@@ -3525,6 +3541,18 @@ function setupPaneReorder(colEl) {
             colEl.classList.add('is-pane-dragging');
             document.body.style.cursor = 'grabbing';
             document.body.style.userSelect = 'none';
+            // Capture to the body, not the grip: the hover auto-switch hides
+            // the drag source (discarded subtree), which would otherwise fire
+            // pointercancel at the grip and kill the still-held carry. The
+            // body survives every space swap, so moves/ups keep flowing here.
+            try {
+                const capTarget = document.body || grip;
+                if (capTarget && typeof capTarget.setPointerCapture === 'function'
+                    && activePointerId !== undefined && activePointerId !== null) {
+                    capTarget.setPointerCapture(activePointerId);
+                    captureEl = capTarget;
+                }
+            } catch (_) {}
         }
 
         // Hit-test every live leaf (horizontal, vertical, nested). Prefer the
@@ -3564,9 +3592,22 @@ function setupPaneReorder(colEl) {
         dropTarget = hit;
     };
 
-    const onUp = (e) => finish(e, false);
-    const onCancel = () => finish(null, true);
-    const onBlurCancel = () => finish(null, true);
+    const onUp = (e) => {
+        if (e.pointerId !== activePointerId) return;
+        finish(e, false);
+    };
+    // The hover auto-switch hides the drag source, which fires pointercancel
+    // (and may blur) at the grip. That cancel belongs to the switch, not the
+    // user — keep carrying while the switch is fresh so the still-held grip
+    // can land on the new space.
+    const onCancel = () => {
+        if (paneDrop.recentAutoSwitch && paneDrop.recentAutoSwitch()) return;
+        finish(null, true);
+    };
+    const onBlurCancel = () => {
+        if (paneDrop.recentAutoSwitch && paneDrop.recentAutoSwitch()) return;
+        finish(null, true);
+    };
 
     grip.addEventListener('pointerdown', (e) => {
         if (e.button != null && e.button !== 0) return;
@@ -3576,6 +3617,7 @@ function setupPaneReorder(colEl) {
         e.stopPropagation();
         dragging = true;
         activated = false;
+        activePointerId = e.pointerId;
         startX = e.clientX;
         startY = e.clientY;
         dropTarget = null;

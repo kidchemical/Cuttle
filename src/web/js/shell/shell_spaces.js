@@ -682,6 +682,7 @@
             let sourceSpaceId = null;
             let hoverTab = null;
             let hoverTimer = 0;
+            let lastAutoSwitchAt = 0;
 
             function clearHover() {
                 if (hoverTimer) { win.clearTimeout(hoverTimer); hoverTimer = 0; }
@@ -699,6 +700,7 @@
                 onAutoSwitch = resetPaneDrop || null;
                 carrying = false;
                 sourceSpaceId = null;
+                lastAutoSwitchAt = 0;
                 clearHover();
             }
 
@@ -708,6 +710,7 @@
                 onAutoSwitch = null;
                 carrying = false;
                 sourceSpaceId = null;
+                lastAutoSwitchAt = 0;
                 clearHover();
             }
 
@@ -725,6 +728,15 @@
                     carrying = false;
                     sourceSpaceId = null;
                 }
+                lastAutoSwitchAt = Date.now();
+            }
+
+            /** True just after a hover auto-switch. The swap hides the drag
+             *  source, which fires pointercancel at the grip — that cancel
+             *  belongs to the switch, not the user, so the shell keeps the
+             *  still-held drag alive while this is true. */
+            function recentAutoSwitch() {
+                return Date.now() - lastAutoSwitchAt < 1500;
             }
 
             function trackHover(e) {
@@ -783,6 +795,7 @@
             return {
                 hoverMs: PANE_SPACE_HOVER_MS,
                 canStartDrag, beginDrag, endDrag, trackHover, clearHover, finishDrop,
+                recentAutoSwitch,
                 isActive: () => !!load,
             };
         }
