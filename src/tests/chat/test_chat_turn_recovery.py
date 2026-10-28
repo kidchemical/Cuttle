@@ -32,6 +32,32 @@ def setup(owner_session, tmp_path):
     return db, sid, EventStore(tmp_path / 'events')
 
 
+def test_stopped_run_without_writing_still_persists_card(owner_session, tmp_path):
+    """Stop must never drop work: a turn stopped before any writing event
+    (only status/sent/edit progress) still leaves a durable interrupted card
+    with a handle and a query-log link."""
+    db, sid, store = setup(owner_session, tmp_path)
+    store.write_batch([('run', 'early-stop', {
+        'timestamp': '2026-10-28T01:04:27',
+        'user_context': {'web_ui': True},
+        'harness': {'agent_id': 'muse', 'model': 'x', 'chat_session_id': str(sid)},
+        'finished_at': 200, 'success': False,
+        'error_message': '[CANCELLED] stopped',
+    })])
+    store.write_batch([
+        ('event', 'early-stop', {'kind': 'sent', 'block_id': 's', 't': 101, 'text': 'hi'}),
+        ('event', 'early-stop', {'kind': 'status', 'block_id': 'st', 't': 102}),
+        ('event', 'early-stop', {'kind': 'edit', 'block_id': 'e', 't': 103}),
+    ])
+    assert len(preserve_interrupted_turns(db, sid, store=store)) == 1
+    assert preserve_interrupted_turns(db, sid, store=store) == []
+    row = db.get_messages(sid)[-1]
+    assert row['role'] == 'assistant'
+    assert 'stopped before completion' in row['content']
+    assert row['metadata']['query_id'] == 'early-stop'
+    assert row['metadata']['report_url'] == '/query_log.html?id=early-stop'
+
+
 def test_cancelled_writing_and_log_survive_reload_exactly_once(owner_session, tmp_path):
     db, sid, store = setup(owner_session, tmp_path)
     plant(store, sid)

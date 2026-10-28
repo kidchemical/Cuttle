@@ -152,3 +152,52 @@ def test_chat_handle_link_css_and_wiring_present():
     assert "transcriptNav.settleAfterLoad()" in session_js
     assert "_suppressAutoScrollUntil" in nav
     assert "function consumePendingMessageJump(" in nav
+
+
+_STOPPED_REF_DRIVER = r"""
+require(%s);
+const assert = require('assert');
+
+const copied = [];
+const nav = globalThis.CuttleChatTranscriptNav.create({
+  win: { document: { getElementById: () => null } },
+  storage: { getItem: () => null, setItem: () => {} },
+  escapeHtmlInline: (s) => String(s),
+  recordSelector: '.message',
+  currentSessionId: () => 1590,
+  formatChatDisplayId: (sid) => 'CH-001590',
+  olderVisibleCount: () => 0,
+  hasOlderMessages: () => false,
+  loadOlderMessages: async () => {},
+  unseenBelow: () => 0,
+  attentionIsError: () => false,
+  clearUnseenBelow: () => {},
+  activateViewport: () => {},
+  copyText: async (t) => { copied.push(t); return true; },
+});
+
+(async () => {
+  // A retained "Agent stopped." bubble keeps a copyable CH-…-N ref.
+  const stoppedEl = { dataset: { stopped: 'true', messageIndex: '2' } };
+  const hit = await nav.copyMessageRefToClipboard({ closest: () => stoppedEl });
+  assert.deepStrictEqual(hit, { ok: true, ref: 'CH-001590-2' });
+  assert.deepStrictEqual(copied, ['CH-001590-2']);
+  console.log('stopped-ref-ok');
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@node_only
+def test_stopped_bubble_ref_stays_copyable():
+    """Stop must not drop the message ref: the retained stopped bubble keeps
+    a copyable CH-<session>-N handle (regression: getMessageRefForButton
+    refused stopped bubbles, so the live bubble had no handle link)."""
+    driver = _STOPPED_REF_DRIVER % json.dumps(str(NAV_JS))
+    proc = subprocess.run(
+        ["node", "-e", driver],
+        capture_output=True,
+        text=True, encoding="utf-8",
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    assert "stopped-ref-ok" in proc.stdout

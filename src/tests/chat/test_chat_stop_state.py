@@ -345,33 +345,43 @@ def test_stopped_bubble_retains_query_target_and_failed_badge():
     harness += r"""
 const make = (pending) => {
   const removed = [];
+  const inserted = [];
   const classes = new Set(pending ? ['is-pending'] : []);
   const link = { href: pending ? '/query_log.html' : '/query_log.html?id=turn123',
     dataset: pending ? {} : {queryId: 'turn123'},
     removeAttribute: (k) => removed.push(k), classList: {remove: (k) => classes.delete(k)} };
   const chip = {dataset: {fullLabel: 'Codex'}, classList: {add: (k) => classes.add(k)}, setAttribute() {} };
   const status = {textContent: 'Thinking', removeAttribute: (k) => removed.push(k)};
+  const icons = { querySelector: () => null,
+    insertAdjacentHTML: (pos, html) => inserted.push(html) };
   const bubble = {dataset: {}, classList: {remove: (k) => classes.delete(k)}, removeAttribute: (k) => removed.push(k),
-    querySelector: (q) => q === '.typing-status' ? status : q === '.message-query-log-link' ? link : {remove() {removed.push('animation');}},
+    querySelector: (q) => q === '.typing-status' ? status : q === '.message-query-log-link' ? link
+      : q === '.message-footer-icons' ? icons : {remove() {removed.push('animation');}},
     querySelectorAll: () => [chip]};
-  return {bubble, link, classes, removed, status};
+  return {bubble, link, classes, removed, inserted, status};
 };
 const ready = make(false), pending = make(true);
 globalThis.document = {querySelectorAll: () => [ready.bubble, pending.bubble]};
 function clearConnectingWatchdog() {}
 function clearStreamStatusPoll() {}
+function getShareRefButtonHtml() { return '<button class="message-share-ref-btn"></button>'; }
+let navUpdates = 0;
+const transcriptNav = { updateMessageNav: () => { navUpdates += 1; } };
 eval(fnBody('retainStoppedAgentBubble'));
 retainStoppedAgentBubble();
-process.stdout.write(JSON.stringify([ready, pending].map(x => ({
+process.stdout.write(JSON.stringify({bubbles: [ready, pending].map(x => ({
   stopped: x.bubble.dataset.stopped, href: x.link.href, title: x.link.title,
-  status: x.status.textContent, classes: [...x.classes], removed: x.removed
-}))));
+  status: x.status.textContent, classes: [...x.classes], removed: x.removed,
+  inserted: x.inserted
+})), navUpdates}));
 })().catch(e => {console.error(e); process.exit(2);});
 """
     proc = subprocess.run(['node', '-e', harness], capture_output=True, text=True, encoding="utf-8",
                           env={**os.environ, 'CHAT_PAGE_JS': str(CHAT_PAGE_JS)}, timeout=30)
     assert proc.returncode == 0, proc.stderr
-    ready, pending = json.loads(proc.stdout)
+    out = json.loads(proc.stdout)
+    ready, pending = out['bubbles']
+    assert out['navUpdates'] == 1
     assert ready['href'] == '/query_log.html?id=turn123'
     assert pending['href'] == '/query_log.html'
     for result in (ready, pending):
@@ -381,6 +391,10 @@ process.stdout.write(JSON.stringify([ready, pending].map(x => ({
         assert 'is-pending' not in result['classes']
         assert 'animation' in result['removed']
         assert 'id' in result['removed']
-        assert 'data-message-index' in result['removed']
+        # The stopped bubble keeps its transcript slot (Stop persists an
+        # interrupted-agent-turn row), so its index survives and it gains a
+        # copyable message ref instead of losing its handle.
+        assert 'data-message-index' not in result['removed']
         assert 'data-pin-key' in result['removed']
         assert 'aria-disabled' in result['removed']
+        assert any('message-share-ref-btn' in html for html in result['inserted'])

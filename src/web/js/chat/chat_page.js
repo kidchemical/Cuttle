@@ -997,10 +997,10 @@
         return !!document.hidden;
     }
 
-    // Activity bubbles have no persisted message index or assistant reply.
-    // Keep them visible without including them in record/navigation decisions.
+    // Stopped bubbles keep their transcript slot: Stop persists an
+    // interrupted-agent-turn row, so they count toward message refs/nav.
     const CHAT_RECORD_SELECTOR =
-        '.message:not(#typing-indicator):not(#typing-indicator-remote):not([data-stopped="true"])';
+        '.message:not(#typing-indicator):not(#typing-indicator-remote)';
 
     /** Last real chat bubble in the open transcript (ignores typing placeholders). */
     function lastVisibleChatMessageEl() {
@@ -12077,7 +12077,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
             // Release live ids so later cleanup cannot remove the stopped activity.
             bubble.removeAttribute('id');
             bubble.dataset.stopped = 'true';
-            bubble.removeAttribute('data-message-index');
             bubble.removeAttribute('data-pin-key');
             bubble.classList.remove('is-pinned-message');
             bubble.dataset.rawContent = 'Agent stopped.';
@@ -12099,7 +12098,14 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 link.classList.remove('is-pending');
                 link.title = link.dataset.queryId ? 'View query log' : 'View query log index';
             }
+            // The typing footer has no share-ref button; the stopped bubble
+            // keeps its transcript slot, so give it a copyable message ref.
+            const icons = bubble.querySelector('.message-footer-icons');
+            if (icons && !icons.querySelector('.message-share-ref-btn')) {
+                icons.insertAdjacentHTML('beforeend', getShareRefButtonHtml());
+            }
         });
+        transcriptNav.updateMessageNav();
     }
 
     function removeTypingIndicator() {

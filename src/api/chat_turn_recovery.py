@@ -53,7 +53,7 @@ def preserve_interrupted_turns(db, session_id, *, store=None, stopped_at=None):
             if not session or not session.get('is_active'):
                 return recovered
             cutoff = stopped_at if stopped_at is not None else run.get('finished_at') or time.time()
-            writing, after, activity = [], 0, False
+            writing, after = [], 0
             while True:
                 events = store.events(qid, after=after, limit=500)
                 if not events:
@@ -61,8 +61,6 @@ def preserve_interrupted_turns(db, session_id, *, store=None, stopped_at=None):
                 for event in events:
                     if event['ts'] > cutoff:
                         continue
-                    if event['kind'] in ('tool', 'thinking', 'writing'):
-                        activity = True
                     if event['kind'] == 'writing' and not event.get('compacted'):
                         try:
                             payload = (store.event(event['id']) or {}).get('detail') or {}
@@ -75,8 +73,9 @@ def preserve_interrupted_turns(db, session_id, *, store=None, stopped_at=None):
                         if text and not text.startswith('[CANCELLED]'):
                             writing.append(_CONTROLS.sub('', text).strip())
                 after = events[-1]['id']
-            if not activity:
-                continue
+            # Every qualifying run leaves a durable card, even when it was
+            # stopped before emitting any writing: the card carries the
+            # query-log link, so no work disappears from history.
             status = 'cancelled' if run['status'] == 'running' else run['status']
             label = 'stopped' if status == 'cancelled' else 'interrupted' if status == 'interrupted' else 'failed'
             when = datetime.fromtimestamp(run['started_at'], timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
