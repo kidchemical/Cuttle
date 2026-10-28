@@ -524,13 +524,21 @@
             </section>
 
             <section class="settings-panel" id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" tabindex="0" hidden>
+            <div class="settings-group voice-experiment-map" id="voiceExperimentMap" hidden>
+                <h3 class="settings-title"><span class="emoji">🧭</span> Voice experiments you have on <span class="settings-scope" data-scope="server" title="Experimental flags are stored on the server — every device shares them.">This server</span></h3>
+                <ul id="voiceExperimentList"></ul>
+                <p class="setting-description">Turn these on or off in <a href="/settings_page.html?tab=experimental">Settings → Experimental</a>.</p>
+            </div>
+
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🔊</span> Spoken replies <button type="button" class="cuttle-info" data-tooltip="How Cuttle reads replies aloud: the play button on chat bubbles and replies in voice chat." aria-label="About Spoken replies">i</button> <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+                <h3 class="settings-title"><span class="emoji">🔊</span> Spoken replies <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+                <p class="setting-description" id="chatTtsScope">The voice Cuttle uses to read replies aloud — from the 🔊 button on a chat reply, and in voice chat.</p>
 
                 <div id="voiceTtsConfig">
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Show play button</strong><button type="button" class="cuttle-info" data-tooltip="Hide the speaker control on chat bubbles when off" aria-label="About Show play button">i</button>
+                        <strong>Read replies aloud</strong>
+                        <div class="setting-description" id="chatTtsEnabledHint">On: replies get a 🔊 button and voice chat speaks its answers.</div>
                     </div>
                     <div class="setting-control">
                         <label class="toggle-switch active" id="chatTtsEnabledToggle" onclick="toggleChatTtsEnabled(event)">
@@ -539,6 +547,7 @@
                         </label>
                     </div>
                 </div>
+                <div id="chatTtsDetails">
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Summarize before speaking</strong><button type="button" class="cuttle-info" data-tooltip="Cheaper + shorter audio. Short replies skip summarization automatically." aria-label="About Summarize before speaking">i</button>
@@ -564,15 +573,16 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Model</strong><button type="button" class="cuttle-info" data-tooltip="Speech model for the selected provider." aria-label="About TTS model">i</button>
+                        <strong>Model</strong><button type="button" class="cuttle-info" data-tooltip="Speech model for the selected provider. The table below compares them." aria-label="About TTS model">i</button>
                     </div>
                     <div class="setting-control setting-control--column">
-                        <select id="chatTtsModel" class="setting-input"><option value="">Loading…</option></select>
+                        <select id="chatTtsModel" class="setting-input" aria-label="Speech model"><option value="">Loading…</option></select>
                         <input id="chatTtsCustomModel" class="setting-input" aria-label="Custom speech model ID" placeholder="Custom model ID" hidden>
                         <button type="button" class="control-button btn-info" onclick="refreshChatTtsModels()">Refresh models</button>
                         <div id="chatTtsModelStatus" class="setting-description" role="status"></div>
                     </div>
                 </div>
+                <div class="voice-model-guide" id="chatTtsModelGuide" hidden></div>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Voice</strong><button type="button" class="cuttle-info" data-tooltip="Choose the voice used to read replies. The list belongs to the selected provider." aria-label="About Voice">i</button>
@@ -631,6 +641,7 @@
                 </div>
 </details>
                 <p id="chatTtsBackgroundNotice" class="setting-description" hidden>Reply narration uses the configured background execution chain. Its model, effort, and temperature are in <a href="/settings_page.html?tab=agents#backgroundHelpersSettings">Agents → Background helpers</a>. The narrator API choices below apply when no background chain is configured.</p>
+                </div><!-- /chatTtsDetails -->
                 <div class="setting-item">
                     <div class="setting-control" style="gap:8px;flex-wrap:wrap">
                         <button type="button" class="control-button btn-start" onclick="saveChatTtsSettings()"><span class="emoji">💾</span> Save chat voice</button>
@@ -645,7 +656,8 @@
 
             <!-- Experiment-owned: stays hidden unless a voice-engine flag is on. -->
             <div class="settings-group" id="voiceConversationGroup" hidden>
-                <h3 class="settings-title"><span class="emoji">🧪</span> Voice conversation <button type="button" class="cuttle-info" data-tooltip="Added by the voice experiments enabled in Settings → Experimental. Turning them off removes this section; voice chat then uses Spoken replies." aria-label="About Voice conversation">i</button> <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+                <h3 class="settings-title"><span class="emoji">🧪</span> Voice conversation <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+                <p class="setting-description">Chooses what runs when you start voice chat. Turning off the GPT-Live and OpenAI Realtime experiments removes this section, and voice chat goes back to the Standard engine.</p>
 
                 <div class="setting-item" id="voiceModeRow">
                     <div class="setting-label">
@@ -874,7 +886,7 @@
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261011menuPosition2"></script>
     <script src="/js/settings/settings_background_helpers.js?v=20261016separateProcessor"></script>
-    <script src="/js/settings/settings_voice_providers.js?v=20261012engines"></script>
+    <script src="/js/settings/settings_voice_providers.js?v=20261028guide"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
     <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
@@ -2388,6 +2400,7 @@
             const next = !checkbox.checked;
             checkbox.checked = next;
             if (toggle) toggle.classList.toggle('active', next);
+            voiceProvidersController().syncEnabled();
         }
 
         function toggleChatTtsSummarize(event) {

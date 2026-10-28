@@ -144,10 +144,13 @@ speech:
   models:
   - id: gpt-4o-mini-tts
     label: gpt-4o-mini-tts (recommended)
+    description: Natural, expressive speech at the lowest OpenAI price. Best default.
   - id: tts-1
     label: tts-1 (fast / cheap)
+    description: Older model. Quickest to start talking, flatter delivery.
   - id: tts-1-hd
     label: tts-1-hd (higher quality)
+    description: Older model with cleaner audio than tts-1. Slower and pricier.
   speed_range:
   - 0.25
   - 4.0

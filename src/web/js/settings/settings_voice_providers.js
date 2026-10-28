@@ -27,7 +27,69 @@
         const speech = root.CuttleProviderPicker.create({document: doc, fetch,
             select: el('chatTtsModel'), custom: el('chatTtsCustomModel'), status: el('chatTtsModelStatus'),
             operation: 'speech_generation', provider: () => el('chatTtsProvider').value,
-            changed: () => { rememberSpeech(); voices(false); }});
+            changed: () => { rememberSpeech(); voices(false); modelGuide(); }});
+        /** Everything below the master toggle only matters while replies are spoken. */
+        function syncEnabled() {
+            const on = el('chatTtsEnabled').checked;
+            el('chatTtsDetails').hidden = !on;
+            el('chatTtsPreviewBtn').hidden = !on;
+            el('chatTtsEnabledHint').textContent = on
+                ? 'On: replies get a 🔊 button and voice chat speaks its answers.'
+                : 'Off: no 🔊 button, and voice chat shows replies as text only. Turn on to choose a voice.';
+        }
+        function cents(usd) {
+            if (usd == null) return '—';
+            const c = usd * 100;
+            return c < 0.1 ? 'under 0.1¢' : '≈ ' + (c < 1 ? c.toFixed(2) : c.toFixed(1)).replace(/\.?0+$/, '') + '¢';
+        }
+        /** Compare the provider's curated models: what each is for and what a reply costs. */
+        function modelGuide() {
+            const guide = el('chatTtsModelGuide'), p = row();
+            const models = ((p && p.models) || []).filter(m => m.description || m.price);
+            guide.replaceChildren();
+            guide.hidden = !models.length;
+            if (!models.length) return;
+            const selected = speech.effective();
+            const table = doc.createElement('table'), head = doc.createElement('tr');
+            for (const title of ['Model', 'Good for', 'Cost per reply*']) {
+                const th = doc.createElement('th'); th.textContent = title; head.appendChild(th);
+            }
+            table.appendChild(head);
+            for (const m of models) {
+                const tr = doc.createElement('tr');
+                if (m.id === selected) tr.className = 'is-selected';
+                const name = doc.createElement('td'), what = doc.createElement('td'), cost = doc.createElement('td');
+                name.textContent = (m.label || m.id) + (m.id === selected ? ' ✓' : '');
+                what.textContent = m.description || '';
+                cost.textContent = cents(m.price && m.price.per_reply_usd);
+                if (m.price && m.price.rate) cost.title = 'List price: ' + m.price.rate;
+                tr.append(name, what, cost); table.appendChild(tr);
+            }
+            const note = doc.createElement('p');
+            note.className = 'setting-description';
+            note.textContent = '* A ~1,000-character reply, about a minute of speech. With “Summarize before speaking” on, most spoken replies are shorter and cheaper. Hover a cost for the list price.';
+            guide.append(table, note);
+        }
+        const EXPERIMENTS = {
+            voice_narrator: 'Speaks short progress updates in voice chat while the agent works. Uses the Spoken replies voice below, so it is silent when “Read replies aloud” is off.',
+            voice_server_stt: 'Changes how voice chat hears you: your speech is transcribed by OpenAI instead of the browser. No settings on this page.',
+            voice_live: 'Adds a GPT-Live engine under Voice conversation. It has its own voice and settings; Spoken replies does not affect it.',
+            voice_realtime: 'Adds an OpenAI Realtime engine under Voice conversation. It has its own voice and settings; Spoken replies does not affect it.',
+        };
+        /** List the voice experiments that are on and where each shows up on this tab. */
+        async function experimentMap() {
+            const data = await optional('/api/experimental/flags');
+            const on = data && !data.kill_switch ? (data.flags || []).filter(f => f.enabled && EXPERIMENTS[f.id]) : [];
+            const list = el('voiceExperimentList');
+            list.replaceChildren();
+            for (const flag of on) {
+                const li = doc.createElement('li'), name = doc.createElement('strong');
+                name.textContent = (flag.label || flag.id) + ' — ';
+                li.append(name, doc.createTextNode(EXPERIMENTS[flag.id]));
+                list.appendChild(li);
+            }
+            el('voiceExperimentMap').hidden = !on.length;
+        }
         const text = root.CuttleProviderPicker.create({document: doc, fetch,
             select: el('chatTtsNarratorModel'), custom: el('chatTtsNarratorCustomModel'), effort: el('chatTtsNarratorEffort'),
             status: el('chatTtsNarratorStatus'), operation: 'text_generation', provider: () => el('chatTtsNarratorProvider').value});
@@ -59,7 +121,9 @@
             options(el('chatTtsVoice'), (p && p.voices) || [], (drafts.voices || {})[pid]);
             tunables();
             const modelLoad = speech.set(p, (drafts.models || {})[pid] || '');
+            modelGuide();
             await Promise.all([modelLoad, voices(false)]);
+            modelGuide();
         }
         async function changeNarrator() {
             rememberNarrator(); nid = el('chatTtsNarratorProvider').value;
@@ -93,6 +157,7 @@
                 el('chatTts' + suffix).checked = drafts[key] !== false;
                 el('chatTts' + suffix + 'Toggle').classList.toggle('active', drafts[key] !== false);
             }
+            syncEnabled();
             el('chatTtsProvider').value = drafts.provider || 'openai';
             el('chatTtsNarratorProvider').value = drafts.summarize_provider || 'openai';
             el('chatTtsSpeed').value = drafts.speed == null ? 1 : drafts.speed;
@@ -163,7 +228,8 @@
             el('voiceLiveConfig').hidden = mode !== 'live';
             el('voiceRealtimeConfig').hidden = mode !== 'realtime';
             el('voiceModeStatus').textContent = mode === 'tts'
-                ? 'Voice chat listens, then reads replies with your Spoken replies voice.' : '';
+                ? 'Voice chat listens, then reads replies with your Spoken replies voice above.'
+                : 'Voice chat uses this engine’s own voice, set below. Spoken replies above still applies to the 🔊 button on chat replies.';
         }
         /** User picked an engine: show it and persist the choice. */
         async function changeMode() {
@@ -260,7 +326,7 @@
                     } catch (_) { notice.hidden = true; }
                 }
             } catch (error) { notify(error.message, 'error'); }
-            await loadEngines();
+            await Promise.all([loadEngines(), experimentMap()]);
         }
         function read() {
             if (!speech.valid() || !text.valid()) throw new Error('Enter a custom model ID or choose Provider default.');
@@ -285,7 +351,7 @@
         }
         el('chatTtsVoice').addEventListener('change', () => { el('chatTtsCustomVoice').value = ''; rememberSpeech(); });
         el('voiceLiveVoice').addEventListener('change', livePreviewable);
-        return {load, apply, read, save, changeProvider, changeNarrator, voices, changeMode, saveRealtime, saveLive,
+        return {load, apply, read, save, syncEnabled, changeProvider, changeNarrator, voices, changeMode, saveRealtime, saveLive,
                 previewSpeech, previewLive, previewRealtime,
                 refreshSpeech: () => Promise.all([speech.discover(true), voices(true)]), refreshNarrator: () => text.discover(true)};
     }

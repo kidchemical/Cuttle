@@ -52,12 +52,16 @@ speech:
   models:
   - id: eleven_flash_v2_5
     label: Flash v2.5 (fast, cheap)
+    description: Lowest latency and half the price. Good everyday choice.
   - id: eleven_turbo_v2_5
     label: Turbo v2.5 (balanced)
+    description: A little more natural than Flash at the same price.
   - id: eleven_multilingual_v2
     label: Multilingual v2 (29 languages)
+    description: Richest, most consistent voice quality. Slower to start.
   - id: eleven_v3
     label: Eleven v3 (most expressive, 70+ languages)
+    description: Most emotional range. Slowest, and voices can vary between replies.
   speed_range:
   - 0.7
   - 1.2
