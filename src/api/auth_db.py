@@ -792,6 +792,9 @@ class AuthDatabase:
     
     def verify_auth_session(self, session_token: str) -> Optional[Dict[str, Any]]:
         """Verify auth session and return user info if valid"""
+        if session_token.startswith('cuttle-chat-op.'):
+            from api.chat_ops.local_auth import verify
+            return verify(session_token, self)
         conn = self._get_connection()
         cursor = conn.cursor()
         

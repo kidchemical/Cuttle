@@ -486,6 +486,13 @@ try:
 except Exception as _jev_watch_err:
     print(f"[JEV] regress watcher not started: {_jev_watch_err}")
 
+# Existing-chat agent operations (durable outbox and explicit check-ins).
+try:
+    from api.chat_ops.worker import ensure_started as _chat_ops_start
+    _chat_ops_start()
+except Exception as _chat_ops_err:
+    print(f"[CHAT OPS] worker not started: {_chat_ops_err}")
+
 # Chat bubble TTS (OpenAI summarize-then-speak, on-demand play button)
 try:
     from api.chat_tts import register_chat_tts_routes

@@ -18,6 +18,7 @@ incoming agent has no cursor and already gets the transcript.
 
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -249,7 +250,18 @@ def _strip_injected_blocks(content: str) -> str:
         text = strip_cuttle_context(text)
     except Exception:
         pass
-    return (text or "").strip()
+    # Never forward another model's raw reasoning to the next harness: the
+    # postprocessing wrapper keeps the unedited reply (often with <think>),
+    # and provider safeguards reject prompts carrying foreign chain-of-thought.
+    text = _ORIGINAL_RESPONSE_RE.sub("", text or "")
+    text = _THINK_RE.sub("", text)
+    return text.strip()
+
+
+_ORIGINAL_RESPONSE_RE = re.compile(
+    r"<cuttle_original_response>.*?</cuttle_original_response>", re.DOTALL
+)
+_THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
 
 
 # Handoff budget: newest messages win; older ones are listed as omitted with a

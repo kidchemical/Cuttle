@@ -489,7 +489,11 @@ def message_child(
     db = _open_db(db)
     child = store.get_child_by_session(db, int(session_id))
     if not child:
-        raise SubagentError(f"session {session_id} is not a sub-agent chat")
+        raise SubagentError(
+            f"session {session_id} is not a sub-agent chat; "
+            f"use python -m api.chat_cli send CH-{int(session_id):06d} --text … "
+            "for an existing chat (status/snapshot inspect it)"
+        )
     if child.status == STATUS_CANCELLED:
         raise SubagentError("that sub-agent was cancelled")
     # This process runs the turn below, so record it as the owner now: a host

@@ -456,6 +456,38 @@ def cmd_search(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def cmd_operation(args: argparse.Namespace) -> int:
+    from api.chat_ops import service, store
+    db = _open_db(args.db)
+    verb = args.command
+    if verb in ('operations', 'operation', 'cancel-operation'):
+        actor = service.session_id(args.as_chat or __import__('os').environ.get('CUTTLE_CHAT_SESSION_ID'))
+        # Validate the acting chat before exposing its operation records.
+        service.context(actor, actor, db=db)
+        if verb == 'operations':
+            payload = {'schema_version': 1, 'ok': True, 'operations': store.listing(actor)}
+        else:
+            op = store.cancel(args.id, actor) if verb == 'cancel-operation' else store.get(args.id, actor)
+            payload = {'schema_version': 1, 'ok': True, 'operation': op}
+    else:
+        kwargs = {'actor': args.as_chat, 'db': db}
+        if verb == 'send':
+            payload = service.send(args.handle, args.text, mode=args.mode, **kwargs)
+        elif verb == 'status':
+            payload = service.status(args.handle, **kwargs)
+        elif verb == 'snapshot':
+            payload = service.snapshot(args.handle, usage_agents=args.usage, **kwargs)
+        elif verb == 'stop':
+            payload = service.stop(args.handle, **kwargs)
+        else:
+            payload = service.supervise(args.handle, every=args.every, instructions=args.instructions,
+                required_branch=args.require_branch, required_path=args.require_path,
+                forbidden_branches=args.forbid_branch, model_tiers=json.loads(args.model_tiers), **kwargs)
+    _emit_text_once(payload, as_json=args.json,
+                    text_fn=lambda p: json.dumps(p, indent=2, ensure_ascii=False, default=str))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
@@ -567,6 +599,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     search_p.set_defaults(func=cmd_search)
 
+    for verb, help_text in (
+        ('send', 'Send to an existing chat: steer live turns, otherwise queue on the host'),
+        ('status', 'Busy, idle, awaiting input, error, and Tasks in one call'),
+        ('snapshot', 'Status plus reply, worktree/branch, jobs, watches and optional plan usage'),
+        ('stop', 'Stop the target chat through the ordinary cancellation path'),
+        ('supervise', 'Create durable recurring check-ins in the acting chat'),
+        ('operations', 'List your delivery requests and supervision profiles'),
+        ('operation', 'Inspect one delivery request or supervision profile'),
+        ('cancel-operation', 'Cancel a pending delivery or recurring supervision profile'),
+    ):
+        op = sub.add_parser(verb, parents=[common], help=help_text)
+        op.add_argument('--as', dest='as_chat', help='Acting chat (default CUTTLE_CHAT_SESSION_ID); same owner required')
+        if verb not in ('operations', 'operation', 'cancel-operation'):
+            op.add_argument('handle', help='Target session CH-…')
+        elif verb != 'operations':
+            op.add_argument('id', help='Operation id from send/supervise')
+        if verb == 'send':
+            op.add_argument('--text', required=True)
+            op.add_argument('--mode', choices=('auto', 'queue'), default='auto')
+        if verb == 'snapshot':
+            op.add_argument('--usage', action='append', default=[], help='Include plan usage for this agent (repeatable)')
+        if verb == 'supervise':
+            op.add_argument('--every', type=int, default=900, help='Seconds between checks, minimum 60')
+            op.add_argument('--instructions', required=True)
+            op.add_argument('--require-branch', default='')
+            op.add_argument('--require-path', default='')
+            op.add_argument('--forbid-branch', action='append', default=[])
+            op.add_argument('--model-tiers', default='{}', help='JSON object with worker/expert model guidance')
+        op.set_defaults(func=cmd_operation)
+
     return p
 
 
@@ -592,6 +654,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return code
         return 1
     except Exception as e:
+        if getattr(args, 'command', '') in ('send', 'status', 'snapshot', 'stop', 'supervise', 'operations', 'operation', 'cancel-operation'):
+            # Request exceptions can contain Authorization headers; keep them
+            # out of logs and JSON. Validation errors are safe and actionable.
+            detail = str(e) if isinstance(e, ValueError) else 'Chat operation failed; check host availability and activation'
+            _emit_text_once({'schema_version': 1, 'ok': False, 'error': detail},
+                            as_json=args.json, text_fn=lambda p: p['error'])
+            return 2 if isinstance(e, ValueError) else 3
         sys.stderr.write(f"error: {e}\n")
         return 3
 
