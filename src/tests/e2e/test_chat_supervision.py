@@ -228,3 +228,33 @@ def test_menu_opens_dialog_and_posts_supervise(browser, static_server):
         assert not errors
     finally:
         page.close()
+
+
+def test_host_started_checkin_paints_promptly_as_cuttle(browser, static_server):
+    """A check-in turn the browser didn't start shows its Cuttle-speaker bubble
+    and the working indicator as soon as the shell reports the chat active."""
+    from playwright.sync_api import expect
+    world = SupervisionWorld(flag=False)
+    world._append("assistant", "Earlier supervisor reply")
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        expect(frame.locator("#chatMessages .message.assistant")).to_have_count(1)
+        page.wait_for_timeout(300)
+        world._append("user", "/cursor Scheduled supervision check-in for CH-001548 (state: idle).")
+        world.history[-1]["metadata"] = {
+            "chat_op_id": "a" * 32, "speaker": "Cuttle", "speaker_kind": "parent", "avatar": "cuttle",
+            "origin": "chat_ops", "parent_handle": "CH-000042", "parent_label": "Supervision check-in"}
+        status = {"active": True, "generating": True, "status": "Agent is working",
+                  "updated_at": time.time() + 1}
+        world.live = dict(status)
+        page.evaluate("s => document.querySelector('iframe').contentWindow.postMessage("
+                      "{type: 'cuttle-live-status', sessionId: 42, status: s, focused: false}, '*')", status)
+        bubble = frame.locator("#chatMessages .message.user.is-parent-speaker")
+        expect(bubble).to_have_count(1, timeout=3000)
+        expect(bubble).to_contain_text("Cuttle")
+        expect(bubble).to_contain_text("Scheduled supervision check-in")
+        expect(frame.locator("#typing-indicator-remote")).to_be_visible(timeout=3000)
+        page.screenshot(path=os.environ.get("SUPERVISION_CHECKIN_SHOT", "/tmp/supervision_checkin.png"))
+        assert not errors
+    finally:
+        page.close()

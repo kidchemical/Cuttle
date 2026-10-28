@@ -7207,9 +7207,13 @@
                 // and the UI painted "No response received." while Cursor still ran.
             }
         } else if (!isLoadingThisSession()) {
-            // Keep remote waiting / history generating flags in sync without a GET.
+            // A turn started elsewhere (supervisor check-in, other device): fetch
+            // its user row now instead of waiting up to a full idle sync interval.
+            const startedElsewhere = stillGoing && !document.getElementById('typing-indicator-remote');
             updateRemoteWaitingFromMessages([], live);
-            if (!stillGoing) {
+            if (startedElsewhere) {
+                try { await syncSessionMessagesFromServer(); } catch (_) {}
+            } else if (!stillGoing) {
                 try {
                     await syncSessionMessagesFromServer();
                 } catch (_) {}

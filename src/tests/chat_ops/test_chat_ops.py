@@ -113,8 +113,44 @@ def test_send_steers_a_live_turn(chats):
     host = FakeHost(generating=True, steered=True)
     out = service.send(_ch(target), "keep going", actor=_ch(sup), db=db, request=host)
     assert out["delivery"] == "steered"
-    assert ("POST", "/api/chat-steer", target, {"message": "keep going"}) in host.calls
-    assert store.listing(sup) == []
+    [op] = store.listing(sup)
+    assert op["state"] == "delivered" and op["result"] == {"steered": True}
+    assert ("POST", "/api/chat-steer", target, {"message": "keep going", "chat_op_id": op["id"]}) in host.calls
+    assert op["id"] not in [o["id"] for o in store.due()]
+
+
+def test_refused_steer_reuses_its_operation_as_the_queued_send(chats):
+    db, _owner, sup, target, _foreign = chats
+    out = service.send(_ch(target), "next", actor=_ch(sup), db=db, request=FakeHost(generating=True, steered=False))
+    assert out["delivery"] == "queued" and out["operation"]["state"] == "pending"
+    assert len(store.listing(sup)) == 1
+
+
+def test_failed_steer_is_verified_not_resent_blindly(chats):
+    db, _owner, sup, target, _foreign = chats
+
+    def host(uid, sid, method, path, data=None, **kw):
+        if path == "/api/chat-steer":
+            raise ConnectionError("dropped")
+        return FakeHost(generating=True)(uid, sid, method, path, data)
+
+    out = service.send(_ch(target), "next", actor=_ch(sup), db=db, request=host)
+    assert out["operation"]["state"] == "verifying"
+
+
+def test_chat_op_rows_speak_as_cuttle_only_when_the_store_vouches(chats):
+    from api.chat_metadata import chat_op_metadata
+    _db, _owner, sup, target, _foreign = chats
+    send = _queued(chats)
+    meta = chat_op_metadata({"chat_op_id": send["id"]}, target)
+    assert meta["speaker"] == "Cuttle" and meta["speaker_kind"] == "parent"
+    assert meta["parent_handle"] == _ch(sup) and meta["parent_label"] == f"Sent by {_ch(sup)}"
+    assert chat_op_metadata({"chat_op_id": send["id"]}, f"db_session_{target}")["speaker_kind"] == "parent"
+    # Wrong chat or an id the store never issued: id only, no speaker claim.
+    assert chat_op_metadata({"chat_op_id": send["id"]}, sup) == {"chat_op_id": send["id"]}
+    assert chat_op_metadata({"chat_op_id": "b" * 32}, target) == {"chat_op_id": "b" * 32}
+    checkin = store.create("checkin", sup, sup, {"text": "x", "schedule_id": "s"})
+    assert chat_op_metadata({"chat_op_id": checkin["id"]}, sup)["parent_label"] == "Supervision check-in"
 
 
 def test_send_queues_when_idle_or_steer_refused(chats):
@@ -432,7 +468,7 @@ def test_agent_prefix_and_start_now_briefing(chats, monkeypatch):
     assert op["payload"]["agent"] == "cursor" and op["due"] <= time.time()
     checkins = _tick(chats, op, _snap("busy"), monkeypatch)
     assert len(checkins) == 1  # the briefing wakes even though the target is busy
-    assert checkins[0]["payload"]["text"].startswith("/cursor Scheduled supervision check-in")
+    assert checkins[0]["payload"]["text"].startswith("/cursor **Supervision check-in for CH-000002**")
     store.finish(checkins[0]["id"], "done", {})
     assert len(_tick(chats, op, _snap("busy"), monkeypatch)) == 1  # later busy checks skip
     with pytest.raises(ValueError, match="Unknown agent"):
@@ -533,3 +569,26 @@ def test_jobs_ledger_lists_chat_ops_only_with_the_flag(chats, monkeypatch):
     assert jobs_service.cancel_job("chat_op", send["id"])["result"]["state"] == "cancelled"
     with pytest.raises(jobs_service.JobNotCancellableError):
         jobs_service.cancel_job("chat_op", send["id"])
+
+
+def test_readable_reply_unwraps_postprocessing_and_strips_markup():
+    wrapped = ('<cuttle_original_response>' + json.dumps("<think>\nplan\n</think>\n\nBuild **failed**.\n\nNext: rerun.")
+               + '</cuttle_original_response>\n\nTL;DR: failed.')
+    assert service.readable_reply(wrapped) == "Build **failed**.\n\nNext: rerun."
+    card = 'Pick one.\n<cuttle_action_form>{"title": "Deploy?", "mode": "choice"}</cuttle_action_form>'
+    assert service.readable_reply(card) == "Pick one.\n[card: Deploy?]"
+    assert service.readable_reply("<cuttle_original_response>not json</cuttle_original_response>\n\nTail") == "Tail"
+
+
+def test_checkin_text_is_markdown_without_raw_json():
+    snap = _snap("idle_with_work", done=1)
+    snap["latest_reply"] = {"text": "Line one\n\nLine two"}
+    cfg = {"agent": "cursor", "instructions": "Keep going.", "model_tiers": {"worker": ["cursor auto"]}}
+    text = worker.checkin_text(cfg, snap, ["target is on forbidden branch 'main'"])
+    assert text.startswith("/cursor **Supervision check-in for CH-000002**: idle with open Tasks items.")
+    assert "Branch `dev/multiplayer` · checkout `/galaxy/wt`" in text
+    assert "- target is on forbidden branch 'main'" in text and "- Tasks: 1/3 done" in text
+    assert "> Line one\n>\n> Line two" in text and "- worker: cursor auto" in text
+    assert "{" not in text and "\\n" not in text
+    snap["latest_reply"] = {"text": "x" * (worker.CHECKIN_REPLY_CHARS + 10)}
+    assert "(start)" in worker.checkin_text(cfg, snap, [])

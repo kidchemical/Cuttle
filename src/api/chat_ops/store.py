@@ -35,12 +35,12 @@ def public(row):
     return {**dict(row), 'payload': json.loads(row['payload']), 'result': json.loads(row['result'])}
 
 
-def create(kind, actor, target, payload, *, due=None):
+def create(kind, actor, target, payload, *, due=None, state='pending'):
     now = time.time()
     oid = uuid.uuid4().hex
     with connection() as conn:
         conn.execute('INSERT INTO operations VALUES (?,?,?,?,?,?,?,?,?)',
-            (oid, kind, actor, target, json.dumps(payload), 'pending', now if due is None else due, now, '{}'))
+            (oid, kind, actor, target, json.dumps(payload), state, now if due is None else due, now, '{}'))
     return get(oid, actor)
 
 

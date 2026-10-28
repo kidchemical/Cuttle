@@ -20,13 +20,32 @@ from typing import Optional
 _CHAT_OP_ID = re.compile(r'[0-9a-f]{32}')
 
 
-def chat_op_metadata(request_data) -> dict:
+def chat_op_metadata(request_data, session_id=None) -> dict:
     """Stamp a chat-ops send's id on the user row so the sender can tell, after a
-    lost connection, whether the turn arrived (api.chat_ops.worker)."""
+    lost connection, whether the turn arrived (api.chat_ops.worker).
+
+    A send recorded in the chat-ops store for this chat renders as Cuttle, like
+    a parent's message to its sub-agent, not as the user. The store lookup is
+    what makes that speaker claim trustworthy; a bare id only gets the id."""
     oid = (request_data or {}).get('chat_op_id') if isinstance(request_data, dict) else None
-    if isinstance(oid, str) and _CHAT_OP_ID.fullmatch(oid):
-        return {'chat_op_id': oid}
-    return {}
+    if not (isinstance(oid, str) and _CHAT_OP_ID.fullmatch(oid)):
+        return {}
+    meta = {'chat_op_id': oid}
+    try:
+        from api.chat_ops import store
+
+        op = store.find(oid)
+    except Exception:
+        op = None
+    bare = str(session_id or '').replace('db_session_', '')
+    if op and op.get('kind') in ('send', 'checkin') and str(op.get('target')) == bare:
+        handle = f"CH-{int(op['actor']):06d}"
+        meta.update({
+            'origin': 'chat_ops', 'speaker': 'Cuttle', 'speaker_kind': 'parent', 'avatar': 'cuttle',
+            'parent_session_id': int(op['actor']), 'parent_handle': handle,
+            'parent_label': 'Supervision check-in' if op['kind'] == 'checkin' else f'Sent by {handle}',
+        })
+    return meta
 
 
 def native_control_metadata(request_data, *, message=None, native_command=None) -> dict:

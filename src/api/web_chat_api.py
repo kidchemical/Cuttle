@@ -4084,7 +4084,7 @@ def chat_endpoint():
                     chat_session_id,
                     'user',
                     history_message,
-                    metadata={**(_user_msg_meta or {}), **_metadata_svc.chat_op_metadata(data)} or None,
+                    metadata={**(_user_msg_meta or {}), **_metadata_svc.chat_op_metadata(data, chat_session_id)} or None,
                 )
 
             def _pipeline_make_saver():

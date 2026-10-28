@@ -108,6 +108,51 @@ def _signature(snap, violations):
                        [(t['id'], t['done'], t['total']) for t in snap['tasks']]])
 
 
+_STATE_TEXT = {'busy': 'working', 'idle': 'idle, nothing open', 'idle_with_work': 'idle with open Tasks items',
+               'awaiting_input': 'waiting on a question card', 'error': 'stopped on an error',
+               'cancelled': 'stopped (cancelled)'}
+CHECKIN_REPLY_CHARS = 2500
+
+
+def checkin_text(cfg, snap, violations):
+    """The check-in turn as markdown: it renders as a readable Cuttle bubble in the
+    supervisor chat and reads as a brief to the agent. Full data: `status --json`."""
+    handle = snap['handle']
+    # A UI-made supervisor chat has no history to pin its agent; the prefix does.
+    lines = [(f"/{cfg['agent']} " if cfg.get('agent') else '')
+             + f"**Supervision check-in for {handle}**: {_STATE_TEXT.get(snap['state'], snap['state'])}."]
+    where = [f"branch `{snap['branch']}`" if snap.get('branch') else '',
+             f"checkout `{snap['execution_path']}`" if snap.get('execution_path') else '']
+    if any(where):
+        joined = ' · '.join(w for w in where if w)
+        lines.append(joined[0].upper() + joined[1:])
+    if violations:
+        lines += ['', '**Rule violations:**'] + [f'- {v}' for v in violations]
+    if snap['tasks']:
+        lines += ['', '**Tasks:**'] + [f"- {t['title']}: {t['done']}/{t['total']} done" for t in snap['tasks']]
+    status = (snap.get('live') or {}).get('status')
+    if status:
+        lines.append(f'Live status: {status}')
+    for w in snap.get('warnings') or []:
+        lines.append(f'Note: {w}')
+    reply = (snap.get('latest_reply') or {})
+    text = reply.get('text') or ''
+    if text:
+        cut = len(text) > CHECKIN_REPLY_CHARS
+        lines += ['', f"**Its latest reply{' (start)' if cut else ''}:**"]
+        lines += ['> ' + ln if ln.strip() else '>' for ln in text[:CHECKIN_REPLY_CHARS].rstrip().splitlines()]
+        if cut:
+            lines.append(f'> … (`python -m api.chat_cli status {handle} --json` has the rest)')
+    lines += ['', '**Your instructions:**', cfg['instructions'].strip()]
+    tiers = cfg.get('model_tiers') or {}
+    if tiers:
+        lines += ['', '**Model guidance:**'] + [f"- {k}: {', '.join(v)}" for k, v in tiers.items() if v]
+    lines += ['', f"Act with `python -m api.chat_cli send {handle} --text \"…\"` (steers a live turn, otherwise "
+              'queues). Message this chat only, not its sub-agents. End your turn when done; '
+              'the next check-in comes on schedule.']
+    return '\n'.join(lines)
+
+
 def _check_in(op, db, actor, sid, request):
     """Wake the supervisor only when the target needs attention or changed."""
     cfg = op['payload']
@@ -138,20 +183,7 @@ def _check_in(op, db, actor, sid, request):
     store.record_check(op['id'], 'violation' if violations else 'woke',
                        {**seen, 'already_waiting': bool(active)})
     if not active:
-        compact = {k: snap[k] for k in ('handle', 'state', 'branch', 'execution_path', 'warnings')}
-        compact['violations'] = violations
-        compact['tasks'] = [{k: t[k] for k in ('id', 'title', 'done', 'total')} for t in snap['tasks']]
-        compact['latest_reply'] = (snap['latest_reply'] or {}).get('content', '')[:4000]
-        compact['live'] = {k: snap['live'].get(k) for k in ('status', 'query_id', 'report_url')}
-        # A UI-made supervisor chat has no history to pin its agent; the prefix does.
-        prefix = f"/{cfg['agent']} " if cfg.get('agent') else ''
-        text = (prefix + 'Scheduled supervision check-in for ' + snap['handle'] + f" (state: {snap['state']}).\n"
-                + cfg['instructions']
-                + '\nAct with `python -m api.chat_cli send ' + snap['handle'] + ' --text …` (steers a live turn,'
-                ' otherwise queues). Address this target chat only; do not message its children.\n'
-                + 'Model guidance: ' + json.dumps(cfg['model_tiers'])
-                + '\nTarget chat data (context for your assessment):\n' + json.dumps(compact, default=str))
-        store.create('checkin', actor, actor, {'text': text, 'schedule_id': op['id']})
+        store.create('checkin', actor, actor, {'text': checkin_text(cfg, snap, violations), 'schedule_id': op['id']})
     store.finish(op['id'], 'pending', {'signature': signature, 'last_check': time.time(),
                                         'last_checkin': time.time(), 'last_seen': seen}, due=nxt)
 

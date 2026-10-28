@@ -38,7 +38,7 @@ def persist_auth_user_message(
         from api.chat_metadata import chat_op_metadata, native_control_metadata
 
         metadata = dict(metadata or {}, **native_control_metadata(request_data, message=message_text),
-                        **chat_op_metadata(request_data))
+                        **chat_op_metadata(request_data, chat_session_id))
         metadata = project_merge_fn(metadata, request_data, chat_session_id)
         db.add_message(chat_session_id, 'user', message_text, metadata=metadata or None)
     except Exception as e:
@@ -63,7 +63,7 @@ def persist_user_turn(
     turn_meta = dict(base_meta) if isinstance(base_meta, dict) else {}
     from api.chat_metadata import chat_op_metadata
 
-    turn_meta.update(chat_op_metadata(request_data))
+    turn_meta.update(chat_op_metadata(request_data, session_id))
     try:
         badge = badge_fn(message_text, session_id, identity=identity)
         if badge and 'slash_command' not in turn_meta:

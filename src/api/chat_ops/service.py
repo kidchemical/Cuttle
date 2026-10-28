@@ -69,6 +69,7 @@ def status(target, actor=None, *, db=None, request=None):
         content = latest.get('content') or ''
         latest['content'] = content[:6000]
         latest['content_truncated'] = len(content) > 6000
+        latest['text'] = readable_reply(content)[:6000]
         meta = latest.get('metadata') or {}
         if isinstance(meta, str):
             try:
@@ -93,6 +94,33 @@ def status(target, actor=None, *, db=None, request=None):
             'followups': db.get_followup_state(sid, uid),
             'operations': [o for o in store.listing(actor) if o['target'] == sid and o['state'] in ('pending', 'dispatching', 'verifying')],
             'latest_reply': latest}
+
+
+_WRAPPED = re.compile(r'^\s*<cuttle_original_response>(.*?)</cuttle_original_response>\s*', re.S)
+_THINK = re.compile(r'<think(?:ing)?>.*?</think(?:ing)?>\s*', re.S | re.I)
+_FORM = re.compile(r'<cuttle_action_form\b[^>]*>(.*?)</cuttle_action_form>', re.S)
+
+
+def readable_reply(content):
+    """A stored reply as a person reads it: the agent's own answer (unwrapped from
+    post-processing), no reasoning blocks, and question cards as one line."""
+    text = str(content or '')
+    wrapped = _WRAPPED.match(text)
+    if wrapped:
+        try:
+            original = json.loads(wrapped.group(1))
+            text = original if isinstance(original, str) else text[wrapped.end():]
+        except ValueError:
+            text = text[wrapped.end():]
+
+    def form(match):
+        try:
+            spec = json.loads(match.group(1))
+        except ValueError:
+            return '[card]'
+        label = spec.get('title') or ('watch' if spec.get('watch') else spec.get('mode') or 'question')
+        return f'[card: {label}]'
+    return _FORM.sub(form, _THINK.sub('', text)).strip()
 
 
 def snapshot(target, actor=None, *, db=None, request=None, usage_agents=()):
@@ -151,9 +179,22 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
     if mode == 'auto':
         live = request(row['user_id'], row['id'], 'GET', '/api/chat-live-status')
         if live.get('generating'):
-            steered = request(row['user_id'], row['id'], 'POST', '/api/chat-steer', {'message': text})
+            # Recorded first (not dispatchable) so the steered row renders as Cuttle.
+            op = store.create('send', actor, row['id'], {'text': text}, state='steering')
+            try:
+                steered = request(row['user_id'], row['id'], 'POST', '/api/chat-steer',
+                                  {'message': text, 'chat_op_id': op['id']})
+            except Exception:
+                store.finish(op['id'], 'verifying', {'attempts': 1, 'uncertain': 'steer request failed'},
+                             due=time.time() + 30)
+                return {'schema_version': 1, 'ok': True, 'delivery': 'queued', 'operation': store.get(op['id'], actor),
+                        'hint': 'Steer outcome unknown; the host checks the chat before resending'}
             if steered.get('steered'):
+                store.finish(op['id'], 'delivered', {'steered': True})
                 return {'schema_version': 1, 'ok': True, 'delivery': 'steered', 'handle': f"CH-{row['id']:06d}"}
+            store.finish(op['id'], 'pending', {})
+            return {'schema_version': 1, 'ok': True, 'delivery': 'queued', 'operation': store.get(op['id'], actor),
+                    'hint': 'Host-owned outbox dispatches when idle; no open browser required'}
     op = store.create('send', actor, row['id'], {'text': text})
     return {'schema_version': 1, 'ok': True, 'delivery': 'queued', 'operation': op,
             'hint': 'Host-owned outbox dispatches when idle; no open browser required'}

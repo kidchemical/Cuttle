@@ -65,7 +65,7 @@ PYTHONPATH=src .venv/bin/python -m api.chat_cli cancel-operation <id> --json
 
 | Verb | Use |
 |---|---|
-| `status CH-…` | `state`: `busy`, `idle`, `idle_with_work` (open Tasks items), `awaiting_input` (form waiting), `error`, `cancelled`; plus Tasks progress, follow-up queue, latest reply |
+| `status CH-…` | `state`: `busy`, `idle`, `idle_with_work` (open Tasks items), `awaiting_input` (form waiting), `error`, `cancelled`; plus Tasks progress, follow-up queue, latest reply (`latest_reply.text` is the readable answer: post-processing wrapper and `<think>` removed, cards as `[card: …]`; `content` is the raw stored row) |
 | `snapshot CH-…` | `status` plus worktree binding, live branch, execution path, the chat's jobs and watch bars; `--usage <agent>` (repeatable) adds plan-usage windows |
 | `send CH-… --text` | A live turn is steered (`delivery: steered`). Otherwise it is queued in a host-owned outbox (`delivery: queued`) and sent when the chat goes idle. The browser does not need to be open. `--mode queue` never steers |
 | `stop CH-…` | Same as the Stop button |
@@ -79,7 +79,10 @@ Send states: `pending` → `delivered` (host started the turn) / `done` /
 send goes to `verifying`. Once the chat is idle, the host looks in its history
 for the send's id (`metadata.chat_op_id` on the user row). If the id is there,
 the send is `delivered`. If not, it was never received and is resent
-automatically. A message is never sent twice. `unknown` now means three
+automatically. A message is never sent twice. Sends, steers and supervision
+check-ins render in the receiving chat as **Cuttle** (like a parent's message
+to a sub-agent), not as the user. This happens only when the chat-ops store
+holds that id for that chat. `unknown` now means three
 attempts never reached the chat; run `status` before resending by hand.
 
 **Supervising another chat:** run `status` once to orient, then `supervise`,
