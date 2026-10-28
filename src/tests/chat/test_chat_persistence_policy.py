@@ -290,3 +290,21 @@ def _expected_assistant_contents(lane, outcome):
     if outcome == "superseded":
         return []
     raise AssertionError(f"unknown outcome {outcome}")
+
+
+@pytest.mark.parametrize("lane", LANES)
+def test_chat_op_id_lands_on_the_user_row(authed_db, monkeypatch, lane,
+                                          _no_real_execution):
+    """api.chat_ops verifies an uncertain send by this id; every lane keeps it."""
+    client, db, _uid = authed_db
+    _install_lane_fakes(monkeypatch, lane, "success_text", db)
+    sid = db.create_chat_session(_uid)
+    payload = {"message": _lane_message(lane, f"op-{next(_counter)}"),
+               "session_id": sid, "chat_op_id": "c" * 32}
+    if lane.endswith("_sync"):
+        payload["stream"] = False
+    if lane.startswith("pipeline"):
+        payload["sticky_agent"] = "none"
+    assert client.post("/api/chat", json=payload).status_code == 200
+    user = [m for m in db.get_messages(sid) if m["role"] == "user"]
+    assert (user[0].get("metadata") or {}).get("chat_op_id") == "c" * 32

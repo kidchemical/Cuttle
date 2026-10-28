@@ -91,7 +91,7 @@ def status(target, actor=None, *, db=None, request=None):
     return {'schema_version': 1, 'ok': True, 'handle': f'CH-{sid:06d}', 'state': state,
             'live': live, 'attention': attention, 'tasks': progress,
             'followups': db.get_followup_state(sid, uid),
-            'operations': [o for o in store.listing(actor) if o['target'] == sid and o['state'] in ('pending', 'dispatching')],
+            'operations': [o for o in store.listing(actor) if o['target'] == sid and o['state'] in ('pending', 'dispatching', 'verifying')],
             'latest_reply': latest}
 
 
@@ -159,8 +159,20 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
             'hint': 'Host-owned outbox dispatches when idle; no open browser required'}
 
 
+def _agent_slash(agent, project_path):
+    """Validated harness slash word (``cursor``) for check-in turns, or ''."""
+    if not agent:
+        return ''
+    from api.agent_harness.catalog import get_agent
+    found = get_agent(str(agent), project_path or None)
+    if not found:
+        raise ValueError(f'Unknown agent {agent!r}')
+    return found[0].slash_prefix().strip().lstrip('/')
+
+
 def supervise(target, actor=None, *, every=900, instructions='', required_branch='',
-              required_path='', forbidden_branches=(), model_tiers=None, db=None):
+              required_path='', forbidden_branches=(), model_tiers=None, agent='',
+              start_now=False, db=None):
     db, actor, row = context(target, actor, db=db)
     if actor == int(row['id']):
         raise ValueError('Supervisor and target must be different chats')
@@ -172,8 +184,108 @@ def supervise(target, actor=None, *, every=900, instructions='', required_branch
         raise ValueError('Give the supervisor explicit instructions')
     payload = {'every': every, 'instructions': instructions, 'required_branch': required_branch,
                'required_path': str(Path(required_path).resolve()) if required_path else '',
-               'forbidden_branches': list(forbidden_branches), 'model_tiers': model_tiers or {}}
-    return {'schema_version': 1, 'ok': True, 'operation': store.create('supervise', actor, row['id'], payload, due=time.time() + every)}
+               'forbidden_branches': list(forbidden_branches), 'model_tiers': model_tiers or {},
+               'agent': _agent_slash(agent, row.get('project_path')), 'brief_on_start': bool(start_now)}
+    due = time.time() + (0 if start_now else every)
+    return {'schema_version': 1, 'ok': True, 'operation': store.create('supervise', actor, row['id'], payload, due=due)}
+
+
+def start_supervisor(target, *, user_id, agent, every=900, instructions='', required_branch='',
+                     required_path='', forbidden_branches=(), model_tiers=None, db=None):
+    """Create a fresh supervisor chat for ``target`` and brief it right away."""
+    from api.auth_db import get_auth_db
+    db = db or get_auth_db()
+    tid = session_id(target)
+    row = db.get_chat_session(tid, int(user_id))
+    if not row or not row.get('is_active'):
+        raise ValueError('Target chat not found')
+    _agent_slash(agent, row.get('project_path'))
+    if not str(instructions or '').strip():
+        raise ValueError('Give the supervisor explicit instructions')
+    sup = db.create_chat_session(int(user_id), f'Supervisor · CH-{tid:06d}')
+    try:
+        # Same project so the supervisor sees its rules, but never the worker's checkout.
+        if row.get('project_path'):
+            db.set_session_project(sup, int(user_id), project_id=row.get('project_id'),
+                                   project_name=row.get('project_name'), project_path=row.get('project_path'))
+        return supervise(tid, sup, every=every, instructions=instructions, required_branch=required_branch,
+                         required_path=required_path, forbidden_branches=forbidden_branches,
+                         model_tiers=model_tiers, agent=agent, start_now=True, db=db)
+    except Exception:
+        db.delete_chat_session(sup, int(user_id))
+        raise
+
+
+def supervise_defaults(session, user_id, *, db=None):
+    from api.auth_db import get_auth_db
+    from api.worktrees.chat_binding import get_chat_binding
+    db = db or get_auth_db()
+    sid = session_id(session)
+    row = db.get_chat_session(sid, int(user_id))
+    if not row:
+        raise LookupError('Chat not found')
+    checkout = (get_chat_binding(sid, db=db) or {}).get('checkout') or {}
+    path = checkout.get('path') or row.get('project_path') or ''
+    branch = ''
+    if path:
+        try:
+            branch = subprocess.run(['git', '-C', path, 'symbolic-ref', '--short', 'HEAD'], capture_output=True,
+                                    text=True, timeout=5, check=True).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return {'handle': f'CH-{sid:06d}', 'branch': branch, 'execution_path': path,
+            'worktree': bool(checkout), 'project_path': row.get('project_path') or ''}
+
+
+def set_paused(op_id, user_id, paused, *, db=None):
+    op = owned_operation(op_id, user_id, db=db)
+    if op['kind'] != 'supervise':
+        raise ValueError('Only supervision schedules can be paused')
+    return store.set_paused(op['id'], op['actor'], paused)
+
+
+def cancel(op_id, user_id, *, db=None):
+    op = owned_operation(op_id, user_id, db=db)
+    return store.cancel(op['id'], op['actor'])
+
+
+def owned_operation(op_id, user_id, *, db=None):
+    from api.auth_db import get_auth_db
+    db = db or get_auth_db()
+    op = store.find(str(op_id or ''))
+    if not op or not db.get_chat_session(int(op['actor']), int(user_id)):
+        raise LookupError('Operation not found')
+    return op
+
+
+def overview(session, user_id, *, db=None):
+    """What the UI shows for one chat: schedules it runs, schedules on it, queued sends."""
+    from api.auth_db import get_auth_db
+    db = db or get_auth_db()
+    sid = session_id(session)
+    if not db.get_chat_session(sid, int(user_id)):
+        raise LookupError('Chat not found')
+    supervising, supervised_by, queued = [], [], []
+    for op in store.involving(sid):
+        if op['kind'] == 'supervise':
+            item = _schedule_view(op)
+            (supervising if op['actor'] == sid else supervised_by).append(item)
+        elif op['kind'] == 'send' and op['target'] == sid:
+            queued.append({'id': op['id'], 'from': f"CH-{op['actor']:06d}", 'state': op['state'],
+                           'text': op['payload'].get('text', '')[:500], 'queued_at': op['updated']})
+    return {'schema_version': 1, 'ok': True, 'handle': f'CH-{sid:06d}', 'supervising': supervising,
+            'supervised_by': supervised_by, 'queued': queued}
+
+
+def _schedule_view(op):
+    cfg, result = op['payload'], op['result'] or {}
+    seen = result.get('last_seen') or {}
+    return {'id': op['id'], 'state': op['state'], 'supervisor': f"CH-{op['actor']:06d}",
+            'target': f"CH-{op['target']:06d}", 'every': cfg.get('every'), 'next_check': op['due'],
+            'agent': cfg.get('agent') or '', 'required_branch': cfg.get('required_branch') or '',
+            'forbidden_branches': cfg.get('forbidden_branches') or [], 'last_check': result.get('last_check'),
+            'last_seen': seen, 'violations': seen.get('violations') or [],
+            'history': store.checks(op['id'], limit=20)}
 
 
 def stop(target, actor=None, *, db=None, request=None):

@@ -90,7 +90,8 @@ async function cancelUnifiedJob(kind, jobId) {
         });
         const data = await r.json().catch(function () { return {}; });
         if (!r.ok || !data.success) throw new Error(data.error || ('HTTP ' + r.status));
-        if (window.showToast) window.showToast((k === 'leftover' ? 'Terminated pid ' : 'Stopped ') + jid.slice(0, 8), 'success');
+        const verb = k === 'leftover' ? 'Terminated pid ' : k === 'chat_op' ? 'Cancelled ' : 'Stopped ';
+        if (window.showToast) window.showToast(verb + jid.slice(0, 8), 'success');
         await loadAll();
     } catch (e) {
         if (window.showToast) window.showToast(String(e.message || e), 'error');

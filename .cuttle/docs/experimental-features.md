@@ -211,6 +211,38 @@ Turning the flag off hides every gizmo and closes pop-outs; rows are kept.
 This applies to the experimental shell gizmos; established composer Tasks
 remain available independently of this flag.
 
+## Chat supervision
+
+Flag `chat_supervision` (off by default, no restart). It shows supervision
+that agents set up with `python -m api.chat_cli supervise` / `send`; those
+verbs work whether the flag is on or not, because the supervisor depends on
+them. The flag hides only the UI and its `/api/chat-ops/*` routes, which
+answer `{success:false, disabled:true}` while it is off.
+
+- **Supervisor chat:** a header chip, "Supervising CH-… · every 15m · next
+  2:28". Click it for rules, the last state seen, and check history
+  (skipped busy/no-change checks, wakes, rule breaks, errors; last 50 kept),
+  plus Pause/Resume and Cancel.
+- **Worker chat:** a "Supervised by CH-…" badge. It turns amber with ⚠ when a
+  branch or path rule is broken.
+- **Queued messages:** an "N queued" pill on the receiving chat. Each message
+  waits until that chat is idle and can be cancelled from the pill.
+- **Chat menu → Supervise this chat…:** creates a `Supervisor · CH-…` chat
+  in the same project and starts the schedule with a first briefing check
+  right away. Check-ins are sent as `/<agent> …`, so the chosen harness runs
+  each one.
+- **Jobs page:** schedules and queued sends appear as `chat` rows that can
+  be cancelled.
+
+Owner: `src/api/chat_ops/` (`routes`, `service.overview` /
+`start_supervisor`, `store.checks`); client
+`src/web/js/chat/chat_supervision_model.js` (pure) +
+`chat_supervision.js` (controller). Tests:
+`src/tests/chat_ops/test_chat_ops.py`,
+`src/tests/e2e/test_chat_supervision.py`. To remove the feature, delete the
+flag row, the blueprint registration, the two client scripts with their CSS,
+and the `chat_op` ledger source. The agent verbs stay.
+
 ## Test Lab App
 
 The Test Lab tile and pinned icon are hidden while disabled; its direct page

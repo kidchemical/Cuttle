@@ -70,6 +70,12 @@ register_flag(FlagSpec(
 ))
 
 register_flag(FlagSpec(
+    id="chat_supervision", label="Chat supervision",
+    description="Show chat supervision in the UI: a header chip in the supervisor chat (target, interval, next check, check history, pause/cancel), a \"Supervised by\" badge with branch-rule warnings in the worker chat, queued messages, a \"Supervise this chat…\" menu action, and schedules on the Jobs page. Agent commands (python -m api.chat_cli supervise/send) work regardless.",
+    default=False, category="agents", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
     id="progress_grid",
     label="Progress grid",
     description="Show a cell-per-item progress grid (frames, files, tests, shards…) on watch cards whose status includes one, coloured by who did each item.",

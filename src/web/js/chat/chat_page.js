@@ -300,6 +300,7 @@
         const wrap = document.getElementById('chatSessionTitle');
         const text = document.getElementById('chatSessionTitleText');
         if (!wrap || !text) return;
+        supervision.setSession(sessionId);
         if (sessionId == null || sessionId === '') {
             wrap.hidden = true;
             text.textContent = '';
@@ -416,6 +417,14 @@
         closeToast: function (id) {
             if (typeof window.closeCuttleToast === 'function') window.closeCuttleToast(id);
         },
+    });
+    // Chat supervision chip/badge/dialog (experimental `chat_supervision`).
+    const supervision = CuttleChatSupervision.create({
+        doc: document, fetch: (u, o) => fetch(u, o), now: () => Date.now(), escapeHtml: escapeHtmlInline,
+        enabledFlags: fetchEnabledExperimentalFlags, openChat: (sid) => loadChatSession(sid),
+        closeMenus: () => closeAllSessionMenus(), confirm: (m) => window.confirm(m),
+        toast: (m, k) => (window.showToast || function () {})(m, k), viewportWidth: () => window.innerWidth,
+        setInterval: (f, ms) => window.setInterval(f, ms), clearInterval: (t) => window.clearInterval(t),
     });
 
     // Branch shown on the segmented project chip (star | name | branch).
@@ -8856,7 +8865,7 @@
                 + '</button>'
             );
         }
-        parts.push(gitPush.menuHtml(icons));
+        parts.push(gitPush.menuHtml(icons), supervision.menuHtml(sessionId, icons.subagents));
         if (_terminalMenuAvailable) {
             parts.push(
                 '<button type="button" class="chat-chrome-menu-item" role="menuitem"'

@@ -19,6 +19,7 @@
     <link rel="stylesheet" href="css/chat_page.css?v=20261027secretVault1">
     <link rel="stylesheet" href="css/searchable_select.css?v=20261011attachedMenus">
     <link rel="stylesheet" href="css/chat_voice.css?v=20261028bigOrb">
+    <link rel="stylesheet" href="/css/chat_supervision.css?v=20261028sup1">
     <link rel="stylesheet" href="/css/shell_voice.css?v=20261028callBtn">
     <link rel="stylesheet" href="/css/query_log_inspector.css?v=20260927qlJson">
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
@@ -133,6 +134,8 @@
                 </button>
                 <span class="chat-session-archived-badge" id="chatSessionArchivedBadge" hidden>Archived</span>
                 <span class="chat-session-title-text" id="chatSessionTitleText"></span>
+                <!-- Supervision chip / badge / queued (chat_supervision.js; flag chat_supervision) -->
+                <span class="chat-supervision-slot" id="chatSupervisionSlot" hidden></span>
             </div>
             <div class="chat-chrome-menu" id="chatChromeMenu">
                 <button type="button" class="corner-chat-button chat-chrome-menu-button" id="chatChromeMenuBtn" title="Menu" aria-label="Chat menu" aria-haspopup="menu" aria-expanded="false" aria-controls="chatChromeMenuDropdown">
@@ -494,6 +497,8 @@
     <script src="/js/chat/chat_voice.js?v=20261028noHint"></script>
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/chat/chat_worktrees.js?v=20261027wtbind1"></script>
+    <script src="/js/chat/chat_supervision_model.js?v=20261028sup1"></script>
+    <script src="/js/chat/chat_supervision.js?v=20261028sup1"></script>
     <script src="/js/chat/chat_chip_config.js?v=20261025spaceov1"></script>
     <script src="/js/chat/chat_session.js?v=20261027wtbind1"></script>
     <script src="/js/chat/chat_page.js?v=20261028wtproj"></script>

@@ -215,17 +215,90 @@ def test_delivery_busy_requeues_and_other_errors_fail(chats, monkeypatch):
     got = _deliver(chats, _queued(chats), FakeStream(500), monkeypatch)
     assert got["state"] == "failed"
     got = _deliver(chats, _queued(chats), FakeStream(200, []), monkeypatch)
-    assert got["state"] == "unknown"
+    assert got["state"] == "verifying" and got["result"]["attempts"] == 1
+    assert got["due"] >= time.time() + worker.VERIFY_GRACE_SEC - 5
 
 
-def test_restart_never_replays_a_send_but_resumes_schedules(chats):
+def test_send_carries_its_operation_id(chats, monkeypatch):
+    op = _queued(chats)
+    seen = []
+    stream = FakeStream(200, [{"type": "query_started", "query_id": "q1"}])
+    db = chats[0]
+    original = service.context
+    monkeypatch.setattr(service, "context", lambda target, actor=None, **kw: original(target, actor, db=db))
+
+    def request(uid, sid, method, path, data=None, *, stream_=False, **kw):
+        if path == "/api/chat":
+            seen.append(data)
+            return stream
+        return FakeHost()(uid, sid, method, path, data)
+
+    worker.dispatch(op, request=request)
+    assert seen[0]["chat_op_id"] == op["id"]
+
+
+def test_restart_verifies_sends_and_resumes_schedules(chats):
     db, _owner, sup, target, _foreign = chats
     send = _queued(chats)
     sched = service.supervise(_ch(target), _ch(sup), every=60, instructions="watch", db=db)["operation"]
     assert store.claim(send["id"]) and store.claim(sched["id"])
     store.recover_after_restart()
-    assert store.get(send["id"], sup)["state"] == "unknown"
+    after = store.get(send["id"], sup)
+    assert after["state"] == "verifying" and after["due"] <= time.time()
     assert store.get(sched["id"], sup)["state"] == "pending"
+    assert send["id"] in [o["id"] for o in store.due()]
+
+
+def _verify(chats, op, monkeypatch, *, generating=False):
+    db = chats[0]
+    original = service.context
+    monkeypatch.setattr(service, "context", lambda target, actor=None, **kw: original(target, actor, db=db))
+    worker.dispatch(store.find(op["id"]), request=FakeHost(generating=generating))
+    return store.find(op["id"])
+
+
+def _lost(chats, monkeypatch, attempts=1):
+    op = _queued(chats)
+    store.claim(op["id"])
+    store.finish(op["id"], "verifying", {"attempts": attempts}, due=0)
+    return op
+
+
+def test_uncertain_send_found_in_history_is_delivered_not_resent(chats, monkeypatch):
+    db, _owner, _sup, target, _foreign = chats
+    op = _lost(chats, monkeypatch)
+    db.add_message(target, "user", "go", metadata={"chat_op_id": op["id"]})
+    got = _verify(chats, op, monkeypatch)
+    assert got["state"] == "delivered" and got["result"]["recovered"] is True
+
+
+def test_uncertain_send_missing_from_history_is_resent(chats, monkeypatch):
+    db, _owner, _sup, target, _foreign = chats
+    op = _lost(chats, monkeypatch)
+    db.add_message(target, "user", "go", metadata={"chat_op_id": "f" * 32})
+    assert _verify(chats, op, monkeypatch, generating=True)["state"] == "verifying"  # wait for idle
+    got = _verify(chats, op, monkeypatch)
+    assert got["state"] == "pending" and got["result"]["attempts"] == 1
+
+
+def test_uncertain_send_gives_up_after_max_attempts(chats, monkeypatch):
+    op = _lost(chats, monkeypatch, attempts=worker.MAX_SEND_ATTEMPTS)
+    got = _verify(chats, op, monkeypatch)
+    assert got["state"] == "unknown" and "attempts" in got["result"]["error"]
+
+
+def test_user_row_stores_only_well_formed_op_ids(chats):
+    from api.chat_turn_persist import persist_auth_user_message, persist_user_turn
+    db, _owner, _sup, target, _foreign = chats
+    oid = "a" * 32
+    merge = lambda meta, *_a: meta  # noqa: E731
+    persist_user_turn(db, target, message_text="hi", history_text="hi", badge_fn=lambda *a, **k: None,
+                      project_merge_fn=merge, request_data={"chat_op_id": oid})
+    persist_auth_user_message(db, target, "/cursor hi", project_merge_fn=merge,
+                              request_data={"chat_op_id": "not-an-id"})
+    rows = db.get_messages(target)
+    assert rows[0]["metadata"] == {"chat_op_id": oid}
+    assert not (rows[1].get("metadata") or {}).get("chat_op_id")
 
 
 # --- supervision check-ins ----------------------------------------------------
@@ -315,3 +388,148 @@ def test_cli_reports_validation_errors_without_traceback(chats, tmp_path, capsys
                  "--as", _ch(sup), "--json"])
     assert code == 2
     assert "different chat" in json.loads(capsys.readouterr().out)["error"]
+
+
+# --- supervision UI support ---------------------------------------------------
+
+
+def test_checks_are_recorded_for_the_history(chats, monkeypatch):
+    sched = _schedule(chats)
+    _tick(chats, sched, _snap("busy"), monkeypatch)
+    _tick(chats, sched, _snap("idle_with_work"), monkeypatch)
+    _tick(chats, sched, _snap("busy", branch="dev/core"), monkeypatch)
+    history = store.checks(sched["id"])
+    assert [h["outcome"] for h in history] == ["skipped", "woke", "skipped"]  # newest first
+    assert history[-1]["detail"]["reason"] == "busy"
+    sched = _schedule(chats, forbidden_branches=["dev/core"])
+    _tick(chats, sched, _snap("busy", branch="dev/core"), monkeypatch)
+    assert store.checks(sched["id"])[0]["outcome"] == "violation"
+
+
+def test_history_is_pruned(chats):
+    sched = _schedule(chats)
+    for _ in range(store.HISTORY_KEEP + 5):
+        store.record_check(sched["id"], "skipped", {"reason": "busy"})
+    assert len(store.checks(sched["id"], limit=500)) == store.HISTORY_KEEP
+
+
+def test_pause_stops_checks_and_resume_checks_now(chats):
+    _db, _owner, sup, _target, _foreign = chats
+    sched = _schedule(chats)
+    assert store.set_paused(sched["id"], sup, True)["state"] == "paused"
+    assert sched["id"] not in [o["id"] for o in store.due()]
+    store.finish(sched["id"], "pending", {}, due=0)  # an in-flight check finishing
+    assert store.get(sched["id"], sup)["state"] == "paused"
+    resumed = store.set_paused(sched["id"], sup, False)
+    assert resumed["state"] == "pending" and resumed["due"] <= time.time()
+    assert store.cancel(store.set_paused(sched["id"], sup, True)["id"], sup)["state"] == "cancelled"
+
+
+def test_agent_prefix_and_start_now_briefing(chats, monkeypatch):
+    db, _owner, sup, target, _foreign = chats
+    op = service.supervise(_ch(target), _ch(sup), instructions="watch", agent="cursor",
+                           start_now=True, db=db)["operation"]
+    assert op["payload"]["agent"] == "cursor" and op["due"] <= time.time()
+    checkins = _tick(chats, op, _snap("busy"), monkeypatch)
+    assert len(checkins) == 1  # the briefing wakes even though the target is busy
+    assert checkins[0]["payload"]["text"].startswith("/cursor Scheduled supervision check-in")
+    store.finish(checkins[0]["id"], "done", {})
+    assert len(_tick(chats, op, _snap("busy"), monkeypatch)) == 1  # later busy checks skip
+    with pytest.raises(ValueError, match="Unknown agent"):
+        service.supervise(_ch(target), _ch(sup), instructions="x", agent="nope", db=db)
+
+
+def test_start_supervisor_creates_a_briefed_chat_in_the_target_project(chats):
+    db, owner, _sup, target, foreign = chats
+    db.set_session_project(target, owner, project_id=7, project_name="Game", project_path="/games/x")
+    out = service.start_supervisor(_ch(target), user_id=owner, agent="cursor", instructions="watch", db=db)
+    new = db.get_chat_session(out["operation"]["actor"], owner)
+    assert new["session_name"] == f"Supervisor · {_ch(target)}"
+    assert new["project_path"] == "/games/x"
+    assert out["operation"]["payload"]["brief_on_start"] is True
+    with pytest.raises(ValueError):
+        service.start_supervisor(_ch(foreign), user_id=owner, agent="cursor", instructions="x", db=db)
+
+
+def test_overview_splits_supervising_supervised_and_queued(chats):
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    store.record_check(sched["id"], "skipped", {"reason": "busy", "state": "busy"})
+    _queued(chats, "next step")
+    mine = service.overview(_ch(sup), owner, db=db)
+    theirs = service.overview(_ch(target), owner, db=db)
+    assert [s["target"] for s in mine["supervising"]] == [_ch(target)]
+    assert mine["supervising"][0]["history"][0]["outcome"] == "skipped"
+    assert mine["supervised_by"] == [] and mine["queued"] == []
+    assert [s["supervisor"] for s in theirs["supervised_by"]] == [_ch(sup)]
+    assert [q["text"] for q in theirs["queued"]] == ["next step"]
+
+
+def test_operation_controls_require_the_owner(chats):
+    db, owner, _sup, _target, _foreign = chats
+    other = db.get_user_by_id(owner)["id"] + 1
+    sched = _schedule(chats)
+    with pytest.raises(LookupError):
+        service.cancel(sched["id"], other, db=db)
+    with pytest.raises(LookupError):
+        service.overview(_ch(chats[3]), other, db=db)
+    assert service.set_paused(sched["id"], owner, True, db=db)["state"] == "paused"
+    with pytest.raises(ValueError):
+        service.set_paused(_queued(chats)["id"], owner, True, db=db)
+
+
+@pytest.fixture
+def client(chats, monkeypatch):
+    from flask import Flask
+    from api.chat_ops import routes
+    db, owner, *_ = chats
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    monkeypatch.setattr(routes, "current_user", lambda: {"id": owner})
+    monkeypatch.setattr("api.http_authz.current_user", lambda: {"id": owner})
+    app = Flask(__name__)
+    app.register_blueprint(routes.chat_ops_bp)
+    return app.test_client()
+
+
+def _flag(monkeypatch, on):
+    monkeypatch.setattr("api.chat_ops.routes.is_enabled", lambda f: on and f == "chat_supervision")
+
+
+def test_routes_are_disabled_while_the_flag_is_off(client, chats, monkeypatch):
+    _flag(monkeypatch, False)
+    body = client.get(f"/api/chat-ops/sessions/{chats[2]}").get_json()
+    assert body == {"success": False, "disabled": True, "error": "Chat supervision is disabled"}
+    assert client.post("/api/chat-ops/supervise", json={}).get_json()["disabled"] is True
+
+
+def test_routes_overview_control_and_start(client, chats, monkeypatch):
+    _flag(monkeypatch, True)
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    body = client.get(f"/api/chat-ops/sessions/{sup}").get_json()
+    assert body["success"] and body["supervising"][0]["id"] == sched["id"]
+    paused = client.post(f"/api/chat-ops/operations/{sched['id']}/pause").get_json()
+    assert paused["operation"]["state"] == "paused"
+    assert client.post(f"/api/chat-ops/operations/{sched['id']}/explode").status_code == 404
+    assert client.post("/api/chat-ops/operations/nope/cancel").status_code == 404
+    started = client.post("/api/chat-ops/supervise", json={
+        "target": _ch(target), "agent": "cursor", "every": 600, "instructions": "watch",
+        "forbidden_branches": "main, master"}).get_json()
+    assert started["success"] and started["operation"]["payload"]["forbidden_branches"] == ["main", "master"]
+    bad = client.post("/api/chat-ops/supervise", json={"target": _ch(target), "agent": "cursor"})
+    assert bad.status_code == 400
+
+
+def test_jobs_ledger_lists_chat_ops_only_with_the_flag(chats, monkeypatch):
+    from api.jobs import ledger, service as jobs_service
+    sched = _schedule(chats)
+    send = _queued(chats)
+    monkeypatch.setattr("api.experimental.is_enabled", lambda f: False)
+    assert ledger.chat_op_jobs() == []
+    monkeypatch.setattr("api.experimental.is_enabled", lambda f: f == "chat_supervision")
+    jobs = {j["id"]: j for j in ledger.chat_op_jobs()}
+    assert jobs[sched["id"]]["status"] == "running" and jobs[sched["id"]]["label"].startswith("Supervise CH-")
+    assert jobs[send["id"]]["status"] == "queued" and jobs[send["id"]]["actions"] == ["cancel"]
+    assert jobs_service.cancel_job("chat_op", send["id"])["result"]["state"] == "cancelled"
+    with pytest.raises(jobs_service.JobNotCancellableError):
+        jobs_service.cancel_job("chat_op", send["id"])

@@ -13,7 +13,20 @@ delivery orchestration here.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
+
+
+_CHAT_OP_ID = re.compile(r'[0-9a-f]{32}')
+
+
+def chat_op_metadata(request_data) -> dict:
+    """Stamp a chat-ops send's id on the user row so the sender can tell, after a
+    lost connection, whether the turn arrived (api.chat_ops.worker)."""
+    oid = (request_data or {}).get('chat_op_id') if isinstance(request_data, dict) else None
+    if isinstance(oid, str) and _CHAT_OP_ID.fullmatch(oid):
+        return {'chat_op_id': oid}
+    return {}
 
 
 def native_control_metadata(request_data, *, message=None, native_command=None) -> dict:

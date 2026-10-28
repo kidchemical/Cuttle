@@ -456,18 +456,27 @@ def cmd_search(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+_OPERATION_VERBS = ('operations', 'operation', 'cancel-operation', 'pause-operation', 'resume-operation')
+_CHAT_OP_VERBS = ('send', 'status', 'snapshot', 'stop', 'supervise') + _OPERATION_VERBS
+
+
 def cmd_operation(args: argparse.Namespace) -> int:
     from api.chat_ops import service, store
     db = _open_db(args.db)
     verb = args.command
-    if verb in ('operations', 'operation', 'cancel-operation'):
+    if verb in _OPERATION_VERBS:
         actor = service.session_id(args.as_chat or __import__('os').environ.get('CUTTLE_CHAT_SESSION_ID'))
         # Validate the acting chat before exposing its operation records.
         service.context(actor, actor, db=db)
         if verb == 'operations':
             payload = {'schema_version': 1, 'ok': True, 'operations': store.listing(actor)}
         else:
-            op = store.cancel(args.id, actor) if verb == 'cancel-operation' else store.get(args.id, actor)
+            if verb == 'cancel-operation':
+                op = store.cancel(args.id, actor)
+            elif verb in ('pause-operation', 'resume-operation'):
+                op = store.set_paused(args.id, actor, verb == 'pause-operation')
+            else:
+                op = store.get(args.id, actor)
             payload = {'schema_version': 1, 'ok': True, 'operation': op}
     else:
         kwargs = {'actor': args.as_chat, 'db': db}
@@ -482,7 +491,8 @@ def cmd_operation(args: argparse.Namespace) -> int:
         else:
             payload = service.supervise(args.handle, every=args.every, instructions=args.instructions,
                 required_branch=args.require_branch, required_path=args.require_path,
-                forbidden_branches=args.forbid_branch, model_tiers=json.loads(args.model_tiers), **kwargs)
+                forbidden_branches=args.forbid_branch, model_tiers=json.loads(args.model_tiers),
+                agent=args.agent, **kwargs)
     _emit_text_once(payload, as_json=args.json,
                     text_fn=lambda p: json.dumps(p, indent=2, ensure_ascii=False, default=str))
     return 0
@@ -608,10 +618,12 @@ def build_parser() -> argparse.ArgumentParser:
         ('operations', 'List your delivery requests and supervision profiles'),
         ('operation', 'Inspect one delivery request or supervision profile'),
         ('cancel-operation', 'Cancel a pending delivery or recurring supervision profile'),
+        ('pause-operation', 'Pause a supervision schedule (no checks until resumed)'),
+        ('resume-operation', 'Resume a paused supervision schedule; checks right away'),
     ):
         op = sub.add_parser(verb, parents=[common], help=help_text)
         op.add_argument('--as', dest='as_chat', help='Acting chat (default CUTTLE_CHAT_SESSION_ID); same owner required')
-        if verb not in ('operations', 'operation', 'cancel-operation'):
+        if verb not in _OPERATION_VERBS:
             op.add_argument('handle', help='Target session CH-…')
         elif verb != 'operations':
             op.add_argument('id', help='Operation id from send/supervise')
@@ -627,6 +639,7 @@ def build_parser() -> argparse.ArgumentParser:
             op.add_argument('--require-path', default='')
             op.add_argument('--forbid-branch', action='append', default=[])
             op.add_argument('--model-tiers', default='{}', help='JSON object with worker/expert model guidance')
+            op.add_argument('--agent', default='', help='Run check-in turns on this harness (e.g. cursor); default: the chat\'s own')
         op.set_defaults(func=cmd_operation)
 
     return p
@@ -654,7 +667,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return code
         return 1
     except Exception as e:
-        if getattr(args, 'command', '') in ('send', 'status', 'snapshot', 'stop', 'supervise', 'operations', 'operation', 'cancel-operation'):
+        if getattr(args, 'command', '') in _CHAT_OP_VERBS:
             # Request exceptions can contain Authorization headers; keep them
             # out of logs and JSON. Validation errors are safe and actionable.
             detail = str(e) if isinstance(e, ValueError) else 'Chat operation failed; check host availability and activation'

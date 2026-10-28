@@ -55,7 +55,7 @@ PYTHONPATH=src .venv/bin/python -m api.chat_cli status   CH-001548 --json
 PYTHONPATH=src .venv/bin/python -m api.chat_cli snapshot CH-001548 --usage codex --json
 PYTHONPATH=src .venv/bin/python -m api.chat_cli send     CH-001548 --text "Continue with the next open task." --json
 PYTHONPATH=src .venv/bin/python -m api.chat_cli stop     CH-001548 --json
-PYTHONPATH=src .venv/bin/python -m api.chat_cli supervise CH-001548 --every 900 \
+PYTHONPATH=src .venv/bin/python -m api.chat_cli supervise CH-001548 --every 900 --agent cursor \
   --instructions "Keep it on its Tasks list; nudge it when it stalls." \
   --require-branch dev/multiplayer --forbid-branch dev/core --forbid-branch master \
   --model-tiers '{"worker":["cursor auto","codex terra medium"],"expert":["claude opus"]}' --json
@@ -70,12 +70,17 @@ PYTHONPATH=src .venv/bin/python -m api.chat_cli cancel-operation <id> --json
 | `send CH-… --text` | A live turn is steered (`delivery: steered`). Otherwise it is queued in a host-owned outbox (`delivery: queued`) and sent when the chat goes idle. The browser does not need to be open. `--mode queue` never steers |
 | `stop CH-…` | Same as the Stop button |
 | `supervise CH-…` | Durable check-ins that survive your turn and Flask restarts. Each interval the host checks the target. It wakes **your** chat with a compact report only when the target is not busy and something changed, or when a branch/path rule is violated. A healthy, working target costs no tokens |
+| `supervise … --agent ID` | Prefix each check-in with `/<agent>` so that harness runs it (validated against the agent catalog) |
 | `operations` / `operation <id>` / `cancel-operation <id>` | Inspect or cancel your queued sends and supervision schedules |
+| `pause-operation <id>` / `resume-operation <id>` | Pause a schedule; resume checks right away |
 
 Send states: `pending` → `delivered` (host started the turn) / `done` /
-`failed`. `unknown` means delivery is uncertain, for example because Flask
-restarted mid-send. Run `status` before resending; it is never replayed
-automatically.
+`failed`. If the connection drops mid-send (for example, Flask restarts), the
+send goes to `verifying`. Once the chat is idle, the host looks in its history
+for the send's id (`metadata.chat_op_id` on the user row). If the id is there,
+the send is `delivered`. If not, it was never received and is resent
+automatically. A message is never sent twice. `unknown` now means three
+attempts never reached the chat; run `status` before resending by hand.
 
 **Supervising another chat:** run `status` once to orient, then `supervise`,
 then end your turn. Do not sleep-loop inside a turn. Each check-in arrives as

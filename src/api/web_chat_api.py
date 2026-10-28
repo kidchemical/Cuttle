@@ -486,9 +486,11 @@ try:
 except Exception as _jev_watch_err:
     print(f"[JEV] regress watcher not started: {_jev_watch_err}")
 
-# Existing-chat agent operations (durable outbox and explicit check-ins).
+# Existing-chat agent operations (durable outbox, check-ins, supervision UI routes).
 try:
+    from api.chat_ops.routes import chat_ops_bp
     from api.chat_ops.worker import ensure_started as _chat_ops_start
+    app.register_blueprint(chat_ops_bp)
     _chat_ops_start()
 except Exception as _chat_ops_err:
     print(f"[CHAT OPS] worker not started: {_chat_ops_err}")
@@ -3846,7 +3848,7 @@ def chat_endpoint():
                 identity=_send_identity,
                 badge_fn=_user_badge_metadata,
                 project_merge_fn=_merge_project_into_meta,
-                request_data=_current_request_data(),
+                request_data=data,
             )
 
         # No-LLM launch gates — project-action confirm buttons and dynamic
@@ -4082,7 +4084,7 @@ def chat_endpoint():
                     chat_session_id,
                     'user',
                     history_message,
-                    metadata=_user_msg_meta,
+                    metadata={**(_user_msg_meta or {}), **_metadata_svc.chat_op_metadata(data)} or None,
                 )
 
             def _pipeline_make_saver():
