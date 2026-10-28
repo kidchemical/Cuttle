@@ -1325,6 +1325,8 @@ def get_session_messages(session_id):
         if limit is not None:
             limit = max(1, min(int(limit), 200))
 
+        from api.chat_turn_recovery import preserve_interrupted_turns
+        preserve_interrupted_turns(db, session_id)
         messages = db.get_messages(
             session_id,
             limit=limit,

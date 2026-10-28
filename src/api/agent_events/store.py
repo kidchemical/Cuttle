@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS events (
  summary TEXT, payload TEXT, payload_ref TEXT, compacted TEXT, failed INTEGER NOT NULL DEFAULT 0,
  UNIQUE(query_id, block_id), FOREIGN KEY(query_id) REFERENCES runs(query_id)
 );
+CREATE INDEX IF NOT EXISTS runs_chat ON runs(chat_session_id,started_at);
 CREATE TABLE IF NOT EXISTS event_changes (
  id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL,
  FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE
@@ -213,6 +214,15 @@ class EventStore:
         with self.connection() as conn:
             row=conn.execute('SELECT * FROM runs WHERE query_id=?',(qid,)).fetchone()
         return {**dict(row),'metadata':json.loads(row['metadata'])} if row else None
+
+    def session_runs(self, session_id):
+        """Durable runs for one chat, including interrupted process owners."""
+        with self.connection() as conn:
+            rows = conn.execute(
+                'SELECT * FROM runs WHERE chat_session_id=? ORDER BY started_at',
+                (str(int(session_id)),),
+            ).fetchall()
+        return [{**dict(row), 'metadata': json.loads(row['metadata'])} for row in rows]
 
     def run_state(self, qid):
         """(status, raw metadata JSON) without decoding, or None."""

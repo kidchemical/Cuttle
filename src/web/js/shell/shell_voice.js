@@ -4,6 +4,10 @@
  * #shellVoiceStrip slot, below the panes). Its height is published as the
  * root CSS variable --shell-voice-strip-h so fixed overlays (side panels,
  * their backdrop, toasts) stop above it instead of covering End voice.
+ *
+ * Presenters whose voice view can place a call (GPT-Live / Realtime) register
+ * an offer; while one is live and no call runs, the strip shows a Call button
+ * that runs the presenter's own connect path. The newest live offer wins.
  */
 (function(root){
     'use strict';
@@ -11,20 +15,45 @@
     const SVG='<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
     const MIC_ICON=SVG+'<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>';
     const MIC_OFF_ICON=SVG+'<line x1="2" y1="2" x2="22" y2="22"/><path d="M9 9v2a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 11v-1m14 0v1a7 7 0 0 1-.11 1.23"/><line x1="12" y1="18" x2="12" y2="22"/></svg>';
+    const CALL_ICON='<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><path d="M6.62 10.79a15.15 15.15 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z"/></svg>';
     const HANG_UP_ICON='<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.67-1.85.996.996 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>';
     function create({win,mount}){
-        let active=null, muted=false, status='', failed=false, usage=null, controller=null;
+        let active=null, muted=false, status='', failed=false, usage=null, controller=null, dialing=false;
         const listeners=new Map();
+        const offers=[];
         const doc=win.document;
         function isMobileShell(){try{return !!(win.isCuttleMobile||(win.cuttleMobile&&win.cuttleMobile.isNative));}catch(_){return false;}}
         let bar=mount||(typeof doc.getElementById==='function'?doc.getElementById('shellVoiceStrip'):null);
+        const floating=!bar;
         if(!bar){bar=doc.createElement('div');doc.body.appendChild(bar);}
-        bar.hidden=true;bar.className='shell-voice-strip';bar.setAttribute('role','region');bar.setAttribute('aria-label','Active voice call');
-        const mute=doc.createElement('button'),end=doc.createElement('button');
+        bar.hidden=true;bar.className='shell-voice-strip'+(floating?' is-floating':'');bar.setAttribute('role','region');bar.setAttribute('aria-label','Voice call');
+        const call=doc.createElement('button'),mute=doc.createElement('button'),end=doc.createElement('button');
+        call.type='button';call.className='shell-voice-btn shell-voice-call';call.setAttribute('aria-label','Start voice call');call.title='Call';
         mute.type='button';mute.className='shell-voice-btn shell-voice-mute';mute.setAttribute('aria-label','Mute');
         end.type='button';end.className='shell-voice-btn shell-voice-end';end.setAttribute('aria-label','End voice');end.title='End call';
-        end.innerHTML=HANG_UP_ICON;bar.append(mute,end);
-        mute.onclick=()=>{muted=!muted;controller?.mute?.(muted);paint();};end.onclick=()=>void stop();
+        call.innerHTML=CALL_ICON;end.innerHTML=HANG_UP_ICON;bar.append(call,mute,end);
+        call.onclick=()=>void dial();mute.onclick=()=>{muted=!muted;controller?.mute?.(muted);paint();};end.onclick=()=>void stop();
+        function currentOffer(){
+            for(let i=offers.length-1;i>=0;i--){
+                let alive=false;try{alive=!offers[i].alive||offers[i].alive();}catch(_){}
+                if(alive)return offers[i];
+                offers.splice(i,1);
+            }
+            return null;
+        }
+        async function dial(){
+            const offer=currentOffer();
+            if(!offer){paint();return;}
+            if(active||dialing)return;
+            dialing=true;paint();
+            try{await offer.connect();}catch(_){}
+            finally{dialing=false;paint();}
+        }
+        function offer(entry){
+            const rec={connect:entry.connect,alive:entry.alive};
+            offers.push(rec);paint();
+            return ()=>{const i=offers.indexOf(rec);if(i!==-1)offers.splice(i,1);paint();};
+        }
         function publishHeight(){
             try{
                 const h=bar.hidden||typeof bar.getBoundingClientRect!=='function'?0:Math.ceil(bar.getBoundingClientRect().height);
@@ -40,7 +69,13 @@
         }
         function paint(){
             const wasHidden=bar.hidden;
-            bar.hidden=!active;
+            const ready=!active&&!!currentOffer();
+            bar.hidden=!active&&!ready;
+            call.hidden=!ready;mute.hidden=!active;end.hidden=!active;
+            if(ready){
+                bar.setAttribute('data-state',dialing?'dialing':'ready');
+                call.disabled=dialing;call.setAttribute('aria-busy',String(dialing));
+            }
             if(active){
                 bar.setAttribute('data-state',stateName());
                 mute.innerHTML=muted?MIC_OFF_ICON:MIC_ICON;mute.title=muted?'Unmute':'Mute';mute.setAttribute('aria-pressed',String(muted));
@@ -81,7 +116,7 @@
         // so a screen lock must NOT hang up (only pagehide / explicit End do).
         doc.addEventListener('visibilitychange',()=>{if(doc.hidden&&!isMobileShell())void stop();});
         win.addEventListener('pagehide',()=>void stop());
-        const api={start,stop,attach,isOpen:sid=>!!(active&&String(active.session_id)===String(sid)&&controller?.isOpen()),
+        const api={start,stop,attach,offer,isOpen:sid=>!!(active&&String(active.session_id)===String(sid)&&controller?.isOpen()),
             engine:sid=>String(active?.session_id)===String(sid)?active.engine:null};
         win.cuttleVoiceRuntime=api;return api;
     }

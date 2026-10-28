@@ -1844,6 +1844,19 @@ class AuthDatabase:
         finally:
             conn.close()
 
+    def assistant_query_ids(self, chat_session_id: int) -> set[str]:
+        """Query receipts without loading transcript contents or large payloads."""
+        conn = self._get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT json_extract(metadata, '$.query_id') FROM chat_messages "
+                "WHERE chat_session_id=? AND role='assistant' AND json_valid(metadata)",
+                (int(chat_session_id),),
+            ).fetchall()
+            return {row[0] for row in rows if row[0]}
+        finally:
+            conn.close()
+
     def add_message_once(self, chat_session_id: int, content: str, *,
                          delivery_key: str, metadata: Optional[Dict] = None) -> Optional[int]:
         """Atomically persist a server completion, including cross-process retries.

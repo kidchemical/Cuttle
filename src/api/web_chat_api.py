@@ -1561,6 +1561,7 @@ def chat_cancel():
             return err
 
     cancel_sid = db_sid if db_sid is not None else sid
+    stopped_at = time.time()
     try:
         from api.chat_run_registry import cancel_session_runs
 
@@ -1568,6 +1569,9 @@ def chat_cancel():
     except Exception as e:
         print(f"[CHAT] cancel_session_runs failed: {e}")
         info = {'cancelled': False, 'error': str(e)}
+    if db_sid is not None:
+        from api.chat_turn_recovery import preserve_interrupted_turns
+        preserve_interrupted_turns(get_auth_db(), db_sid, stopped_at=stopped_at)
     try:
         from api.subagents.service import on_session_cancelled
 

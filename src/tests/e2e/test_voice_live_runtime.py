@@ -68,6 +68,7 @@ def _open_shell_with_call(page, html_class='', safe_bottom='0px'):
     page.set_content(SHELL_FIXTURE.replace('{html_class}', html_class))
     page.add_style_tag(path=str(REPO / 'src/web/css/safe_area.css'))
     page.add_style_tag(path=str(REPO / 'src/web/css/app_shell.css'))
+    page.add_style_tag(path=str(REPO / 'src/web/css/shell_voice.css'))
     page.evaluate('''safeBottom => {
         document.documentElement.style.setProperty('--safe-area-inset-bottom', safeBottom);
         window.stops=0;
@@ -121,7 +122,7 @@ def test_voice_strip_docks_below_panes_and_overlays_stop_above_it(browser):
         assert box['state'] == 'live', box
 
         strip = page.locator('#shellVoiceStrip')
-        assert strip.locator('button').count() == 2
+        assert strip.locator('button:visible').count() == 2
         assert strip.inner_text().strip() == '', 'call bar is icon-only: no handle or status text'
         mute = page.get_by_role('button', name='Mute', exact=True)
         for btn in (mute, page.get_by_role('button', name='End voice', exact=True)):

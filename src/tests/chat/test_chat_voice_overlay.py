@@ -1151,3 +1151,53 @@ const rec = R.create({ fetch: async () => ({}), onSpeech() {}, onPhraseText() {}
 assert.strictEqual(typeof rec.level, 'function');
 assert.strictEqual(rec.level(), 0, 'idle recorder reports no level');
 """)
+
+
+@node_only
+def test_live_voice_view_offers_persistent_call_button_until_exit():
+    """GPT-Live voice view registers a Call offer; Call runs the orb's connect path."""
+    _node(r"""
+globalThis.parent = globalThis;
+const runtime = { offers: [], started: [], withdrawn: 0, open: false,
+  offer(o) { this.offers.push(o); return () => { this.withdrawn += 1; }; },
+  attach: () => () => {},
+  start: async (ctx) => { runtime.started.push(ctx); runtime.open = true; },
+  stop: async () => { runtime.open = false; },
+  isOpen: () => runtime.open, engine: () => (runtime.open ? 'live' : null) };
+globalThis.CuttleShellVoice = { create: () => runtime };
+globalThis.CuttleChatVoiceLive = { supported: () => true, create: () => ({}) };
+""" + CONTROLLER_HARNESS + r"""
+host.sessionId = () => '42';
+flagsOn = ['voice_live'];
+(async () => {
+  voice.enter();
+  await sleep(20);
+  assert.strictEqual(runtime.offers.length, 1, 'voice view offers a call');
+  const offer = runtime.offers[0];
+  assert.ok(offer.alive(), 'offer is live while voice view is open');
+  await offer.connect();
+  assert.strictEqual(runtime.started.length, 1);
+  assert.strictEqual(runtime.started[0].session_id, '42');
+  assert.strictEqual(runtime.started[0].engine, 'live');
+  await offer.connect();
+  assert.strictEqual(runtime.started.length, 1, 'Call never redials an open call');
+  voice.exit();
+  assert.strictEqual(runtime.withdrawn, 1, 'leaving voice view withdraws the offer');
+  assert.ok(!offer.alive());
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_push_to_talk_voice_view_offers_no_call_button():
+    _node(r"""
+globalThis.parent = globalThis;
+let offered = 0;
+globalThis.CuttleShellVoice = { create: () => ({ offer() { offered += 1; return () => {}; } }) };
+""" + CONTROLLER_HARNESS + r"""
+(async () => {
+  voice.enter();
+  await sleep(20);
+  assert.strictEqual(offered, 0, 'browser speech keeps the orb as push-to-talk');
+})().catch((e) => { console.error(e); process.exit(1); });
+""")

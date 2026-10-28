@@ -1120,6 +1120,7 @@
             try { meta = JSON.parse(meta); } catch (_) { meta = {}; }
         }
         if (!meta || typeof meta !== 'object') meta = {};
+        if (meta.kind === 'interrupted-agent-turn') el.dataset.stopped = 'true';
         const queryId = msg.query_id || meta.query_id;
         if (queryId) el.dataset.queryId = String(queryId);
         if (msg.slash_command_failed) meta = Object.assign({}, meta, { slash_command_failed: true });
@@ -8638,6 +8639,9 @@
                 }
                 return null;
             };
+            const stoppedQueryBubble = (qid) => document.querySelector(
+                `#chatMessages .message[data-stopped="true"] .message-query-log-link[data-query-id="${CSS.escape(String(qid))}"]`
+            )?.closest('.message');
             for (const msg of data.messages) {
                 if (msg == null || msg.id == null) continue;
                 const mid = Number(msg.id);
@@ -8655,6 +8659,7 @@
                         hasDomId: (id) => !!document.querySelector(
                             `#chatMessages .message[data-message-id="${Number(id)}"]`
                         ),
+                        hasStoppedQuery: (qid) => !!stoppedQueryBubble(qid),
                         findControlClaim: (crid, role) => {
                             const hit = controlClaimEl(crid, role);
                             return hit ? (hit.exact ? 'exact' : 'role') : null;
@@ -8668,6 +8673,9 @@
                     }
                 );
                 switch (syncDecision.decision) {
+                    case 'claim-interrupted':
+                        stampAssistantElFromServer(stoppedQueryBubble(syncDecision.queryId), msg);
+                        continue;
                     case 'update-in-place': {
                         const existing = document.querySelector(
                             `#chatMessages .message[data-message-id="${mid}"]`
@@ -11293,6 +11301,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
 
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${role}`;
+        if (opts.kind === 'interrupted-agent-turn') messageDiv.dataset.stopped = 'true';
         messageDiv.dataset.rawContent = String(content ?? '');
         if (opts.query_id) messageDiv.dataset.queryId = String(opts.query_id);
         if (opts.message_id != null && opts.message_id !== '') {

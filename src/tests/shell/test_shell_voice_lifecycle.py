@@ -101,3 +101,62 @@ const api=win.CuttleShellVoice.create({win,navigate(){}});
         encoding="utf-8",
         timeout=30,
     )
+
+
+@node_only
+def test_call_offer_shows_call_button_then_call_controls():
+    """Voice view offers a call: Call alone → Mute + hang-up → back to Call."""
+    script = r"""
+const assert = require('assert');
+function el(){return {hidden:false,disabled:false,className:'',textContent:'',innerHTML:'',style:{},children:[],attrs:{},
+  setAttribute(k,v){this.attrs[k]=v;},append(...c){this.children.push(...c);},appendChild(c){this.children.push(c);return c;},
+  getBoundingClientRect(){return {height:this.hidden?0:80};}};}
+const rootVars={};
+const slot=el();
+const doc={head:el(),body:el(),createElement:()=>el(),addEventListener(){},hidden:false,
+  getElementById:id=>id==='shellVoiceStrip'?slot:null,
+  documentElement:{style:{setProperty(k,v){rootVars[k]=v;}}}};
+const win={document:doc,fetch:async()=>({ok:true,json:async()=>({success:true,flags:[]})}),
+  addEventListener(){},dispatchEvent(){},Event:function(){}};
+let opened=false;
+win.CuttleChatVoiceLive={create:host=>({start:async()=>{opened=true;host.onStatus('Listening…');},
+  stop:async()=>{opened=false;host.onStatus('Disconnected');},isOpen:()=>opened,mute(){}})};
+globalThis.window=win;
+require(process.argv[1]);
+const api=win.CuttleShellVoice.create({win});
+const [call,mute,end]=slot.children;
+const visible=()=>[call,mute,end].filter(b=>!b.hidden).map(b=>b.attrs['aria-label']);
+(async()=>{
+  assert.ok(slot.hidden,'no offer, no call: strip hidden');
+  let presenterAlive=true, connects=0;
+  const withdraw=api.offer({alive:()=>presenterAlive,connect:async()=>{connects++;await api.start({session_id:'9',engine:'live'});}});
+  assert.ok(!slot.hidden,'an offer shows the strip');
+  assert.deepStrictEqual(visible(),['Start voice call']);
+  assert.strictEqual(slot.attrs['data-state'],'ready');
+  assert.strictEqual(rootVars['--shell-voice-strip-h'],'80px');
+  call.onclick();
+  await new Promise(r=>setTimeout(r,0));
+  assert.strictEqual(connects,1);
+  assert.deepStrictEqual(visible(),['Mute','End voice']);
+  await end.onclick();
+  await new Promise(r=>setTimeout(r,0));
+  assert.deepStrictEqual(visible(),['Start voice call'],'hang-up returns to Call while voice view is open');
+  withdraw();
+  assert.ok(slot.hidden,'withdrawn offer hides the strip');
+  assert.strictEqual(rootVars['--shell-voice-strip-h'],'0px');
+  // A presenter whose frame died is pruned instead of dialing.
+  api.offer({alive:()=>presenterAlive,connect:async()=>{connects++;}});
+  presenterAlive=false;
+  call.onclick();
+  await new Promise(r=>setTimeout(r,0));
+  assert.strictEqual(connects,1,'dead offer never connects');
+  assert.ok(slot.hidden);
+})().catch(e=>{console.error(e);process.exit(1);});
+"""
+    subprocess.run(
+        ["node", "-e", script, str(SHELL_VOICE_JS)],
+        check=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+    )

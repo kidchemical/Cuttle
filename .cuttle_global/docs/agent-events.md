@@ -7,6 +7,14 @@ own vendor shapes; the event owner owns persistence, snapshots and retention.
 - Query inspector: paged steps, lazy full payloads, Changes tab and unified / side
   by side patches. Existing query links still work; pre-store turns read their
   legacy JSON files in `<home>/logs/queries/`. Old truncation cannot be recovered from those files.
+- Interrupted chat turns: Stop preserves captured public writing and the query
+  link as an `interrupted-agent-turn` transcript row. Authenticated history reads
+  repair missing rows for cancelled, failed and process-interrupted web runs.
+  `api.chat_turn_recovery` owns this projection; the event store remains the
+  source of full activity. Delivery tokens still reject late replies. Recovered
+  snapshots cannot finish a newer turn, and draft action cards are removed.
+  Historical repairs append an explicitly dated recovery record; they do not
+  renumber old messages or revive deleted chats.
 - Apps → Agent Feed: enable **Agent Feed** in Settings → Experimental for live
   SSE. Shows this server's agents; remote-worker aggregation is deferred.
   Capture records carry a PID and process creation time. The writer replays

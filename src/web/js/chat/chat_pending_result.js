@@ -422,11 +422,19 @@
     }
 
     function isAgentReply(msg) {
-        return !!(msg && msg.role === 'assistant' && !parseControlRequestId(msg));
+        return !!(msg && msg.role === 'assistant' && !parseControlRequestId(msg) && !interruptedQueryId(msg));
+    }
+
+    function interruptedQueryId(msg) {
+        let meta = msg && msg.metadata;
+        if (typeof meta === 'string') {
+            try { meta = JSON.parse(meta); } catch (_) { meta = {}; }
+        }
+        return meta && meta.kind === 'interrupted-agent-turn' && meta.query_id || null;
     }
 
     function agentTranscript(messages) {
-        return Array.isArray(messages) ? messages.filter((msg) => !parseControlRequestId(msg)) : messages;
+        return Array.isArray(messages) ? messages.filter((msg) => !parseControlRequestId(msg) && !interruptedQueryId(msg)) : messages;
     }
 
     /**
@@ -449,6 +457,13 @@
         if (!msg || msg.id == null) return { decision: 'skip-invalid' };
         const mid = Number(msg.id);
         if (fns.hasDomId(mid)) return { decision: 'update-in-place' };
+        const interrupted = interruptedQueryId(msg);
+        if (interrupted) {
+            // An archived snapshot belongs to its original query, never the
+            // current stream. Stop must not suppress it or adopt a newer bubble.
+            return { decision: fns.hasStoppedQuery && fns.hasStoppedQuery(interrupted)
+                ? 'claim-interrupted' : 'append', queryId: interrupted };
+        }
         // Exactly-once: a second history row with the same
         // control_request_id only gets its server id stamped.
         const crid = parseControlRequestId(msg);
