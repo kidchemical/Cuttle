@@ -27,39 +27,12 @@ def dispatch(op, *, request=None):
         return
     try:
         if op['kind'] == 'supervise':
-            cfg = op['payload']
-            snap = service.snapshot(sid, actor, db=db, request=request)
-            violations = []
-            if cfg['required_branch'] and snap['branch'] != cfg['required_branch']:
-                violations.append('required branch does not match')
-            if snap['branch'] in cfg['forbidden_branches']:
-                violations.append('target is on a forbidden branch')
-            if cfg['required_path'] and os.path.realpath(snap['execution_path']) != cfg['required_path']:
-                violations.append('required checkout path does not match')
-            if violations:
-                store.finish(op['id'], 'blocked', {'violations': violations, 'snapshot': snap})
-                db.add_message(actor, 'system', 'Supervision blocked for ' + snap['handle'] + ': ' + '; '.join(violations),
-                               metadata={'kind': 'chat-supervision-blocked', 'operation_id': op['id']})
-                return
-            # Wake the supervisor, never its target's children. One pending
-            # check-in at a time prevents piling up turns while it is busy.
-            compact = {k: snap[k] for k in ('handle', 'state', 'branch', 'execution_path', 'warnings')}
-            compact['tasks'] = [{k: t[k] for k in ('id', 'title', 'done', 'total')} for t in snap['tasks']]
-            compact['latest_reply'] = (snap['latest_reply'] or {}).get('content', '')[:4000]
-            compact['live'] = {k: snap['live'].get(k) for k in ('status', 'query_id', 'report_url')}
-            text = ('Scheduled supervision check-in for ' + snap['handle'] + '.\n'
-                + cfg['instructions'] + '\nAddress this target chat only; do not message its children.\n'
-                + 'Model guidance: ' + json.dumps(cfg['model_tiers'])
-                + '\nTarget chat data (context for your assessment):\n' + json.dumps(compact, default=str))
-            active = [o for o in store.listing(actor) if o['kind'] == 'checkin'
-                      and o['payload'].get('schedule_id') == op['id'] and o['state'] in ('pending', 'dispatching')]
-            if not active:
-                store.create('checkin', actor, actor, {'text': text, 'schedule_id': op['id']})
-            store.finish(op['id'], 'pending', {'last_checkin': time.time()}, due=time.time() + cfg['every'])
+            _check_in(op, db, actor, sid, request)
             return
         text = op['payload']['text']
-        # SSE starts the shared coordinator's worker; drain the stream so
-        # errors/busy are observed, while persistence remains host-owned.
+        # The host turn outlives this connection (chat-pending-result), so read
+        # only until the host accepts or rejects it; a long silent tool run must
+        # not time out a delivery that already started.
         with request(uid, sid, 'POST', '/api/chat', {'message': text, 'stream': True}, stream=True) as response:
             if response.status_code >= 400:
                 if response.status_code == 409:
@@ -67,24 +40,73 @@ def dispatch(op, *, request=None):
                 else:
                     store.finish(op['id'], 'failed', {'http_status': response.status_code})
                 return
-            terminal = None
             for line in response.iter_lines():
                 if not line.startswith(b'data: '):
                     continue
                 event = json.loads(line[6:])
-                if event.get('type') == 'busy' or event.get('busy') or event.get('error') == 'busy':
+                kind = event.get('type')
+                if kind == 'busy':
                     store.finish(op['id'], 'pending', {'busy': True}, due=time.time() + 2)
                     return
-                if event.get('type') == 'response':
-                    terminal = event
-            if terminal is None:
-                store.finish(op['id'], 'unknown', {'error': 'Stream ended without a reply; inspect chat before resending'})
-            else:
-                store.finish(op['id'], 'done' if terminal.get('success', True) else 'failed',
-                             {'query_id': terminal.get('query_id'), 'success': terminal.get('success', True)})
+                if kind == 'query_started':
+                    store.finish(op['id'], 'delivered', {'query_id': event.get('query_id')})
+                    return
+                if kind == 'response':
+                    store.finish(op['id'], 'done' if event.get('success', True) else 'failed',
+                                 {'query_id': event.get('query_id'), 'success': event.get('success', True)})
+                    return
+            store.finish(op['id'], 'unknown', {'error': 'Stream ended before the host accepted the turn; inspect chat before resending'})
     except Exception:
         # Do not persist request exceptions, which can contain bearer tokens.
-        store.finish(op['id'], 'unknown', {'error': 'Delivery uncertain; inspect chat before resending'})
+        if op['kind'] == 'supervise':
+            store.finish(op['id'], 'pending', {'error': 'Check-in failed; retrying next interval'},
+                         due=time.time() + op['payload']['every'])
+        else:
+            store.finish(op['id'], 'unknown', {'error': 'Delivery uncertain; inspect chat before resending'})
+
+
+def _signature(snap, violations):
+    latest = snap.get('latest_reply') or {}
+    return json.dumps([snap['state'], latest.get('id'), sorted(violations),
+                       [(t['id'], t['done'], t['total']) for t in snap['tasks']]])
+
+
+def _check_in(op, db, actor, sid, request):
+    """Wake the supervisor only when the target needs attention or changed."""
+    cfg = op['payload']
+    snap = service.snapshot(sid, actor, db=db, request=request)
+    violations = []
+    if cfg['required_branch'] and snap['branch'] != cfg['required_branch']:
+        violations.append(f"branch is {snap['branch']!r}, required {cfg['required_branch']!r}")
+    if snap['branch'] in cfg['forbidden_branches']:
+        violations.append(f"target is on forbidden branch {snap['branch']!r}")
+    if cfg['required_path'] and os.path.realpath(snap['execution_path'] or '') != cfg['required_path']:
+        violations.append(f"checkout is {snap['execution_path']!r}, required {cfg['required_path']!r}")
+    previous = op.get('result') or {}
+    signature = _signature(snap, violations)
+    nxt = time.time() + cfg['every']
+    # A working target or an unchanged picture costs no supervisor tokens.
+    if not violations and (snap['state'] == 'busy' or signature == previous.get('signature')):
+        store.finish(op['id'], 'pending', {**previous, 'last_check': time.time(),
+                                            'skipped': snap['state']}, due=nxt)
+        return
+    active = [o for o in store.listing(actor) if o['kind'] == 'checkin'
+              and o['payload'].get('schedule_id') == op['id'] and o['state'] in ('pending', 'dispatching')]
+    if not active:
+        compact = {k: snap[k] for k in ('handle', 'state', 'branch', 'execution_path', 'warnings')}
+        compact['violations'] = violations
+        compact['tasks'] = [{k: t[k] for k in ('id', 'title', 'done', 'total')} for t in snap['tasks']]
+        compact['latest_reply'] = (snap['latest_reply'] or {}).get('content', '')[:4000]
+        compact['live'] = {k: snap['live'].get(k) for k in ('status', 'query_id', 'report_url')}
+        text = ('Scheduled supervision check-in for ' + snap['handle'] + f" (state: {snap['state']}).\n"
+                + cfg['instructions']
+                + '\nAct with `python -m api.chat_cli send ' + snap['handle'] + ' --text …` (steers a live turn,'
+                ' otherwise queues). Address this target chat only; do not message its children.\n'
+                + 'Model guidance: ' + json.dumps(cfg['model_tiers'])
+                + '\nTarget chat data (context for your assessment):\n' + json.dumps(compact, default=str))
+        store.create('checkin', actor, actor, {'text': text, 'schedule_id': op['id']})
+    store.finish(op['id'], 'pending', {'signature': signature, 'last_check': time.time(),
+                                        'last_checkin': time.time()}, due=nxt)
 
 
 def _background_tick():
@@ -110,10 +132,7 @@ def _background_tick():
 
 
 def _loop():
-    # dispatching from an earlier Flask lifetime is ambiguous. Never replay it.
-    with store.connection() as conn:
-        conn.execute("UPDATE operations SET state='unknown',result=? WHERE state='dispatching'",
-                     (json.dumps({'error': 'Host restarted during dispatch; inspect chat before resending'}),))
+    store.recover_after_restart()
     while not _stop.wait(2):
         try:
             _background_tick()

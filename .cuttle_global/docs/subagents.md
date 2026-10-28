@@ -8,6 +8,10 @@ and die with it, so they never become openable child chats).
 
 Library: `api.subagents`. CLI: `python -m api.subagents`.
 
+To message, check on, or supervise a chat this CLI did not spawn (a parent,
+sibling, or any existing chat), use `python -m api.chat_cli send|status|snapshot|supervise`
+(`chat-history.md`).
+
 ## Spawn
 
 ```bash

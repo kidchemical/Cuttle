@@ -52,7 +52,8 @@ def listing(actor):
 
 def cancel(oid, actor):
     with connection() as conn:
-        conn.execute("UPDATE operations SET state='cancelled', updated=? WHERE id=? AND actor=? AND state='pending'", (time.time(), oid, actor))
+        conn.execute("UPDATE operations SET state='cancelled', updated=? WHERE id=? AND actor=? "
+                     "AND (state='pending' OR (state='dispatching' AND kind='supervise'))", (time.time(), oid, actor))
     return get(oid, actor)
 
 
@@ -67,7 +68,19 @@ def claim(oid):
         return bool(changed)
 
 
+def recover_after_restart():
+    """A send dispatching in an earlier Flask lifetime is ambiguous: never
+    replay it. A schedule has no side effect of its own, so it resumes."""
+    now = time.time()
+    with connection() as conn:
+        conn.execute("UPDATE operations SET state='pending', due=?, updated=? "
+                     "WHERE state='dispatching' AND kind='supervise'", (now, now))
+        conn.execute("UPDATE operations SET state='unknown', updated=?, result=? WHERE state='dispatching'",
+                     (now, json.dumps({'error': 'Host restarted during dispatch; inspect chat before resending'})))
+
+
 def finish(oid, state, result, *, due=None):
     with connection() as conn:
-        conn.execute('UPDATE operations SET state=?,result=?,updated=?,due=COALESCE(?,due) WHERE id=?',
+        conn.execute("UPDATE operations SET state=?,result=?,updated=?,due=COALESCE(?,due) "
+                     "WHERE id=? AND state != 'cancelled'",
                      (state, json.dumps(result), time.time(), due, oid))

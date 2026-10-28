@@ -533,3 +533,13 @@ def test_context_dashboard_counts_turns_across_utc_midnight(monkeypatch):
     for off in (None, 420, -540, 0):
         p = cuttle_context(range_id="7d", tz_offset_minutes=off)
         assert p["stats"]["full"] == 1 and sum(p["modes"][0]["series"] + p["modes"][1]["series"]) >= 1, off
+
+
+def test_handoff_transcript_drops_foreign_reasoning():
+    from api.cuttle_brain.handoff import _strip_injected_blocks
+
+    raw = (
+        '<cuttle_original_response>"<think>private plan</think>draft"</cuttle_original_response>'
+        "  Final answer.<thinking>more</thinking>"
+    )
+    assert _strip_injected_blocks(raw) == "Final answer."

@@ -5,6 +5,7 @@ When you need Cuttle-owned data or platform verbs (chat transcripts, workers, br
 throwaway scripts.
 
 - Chat handles / history → `python -m api.chat_cli` (see `chat-history.md`)
+- Message, check on, or supervise another existing chat → `python -m api.chat_cli status|snapshot|send|supervise CH-…` (see `chat-history.md`); never mint tokens or curl chat routes
 - Multi-step agent work → create or reuse a Tasks gizmo early, then patch it as work progresses (`gizmos.md`); no Tasks markdown tags. Skip for quick questions or small edits.
 - Long-running OS jobs → start a real status-backed watch card with a progress bar (`action-forms.md` / `headless-turns.md`); use measured progress, not guessed percentages. A Tasks list tracks agent steps; it does not replace a job watch.
 - Before reporting work tracked in a Tasks gizmo complete, patch finished items and read back the list; leave unfinished items open with a reason (`gizmos.md`).

@@ -20,6 +20,7 @@ agent toolkit.
 | Agent activity / database policies | `python -m api.agent_events` / `python -m api.storage` | `agent-events.md` |
 | Agent review (Keep / Undo agent hunks) | `python -m api.agent_review` (list, show, keep, undo) | Cuttle `.cuttle/docs/experimental-features.md` |
 | Chat handles / transcripts | `python -m api.chat_cli` | `chat-history.md` |
+| Message / inspect / supervise an existing chat | `python -m api.chat_cli` (status, snapshot, send, stop, supervise, operations) | `chat-history.md` |
 | Chat visual effects | `python -m api.chat_vfx` | `chat-vfx.md` |
 | Model API provider catalogs | `python -m api.model_providers` (list, models, inspect) | Cuttle `.cuttle/docs/model-providers.md` |
 | Background helper execution catalogs | `python -m api.background_helpers` (list, models, inspect; no inference) | Cuttle `.cuttle/docs/model-providers.md` |
