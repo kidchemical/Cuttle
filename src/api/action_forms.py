@@ -271,6 +271,14 @@ def normalize_action_form_spec(
         submit_action = None
         submit_params = {}
 
+    if not options and not fields and not submit_action and not buttons:
+        # A bare "Restart Flask" card (any agent, any project) still becomes
+        # the one server-owned chooser instead of being dropped.
+        from api.flask_restart import is_flask_restart_controller_spec
+        if is_flask_restart_controller_spec({"title": title}):
+            mode = "choice"
+            options = [{"id": "graceful", "label": "Graceful", "action": "flask.restart",
+                        "params": {"mode": "graceful"}, "lock": None}]
     if mode in ("choice", "multi") and not options:
         return None
     if mode == "form" and not fields and not submit_action and not buttons:

@@ -465,6 +465,19 @@ def _rotate_log(path: Path, max_bytes: int = LOG_ROTATE_BYTES, keep: int = LOG_R
         print(f"[DAEMON] Log rotation skipped for {path.name}: {exc}")
 
 
+def _next_flask_generation(current: int) -> int:
+    """Monotonic across daemon boots so restart-card ids never repeat."""
+    from core.flask_generation import next_generation
+    from core.runtime_paths import flask_generation_path
+
+    seen = []
+    try:
+        seen.append(int(json.loads(FLASK_RESTART_STATUS_PATH.read_text(encoding="utf-8")).get("generation")))
+    except Exception:
+        pass
+    return next_generation(flask_generation_path(), current, seen)
+
+
 def start_flask() -> bool:
     """Start Flask web server."""
     global _flask_generation
@@ -486,7 +499,7 @@ def start_flask() -> bool:
     env = _flask_child_env(os.environ)
     env["PYTHONPATH"] = str(SRC_ROOT)
     env["FLASK_ENV"] = "production"
-    _flask_generation += 1
+    _flask_generation = _next_flask_generation(_flask_generation)
     env["CUTTLE_FLASK_GENERATION"] = str(_flask_generation)
     log_path = LOGS_DIR / "flask.log"
     _rotate_log(log_path)

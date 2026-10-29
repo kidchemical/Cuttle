@@ -254,7 +254,17 @@ restart endpoint are independent recovery paths.
 
 
 Never kill Flask, the daemon, or the Discord bot (`kill`/`pkill`, `taskkill`/`Stop-Process`) from an agent
-Flask is hosting. After Python changes need a restart, emit:
+Flask is hosting. After Python changes need a restart, emit the stub (preferred —
+any agent, any project):
+
+```xml
+<cuttle_action_form>{"title": "Restart Flask (daemon-owned)"}</cuttle_action_form>
+```
+
+The server expands any card titled "Restart Flask…" or carrying a `flask.restart`
+option into the one standard chooser below (title, five options, shared id), so a
+trimmed or retitled hand-written card still renders correctly. The full form, for
+reference:
 
 ```xml
 <cuttle_action_form>
@@ -276,12 +286,13 @@ Flask is hosting. After Python changes need a restart, emit:
 
 **Linked across chats:** do **not** invent a custom form `id`. The server stamps every
 Flask-restart controller with a shared id `flask-restart-g{generation}` (daemon
-Flask generation). Cards in every open chat stay linked until Flask actually
+Flask generation; persisted in the instance state dir by `core.flask_generation`,
+so it keeps increasing across daemon cold boots and a new card never reuses an
+old, already-clicked card's id). Cards in every open chat stay linked until Flask actually
 restarts; then the generation bumps and the next batch of cards gets a new id.
 Clicking Graceful/When-idle/Force on one card settles the others.
-Durable dispatch receipts additionally include the Flask PID and creation time:
-generation counters reset on a cold daemon boot, so generation alone cannot
-identify a restart request across daemon lifetimes.
+Durable dispatch receipts additionally include the Flask PID and creation time,
+so a receipt also survives a lost or reset generation file.
 
 **Do not soft-dismiss restart cards:** sending a follow-up chat message collapses
 ordinary one-shot forms as “Ignored”. Flask restart controllers are exempt —

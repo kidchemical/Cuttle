@@ -7,9 +7,12 @@ per-project `GLOBAL.ini` cannot switch them off, and a project `00-safety.md`
 can only *append* (never replace them).
 
 1. Never force-kill Flask, `cuttle_daemon`, or the Discord bot from an agent those
-   processes host (on Windows that means no `taskkill` / `Stop-Process` on them) →
-   `action-forms.md` (Flask restart) or `/restart …`. Killing the host breaks
-   delivery for every chat, not just yours.
+   processes host (on Windows that means no `taskkill` / `Stop-Process` on them).
+   To offer a Flask restart in Cuttle chat, emit exactly
+   `<cuttle_action_form>{"title": "Restart Flask (daemon-owned)"}</cuttle_action_form>`
+   (Cuttle fills in the standard chooser; never hand-write its options); elsewhere
+   `/restart …`. Details: `action-forms.md`. Killing the host breaks delivery for
+   every chat, not just yours.
 2. Writes outside the active project root — especially another project's
    `.cuttle/` — require a confirm form first (`cuttle_confirm`). Compare the
    target path against the `active project root` in your context envelope; when

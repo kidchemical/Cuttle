@@ -485,6 +485,11 @@ def flask_restart_status_path(project_root: Optional[Path] = None) -> Path:
     return instance_state_dir(project_root) / "cuttle_flask_restart_status.json"
 
 
+def flask_generation_path(project_root: Optional[Path] = None) -> Path:
+    """Last Flask generation the daemon handed out (monotonic across daemon boots)."""
+    return instance_state_dir(project_root) / "cuttle_flask_generation"
+
+
 def flask_restart_request_path(project_root: Optional[Path] = None) -> Path:
     """Flask restart request (Flask writes, daemon consumes)."""
     return instance_state_dir(project_root) / "cuttle_flask_restart_request.json"
