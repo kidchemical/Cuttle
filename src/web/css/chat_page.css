@@ -3053,7 +3053,8 @@ body.has-video-background .chat-restore-loader {
 
 /* The default identity shares the rail's transparent full mascot. Custom
    profile photos keep their circular frame and cover sizing. */
-.message.assistant .message-avatar:has(.assistant-avatar-img--mascot) {
+.message.assistant .message-avatar:has(.assistant-avatar-img--mascot),
+.message.user.is-parent-speaker .message-avatar:has(.assistant-avatar-img--mascot) {
     background: transparent;
     border: none;
     border-radius: 0;
@@ -3061,6 +3062,7 @@ body.has-video-background .chat-restore-loader {
 }
 
 .message.assistant .message-avatar .assistant-avatar-img--mascot,
+.message.user.is-parent-speaker .message-avatar .assistant-avatar-img--mascot,
 .typing-orbit-core--glyph img.assistant-avatar-img--mascot,
 .subagent-fleet-avatar img.assistant-avatar-img--mascot {
     object-fit: contain;
