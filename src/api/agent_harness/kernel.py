@@ -397,7 +397,7 @@ def _compile_agent_prompt(
         try:
             from api.cuttle_brain.context_delta import compute_snapshot
 
-            stable_before = compute_snapshot(cwd)
+            stable_before = compute_snapshot(cwd, chat_session_id)
         except Exception as exc:
             # Bookkeeping only: the envelope below still carries the full
             # briefing, so this alone is an operator diagnostic, never a
@@ -464,7 +464,7 @@ def _compile_agent_prompt(
         try:
             from api.cuttle_brain.context_delta import compute_snapshot
 
-            prepared = compute_snapshot(cwd)
+            prepared = compute_snapshot(cwd, chat_session_id)
             if stable_before is None or prepared != stable_before:
                 prepared = None
         except Exception as exc:
