@@ -317,6 +317,77 @@ def test_handoff_no_loss_has_no_pointer():
     assert "chat_cli" not in text
 
 
+def test_first_turn_of_new_agent_keeps_standing_user_instructions():
+    """CH-001548: Cursor/Codex delegated to sub-agents because an early user
+    message said so; Muse joined mid-chat, got only the newest window under a
+    "prefer your native resume" header, and never saw the instruction."""
+    from api.cuttle_brain import handoff as ho
+
+    db, sid = _chat()
+    db.add_message(sid, "user", "/cursor STANDING: use a cuttle subagent for expert review")
+    db.add_message(sid, "assistant", "will do")
+    ho.record_last_agent(sid, "cursor")
+    for i in range(60):
+        db.add_message(sid, "user", f"/cursor step {i}")
+        db.add_message(sid, "assistant", f"did step {i} " + "w" * 300)
+    db.add_message(sid, "user", "/muse continue")
+
+    h = ho.build_handoff(sid, to_agent="muse", current_prompt="continue")
+    assert h is not None and h.mode == "join"
+    assert "has not run in this chat before" in h.text
+    assert "native resume" not in h.text
+    assert "earlier messages not shown" in h.text
+    assert "Earlier user messages" in h.text
+    assert "STANDING: use a cuttle subagent" in h.text
+    assert "did step 59" in h.text
+    # Earlier user rows sit before the recent window, oldest first.
+    assert h.text.index("STANDING") < h.text.index("### Recent conversation")
+
+
+def test_join_not_claimed_when_agent_has_native_session():
+    from api.cuttle_brain import handoff as ho
+
+    db, sid = _chat()
+    db.add_message(sid, "user", "/cursor hi")
+    db.add_message(sid, "assistant", "hello")
+    ho.record_last_agent(sid, "cursor")
+    db.add_message(sid, "user", "/codex next")
+    h = ho.build_handoff(
+        sid, to_agent="codex", current_prompt="next", has_native_session=True
+    )
+    assert h is not None and h.mode == "switch"
+    assert "Agent handoff" in h.text
+
+
+def test_earlier_user_messages_are_capped(monkeypatch):
+    from api.cuttle_brain import handoff as ho
+
+    monkeypatch.setattr(ho, "_EARLIER_USER_CHARS", 1200)
+    db, sid = _chat()
+    for i in range(10):
+        db.add_message(sid, "user", f"rule {i} " + "r" * 900)
+        db.add_message(sid, "user", "/restart")
+    for i in range(50):
+        db.add_message(sid, "assistant", f"reply {i}")
+    kept, omitted = ho._earlier_user_messages(sid, 10_000_000)
+    assert all(len(m["content"]) <= ho._EARLIER_USER_MESSAGE_CHARS for m in kept)
+    assert kept[0]["content"].startswith("rule 0")
+    assert not any(m["content"].startswith("/restart") for m in kept)
+    assert len(kept) + omitted == 10 and omitted > 0
+
+
+def test_untrimmed_handoff_has_no_earlier_section():
+    from api.cuttle_brain import handoff as ho
+
+    db, sid = _chat()
+    db.add_message(sid, "user", "what is a cuttlefish")
+    db.add_message(sid, "assistant", "a cephalopod")
+    db.add_message(sid, "user", "/cursor write that down")
+    h = ho.build_handoff(sid, to_agent="cursor", current_prompt="write that down")
+    assert h is not None and h.mode == "join"
+    assert "Earlier user messages" not in h.text
+
+
 def test_no_resume_agent_gets_history_every_turn(tmp_path, monkeypatch):
     db, sid = _chat()
     db.add_message(sid, "user", "/deepseek name a color")

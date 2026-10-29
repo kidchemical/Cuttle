@@ -7,6 +7,8 @@ after its cursor that it did not produce itself — turns answered by other
 agents, plain LLM / router replies, or failed turns — within a char budget
 (older rows are counted as omitted with a ``chat_cli`` pointer, never dropped
 silently). Agents without native resume get the recent conversation every turn.
+When only a recent window is sent, the user's earlier messages ride along in a
+compact section: they hold standing instructions the incoming agent never saw.
 
 A CLI resume id is keyed by workspace, so switching the chat's project keeps
 the same agent but silently drops its native session. The seen cursor would
@@ -208,10 +210,12 @@ class AgentHandoff:
     text: str
     message_count: int = 0
     truncated_count: int = 0
-    # Why this transcript was injected: "switch" (agent changed), "reset"
-    # (same agent, project/workspace changed so the per-cwd resume is gone),
-    # or "history" (agent keeps no native session). Consumers use it to keep
-    # conversation out of briefing-size metrics.
+    # Why this transcript was injected: "switch" (agent changed; its native
+    # resume covers turns before its cursor), "join" (first turn of this agent
+    # in the chat: no native session here at all), "reset" (same agent,
+    # project/workspace changed so the per-cwd resume is gone), or "history"
+    # (agent keeps no native session). Consumers use it to keep conversation
+    # out of briefing-size metrics.
     mode: str = "switch"
 
 
@@ -269,6 +273,12 @@ _THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGN
 _MAX_MESSAGE_CHARS = 1500
 _MAX_HANDOFF_CHARS = 12000
 _RECENT_WINDOW = 40
+# Earlier user rows outside the window still carry standing instructions
+# ("use sub-agents", "don't ask me", reviewer choice); an agent without the
+# conversation in its own session would otherwise never see them.
+_EARLIER_USER_MESSAGE_CHARS = 500
+_EARLIER_USER_CHARS = 4000
+_EARLIER_USER_SCAN = 2000
 
 
 def fetch_recent_transcript(
@@ -388,6 +398,46 @@ def _fit_budget(
     return kept, len(messages) - len(kept), truncated
 
 
+def _earlier_user_messages(
+    chat_session_id: Any, before_id: Any
+) -> tuple[List[Dict[str, Any]], int]:
+    """User rows older than ``before_id``, oldest first, within a small budget.
+
+    Returns (kept, omitted). Each row is cut to ``_EARLIER_USER_MESSAGE_CHARS``;
+    native control commands (``/restart``) carry no instructions and are skipped.
+    """
+    sid = _numeric_session_id(chat_session_id)
+    if sid is None or before_id is None:
+        return [], 0
+    try:
+        from api.auth_db import get_auth_db
+
+        rows = get_auth_db().get_messages(
+            sid, before_id=int(before_id), limit=_EARLIER_USER_SCAN
+        )
+    except Exception:
+        return [], 0
+    users: List[Dict[str, Any]] = []
+    for row in sorted(rows, key=lambda r: int(r.get("id") or 0)):
+        if str(row.get("role") or "").strip().lower() != "user":
+            continue
+        content = _strip_injected_blocks(str(row.get("content") or ""))
+        if not content or re.match(r"^/restart\b", content):
+            continue
+        users.append({"id": row.get("id"), "role": "user", "content": content})
+    kept: List[Dict[str, Any]] = []
+    used = 0
+    for msg in users:
+        content = msg["content"]
+        if len(content) > _EARLIER_USER_MESSAGE_CHARS:
+            content = content[: _EARLIER_USER_MESSAGE_CHARS - 3].rstrip() + "..."
+        if kept and used + len(content) > _EARLIER_USER_CHARS:
+            break
+        kept.append({**msg, "content": content})
+        used += len(content)
+    return kept, len(users) - len(kept)
+
+
 def _chat_handle(chat_session_id: Any) -> Optional[str]:
     sid = _numeric_session_id(chat_session_id)
     return f"CH-{sid:06d}" if sid is not None else None
@@ -402,8 +452,20 @@ def format_handoff_delta(
     truncated: int = 0,
     chat_handle: Optional[str] = None,
     mode: str = "switch",
+    earlier_user: Optional[List[Dict[str, Any]]] = None,
+    earlier_user_omitted: int = 0,
 ) -> str:
-    if mode == "history":
+    if mode == "join":
+        lines = ["## Conversation so far (Cuttle transcript)"]
+        if from_agent and from_agent != to_agent:
+            lines.append(f"Sticky agent changed: `{from_agent}` → `{to_agent}`.")
+        lines.append(
+            f"`{to_agent}` has not run in this chat before, so its own session "
+            "holds none of it. This transcript is the conversation it is "
+            "continuing — treat it as prior context, not a fresh request, and "
+            "keep following the user's standing instructions in it."
+        )
+    elif mode == "history":
         lines = [
             "## Conversation so far (Cuttle transcript)",
             (
@@ -457,6 +519,18 @@ def format_handoff_delta(
         lines.append(
             f"({truncated} message(s) truncated to {_MAX_MESSAGE_CHARS} chars{where}.)"
         )
+    if earlier_user:
+        lines.append("")
+        lines.append(
+            "### Earlier user messages (oldest first; may hold standing instructions)"
+        )
+        for msg in earlier_user:
+            content = (msg.get("content") or "").replace("\n", " ").strip()
+            lines.append(f"- {content}")
+        if earlier_user_omitted > 0:
+            lines.append(f"- … {earlier_user_omitted} more earlier user message(s) not shown.")
+        lines.append("")
+        lines.append("### Recent conversation")
     lines.append("")
     for msg in messages:
         role = msg.get("role") or "unknown"
@@ -474,6 +548,7 @@ def build_handoff(
     current_prompt: Optional[str] = None,
     full_history: bool = False,
     project_path: Optional[str] = None,
+    has_native_session: Optional[bool] = None,
 ) -> Optional[AgentHandoff]:
     """Chat messages ``to_agent`` has not seen yet; None when it is caught up.
 
@@ -487,8 +562,11 @@ def build_handoff(
       to that turn. Covers plain-LLM / router turns and settings commands,
       which never move any agent's cursor.
     * No cursor yet (first turn of this agent in the chat): the recent
-      window, unless a legacy record says this agent already was last.
+      window under a "join" notice (its own session holds none of the chat),
+      unless a legacy record says this agent already was last.
 
+    Whenever only a window is sent, earlier user rows outside it follow in a
+    compact section, so standing instructions survive the handoff.
     The trailing user row for ``current_prompt`` is excluded either way.
     """
     target = (to_agent or "").strip()
@@ -530,6 +608,8 @@ def build_handoff(
             return None
         if from_agent is not None and (not previous or previous == target):
             return None
+        if cursor is None and not state.get("legacy") and not has_native_session:
+            mode = "join"
         messages = fetch_recent_transcript(chat_session_id, limit=limit)
         window_limited = True
     messages = _drop_current_turn(messages, current_prompt)
@@ -541,6 +621,12 @@ def build_handoff(
         else 0
     )
     kept, omitted, truncated = _fit_budget(messages)
+    earlier_user: List[Dict[str, Any]] = []
+    earlier_user_omitted = 0
+    if window_limited and kept and (omitted or head_dropped):
+        earlier_user, earlier_user_omitted = _earlier_user_messages(
+            chat_session_id, kept[0].get("id")
+        )
     text = format_handoff_delta(
         from_agent=previous,
         to_agent=target,
@@ -549,6 +635,8 @@ def build_handoff(
         truncated=truncated,
         chat_handle=_chat_handle(chat_session_id),
         mode=mode,
+        earlier_user=earlier_user,
+        earlier_user_omitted=earlier_user_omitted,
     )
     return AgentHandoff(
         from_agent=previous,

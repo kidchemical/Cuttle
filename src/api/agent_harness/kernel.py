@@ -331,6 +331,7 @@ def _compile_agent_prompt(
             current_prompt=prompt,
             full_history=not manifest.resume,
             project_path=cwd,
+            has_native_session=has_resume,
         )
     except Exception as exc:
         # A failed handoff means the agent misses unseen conversation, not
