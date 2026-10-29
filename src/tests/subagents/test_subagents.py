@@ -486,6 +486,13 @@ def test_cli_profiles_roundtrip(tmp_path: Path):
     assert resolve(db, owner, "judge") is None
 
 
+def test_claude_harness_is_not_aliased_to_cursor():
+    from api.subagents.profiles import normalize_harness
+
+    assert normalize_harness("claude") == "claude"
+    assert normalize_harness("Cursor Auto") == "cursor"
+
+
 def test_resolve_child_cursor_model_bakes_effort():
     from api.subagents.identity import resolve_child_model_id
 
@@ -749,7 +756,7 @@ def test_hydrate_repairs_missing_codex_assistant_badge(tmp_path: Path):
         children=[{
             "title": "Luna Riddler",
             "agent": "codex",
-            "model": "gpt-5.6",
+            "model": "gpt-5.6-sol",
             "effort": "low",
             "message": "echo riddle",
         }],
@@ -765,7 +772,7 @@ def test_hydrate_repairs_missing_codex_assistant_badge(tmp_path: Path):
     user_msg["metadata"]["slash_command"] = {
         "chips": [{
             "label": "Codex - GPT-5.6",
-            "meta": "/codex · model gpt-5.6",
+            "meta": "/codex · model gpt-5.6-sol",
             "category": "codex",
         }]
     }

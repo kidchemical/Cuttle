@@ -158,6 +158,11 @@ On `--child` JSON:
 
 `--agent none` on `profiles save` means no harness preference.
 
+`profiles save` checks the harness/model/effort pin against that CLI's catalog
+and rejects a pin that cannot start. `spawn` runs the same check on every
+child before creating any chat; a rejection names the child and the pin — fix
+the spec or pick another profile rather than resending it unchanged.
+
 ## Parent reply
 
 After `--wait`, synthesize **one** answer in the parent chat. Cite children with

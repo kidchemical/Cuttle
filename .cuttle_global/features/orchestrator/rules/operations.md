@@ -1,0 +1,1 @@
+Orchestrating a multi-step job across sub-agents, `/orchestrate`, or a chat whose context carries an "Orchestrator playbook" brief → `feature/orchestrator/docs/orchestrator.md`. Follow the brief; do not restate model pins.

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orchestrator - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
+    <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="/css/landing_page.css?v=20261028gpuBg">
+    <link rel="stylesheet" href="/css/compact_page.css?v=20261015glass">
+    <link rel="stylesheet" href="/css/orchestrator_page.css?v=20261028orch1">
+</head>
+<body class="compact-shell-page" data-page="orchestrator">
+    <main class="orch-page orchestrator-page cuttle-page">
+        <header class="compact-page-title has-actions">
+            <div class="compact-page-heading">
+                <h1>Orchestrator</h1>
+                <p>Playbooks: the org chart, escalation limits and supervisor defaults an orchestrator chat follows.</p>
+            </div>
+            <div class="compact-page-actions">
+                <button id="orchRefresh" type="button">Refresh</button>
+                <button id="orchNew" type="button" class="orch-primary">New playbook</button>
+            </div>
+        </header>
+
+        <section id="orchNotice" class="orch-notice" role="status" aria-live="polite" hidden></section>
+
+        <section id="orchContent" hidden>
+            <div class="orch-layout">
+                <aside>
+                    <div class="orch-section-heading"><div><h2>Playbooks</h2></div></div>
+                    <div id="orchList" class="orch-list"></div>
+                    <div class="orch-section-heading" style="margin-top:22px"><div><h2>Orchestrator chats</h2>
+                        <p>Chats bound with <code>/orchestrate</code>.</p></div></div>
+                    <div id="orchBindings" class="orch-list"></div>
+                </aside>
+
+                <div id="orchEditor">
+                    <section class="orch-card">
+                        <form id="orchMeta" class="orch-form" autocomplete="off">
+                            <label>Id<input name="id" required pattern="[a-z][a-z0-9_\-]{0,39}"></label>
+                            <label>Name<input name="name" maxlength="80"></label>
+                            <label class="orch-wide">Description<input name="description" maxlength="400"></label>
+                        </form>
+                        <p class="orch-muted" id="orchStartHint" style="margin:10px 0 0"></p>
+                    </section>
+
+                    <section class="orch-section">
+                        <div class="orch-section-heading">
+                            <div><h2>Org chart</h2><p>Tiers in escalation order. Every task starts at the first worker tier; the first profile in a tier is the default, the rest are alternates.</p></div>
+                            <button type="button" id="orchAddTier">Add tier</button>
+                        </div>
+                        <div id="orchTiers"></div>
+                    </section>
+
+                    <section class="orch-section">
+                        <div class="orch-section-heading"><div><h2>Limits</h2><p>When the orchestrator must stop grinding, escalate, or report.</p></div></div>
+                        <form id="orchLimits" class="orch-form orch-card"></form>
+                    </section>
+
+                    <section class="orch-section">
+                        <div class="orch-section-heading"><div><h2>Supervisor defaults</h2><p>Used by the supervise command below. Leave the agent empty so check-ins follow the supervisor chat's own agent.</p></div></div>
+                        <form id="orchSupervisor" class="orch-form orch-card" autocomplete="off">
+                            <label>Check-in interval (seconds)<input name="every_sec" type="number" min="60" max="86400"></label>
+                            <label>Pin check-ins to agent<select name="agent"></select></label>
+                            <label>Required branch<input name="require_branch" placeholder="dev/multiplayer"></label>
+                            <label>Required path<input name="require_path" placeholder="/path/to/worktree"></label>
+                            <label class="orch-wide">Forbidden branches<input name="forbid_branches" placeholder="master, dev/core"></label>
+                            <label class="orch-wide">Instructions<textarea name="instructions" rows="2" maxlength="2000"></textarea></label>
+                        </form>
+                    </section>
+
+                    <section class="orch-section">
+                        <div class="orch-section-heading"><div><h2>Notes</h2><p>Extra standing rules appended to the brief (markdown).</p></div></div>
+                        <textarea id="orchNotes" rows="4" maxlength="8000" style="width:100%;box-sizing:border-box"></textarea>
+                    </section>
+
+                    <div id="orchProblems" class="orch-problems" hidden></div>
+                    <div class="orch-form-actions" style="margin-bottom:24px">
+                        <span id="orchSaveState" class="orch-muted"></span>
+                        <button type="button" id="orchDelete" class="orch-danger">Delete</button>
+                        <button type="button" id="orchSave" class="orch-primary">Save playbook</button>
+                    </div>
+
+                    <section class="orch-section">
+                        <div class="orch-section-heading">
+                            <div><h2>Preview</h2><p>The brief an orchestrator chat receives (saved version), and the command a supervisor chat runs.</p></div>
+                            <button type="button" id="orchCopyBrief">Copy brief</button>
+                        </div>
+                        <pre id="orchBrief" class="orch-pre"></pre>
+                        <div class="orch-section-heading" style="margin-top:14px">
+                            <label style="display:flex;gap:8px;align-items:center">Orchestrator chat <input id="orchTarget" placeholder="CH-001548" style="width:120px"></label>
+                            <button type="button" id="orchCopySupervise">Copy supervise command</button>
+                        </div>
+                        <pre id="orchSupervise" class="orch-pre"></pre>
+                    </section>
+                </div>
+            </div>
+        </section>
+    </main>
+    <script src="/js/shared/shared_navigation.js"></script>
+    <script src="/js/shared/toast.js"></script>
+    <script src="/js/orchestrator/orchestrator_model.js?v=20261028orch1"></script>
+    <script src="/js/orchestrator/orchestrator_page.js?v=20261028orch1"></script>
+</body>
+</html>

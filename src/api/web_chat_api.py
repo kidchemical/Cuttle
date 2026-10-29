@@ -307,6 +307,13 @@ except Exception as _test_lab_err:
     print(f"[TEST_LAB] Failed to register routes: {_test_lab_err}")
 
 try:
+    from api.orchestrator.routes import orchestrator_bp, orchestrator_pages_bp
+    from api.subagents.profile_routes import agent_profiles_bp
+    for _bp in (orchestrator_bp, orchestrator_pages_bp, agent_profiles_bp): app.register_blueprint(_bp)
+except Exception as _orchestrator_err:
+    print(f"[ORCHESTRATOR] Failed to register routes: {_orchestrator_err}")
+
+try:
     from api.ide.routes import ide_bp, ide_pages_bp
     app.register_blueprint(ide_bp)
     app.register_blueprint(ide_pages_bp)

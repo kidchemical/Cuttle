@@ -471,6 +471,19 @@ into form answers. Apps → Secrets is `secrets_page.js` over the pure
 `secrets_model.js`. Agent verbs: `python -m api.secret_vault`. Runbook:
 `.cuttle/docs/experimental-features.md` (Secrets App).
 
+**Orchestrator (experimental):** `api.orchestrator` owns playbooks (an ordered
+org chart of tiers over agent-profile ids, grind/retry limits, supervisor
+defaults) and chat bindings. `model` is pure and Cuttle-free; `service` adapts
+it (profiles from `api.subagents.profiles`, `<home>/db/orchestrator.db`).
+A bound chat's brief is appended to the Context Compiler's runtime block
+(`service.brief_block`), so a harness switch keeps it. Profile and spawn pins
+share `agent_harness.agent_models.check_agent_pin` (also used by Settings →
+sub-agent defaults). Apps → Orchestrator / Agents are `orchestrator_page.js` /
+`agent_profiles_page.js` over the pure `orchestrator_model.js`. Agent verbs:
+`python -m api.orchestrator`; `/orchestrate` ships in
+`.cuttle_global/features/orchestrator/`. Runbook:
+`.cuttle/docs/experimental-features.md` (Orchestrator and Agents Apps).
+
 **Gizmos (experimental):** live UI objects outside chat bubbles (widgets stay
 inside bubbles). `api.gizmos` owns types (`catalog`), normalized vendor plan
 usage (`usage`, reused from `api.agent_usage` fetchers), validation/placement

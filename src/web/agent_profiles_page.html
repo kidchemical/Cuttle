@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agents - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
+    <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="/css/landing_page.css?v=20261028gpuBg">
+    <link rel="stylesheet" href="/css/compact_page.css?v=20261015glass">
+    <link rel="stylesheet" href="/css/orchestrator_page.css?v=20261028orch1">
+</head>
+<body class="compact-shell-page" data-page="agents">
+    <main class="orch-page agents-page cuttle-page">
+        <header class="compact-page-title has-actions">
+            <div class="compact-page-heading">
+                <h1>Agents</h1>
+                <p>Sub-agent profiles: who a child chat is, and which harness, model and effort it runs.</p>
+            </div>
+            <div class="compact-page-actions">
+                <button id="agentsRefresh" type="button">Refresh</button>
+                <button id="agentsNew" type="button" class="orch-primary">New profile</button>
+            </div>
+        </header>
+
+        <section id="agentsNotice" class="orch-notice" role="status" aria-live="polite" hidden></section>
+
+        <section id="agentsContent" hidden>
+            <section class="orch-card" id="agentsEditor" hidden>
+                <h3 id="agentsEditorTitle">New profile</h3>
+                <form id="agentsForm" class="orch-form" autocomplete="off">
+                    <label>Id<input name="id" required pattern="[a-z][a-z0-9_\-]{0,39}" placeholder="grunt"></label>
+                    <label>Name<input name="name" required maxlength="80" placeholder="Grunt"></label>
+                    <label>Avatar<input name="avatar" maxlength="200" placeholder="🐜, image URL, or cuttle"></label>
+                    <label>Harness<select name="agent"></select></label>
+                    <label>Model<input name="model" list="agentsModels" maxlength="80" placeholder="CLI default"><datalist id="agentsModels"></datalist></label>
+                    <label>Effort<select name="effort"></select></label>
+                    <div class="orch-form-actions">
+                        <span id="agentsCheck" class="orch-check"></span>
+                        <button type="button" id="agentsCancel">Cancel</button>
+                        <button type="submit" class="orch-primary">Save profile</button>
+                    </div>
+                </form>
+            </section>
+
+            <section class="orch-section" aria-labelledby="agentsCustomTitle">
+                <div class="orch-section-heading">
+                    <div><h2 id="agentsCustomTitle">Your profiles</h2>
+                        <p>Saved pins are checked against each CLI's model catalog on save and again before a spawn.</p></div>
+                </div>
+                <div id="agentsCustom" class="orch-list"></div>
+            </section>
+
+            <section class="orch-section" aria-labelledby="agentsBuiltinTitle">
+                <div class="orch-section-heading">
+                    <div><h2 id="agentsBuiltinTitle">Built-in profiles</h2>
+                        <p>Read-only. Duplicate one to customize it.</p></div>
+                </div>
+                <div id="agentsBuiltin" class="orch-list"></div>
+            </section>
+        </section>
+    </main>
+    <script src="/js/shared/shared_navigation.js"></script>
+    <script src="/js/shared/toast.js"></script>
+    <script src="/js/orchestrator/orchestrator_model.js?v=20261028orch1"></script>
+    <script src="/js/orchestrator/agent_profiles_page.js?v=20261028orch1"></script>
+</body>
+</html>

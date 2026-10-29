@@ -17,6 +17,8 @@
         'nav-dashboards': 236,
         'nav-test-lab': 146,
         'nav-secrets': 32,
+        'nav-orchestrator': 286,
+        'nav-agents': 330,
         'nav-ide': 204,
         'nav-settings': 150,
         'nav-account': 262,

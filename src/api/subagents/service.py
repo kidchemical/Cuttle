@@ -201,6 +201,32 @@ def _kill_pid(pid: int) -> None:
             pass
 
 
+def _preflight_pins(specs: List[ChildSpec]) -> None:
+    """Reject a child whose harness/model/effort cannot start, before any row exists.
+
+    A bad pin used to create a child chat that failed with "was not started";
+    agents then resent the identical spawn. Routed children pick their own pin.
+    """
+    from api.agent_harness.agent_models import check_agent_pin
+    from api.agent_harness.catalog import get_agent
+
+    catalogs: Dict[str, Any] = {}
+    for index, spec in enumerate(specs, start=1):
+        if spec.route:
+            continue
+        pair = get_agent(spec.agent)
+        # Harnesses without an effort flag (Cursor) bake effort into the model
+        # id at launch (identity.resolve_child_model_id); check the base pin.
+        effort = spec.effort if pair is None or pair[0].supports_effort else ""
+        error = check_agent_pin(spec.agent, spec.model, effort, catalogs=catalogs)
+        if error:
+            raise SubagentError(
+                f"child {index} ({spec.title}): {error} "
+                f"(agent={spec.agent!r} model={spec.model!r} effort={spec.effort!r}). "
+                "No chat was created; fix the spec or choose another profile."
+            )
+
+
 def spawn(
     *,
     parent_session_id: int,
@@ -254,6 +280,7 @@ def spawn(
                     if not spec.effort_explicit: spec.effort = str(pref.get('effort') or '')
     except Exception:
         pass
+    _preflight_pins(specs)
     collect_n = normalize_collect(collect)
     lifetime_n = normalize_lifetime(lifetime)
     project_path = str(parent.get("project_path") or "")

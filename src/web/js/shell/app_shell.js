@@ -791,6 +791,8 @@ const PAGE_TITLES = {
     '/gizmos_page.html': 'Gizmos',
     '/test_lab_page.html': 'Test Lab',
     '/secrets_page.html': 'Secrets',
+    '/orchestrator_page.html': 'Orchestrator',
+    '/agent_profiles_page.html': 'Agents',
     '/ide_page.html': 'IDE',
     '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',

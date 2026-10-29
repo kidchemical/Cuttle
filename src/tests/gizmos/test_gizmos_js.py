@@ -191,12 +191,12 @@ def test_gizmos_app_starts_stashed_and_migrates_once():
     source = (WEB / "js" / "shell" / "shell_rail.js").read_text(encoding="utf-8")
     assert "'nav-gizmos'" in source.split("const CANONICAL_RAIL_ITEM_ORDER")[1].split("];")[0]
     assert "'nav-gizmos'" in source.split("const DEFAULT_RAIL_HIDDEN =")[1].split(";")[0]
-    assert "const RAIL_LAYOUT_VERSION = 12;" in source
+    assert "const RAIL_LAYOUT_VERSION = 13;" in source
     start = source.index("function migrateUILayout(saved)")
     end = source.index("\n        }\n", start) + len("\n        }\n")
     script = """const assert = require('assert');
 const DEFAULT_LAYOUT={}; const DEFAULT_RAIL_HIDDEN=['nav-achievements','nav-gizmos','nav-test-lab','nav-ide','nav-secrets','nav-projects','nav-agent-feed','nav-mesh'];
-const RAIL_LAYOUT_VERSION=12;
+const RAIL_LAYOUT_VERSION=13;
 const HIDEABLE_FOOTER_IDS=new Set(['nav-workspace']);
 const CANONICAL_RAIL_ITEM_ORDER=['nav-chat','nav-achievements','nav-gizmos','nav-test-lab','nav-ide','nav-secrets','nav-projects','nav-agent-feed','nav-mesh','nav-apps'];
 """ + source[start:end] + """
@@ -216,6 +216,8 @@ r = migrateUILayout({layout_version:11, rail_items:['nav-chat','nav-gizmos','nav
 assert.equal(r.changed, true); assert(r.layout.rail_items.includes('nav-ide'));
 assert.deepEqual(r.layout.rail_hidden, ['nav-secrets']); assert(!r.layout.rail_items.includes('nav-secrets'));
 r = migrateUILayout({layout_version:12, rail_items:['nav-chat','nav-secrets'], rail_hidden:[]});
+assert.equal(r.changed, true); assert(r.layout.rail_items.includes('nav-secrets'));
+r = migrateUILayout({layout_version:13, rail_items:['nav-chat','nav-secrets'], rail_hidden:[]});
 assert.equal(r.changed, false); assert(r.layout.rail_items.includes('nav-secrets'));
 """
     if not shutil.which("node"):

@@ -23,7 +23,6 @@ _HARNESS_ALIASES = {
     "auto": "cursor",
     "muse code": "muse",
     "muse-code": "muse",
-    "claude": "cursor",
     "codex cli": "codex",
 }
 
@@ -208,6 +207,14 @@ def save_profile(
     if not display:
         raise ValueError("profile name is required")
     harness = normalize_harness(agent)
+    if harness == "none" and ((model or "").strip() or (effort or "").strip()):
+        raise ValueError("a profile with no harness cannot pin a model or effort")
+    if harness != "none":
+        from api.agent_harness.agent_models import check_agent_pin
+
+        error = check_agent_pin(harness, model, effort)
+        if error:
+            raise ValueError(error)
     conn = db._get_connection()
     cur = conn.cursor()
     cur.execute(

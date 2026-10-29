@@ -139,6 +139,12 @@ register_flag(FlagSpec(
 ))
 
 register_flag(FlagSpec(
+    id="orchestrator", label="Orchestrator",
+    description="Standing orchestration setups: Apps → Agents edits sub-agent profiles (harness, model, effort, checked against each CLI's catalog) and Apps → Orchestrator edits playbooks (org-chart tiers, grind/retry limits, supervisor defaults). /orchestrate binds a chat to a playbook and keeps its brief in context across harness switches.",
+    default=False, category="agents", risk="low", since="0.0.0", needs_restart=False, context_bundle=True,
+))
+
+register_flag(FlagSpec(
     id="ide", label="IDE",
     description="A Cursor-style code editor in Apps → IDE: Monaco editing of registered projects with explorer, tabs, quick open, find in files, source control diffs, an integrated terminal, and an AI chat panel bound to the project. Also adds an Editor button to file diffs.",
     # Default on: a core tool. Paths stay confined to allowlisted workspaces;

@@ -255,6 +255,40 @@ Python environment when present, and keep their recent output in the Cuttle
 home database. Discovery supports pytest files, npm `test` scripts, Go modules,
 and Rust Cargo packages. Only the owner can inspect projects or start runs.
 
+## Orchestrator and Agents Apps
+
+Flag `orchestrator` (default off). Replaces restating an orchestration setup
+in every new orchestrator chat. **Apps → Agents** edits sub-agent profiles
+(name, avatar, harness, model, effort); every save is checked against that
+CLI's live model catalog plus its manifest ids, with live feedback while
+editing. Built-ins are read-only; duplicate one to customize. **Apps →
+Orchestrator** edits playbooks: tiers in escalation order (worker →
+escalation → expert, each an ordered list of profiles, first = default),
+limits (solo attempts/minutes before delegating, same-tier retries, setup
+failures before reporting), supervisor defaults (interval, optional pinned
+agent, required branch/path, forbidden branches, instructions) and notes. It
+previews the rendered brief and builds the `chat_cli supervise` command for a
+target chat, and lists bound chats (unbind, supervise). The `default`
+playbook is a virtual seed until saved. Both Apps start stashed and are
+hidden while the flag is off; their pages and routes return 403.
+
+`/orchestrate [@playbook] <goal>` (feature bundle
+`.cuttle_global/features/orchestrator/`) binds the chat via
+`python -m api.orchestrator start`. The Context Compiler appends the bound
+brief to every fresh context for that chat, so an agent that joins after a
+harness switch still has it; turning the flag off withdraws it. Independently
+of the flag, `api.subagents.spawn` now rejects a child whose
+harness/model/effort cannot start before any child chat is created (effort
+for harnesses that bake it into the model id, like Cursor, is not checked).
+
+Owner `src/api/orchestrator/` (`model` pure / `store` / `service` / `routes` /
+`__main__`); profile transport `api/subagents/profile_routes.py`; shared pin
+check `api/agent_harness/agent_models.check_agent_pin`. Client
+`js/orchestrator/` (`orchestrator_model.js` pure + two page controllers),
+`css/orchestrator_page.css`. Tests: `src/tests/orchestrator/`. Teardown: the
+`api/orchestrator/__init__.py` docstring. Turning the flag off keeps
+playbooks, bindings and profiles; profiles keep working for `spawn`.
+
 ## Secrets App (secret vault)
 
 Flag `secret_vault` (default off). Agents use passwords, API keys and other
