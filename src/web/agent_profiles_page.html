@@ -9,61 +9,47 @@
     <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="/css/landing_page.css?v=20261028gpuBg">
     <link rel="stylesheet" href="/css/compact_page.css?v=20261015glass">
-    <link rel="stylesheet" href="/css/orchestrator_page.css?v=20261028orch1">
+    <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
+    <link rel="stylesheet" href="/css/chip_config_modal.css?v=20261029shared">
+    <link rel="stylesheet" href="/css/searchable_select.css?v=20261011attachedMenus">
+    <link rel="stylesheet" href="/css/page_controls.css?v=20261015glass">
+    <link rel="stylesheet" href="/css/orchestrator_page.css?v=20261029orch3">
 </head>
 <body class="compact-shell-page" data-page="agents">
     <main class="orch-page agents-page cuttle-page">
         <header class="compact-page-title has-actions">
             <div class="compact-page-heading">
                 <h1>Agents</h1>
-                <p>Sub-agent profiles: who a child chat is, and which harness, model and effort it runs.</p>
+                <p>Who a sub-agent is in chat, and what it runs on.</p>
             </div>
             <div class="compact-page-actions">
-                <button id="agentsRefresh" type="button">Refresh</button>
-                <button id="agentsNew" type="button" class="orch-primary">New profile</button>
+                <button id="agentsRefresh" type="button" aria-label="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 6M20 4v7h-7"/></svg><span class="desktop-label">Refresh</span></button>
+                <button id="agentsNew" type="button" class="primary">New profile</button>
             </div>
         </header>
 
-        <section id="agentsNotice" class="orch-notice" role="status" aria-live="polite" hidden></section>
+        <section id="agentsNotice" class="orch-notice" role="status" aria-live="polite">Loading profiles…</section>
 
-        <section id="agentsContent" hidden>
-            <section class="orch-card" id="agentsEditor" hidden>
-                <h3 id="agentsEditorTitle">New profile</h3>
-                <form id="agentsForm" class="orch-form" autocomplete="off">
-                    <label>Id<input name="id" required pattern="[a-z][a-z0-9_\-]{0,39}" placeholder="grunt"></label>
-                    <label>Name<input name="name" required maxlength="80" placeholder="Grunt"></label>
-                    <label>Avatar<input name="avatar" maxlength="200" placeholder="🐜, image URL, or cuttle"></label>
-                    <label>Harness<select name="agent"></select></label>
-                    <label>Model<input name="model" list="agentsModels" maxlength="80" placeholder="CLI default"><datalist id="agentsModels"></datalist></label>
-                    <label>Effort<select name="effort"></select></label>
-                    <div class="orch-form-actions">
-                        <span id="agentsCheck" class="orch-check"></span>
-                        <button type="button" id="agentsCancel">Cancel</button>
-                        <button type="submit" class="orch-primary">Save profile</button>
-                    </div>
-                </form>
-            </section>
+        <section id="agentsContent" class="orch-split" hidden>
+            <aside class="orch-sidebar" aria-label="Profiles">
+                <input id="agentsSearch" type="search" placeholder="Search profiles" aria-label="Search profiles" autocomplete="off">
+                <div class="orch-side-title"><span>Your profiles</span><span id="agentsCustomCount" class="orch-count"></span></div>
+                <div id="agentsCustom" class="orch-cards"></div>
+                <div class="orch-side-title"><span>Built-in</span><span id="agentsBuiltinCount" class="orch-count"></span></div>
+                <div id="agentsBuiltin" class="orch-cards"></div>
+            </aside>
 
-            <section class="orch-section" aria-labelledby="agentsCustomTitle">
-                <div class="orch-section-heading">
-                    <div><h2 id="agentsCustomTitle">Your profiles</h2>
-                        <p>Saved pins are checked against each CLI's model catalog on save and again before a spawn.</p></div>
-                </div>
-                <div id="agentsCustom" class="orch-list"></div>
-            </section>
-
-            <section class="orch-section" aria-labelledby="agentsBuiltinTitle">
-                <div class="orch-section-heading">
-                    <div><h2 id="agentsBuiltinTitle">Built-in profiles</h2>
-                        <p>Read-only. Duplicate one to customize it.</p></div>
-                </div>
-                <div id="agentsBuiltin" class="orch-list"></div>
-            </section>
+            <section class="orch-panel orch-editor" id="agentsEditor" aria-live="polite"></section>
         </section>
     </main>
     <script src="/js/shared/shared_navigation.js"></script>
     <script src="/js/shared/toast.js"></script>
-    <script src="/js/orchestrator/orchestrator_model.js?v=20261028orch1"></script>
-    <script src="/js/orchestrator/agent_profiles_page.js?v=20261028orch1"></script>
+    <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
+    <script src="/js/shared/page_controls.js?v=20261011pageControls2"></script>
+    <script src="/js/chat/chat_chip_config.js?v=20261029pickerLabels"></script>
+    <script src="/js/orchestrator/orchestrator_model.js?v=20261029orch3"></script>
+    <script src="/js/orchestrator/agent_pin_picker.js?v=20261029orch3"></script>
+    <script src="/js/orchestrator/avatar_picker.js?v=20261029orch3"></script>
+    <script src="/js/orchestrator/agent_profiles_page.js?v=20261029orch3"></script>
 </body>
 </html>

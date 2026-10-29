@@ -85,6 +85,26 @@ def check_route():
     return jsonify(success=True, ok=error is None, error=error)
 
 
+@agent_profiles_bp.post("/avatar")
+@owner_required
+def avatar_route():
+    """Upload a profile picture; returns its URL for the profile's ``avatar``."""
+    disabled = _disabled()
+    if disabled:
+        return disabled
+    from api.subagents import profile_avatars
+
+    upload = request.files.get("file")
+    if upload is None:
+        return jsonify(success=False, error="Choose an image file."), 400
+    data = upload.stream.read(profile_avatars.MAX_UPLOAD_BYTES + 1)
+    try:
+        url = profile_avatars.store(_uid(), data)
+    except profile_avatars.AvatarError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    return jsonify(success=True, url=url)
+
+
 @agent_profiles_bp.delete("/<profile_id>")
 @owner_required
 def delete_route(profile_id: str):

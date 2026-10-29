@@ -1,6 +1,7 @@
 /**
  * Orchestrator App controller — transport + events over CuttleOrchestrator
  * (pure). Playbooks are owned by api.orchestrator; profiles by the Agents App.
+ * Selects are plain <select>s upgraded by the shared page_controls combobox.
  */
 (function () {
     'use strict';
@@ -9,9 +10,14 @@
     const $ = (id) => document.getElementById(id);
     const notice = $('orchNotice');
     const content = $('orchContent');
-    const meta = $('orchMeta');
     const sup = $('orchSupervisor');
-    let state = { playbooks: [], profiles: [], catalog: [], bindings: [], draft: null, savedId: '', dirty: false, preview: null };
+    const LIMIT_HELP = {
+        solo_attempts: 'Failed attempts on one problem in its own turn before it must hand the problem to a worker.',
+        solo_minutes: 'Minutes on one problem in its own turn before it must delegate, even without a clear failure.',
+        child_retries: 'Retries on the same tier, with a sharper brief, before a task moves down the ladder.',
+        setup_retries: 'Spawns that fail to start (bad pin, quota, missing CLI) before it reports instead of looping.',
+    };
+    let state = { playbooks: [], profiles: [], catalog: [], bindings: [], draft: null, savedId: '', saved: '', tab: 'chart', preview: null };
     let previewTimer = null;
 
     function toast(message, kind) {
@@ -34,125 +40,216 @@
         return data;
     }
 
-    function showNotice(html, kind) {
-        notice.hidden = false;
-        notice.className = 'orch-notice' + (kind ? ' is-' + kind : '');
-        notice.innerHTML = html;
-        content.hidden = true;
+    function profileById(id) { return state.profiles.find((p) => p.id === id) || null; }
+
+    function snapshot(d) {
+        const body = M.clone(d);
+        delete body.seed; delete body.missing_profiles; delete body.updated_at;
+        return JSON.stringify(body);
     }
 
-    function profileById(id) {
-        return state.profiles.find((p) => p.id === id) || null;
+    function isDirty() { return !!state.draft && snapshot(state.draft) !== state.saved; }
+
+    async function copy(text, label) {
+        try { await navigator.clipboard.writeText(text || ''); toast(`${label} copied`, 'success'); }
+        catch (_) { toast('Copy failed — select the text instead', 'error'); }
     }
 
-    function markDirty() {
-        state.dirty = true;
-        $('orchSaveState').textContent = 'Unsaved changes';
-        renderProblems();
+    function destroyCombos(rootEl) {
+        rootEl.querySelectorAll('select').forEach((sel) => { try { sel.__cuttleSearchable?.destroy(); } catch (_) {} });
     }
 
-    // ── Rendering ────────────────────────────────────────────────────────
+    // ── Sidebar ─────────────────────────────────────────────────────────
 
-    function renderList() {
+    function ladderDots(pb) {
+        return (pb.tiers || []).map((t) => `<span class="orch-ladder-dot role-${M.esc(t.role)}" title="${M.esc(t.label)}"></span>`).join('');
+    }
+
+    function renderSidebar() {
         $('orchList').innerHTML = state.playbooks.map((pb) => {
             const missing = (pb.missing_profiles || []).length;
-            const badges = (pb.seed ? '<span class="orch-badge">not saved</span>' : '')
-                + (missing ? `<span class="orch-badge is-bad">${missing} missing</span>` : '');
-            return `<div class="orch-row${state.draft && state.savedId === pb.id ? ' is-selected' : ''}" data-open="${M.esc(pb.id)}" style="cursor:pointer;grid-template-columns:minmax(0,1fr) auto">
-                <div><div class="orch-row-title">${M.esc(pb.name)} ${badges}</div>
-                <div class="orch-row-meta">${M.esc(pb.id)} · ${(pb.tiers || []).length} tiers</div></div></div>`;
-        }).join('') || '<div class="orch-notice">No playbooks.</div>';
-        $('orchBindings').innerHTML = state.bindings.map((b) => `<div class="orch-row" style="grid-template-columns:minmax(0,1fr) auto">
-            <div><div class="orch-row-title">${M.esc(b.session)} <span class="orch-muted">${M.esc(b.playbook_id)}</span></div>
-            <div class="orch-row-meta">${M.esc(b.title || b.goal || '')}</div></div>
-            <div class="orch-row-actions"><button type="button" class="orch-small" data-target="${M.esc(b.session)}">Supervise…</button>
-            <button type="button" class="orch-small orch-danger" data-unbind="${M.esc(b.session)}">Unbind</button></div></div>`).join('')
-            || '<div class="orch-muted">None yet. Start one with <code>/orchestrate</code>.</div>';
+            return `<button type="button" class="orch-card${state.savedId === pb.id ? ' is-active' : ''}" data-open="${M.esc(pb.id)}">
+                <span class="orch-card-icon" aria-hidden="true"><span class="orch-ladder-dots">${ladderDots(pb)}</span></span>
+                <span class="orch-card-main">
+                    <span class="orch-card-title">${M.esc(pb.name)}</span>
+                    <span class="orch-card-sub">${M.esc(pb.id)} · ${(pb.tiers || []).length} tiers${pb.seed ? ' · not saved' : ''}</span>
+                </span>
+                ${missing ? `<span class="orch-dot-count is-bad" title="${missing} missing profile(s)">!</span>` : ''}
+            </button>`;
+        }).join('') || '<p class="orch-empty-line">No playbooks.</p>';
+        $('orchCount').textContent = String(state.playbooks.filter((p) => !p.seed).length || '');
+        $('orchBindCount').textContent = state.bindings.length ? String(state.bindings.length) : '';
+        $('orchBindings').innerHTML = state.bindings.map((b) => `<div class="orch-card orch-card--static">
+            <span class="orch-card-icon orch-card-icon--chat" aria-hidden="true">💬</span>
+            <span class="orch-card-main" title="${M.esc(b.goal || '')}">
+                <span class="orch-card-title">${M.esc(b.title || 'Untitled chat')}</span>
+                <span class="orch-card-sub">${M.esc([b.session, b.project, b.playbook_id].filter(Boolean).join(' · '))}</span>
+            </span>
+            <span class="orch-card-actions">
+                <button type="button" class="orch-icon-btn" data-target="${M.esc(b.session)}" title="Supervise command" aria-label="Supervise ${M.esc(b.session)}">⌖</button>
+                <button type="button" class="orch-icon-btn is-danger" data-unbind="${M.esc(b.session)}" title="Unbind" aria-label="Unbind ${M.esc(b.session)}">✕</button>
+            </span></div>`).join('')
+            || '<p class="orch-empty-line">None yet. Start one with <code>/orchestrate &lt;goal&gt;</code> in any chat.</p>';
+    }
+
+    // ── Org chart ───────────────────────────────────────────────────────
+
+    function profileChip(pid, index, tierIndex) {
+        const p = profileById(pid);
+        return `<li class="orch-member${p ? '' : ' is-missing'}${index === 0 ? ' is-default' : ''}">
+            <span class="orch-av orch-av--sm">${M.avatarHtml(p ? p.avatar : '')}</span>
+            <span class="orch-member-main">
+                <span class="orch-member-name">${M.esc(p ? p.name : pid)}${index === 0 ? '<span class="orch-tag is-accent">Default</span>' : ''}</span>
+                <span class="orch-member-pin">${p ? `<span aria-hidden="true">${M.esc(M.agentIcon(state.catalog, p.agent))}</span> ${M.esc(M.pinLabel(state.catalog, p))}` : 'Missing profile — create it in Agents'}</span>
+            </span>
+            <span class="orch-member-actions">
+                ${index > 0 ? `<button type="button" class="orch-icon-btn" data-tier="${tierIndex}" data-up-profile="${M.esc(pid)}" title="Make default" aria-label="Make ${M.esc(pid)} the default">★</button>` : ''}
+                <button type="button" class="orch-icon-btn is-danger" data-tier="${tierIndex}" data-drop-profile="${M.esc(pid)}" title="Remove" aria-label="Remove ${M.esc(pid)}">✕</button>
+            </span>
+        </li>`;
     }
 
     function tierHtml(tier, index, count) {
-        const chips = tier.profiles.map((pid) => {
-            const p = profileById(pid);
-            return `<span class="orch-chip${p ? '' : ' is-missing'}" title="${M.esc(M.profileSummary(p))}">
-                ${M.esc(p ? p.name : pid)} <span class="orch-muted">${M.esc(M.profileSummary(p))}</span>
-                <button type="button" data-tier="${index}" data-up-profile="${M.esc(pid)}" title="Make default" aria-label="Move earlier">↑</button>
-                <button type="button" data-tier="${index}" data-drop-profile="${M.esc(pid)}" aria-label="Remove">✕</button></span>`;
-        }).join('');
-        const options = state.profiles.filter((p) => tier.profiles.indexOf(p.id) < 0)
-            .map((p) => `<option value="${M.esc(p.id)}">${M.esc(p.name)} — ${M.esc(M.profileSummary(p))}</option>`).join('');
+        const meta = M.ROLE_META[tier.role] || M.ROLE_META.worker;
+        const available = state.profiles.filter((p) => tier.profiles.indexOf(p.id) < 0);
         const roles = M.ROLES.map((r) => `<option value="${r}"${tier.role === r ? ' selected' : ''}>${M.ROLE_LABELS[r]}</option>`).join('');
-        return `<div class="orch-tier" data-index="${index}">
-            <div class="orch-tier-head">
-                <span class="orch-tier-step">${index + 1}</span>
-                <input data-field="label" value="${M.esc(tier.label)}" aria-label="Tier name" maxlength="60">
-                <select data-field="role" aria-label="Role">${roles}</select>
-                <div class="orch-row-actions">
-                    <button type="button" class="orch-small" data-move="-1" ${index === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
-                    <button type="button" class="orch-small" data-move="1" ${index === count - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
-                    <button type="button" class="orch-small orch-danger" data-remove-tier ${count === 1 ? 'disabled' : ''}>Remove</button>
+        return `<li class="orch-tier role-${M.esc(tier.role)}" data-index="${index}">
+            <div class="orch-tier-rail" aria-hidden="true"><span class="orch-tier-step">${index + 1}</span>${index < count - 1 ? '<span class="orch-tier-line"></span>' : ''}</div>
+            <div class="orch-tier-card">
+                <div class="orch-tier-head">
+                    <span class="orch-role-badge" title="${M.esc(meta.hint)}"><span aria-hidden="true">${meta.icon}</span></span>
+                    <input class="orch-tier-name" data-field="label" value="${M.esc(tier.label)}" aria-label="Tier name" maxlength="60">
+                    <select data-field="role" aria-label="Tier role" class="orch-role-select">${roles}</select>
+                    <span class="orch-tier-actions">
+                        <button type="button" class="orch-icon-btn" data-move="-1" ${index === 0 ? 'disabled' : ''} title="Move up" aria-label="Move tier up">↑</button>
+                        <button type="button" class="orch-icon-btn" data-move="1" ${index === count - 1 ? 'disabled' : ''} title="Move down" aria-label="Move tier down">↓</button>
+                        <button type="button" class="orch-icon-btn is-danger" data-remove-tier ${count === 1 ? 'disabled' : ''} title="Remove tier" aria-label="Remove tier">✕</button>
+                    </span>
                 </div>
+                <p class="orch-tier-hint">${M.esc(meta.hint)}</p>
+                <ul class="orch-members">${tier.profiles.map((pid, i) => profileChip(pid, i, index)).join('')
+                    || '<li class="orch-member is-empty">No profiles yet — add one below.</li>'}</ul>
+                <div class="orch-tier-add">
+                    <select data-add-profile aria-label="Add a profile to this tier"${available.length ? '' : ' disabled'}>
+                        <option value="">${available.length ? 'Add a profile…' : 'All profiles added'}</option>
+                        ${available.map((p) => `<option value="${M.esc(p.id)}">${M.esc(p.name)} — ${M.esc(M.pinLabel(state.catalog, p))}</option>`).join('')}
+                    </select>
+                </div>
+                <textarea class="orch-tier-use" data-field="use_for" rows="2" maxlength="600" placeholder="Use this tier for…" aria-label="Use this tier for">${M.esc(tier.use_for)}</textarea>
             </div>
-            <div class="orch-chips">${chips || '<span class="orch-muted">No profiles yet.</span>'}</div>
-            <div style="display:flex;gap:8px;margin-bottom:8px">
-                <select data-add-profile aria-label="Add profile"><option value="">Add a profile…</option>${options}</select>
-                <a href="/agent_profiles_page.html" class="orch-muted" style="align-self:center">Manage profiles</a>
-            </div>
-            <textarea data-field="use_for" rows="2" maxlength="600" placeholder="Use this tier for…" style="width:100%;box-sizing:border-box">${M.esc(tier.use_for)}</textarea>
-        </div>`;
+        </li>`;
     }
 
     function renderTiers() {
+        const host = $('orchTiers');
+        destroyCombos(host);
         const tiers = state.draft.tiers;
-        $('orchTiers').innerHTML = tiers.map((t, i) => tierHtml(t, i, tiers.length)).join('');
+        host.innerHTML = tiers.map((t, i) => tierHtml(t, i, tiers.length)).join('');
     }
 
+    // ── Limits / supervisor ─────────────────────────────────────────────
+
     function renderLimits() {
-        $('orchLimits').innerHTML = M.LIMIT_FIELDS.map(([key, label, low, high]) =>
-            `<label>${M.esc(label)}<input type="number" name="${key}" min="${low}" max="${high}" value="${M.esc(state.draft.limits[key])}"></label>`).join('');
+        $('orchLimits').innerHTML = M.LIMIT_FIELDS.map(([key, label, low, high]) => `<div class="orch-limit">
+            <div class="orch-limit-text"><strong>${M.esc(label)}</strong><span>${M.esc(LIMIT_HELP[key] || '')}</span></div>
+            <div class="orch-stepper" data-key="${key}">
+                <button type="button" class="orch-icon-btn" data-step="-1" aria-label="Decrease">−</button>
+                <input type="number" min="${low}" max="${high}" value="${M.esc(state.draft.limits[key])}" aria-label="${M.esc(label)}">
+                <button type="button" class="orch-icon-btn" data-step="1" aria-label="Increase">＋</button>
+            </div></div>`).join('');
+    }
+
+    function renderForbid() {
+        const host = $('orchForbid');
+        const input = host.querySelector('input');
+        host.querySelectorAll('.orch-tag-chip').forEach((n) => n.remove());
+        (state.draft.supervisor.forbid_branches || []).forEach((b) => {
+            const chip = document.createElement('span');
+            chip.className = 'orch-tag-chip';
+            chip.innerHTML = `${M.esc(b)}<button type="button" data-unforbid="${M.esc(b)}" aria-label="Remove ${M.esc(b)}">✕</button>`;
+            host.insertBefore(chip, input);
+        });
     }
 
     function renderSupervisor() {
         const s = state.draft.supervisor;
-        sup.agent.innerHTML = ['<option value="">Follow the supervisor chat (recommended)</option>']
+        destroyCombos(sup);
+        sup.agent.innerHTML = ['<option value="">The supervisor chat\'s own agent (recommended)</option>']
             .concat(state.catalog.map((r) => `<option value="${M.esc(r.id)}">${M.esc(r.label || r.id)}</option>`)).join('');
-        sup.every_sec.value = s.every_sec;
+        sup.every_min.value = Math.round((s.every_sec || 900) / 60);
         sup.agent.value = s.agent || '';
         sup.require_branch.value = s.require_branch || '';
         sup.require_path.value = s.require_path || '';
-        sup.forbid_branches.value = (s.forbid_branches || []).join(', ');
         sup.instructions.value = s.instructions || '';
+        renderForbid();
     }
 
-    function renderProblems() {
+    // ── Editor shell ────────────────────────────────────────────────────
+
+    function startCommand(d) {
+        return `/orchestrate${d.id === 'default' ? '' : ' @' + d.id} <goal>`;
+    }
+
+    function renderSavebar() {
+        const bar = $('orchSavebar');
+        $('orchDelete').hidden = !state.draft || !state.savedId || !!state.draft.seed;
+        if (!state.draft) { bar.hidden = true; return; }
         const problems = M.playbookProblems(state.draft, state.profiles.map((p) => p.id));
-        const box = $('orchProblems');
-        box.hidden = !problems.length;
-        box.innerHTML = problems.length ? `<strong>Fix before saving</strong><ul>${problems.map((p) => `<li>${M.esc(p)}</li>`).join('')}</ul>` : '';
-        $('orchSave').disabled = problems.length > 0;
+        const dirty = isDirty() || !state.savedId || state.draft.seed;
+        // Only on screen when there is something to save or fix.
+        bar.hidden = !dirty && !problems.length;
+        const stateEl = $('orchSaveState');
+        if (problems.length) {
+            stateEl.className = 'orch-savebar-state is-bad';
+            stateEl.innerHTML = `<strong>${problems.length} to fix</strong> · ${M.esc(problems[0])}`;
+            stateEl.title = problems.join('\n');
+        } else {
+            stateEl.className = 'orch-savebar-state' + (dirty ? ' is-dirty' : ' is-ok');
+            stateEl.textContent = state.draft.seed ? 'Built-in default — save to customize it' : (dirty ? 'Unsaved changes' : 'All changes saved');
+            stateEl.title = '';
+        }
+        $('orchSave').disabled = !!problems.length || !dirty;
+        $('orchDiscard').hidden = !isDirty();
+        bar.classList.toggle('is-dirty', dirty && !problems.length);
+    }
+
+    function changed() {
+        renderSavebar();
+        const d = state.draft;
+        $('orchStartCmd').querySelector('code').textContent = startCommand(d);
+    }
+
+    function setTab(tab) {
+        state.tab = tab;
+        document.querySelectorAll('.orch-tabs [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+        document.querySelectorAll('.orch-tab').forEach((p) => { p.hidden = p.dataset.panel !== tab; });
+        if (tab === 'preview') loadPreview();
     }
 
     function renderEditor() {
         const d = state.draft;
-        meta.id.value = d.id;
-        meta.id.readOnly = !!state.savedId && !d.seed;
-        meta.name.value = d.name;
-        meta.description.value = d.description || '';
+        $('orchName').value = d.name;
+        $('orchDescription').value = d.description || '';
+        $('orchId').value = d.id;
+        $('orchId').readOnly = !!state.savedId && !d.seed;
+        $('orchSeed').hidden = !d.seed;
         $('orchNotes').value = d.notes || '';
-        $('orchStartHint').innerHTML = `Start in any chat: <code>/orchestrate${d.id === 'default' ? '' : ' @' + M.esc(d.id)} &lt;goal&gt;</code>`;
-        $('orchDelete').disabled = !state.savedId || !!d.seed;
-        $('orchSaveState').textContent = d.seed ? 'Built-in seed — save to customize' : '';
         renderTiers();
         renderLimits();
         renderSupervisor();
-        renderProblems();
-        renderList();
-        loadPreview();
+        renderSidebar();
+        changed();
+        if (state.tab === 'preview') loadPreview();
     }
 
-    async function loadPreview() {
+    function loadPreview() {
         clearTimeout(previewTimer);
         previewTimer = setTimeout(async () => {
-            if (!state.savedId) { $('orchBrief').textContent = 'Save the playbook to preview its brief.'; $('orchSupervise').textContent = ''; return; }
+            if (!state.savedId) {
+                $('orchBrief').textContent = 'Save the playbook to preview its brief.';
+                $('orchSupervise').textContent = '';
+                return;
+            }
             const target = $('orchTarget').value.trim();
             try {
                 const q = target ? '?session=' + encodeURIComponent(target) : '';
@@ -162,32 +259,16 @@
             } catch (err) {
                 $('orchSupervise').textContent = err.message;
             }
-        }, 250);
+        }, 200);
     }
 
-    // ── Draft edits ──────────────────────────────────────────────────────
-
-    function readForms() {
-        const d = state.draft;
-        d.id = M.slug(meta.id.value);
-        d.name = meta.name.value.trim();
-        d.description = meta.description.value.trim();
-        d.notes = $('orchNotes').value;
-        M.LIMIT_FIELDS.forEach(([key]) => { d.limits[key] = Number($('orchLimits').elements[key].value); });
-        d.supervisor = {
-            every_sec: Number(sup.every_sec.value), agent: sup.agent.value,
-            instructions: sup.instructions.value.trim(), require_branch: sup.require_branch.value.trim(),
-            require_path: sup.require_path.value.trim(), forbid_branches: M.parseBranches(sup.forbid_branches.value),
-        };
-    }
-
-    function openPlaybook(id) {
-        if (state.dirty && !window.confirm('Discard unsaved changes?')) return;
+    function openPlaybook(id, force) {
+        if (!force && isDirty() && !window.confirm('Discard unsaved changes?')) return;
         const pb = state.playbooks.find((p) => p.id === id);
         if (!pb) return;
         state.draft = M.clone(pb);
         state.savedId = pb.id;
-        state.dirty = false;
+        state.saved = pb.seed ? '' : snapshot(pb);
         renderEditor();
     }
 
@@ -206,116 +287,191 @@
             notice.hidden = true;
             content.hidden = false;
             const want = selectId || state.savedId || (state.playbooks[0] && state.playbooks[0].id);
-            state.dirty = false;
-            if (want) openPlaybook(want); else renderList();
+            if (want) openPlaybook(want, true); else renderSidebar();
         } catch (err) {
-            if (err.disabled) showNotice('Turn on <strong>Orchestrator</strong> in <a href="/settings_page.html?tab=experimental">Settings → Experimental</a>.');
-            else showNotice(M.esc(err.message || 'Orchestrator could not load.'), 'error');
+            notice.hidden = false;
+            notice.classList.add('is-error');
+            notice.innerHTML = err.disabled
+                ? 'Turn on <strong>Orchestrator</strong> in <a href="/settings_page.html?tab=experimental">Settings → Experimental</a>.'
+                : M.esc(err.message || 'Orchestrator could not load.');
+            content.hidden = true;
+            $('orchSavebar').hidden = true;
         }
     }
 
-    $('orchTiers').addEventListener('input', (event) => {
-        const box = event.target.closest('.orch-tier');
-        const field = event.target.dataset.field;
-        if (!box || !field) return;
-        state.draft.tiers[Number(box.dataset.index)][field] = event.target.value;
-        markDirty();
+    // ── Events ──────────────────────────────────────────────────────────
+
+    const tiersEl = $('orchTiers');
+    tiersEl.addEventListener('input', (e) => {
+        const box = e.target.closest('.orch-tier');
+        const field = e.target.dataset.field;
+        if (!box || !field || field === 'role') return;
+        state.draft.tiers[Number(box.dataset.index)][field] = e.target.value;
+        changed();
     });
-    $('orchTiers').addEventListener('change', (event) => {
-        const box = event.target.closest('.orch-tier');
+    tiersEl.addEventListener('change', (e) => {
+        const box = e.target.closest('.orch-tier');
         if (!box) return;
         const i = Number(box.dataset.index);
-        if (event.target.dataset.field === 'role') {
-            state.draft.tiers[i].role = event.target.value;
-            markDirty();
-        } else if (event.target.hasAttribute('data-add-profile') && event.target.value) {
-            state.draft.tiers[i] = M.addProfileToTier(state.draft.tiers[i], event.target.value);
-            markDirty();
+        if (e.target.dataset.field === 'role') {
+            state.draft.tiers[i].role = e.target.value;
             renderTiers();
+            changed();
+        } else if (e.target.hasAttribute('data-add-profile') && e.target.value) {
+            state.draft.tiers[i] = M.addProfileToTier(state.draft.tiers[i], e.target.value);
+            renderTiers();
+            changed();
         }
     });
-    $('orchTiers').addEventListener('click', (event) => {
-        const btn = event.target.closest('button');
-        const box = event.target.closest('.orch-tier');
-        if (!btn || !box) return;
+    tiersEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        const box = e.target.closest('.orch-tier');
+        if (!btn || !box || btn.disabled) return;
         const i = Number(box.dataset.index);
         const tiers = state.draft.tiers;
         if (btn.dataset.move) state.draft.tiers = M.moveItem(tiers, i, Number(btn.dataset.move));
-        else if (btn.hasAttribute('data-remove-tier')) tiers.splice(i, 1);
-        else if (btn.dataset.dropProfile) tiers[i] = M.removeProfileFromTier(tiers[i], btn.dataset.dropProfile);
+        else if (btn.hasAttribute('data-remove-tier')) {
+            if (tiers[i].profiles.length && !window.confirm(`Remove the ${tiers[i].label} tier?`)) return;
+            tiers.splice(i, 1);
+        } else if (btn.dataset.dropProfile) tiers[i] = M.removeProfileFromTier(tiers[i], btn.dataset.dropProfile);
         else if (btn.dataset.upProfile) {
-            const at = tiers[i].profiles.indexOf(btn.dataset.upProfile);
-            tiers[i].profiles = M.moveItem(tiers[i].profiles, at, -1);
+            const list = tiers[i].profiles.filter((p) => p !== btn.dataset.upProfile);
+            tiers[i].profiles = [btn.dataset.upProfile].concat(list);
         } else return;
-        markDirty();
         renderTiers();
+        changed();
     });
     $('orchAddTier').addEventListener('click', () => {
-        state.draft.tiers.push(M.newTier(state.draft.tiers));
-        markDirty();
+        const tier = M.newTier(state.draft.tiers);
+        tier.role = state.draft.tiers.some((t) => t.role === 'expert') ? 'escalation' : 'expert';
+        tier.label = M.ROLE_LABELS[tier.role];
+        state.draft.tiers.push(tier);
         renderTiers();
+        changed();
+        tiersEl.lastElementChild?.querySelector('.orch-tier-name')?.focus();
     });
-    [meta, $('orchLimits'), sup].forEach((f) => f.addEventListener('input', () => { readForms(); markDirty(); }));
-    sup.addEventListener('change', () => { readForms(); markDirty(); });
-    $('orchNotes').addEventListener('input', () => { readForms(); markDirty(); });
+
+    $('orchName').addEventListener('input', (e) => { state.draft.name = e.target.value; changed(); });
+    $('orchDescription').addEventListener('input', (e) => { state.draft.description = e.target.value; changed(); });
+    $('orchId').addEventListener('input', (e) => { state.draft.id = M.slug(e.target.value); changed(); });
+    $('orchNotes').addEventListener('input', (e) => { state.draft.notes = e.target.value; changed(); });
+
+    $('orchLimits').addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-step]');
+        if (!btn) return;
+        const wrap = btn.closest('.orch-stepper');
+        const input = wrap.querySelector('input');
+        const v = Math.min(Number(input.max), Math.max(Number(input.min), (Number(input.value) || 0) + Number(btn.dataset.step)));
+        input.value = v;
+        state.draft.limits[wrap.dataset.key] = v;
+        changed();
+    });
+    $('orchLimits').addEventListener('input', (e) => {
+        const wrap = e.target.closest('.orch-stepper');
+        if (!wrap) return;
+        state.draft.limits[wrap.dataset.key] = Number(e.target.value);
+        changed();
+    });
+
+    function readSupervisor() {
+        const s = state.draft.supervisor;
+        s.every_sec = Math.round(Number(sup.every_min.value) * 60);
+        s.agent = sup.agent.value;
+        s.require_branch = sup.require_branch.value.trim();
+        s.require_path = sup.require_path.value.trim();
+        s.instructions = sup.instructions.value.trim();
+        changed();
+    }
+    sup.addEventListener('input', readSupervisor);
+    sup.addEventListener('change', readSupervisor);
+    sup.addEventListener('submit', (e) => e.preventDefault());
+    const forbidInput = $('orchForbid').querySelector('input');
+    function addForbid() {
+        const names = M.parseBranches(forbidInput.value);
+        if (!names.length) return;
+        const list = state.draft.supervisor.forbid_branches;
+        names.forEach((b) => { if (list.indexOf(b) < 0) list.push(b); });
+        forbidInput.value = '';
+        renderForbid();
+        changed();
+    }
+    forbidInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addForbid(); }
+        else if (e.key === 'Backspace' && !forbidInput.value && state.draft.supervisor.forbid_branches.length) {
+            state.draft.supervisor.forbid_branches.pop();
+            renderForbid();
+            changed();
+        }
+    });
+    forbidInput.addEventListener('blur', addForbid);
+    $('orchForbid').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-unforbid]');
+        if (b) {
+            state.draft.supervisor.forbid_branches = state.draft.supervisor.forbid_branches.filter((x) => x !== b.dataset.unforbid);
+            renderForbid();
+            changed();
+        } else forbidInput.focus();
+    });
+
+    document.querySelector('.orch-tabs').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-tab]');
+        if (b) setTab(b.dataset.tab);
+    });
     $('orchTarget').addEventListener('input', loadPreview);
+    $('orchStartCmd').addEventListener('click', () => copy(startCommand(state.draft), 'Command'));
+    $('orchCopyBrief').addEventListener('click', () => copy(state.preview && state.preview.brief, 'Brief'));
+    $('orchCopySupervise').addEventListener('click', () => copy(state.preview && state.preview.supervisor_command, 'Command'));
 
     $('orchNew').addEventListener('click', () => {
-        if (state.dirty && !window.confirm('Discard unsaved changes?')) return;
+        if (isDirty() && !window.confirm('Discard unsaved changes?')) return;
         let n = 1;
         while (state.playbooks.some((p) => p.id === `playbook-${n}`)) n += 1;
         state.draft = M.newPlaybook(`playbook-${n}`);
         state.savedId = '';
-        state.dirty = true;
+        state.saved = '';
+        setTab('chart');
         renderEditor();
-        meta.name.focus();
+        $('orchName').select();
     });
 
     $('orchSave').addEventListener('click', async () => {
-        readForms();
-        const body = M.clone(state.draft);
-        delete body.seed; delete body.missing_profiles; delete body.updated_at;
+        readSupervisor();
+        const body = JSON.parse(snapshot(state.draft));
         try {
             const data = await call('/api/orchestrator/playbooks/' + encodeURIComponent(body.id), 'PUT', body);
             toast(`Saved ${data.playbook.name}`, 'success');
             state.savedId = data.playbook.id;
-            state.dirty = false;
-            load(data.playbook.id);
+            await load(data.playbook.id);
         } catch (err) {
             toast(err.message, 'error');
-            $('orchSaveState').textContent = err.message;
+            const el = $('orchSaveState');
+            el.className = 'orch-savebar-state is-bad';
+            el.textContent = err.message;
         }
     });
-
+    $('orchDiscard').addEventListener('click', () => { if (state.savedId) openPlaybook(state.savedId, true); });
     $('orchDelete').addEventListener('click', async () => {
-        if (!state.savedId || !window.confirm(`Delete playbook ${state.savedId}? Chats bound to it fall back to an error until rebound.`)) return;
+        if (!state.savedId || !window.confirm(`Delete playbook “${state.draft.name}”? Chats bound to it lose their brief until rebound.`)) return;
         try {
             await call('/api/orchestrator/playbooks/' + encodeURIComponent(state.savedId), 'DELETE');
-            toast('Deleted', 'success');
+            toast('Playbook deleted', 'success');
             state.savedId = '';
-            state.dirty = false;
+            state.saved = '';
+            state.draft = null;
             load();
         } catch (err) { toast(err.message, 'error'); }
     });
 
-    async function copy(text, label) {
-        try { await navigator.clipboard.writeText(text || ''); toast(`${label} copied`, 'success'); }
-        catch (_) { toast('Copy failed — select the text instead', 'error'); }
-    }
-    $('orchCopyBrief').addEventListener('click', () => copy(state.preview && state.preview.brief, 'Brief'));
-    $('orchCopySupervise').addEventListener('click', () => copy(state.preview && state.preview.supervisor_command, 'Command'));
-
-    content.addEventListener('click', async (event) => {
-        const open = event.target.closest('[data-open]');
+    content.querySelector('.orch-sidebar').addEventListener('click', async (e) => {
+        const open = e.target.closest('[data-open]');
         if (open) { openPlaybook(open.dataset.open); return; }
-        const btn = event.target.closest('button');
+        const btn = e.target.closest('button');
         if (!btn) return;
         if (btn.dataset.target) {
             const b = state.bindings.find((x) => x.session === btn.dataset.target);
             if (b && b.playbook_id !== state.savedId) openPlaybook(b.playbook_id);
             $('orchTarget').value = btn.dataset.target;
-            loadPreview();
-            $('orchSupervise').scrollIntoView({ behavior: 'smooth', block: 'center' });
+            setTab('preview');
         } else if (btn.dataset.unbind) {
             if (!window.confirm(`Unbind ${btn.dataset.unbind}? Its next fresh context will not carry the brief.`)) return;
             try {
@@ -325,6 +481,7 @@
         }
     });
 
-    $('orchRefresh').addEventListener('click', () => load());
+    window.addEventListener('beforeunload', (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
+    $('orchRefresh').addEventListener('click', () => { if (!isDirty() || window.confirm('Discard unsaved changes?')) load(); });
     load();
 })();

@@ -172,6 +172,14 @@ def brief(session: Any = None, *, playbook_id: str = "", user_id: Optional[int] 
     }
 
 
+def _chat_title(sess: Dict[str, Any]) -> str:
+    """Display title: auto-names start with the slash commands typed first."""
+    import re
+
+    raw = str(sess.get("session_name") or sess.get("title") or "").strip()
+    return re.sub(r"^(?:/[\w-]+\s+)+", "", raw).strip() or raw
+
+
 def list_bindings(user_id: int, *, db=None) -> List[Dict[str, Any]]:
     db = _db(db)
     out = []
@@ -181,7 +189,8 @@ def list_bindings(user_id: int, *, db=None) -> List[Dict[str, Any]]:
             continue
         out.append({
             "session": _handle(row["session_id"]),
-            "title": sess.get("title") or "",
+            "title": _chat_title(sess),
+            "project": str(sess.get("project_name") or ""),
             "playbook_id": row["playbook_id"],
             "goal": row["goal"],
             "bound_at": row["bound_at"],

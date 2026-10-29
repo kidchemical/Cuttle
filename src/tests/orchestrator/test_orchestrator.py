@@ -138,6 +138,12 @@ def test_save_rejects_unknown_profiles(tmp_path, orch):
         service.save_playbook(owner, bad, db=db)
 
 
+def test_binding_titles_strip_leading_slash_commands():
+    assert service._chat_title({"session_name": "/cursor /codex 🧪 Multiplayer"}) == "🧪 Multiplayer"
+    assert service._chat_title({"session_name": "/restart"}) == "/restart"
+    assert service._chat_title({}) == ""
+
+
 def test_bind_brief_and_context_block(tmp_path, orch, monkeypatch):
     db, owner, other, sid, other_sid = _seed_db(tmp_path)
     monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
@@ -268,6 +274,48 @@ def test_routes_round_trip(tmp_path, monkeypatch, orch):
     assert client.get("/api/orchestrator/playbooks").status_code == 403
 
 
+def _png(w=40, h=20, color=(200, 30, 30, 255)):
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGBA", (w, h), color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_avatar_normalize_and_store(tmp_path, monkeypatch):
+    from PIL import Image
+    from api.subagents import profile_avatars
+
+    monkeypatch.setattr(profile_avatars, "output_dir", lambda: tmp_path)
+    url = profile_avatars.store(7, _png(600, 300))
+    assert url.startswith("/output/avatars/7/") and url.endswith(".png")
+    saved = tmp_path / url[len("/output/"):]
+    with Image.open(saved) as img:
+        assert img.size == (256, 256)
+    assert profile_avatars.store(7, _png(600, 300)) == url  # content-addressed
+    for bad, needle in ((b"", "empty"), (b"not an image", "PNG, JPEG"), (b"\x89PNG\r\n\x1a\nbroken", "could not be read")):
+        with pytest.raises(profile_avatars.AvatarError, match=needle):
+            profile_avatars.normalize(bad)
+
+
+def test_avatar_upload_route(tmp_path, monkeypatch, orch):
+    from api.subagents import profile_avatars
+
+    monkeypatch.setattr(profile_avatars, "output_dir", lambda: tmp_path)
+    client = _client(tmp_path, monkeypatch)["client"]
+    resp = client.post("/api/agent-profiles/avatar", data={"file": (io.BytesIO(_png()), "me.png")},
+                       content_type="multipart/form-data")
+    assert resp.status_code == 200, resp.get_json()
+    url = resp.get_json()["url"]
+    assert url.startswith("/output/avatars/")
+    bad = client.post("/api/agent-profiles/avatar", data={"file": (io.BytesIO(b"hello"), "x.png")},
+                      content_type="multipart/form-data")
+    assert bad.status_code == 400
+    assert client.post("/api/agent-profiles/avatar").status_code == 400
+    saved = client.put("/api/agent-profiles/pic", json={"name": "Pic", "avatar": url, "agent": "none"})
+    assert saved.get_json()["profile"]["avatar"] == url
+
+
 # ── client wiring + pure JS model ──────────────────────────────────────────
 
 
@@ -282,6 +330,15 @@ def test_rail_apps_registered_stashed_and_flag_gated():
     for page in ("orchestrator_page.html", "agent_profiles_page.html"):
         text = (WEB / page).read_text(encoding="utf-8")
         assert text.index("orchestrator_model.js") < text.index("_page.js?v=")
+        assert text.index("page_controls.css") < text.index("orchestrator_page.css")  # page skin first
+        assert "<datalist" not in text
+    agents = (WEB / "agent_profiles_page.html").read_text(encoding="utf-8")
+    # "Runs on" is the composer's chip picker, not a parallel set of dropdowns.
+    for dep in ("searchable_select.js", "chat_chip_config.js", "agent_pin_picker.js", "chip_config_modal.css", "auth_modal.css"):
+        assert dep in agents
+    assert agents.index("chat_chip_config.js") < agents.index("agent_pin_picker.js")
+    for html in ("app_shell.html", "chat_page.html"):
+        assert "chip_config_modal.css" in (WEB / html).read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
@@ -308,5 +365,14 @@ assert.deepEqual(M.moveItem(['a','b','c'], 2, -1), ['a','c','b']);
 assert.deepEqual(M.profileUsage([{name:'P', tiers:[{profiles:['a','b']}]}]), {a:['P'], b:['P']});
 assert.deepEqual(M.parseBranches('master, dev/core  x'), ['master','dev/core','x']);
 assert.equal(M.esc('<b>'), '&lt;b&gt;');
+assert.equal(M.avatarKind(''), 'mascot'); assert.equal(M.avatarKind('cuttle'), 'mascot');
+assert.equal(M.avatarKind('🦉'), 'emoji'); assert.equal(M.avatarKind('/output/avatars/1/a.png'), 'image');
+assert.ok(M.avatarHtml('/output/avatars/1/a.png').includes('src="/output/avatars/1/a.png"'));
+assert.ok(M.avatarHtml('/etc/passwd').includes('cuttle-mascot'));  // unsafe local path → mascot
+assert.ok(!M.avatarHtml('<img onerror=x>').includes('<img onerror'));
+assert.deepEqual(M.settingItems(['a', {id:'b', label:'B'}, null, {}]), [{modelId:'a',label:'a'},{modelId:'b',label:'B'}]);
+assert.equal(M.pinLabel([claude], {agent:'claude', model:'opus', effort:'high'}), 'Claude · opus · high');
+assert.equal(M.pinLabel([], {agent:'none'}), 'Any harness');
+assert.deepEqual(M.effortLevels(cursor, 'auto'), []);
 """ % json.dumps(str(WEB / "js" / "orchestrator" / "orchestrator_model.js"))
     subprocess.run(["node", "-e", script], check=True)

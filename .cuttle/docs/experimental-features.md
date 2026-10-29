@@ -259,9 +259,18 @@ and Rust Cargo packages. Only the owner can inspect projects or start runs.
 
 Flag `orchestrator` (default off). Replaces restating an orchestration setup
 in every new orchestrator chat. **Apps → Agents** edits sub-agent profiles
-(name, avatar, harness, model, effort); every save is checked against that
-CLI's live model catalog plus its manifest ids, with live feedback while
-editing. Built-ins are read-only; duplicate one to customize. **Apps →
+(name, avatar, harness, model, effort). **Runs on** opens the composer's agent
+chip modal (`CuttleChipConfig.openAgent` through `js/orchestrator/agent_pin_picker.js`,
+the same adapter shape Spaces overrides use), so long catalogs page lazily in
+the shared searchable list; never a native `<select>`/`<datalist>` per model.
+Every save is checked against that CLI's live model catalog plus its manifest
+ids, with live feedback while editing. The avatar (emoji grid or any emoji, an
+uploaded picture, an https URL, or the mascot) is what child-chat bubbles and
+fleet cards show for the profile; uploads are cropped to a 256 px PNG under
+`<home>/output/avatars/<user>/` (`api/subagents/profile_avatars.py`, not
+pruned). Built-ins are read-only; duplicate one to customize. The picker's
+styles live in the shared `css/chip_config_modal.css` (chat, shell and these
+Apps). **Apps →
 Orchestrator** edits playbooks: tiers in escalation order (worker →
 escalation → expert, each an ordered list of profiles, first = default),
 limits (solo attempts/minutes before delegating, same-tier retries, setup

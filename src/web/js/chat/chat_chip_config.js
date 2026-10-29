@@ -8,6 +8,9 @@
    branch list/switch transport, and the segmented project chip's branch
    cache.
 
+   Optional host labels (app pages reusing the picker, e.g. Apps →
+   Agents): `agentPickerTitle`, `agentPickerSubtitle`, `clearChoiceLabel`.
+
    Composed once per page by chat_page.js:
    `CuttleChipConfig.create(host)` returns
    `{ openProject, openAgent, close, bindRow }`. The page keeps chat
@@ -233,7 +236,9 @@
         function selectHtml(id, label, options, selected, disabled) {
             return '<div class="chip-config-field">' +
                 '<span class="chip-config-field-label">' + esc(label) + '</span>' +
-                '<select class="chip-config-select" id="' + id + '"' + (disabled ? ' disabled' : '') + '>' +
+                // data-native-select: this module owns the combobox, so app-page
+                // skins (page_controls.js) leave it as the composer renders it.
+                '<select class="chip-config-select" data-native-select id="' + id + '"' + (disabled ? ' disabled' : '') + '>' +
                 optionsHtml(options, selected) + '</select></div>';
         }
 
@@ -608,7 +613,7 @@
             const id = String(agentId || '').toLowerCase();
             const spec = id && h.getAgentSpec ? h.getAgentSpec(id) : null;
             let agentOptions = entries.map((e) => ({ value: e.id, label: e.label }));
-            if (defaultsMode) agentOptions = withClearChoice(agentOptions);
+            if (defaultsMode) agentOptions = withClearChoice(agentOptions, h.clearChoiceLabel);
             let fields = selectHtml('chipConfigAgent', 'Agent', agentOptions, id, !agentOptions.length);
             let modelOpts = [];
             let effortOpts = [];
@@ -623,10 +628,10 @@
                 fields += selectHtml('chipConfigEffort', 'Effort', effortOpts, spec.efforts.current());
             }
             openModal(
-                'Agent',
-                defaultsMode
+                h.agentPickerTitle || 'Agent',
+                h.agentPickerSubtitle || (defaultsMode
                     ? 'Choose the agent, model, and effort for new chats in this tab or group.'
-                    : 'Choose the agent, model, and effort for this chat.',
+                    : 'Choose the agent, model, and effort for this chat.'),
                 fields,
                 (el) => {
                     const agentSel = el.querySelector('#chipConfigAgent');

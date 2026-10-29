@@ -99,6 +99,78 @@
         return { id: '', name: '', avatar: '', agent: 'none', model: '', effort: '' };
     }
 
+    // ── Avatars ───────────────────────────────────────────────────────────
+
+    const EMOJI_GROUPS = [
+        ['Roles', ['🤖', '🧠', '🦉', '🐜', '🐝', '🦊', '🐙', '🦑', '🐺', '🦅', '🐢', '🐇', '🦄', '🐉', '🦁', '🐻', '🐼', '🐧', '🦖', '🐳']],
+        ['Work', ['🛠️', '🔧', '🔨', '⚙️', '🧰', '🧪', '🔬', '🔭', '📐', '🧭', '🗺️', '📦', '🚀', '🛰️', '⚡', '🔥', '💡', '🧩', '🎯', '🏗️']],
+        ['People', ['🧑‍💻', '👩‍💻', '👨‍💻', '🧑‍🔬', '🧑‍🏫', '🧑‍⚖️', '🕵️', '🧙', '🥷', '🦸', '👷', '🧑‍🚀', '🧑‍🎨', '🧑‍🍳', '💂', '🤠', '😎', '🤓', '🧐', '🫡']],
+        ['Symbols', ['⭐', '🌟', '✨', '💎', '🔮', '🪄', '🎲', '♟️', '🏆', '🥇', '🛡️', '⚔️', '🗝️', '🔒', '📜', '📚', '🧾', '🔍', '⚖️', '🧬']],
+        ['Nature', ['🌊', '🌋', '🌙', '☀️', '🌈', '❄️', '🍀', '🌵', '🌲', '🍄', '🌸', '🌻', '🪐', '☄️', '🌪️', '🍋', '🍉', '🍒', '🌶️', '🥑']],
+    ];
+
+    /** 'mascot' | 'image' | 'emoji' — mirrors the chat bubble renderer. */
+    function avatarKind(avatar) {
+        const a = String(avatar || '').trim();
+        if (!a || a.toLowerCase() === 'cuttle') return 'mascot';
+        if (/^https?:\/\//i.test(a) || (a.charAt(0) === '/' && a.charAt(1) !== '/')) return 'image';
+        return 'emoji';
+    }
+
+    /** Same sources the chat bubble accepts: http(s) or Cuttle's /output/. */
+    function safeImageSrc(src) {
+        const u = String(src || '').trim();
+        if (/^(javascript|data|vbscript):/i.test(u)) return false;
+        return /^https?:\/\//i.test(u) || u.startsWith('/output/');
+    }
+
+    function avatarHtml(avatar, className) {
+        const cls = className ? ' ' + className : '';
+        const kind = avatarKind(avatar);
+        if (kind === 'image' && safeImageSrc(avatar)) {
+            return `<img class="orch-av-img${cls}" src="${esc(String(avatar).trim())}" alt="" referrerpolicy="no-referrer">`;
+        }
+        if (kind === 'emoji') return `<span class="orch-av-emoji${cls}" aria-hidden="true">${esc(String(avatar).trim())}</span>`;
+        return `<img class="orch-av-img is-mascot${cls}" src="/img/cuttle-mascot.png" alt="">`;
+    }
+
+    // ── Agent pins (harness · model · effort) ─────────────────────────────
+
+    const DEFAULT_PIN = '__cli_default__';
+
+    function settingItems(list) {
+        return (list || []).map((item) => {
+            if (item == null) return null;
+            if (typeof item === 'string' || typeof item === 'number') return { modelId: String(item), label: String(item) };
+            const v = item.id || item.modelId || item.value;
+            return v == null || v === '' ? null : { modelId: String(v), label: String(item.label || v) };
+        }).filter(Boolean);
+    }
+
+    /** Effort levels offered for a harness row + model ([] when it has no effort flag). */
+    function effortLevels(row, model) {
+        return pinOptions(row, model).efforts;
+    }
+
+    /** "Claude Code · claude-opus-5-5 · high" (or "Any harness"). */
+    function pinLabel(catalog, profile) {
+        const p = profile || {};
+        if (!p.agent || p.agent === 'none') return 'Any harness';
+        const row = catalogRow(catalog, p.agent);
+        return [row ? (row.label || p.agent) : p.agent, p.model || 'default model', p.effort].filter(Boolean).join(' · ');
+    }
+
+    function agentIcon(catalog, agentId) {
+        const row = catalogRow(catalog, agentId);
+        return (row && row.icon) || (agentId && agentId !== 'none' ? '◆' : '✦');
+    }
+
+    const ROLE_META = {
+        worker: { icon: '⚒', hint: 'Every task starts here. Cheap and fast.' },
+        escalation: { icon: '⤴', hint: 'Takes over when a worker task fails after a retry.' },
+        expert: { icon: '◈', hint: 'Plans and reviews. Never grinds.' },
+    };
+
     // ── Playbooks ─────────────────────────────────────────────────────────
 
     function newTier(existing) {
@@ -182,6 +254,8 @@
         ROLES, ROLE_LABELS, LIMIT_FIELDS,
         esc, slug, validId, clone,
         catalogRow, modelIds, pinOptions, pinProblem, profileSummary, profileUsage, emptyProfile,
+        EMOJI_GROUPS, avatarKind, safeImageSrc, avatarHtml,
+        DEFAULT_PIN, settingItems, effortLevels, pinLabel, agentIcon, ROLE_META,
         newTier, newPlaybook, moveItem, addProfileToTier, removeProfileFromTier, parseBranches,
         playbookProblems, formatTime,
     };
