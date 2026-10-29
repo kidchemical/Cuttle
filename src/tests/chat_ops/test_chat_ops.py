@@ -273,6 +273,23 @@ def test_send_carries_its_operation_id(chats, monkeypatch):
     assert seen[0]["chat_op_id"] == op["id"]
 
 
+def test_send_runs_on_the_target_chats_agent_not_the_router(chats):
+    from api.subagents.spec import ChildSpec
+    from api.subagents.store import insert_child
+    db, owner, _sup, target, _foreign = chats
+    row = {"id": target, "user_id": owner}
+    pin = lambda text: service.pin_to_chat_agent(db, row, text)
+    assert pin("go") == "go"
+    assert pin("/codex go") == "/codex go"
+    insert_child(db, batch_id="b1", session_id=target, sort_index=0,
+                 spec=ChildSpec(title="w", message="m", agent="muse"), prompt="m")
+    assert pin("go") == "/muse go"
+    db.set_composer_selection(target, owner, {"stickyChips": [{"prefix": "/cursor", "label": "Cursor"}]})
+    assert pin("go") == "/cursor go"
+    db.set_composer_selection(target, owner, {"stickyChips": [], "stickyCleared": True})
+    assert pin("go") == "go"
+
+
 def test_restart_verifies_sends_and_resumes_schedules(chats):
     db, _owner, sup, target, _foreign = chats
     send = _queued(chats)

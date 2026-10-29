@@ -63,7 +63,7 @@ def dispatch(op, *, request=None):
         if op['kind'] == 'supervise':
             _check_in(op, db, actor, sid, request)
             return
-        text = op['payload']['text']
+        text = service.pin_to_chat_agent(db, row, op['payload']['text'])
         # The host turn outlives this connection (chat-pending-result), so read
         # only until the host accepts or rejects it; a long silent tool run must
         # not time out a delivery that already started.

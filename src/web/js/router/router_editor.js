@@ -784,7 +784,13 @@ function wirePreview() {
 function fmtTime(ts) {
     if (!ts) return '';
     const d = new Date(ts * 1000);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) return time;
+    const date = d.toLocaleDateString([], d.getFullYear() === now.getFullYear()
+        ? { month: 'short', day: 'numeric' }
+        : { year: 'numeric', month: 'short', day: 'numeric' });
+    return `${date} ${time}`;
 }
 
 function renderHealth() {

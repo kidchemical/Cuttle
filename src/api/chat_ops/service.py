@@ -200,6 +200,26 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
             'hint': 'Host-owned outbox dispatches when idle; no open browser required'}
 
 
+def pin_to_chat_agent(db, row, text):
+    """Run a sent turn on the target chat's own agent, not the agent router.
+
+    A plain message carries no composer badge, so ``/api/chat`` would route a
+    chat whose agent lives only in its badge selection or sub-agent spec.
+    A badge the user removed (``stickyCleared``) stays unpinned on purpose."""
+    if text.startswith('/'):
+        return text
+    selection = db.get_composer_selection(int(row['id']), int(row['user_id'])) or {}
+    chips = selection.get('stickyChips') or []
+    if chips:
+        return chips[0]['prefix'] + text
+    if selection.get('stickyCleared'):
+        return text
+    from api.subagents.store import get_child_by_session
+    child = get_child_by_session(db, int(row['id']))
+    agent = str(getattr(child, 'agent', '') or '').strip().lstrip('/')
+    return f'/{agent} {text}' if agent else text
+
+
 def _agent_slash(agent, project_path):
     """Validated harness slash word (``cursor``) for check-in turns, or ''."""
     if not agent:
