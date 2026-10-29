@@ -42,7 +42,7 @@
                 return win.CuttleAuth.userAvatarInnerHtml(u);
             }
             if (u.profile_image) {
-                return `<img src="${escapeHtml(u.profile_image)}" alt="">`;
+                return `<img src="${escapeHtml(u.profile_image)}" alt="" referrerpolicy="no-referrer">`;
             }
             return initials(u);
         }

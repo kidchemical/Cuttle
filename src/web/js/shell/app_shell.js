@@ -2566,7 +2566,7 @@ function accountAvatarInnerHtml(user) {
         return window.CuttleAuth.userAvatarInnerHtml(user);
     }
     if (user.profile_image) {
-        return `<img src="${escapeHtml(user.profile_image)}" alt="">`;
+        return `<img src="${escapeHtml(user.profile_image)}" alt="" referrerpolicy="no-referrer">`;
     }
     return accountInitials(user);
 }
