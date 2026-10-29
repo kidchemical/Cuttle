@@ -207,6 +207,7 @@ def _no_cache_ui_assets(response):
 # Rate limiter — shared instance from limiter.py (auth_api.py imports from there too,
 # avoiding the circular-import that would occur if it imported from web_chat_api).
 from api.limiter import limiter
+from api.transcript_text import agent_visible_text
 limiter.init_app(app)
 
 # Live-status store — owned service (chat_live_status.py). Delivery, auth,
@@ -2263,7 +2264,7 @@ def _format_pane_messages_for_prompt(pane_number: int, limit: int = 40):
     lines = []
     for msg in messages:
         role = (msg.get('role') or '?').upper()
-        content = (msg.get('content') or '').strip()
+        content = agent_visible_text(msg.get('content'))
         if len(content) > 4000:
             content = content[:4000] + '\n…(truncated)'
         lines.append(f'**{role}:** {content}')
@@ -4702,7 +4703,7 @@ def api_shell_pane_messages(pane_number):
         # Trim bulky fields for agent consumption
         out = []
         for msg in messages:
-            content = msg.get('content') or ''
+            content = agent_visible_text(msg.get('content'))
             if len(content) > 8000:
                 content = content[:8000] + '\n…(truncated)'
             out.append({

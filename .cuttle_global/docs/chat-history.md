@@ -29,6 +29,12 @@ reads no longer import bcrypt at module load.
 
 Put flags **after** the verb (`get … --json`, not `--json get …`).
 
+`get` / `session` / `search` hide other agents' `<think>` narration and
+post-processing originals (they trip provider reasoning-extraction safeguards
+for the agent reading them). Read through `chat_cli`, not raw SQL; `--raw`
+shows stored text unchanged, but only for debugging storage, never to bring
+context into your own turn.
+
 | Verb | Use |
 |---|---|
 | `get CH-…` | Session summary, or one bubble when `CH-…-N` |

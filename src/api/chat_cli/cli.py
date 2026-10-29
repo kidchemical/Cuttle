@@ -78,8 +78,17 @@ def _message_payload(
     session_id: int,
     share_index: Optional[int],
     max_chars: Optional[int],
+    raw: bool = False,
 ) -> Dict[str, Any]:
+    from api.transcript_text import agent_visible_metadata, agent_visible_text
+
     content = msg.get("content") or ""
+    meta = msg.get("metadata")
+    if not raw:
+        # Another model's <think> narration in a tool result trips provider
+        # reasoning-extraction safeguards for the agent reading it.
+        content = agent_visible_text(content)
+        meta = agent_visible_metadata(meta)
     out: Dict[str, Any] = {
         "id": msg.get("id"),
         "session_id": int(session_id),
@@ -92,7 +101,6 @@ def _message_payload(
     if max_chars and isinstance(content, str) and len(content) > max_chars:
         out["content_truncated"] = True
         out["content_chars"] = len(content)
-    meta = msg.get("metadata")
     if meta is not None:
         out["metadata"] = _json_ready(meta)
     return out
@@ -246,6 +254,7 @@ def cmd_get(args: argparse.Namespace) -> int:
             session_id=sid,
             share_index=int(parsed["message_index"]),
             max_chars=max_chars,
+            raw=args.raw,
         )
         payload = {"ok": True, **body}
         _emit_text_once(
@@ -369,6 +378,7 @@ def cmd_session(args: argparse.Namespace) -> int:
                 session_id=sid,
                 share_index=share_index,
                 max_chars=max_chars,
+                raw=args.raw,
             )
         )
 
@@ -416,12 +426,14 @@ def cmd_search(args: argparse.Namespace) -> int:
             sys.stderr.write(msg + "\n")
         return 2
 
+    from api.transcript_text import agent_visible_text
+
     hits = db.search_user_chats(uid, args.query, limit=int(args.limit))
     results = []
     for row in hits:
         entry = _session_payload(dict(row))
         entry["match"] = row.get("match")
-        entry["snippet"] = row.get("snippet") or ""
+        entry["snippet"] = agent_visible_text(row.get("snippet") or "")
         if row.get("message_count") is not None:
             entry["message_count"] = row.get("message_count")
         results.append(entry)
@@ -547,6 +559,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not truncate message content",
     )
+    get_p.add_argument(
+        "--raw", action="store_true",
+        help="Keep <think> blocks and post-processing originals (hidden by default)",
+    )
     get_p.set_defaults(func=cmd_get)
 
     sess_p = sub.add_parser(
@@ -587,6 +603,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sess_p.add_argument("--max-chars", type=int, default=500)
     sess_p.add_argument("--full", action="store_true")
+    sess_p.add_argument(
+        "--raw", action="store_true",
+        help="Keep <think> blocks and post-processing originals (hidden by default)",
+    )
     sess_p.set_defaults(func=cmd_session)
 
     search_p = sub.add_parser(

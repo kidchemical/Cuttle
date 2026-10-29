@@ -22,10 +22,11 @@ When the user asks you to **create, register, or set up a Cuttle project**
    `ProjectManager.add_local_project`) — registration **auto-scaffolds**
    `.cuttle/` via `managers.cuttle_scaffold.ensure_cuttle_scaffold`.
 3. If you only create folders and skip the API, still run the scaffold yourself:
-   ```text
-   ..\.venv\Scripts\python.exe -m managers.cuttle_scaffold "E:\path\to\project" --name "Display Name"
+   ```bash
+   PYTHONPATH=src .venv/bin/python -m managers.cuttle_scaffold "/path/to/project" --name "Display Name"
+   # Windows: $env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe -m managers.cuttle_scaffold "E:\path\to\project" --name "Display Name"
    ```
-   (cwd = `/path/to/Cuttle/src`), or call `ensure_cuttle_scaffold(path, project_name=…)` in Python.
+   (cwd = the Cuttle repo root), or call `ensure_cuttle_scaffold(path, project_name=…)` in Python.
 4. Fill `rules/00-core.md` with real layout notes for that project; leave stubs only as a starting point.
 5. Do **not** treat “project created” as done until `{root}/.cuttle/rules/00-core.md` exists.
 

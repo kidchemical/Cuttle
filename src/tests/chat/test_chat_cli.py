@@ -183,3 +183,42 @@ def test_help_lists_verbs():
     with pytest.raises(SystemExit) as ei:
         main(["--help"])
     assert ei.value.code == 0
+
+
+# CH-001621: Claude read a Cursor reply through `chat_cli session` and the tool
+# result carried Cursor's <think> narration, tripping `reasoning_extraction`.
+_REASONING_REPLY = (
+    '<cuttle_original_response>"<think>\\nI\'ll read the files.\\n</think>\\n\\nDone."'
+    "</cuttle_original_response>\n\n<think>more narration</think>Implemented the fix."
+)
+
+
+def _seed_reasoning(tmp_path: Path) -> tuple[Path, int]:
+    db = AuthDatabase(tmp_path / "cuttle_auth.db")
+    owner = db.create_user("owner@local", "Owner", "local", password="x")
+    sid = db.create_chat_session(owner, "Reasoning demo")
+    db.add_message(sid, "user", "go")
+    db.add_message(
+        sid, "assistant", _REASONING_REPLY,
+        metadata={"postprocessing": {"status": "completed", "original_response": "<think>x</think>y"}},
+    )
+    return tmp_path / "cuttle_auth.db", sid
+
+
+@pytest.mark.parametrize("verb", ["get", "session"])
+def test_reads_hide_foreign_reasoning(tmp_path: Path, verb: str):
+    db_path, sid = _seed_reasoning(tmp_path)
+    handle = f"CH-{sid:06d}-2" if verb == "get" else f"CH-{sid:06d}"
+    code, out, err = _run([verb, handle, "--db", str(db_path), "--json", "--full"])
+    assert code == 0, err
+    assert "think>" not in out
+    assert "cuttle_original_response" not in out
+    assert "original_response" not in out
+    assert "Implemented the fix." in out
+
+
+def test_raw_flag_keeps_stored_text(tmp_path: Path):
+    db_path, sid = _seed_reasoning(tmp_path)
+    code, out, err = _run(["get", f"CH-{sid:06d}-2", "--db", str(db_path), "--json", "--full", "--raw"])
+    assert code == 0, err
+    assert json.loads(out)["content"] == _REASONING_REPLY

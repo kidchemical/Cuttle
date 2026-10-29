@@ -257,15 +257,9 @@ def _strip_injected_blocks(content: str) -> str:
     # Never forward another model's raw reasoning to the next harness: the
     # postprocessing wrapper keeps the unedited reply (often with <think>),
     # and provider safeguards reject prompts carrying foreign chain-of-thought.
-    text = _ORIGINAL_RESPONSE_RE.sub("", text or "")
-    text = _THINK_RE.sub("", text)
-    return text.strip()
+    from api.transcript_text import agent_visible_text
 
-
-_ORIGINAL_RESPONSE_RE = re.compile(
-    r"<cuttle_original_response>.*?</cuttle_original_response>", re.DOTALL
-)
-_THINK_RE = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
+    return agent_visible_text(text)
 
 
 # Handoff budget: newest messages win; older ones are listed as omitted with a
