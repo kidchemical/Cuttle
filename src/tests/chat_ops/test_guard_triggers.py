@@ -184,8 +184,8 @@ def test_bringing_in_protected_work_is_a_violation_whoever_does_it(chats, repo):
 
 def test_unattributed_commit_on_protected_paths_is_a_violation(chats, repo):
     db, _owner, _sup, target, _child = chats
-    _schedule(chats, forbidden_paths=r"^Networking/")
-    _commit_on(repo, "dev/core", "net", file="Networking/Net.cs")
+    _schedule(chats, forbidden_paths=r"^protected/")
+    _commit_on(repo, "dev/core", "net", file="protected/thing.txt")
     assert triggers.run_checks({target: "tool"}, db=db, request=_host) == 1
     assert "touches protected paths" in _checkins(chats)[0]["payload"]["text"]
 
