@@ -257,7 +257,7 @@ def _agent_slash(agent, project_path):
 
 def supervise(target, actor=None, *, every=900, instructions='', required_branch='',
               required_path='', forbidden_branches=(), model_tiers=None, agent='',
-              start_now=False, db=None):
+              start_now=False, forbidden_paths='', db=None):
     db, actor, row = context(target, actor, db=db)
     if actor == int(row['id']):
         raise ValueError('Supervisor and target must be different chats')
@@ -267,10 +267,16 @@ def supervise(target, actor=None, *, every=900, instructions='', required_branch
         raise ValueError('model_tiers must be a JSON object')
     if not instructions.strip():
         raise ValueError('Give the supervisor explicit instructions')
+    if forbidden_paths:
+        try:
+            re.compile(forbidden_paths)
+        except re.error as exc:
+            raise ValueError(f'forbidden_paths is not a valid regex: {exc}') from None
     payload = {'every': every, 'instructions': instructions, 'required_branch': required_branch,
                'required_path': str(Path(required_path).resolve()) if required_path else '',
                'forbidden_branches': list(forbidden_branches), 'model_tiers': model_tiers or {},
-               'agent': _agent_slash(agent, row.get('project_path')), 'brief_on_start': bool(start_now)}
+               'agent': _agent_slash(agent, row.get('project_path')), 'brief_on_start': bool(start_now),
+               'forbidden_paths': forbidden_paths or ''}
     if forbidden_branches:
         from api.chat_ops.rules import branch_tips
         # Baseline for "a commit landed on a forbidden branch", from any checkout of the repo.

@@ -504,7 +504,7 @@ def cmd_operation(args: argparse.Namespace) -> int:
             payload = service.supervise(args.handle, every=args.every, instructions=args.instructions,
                 required_branch=args.require_branch, required_path=args.require_path,
                 forbidden_branches=args.forbid_branch, model_tiers=json.loads(args.model_tiers),
-                agent=args.agent, **kwargs)
+                agent=args.agent, forbidden_paths=args.forbid_paths, **kwargs)
     _emit_text_once(payload, as_json=args.json,
                     text_fn=lambda p: json.dumps(p, indent=2, ensure_ascii=False, default=str))
     return 0
@@ -658,6 +658,9 @@ def build_parser() -> argparse.ArgumentParser:
             op.add_argument('--require-branch', default='')
             op.add_argument('--require-path', default='')
             op.add_argument('--forbid-branch', action='append', default=[])
+            op.add_argument('--forbid-paths', default='',
+                            help='Regex: an unattributed commit on a forbidden branch touching '
+                                 'matching files counts as a violation')
             op.add_argument('--model-tiers', default='{}', help='JSON object with worker/expert model guidance')
             op.add_argument('--agent', default='', help='Run check-in turns on this harness (e.g. cursor); default: the chat\'s own')
         op.set_defaults(func=cmd_operation)

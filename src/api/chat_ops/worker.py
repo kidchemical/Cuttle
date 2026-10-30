@@ -177,22 +177,62 @@ def _progress(snap):
                        [(t['id'], t['done'], t['total']) for t in snap['tasks']]])
 
 
-def _violations(op, branch, path):
-    """Guard-rule violations and which of them are one-shot forbidden-branch moves.
+def _lineage_queries(db, sid):
+    """Query ids of the supervised chat and its sub-agents (saved turns + live runs)."""
+    from api.chat_run_registry import live_query_ids
+    found, todo, seen = set(), [int(sid)], set()
+    while todo and len(seen) < 200:
+        current = todo.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        found |= set(db.assistant_query_ids(current))
+        found |= set(live_query_ids(current))
+        conn = db._get_connection()
+        try:
+            todo += [r[0] for r in conn.execute('SELECT id FROM chat_sessions WHERE parent_session_id=?',
+                                                (current,)).fetchall()]
+        finally:
+            conn.close()
+    return found
 
-    A moved forbidden branch is reported once: the new tip becomes the baseline.
-    Wrong branch / wrong checkout are states, re-raised on every interval check."""
+
+def _violations(op, branch, path, *, db=None, commands=()):
+    """Guard-rule violations and which of them are one-shot (moves and commands).
+
+    A forbidden branch that moved is a violation only when the move is tied to
+    the supervised chats (``rules.classify_move``) or a git write they ran names
+    it; other people's commits become notes in the check history. The new tip
+    becomes the baseline either way. Wrong branch / wrong checkout are states,
+    re-raised on every interval check."""
     cfg = op['payload']
     found = rules.state_violations(cfg, branch, path)
     moved = []
     forbidden = cfg.get('forbidden_branches') or []
     if forbidden and path:
+        worktrees = rules.worktree_branches(path) if commands else {}
+        for sid, command in commands:
+            if rules.forbidden_command(command, forbidden, worktrees):
+                moved.append(f'CH-{sid:06d} ran a git write against a forbidden branch: `{command[:200]}`')
         tips = rules.branch_tips(path, forbidden)
         baseline = cfg.get('forbidden_tips')
         if baseline is None:  # schedule made before baselines existed
             baseline = tips
-        moved = rules.moved_tips(baseline, tips)
-        if moved or baseline != {**baseline, **tips} or 'forbidden_tips' not in cfg:
+        changed = {b: (old, tips[b]) for b, old in baseline.items() if tips.get(b) and tips[b] != old}
+        if changed:
+            own = _lineage_queries(db, op['target']) if db is not None else set()
+            required = cfg.get('required_branch') or ''
+            protected = rules.branch_tips(path, [required]).get(required, '') if required else ''
+            notes = []
+            for b, (old, new) in sorted(changed.items()):
+                bad, info = rules.classify_move(path, b, old, new, own_queries=own, protected_tip=protected,
+                                                protected_name=required,
+                                                path_pattern=cfg.get('forbidden_paths') or '')
+                moved += bad
+                notes += info
+            if notes:
+                store.record_check(op['id'], 'note', {'notes': notes})
+        if changed or baseline != {**baseline, **tips} or 'forbidden_tips' not in cfg:
             store.patch_payload(op['id'], forbidden_tips={**baseline, **tips})
     return found + moved, moved
 
@@ -202,7 +242,7 @@ def _active_checkins(actor, schedule_id):
             and o['payload'].get('schedule_id') == schedule_id and o['state'] in ('pending', 'dispatching')]
 
 
-def guard_check(op, db=None, request=None, *, trigger=''):
+def guard_check(op, db=None, request=None, *, trigger='', commands=()):
     """Event-triggered rule check (``triggers``): wake the supervisor only on a
     violation it has not been told about. No LLM turn when the rules hold."""
     cfg = op['payload']
@@ -210,7 +250,7 @@ def guard_check(op, db=None, request=None, *, trigger=''):
         return False
     db, actor, row = service.context(op['target'], op['actor'], db=db)
     path, branch = service.checkout_state(row, db)
-    violations, moved = _violations(op, branch, path)
+    violations, moved = _violations(op, branch, path, db=db, commands=commands)
     reported = (op.get('result') or {}).get('guard_reported') or []
     if not violations:
         if reported:
@@ -230,7 +270,7 @@ def _check_in(op, db, actor, sid, request):
     """Wake the supervisor only when the target needs attention or changed."""
     cfg = op['payload']
     snap = service.snapshot(sid, actor, db=db, request=request)
-    violations, moved = _violations(op, snap['branch'], snap['execution_path'])
+    violations, moved = _violations(op, snap['branch'], snap['execution_path'], db=db)
     previous = op.get('result') or {}
     signature = _signature(snap, violations)
     nxt = time.time() + cfg['every']

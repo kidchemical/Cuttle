@@ -68,9 +68,13 @@ def _checkins(chats):
     return [o for o in store.listing(chats[2]) if o["kind"] == "checkin"]
 
 
-def _commit_on(repo, branch):
+def _commit_on(repo, branch, message="oops", *, file=None):
     _git(repo, "checkout", "-q", branch)
-    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "oops")
+    if file:
+        (repo / file).parent.mkdir(parents=True, exist_ok=True)
+        (repo / file).write_text(message)
+        _git(repo, "add", file)
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", message)
     _git(repo, "checkout", "-q", "dev/feature")
 
 
@@ -134,17 +138,66 @@ def test_rules_holding_cost_no_checkin(chats):
     assert _checkins(chats) == []
 
 
-def test_child_commit_on_forbidden_branch_wakes_supervisor_once(chats, repo):
+def test_child_git_write_on_forbidden_branch_wakes_supervisor_once(chats, repo):
     db, _owner, _sup, target, child = chats
     _schedule(chats)
     _commit_on(repo, "dev/core")
     # The event came from the orchestrator's sub-agent; the orchestrator's schedule checks.
-    assert triggers.run_checks({child: "tool"}, db=db, request=_host) == 1
+    cmd = "git checkout dev/core && git commit -m oops"
+    assert triggers.run_checks({child: "tool"}, db=db, request=_host, commands={child: [cmd]}) == 1
     texts = [c["payload"]["text"] for c in _checkins(chats)]
-    assert len(texts) == 1 and "forbidden branch 'dev/core' moved" in texts[0]
+    assert len(texts) == 1 and f"CH-{child:06d} ran a git write against a forbidden branch" in texts[0]
     # The new tip is the baseline: the same commit is not reported again.
     assert triggers.run_checks({child: "tool"}, db=db, request=_host) == 0
     assert len(_checkins(chats)) == 1
+
+
+def test_someone_elses_commit_on_forbidden_branch_is_only_a_note(chats, repo):
+    db, _owner, sup, target, _child = chats
+    sched = _schedule(chats)
+    _commit_on(repo, "dev/core", "user tweak")
+    assert triggers.run_checks({target: "tool"}, db=db, request=_host) == 0
+    assert _checkins(chats) == []
+    notes = [c for c in store.checks(sched["id"]) if c["outcome"] == "note"]
+    assert len(notes) == 1 and "by someone else" in notes[0]["detail"]["notes"][0]
+
+
+def test_commit_attributed_to_the_supervised_chat_is_a_violation(chats, repo, monkeypatch):
+    db, _owner, _sup, target, _child = chats
+    _schedule(chats)
+    monkeypatch.setattr(worker, "_lineage_queries", lambda db, sid: {"q123"})
+    _commit_on(repo, "dev/core", "agent commit\n\nCuttle-Query: q123")
+    assert triggers.run_checks({target: "tool"}, db=db, request=_host) == 1
+    assert "made by the supervised chats" in _checkins(chats)[0]["payload"]["text"]
+
+
+def test_bringing_in_protected_work_is_a_violation_whoever_does_it(chats, repo):
+    db, _owner, _sup, target, _child = chats
+    _schedule(chats)
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "feature work")
+    _git(repo, "checkout", "-q", "dev/core")
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "--no-ff", "-m", "merge", "dev/feature")
+    _git(repo, "checkout", "-q", "dev/feature")
+    assert triggers.run_checks({target: "tool"}, db=db, request=_host) == 1
+    assert "brings in 1 commit(s) from 'dev/feature'" in _checkins(chats)[0]["payload"]["text"]
+
+
+def test_unattributed_commit_on_protected_paths_is_a_violation(chats, repo):
+    db, _owner, _sup, target, _child = chats
+    _schedule(chats, forbidden_paths=r"^Networking/")
+    _commit_on(repo, "dev/core", "net", file="Networking/Net.cs")
+    assert triggers.run_checks({target: "tool"}, db=db, request=_host) == 1
+    assert "touches protected paths" in _checkins(chats)[0]["payload"]["text"]
+
+
+def test_git_write_detection():
+    wts = {"/repo/core": "dev/core", "/repo/feature": "dev/feature"}
+    forbidden = ["dev/core", "master"]
+    assert rules.forbidden_command("git merge dev/feature && git push origin dev/core", forbidden, wts)
+    assert rules.forbidden_command('git -C "/repo/core" commit -m x', forbidden, wts)
+    assert not rules.forbidden_command("git log dev/core..HEAD", forbidden, wts)
+    assert not rules.forbidden_command("git commit -m x", forbidden, wts)
+    assert not rules.forbidden_command("git diff dev/core-old", forbidden, wts)
 
 
 def test_state_violation_wakes_once_until_it_clears(chats, repo):
@@ -175,10 +228,11 @@ def test_interval_check_reports_a_moved_branch_even_behind_a_queued_checkin(chat
     db, _owner, sup, target, _child = chats
     sched = _schedule(chats)
     store.create("checkin", sup, sup, {"text": "earlier", "schedule_id": sched["id"]})
-    _commit_on(repo, "master")
+    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "feature")
+    _git(repo, "branch", "-f", "master", "dev/feature")
     worker._check_in(store.get(sched["id"], sup), db, sup, target, _host)
     texts = [c["payload"]["text"] for c in _checkins(chats)]
-    assert any("forbidden branch 'master' moved" in t for t in texts)
+    assert any("forbidden branch 'master' moved" in t and "brings in" in t for t in texts)
 
 
 def test_schedule_without_baseline_adopts_current_tips(chats, repo):
