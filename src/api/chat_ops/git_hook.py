@@ -5,9 +5,12 @@ merge, rebase, reset, ``branch -f``, ``update-ref``) and aborts the transaction
 by exiting non-zero in the ``prepared`` phase. Protected branches are standard
 per-repository git config (``git config --add cuttle.protectBranch <branch>``),
 shared by every worktree and never in the tree. Only processes that carry
-``CUTTLE_CHAT_SESSION_ID`` (set for every Cuttle agent turn) are refused; the
-user's terminal, editors and the Git UI pass. The hook never calls Cuttle, so it
-works while Cuttle is down and cannot hang a commit.
+``CUTTLE_CHAT_SESSION_ID`` (set for every Cuttle agent turn) whose own checkout
+(``CUTTLE_AGENT_PROJECT_PATH``) is not on that branch are refused: an agent
+working in a dev/core checkout may still commit to dev/core, one working in a
+feature worktree may not. The user's terminal, editors and the Git UI pass.
+The hook never calls Cuttle, so it works while Cuttle is down and cannot hang
+a commit.
 """
 from __future__ import annotations
 
@@ -21,15 +24,21 @@ MARKER = '# cuttle-protect-branch-hook v1'
 
 SCRIPT = f"""#!/bin/sh
 {MARKER}
-# Installed by `python -m api.chat_cli install-hook`. Refuses agent updates of
-# branches listed in `git config cuttle.protectBranch`; everyone else passes.
+# Installed by `python -m api.chat_cli install-hook`. Refuses updates of branches
+# listed in `git config cuttle.protectBranch` by Cuttle agents whose own checkout
+# is not on that branch; everyone else passes.
 [ "$1" = prepared ] || exit 0
 [ -n "$CUTTLE_CHAT_SESSION_ID" ] || exit 0
 protected=$(git config --get-all cuttle.protectBranch 2>/dev/null) || {{ cat >/dev/null; exit 0; }}
+own=""
+if [ -n "$CUTTLE_AGENT_PROJECT_PATH" ]; then
+  own=$(unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX; \
+        git -C "$CUTTLE_AGENT_PROJECT_PATH" symbolic-ref --quiet --short HEAD 2>/dev/null)
+fi
 status=0
 while read -r old new ref; do
   for b in $protected; do
-    if [ "$ref" = "refs/heads/$b" ]; then
+    if [ "$ref" = "refs/heads/$b" ] && [ "$b" != "$own" ]; then
       echo "cuttle: agent chat CH-$CUTTLE_CHAT_SESSION_ID may not update protected branch '$b' (git config cuttle.protectBranch)" >&2
       status=1
     fi

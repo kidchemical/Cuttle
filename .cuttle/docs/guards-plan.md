@@ -14,7 +14,9 @@ and aborts the transaction by exiting non-zero in the `prepared` phase.
 
 - **Which branches**: standard git config, per repository, shared by all its
   worktrees, never in the tree: `git config --add cuttle.protectBranch dev/core`.
-- **Whose updates**: only processes carrying `CUTTLE_CHAT_SESSION_ID`, which
+- **Whose updates**: processes carrying `CUTTLE_CHAT_SESSION_ID` whose own
+  checkout (`CUTTLE_AGENT_PROJECT_PATH`) is not on that branch, so agents working
+  in the dev/core checkout keep working; Cuttle sets both for every agent turn,
   Cuttle already sets for every agent turn. The user's terminal, Unity, and the
   Git UI pass untouched.
 - **No Cuttle call** from the hook: it reads git config and the environment, so

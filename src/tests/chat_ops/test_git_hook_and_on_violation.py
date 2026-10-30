@@ -15,12 +15,15 @@ def _git(path, *args, env=None, check=True):
                           env=env)
 
 
-def _env(agent):
-    env = {k: v for k, v in os.environ.items() if k != "CUTTLE_CHAT_SESSION_ID"}
+def _env(agent, checkout=None):
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("CUTTLE_CHAT_SESSION_ID", "CUTTLE_AGENT_PROJECT_PATH")}
     env.update({"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
                 "GIT_COMMITTER_EMAIL": "t@t"})
     if agent:
         env["CUTTLE_CHAT_SESSION_ID"] = "42"
+    if checkout:
+        env["CUTTLE_AGENT_PROJECT_PATH"] = str(checkout)
     return env
 
 
@@ -34,9 +37,9 @@ def repo(tmp_path):
     return path
 
 
-def _commit(repo, branch, *, agent):
+def _commit(repo, branch, *, agent, checkout=None):
     _git(repo, "checkout", "-q", branch, env=_env(False))
-    out = _git(repo, "commit", "--allow-empty", "-m", "x", env=_env(agent), check=False)
+    out = _git(repo, "commit", "--allow-empty", "-m", "x", env=_env(agent, checkout), check=False)
     _git(repo, "checkout", "-q", "dev/feature", env=_env(False))
     return out
 
@@ -44,15 +47,23 @@ def _commit(repo, branch, *, agent):
 # --- git hook ------------------------------------------------------------------
 
 
-def test_hook_refuses_agent_updates_of_protected_branches_only(repo):
+def test_hook_refuses_agents_outside_the_branch_checkout_only(repo):
     result = git_hook.install(repo, ["dev/core"])
     assert result["protected"] == ["dev/core"]
-    refused = _commit(repo, "dev/core", agent=True)
+    other = repo.parent / "other-wt"
+    _git(repo, "worktree", "add", "-q", "-b", "dev/other", str(other), env=_env(False))
+    # An agent working in another worktree may not touch dev/core.
+    refused = _commit(repo, "dev/core", agent=True, checkout=other)
     assert refused.returncode != 0 and "may not update protected branch 'dev/core'" in refused.stderr
-    assert _commit(repo, "dev/core", agent=False).returncode == 0      # the user's own commit
-    assert _commit(repo, "dev/feature", agent=True).returncode == 0    # the agent's own branch
+    # No checkout known: refused too (conservative).
+    assert _commit(repo, "dev/core", agent=True).returncode != 0
+    # The user's own commit, and an agent whose checkout is on dev/core, pass.
+    assert _commit(repo, "dev/core", agent=False).returncode == 0
+    assert _commit(repo, "dev/core", agent=True, checkout=repo).returncode == 0
+    # The outside agent keeps working on its own branch.
+    assert _git(other, "commit", "--allow-empty", "-m", "x", env=_env(True, other), check=False).returncode == 0
     # Non-commit ref updates are caught too.
-    moved = _git(repo, "branch", "-f", "dev/core", "dev/feature", env=_env(True), check=False)
+    moved = _git(repo, "branch", "-f", "dev/core", "dev/other", env=_env(True, other), check=False)
     assert moved.returncode != 0
 
 
