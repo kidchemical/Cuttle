@@ -382,6 +382,34 @@ def test_busy_target_costs_no_supervisor_turn(chats, monkeypatch):
     assert store.get(sched["id"], chats[2])["state"] == "pending"
 
 
+def test_busy_target_without_progress_wakes_supervisor(chats, monkeypatch):
+    sched = _schedule(chats)
+    clock = [1000.0]
+    monkeypatch.setattr(worker.time, "time", lambda: clock[0])
+    monkeypatch.setattr(worker, "_git_head", lambda path: "abc")
+    assert _tick(chats, sched, _snap("busy"), monkeypatch) == []
+    clock[0] += worker.STALL_SEC - 60
+    assert _tick(chats, sched, _snap("busy"), monkeypatch) == []
+    clock[0] += 120
+    checkins = _tick(chats, sched, _snap("busy"), monkeypatch)
+    assert len(checkins) == 1 and "No progress for" in checkins[0]["payload"]["text"]
+    store.finish(checkins[0]["id"], "done", {})
+    clock[0] += 60  # stall window restarts after a wake
+    assert len(_tick(chats, sched, _snap("busy"), monkeypatch)) == 1
+
+
+def test_busy_target_with_progress_stays_quiet(chats, monkeypatch):
+    sched = _schedule(chats)
+    clock = [1000.0]
+    monkeypatch.setattr(worker.time, "time", lambda: clock[0])
+    monkeypatch.setattr(worker, "_git_head", lambda path: "abc")
+    _tick(chats, sched, _snap("busy"), monkeypatch)
+    clock[0] += worker.STALL_SEC - 60
+    _tick(chats, sched, _snap("busy", done=1), monkeypatch)
+    clock[0] += worker.STALL_SEC - 60
+    assert _tick(chats, sched, _snap("busy", done=1), monkeypatch) == []
+
+
 def test_idle_target_wakes_supervisor_once_until_it_changes(chats, monkeypatch):
     sched = _schedule(chats)
     checkins = _tick(chats, sched, _snap("idle_with_work"), monkeypatch)

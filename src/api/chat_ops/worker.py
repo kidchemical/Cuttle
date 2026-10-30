@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -19,6 +20,9 @@ _active = {}
 # wait this long (and for the chat to go idle) before reading history.
 VERIFY_GRACE_SEC = 30
 MAX_SEND_ATTEMPTS = 3
+# A busy target whose Tasks and git HEAD have not moved for this long wakes the
+# supervisor anyway: one long turn can hide a retry loop for hours.
+STALL_SEC = 45 * 60
 
 
 def _uncertain(op, reason):
@@ -114,7 +118,7 @@ _STATE_TEXT = {'busy': 'working', 'idle': 'idle, nothing open', 'idle_with_work'
 CHECKIN_REPLY_CHARS = 2500
 
 
-def checkin_text(cfg, snap, violations):
+def checkin_text(cfg, snap, violations, stalled_min=None):
     """The check-in turn as markdown: it renders as a readable Cuttle bubble in the
     supervisor chat and reads as a brief to the agent. Full data: `status --json`."""
     handle = snap['handle']
@@ -126,6 +130,10 @@ def checkin_text(cfg, snap, violations):
     if any(where):
         joined = ' · '.join(w for w in where if w)
         lines.append(joined[0].upper() + joined[1:])
+    if stalled_min:
+        lines += ['', f'**No progress for {stalled_min} min:** still mid-turn, but no commit and no Tasks '
+                  'change. Check its run logs for a retry loop; if it keeps repeating a failing attempt, '
+                  'steer it to escalate now.']
     if violations:
         lines += ['', '**Rule violations:**'] + [f'- {v}' for v in violations]
     if snap['tasks']:
@@ -153,6 +161,22 @@ def checkin_text(cfg, snap, violations):
     return '\n'.join(lines)
 
 
+def _git_head(path):
+    if not path:
+        return ''
+    try:
+        out = subprocess.run(['git', '-C', path, 'rev-parse', 'HEAD'], capture_output=True,
+                             text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    return out.stdout.strip() if out.returncode == 0 else ''
+
+
+def _progress(snap):
+    return json.dumps([_git_head(snap.get('execution_path')),
+                       [(t['id'], t['done'], t['total']) for t in snap['tasks']]])
+
+
 def _check_in(op, db, actor, sid, request):
     """Wake the supervisor only when the target needs attention or changed."""
     cfg = op['payload']
@@ -171,20 +195,31 @@ def _check_in(op, db, actor, sid, request):
             'tasks': [{'title': t['title'], 'done': t['done'], 'total': t['total']} for t in snap['tasks']]}
     # The first check of a UI-started schedule always briefs the new supervisor.
     briefing = bool(cfg.get('brief_on_start')) and not previous.get('last_checkin')
+    now = time.time()
+    progress = _progress(snap)
+    progress_at = previous.get('progress_at') or now
+    if progress != previous.get('progress'):
+        progress_at = now
+    stalled = snap['state'] == 'busy' and now - progress_at >= cfg.get('stall_after', STALL_SEC)
+    tracking = {'progress': progress, 'progress_at': now if stalled else progress_at}
+    if stalled:
+        seen['stalled_min'] = int((now - progress_at) // 60)
     # A working target or an unchanged picture costs no supervisor tokens.
-    if not violations and not briefing and (snap['state'] == 'busy' or signature == previous.get('signature')):
+    if not violations and not briefing and not stalled and (
+            snap['state'] == 'busy' or signature == previous.get('signature')):
         reason = 'busy' if snap['state'] == 'busy' else 'unchanged'
         store.record_check(op['id'], 'skipped', {**seen, 'reason': reason})
-        store.finish(op['id'], 'pending', {**previous, 'last_check': time.time(), 'last_seen': seen,
-                                            'skipped': reason}, due=nxt)
+        store.finish(op['id'], 'pending', {**previous, **tracking, 'last_check': time.time(),
+                                            'last_seen': seen, 'skipped': reason}, due=nxt)
         return
     active = [o for o in store.listing(actor) if o['kind'] == 'checkin'
               and o['payload'].get('schedule_id') == op['id'] and o['state'] in ('pending', 'dispatching')]
-    store.record_check(op['id'], 'violation' if violations else 'woke',
+    store.record_check(op['id'], 'violation' if violations else 'stalled' if stalled else 'woke',
                        {**seen, 'already_waiting': bool(active)})
     if not active:
-        store.create('checkin', actor, actor, {'text': checkin_text(cfg, snap, violations), 'schedule_id': op['id']})
-    store.finish(op['id'], 'pending', {'signature': signature, 'last_check': time.time(),
+        text = checkin_text(cfg, snap, violations, stalled_min=seen.get('stalled_min'))
+        store.create('checkin', actor, actor, {'text': text, 'schedule_id': op['id']})
+    store.finish(op['id'], 'pending', {**tracking, 'signature': signature, 'last_check': time.time(),
                                         'last_checkin': time.time(), 'last_seen': seen}, due=nxt)
 
 
