@@ -72,6 +72,8 @@ def dispatch(op, *, request=None):
         # only until the host accepts or rejects it; a long silent tool run must
         # not time out a delivery that already started.
         body = {'message': text, 'stream': True, 'chat_op_id': op['id']}
+        if op['payload'].get('agent_pins'):
+            body['agent_pins'] = op['payload']['agent_pins']
         with request(uid, sid, 'POST', '/api/chat', body, stream=True) as response:
             if response.status_code >= 400:
                 if response.status_code == 409:
@@ -242,6 +244,78 @@ def _active_checkins(actor, schedule_id):
             and o['payload'].get('schedule_id') == schedule_id and o['state'] in ('pending', 'dispatching')]
 
 
+VIOLATION_ENTRIES = ('wake', 'stop', 'action:', 'supervisor:')
+
+
+def parse_on_violation(entries):
+    """Validated ``on_violation`` list; ``wake`` (today's behavior) when empty."""
+    out = [str(e).strip() for e in (entries or []) if str(e).strip()]
+    for e in out:
+        if not (e in ('wake', 'stop') or (e.startswith(('action:', 'supervisor:')) and e.split(':', 1)[1])):
+            raise ValueError(f'on_violation entry {e!r}: use wake, stop, action:<name> or supervisor:<profile>')
+    return out or ['wake']
+
+
+def _run_action(name, row, target, violations):
+    """An allowlisted .cuttle/actions recipe, through the same signed path as a confirm click."""
+    from api import project_actions
+    token = project_actions.encode_inline_action_payload(
+        action_name=name, project_path=row.get('project_path') or '',
+        params={'target': target, 'violations': '\n'.join(violations)}, session_id=str(row['id']))
+    return project_actions.execute_inline_action(token, session_id=str(row['id']))
+
+
+def _incident_supervisor(profile_id, db, row, cfg, snap, violations):
+    """A fresh chat on the profile's agent/model/effort, briefed once with the incident.
+
+    It is not bound as a second supervisor; it acts through the normal chat verbs."""
+    from api.agent_harness.agent_models import check_agent_pin
+    from api.subagents import profiles
+    uid = int(row['user_id'])
+    profile = profiles.resolve(db, uid, profile_id)
+    if not profile or not profile.get('agent') or profile['agent'] == 'none':
+        raise ValueError(f'profile {profile_id!r} not found or has no agent')
+    agent, model, effort = profile['agent'], profile.get('model') or '', profile.get('effort') or ''
+    error = check_agent_pin(agent, model, effort)
+    if error:
+        raise ValueError(error)
+    chat = db.create_chat_session(uid, f"Guard incident · CH-{int(row['id']):06d}")
+    if row.get('project_path'):
+        db.set_session_project(chat, uid, project_id=row.get('project_id'),
+                               project_name=row.get('project_name'), project_path=row.get('project_path'))
+    text = checkin_text({**cfg, 'agent': agent}, snap, violations)
+    payload = {'text': text}
+    if model or effort:
+        payload['agent_pins'] = {agent: {'model': model, 'effort': effort}}
+    store.create('checkin', chat, chat, payload)
+    return chat
+
+
+def _respond(op, db, actor, row, snap, violations):
+    """Run the schedule's non-wake ``on_violation`` entries for new violations.
+
+    Returns whether the supervisor should be woken for them."""
+    cfg = op['payload']
+    entries = parse_on_violation(cfg.get('on_violation'))
+    target = f"CH-{int(row['id']):06d}"
+    for entry in entries:
+        if entry == 'wake':
+            continue
+        try:
+            if entry == 'stop':
+                service.stop(target, actor, db=db)
+                done = {}
+            elif entry.startswith('action:'):
+                result = _run_action(entry.split(':', 1)[1], row, target, violations)
+                done = {'success': bool((result or {}).get('success'))}
+            else:
+                done = {'chat': _incident_supervisor(entry.split(':', 1)[1], db, row, cfg, snap, violations)}
+            store.record_check(op['id'], 'acted', {'entry': entry, **done})
+        except Exception as exc:
+            store.record_check(op['id'], 'error', {'entry': entry, 'error': str(exc)[:300]})
+    return 'wake' in entries
+
+
 def guard_check(op, db=None, request=None, *, trigger='', commands=()):
     """Event-triggered rule check (``triggers``): wake the supervisor only on a
     violation it has not been told about. No LLM turn when the rules hold."""
@@ -261,7 +335,8 @@ def guard_check(op, db=None, request=None, *, trigger='', commands=()):
     snap = service.snapshot(row['id'], actor, db=db, request=request or transport.request)
     store.record_check(op['id'], 'violation', {'state': snap['state'], 'branch': snap['branch'],
                                                'violations': violations, 'trigger': trigger})
-    store.create('checkin', actor, actor, {'text': checkin_text(cfg, snap, violations), 'schedule_id': op['id']})
+    if _respond(op, db, actor, row, snap, [v for v in violations if v not in reported]):
+        store.create('checkin', actor, actor, {'text': checkin_text(cfg, snap, violations), 'schedule_id': op['id']})
     store.patch_result(op['id'], guard_reported=violations)
     return True
 
@@ -270,8 +345,19 @@ def _check_in(op, db, actor, sid, request):
     """Wake the supervisor only when the target needs attention or changed."""
     cfg = op['payload']
     snap = service.snapshot(sid, actor, db=db, request=request)
-    violations, moved = _violations(op, snap['branch'], snap['execution_path'], db=db)
+    found, moved = _violations(op, snap['branch'], snap['execution_path'], db=db)
     previous = op.get('result') or {}
+    new = [v for v in found if v not in (previous.get('guard_reported') or [])]
+    wake = True
+    if new:
+        db_, _a, row = service.context(op['target'], op['actor'], db=db)
+        wake = _respond(op, db_, actor, row, snap, new)
+    elif found:
+        wake = 'wake' in parse_on_violation(cfg.get('on_violation'))
+    # Violations only wake the supervisor when the schedule says so.
+    violations = found if wake else []
+    if not wake:
+        moved = []
     signature = _signature(snap, violations)
     nxt = time.time() + cfg['every']
     seen = {'state': snap['state'], 'branch': snap['branch'], 'violations': violations,
@@ -293,7 +379,7 @@ def _check_in(op, db, actor, sid, request):
         reason = 'busy' if snap['state'] == 'busy' else 'unchanged'
         store.record_check(op['id'], 'skipped', {**seen, 'reason': reason})
         store.finish(op['id'], 'pending', {**previous, **tracking, 'last_check': time.time(),
-                                            'last_seen': seen, 'skipped': reason, 'guard_reported': []}, due=nxt)
+                                            'last_seen': seen, 'skipped': reason, 'guard_reported': found}, due=nxt)
         return
     active = _active_checkins(actor, op['id'])
     store.record_check(op['id'], 'violation' if violations else 'stalled' if stalled else 'woke',
@@ -304,7 +390,7 @@ def _check_in(op, db, actor, sid, request):
         store.create('checkin', actor, actor, {'text': text, 'schedule_id': op['id']})
     store.finish(op['id'], 'pending', {**tracking, 'signature': signature, 'last_check': time.time(),
                                         'last_checkin': time.time(), 'last_seen': seen,
-                                        'guard_reported': violations}, due=nxt)
+                                        'guard_reported': found}, due=nxt)
 
 
 def _background_tick():

@@ -1,6 +1,7 @@
-# Guards — plan (not implemented)
+# Guards — plan
 
-Status: proposal, 2026-10-30, revised down to the minimum. Supervision guards
+Status: implemented 2026-10-30 (`api/chat_ops/git_hook.py`, `on_violation` in
+`api/chat_ops/worker.py`). Revised down to the minimum before building. Supervision guards
 today (`src/api/chat_ops/rules.py`, `triggers.py`, `worker.py`) detect violations
 and wake the schedule's supervisor chat. Two gaps, two small changes. No new
 package, schema, engine, or UI.
@@ -18,9 +19,9 @@ and aborts the transaction by exiting non-zero in the `prepared` phase.
   Git UI pass untouched.
 - **No Cuttle call** from the hook: it reads git config and the environment, so
   it works when Cuttle is down and cannot hang a commit.
-- **Install**: `python -m api.chat_ops install-hook <repo>` copies a ~30-line
+- **Install**: `python -m api.chat_cli install-hook <repo> --protect <branch>` copies a ~30-line
   script into the repo's hooks dir. If a hook of that name exists it refuses and
-  prints how to chain it, never overwriting (Git LFS installs other hooks, not
+  says to chain it, never overwriting (Git LFS installs other hooks, not
   this one). `uninstall-hook` removes only Cuttle's script.
 - Bypass (`--no-verify` does not skip this hook; `core.hooksPath` changes or
   unsetting the env var do) stays visible to the existing supervision guard.

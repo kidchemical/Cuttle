@@ -468,6 +468,20 @@ def cmd_search(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def cmd_hook(args: argparse.Namespace) -> int:
+    from api.chat_ops import git_hook
+    try:
+        if args.command == 'install-hook':
+            payload = {'ok': True, **git_hook.install(args.repo, args.protect)}
+        else:
+            payload = {'ok': True, **git_hook.uninstall(args.repo)}
+    except ValueError as exc:
+        payload = {'ok': False, 'error': str(exc)}
+    _emit_text_once(payload, as_json=args.json,
+                    text_fn=lambda p: json.dumps(p, indent=2, ensure_ascii=False, default=str))
+    return 0 if payload['ok'] else 1
+
+
 _OPERATION_VERBS = ('operations', 'operation', 'cancel-operation', 'pause-operation', 'resume-operation')
 _CHAT_OP_VERBS = ('send', 'status', 'snapshot', 'stop', 'supervise') + _OPERATION_VERBS
 
@@ -504,7 +518,8 @@ def cmd_operation(args: argparse.Namespace) -> int:
             payload = service.supervise(args.handle, every=args.every, instructions=args.instructions,
                 required_branch=args.require_branch, required_path=args.require_path,
                 forbidden_branches=args.forbid_branch, model_tiers=json.loads(args.model_tiers),
-                agent=args.agent, forbidden_paths=args.forbid_paths, **kwargs)
+                agent=args.agent, forbidden_paths=args.forbid_paths,
+                on_violation=args.on_violation, **kwargs)
     _emit_text_once(payload, as_json=args.json,
                     text_fn=lambda p: json.dumps(p, indent=2, ensure_ascii=False, default=str))
     return 0
@@ -630,6 +645,17 @@ def build_parser() -> argparse.ArgumentParser:
     search_p.set_defaults(func=cmd_search)
 
     for verb, help_text in (
+        ('install-hook', 'Install a git hook that refuses agent updates of protected branches'),
+        ('uninstall-hook', "Remove Cuttle's protected-branch git hook"),
+    ):
+        hook_p = sub.add_parser(verb, parents=[common], help=help_text)
+        hook_p.add_argument('repo', help='Path to any checkout of the repository')
+        if verb == 'install-hook':
+            hook_p.add_argument('--protect', action='append', default=[],
+                                help='Branch to protect (repeatable); stored in git config cuttle.protectBranch')
+        hook_p.set_defaults(func=cmd_hook)
+
+    for verb, help_text in (
         ('send', 'Send to an existing chat: steer live turns, otherwise queue on the host'),
         ('status', 'Busy, idle, awaiting input, error, and Tasks in one call'),
         ('snapshot', 'Status plus reply, worktree/branch, jobs, watches and optional plan usage'),
@@ -661,6 +687,9 @@ def build_parser() -> argparse.ArgumentParser:
             op.add_argument('--forbid-paths', default='',
                             help='Regex: an unattributed commit on a forbidden branch touching '
                                  'matching files counts as a violation')
+            op.add_argument('--on-violation', action='append', default=[],
+                            help='What a guard violation does, in order (repeatable): wake (default), '
+                                 'stop, action:<.cuttle/actions name>, supervisor:<agent profile>')
             op.add_argument('--model-tiers', default='{}', help='JSON object with worker/expert model guidance')
             op.add_argument('--agent', default='', help='Run check-in turns on this harness (e.g. cursor); default: the chat\'s own')
         op.set_defaults(func=cmd_operation)

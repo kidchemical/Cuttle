@@ -257,7 +257,7 @@ def _agent_slash(agent, project_path):
 
 def supervise(target, actor=None, *, every=900, instructions='', required_branch='',
               required_path='', forbidden_branches=(), model_tiers=None, agent='',
-              start_now=False, forbidden_paths='', db=None):
+              start_now=False, forbidden_paths='', on_violation=None, db=None):
     db, actor, row = context(target, actor, db=db)
     if actor == int(row['id']):
         raise ValueError('Supervisor and target must be different chats')
@@ -277,6 +277,9 @@ def supervise(target, actor=None, *, every=900, instructions='', required_branch
                'forbidden_branches': list(forbidden_branches), 'model_tiers': model_tiers or {},
                'agent': _agent_slash(agent, row.get('project_path')), 'brief_on_start': bool(start_now),
                'forbidden_paths': forbidden_paths or ''}
+    if on_violation:
+        from api.chat_ops.worker import parse_on_violation
+        payload['on_violation'] = parse_on_violation(on_violation)
     if forbidden_branches:
         from api.chat_ops.rules import branch_tips
         # Baseline for "a commit landed on a forbidden branch", from any checkout of the repo.
