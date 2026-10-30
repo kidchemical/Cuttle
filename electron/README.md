@@ -9,7 +9,7 @@ chat server. Client worker mode is enabled by default and can be disabled in
 ## Prerequisites
 
 Building or running from source requires Python **3.11+** and the repository venv
-using the [root quick start](../README.md#quick-start). Packaged Host artifacts
+using the [root quick start](../README.md#run-from-source). Packaged Host artifacts
 bundle a Python runtime and dependencies under `resources/python`, so an installed
 Host needs no system Python. A Client that runs a device worker also needs Python;
 a UI-only Client connects to the remote Host.

@@ -1,8 +1,9 @@
 {
     "name":  "cuttle-desktop",
-    "version":  "0.2.26",
+    "version":  "0.3.0",
     "description":  "Cuttle - AI Agent Framework Desktop Application",
     "main":  "main.js",
+    "desktopName":  "cuttle-desktop.desktop",
     "author":  "Ian McCambridge",
     "license":  "MIT",
     "homepage":  "https://github.com/kidchemical/Cuttle",
@@ -21,7 +22,7 @@
                     "bundle:python":  "node bundle-python.js",
                     "build":  "node bundle-python.js && electron-builder build --win --publish never",
                     "build:dir":  "node bundle-python.js && electron-builder build --win --dir",
-                    "build:linux":  "node bundle-python.js && electron-builder build --linux AppImage --publish never",
+                    "build:linux":  "node bundle-python.js && electron-builder build --linux AppImage deb --publish never",
                     "build:linux:dir":  "node bundle-python.js && electron-builder build --linux --dir",
                     "build:portable":  "node bundle-python.js && electron-builder build --win portable",
                     "dist":  "electron-builder",
@@ -129,8 +130,19 @@
                                                  "arch":  [
                                                               "x64"
                                                           ]
+                                             },
+                                             {
+                                                 "target":  "deb",
+                                                 "arch":  [
+                                                             "x64"
+                                                         ]
                                              }
                                          ],
+                              "syncDesktopName": true,
+                              "maintainer": "kidchemical <kidchemical@users.noreply.github.com>",
+                              "synopsis": "Persistent AI agent framework",
+                              "description": "Cuttle is a persistent AI agent framework for managing agent CLIs and tools.",
+                              "icon": "../src/img/cuttle-linux.png",
                               "category":  "Utility",
                               "artifactName":  "${productName}-${version}-${arch}.${ext}"
                           },

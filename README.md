@@ -6,9 +6,9 @@
 
 Pick an agent per chat or let the router choose, and fan jobs out across every machine on your LAN. It's open source down to the last line: describe the Cuttle you want, and your agents build it.
 
-[Quick start](#quick-start) · [Make it yours](#make-it-yours) · [Tour](#tour) · [Features](#features) · [Architecture](#architecture) · [Docs](#documentation) · [Roadmap](docs/ROADMAP.md)
+[Install](#install) · [Run from source](#run-from-source) · [Make it yours](#make-it-yours) · [Tour](#tour) · [Features](#features) · [Architecture](#architecture) · [Docs](#documentation) · [Roadmap](docs/ROADMAP.md)
 
-[![MIT license](https://img.shields.io/badge/license-MIT-7048e8.svg)](LICENSE.txt) [![Windows | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-191b45.svg)](#requirements) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3b82f6.svg)](#requirements) [![Self-hosted](https://img.shields.io/badge/self--hosted-your%20machines-2fa37a.svg)](#quick-start)
+[![MIT license](https://img.shields.io/badge/license-MIT-7048e8.svg)](LICENSE.txt) [![Windows | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-191b45.svg)](#requirements) [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3b82f6.svg)](#requirements) [![Self-hosted](https://img.shields.io/badge/self--hosted-your%20machines-2fa37a.svg)](#run-from-source)
 
 <br>
 
@@ -23,7 +23,27 @@ Pick an agent per chat or let the router choose, and fan jobs out across every m
 
 Cuttle is a control plane for the coding agents you already use. It runs as a daemon on your PC (tray icon or headless), hosts vendor agent CLIs such as Cursor, Codex, Claude Code, Muse Code, and Hermes, and gives them one chat UI with shared history, projects, and tools. The same chats open in the browser, in the Electron desktop app, and on an Android phone. Discord is optional **agent operations** (read a channel, confirmed posts) — not a default chat gateway.
 
-Each chat can stick to one agent, or leave the choice to the **agent router**, which picks a harness for cost and quality and tries another target when an agent cannot start (for example, missing CLI, authentication, or quota). A task that ran and failed is terminal; retry it explicitly. Agents report progress, keep a pinned task list, and ask questions as clickable cards instead of walls of text. When a job is too big for one machine, **Cuttle Workers** splits it across the other PCs on your network.
+Each chat can stick to one agent, or leave the choice to the **agent router**, which classifies the turn and picks a harness for its lane. Only failures where the agent never ran (such as quota, auth, or a missing CLI) can move to another target; a task that ran and failed, or was stopped, is terminal. Agents report progress, keep a pinned task list, and ask questions as clickable cards. When a job is too big for one machine, **Cuttle Workers** splits it across the other PCs on your network.
+
+## Install
+
+Download the current release from [GitHub Releases](https://github.com/kidchemical/cuttle/releases). Packaged builds include their pinned Python runtime; system Python is not required.
+
+- **Windows installer:** `Cuttle-<version>-x64.exe` is an NSIS installer (just you by default; can install for all users). Choose an install folder; it creates Desktop and Start menu shortcuts.
+- **Windows portable:** `Cuttle-<version>-portable.exe` runs without installation.
+- **Linux x64 (Ubuntu / Debian, recommended):** `Cuttle-<version>-amd64.deb`. Install with `sudo apt install ./Cuttle-<version>-amd64.deb`; it adds an AppArmor profile so Chromium's sandbox works on Ubuntu 24.04+.
+- **Linux x64 (other distributions):** `Cuttle-<version>-x86_64.AppImage`:
+
+  ```bash
+  chmod +x Cuttle-<version>-x86_64.AppImage
+  ./Cuttle-<version>-x86_64.AppImage
+  ```
+
+  If FUSE is unavailable, install `libfuse2` or run it with `--appimage-extract-and-run`. On distributions that restrict unprivileged user namespaces (Ubuntu 24.04+), the AppImage cannot start Chromium's sandbox and exits with a `chrome-sandbox` error; use the `.deb` there.
+
+Verify downloaded artifacts against `SHA256SUMS` from the same release (`sha256sum -c SHA256SUMS --ignore-missing` on Linux; use `Get-FileHash -Algorithm SHA256 <file>` on Windows and compare the result). Windows builds are not code-signed, so SmartScreen warns on first run: verify the checksum, then choose **More info → Run anyway**.
+
+Runtime data stays in your per-user Cuttle home: `%LOCALAPPDATA%\Cuttle` on Windows or `~/.local/share/cuttle` on Linux. Set `CUTTLE_HOME` to use another location. Packaged installs check GitHub Releases for new versions; install the new download to update (`sudo apt install ./Cuttle-<new>-amd64.deb` upgrades the deb in place). They do not update from Git. Vendor agent CLIs (Cursor, Codex, Claude Code, and others) are BYO and must be installed and authenticated separately.
 
 ## Make it yours
 
@@ -69,7 +89,7 @@ The codebase is set up so an agent can do that well:
 | **Open source** | MIT-licensed Python and vanilla JS with agent briefings built in, so any hosted agent can extend Cuttle itself. See [Make it yours](#make-it-yours). |
 | **Chat** | Web UI, Electron desktop (Host + LAN Client), and Android app over one history. Streamed progress notes, pinned **Tasks** lists, clickable **action forms** for questions and approvals, image and PDF attachments with a vision pre-pass, and mid-turn steering for Codex, Muse Code, and Claude Code. |
 | **Agents** | `/cursor`, `/codex`, `/claude`, `/muse`, `/hermes`, `/deepseek`, `/opencode`, `/antigravity`, and more from a shared harness catalog ([`src/api/agent_harness/agents/`](src/api/agent_harness/agents/)). Star one as the default for new chats. |
-| **Agent router** | Classifies each turn on clean sessions and picks a harness per lane (default Cursor Auto). Falls back only when an agent never ran (quota, auth, missing CLI); a task that ran and failed, or was stopped, is terminal. Starred or sticky agents bypass it. |
+| **Agent router** | Classifies each turn on clean sessions and picks a harness per lane. Falls back only when an agent never ran (quota, auth, missing CLI); a task that ran and failed, or was stopped, is terminal. Starred or sticky agents bypass it. |
 | **IDE** | A Cursor-style editor for registered projects: Monaco tabs, quick open, find in files, source control, a terminal, and an AI chat panel any harness can drive, with `Ctrl+K` inline edits, opt-in Tab completions, and opt-in Keep / Undo review of agent hunks. |
 | **Workspace** | Split any pane horizontally or vertically, drag to resize, and keep a separate layout per space. 13 built-in themes, a custom theme, and YouTube or video wallpapers behind the whole UI. |
 | **Sub-agents** | Fan a task out into real child chats across harnesses, then synthesize one reply ([`python -m api.subagents`](.cuttle_global/docs/subagents.md)). |
@@ -79,7 +99,7 @@ The codebase is set up so an agent can do that well:
 | **Local models** | Configure local inference in your agent CLI; user-managed endpoints can also serve router and completion helpers. |
 | **Agent ops CLIs** | Agents drive Cuttle through `python -m api.<module>` verbs (chats, widgets, Discord, workers, brain) instead of raw SQL ([`agent-ops-cli.md`](.cuttle_global/docs/agent-ops-cli.md)). |
 
-## Quick start
+## Run from source
 
 ### Requirements
 

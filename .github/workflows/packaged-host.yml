@@ -43,9 +43,9 @@ jobs:
       - run: node node_modules/electron/install.js
       - name: Bundle pinned Python runtime + dependencies
         run: node bundle-python.js
-      - name: Build Linux AppImage
+      - name: Build Linux AppImage and deb
         if: matrix.platform == 'linux'
-        run: npx electron-builder --linux AppImage --publish never
+        run: npx electron-builder --linux AppImage deb --publish never
       - name: Build Windows installer + portable
         if: matrix.platform == 'windows'
         run: npx electron-builder --win nsis portable --publish never
@@ -62,7 +62,7 @@ jobs:
         if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          $installer = Get-ChildItem dist\*.exe | Where-Object { $_.Name -notmatch 'portable' } | Select-Object -First 1
+          $installer = Get-ChildItem dist\Cuttle-*.exe | Where-Object { $_.Name -notmatch 'portable' } | Select-Object -First 1
           $dest = Join-Path $env:RUNNER_TEMP 'CuttleInstall'
           Start-Process -FilePath $installer.FullName -ArgumentList '/S', "/D=$dest" -Wait
           if (-not (Test-Path (Join-Path $dest 'Cuttle.exe'))) { throw "installer did not produce $dest\Cuttle.exe" }
@@ -77,6 +77,21 @@ jobs:
         env:
           CUTTLE_E2E_ELECTRON_ARGS: --no-sandbox --ozone-platform=x11
         run: xvfb-run -a node tests/packaged-host-e2e.cjs --app "$CUTTLE_E2E_APP"
+      - name: Install Linux deb (AppArmor profile, sandbox helper not setuid)
+        if: matrix.platform == 'linux'
+        # Force the Ubuntu 24.04+ userns restriction so the sandboxed E2E below
+        # proves the deb's AppArmor profile, whatever the runner default is.
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          sudo apt-get install -y ./dist/*.deb
+          test -f /etc/apparmor.d/cuttle-desktop
+          sudo aa-status | grep -q cuttle-desktop
+          test "$(stat -c %a /opt/Cuttle/chrome-sandbox)" = 755
+      - name: Packaged Host E2E (Linux deb, AppArmor sandbox)
+        if: matrix.platform == 'linux'
+        env:
+          CUTTLE_E2E_ELECTRON_ARGS: --ozone-platform=x11
+        run: xvfb-run -a node tests/packaged-host-e2e.cjs --app /opt/Cuttle
       - name: Packaged Host E2E (Windows)
         if: matrix.platform == 'windows'
         run: node tests/packaged-host-e2e.cjs --app "$CUTTLE_E2E_APP"
@@ -85,7 +100,7 @@ jobs:
         run: |
           cd dist
           shopt -s nullglob
-          files=( *.AppImage *.exe )
+          files=( *.AppImage *.deb Cuttle-*.exe )
           sha256sum "${files[@]}" > "SHA256SUMS-${{ matrix.platform }}.txt"
           cat "SHA256SUMS-${{ matrix.platform }}.txt"
       - uses: actions/upload-artifact@v7
@@ -95,5 +110,6 @@ jobs:
           if-no-files-found: error
           path: |
             electron/dist/*.AppImage
-            electron/dist/*.exe
+            electron/dist/*.deb
+            electron/dist/Cuttle-*.exe
             electron/dist/SHA256SUMS-*.txt

@@ -2359,8 +2359,9 @@ if (LAUNCH_MODE === 'host') {
 }
 if (process.platform === 'linux' && ['host', 'client'].includes(LAUNCH_MODE)) {
     // Must precede ready; supplies both X11 WM_CLASS and Wayland app_id.
-    // --class does not override Electron's desktop identity.
-    app.setDesktopName(`cuttle-${LAUNCH_MODE}.desktop`);
+    // --class does not override Electron's desktop identity. Source launchers
+    // install per-mode entries; packaged builds ship one (package.json desktopName).
+    app.setDesktopName(app.isPackaged ? 'cuttle-desktop.desktop' : `cuttle-${LAUNCH_MODE}.desktop`);
 }
 
 // Single-instance lock: if another instance is already running, focus it and quit this one.

@@ -64,5 +64,5 @@ Record the result in `<home>/personal/docs/remote-access.md`, for example:
 ```markdown
 - Tool: OpenSSH over Tailscale
 - laptop → `ssh laptop` (Windows, cmd.exe), user `me`
-- nas → `tailscale ssh admin@nas` (read-only unless asked)
+- nas → `tailscale ssh me@nas` (read-only unless asked)
 ```
