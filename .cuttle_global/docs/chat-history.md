@@ -76,6 +76,7 @@ PYTHONPATH=src .venv/bin/python -m api.chat_cli cancel-operation <id> --json
 | `send CH-… --text` | A live turn is steered (`delivery: steered`). Otherwise it is queued in a host-owned outbox (`delivery: queued`) and sent when the chat goes idle. The browser does not need to be open. `--mode queue` never steers |
 | `stop CH-…` | Same as the Stop button |
 | `supervise CH-…` | Durable check-ins that survive your turn and Flask restarts. Each interval the host checks the target. It wakes **your** chat with a compact report only when the target is not busy and something changed, or when a branch/path rule is violated. A healthy, working target costs no tokens |
+| `supervise … --require-branch / --require-path / --forbid-branch` | Guard rules, checked on every interval **and** whenever the target or one of its sub-agent children finishes a tool call or rebinds its worktree. A new violation wakes you within seconds, even mid-turn. A commit landing on a forbidden branch from any checkout of the repo is reported once (the new tip becomes the baseline); wrong branch/checkout repeats each interval until fixed |
 | `supervise … --agent ID` | Prefix each check-in with `/<agent>` so that harness runs it (validated against the agent catalog) |
 | `operations` / `operation <id>` / `cancel-operation <id>` | Inspect or cancel your queued sends and supervision schedules |
 | `pause-operation <id>` / `resume-operation <id>` | Pause a schedule; resume checks right away |
@@ -97,7 +98,7 @@ a new turn in your chat. Act on the target with `send` (steer or queue). Do not
 message its sub-agent children unless asked.
 
 Sends and supervision need the host up (Flask on loopback); read-only `get` /
-`session` / `search` do not. Library: `api.chat_ops` (service, store, worker).
+`session` / `search` do not. Library: `api.chat_ops` (service, store, worker, rules, triggers).
 
 ## This chat vs other chats
 

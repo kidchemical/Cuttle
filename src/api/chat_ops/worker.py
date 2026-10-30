@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 
-from api.chat_ops import service, store, transport
+from api.chat_ops import rules, service, store, transport
 
 _lock = threading.Lock()
 _thread = None
@@ -177,17 +177,60 @@ def _progress(snap):
                        [(t['id'], t['done'], t['total']) for t in snap['tasks']]])
 
 
+def _violations(op, branch, path):
+    """Guard-rule violations and which of them are one-shot forbidden-branch moves.
+
+    A moved forbidden branch is reported once: the new tip becomes the baseline.
+    Wrong branch / wrong checkout are states, re-raised on every interval check."""
+    cfg = op['payload']
+    found = rules.state_violations(cfg, branch, path)
+    moved = []
+    forbidden = cfg.get('forbidden_branches') or []
+    if forbidden and path:
+        tips = rules.branch_tips(path, forbidden)
+        baseline = cfg.get('forbidden_tips')
+        if baseline is None:  # schedule made before baselines existed
+            baseline = tips
+        moved = rules.moved_tips(baseline, tips)
+        if moved or baseline != {**baseline, **tips} or 'forbidden_tips' not in cfg:
+            store.patch_payload(op['id'], forbidden_tips={**baseline, **tips})
+    return found + moved, moved
+
+
+def _active_checkins(actor, schedule_id):
+    return [o for o in store.listing(actor) if o['kind'] == 'checkin'
+            and o['payload'].get('schedule_id') == schedule_id and o['state'] in ('pending', 'dispatching')]
+
+
+def guard_check(op, db=None, request=None, *, trigger=''):
+    """Event-triggered rule check (``triggers``): wake the supervisor only on a
+    violation it has not been told about. No LLM turn when the rules hold."""
+    cfg = op['payload']
+    if not rules.has_guards(cfg):
+        return False
+    db, actor, row = service.context(op['target'], op['actor'], db=db)
+    path, branch = service.checkout_state(row, db)
+    violations, moved = _violations(op, branch, path)
+    reported = (op.get('result') or {}).get('guard_reported') or []
+    if not violations:
+        if reported:
+            store.patch_result(op['id'], guard_reported=[])
+        return False
+    if sorted(violations) == sorted(reported):
+        return False  # already raised; the interval check repeats it
+    snap = service.snapshot(row['id'], actor, db=db, request=request or transport.request)
+    store.record_check(op['id'], 'violation', {'state': snap['state'], 'branch': snap['branch'],
+                                               'violations': violations, 'trigger': trigger})
+    store.create('checkin', actor, actor, {'text': checkin_text(cfg, snap, violations), 'schedule_id': op['id']})
+    store.patch_result(op['id'], guard_reported=violations)
+    return True
+
+
 def _check_in(op, db, actor, sid, request):
     """Wake the supervisor only when the target needs attention or changed."""
     cfg = op['payload']
     snap = service.snapshot(sid, actor, db=db, request=request)
-    violations = []
-    if cfg['required_branch'] and snap['branch'] != cfg['required_branch']:
-        violations.append(f"branch is {snap['branch']!r}, required {cfg['required_branch']!r}")
-    if snap['branch'] in cfg['forbidden_branches']:
-        violations.append(f"target is on forbidden branch {snap['branch']!r}")
-    if cfg['required_path'] and os.path.realpath(snap['execution_path'] or '') != cfg['required_path']:
-        violations.append(f"checkout is {snap['execution_path']!r}, required {cfg['required_path']!r}")
+    violations, moved = _violations(op, snap['branch'], snap['execution_path'])
     previous = op.get('result') or {}
     signature = _signature(snap, violations)
     nxt = time.time() + cfg['every']
@@ -210,17 +253,18 @@ def _check_in(op, db, actor, sid, request):
         reason = 'busy' if snap['state'] == 'busy' else 'unchanged'
         store.record_check(op['id'], 'skipped', {**seen, 'reason': reason})
         store.finish(op['id'], 'pending', {**previous, **tracking, 'last_check': time.time(),
-                                            'last_seen': seen, 'skipped': reason}, due=nxt)
+                                            'last_seen': seen, 'skipped': reason, 'guard_reported': []}, due=nxt)
         return
-    active = [o for o in store.listing(actor) if o['kind'] == 'checkin'
-              and o['payload'].get('schedule_id') == op['id'] and o['state'] in ('pending', 'dispatching')]
+    active = _active_checkins(actor, op['id'])
     store.record_check(op['id'], 'violation' if violations else 'stalled' if stalled else 'woke',
                        {**seen, 'already_waiting': bool(active)})
-    if not active:
+    # A moved forbidden branch is reported once, so it never waits behind a queued check-in.
+    if not active or moved:
         text = checkin_text(cfg, snap, violations, stalled_min=seen.get('stalled_min'))
         store.create('checkin', actor, actor, {'text': text, 'schedule_id': op['id']})
     store.finish(op['id'], 'pending', {**tracking, 'signature': signature, 'last_check': time.time(),
-                                        'last_checkin': time.time(), 'last_seen': seen}, due=nxt)
+                                        'last_checkin': time.time(), 'last_seen': seen,
+                                        'guard_reported': violations}, due=nxt)
 
 
 def _background_tick():
@@ -266,4 +310,6 @@ def ensure_started():
         _stop.clear()
         _thread = threading.Thread(target=_loop, name='cuttle-chat-ops', daemon=True)
         _thread.start()
+    from api.chat_ops import triggers
+    triggers.start()
     return True

@@ -146,3 +146,34 @@ def checks(schedule_id, limit=HISTORY_KEEP):
         return [{'at': r['at'], 'outcome': r['outcome'], 'detail': json.loads(r['detail'])}
                 for r in conn.execute('SELECT * FROM checks WHERE schedule_id=? ORDER BY at DESC LIMIT ?',
                                       (schedule_id, limit))]
+
+
+def _patch(oid, column, fields):
+    with connection() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute(f'SELECT {column} FROM operations WHERE id=?', (oid,)).fetchone()
+        if row:
+            conn.execute(f'UPDATE operations SET {column}=? WHERE id=?',
+                         (json.dumps({**json.loads(row[0]), **fields}), oid))
+
+
+def patch_payload(oid, **fields):
+    """Merge fields into a schedule's stored config (e.g. a guard baseline)."""
+    _patch(oid, 'payload', fields)
+
+
+def patch_result(oid, **fields):
+    """Merge fields into an operation's result without touching state or due."""
+    _patch(oid, 'result', fields)
+
+
+def supervising(targets):
+    """Live supervision schedules on any of ``targets``."""
+    targets = [int(t) for t in targets]
+    if not targets:
+        return []
+    marks = ','.join('?' * len(targets))
+    with connection() as conn:
+        return [public(r) for r in conn.execute(
+            f"SELECT * FROM operations WHERE kind='supervise' AND state IN ('pending','dispatching') "
+            f'AND target IN ({marks})', targets)]

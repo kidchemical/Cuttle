@@ -123,6 +123,21 @@ def readable_reply(content):
     return _FORM.sub(form, _THINK.sub('', text)).strip()
 
 
+def checkout_state(row, db, *, binding=None):
+    """``(execution_path, branch)`` the chat's turns run in; branch is None when unresolvable."""
+    if binding is None:
+        from api.worktrees.chat_binding import get_chat_binding
+        binding = get_chat_binding(row['id'], db=db)
+    path = ((binding or {}).get('checkout') or {}).get('path') or row.get('project_path') or ''
+    if not path:
+        return '', None
+    try:
+        return path, subprocess.run(['git', '-C', path, 'symbolic-ref', '--short', 'HEAD'],
+                                    capture_output=True, text=True, timeout=5, check=True).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return path, None
+
+
 def snapshot(target, actor=None, *, db=None, request=None, usage_agents=()):
     from api.worktrees.chat_binding import get_chat_binding
     from api.jobs.ledger import unified_jobs
@@ -130,14 +145,8 @@ def snapshot(target, actor=None, *, db=None, request=None, usage_agents=()):
     result = status(target, actor, db=db, request=request)
     warnings = []
     binding = get_chat_binding(row['id'], db=db)
-    checkout = binding.get('checkout')
-    path = (checkout or {}).get('path') or row.get('project_path') or ''
-    branch = None
-    try:
-        if path:
-            branch = subprocess.run(['git', '-C', path, 'symbolic-ref', '--short', 'HEAD'],
-                capture_output=True, text=True, timeout=5, check=True).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
+    path, branch = checkout_state(row, db, binding=binding)
+    if path and branch is None:
         warnings.append('Cannot resolve a live branch (missing checkout or detached HEAD)')
     try:
         jobs = [j for j in unified_jobs(limit=200)
@@ -247,6 +256,10 @@ def supervise(target, actor=None, *, every=900, instructions='', required_branch
                'required_path': str(Path(required_path).resolve()) if required_path else '',
                'forbidden_branches': list(forbidden_branches), 'model_tiers': model_tiers or {},
                'agent': _agent_slash(agent, row.get('project_path')), 'brief_on_start': bool(start_now)}
+    if forbidden_branches:
+        from api.chat_ops.rules import branch_tips
+        # Baseline for "a commit landed on a forbidden branch", from any checkout of the repo.
+        payload['forbidden_tips'] = branch_tips(checkout_state(row, db)[0], list(forbidden_branches))
     due = time.time() + (0 if start_now else every)
     return {'schema_version': 1, 'ok': True, 'operation': store.create('supervise', actor, row['id'], payload, due=due)}
 

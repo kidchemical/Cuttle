@@ -678,7 +678,7 @@ def run_agent_web_command(
     try:
         from api.query_events import QueryStatusTee, bind_query_id, reset_query_id
 
-        user_ctx = {"web_ui": True, "slash_command": slash}
+        user_ctx = {"web_ui": True, "slash_command": slash, "chat_session_id": sid}
         _put_status(status_queue, f"Starting {label}…")
         query_id = start_query_tracking(f"{slash} {prompt}", user_ctx)
         qid_token = bind_query_id(query_id)

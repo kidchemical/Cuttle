@@ -185,6 +185,8 @@ def bind_chat(
     )
     if uid:
         registry.touch_checkout(uid, db_path_override=db_path_override)
+    from api.session_events import publish
+    publish("worktree_bound", sid, checkout_uid=uid)
     if note:
         label = (checkout.branch or uid) if checkout else "Local (primary checkout)"
         by = f" (set by {actor_handle})" if actor_handle and rel != "self" else ""
