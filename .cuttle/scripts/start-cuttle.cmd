@@ -69,6 +69,16 @@ if exist "%CUTTLE_EXE%" (
   )
   goto :eof
 )
+rem Source checkout: run the installed Electron binary directly (no console).
+set "ELECTRON_BIN=%ELECTRON_DIR%\node_modules\electron\dist\electron.exe"
+if exist "%ELECTRON_BIN%" (
+  if defined CUTTLE_HOST (
+    start "Cuttle Client" /D "%ELECTRON_DIR%" "%ELECTRON_BIN%" "%ELECTRON_DIR%" --client --host="%CUTTLE_HOST%"
+  ) else (
+    start "Cuttle Client" /D "%ELECTRON_DIR%" "%ELECTRON_BIN%" "%ELECTRON_DIR%" --client
+  )
+  goto :eof
+)
 where npm.cmd >nul 2>&1
 if errorlevel 1 (
   echo ERROR: No Cuttle.exe and npm.cmd not found.

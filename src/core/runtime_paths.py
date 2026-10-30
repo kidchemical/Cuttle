@@ -190,9 +190,11 @@ def electron_packaged_exe(project_root: Path) -> Optional[Path]:
 def electron_dev_bin(project_root: Path) -> Optional[Path]:
     root = Path(project_root)
     if is_windows():
+        # The real binary first: the .bin/electron.cmd shim runs in cmd.exe, and a
+        # detached launch of it opens an extra console window.
         candidates = [
-            root / "electron" / "node_modules" / ".bin" / "electron.cmd",
             root / "electron" / "node_modules" / "electron" / "dist" / "electron.exe",
+            root / "electron" / "node_modules" / ".bin" / "electron.cmd",
         ]
     else:
         candidates = [
