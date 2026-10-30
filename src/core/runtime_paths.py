@@ -221,14 +221,20 @@ def electron_display_args() -> List[str]:
 
 
 def electron_launch_argv(project_root: Path) -> Optional[List[str]]:
-    """Argv to open the desktop UI: packaged app, else local electron binary."""
+    """Argv for the Host's own desktop UI: packaged app, else local electron binary.
+
+    Always ``--mode=host``: whoever runs the daemon is the Host, so its window
+    must use the Host profile. Without it Electron falls back to the shared
+    default profile and restores any saved Client target (a laptop that was
+    once a Client opened its Host shortcut as a Client).
+    """
     root = Path(project_root)
     packaged = electron_packaged_exe(root)
     if packaged is not None:
-        return [str(packaged), *electron_display_args()]
+        return [str(packaged), *electron_display_args(), "--mode=host"]
     dev = electron_dev_bin(root)
     if dev is not None:
-        return [str(dev), *electron_display_args(), str(root / "electron")]
+        return [str(dev), *electron_display_args(), str(root / "electron"), "--mode=host"]
     return None
 
 

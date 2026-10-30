@@ -101,7 +101,10 @@
                 const r=await win.fetch('/api/experimental/flags',{cache:'no-store'}),d=await r.json();
                 if(!r.ok||!d.success)throw new Error('Flags unavailable');return new Set(d.flags.filter(f=>f.enabled).map(f=>f.id));},
                 onStatus:text=>{if(active!==own)return;status=text;failed=false;paint();emit('onStatus',text);if(text.startsWith('Disconnected')){active=null;paint();}},
-                onError:text=>{if(active!==own)return;status=text;failed=true;paint();emit('onError',text);},
+                // A fatal engine error closes the connection and reports only
+                // onError (no "Disconnected"); end the call so the strip offers
+                // Call again instead of Mute/hang-up for a dead call.
+                onError:text=>{if(active!==own)return;status=text;failed=true;emit('onError',text);if(!controller?.isOpen?.())active=null;paint();},
                 onTranscript:(...args)=>{if(active!==own)return;active.transcripts.push(args);if(active.transcripts.length>1000)active.transcripts.shift();emit('onTranscript',...args);},
                 onUsage:value=>{if(active!==own)return;usage=value;paint();emit('onUsage',value);win.dispatchEvent(new win.Event('cuttle-voice-usage'));},
                 delegate:context.delegate,realtimeUsage:async payload=>{

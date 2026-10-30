@@ -236,6 +236,9 @@ function desktopLaunchMode() {
     const m = String(parseArgValue('--mode') || '').toLowerCase();
     if (m === 'host' || m === 'local') return 'host';
     if (m === 'client') return 'client';
+    // A window the daemon opened is the Host's own UI by definition. Older
+    // daemons omit --mode=host; never let them restore a saved Client target.
+    if (process.env.CUTTLE_HOSTED_BY_DAEMON === '1') return 'host';
     return '';
 }
 

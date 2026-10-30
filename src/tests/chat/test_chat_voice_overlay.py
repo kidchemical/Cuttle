@@ -1201,3 +1201,62 @@ globalThis.CuttleShellVoice = { create: () => ({ offer() { offered += 1; return 
   assert.strictEqual(offered, 0, 'browser speech keeps the orb as push-to-talk');
 })().catch((e) => { console.error(e); process.exit(1); });
 """)
+
+
+@node_only
+def test_realtime_voice_view_on_new_chat_still_offers_call():
+    """New chat (no id yet) → voice view: Call is offered and creates the chat on connect.
+
+    Regression: the offer was gated on an existing session id, so voice view on a
+    fresh chat (or before a restore finished) showed no Call button at all.
+    """
+    _node(r"""
+globalThis.parent = globalThis;
+const runtime = { offers: [], started: [], open: false,
+  offer(o) { this.offers.push(o); return () => {}; },
+  attach: () => () => {},
+  start: async (ctx) => { runtime.started.push(ctx); runtime.open = true; },
+  stop: async () => { runtime.open = false; },
+  isOpen: () => runtime.open, engine: () => (runtime.open ? 'realtime' : null) };
+globalThis.CuttleShellVoice = { create: () => runtime };
+globalThis.CuttleChatVoiceRealtime = { supported: () => true, create: () => ({}) };
+""" + CONTROLLER_HARNESS + r"""
+let sid = null;
+const created = [];
+host.sessionId = () => sid;
+host.adoptSession = (id) => { sid = id; };
+host.fetch = async (url, opts) => {
+  if (url === '/api/auth/sessions') { created.push(JSON.parse(opts.body)); return { ok: true, json: async () => ({ success: true, session_id: 77 }) }; }
+  return { ok: true, json: async () => ({ success: true }) };
+};
+flagsOn = ['voice_realtime'];
+(async () => {
+  voice.enter();
+  await sleep(20);
+  assert.strictEqual(runtime.offers.length, 1, 'new chat voice view offers Call');
+  await runtime.offers[0].connect();
+  assert.strictEqual(created.length, 1, 'connecting creates the chat');
+  assert.strictEqual(runtime.started.length, 1);
+  assert.strictEqual(runtime.started[0].session_id, '77');
+  assert.strictEqual(runtime.started[0].engine, 'realtime');
+  voice.exit();
+})().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@node_only
+def test_realtime_voice_view_without_session_capability_offers_no_call():
+    _node(r"""
+globalThis.parent = globalThis;
+let offered = 0;
+globalThis.CuttleShellVoice = { create: () => ({ offer() { offered += 1; return () => {}; }, attach: () => () => {} }) };
+globalThis.CuttleChatVoiceRealtime = { supported: () => true, create: () => ({}) };
+""" + CONTROLLER_HARNESS + r"""
+host.sessionId = () => null;
+flagsOn = ['voice_realtime'];
+(async () => {
+  voice.enter();
+  await sleep(20);
+  assert.strictEqual(offered, 0, 'no chat and no way to create one: no Call');
+})().catch((e) => { console.error(e); process.exit(1); });
+""")

@@ -99,7 +99,10 @@ if not exist "%DAEMON%" (
   exit /b 1
 )
 echo Starting Cuttle Host ^(daemon + app^) ...
-start "Cuttle Host" "%VENV_PY%" "%DAEMON%"
+rem Run the daemon in this window: `start` would open a second console.
+rem Closing this window stops the daemon; tray Exit is the normal shutdown.
+title Cuttle Host
+"%VENV_PY%" "%DAEMON%"
 goto :eof
 
 :START_DAEMON
@@ -111,7 +114,8 @@ if not exist "%VENV_PY%" (
   exit /b 1
 )
 echo Starting Cuttle daemon only ^(no app^) ...
-start "Cuttle Daemon" "%VENV_PY%" "%DAEMON%"
+title Cuttle Daemon
+"%VENV_PY%" "%DAEMON%" --no-ui
 goto :eof
 
 :MAKE_SHORTCUT

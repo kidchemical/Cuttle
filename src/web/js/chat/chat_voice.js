@@ -562,10 +562,12 @@
         }
 
         /** Call engines get the runtime's persistent Call button; it runs the same
-         *  connect path as tapping the orb so orb, status and transcript agree. */
+         *  connect path as tapping the orb so orb, status and transcript agree.
+         *  A chat with no id yet (new chat, restore in flight) still gets Call:
+         *  connecting creates the chat through voiceContext, exactly like the orb. */
         function offerCall() {
             withdrawCallOffer?.(); withdrawCallOffer = null;
-            if (engine !== 'live' && !(engine === 'realtime' && host.sessionId?.())) return;
+            if (engine !== 'live' && !(engine === 'realtime' && (host.sessionId?.() || host.adoptSession))) return;
             const runtime = voiceRuntime();
             if (!runtime || typeof runtime.offer !== 'function') return;
             const frameAlive = conversationCallbacks().alive;

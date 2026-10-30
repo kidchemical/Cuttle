@@ -105,6 +105,33 @@ def test_electron_launch_argv_is_none_or_existing():
         assert Path(paths[-1]).is_dir() or Path(paths[-1]).is_file()
 
 
+def test_electron_launch_argv_opens_the_host_profile(tmp_path, monkeypatch):
+    """The daemon's window is the Host UI; without --mode=host Electron restores
+    a saved Client target from the shared default profile."""
+    import core.runtime_paths as rp
+
+    exe = tmp_path / "Cuttle.exe"
+    exe.write_text("")
+    monkeypatch.setattr(rp, "electron_packaged_exe", lambda _root: exe)
+    assert rp.electron_launch_argv(tmp_path)[-1] == "--mode=host"
+
+    dev = tmp_path / "electron.exe"
+    dev.write_text("")
+    monkeypatch.setattr(rp, "electron_packaged_exe", lambda _root: None)
+    monkeypatch.setattr(rp, "electron_dev_bin", lambda _root: dev)
+    argv = rp.electron_launch_argv(tmp_path)
+    assert argv[-2:] == [str(tmp_path / "electron"), "--mode=host"]
+
+
+def test_windows_launcher_runs_the_daemon_in_one_console():
+    """`start` spawned a second console for the Host shortcut; Daemon-only must not open the app."""
+    text = (REPO / ".cuttle" / "scripts" / "start-cuttle.cmd").read_text(encoding="utf-8")
+    host = text.split(":START_HOST", 1)[1].split(":START_DAEMON", 1)[0]
+    daemon = text.split(":START_DAEMON", 1)[1].split(":MAKE_SHORTCUT", 1)[0]
+    assert '"%VENV_PY%" "%DAEMON%"' in host and "start " not in host.lower()
+    assert '"%VENV_PY%" "%DAEMON%" --no-ui' in daemon and "start " not in daemon.lower()
+
+
 def test_desktop_state_dir_is_named_cuttle_desktop():
     path = desktop_state_dir()
     assert path.name == "cuttle-desktop"

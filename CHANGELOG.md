@@ -47,6 +47,9 @@ User-visible changes to Cuttle. The format follows
   `LOCAL_LLM_QUEUE_TIMEOUT_SEC` (default 120 s) instead of waiting forever.
 
 ### Fixed
+- The Windows **Cuttle Host** shortcut opens one console instead of two,
+  and its app always opens in Host mode, even on a PC that was used as a
+  Client before. **Cuttle Daemon** no longer opens the app.
 - POSIX launchers and helper scripts are executable in fresh clones, and
   Windows `.cmd` scripts check out with CRLF.
 - Agent handoff reports when long messages were truncated and points to the
