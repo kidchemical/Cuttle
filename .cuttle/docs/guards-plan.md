@@ -175,16 +175,34 @@ New, cheap: `target_state` (busy/idle/error/awaiting_input), `command_matches`
 4. **UI**: list/enable/disable guards and see recent firings (Apps → Orchestrator
    or Jobs), surfaced like Jobs rows.
 
-## Open questions
+## Decisions (were open questions; decided 2026-10-30 against Cuttle's positioning)
 
-1. **`notify` delivery.** Completion notifications are browser-side and need an
-   open page. A host-side notice (Jobs row + attention badge, optional
-   `service_op` to ntfy/Discord) is reliable; true push needs a new owner. Accept
-   "visible in Cuttle + optional service_op" for v1?
-2. **Spawned supervisor context.** Give it the guard, violations, target snapshot
-   and target handle (it can then `chat_cli status/send`), or bind it as the
-   target's supervisor for the rest of the incident?
-3. **`watch: project`** without a chat: evaluate on `ref_update` + `interval`
-   only, or also on any chat whose checkout is in the repo?
-4. Should a guard be able to **pause the target's supervision schedule** or the
-   target's queued sends (a stronger stop)?
+Grounding: Cuttle is a self-hosted "harness of harnesses" — one host, shared
+history across web, desktop and the Android app; agents act through
+`python -m api.*` verbs; parts are sockets; personal tweaks stay out of git.
+
+1. **`notify` is host-side first.** A guard firing writes a durable host record
+   (Jobs row + the chat's attention badge + an entry in the guard's firing
+   history). Because state lives on the host, every client — browser, Electron,
+   Android — sees it without an open page. Off-host delivery is an explicit
+   `service_op` (Discord today; ntfy or similar as a future `service_ops` drop-in),
+   not a new channel inside guards. Browser push stays owned by completion
+   notifications; it can later subscribe to guard firings as one more event kind.
+2. **A spawned supervisor is incident-scoped.** `spawn` creates a chat that
+   receives an incident brief (guard, violations, target snapshot, target handle)
+   and acts through the normal verbs (`chat_cli status|snapshot|send|stop`). It is
+   not silently made the target's long-term supervisor: one schedule keeps one
+   supervisor, so two LLMs never steer the same chat. The firing record links the
+   two chats; promoting it is an explicit `chat_cli supervise` call. Lifetime is
+   `conversational` so the user can talk to it; it is closed when the incident
+   resolves or after an idle timeout.
+3. **`watch: project` evaluates on `ref_update`, `interval`, and events from any
+   chat whose checkout is in that repository** (worktree binds already record the
+   checkout). Conditions are cheap and LLM-free, so wide triggers cost nothing
+   until an action runs; attribution uses the chat that raised the event and its
+   lineage, exactly as chat guards do.
+4. **Yes, a stronger stop exists, opt-in.** `stop_target: {hold_queue: true}`
+   also pauses the target's queued `chat_ops` sends and its supervision schedule
+   (existing `pause-operation` semantics) until someone resumes them. Default is
+   the plain Stop. Holds are listed on the firing record and in Jobs, and
+   `python -m api.guards release <firing>` resumes everything it paused.
