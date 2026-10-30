@@ -187,6 +187,26 @@ def test_coordinator_embeds_preservation_owner(monkeypatch):
     assert job['params']['checkout_helper_text'] == (SCRIPTS / 'client-update-checkout.py').read_text(encoding='utf-8')
 
 
+def test_host_channel_embeds_heads_it_already_delivered(monkeypatch):
+    monkeypatch.setattr(platform, 'submit_job', lambda **kwargs: kwargs)
+    monkeypatch.setattr(platform, 'get_store', lambda: SimpleNamespace(host_delivered_heads=lambda wid: ['0fc771cba']))
+    job = platform.submit_self_update(target_worker_id='fixture', update_source='host')
+    assert "EMBEDDED_HOST_DELIVERED_HEADS: tuple = ('0fc771cba',)" in job['params']['checkout_helper_text']
+
+
+def test_store_lists_heads_from_succeeded_host_updates(tmp_path):
+    from api.device_workers.store import DeviceWorkerStore
+
+    db = DeviceWorkerStore(tmp_path / 'dw.db')
+    for source, head in (('official', 'aaaaaaaaa'), ('host', 'bbbbbbbbb'), ('host', 'not-a-sha')):
+        job = db.submit_job(job_type='cuttle_self_update', params={'update_source': source},
+                            requirements={'cuttle_self_update': True}, target_worker_id='laptop')
+        db.claim_jobs(worker_id='laptop', capabilities={'cuttle_self_update': True})
+        db.complete_job(job['id'], 'laptop', result={'head': head})
+    assert db.host_delivered_heads('laptop') == ['bbbbbbbbb']
+    assert db.host_delivered_heads('other') == []
+
+
 @pytest.mark.parametrize('missing', ['client-self-update.ps1', 'client-self-update.sh', 'client-update-checkout.py'])
 def test_coordinator_refuses_incomplete_delivery(monkeypatch, missing):
     real_read = Path.read_text
