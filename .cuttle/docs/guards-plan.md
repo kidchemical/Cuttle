@@ -16,9 +16,8 @@ and aborts the transaction by exiting non-zero in the `prepared` phase.
   worktrees, never in the tree: `git config --add cuttle.protectBranch dev/core`.
 - **Whose updates**: processes carrying `CUTTLE_CHAT_SESSION_ID` whose own
   checkout (`CUTTLE_AGENT_PROJECT_PATH`) is not on that branch, so agents working
-  in the dev/core checkout keep working; Cuttle sets both for every agent turn,
-  Cuttle already sets for every agent turn. The user's terminal, Unity, and the
-  Git UI pass untouched.
+  in the dev/core checkout keep working (Cuttle sets both for every agent turn).
+  The user's terminal, Unity, and the Git UI pass untouched.
 - **No Cuttle call** from the hook: it reads git config and the environment, so
   it works when Cuttle is down and cannot hang a commit.
 - **Install**: `python -m api.chat_cli install-hook <repo> --protect <branch>` copies a ~30-line
