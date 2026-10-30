@@ -290,6 +290,16 @@ def test_send_runs_on_the_target_chats_agent_not_the_router(chats):
     assert pin("go") == "go"
 
 
+def test_send_follows_the_chats_latest_agent_over_a_stale_badge(chats):
+    db, owner, _sup, target, _foreign = chats
+    row = {"id": target, "user_id": owner}
+    db.set_composer_selection(target, owner, {"stickyChips": [{"prefix": "/codex", "label": "Codex"}]})
+    db.add_message(target, "user", "/claude switch harness")
+    db.add_message(target, "assistant", "ok")
+    db.add_message(target, "user", "plain follow-up")
+    assert service.pin_to_chat_agent(db, row, "go") == "/claude go"
+
+
 def test_restart_verifies_sends_and_resumes_schedules(chats):
     db, _owner, sup, target, _foreign = chats
     send = _queued(chats)

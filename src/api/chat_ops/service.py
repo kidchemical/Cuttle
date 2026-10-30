@@ -209,20 +209,35 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
             'hint': 'Host-owned outbox dispatches when idle; no open browser required'}
 
 
+def _latest_turn_prefix(db, sid):
+    from api.starred_slash import sticky_prefix_from_text
+    for msg in reversed(db.get_messages(sid, limit=40) or []):
+        if isinstance(msg, dict) and msg.get('role') == 'user':
+            found = sticky_prefix_from_text(str(msg.get('content') or ''))
+            if found:
+                return found.strip()
+    return ''
+
+
 def pin_to_chat_agent(db, row, text):
     """Run a sent turn on the target chat's own agent, not the agent router.
 
     A plain message carries no composer badge, so ``/api/chat`` would route a
     chat whose agent lives only in its badge selection or sub-agent spec.
-    A badge the user removed (``stickyCleared``) stays unpinned on purpose."""
+    A badge the user removed (``stickyCleared``) stays unpinned on purpose.
+    The chat's latest explicit agent turn beats a saved badge: a send that
+    switched harness (``/claude …``) never updates the composer selection."""
     if text.startswith('/'):
         return text
     selection = db.get_composer_selection(int(row['id']), int(row['user_id'])) or {}
+    if selection.get('stickyCleared') and not selection.get('stickyChips'):
+        return text
+    latest = _latest_turn_prefix(db, int(row['id']))
+    if latest:
+        return f'{latest} {text}'
     chips = selection.get('stickyChips') or []
     if chips:
         return chips[0]['prefix'] + text
-    if selection.get('stickyCleared'):
-        return text
     from api.subagents.store import get_child_by_session
     child = get_child_by_session(db, int(row['id']))
     agent = str(getattr(child, 'agent', '') or '').strip().lstrip('/')
