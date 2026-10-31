@@ -5,12 +5,15 @@
     const STORAGE_PROJECT = 'cuttleGitGraphProject';
     const STORAGE_BRANCH = 'cuttleGitGraphBranch';
     const STORAGE_REPO_PREFIX = 'cuttleGitGraphRepo:';
-    const ROW_H = 52;
-    const LANE_W = 11;
-    const GUTTER_PAD = 14;
+    const ROW_H = 40;
+    const LANE_W = 14;
+    const GUTTER_PAD = 16;
     /** Gap from node center to the start of commit text */
-    const TEXT_AFTER_NODE = 10;
-    const PAGE_SIZE = 20;
+    const TEXT_AFTER_NODE = 14;
+    /** Server caps a page at 200; the scroll/footer loader fetches the next one. */
+    const PAGE_SIZE = 60;
+    /** Start fetching the next page this many rows before the end of the list. */
+    const LOAD_AHEAD_ROWS = 20;
     const COLORS = [
         '#38bdf8', '#a78bfa', '#34d399', '#fbbf24', '#f472b6',
         '#22d3ee', '#c084fc', '#4ade80', '#fb923c', '#e879f9',
@@ -26,6 +29,7 @@
         scroll: document.getElementById('gitGraphScroll'),
         svg: document.getElementById('gitGraphSvg'),
         rows: document.getElementById('gitGraphRows'),
+        more: document.getElementById('gitGraphMore'),
         layout: document.getElementById('gitGraphLayout'),
         drawer: document.getElementById('gitGraphDrawer'),
         drawerClose: document.getElementById('gitGraphDrawerClose'),
@@ -59,6 +63,8 @@
     let graphHeadBranch = '';
     let graphHasMore = false;
     let graphLoadingMore = false;
+    /** Last load-more failure; stops auto-loading until the user retries. */
+    let graphMoreError = '';
     let pendingChangesCtl = null;
 
     function loadBranchMode() {
@@ -317,16 +323,17 @@
      * Prefer a local branch tip on this commit (skip HEAD / prefer non-remote).
      * e.g. HEAD + dev/core + origin/dev/core → "dev/core"
      */
-    function pickCommitTip(refs) {
+    function pickCommitTip(commit) {
         let best = '';
         let bestScore = -1;
         const head = String(graphHeadBranch || '').toLowerCase();
-        (refs || []).forEach((lab) => {
+        const tags = new Set((commit && commit.tags) || []);
+        ((commit && commit.refs) || []).forEach((lab) => {
             const s = String(lab || '');
             if (!s || s === 'HEAD') return;
             const lower = s.toLowerCase();
             let sc = -1;
-            if (lower.startsWith('tag:')) sc = 1;
+            if (tags.has(s)) sc = 1;
             else if (lower.startsWith('origin/') || lower.startsWith('remotes/')) sc = 3;
             else if (lower === 'main' || lower === 'master') sc = 9;
             else sc = 8;
@@ -392,7 +399,7 @@
 
         rows.forEach((r) => {
             const hash = r.commit.hash;
-            const tip = pickCommitTip(r.commit.refs);
+            const tip = pickCommitTip(r.commit);
             let name = tip || inherit.get(hash) || '';
             if (tip) rememberColorKey(tip);
             if (name) labels.set(hash, name);
@@ -440,10 +447,37 @@
         return { labels, colors };
     }
 
+    /**
+     * Rightmost lane any drawn edge occupies in each row, so commit text starts
+     * past the lines crossing that row instead of under them.
+     */
+    function assignTextLanes(rows) {
+        rows.forEach((r) => { r.textLane = r.lane; });
+        rows.forEach((r, i) => {
+            (r.commit.parents || []).forEach((ph, pi) => {
+                const j = hashToRow.get(ph);
+                if (j == null) {
+                    // Stub toward a parent on a page not loaded yet: dips into the next row.
+                    const edge = r.edges && r.edges[pi];
+                    const toLane = edge && edge.toLane != null ? edge.toLane : r.lane;
+                    if (i + 1 < rows.length) {
+                        rows[i + 1].textLane = Math.max(rows[i + 1].textLane, r.lane, toLane);
+                    }
+                    return;
+                }
+                const hi = Math.max(r.lane, rows[j].lane);
+                for (let k = Math.min(i, j) + 1; k < Math.max(i, j); k++) {
+                    if (rows[k].textLane < hi) rows[k].textLane = hi;
+                }
+            });
+        });
+    }
+
     function layoutGraph(list) {
         layoutRows = assignLanes(list);
         hashToRow = new Map();
         layoutRows.forEach((r, i) => hashToRow.set(r.commit.hash, i));
+        assignTextLanes(layoutRows);
         const owned = assignBranchOwnership(layoutRows);
         commitBranch = owned.labels;
         branchColorMap = owned.colors;
@@ -523,7 +557,10 @@
     }
 
     let lastPaintKey = '';
+    let lastPaintScrollTop = -1;
     let ignoreScrollPaint = false;
+    /** A scroll arrived while ignoreScrollPaint was set; repaint once it clears. */
+    let scrollPaintDeferred = false;
     let paintStorm = false;
     let paintsInWindow = 0;
     let paintWindowStart = 0;
@@ -531,19 +568,7 @@
 
     function paintViewport() {
         if (paintStorm || !els.rows || !els.svg || !els.scroll) return;
-        const now = performance.now();
-        if (now - paintWindowStart > 1000) {
-            paintWindowStart = now;
-            paintsInWindow = 0;
-        }
-        paintsInWindow += 1;
-        // Split-pane Electron used to lock the shared renderer main thread here:
-        // clientHeight flickered → paintKey changed → innerHTML → layout → repeat.
-        if (paintsInWindow > 40) {
-            paintStorm = true;
-            console.error('[git-graph] paint storm suppressed (split/resize feedback loop)');
-            return;
-        }
+        scrollPaintDeferred = false;
 
         const n = layoutRows.length;
         const [start, end] = visibleRange();
@@ -556,6 +581,23 @@
         const paintKey = [width, totalH, start, end, Math.round(st), selectedHash || ''].join('|');
         if (paintKey === lastPaintKey) return;
         lastPaintKey = paintKey;
+
+        // Split-pane Electron used to lock the shared renderer main thread here:
+        // clientHeight flickered → paintKey changed → innerHTML → layout → repeat.
+        // That loop repaints with scrollTop unchanged; a user scroll moves it,
+        // so steady scrolling never counts toward the storm.
+        const now = performance.now();
+        if (now - paintWindowStart > 1000) {
+            paintWindowStart = now;
+            paintsInWindow = 0;
+        }
+        if (Math.round(st) === lastPaintScrollTop) paintsInWindow += 1;
+        lastPaintScrollTop = Math.round(st);
+        if (paintsInWindow > 40) {
+            paintStorm = true;
+            console.error('[git-graph] paint storm suppressed (split/resize feedback loop)');
+            return;
+        }
 
         // Same coordinate space as the absolutely positioned rows (scroll together).
         els.svg.setAttribute('width', String(width));
@@ -571,25 +613,27 @@
             const r = layoutRows[idx];
             const c = r.commit;
             const subject = String(c.subject || '(no subject)').replace(/\s+/g, ' ').trim();
-            const refs = (c.refs || []).map((lab) => {
-                const head = lab === 'HEAD' ? ' is-head' : '';
-                return '<span class="git-graph-ref' + head + '" title="' + esc(lab) + '">' + esc(lab) + '</span>';
-            }).join('');
-            const meta = [c.author, c.date].filter(Boolean).join(' · ');
-            const sel = c.hash === selectedHash ? ' is-selected' : '';
-            // Sit text beside this commit's node — not after the global max-lane gutter.
-            const inset = laneX(r.lane) + TEXT_AFTER_NODE;
+            const refs = refChipsHtml(c);
+            let cls = 'git-graph-row';
+            if (c.hash === selectedHash) cls += ' is-selected';
+            if ((c.parents || []).length > 1) cls += ' is-merge';
+            // Sit text past the lanes crossing this row — not after the global max-lane gutter.
+            const inset = laneX(r.textLane) + TEXT_AFTER_NODE;
+            const author = String(c.author || '');
             html +=
-                '<div class="git-graph-row' + sel + '" data-hash="' + esc(c.hash)
+                '<div class="' + cls + '" data-hash="' + esc(c.hash)
                 + '" data-idx="' + idx + '" role="button" tabindex="0" style="top:'
-                + (idx * ROW_H) + 'px;--text-inset:' + inset + 'px">'
+                + (idx * ROW_H) + 'px;--text-inset:' + inset + 'px;--lane-color:'
+                + colorForBranch(commitBranch.get(c.hash) || '') + '">'
                 + '<div class="git-graph-row-body">'
-                + '<div class="git-graph-row-top">'
-                + '<span class="git-graph-hash">' + esc(c.short || c.hash.slice(0, 7)) + '</span>'
                 + (refs ? '<span class="git-graph-refs">' + refs + '</span>' : '')
                 + '<span class="git-graph-subject" title="' + esc(subject) + '">' + esc(subject) + '</span>'
-                + '</div>'
-                + '<div class="git-graph-meta">' + esc(meta) + '</div>'
+                + '<span class="git-graph-author" title="' + esc([author, c.email].filter(Boolean).join(' · '))
+                + '"><span class="git-graph-avatar" aria-hidden="true" style="--avatar-hue:' + authorHue(author) + '">' + esc(authorInitials(author)) + '</span>'
+                + '<span class="git-graph-author-name">' + esc(author) + '</span></span>'
+                + '<time class="git-graph-date" datetime="' + esc(c.date) + '" title="' + esc(formatFullDate(c.date)) + '">'
+                + esc(formatRelativeDate(c.date)) + '</time>'
+                + '<span class="git-graph-hash">' + esc(c.short || c.hash.slice(0, 7)) + '</span>'
                 + '</div></div>';
         }
         ignoreScrollPaint = true;
@@ -652,16 +696,98 @@
             const br = commitBranch.get(r.commit.hash) || '';
             const col = colorForBranch(br);
             const sel = r.commit.hash === selectedHash;
+            const merge = (r.commit.parents || []).length > 1;
+            const head = (r.commit.refs || []).includes('HEAD');
+            let cls = 'git-graph-node';
+            if (sel) cls += ' is-selected';
+            if (merge) cls += ' is-merge';
+            if (head) cls += ' is-head';
             nodes +=
-                '<circle class="git-graph-node" data-branch="' + esc(br) + '" cx="' + cx + '" cy="' + cy
-                + '" r="' + (sel ? 6 : 4.5) + '" fill="' + col + '"'
-                + (sel ? ' stroke="#fff" stroke-width="2"' : '') + '/>';
+                '<circle class="' + cls + '" data-branch="' + esc(br) + '" cx="' + cx + '" cy="' + cy
+                + '" r="' + (sel ? 6 : (head ? 5.5 : 4.5)) + '"'
+                + ' fill="' + col + '"' + (merge ? ' stroke="' + col + '"' : '')
+                + '/>';
         }
 
         els.svg.innerHTML = paths + nodes;
         if (hoveredBranch) applyBranchHover(hoveredBranch);
-        // Allow layout to settle before re-arming scroll→paint.
-        requestAnimationFrame(() => { ignoreScrollPaint = false; });
+        // Allow layout to settle before re-arming scroll→paint. A scroll that
+        // landed in that window still repaints (else the list can stop short).
+        requestAnimationFrame(() => {
+            ignoreScrollPaint = false;
+            if (scrollPaintDeferred) schedulePaint();
+        });
+    }
+
+    function isRemoteRef(label) {
+        const lower = String(label || '').toLowerCase();
+        if (lower.startsWith('origin/') || lower.startsWith('remotes/')) return true;
+        // Local branches like dev/core also contain '/': trust the branch list.
+        return lower.includes('/') && branches.length > 0
+            && !branches.some((b) => b && b.name === label);
+    }
+
+    /** Ref chips by kind; HEAD folds into the checked-out branch chip. */
+    function refChipsHtml(c) {
+        const refs = Array.isArray(c.refs) ? c.refs : [];
+        const tags = new Set(Array.isArray(c.tags) ? c.tags : []);
+        const headBranch = String(graphHeadBranch || '');
+        const headFolded = refs.includes('HEAD') && !!headBranch && refs.includes(headBranch);
+        return refs.map((lab) => {
+            if (lab === 'HEAD' && headFolded) return '';
+            let kind = 'is-local';
+            let title = lab;
+            if (lab === 'HEAD') {
+                kind = 'is-head';
+                title = 'HEAD (detached)';
+            } else if (tags.has(lab)) {
+                kind = 'is-tag';
+                title = 'Tag ' + lab;
+            } else if (isRemoteRef(lab)) {
+                kind = 'is-remote';
+            }
+            if (headFolded && lab === headBranch) {
+                kind += ' is-head';
+                title = 'HEAD → ' + lab;
+            }
+            return '<span class="git-graph-ref ' + kind + '" title="' + esc(title) + '">' + esc(lab) + '</span>';
+        }).join('');
+    }
+
+    /** Stable per-author hue so the same person keeps the same avatar color. */
+    function authorHue(name) {
+        let h = 0;
+        const str = String(name || '');
+        for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+        return h % 360;
+    }
+
+    function authorInitials(name) {
+        const words = String(name || '').replace(/\[bot\]$/i, '').split(/[\s._-]+/).filter(Boolean);
+        if (!words.length) return '?';
+        const first = words[0][0] || '';
+        const second = words.length > 1 ? (words[words.length - 1][0] || '') : (words[0][1] || '');
+        return (first + second).toUpperCase();
+    }
+
+    function formatRelativeDate(iso) {
+        const t = Date.parse(iso || '');
+        if (!isFinite(t)) return String(iso || '');
+        const sec = Math.max(0, (Date.now() - t) / 1000);
+        if (sec < 60) return 'just now';
+        if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+        if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
+        if (sec < 86400 * 7) return Math.floor(sec / 86400) + 'd ago';
+        const d = new Date(t);
+        const opts = d.getFullYear() === new Date().getFullYear()
+            ? { month: 'short', day: 'numeric' }
+            : { year: 'numeric', month: 'short', day: 'numeric' };
+        return d.toLocaleDateString(undefined, opts);
+    }
+
+    function formatFullDate(iso) {
+        const t = Date.parse(iso || '');
+        return isFinite(t) ? new Date(t).toLocaleString() : String(iso || '');
     }
 
     function edgePath(x1, y1, x2, y2, color, branch) {
@@ -682,6 +808,10 @@
 
     function highlightSelection() {
         schedulePaint();
+    }
+
+    function isFiltering() {
+        return !!(els.filter && (els.filter.value || '').trim());
     }
 
     function filteredCommits() {
@@ -983,6 +1113,7 @@
         const ac = graphAbort;
         graphLoadingMore = false;
         graphHasMore = false;
+        graphMoreError = '';
 
         setStatus('Loading graph…', false);
         const resp = await fetch('/api/git/graph?' + graphQueryParams(0).toString(), {
@@ -1003,10 +1134,49 @@
         updateCommitSubtitle();
         if (!commits.length) {
             setStatus('No commits in this repository.', false);
+            renderMoreFooter();
             return;
         }
         setStatus('', false);
+        if (els.scroll) els.scroll.scrollTop = 0;
         layoutGraph(filteredCommits());
+        renderMoreFooter();
+        scheduleLoadMoreCheck();
+    }
+
+    /** Footer under the last row: progress, explicit "Load more", retry, or end of history. */
+    function renderMoreFooter() {
+        const el = els.more;
+        if (!el) return;
+        const n = commits.length;
+        if (!n) {
+            el.hidden = true;
+            el.innerHTML = '';
+            return;
+        }
+        el.hidden = false;
+        const plural = (k, word) => k + ' ' + word + (k === 1 ? '' : 's');
+        const note = isFiltering()
+            ? layoutRows.length + ' of ' + plural(n, 'loaded commit') + ' match'
+            : '';
+        let html = '';
+        if (graphLoadingMore) {
+            html = '<span class="git-graph-spinner" aria-hidden="true"></span>'
+                + '<span>Loading older commits…</span>';
+        } else if (graphMoreError) {
+            html = '<span class="is-error">' + esc(graphMoreError) + '</span>'
+                + '<button type="button" class="git-graph-more-btn" data-more="load">Retry</button>';
+        } else if (graphHasMore) {
+            html = (note ? '<span>' + esc(note) + '</span>' : '')
+                + '<button type="button" class="git-graph-more-btn" data-more="load">'
+                + (note ? 'Search older commits' : 'Load more commits') + '</button>';
+        } else {
+            html = '<span class="git-graph-more-end">'
+                + esc(note ? note + ' · start of history' : 'Start of history · ' + plural(n, 'commit'))
+                + '</span>';
+        }
+        el.innerHTML = html;
+        el.classList.toggle('is-loading', graphLoadingMore);
     }
 
     async function loadMoreGraph() {
@@ -1015,10 +1185,13 @@
         if (!path || !commits.length) return;
 
         graphLoadingMore = true;
+        graphMoreError = '';
+        renderMoreFooter();
         if (graphAbort) graphAbort.abort();
         graphAbort = new AbortController();
         const ac = graphAbort;
         const skip = commits.length;
+        let loaded = false;
 
         try {
             const resp = await fetch('/api/git/graph?' + graphQueryParams(skip).toString(), {
@@ -1028,7 +1201,7 @@
             const data = await resp.json().catch(() => null);
             if (ac.signal.aborted) return;
             if (!data || !data.success) {
-                graphHasMore = false;
+                graphMoreError = (data && data.error) || 'Could not load older commits.';
                 return;
             }
             const more = Array.isArray(data.commits) ? data.commits : [];
@@ -1048,21 +1221,44 @@
             commits = commits.concat(added);
             updateCommitSubtitle();
             layoutGraph(filteredCommits());
+            loaded = true;
         } catch (e) {
             if (e && e.name === 'AbortError') return;
             console.warn('[git-graph] load more failed', e);
+            graphMoreError = 'Could not load older commits.';
         } finally {
-            graphLoadingMore = false;
+            if (ac === graphAbort) {
+                graphLoadingMore = false;
+                renderMoreFooter();
+                // A tall viewport may still show the footer: keep filling it.
+                if (loaded) scheduleLoadMoreCheck();
+            }
         }
     }
 
+    /**
+     * Auto-load the next page near the end of the list — also when the list is
+     * shorter than the viewport (no scrollbar means no scroll event ever fires).
+     * Filtering pauses auto-load so a narrow filter cannot walk all history;
+     * the footer button continues the search.
+     */
     function maybeLoadMoreFromScroll() {
         const el = els.scroll;
-        if (!el || el.hidden || !graphHasMore || graphLoadingMore) return;
+        if (!el || el.hidden || !graphHasMore || graphLoadingMore || graphMoreError) return;
+        if (isFiltering()) return;
         const remain = el.scrollHeight - el.scrollTop - el.clientHeight;
-        if (remain < ROW_H * 12) {
+        if (remain < ROW_H * LOAD_AHEAD_ROWS) {
             loadMoreGraph().catch(() => {});
         }
+    }
+
+    let loadMoreCheckRaf = 0;
+    function scheduleLoadMoreCheck() {
+        if (loadMoreCheckRaf) return;
+        loadMoreCheckRaf = requestAnimationFrame(() => {
+            loadMoreCheckRaf = 0;
+            maybeLoadMoreFromScroll();
+        });
     }
 
     async function selectCommit(hash, opts) {
@@ -1277,13 +1473,26 @@
             if (!commits.length) return;
             setStatus('', false);
             layoutGraph(filteredCommits());
+            renderMoreFooter();
+            scheduleLoadMoreCheck();
         }, 120);
     });
+    if (els.more) {
+        els.more.addEventListener('click', (e) => {
+            const btn = e.target && e.target.closest ? e.target.closest('[data-more="load"]') : null;
+            if (!btn) return;
+            graphMoreError = '';
+            loadMoreGraph().catch(() => {});
+        });
+    }
     els.drawerClose.addEventListener('click', closeDrawer);
     els.scroll.addEventListener('scroll', () => {
-        if (ignoreScrollPaint) return;
-        schedulePaint();
         maybeLoadMoreFromScroll();
+        if (ignoreScrollPaint) {
+            scrollPaintDeferred = true;
+            return;
+        }
+        schedulePaint();
     }, { passive: true });
     window.addEventListener('resize', () => {
         scheduleFitBranches();
@@ -1292,6 +1501,7 @@
             resizePaintTimer = 0;
             lastPaintKey = '';
             schedulePaint();
+            scheduleLoadMoreCheck();
         }, 120);
     });
     if (typeof ResizeObserver !== 'undefined' && els.branchesList) {

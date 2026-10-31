@@ -18,7 +18,7 @@
     <link rel="stylesheet" href="/css/diff_modal.css?v=20261017ideEdit">
     <link rel="stylesheet" href="/css/agent_review.css?v=20261018review">
     <link rel="stylesheet" href="/css/git_commit_viewer.css?v=20261001sharedDiff">
-    <link rel="stylesheet" href="/css/git_graph_page.css?v=20261015glass">
+    <link rel="stylesheet" href="/css/git_graph_page.css?v=20261030lazyLoad">
     <script src="/js/shared/toast.js"></script>
 <script defer src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
 <link rel="stylesheet" href="/css/searchable_select.css?v=20261011attachedMenus">
@@ -59,6 +59,7 @@
                 <div class="git-graph-scroll" id="gitGraphScroll" hidden>
                     <svg class="git-graph-svg" id="gitGraphSvg" xmlns="http://www.w3.org/2000/svg"></svg>
                     <div class="git-graph-rows" id="gitGraphRows"></div>
+                    <div class="git-graph-more" id="gitGraphMore" hidden aria-live="polite"></div>
                 </div>
             </section>
 
@@ -86,6 +87,6 @@
     <script src="/js/git/pending_changes_panel.js?v=20261028poll2"></script>
     <script src="/js/git/diff_modal.js?v=20261018review"></script>
     <script src="/js/git/git_commit_viewer.js?v=20261001sharedDiff"></script>
-    <script src="/js/git/git_graph_page.js?v=20261005projects"></script>
+    <script src="/js/git/git_graph_page.js?v=20261030lazyLoad"></script>
 </body>
 </html>

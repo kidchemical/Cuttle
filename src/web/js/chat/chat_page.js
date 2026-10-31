@@ -4167,6 +4167,7 @@
                         claudeEffortBadge
                     ) || chip.label;
                 }
+                if (orchestrateChip.isChip(chip)) displayLabel = orchestrateChip.label(chip);
                 const safeLabel = escapeHtmlInline(displayLabel);
                 const starred = isSlashCommandStarred(chip.prefix);
                 let tipBase = starred
@@ -4299,6 +4300,7 @@
         chipConfigControl.bindRow(row, {
             chips: slashCtx[key].chips,
             composerChipAgentId,
+            onChip: orchestrateChip.open,
         });
         scheduleSlashChipCompactLabels(row);
         contextGauge.scheduleRefresh(60);
@@ -4354,6 +4356,13 @@
         getChatCheckout: () => currentCheckoutUid,
         setChatCheckout,
         showToast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+    });
+    // `/orchestrate` chip + playbook popup — owned by chat_orchestrate_chip.js.
+    const orchestrateChip = CuttleChatOrchestrateChip.create({
+        escapeHtml: escapeHtmlInline, showToast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+        openModal: (...args) => chipConfigControl.openCustom(...args), close: () => chipConfigControl.close(),
+        rerender: () => { ['welcome', 'chat'].forEach((k) => renderSlashChips(k, document.getElementById(k === 'chat' ? 'chatInput' : 'welcomeChatInput'))); saveComposerDraftControls(session.current() || 'new'); },
+        navigate: (page) => (window.parent !== window ? window.parent.postMessage({ type: 'cuttle-navigate', page }, '*') : window.location.assign(page)),
     });
 
     // Probe the worktrees feature once (server 404s it when disabled) so the

@@ -51,7 +51,7 @@ def _seed_db(tmp_path):
 
 def test_default_playbook_normalizes_and_lists_profiles():
     pb = model.default_playbook()
-    assert pb["schema"] == 1 and [t["role"] for t in pb["tiers"]] == ["worker", "escalation", "expert"]
+    assert pb["schema"] == 2 and [t["role"] for t in pb["tiers"]] == ["worker", "escalation", "expert"]
     assert model.referenced_profiles(pb) == ["grunt", "grunt-muse", "escalate", "expert-claude", "expert-codex"]
     assert model.missing_profiles(pb, ["grunt"]) == ["grunt-muse", "escalate", "expert-claude", "expert-codex"]
 
@@ -62,7 +62,10 @@ def test_default_playbook_normalizes_and_lists_profiles():
     ({"id": "x", "tiers": [{"role": "expert", "profiles": ["a"]}]}, "worker tier"),
     ({"id": "x", "tiers": [{"id": "a", "role": "worker", "profiles": ["p"]},
                            {"id": "a", "role": "expert", "profiles": ["p"]}]}, "duplicated"),
-    ({"id": "x", "tiers": [{"role": "worker", "profiles": []}]}, "at least one agent profile"),
+    ({"id": "x", "tiers": [{"role": "worker", "profiles": []}]}, "at least one agent"),
+    ({"id": "x", "tiers": [{"role": "worker", "members": [{"agent": "", "model": "auto"}]}]}, "needs a harness"),
+    ({"id": "x", "tiers": [{"role": "worker", "members": [{"profile": "a", "on": False}]},
+                           {"role": "expert", "members": ["b"]}]}, "switch on at least one agent"),
     ({"id": "x", "tiers": [{"role": "boss", "profiles": ["a"]}]}, "role must be"),
     ({"id": "x", "tiers": [{"role": "worker", "profiles": ["a"]}], "limits": {"solo_minutes": 1}}, "solo_minutes"),
     ({"id": "x", "tiers": [{"role": "worker", "profiles": ["a"]}], "supervisor": {"every_sec": 5}}, "every_sec"),
@@ -81,7 +84,7 @@ def test_normalize_drops_unknown_keys_and_parses_branch_text():
         "supervisor": {"forbid_branches": "master, dev/core", "agent": "Cursor"},
     })
     assert pb["id"] == "galaxy-run" and "evil" not in pb
-    assert pb["tiers"][0]["profiles"] == ["grunt"]
+    assert pb["tiers"][0]["members"] == [{"profile": "grunt", "on": True}]
     assert pb["supervisor"]["forbid_branches"] == ["master", "dev/core"]
     assert pb["supervisor"]["agent"] == "cursor"
 
@@ -117,6 +120,68 @@ def test_supervisor_argv_follows_chip_and_carries_guards():
     assert tiers["worker"][0] == "cursor auto"
     pinned = model.normalize_playbook({**pb, "supervisor": {**pb["supervisor"], "agent": "codex"}})
     assert model.supervisor_argv(pinned, "CH-1", {})[4:6] == ["--agent", "codex"]
+
+
+def test_members_toggle_and_temporary_agents_shape_brief_and_tiers():
+    pb = model.normalize_playbook({"id": "mix", "tiers": [
+        {"id": "worker", "role": "worker", "members": [
+            {"profile": "grunt", "on": False},
+            {"agent": "Cursor", "model": "auto"},
+            {"agent": "cursor", "model": "auto"},  # duplicate pin dropped
+        ]},
+        {"id": "expert", "role": "expert", "members": [{"profile": "expert-claude", "on": False}]},
+    ]})
+    members = pb["tiers"][0]["members"]
+    assert members == [{"profile": "grunt", "on": False},
+                       {"name": "cursor auto", "agent": "cursor", "model": "auto", "effort": "", "on": True}]
+    assert [t["id"] for t in model.active_tiers(pb)] == ["worker"]  # all-off tier is left out
+    assert model.model_tiers(pb, {}) == {"worker": ["cursor auto"]}
+    text = model.render_brief(pb, {})
+    assert '`{"name":"cursor auto","agent":"cursor","model":"auto"}` (temporary): cursor auto' in text
+    assert "`grunt`" not in text and "| Expert |" not in text
+    assert model.referenced_profiles(pb) == ["grunt", "expert-claude"]  # off members still validated
+
+
+def test_default_playbook_choice_drives_start(tmp_path, orch, monkeypatch):
+    db, owner, _other, sid, _ = _seed_db(tmp_path)
+    assert service.default_id(owner) == "default"
+    fast = {"id": "fast", "name": "Fast", "tiers": [{"role": "worker", "members": ["grunt"]}]}
+    service.save_playbook(owner, fast, db=db)
+    with pytest.raises(service.OrchestratorError, match="not found"):
+        service.set_default(owner, "ghost")
+    assert service.set_default(owner, "fast") == "fast"
+    listed = {p["id"]: p["is_default"] for p in service.list_playbooks(owner, db=db)}
+    assert listed == {"default": False, "fast": True}
+    assert service.bind(sid, "", "g", db=db)["playbook"]["id"] == "fast"
+    assert service.bind(sid, "@default", "g", db=db)["playbook"]["id"] == "default"
+    service.delete_playbook(owner, "fast")
+    assert service.default_id(owner) == "default"  # stale pick falls back
+
+
+def test_schema1_docs_read_as_members(tmp_path, orch):
+    db, owner, *_ = _seed_db(tmp_path)
+    store.put_playbook(owner, {"schema": 1, "id": "old", "name": "Old",
+                               "tiers": [{"id": "w", "role": "worker", "profiles": ["grunt"]}]})
+    doc = service.get_playbook(owner, "old", db=db)
+    assert doc["schema"] == 2 and doc["tiers"][0]["members"] == [{"profile": "grunt", "on": True}]
+
+
+def test_save_checks_temporary_agent_pins(tmp_path, orch, monkeypatch):
+    db, owner, *_ = _seed_db(tmp_path)
+    seen = []
+
+    def fake_check(agent, model_id="", effort="", *, catalogs=None):
+        seen.append((agent, model_id, effort))
+        return "Effort max is not offered" if effort == "max" else None
+
+    monkeypatch.setattr("api.agent_harness.agent_models.check_agent_pin", fake_check)
+    ok = {"id": "t", "tiers": [{"role": "worker", "members": [{"agent": "muse-code", "effort": "high"}]}]}
+    saved = service.save_playbook(owner, ok, db=db)
+    assert saved["tiers"][0]["members"][0]["agent"] == "muse"  # harness alias normalized
+    assert seen[-1] == ("muse", "", "high")
+    bad = {"id": "t", "tiers": [{"role": "worker", "members": [{"agent": "claude", "effort": "max"}]}]}
+    with pytest.raises(service.OrchestratorError, match="Effort max"):
+        service.save_playbook(owner, bad, db=db)
 
 
 # ── service ────────────────────────────────────────────────────────────────
@@ -264,6 +329,9 @@ def test_routes_round_trip(tmp_path, monkeypatch, orch):
     ghost = client.put("/api/orchestrator/playbooks/ghost",
                        json={"tiers": [{"role": "worker", "profiles": ["ghost"]}]})
     assert ghost.status_code == 400
+    assert client.put("/api/orchestrator/default", json={"id": "mine"}).get_json()["default_id"] == "mine"
+    assert client.get("/api/orchestrator/playbooks").get_json()["default_id"] == "mine"
+    assert client.put("/api/orchestrator/default", json={"id": "ghost"}).status_code == 404
     preview = client.get(f"/api/orchestrator/playbooks/mine/preview?session=CH-{ctx['sid']:06d}").get_json()
     assert preview["success"] and f"CH-{ctx['sid']:06d}" in preview["supervisor_command"]
     other = client.get(f"/api/orchestrator/playbooks/mine/preview?session={ctx['other_sid']}")
@@ -356,13 +424,30 @@ assert.equal(M.pinProblem(cursor, 'cursor', 'auto', 'high'), 'cursor has no effo
 assert.equal(M.pinProblem(null, 'none', '', ''), '');
 assert.match(M.pinProblem(null, 'none', 'auto', ''), /Choose a harness/);
 const pb = M.newPlaybook('x');
-assert.ok(M.playbookProblems(pb, ['grunt']).some(p => /add at least one agent profile/.test(p)));
-pb.tiers[0] = M.addProfileToTier(pb.tiers[0], 'grunt');
+assert.ok(M.playbookProblems(pb, ['grunt']).some(p => /add at least one agent/.test(p)));
+pb.tiers[0] = M.addMember(pb.tiers[0], 'grunt');
 assert.deepEqual(M.playbookProblems(pb, ['grunt']), []);
-pb.tiers.push(Object.assign(M.newTier(pb.tiers), {role:'expert', profiles:['ghost']}));
+pb.tiers[0] = M.toggleMember(pb.tiers[0], 0);
+assert.ok(M.playbookProblems(pb, ['grunt']).some(p => /Switch on at least one agent/.test(p)));
+const temp = M.temporaryMember([claude], {agent:'claude', model:'opus', effort:'high'});
+assert.deepEqual(temp, {name:'Claude · opus · high', agent:'claude', model:'opus', effort:'high', on:true});
+pb.tiers[0] = M.addMember(M.addMember(pb.tiers[0], temp), temp);  // duplicate pin ignored
+assert.equal(pb.tiers[0].members.length, 2);
+assert.deepEqual(M.playbookProblems(pb, ['grunt']), []);  // the temporary agent is on
+pb.tiers[0] = M.promoteMember(pb.tiers[0], 1);
+assert.ok(M.isTemporary(pb.tiers[0].members[0]) && !M.isTemporary(pb.tiers[0].members[1]));
+pb.tiers[0] = M.replaceMember(pb.tiers[0], 0, Object.assign({}, temp, {effort:'low', on:false}));
+assert.equal(pb.tiers[0].members[0].effort, 'low'); assert.equal(pb.tiers[0].members[0].on, true);  // keeps on/off
+assert.equal(M.removeMember(pb.tiers[0], 0).members.length, 1);
+pb.tiers.push(Object.assign(M.newTier(pb.tiers), {role:'expert', members:[{profile:'ghost'}]}));
 assert.ok(M.playbookProblems(pb, ['grunt']).some(p => /ghost/.test(p)));
+assert.deepEqual(M.tierMembers({profiles:['a']}), [{profile:'a', on:true}]);  // schema 1
+const copy = M.duplicatePlaybook(Object.assign({seed:true, is_default:true}, pb, {id:'fast', name:'Fast'}), ['fast', 'fast-copy']);
+assert.equal(copy.id, 'fast-copy-2'); assert.equal(copy.name, 'Fast (copy)');
+assert.ok(!('seed' in copy) && !('is_default' in copy));
+assert.equal(M.duplicatePlaybook(copy, []).name, 'Fast (copy)');
 assert.deepEqual(M.moveItem(['a','b','c'], 2, -1), ['a','c','b']);
-assert.deepEqual(M.profileUsage([{name:'P', tiers:[{profiles:['a','b']}]}]), {a:['P'], b:['P']});
+assert.deepEqual(M.profileUsage([{name:'P', tiers:[{members:[{profile:'a'},{agent:'cursor'}]}, {profiles:['b']}]}]), {a:['P'], b:['P']});
 assert.deepEqual(M.parseBranches('master, dev/core  x'), ['master','dev/core','x']);
 assert.equal(M.esc('<b>'), '&lt;b&gt;');
 assert.equal(M.avatarKind(''), 'mascot'); assert.equal(M.avatarKind('cuttle'), 'mascot');
@@ -376,3 +461,32 @@ assert.equal(M.pinLabel([], {agent:'none'}), 'Any harness');
 assert.deepEqual(M.effortLevels(cursor, 'auto'), []);
 """ % json.dumps(str(WEB / "js" / "orchestrator" / "orchestrator_model.js"))
     subprocess.run(["node", "-e", script], check=True)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_js_orchestrate_chip_prefix_carries_playbook():
+    script = """
+const assert = require('assert');
+const C = require(%s);
+const chip = {prefix: '/orchestrate ', label: 'orchestrate', category: 'project-cmd'};
+assert.ok(C.isChip(chip) && C.isChip({prefix: '/cmd orchestrate @fast '}));
+assert.ok(!C.isChip({prefix: '/orchestrator '}) && !C.isChip({prefix: '/cursor '}));
+assert.equal(C.playbookOf(chip), '');
+const fast = C.withPlaybook(chip, 'fast');
+assert.equal(fast.prefix, '/orchestrate @fast '); assert.equal(fast.category, 'project-cmd');
+assert.equal(C.playbookOf(fast), 'fast');
+assert.equal(C.withPlaybook({prefix: '/cmd orchestrate '}, 'x').prefix, '/cmd orchestrate @x ');
+assert.equal(C.withPlaybook(fast, '').prefix, '/orchestrate ');
+const pbs = [{id: 'default', name: 'Default org chart'}, {id: 'fast', name: 'Fast - lean'}];
+assert.equal(C.labelFor(chip, pbs, 'default'), 'Orchestrate - Default org chart');
+assert.equal(C.labelFor(fast, pbs, 'default'), 'Orchestrate - Fast lean');  // stays two segments
+assert.equal(C.labelFor(C.withPlaybook(chip, 'gone'), pbs, 'default'), 'Orchestrate - @gone');
+assert.equal(C.labelFor(chip, null, ''), 'Orchestrate');
+""" % json.dumps(str(WEB / "js" / "chat" / "chat_orchestrate_chip.js"))
+    subprocess.run(["node", "-e", script], check=True)
+    page = (WEB / "chat_page.html").read_text(encoding="utf-8")
+    assert page.index("chat_chip_config.js") < page.index("chat_orchestrate_chip.js") < page.index("/js/chat/chat_page.js")
+    orch = (WEB / "orchestrator_page.html").read_text(encoding="utf-8")
+    for dep in ("chat_chip_config.js", "agent_pin_picker.js", "chip_config_modal.css", "auth_modal.css"):
+        assert dep in orch
+    assert orch.index("orchestrator_model.js") < orch.index("agent_pin_picker.js") < orch.index("orchestrator_page.js")

@@ -11,14 +11,15 @@ Bind this chat to an Orchestrator playbook and follow its brief for the rest of
 the chat. Runbook: `feature/orchestrator/docs/orchestrator.md`.
 
 The user's arguments are the goal. If they start with `@<playbook-id>`, that
-word picks the playbook; otherwise use `default`. If there is no goal, ask for
-it with one Q&A action form and end the turn.
+word picks the playbook (the composer chip adds it); otherwise omit
+`--playbook` so the user's default playbook is used. If there is no goal, ask
+for it with one Q&A action form and end the turn.
 
 1. Bind and print the brief (Cuttle venv + `src` on `PYTHONPATH`, from the
    Cuttle checkout — also for guest projects; see `agent-ops-cli.md`):
 
    ```bash
-   PYTHONPATH=src .venv/bin/python -m api.orchestrator start --playbook <id> --goal "<goal>" --json
+   PYTHONPATH=src .venv/bin/python -m api.orchestrator start [--playbook <id>] --goal "<goal>" --json
    ```
 
    On error (unknown playbook, missing profile), show it and point the user to

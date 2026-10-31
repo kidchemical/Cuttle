@@ -1,25 +1,32 @@
 """Orchestrator playbooks — pure contract (no Cuttle imports, no I/O).
 
 A playbook is a versioned JSON document describing *how* an orchestrator chat
-delegates: an ordered org chart of tiers (each a list of agent-profile ids),
-grind/retry limits, supervisor defaults, and free-form notes. The host injects
-resolved profiles; this module only normalizes documents and renders text:
+delegates: an ordered org chart of tiers (each a list of members), grind/retry
+limits, supervisor defaults, and free-form notes. A member is a saved agent
+profile (``{"profile": id}``) or a temporary agent pinned inline
+(``{"name", "agent", "model", "effort"}``); either can be switched off
+(``"on": false``) without removing it. A tier with no member switched on is
+left out of the brief. The host injects resolved profiles; this module only
+normalizes documents and renders text:
 
 - ``normalize_playbook(raw)``  → canonical dict (raises ``PlaybookError``)
 - ``render_brief(playbook, profiles, ...)`` → markdown the orchestrator follows
 - ``model_tiers(playbook, profiles)`` → ``--model-tiers`` mapping for supervision
 - ``supervisor_argv(playbook, target, profiles)`` → ``chat_cli supervise`` args
 
-Schema version 1. Unknown keys are dropped; missing keys take defaults.
+Schema version 2. Version 1 tiers (``profiles: [id, …]``) are read as
+members. Unknown keys are dropped; missing keys take defaults.
 """
 
 from __future__ import annotations
 
 import copy
+import json
 import re
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+MAX_MEMBERS = 6
 ROLES = ("worker", "escalation", "expert")
 _ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9._/@+-]{1,200}$")
@@ -73,13 +80,13 @@ def default_playbook() -> Dict[str, Any]:
         "description": "Budget agents grind, Grok escalates, frontier models plan and review.",
         "tiers": [
             {"id": "worker", "label": "Grunt", "role": "worker",
-             "profiles": ["grunt", "grunt-muse"],
+             "members": ["grunt", "grunt-muse"],
              "use_for": "Implementation, edits, test runs, searches, log digging, mechanical refactors, docs."},
             {"id": "escalate", "label": "Escalation", "role": "escalation",
-             "profiles": ["escalate"],
+             "members": ["escalate"],
              "use_for": "A worker task failed after a sharper retry, came back wrong, or is clearly beyond the worker tier."},
             {"id": "expert", "label": "Expert", "role": "expert",
-             "profiles": ["expert-claude", "expert-codex"],
+             "members": ["expert-claude", "expert-codex"],
              "use_for": "Critical planning, architecture decisions, final review of risky diffs. Plans and reviews only."},
         ],
     })
@@ -109,23 +116,18 @@ def normalize_playbook(raw: Any) -> Dict[str, Any]:
         role = _text(tier.get("role"), 20).lower() or "worker"
         if role not in ROLES:
             raise PlaybookError(f"tier {tid}: role must be one of {', '.join(ROLES)}")
-        profiles_raw = tier.get("profiles") or []
-        if not isinstance(profiles_raw, list):
-            raise PlaybookError(f"tier {tid}: profiles must be a list")
-        profiles = list(dict.fromkeys(_slug(p) for p in profiles_raw if _slug(p)))
-        if not profiles:
-            raise PlaybookError(f"tier {tid}: choose at least one agent profile")
-        if len(profiles) > 6:
-            raise PlaybookError(f"tier {tid}: at most 6 profiles")
+        members = _normalize_members(tier, tid)
         tiers.append({
             "id": tid,
             "label": _text(tier.get("label"), 60) or tid,
             "role": role,
-            "profiles": profiles,
+            "members": members,
             "use_for": _text(tier.get("use_for"), 600),
         })
     if not any(t["role"] == "worker" for t in tiers):
         raise PlaybookError("playbook needs a worker tier (where every task starts)")
+    if not any(t["role"] == "worker" for t in active_tiers({"tiers": tiers})):
+        raise PlaybookError("switch on at least one agent in a worker tier (where every task starts)")
 
     limits = dict(DEFAULT_LIMITS)
     limits_raw = raw.get("limits") if isinstance(raw.get("limits"), Mapping) else {}
@@ -182,13 +184,77 @@ def normalize_playbook(raw: Any) -> Dict[str, Any]:
     }
 
 
+def _normalize_members(tier: Mapping[str, Any], tid: str) -> List[Dict[str, Any]]:
+    raw = tier.get("members")
+    if raw is None:
+        raw = tier.get("profiles") or []  # schema 1: a list of profile ids
+    if not isinstance(raw, list):
+        raise PlaybookError(f"tier {tid}: members must be a list")
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for item in raw:
+        if isinstance(item, str):
+            if not _slug(item):
+                continue
+            item = {"profile": item}
+        if not isinstance(item, Mapping):
+            raise PlaybookError(f"tier {tid}: each member must be a profile id or an object")
+        on = item.get("on") is not False
+        pid = _slug(item.get("profile"))
+        if pid:
+            member: Dict[str, Any] = {"profile": pid, "on": on}
+            key = ("profile", pid)
+        else:
+            agent = _slug(item.get("agent"))
+            if not agent or agent == "none":
+                raise PlaybookError(f"tier {tid}: a temporary agent needs a harness")
+            model = _text(item.get("model"), 120)
+            effort = _text(item.get("effort"), 20).lower()
+            name = _text(item.get("name"), 60) or " ".join(x for x in (agent, model, effort) if x)
+            member = {"name": name, "agent": agent, "model": model, "effort": effort, "on": on}
+            key = ("agent", agent, model, effort)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(member)
+    if not out:
+        raise PlaybookError(f"tier {tid}: add at least one agent")
+    if len(out) > MAX_MEMBERS:
+        raise PlaybookError(f"tier {tid}: at most {MAX_MEMBERS} agents")
+    return out
+
+
+def is_temporary(member: Mapping[str, Any]) -> bool:
+    return not member.get("profile")
+
+
+def active_members(tier: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    return [dict(m) for m in tier.get("members") or [] if m.get("on", True) is not False]
+
+
+def active_tiers(playbook: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """Tiers with at least one member switched on, members filtered to those."""
+    out = []
+    for tier in playbook.get("tiers") or []:
+        members = active_members(tier)
+        if members:
+            out.append({**tier, "members": members})
+    return out
+
+
 def referenced_profiles(playbook: Mapping[str, Any]) -> List[str]:
     out: List[str] = []
     for tier in playbook.get("tiers") or []:
-        for pid in tier.get("profiles") or []:
-            if pid not in out:
+        for member in tier.get("members") or []:
+            pid = member.get("profile")
+            if pid and pid not in out:
                 out.append(pid)
     return out
+
+
+def temporary_agents(playbook: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    return [dict(m) for tier in playbook.get("tiers") or []
+            for m in tier.get("members") or [] if is_temporary(m)]
 
 
 def missing_profiles(playbook: Mapping[str, Any], known: Iterable[str]) -> List[str]:
@@ -210,13 +276,26 @@ def describe_profile(profile: Optional[Mapping[str, Any]]) -> str:
     return f"{text} ({effort})" if effort else text
 
 
+def describe_member(member: Mapping[str, Any], profiles: Mapping[str, Mapping[str, Any]]) -> str:
+    if is_temporary(member):
+        return describe_profile(member)
+    return describe_profile(profiles.get(member.get("profile")))
+
+
+def spawn_profile(member: Mapping[str, Any]) -> Any:
+    """The child spec's ``profile`` value: a saved id, or an inline (ephemeral) object."""
+    if not is_temporary(member):
+        return member["profile"]
+    return {k: member[k] for k in ("name", "agent", "model", "effort") if member.get(k)}
+
+
 def model_tiers(
     playbook: Mapping[str, Any], profiles: Mapping[str, Mapping[str, Any]]
 ) -> Dict[str, List[str]]:
     """Tier id → human pin strings, the shape ``chat_cli supervise --model-tiers`` takes."""
     return {
-        tier["id"]: [describe_profile(profiles.get(pid)) for pid in tier["profiles"]]
-        for tier in playbook.get("tiers") or []
+        tier["id"]: [describe_member(m, profiles) for m in tier["members"]]
+        for tier in active_tiers(playbook)
     }
 
 
@@ -226,8 +305,6 @@ def supervisor_argv(
     profiles: Mapping[str, Mapping[str, Any]],
 ) -> List[str]:
     """Arguments after ``python -m api.chat_cli`` that start supervision of ``target``."""
-    import json
-
     sup = playbook.get("supervisor") or DEFAULT_SUPERVISOR
     argv = ["supervise", target, "--every", str(int(sup.get("every_sec") or 900))]
     # No --agent unless the playbook pins one: check-ins then follow the
@@ -258,7 +335,7 @@ def render_brief(
 ) -> str:
     """Markdown brief for an orchestrator chat. Deterministic for a given input."""
     limits = {**DEFAULT_LIMITS, **(playbook.get("limits") or {})}
-    tiers = list(playbook.get("tiers") or [])
+    tiers = active_tiers(playbook) or list(playbook.get("tiers") or [])
     worker = next((t for t in tiers if t["role"] == "worker"), tiers[0])
     lines: List[str] = [
         f"## Orchestrator playbook: {playbook.get('name') or playbook.get('id')}",
@@ -273,16 +350,20 @@ def render_brief(
         "",
         f"Delegate only through real child chats: `{spawn_cli} spawn --parent <this chat> --wait --json "
         "--child '{\"title\":…,\"profile\":\"<id>\",\"message\":…}'`. Never use your own CLI's built-in "
-        "subagent/task tool. The profile pins harness, model and effort; do not restate them on the child.",
+        "subagent/task tool. The profile pins harness, model and effort; do not restate them on the child. "
+        "A temporary agent has no saved profile: its cell shows the exact `profile` object to send.",
         "",
         "### Org chart (in escalation order)",
         "",
-        "| Tier | Role | Profiles | Use for |",
+        "| Tier | Role | Agents | Use for |",
         "|---|---|---|---|",
     ]
     for tier in tiers:
         cells = ", ".join(
-            f"`{pid}`: {describe_profile(profiles.get(pid))}" for pid in tier["profiles"]
+            (f"`{json.dumps(spawn_profile(m), separators=(',', ':'), ensure_ascii=False)}` (temporary)"
+             if is_temporary(m) else f"`{m['profile']}`")
+            + f": {describe_member(m, profiles)}"
+            for m in tier["members"]
         )
         use_for = (tier.get("use_for") or "").replace("|", "\\|").replace("\n", " ")
         lines.append(f"| {tier['label']} | {tier['role']} | {cells} | {use_for} |")
@@ -291,7 +372,7 @@ def render_brief(
         "### Rules",
         "",
         f"1. **Default down.** Every task starts at the {worker['label']} tier unless it is planning or "
-        "review that needs expert judgment. Use the first profile in a tier; the others are alternates "
+        "review that needs expert judgment. Use the first agent in a tier; the others are alternates "
         "(parallel lane, or when the first is out of usage).",
         f"2. **Escalate on evidence, one tier at a time.** Retry a failed child task "
         f"{limits['child_retries']}× on the same tier with a sharper brief, then move to the next tier. "
@@ -300,10 +381,10 @@ def render_brief(
         f"{limits['solo_minutes']} minutes on one problem in your own turn, delegate it to the worker "
         "tier with what you tried, then escalate if that child fails.",
         "4. **Never resend an identical failing spawn.** A setup error (\"was not started\", unsupported "
-        "model/effort, missing CLI, quota) means fix the spec or switch to the tier's next profile. After "
+        "model/effort, missing CLI, quota) means fix the spec or switch to the tier's next agent. After "
         f"{limits['setup_retries']} setup failures on one task, report it instead of looping.",
         "5. **Experts plan and review; they do not grind.** Send them the plan, the diff, or a specific "
-        "question. For high-stakes plans or merges, ask every expert profile (`--collect all`) and reconcile.",
+        "question. For high-stakes plans or merges, ask every expert agent (`--collect all`) and reconcile.",
         "6. **Self-contained briefs.** Children start cold: give the goal, file paths, constraints (branch, "
         "owner module, tests to run) and the exact deliverable.",
         "7. **Verify before you trust.** Run the tests or read the diff before marking work done.",

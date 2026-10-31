@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from scripts.utilities.git_graph import (
+    _decorate_tags,
     _parse_decorate,
     collect_commit_detail,
     collect_file_commit_diff,
@@ -18,6 +19,13 @@ def test_parse_decorate():
     assert "master" in _parse_decorate(" (HEAD -> master, origin/master)")
     assert "v1" in _parse_decorate(" (tag: v1)")
     assert _parse_decorate("") == []
+
+
+def test_decorate_tags_keeps_tag_kind():
+    raw = " (HEAD -> master, tag: v1, origin/master, tag: v1.1)"
+    assert _decorate_tags(raw) == ["v1", "v1.1"]
+    assert _decorate_tags(" (HEAD -> master)") == []
+    assert _decorate_tags("") == []
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -63,6 +71,12 @@ def test_collect_git_graph_linear_and_merge(tmp_path: Path):
     assert len(hashes) == graph["count"]
     merge = next(c for c in graph["commits"] if c["subject"].startswith("merge"))
     assert len(merge["parents"]) == 2
+    assert all(c["tags"] == [] for c in graph["commits"])
+
+    _git(repo, "tag", "v1", merge["hash"])
+    tagged = collect_git_graph(str(repo), limit=1)["commits"][0]
+    assert tagged["hash"] == merge["hash"]
+    assert tagged["tags"] == ["v1"] and "v1" in tagged["refs"]
 
     page1 = collect_git_graph(str(repo), limit=2, skip=0, all_refs=True)
     assert page1["count"] == 2

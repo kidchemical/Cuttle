@@ -53,13 +53,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="verb", required=True)
     sub.add_parser("list", parents=[common], help="List playbooks")
     g = sub.add_parser("get", parents=[common], help="Show one playbook")
-    g.add_argument("playbook", nargs="?", default="default")
+    g.add_argument("playbook", nargs="?", default="", help="Playbook id (default: your default playbook)")
     s = sub.add_parser("save", parents=[common], help="Create/replace a playbook from JSON")
     s.add_argument("--file", default=None, help="JSON file (default: stdin)")
     d = sub.add_parser("delete", parents=[common], help="Delete a playbook")
     d.add_argument("playbook")
     st = sub.add_parser("start", parents=[common], help="Bind this chat to a playbook and print its brief")
-    st.add_argument("--playbook", default="default")
+    st.add_argument("--playbook", default="", help="Playbook id (default: the one set in Apps → Orchestrator)")
     st.add_argument("--goal", default="")
     sub.add_parser("stop", parents=[common], help="Unbind this chat")
     b = sub.add_parser("brief", parents=[common], help="Print the brief for this chat (or --playbook preview)")
@@ -69,6 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("target", help="Orchestrator CH- handle")
     sv.add_argument("--playbook", default="")
     sub.add_parser("bindings", parents=[common], help="List chats bound to playbooks")
+    df = sub.add_parser("default", parents=[common], help="Show or set the default playbook")
+    df.add_argument("playbook", nargs="?", default="")
     return p
 
 
@@ -86,7 +88,8 @@ def main(argv=None) -> int:
         if args.verb == "list":
             docs = service.list_playbooks(_user(args, db), db=db)
             _emit({"ok": True, "playbooks": docs}, as_json,
-                  "\n".join(f"{d['id']}  {d['name']}" + ("  (seed)" if d.get("seed") else "") for d in docs))
+                  "\n".join(f"{d['id']}  {d['name']}" + ("  (seed)" if d.get("seed") else "")
+                            + ("  (default)" if d.get("is_default") else "") for d in docs))
         elif args.verb == "get":
             doc = service.get_playbook(_user(args, db), args.playbook, db=db)
             _emit({"ok": True, "playbook": doc}, as_json)
@@ -123,6 +126,10 @@ def main(argv=None) -> int:
             out = service.brief(target, playbook_id=args.playbook, db=db)
             _emit({"ok": True, "argv": out["supervisor_argv"], "command": out["supervisor_command"]},
                   as_json, out["supervisor_command"])
+        elif args.verb == "default":
+            uid = _user(args, db)
+            pid = service.set_default(uid, args.playbook, db=db) if args.playbook else service.default_id(uid)
+            _emit({"ok": True, "default_id": pid}, as_json, pid)
         elif args.verb == "bindings":
             rows = service.list_bindings(_user(args, db), db=db)
             _emit({"ok": True, "bindings": rows}, as_json,

@@ -85,7 +85,7 @@
         const usage = {};
         (playbooks || []).forEach((pb) => {
             (pb.tiers || []).forEach((tier) => {
-                (tier.profiles || []).forEach((pid) => {
+                tierMembers(tier).filter((m) => !isTemporary(m)).map((m) => m.profile).forEach((pid) => {
                     usage[pid] = usage[pid] || [];
                     const label = pb.name || pb.id;
                     if (usage[pid].indexOf(label) < 0) usage[pid].push(label);
@@ -171,19 +171,90 @@
         expert: { icon: '◈', hint: 'Plans and reviews. Never grinds.' },
     };
 
+    // ── Tier members (saved profile or temporary agent, each on/off) ───────
+
+    const MAX_MEMBERS = 6;
+
+    function isTemporary(member) { return !!member && !member.profile; }
+
+    function isOn(member) { return !!member && member.on !== false; }
+
+    /** A tier's members; schema-1 `profiles: [id]` tiers read as members. */
+    function tierMembers(tier) {
+        if (tier && Array.isArray(tier.members)) return tier.members;
+        return ((tier && tier.profiles) || []).map((pid) => ({ profile: pid, on: true }));
+    }
+
+    function memberKey(member) {
+        return isTemporary(member)
+            ? ['agent', member.agent, member.model || '', member.effort || ''].join('|')
+            : 'profile|' + member.profile;
+    }
+
+    /** Temporary agent from a picker pin; named after its pin unless given a name. */
+    function temporaryMember(catalog, pin, name) {
+        const p = pin || {};
+        return {
+            name: String(name || '').trim() || pinLabel(catalog, p),
+            agent: p.agent || 'none', model: p.model || '', effort: p.effort || '', on: true,
+        };
+    }
+
+    function withMembers(tier, members) {
+        const out = clone(tier);
+        delete out.profiles;
+        out.members = members;
+        return out;
+    }
+
+    /** Adds a profile id or a member object; duplicates and a full tier are no-ops. */
+    function addMember(tier, member) {
+        const list = clone(tierMembers(tier));
+        const m = typeof member === 'string' ? { profile: member, on: true } : clone(member);
+        if (!m || (!m.profile && !m.agent) || list.length >= MAX_MEMBERS) return withMembers(tier, list);
+        if (!list.some((x) => memberKey(x) === memberKey(m))) list.push(m);
+        return withMembers(tier, list);
+    }
+
+    function removeMember(tier, index) {
+        return withMembers(tier, clone(tierMembers(tier)).filter((_, i) => i !== index));
+    }
+
+    function replaceMember(tier, index, member) {
+        const list = clone(tierMembers(tier));
+        if (index >= 0 && index < list.length) list[index] = Object.assign({}, member, { on: isOn(list[index]) });
+        return withMembers(tier, list);
+    }
+
+    function toggleMember(tier, index) {
+        const list = clone(tierMembers(tier));
+        if (list[index]) list[index].on = !isOn(list[index]);
+        return withMembers(tier, list);
+    }
+
+    /** Moves a member to the front: the first switched-on member is the tier's default. */
+    function promoteMember(tier, index) {
+        const list = clone(tierMembers(tier));
+        if (index <= 0 || index >= list.length) return withMembers(tier, list);
+        const [m] = list.splice(index, 1);
+        m.on = true;
+        list.unshift(m);
+        return withMembers(tier, list);
+    }
+
     // ── Playbooks ─────────────────────────────────────────────────────────
 
     function newTier(existing) {
         const ids = new Set((existing || []).map((t) => t.id));
         let n = (existing || []).length + 1;
         while (ids.has(`tier-${n}`)) n += 1;
-        return { id: `tier-${n}`, label: `Tier ${n}`, role: 'worker', profiles: [], use_for: '' };
+        return { id: `tier-${n}`, label: `Tier ${n}`, role: 'worker', members: [], use_for: '' };
     }
 
     function newPlaybook(id) {
         return {
-            schema: 1, id: slug(id) || 'new-playbook', name: 'New playbook', description: '',
-            tiers: [{ id: 'worker', label: 'Worker', role: 'worker', profiles: [], use_for: '' }],
+            schema: 2, id: slug(id) || 'new-playbook', name: 'New playbook', description: '',
+            tiers: [{ id: 'worker', label: 'Worker', role: 'worker', members: [], use_for: '' }],
             limits: { solo_attempts: 2, solo_minutes: 40, child_retries: 1, setup_retries: 2 },
             supervisor: { every_sec: 900, agent: '', instructions: '', require_branch: '', require_path: '', forbid_branches: [] },
             notes: '',
@@ -199,15 +270,21 @@
         return out;
     }
 
-    function addProfileToTier(tier, profileId) {
-        const out = clone(tier);
-        if (profileId && out.profiles.indexOf(profileId) < 0) out.profiles.push(profileId);
-        return out;
+    function uniqueId(base, taken) {
+        const ids = new Set(taken || []);
+        const stem = slug(base).replace(/-copy(-\d+)?$/, '').slice(0, 30) || 'playbook';
+        let id = `${stem}-copy`;
+        for (let n = 2; ids.has(id); n += 1) id = `${stem}-copy-${n}`;
+        return id;
     }
 
-    function removeProfileFromTier(tier, profileId) {
-        const out = clone(tier);
-        out.profiles = out.profiles.filter((p) => p !== profileId);
+    /** Unsaved copy of a playbook under a fresh id ("Name (copy)"). */
+    function duplicatePlaybook(pb, takenIds) {
+        const out = clone(pb);
+        ['seed', 'missing_profiles', 'updated_at', 'is_default'].forEach((k) => { delete out[k]; });
+        out.id = uniqueId(pb.id, takenIds);
+        out.name = `${String(pb.name || pb.id).replace(/ \(copy\)$/, '')} (copy)`.slice(0, 80);
+        out.tiers = (out.tiers || []).map((t) => withMembers(t, clone(tierMembers(t))));
         return out;
     }
 
@@ -223,15 +300,23 @@
         const tiers = (pb && pb.tiers) || [];
         if (!tiers.length) problems.push('Add at least one tier.');
         if (!tiers.some((t) => t.role === 'worker')) problems.push('Add a worker tier — every task starts there.');
+        else if (!tiers.some((t) => t.role === 'worker' && tierMembers(t).some(isOn))) {
+            problems.push('Switch on at least one agent in a worker tier.');
+        }
         const seen = new Set();
         tiers.forEach((tier, i) => {
             const name = tier.label || tier.id || `Tier ${i + 1}`;
+            const members = tierMembers(tier);
             if (!validId(tier.id) || seen.has(tier.id)) problems.push(`${name}: tier id is invalid or duplicated.`);
             seen.add(tier.id);
             if (ROLES.indexOf(tier.role) < 0) problems.push(`${name}: choose a role.`);
-            if (!(tier.profiles || []).length) problems.push(`${name}: add at least one agent profile.`);
-            (tier.profiles || []).forEach((pid) => {
-                if (known.size && !known.has(pid)) problems.push(`${name}: profile "${pid}" does not exist.`);
+            if (!members.length) problems.push(`${name}: add at least one agent.`);
+            members.forEach((m) => {
+                if (isTemporary(m)) {
+                    if (!m.agent || m.agent === 'none') problems.push(`${name}: a temporary agent needs a harness.`);
+                } else if (known.size && !known.has(m.profile)) {
+                    problems.push(`${name}: profile "${m.profile}" does not exist.`);
+                }
             });
         });
         LIMIT_FIELDS.forEach(([key, label, low, high]) => {
@@ -256,7 +341,9 @@
         catalogRow, modelIds, pinOptions, pinProblem, profileSummary, profileUsage, emptyProfile,
         EMOJI_GROUPS, avatarKind, safeImageSrc, avatarHtml,
         DEFAULT_PIN, settingItems, effortLevels, pinLabel, agentIcon, ROLE_META,
-        newTier, newPlaybook, moveItem, addProfileToTier, removeProfileFromTier, parseBranches,
+        MAX_MEMBERS, isTemporary, isOn, tierMembers, memberKey, temporaryMember,
+        addMember, removeMember, replaceMember, toggleMember, promoteMember,
+        newTier, newPlaybook, duplicatePlaybook, moveItem, parseBranches,
         playbookProblems, formatTime,
     };
     root.CuttleOrchestrator = api;

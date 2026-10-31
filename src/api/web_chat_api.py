@@ -3850,6 +3850,7 @@ def chat_endpoint():
             _send_identity = None
         _ident_run_kw = _harness_identity_run_kwargs(_send_identity)
 
+        _turn_history = {}  # typed text + meta when a project command expands
         def _persist_user_turn(sid):
             """Persist the user turn as history sees it (owned by chat_turn_persist)."""
             from api.chat_turn_persist import persist_user_turn as _owned
@@ -3858,20 +3859,20 @@ def chat_endpoint():
                 get_auth_db(),
                 sid,
                 message_text=message_content,
-                history_text=_attachment_history_text(message_content, _att_note),
+                history_text=_attachment_history_text(
+                    _turn_history.get('text', message_content), _att_note),
                 base_meta=_user_msg_meta,
                 identity=_send_identity,
                 badge_fn=_user_badge_metadata,
                 project_merge_fn=_merge_project_into_meta,
                 request_data=data,
+                extra_meta=_turn_history.get('meta'),
             )
 
         # No-LLM launch gates — project-action confirm buttons and dynamic
         # action forms. Owned by api.chat_turn_workflow.run_launch_gate_lane;
         # the route only frames jsonify. Returns None for non-gate messages.
-        from api.chat_turn_workflow import (
-            run_launch_gate_lane as _run_launch_gate_lane,
-        )
+        from api.chat_turn_workflow import run_launch_gate_lane as _run_launch_gate_lane
 
         _launch_gate_body = _run_launch_gate_lane(
             message_content,
@@ -3887,9 +3888,7 @@ def chat_endpoint():
         # Runs before /cursor handlers so ``/cursor /build`` becomes a full agent prompt.
         # Owned by api.chat_turn_workflow.run_shell_action_lane; the route keeps
         # request capture, the busy SSE/409 transport and jsonify.
-        from api.chat_turn_workflow import (
-            run_shell_action_lane as _run_shell_action_lane,
-        )
+        from api.chat_turn_workflow import run_shell_action_lane as _run_shell_action_lane
 
         _shell_body, message_content, _shell_busy = _run_shell_action_lane(
             message_content,
@@ -3900,6 +3899,7 @@ def chat_endpoint():
             persist_user_turn=_persist_user_turn,
             make_saver=_make_auth_assistant_saver,
             rewrite_actions=_rewrite_assistant_response_actions,
+            remember_history=_turn_history.update,
         )
         if _shell_busy:
             busy_resp = _reject_if_chat_busy(chat_session_id, wants_stream)

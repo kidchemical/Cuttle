@@ -1,16 +1,22 @@
 # Orchestrator
 
 Flag `orchestrator`. A **playbook** is a saved orchestration setup: an ordered
-org chart of tiers (worker → escalation → expert), each a list of **agent
-profiles**; grind/retry limits; supervisor defaults; free-form notes. Users edit
-playbooks in **Apps → Orchestrator** and profiles in **Apps → Agents**.
+org chart of tiers (worker → escalation → expert), each a list of agents — a
+saved **agent profile** or a **temporary agent** (harness · model · effort
+pinned in the playbook, no profile); each agent can be switched off without
+removing it, and a tier with every agent off is skipped. Plus grind/retry
+limits, supervisor defaults and free-form notes. Users edit playbooks in
+**Apps → Orchestrator** (duplicate, make default) and profiles in **Apps → Agents**.
 
 ## Start
 
-`/orchestrate [@playbook] <goal>` binds the chat and prints the brief. Or:
+`/orchestrate [@playbook] <goal>` binds the chat and prints the brief. Without
+`@playbook` it uses the user's default playbook. In the composer the command is
+a chip (`Orchestrate · <playbook>`); clicking it picks the playbook. Or:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.orchestrator start --playbook default --goal "…" --json
+PYTHONPATH=src .venv/bin/python -m api.orchestrator start [--playbook ID] --goal "…" --json
+PYTHONPATH=src .venv/bin/python -m api.orchestrator default [ID]     # show / set the default
 PYTHONPATH=src .venv/bin/python -m api.orchestrator brief            # reprint for this chat
 PYTHONPATH=src .venv/bin/python -m api.orchestrator stop             # unbind
 PYTHONPATH=src .venv/bin/python -m api.orchestrator list|get <id>|bindings --json
@@ -22,7 +28,8 @@ it too. Treat it as standing instructions.
 
 ## Delegating
 
-Spawn with the profile id; the profile pins harness, model and effort:
+Spawn with the profile id; the profile pins harness, model and effort. A
+temporary agent's brief cell shows the inline `profile` object to send instead:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m api.subagents spawn --parent CH-… --wait --json \

@@ -34,6 +34,10 @@ def _connect() -> sqlite3.Connection:
         goal TEXT NOT NULL DEFAULT '',
         bound_at REAL NOT NULL
     )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS prefs (
+        user_id INTEGER PRIMARY KEY,
+        default_playbook TEXT NOT NULL DEFAULT ''
+    )""")
     conn.commit()
     return conn
 
@@ -88,6 +92,24 @@ def delete_playbook(user_id: int, playbook_id: str) -> bool:
         )
         conn.commit()
         return cur.rowcount > 0
+
+
+def default_playbook(user_id: int) -> str:
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            "SELECT default_playbook FROM prefs WHERE user_id = ?", (int(user_id),)
+        ).fetchone()
+    return str(row["default_playbook"]) if row else ""
+
+
+def set_default_playbook(user_id: int, playbook_id: str) -> None:
+    with closing(_connect()) as conn:
+        conn.execute(
+            """INSERT INTO prefs (user_id, default_playbook) VALUES (?, ?)
+               ON CONFLICT(user_id) DO UPDATE SET default_playbook = excluded.default_playbook""",
+            (int(user_id), playbook_id),
+        )
+        conn.commit()
 
 
 def bind(session_id: int, user_id: int, playbook_id: str, goal: str = "") -> None:

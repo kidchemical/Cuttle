@@ -354,7 +354,34 @@ body.compact-shell-page .orch-page input.orch-tier-name:is(:hover, :focus) { bor
 .orch-member-name { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
 .orch-member-pin { font-size: 11.5px; color: var(--orch-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .orch-member-actions { display: flex; gap: 2px; }
-.orch-tier-add { margin-bottom: 10px; max-width: 360px; }
+.orch-member.is-off { opacity: .55; border-style: dashed; background: transparent; }
+.orch-member.is-off .orch-member-name { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--orch-text) 35%, transparent); }
+.orch-tier-hint.is-off { margin: -4px 0 10px; color: var(--orch-bad); }
+/* On/off switch for a tier member (native checkbox, styled). */
+.orch-switch { position: relative; flex: 0 0 auto; width: 30px; height: 18px; cursor: pointer; }
+.orch-switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.orch-switch span { position: absolute; inset: 0; border-radius: 999px; background: color-mix(in srgb, var(--orch-text) 18%, transparent); transition: background .15s; }
+.orch-switch span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.orch-switch input:checked + span { background: var(--role); }
+.orch-switch input:checked + span::after { transform: translateX(12px); }
+.orch-switch input:focus-visible + span { outline: 2px solid var(--orch-accent); outline-offset: 2px; }
+body.compact-shell-page .orch-page input.orch-member-rename {
+    min-height: 0; height: 22px; padding: 0 4px; margin-left: -4px;
+    field-sizing: content; width: auto; min-width: 6em; max-width: 100%; font-weight: 600;
+    border: 1px solid transparent; background: transparent; font: inherit;
+}
+body.compact-shell-page .orch-page input.orch-member-rename:is(:hover, :focus) { border-color: var(--orch-border); background: var(--orch-subtle); }
+.orch-page button.orch-pin-btn {
+    display: block; align-self: flex-start; max-width: 100%; min-height: 0; padding: 0;
+    border: 0; background: none; text-align: left; justify-content: flex-start; cursor: pointer;
+    font-size: 11.5px; font-weight: 400; color: var(--orch-muted);
+}
+.orch-page button.orch-pin-btn:hover { color: var(--orch-accent); text-decoration: underline; }
+.orch-default-star { margin-left: 6px; color: var(--orch-accent); font-size: 12px; }
+.orch-page button.orch-default-btn.is-default { color: var(--orch-accent); border-color: color-mix(in srgb, var(--orch-accent) 45%, var(--orch-border)); opacity: 1; }
+.orch-tier-add { margin-bottom: 10px; max-width: 520px; display: flex; gap: 8px; align-items: center; }
+.orch-tier-add > select, .orch-tier-add > .cuttle-combo { flex: 1 1 auto; min-width: 0; }
+.orch-tier-add > button { flex: 0 0 auto; white-space: nowrap; }
 body.compact-shell-page .orch-page textarea.orch-tier-use {
     width: 100%; min-height: 0; height: auto; padding: 8px 10px;
     border-color: transparent; background: color-mix(in srgb, var(--orch-text) 3%, transparent);

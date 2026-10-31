@@ -13,7 +13,9 @@
 
    Composed once per page by chat_page.js:
    `CuttleChipConfig.create(host)` returns
-   `{ openProject, openAgent, close, bindRow }`. The page keeps chat
+   `{ openProject, openAgent, close, bindRow, openCustom }` — `openCustom`
+   lends the same modal to other chip owners; `bindRow(row, { onChip })`
+   lets them claim a chip click first. The page keeps chat
    state, palette catalogs and setters, and chip rendering: they
    arrive as explicit `host` capabilities and this module never reads
    page scope directly.
@@ -718,6 +720,8 @@
                     }
                     const idx = parseInt(el.getAttribute('data-chip-index'), 10);
                     const chip = Number.isFinite(idx) ? chips[idx] : null;
+                    // Other chip owners (e.g. the /orchestrate chip) claim their own clicks.
+                    if (chip && typeof opts.onChip === 'function' && opts.onChip(chip)) return;
                     const agentId = chip && classify ? classify(chip) : '';
                     if (agentId) openAgent(agentId);
                 };
@@ -744,7 +748,7 @@
             });
         }
 
-        return { openProject, openAgent, close, bindRow };
+        return { openProject, openAgent, close, bindRow, openCustom: openModal };
     }
 
     const api = {

@@ -93,7 +93,7 @@ def test_helper_outputs():
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout)
     assert out["hasCreate"] is True
-    assert out["api"] == ["bindRow", "close", "openAgent", "openProject"]
+    assert out["api"] == ["bindRow", "close", "openAgent", "openCustom", "openProject"]
     assert out["branchEmpty"] == ""
     assert out["modelOpts"] == [
         {"value": "opus", "label": "Opus", "disabled": False},

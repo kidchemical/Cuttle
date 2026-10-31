@@ -19,9 +19,12 @@ from api.orchestrator.model import (
     normalize_playbook,
     render_brief,
     supervisor_argv,
+    temporary_agents,
 )
 
 FLAG_ID = "orchestrator"
+# Id of the built-in seed. The playbook ``/orchestrate`` uses without ``@id``
+# is the user's chosen default (``default_id``), which falls back to this.
 DEFAULT_ID = "default"
 
 
@@ -71,23 +74,71 @@ def _annotate(doc: Dict[str, Any], profiles: Dict[str, Dict[str, Any]]) -> Dict[
     return out
 
 
+def _upgrade(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Stored docs may predate the current schema; reads see them upgraded."""
+    try:
+        return {**doc, **normalize_playbook(doc)}
+    except PlaybookError:
+        return doc
+
+
+def _load(user_id: int, pid: str) -> Optional[Dict[str, Any]]:
+    doc = store.get_playbook(user_id, pid)
+    if doc is None and pid == DEFAULT_ID:
+        return {**default_playbook(), "seed": True}
+    return _upgrade(doc) if doc is not None else None
+
+
+def default_id(user_id: int) -> str:
+    """The playbook ``/orchestrate`` uses without ``@id`` (stale picks fall back)."""
+    pid = store.default_playbook(user_id)
+    if pid and pid != DEFAULT_ID and store.get_playbook(user_id, pid) is None:
+        return DEFAULT_ID
+    return pid or DEFAULT_ID
+
+
+def set_default(user_id: int, playbook_id: str, *, db=None) -> str:
+    pid = str(playbook_id or "").strip().lower() or DEFAULT_ID
+    if _load(user_id, pid) is None:
+        raise OrchestratorError(f"playbook {pid!r} not found")
+    store.set_default_playbook(user_id, pid)
+    return pid
+
+
 def list_playbooks(user_id: int, *, db=None) -> List[Dict[str, Any]]:
-    docs = store.list_playbooks(user_id)
+    docs = [_upgrade(d) for d in store.list_playbooks(user_id)]
     if not any(d.get("id") == DEFAULT_ID for d in docs):
         # The seed is virtual until the user saves it; never written implicitly.
         docs.insert(0, {**default_playbook(), "seed": True})
     profiles = profile_map(user_id, db=db)
-    return [_annotate(d, profiles) for d in docs]
+    chosen = default_id(user_id)
+    return [{**_annotate(d, profiles), "is_default": d.get("id") == chosen} for d in docs]
 
 
-def get_playbook(user_id: int, playbook_id: str, *, db=None) -> Dict[str, Any]:
-    pid = str(playbook_id or DEFAULT_ID).strip().lower()
-    doc = store.get_playbook(user_id, pid)
-    if doc is None and pid == DEFAULT_ID:
-        doc = {**default_playbook(), "seed": True}
+def get_playbook(user_id: int, playbook_id: str = "", *, db=None) -> Dict[str, Any]:
+    pid = str(playbook_id or "").strip().lower().lstrip("@") or default_id(user_id)
+    doc = _load(user_id, pid)
     if doc is None:
         raise OrchestratorError(f"playbook {pid!r} not found")
-    return _annotate(doc, profile_map(user_id, db=db))
+    return {**_annotate(doc, profile_map(user_id, db=db)), "is_default": pid == default_id(user_id)}
+
+
+def _check_temporary_agents(doc: Dict[str, Any]) -> None:
+    """Temporary agents get the same pin check as a saved profile."""
+    from api.agent_harness.agent_models import check_agent_pin
+    from api.subagents.profiles import normalize_harness
+
+    catalogs: Dict[str, Any] = {}
+    for tier in doc["tiers"]:
+        for member in tier["members"]:
+            if member.get("profile"):
+                continue
+            member["agent"] = normalize_harness(member["agent"])
+            if member["agent"] == "none":
+                raise OrchestratorError(f"{tier['label']}: a temporary agent needs a harness")
+            error = check_agent_pin(member["agent"], member["model"], member["effort"], catalogs=catalogs)
+            if error:
+                raise OrchestratorError(f"{tier['label']} · {member['name']}: {error}")
 
 
 def save_playbook(user_id: int, raw: Any, *, db=None) -> Dict[str, Any]:
@@ -100,6 +151,8 @@ def save_playbook(user_id: int, raw: Any, *, db=None) -> Dict[str, Any]:
         raise OrchestratorError(
             "unknown agent profile(s): " + ", ".join(missing) + " — create them in Apps → Agents first"
         )
+    if temporary_agents(doc):
+        _check_temporary_agents(doc)
     store.put_playbook(user_id, doc)
     return get_playbook(user_id, doc["id"], db=db)
 
@@ -115,7 +168,7 @@ def _session_owner(session_id: int, db) -> int:
     return int(row["user_id"])
 
 
-def bind(session: Any, playbook_id: str = DEFAULT_ID, goal: str = "", *, db=None,
+def bind(session: Any, playbook_id: str = "", goal: str = "", *, db=None,
          user_id: Optional[int] = None) -> Dict[str, Any]:
     db = _db(db)
     sid = parse_session(session)
@@ -155,7 +208,7 @@ def brief(session: Any = None, *, playbook_id: str = "", user_id: Optional[int] 
         user_id = owner
     if user_id is None:
         raise OrchestratorError("brief needs a chat or a user")
-    pid = playbook_id or (binding or {}).get("playbook_id") or DEFAULT_ID
+    pid = playbook_id or (binding or {}).get("playbook_id") or ""
     doc = get_playbook(int(user_id), pid, db=db)
     profiles = profile_map(int(user_id), db=db)
     handle = _handle(sid) if sid is not None else ""

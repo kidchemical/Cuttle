@@ -1,7 +1,9 @@
 /**
  * Orchestrator App controller — transport + events over CuttleOrchestrator
  * (pure). Playbooks are owned by api.orchestrator; profiles by the Agents App.
- * Selects are plain <select>s upgraded by the shared page_controls combobox.
+ * Temporary agents pin harness · model · effort inline through the composer's
+ * chip picker (CuttleAgentPinPicker). Selects are plain <select>s upgraded by
+ * the shared page_controls combobox.
  */
 (function () {
     'use strict';
@@ -17,8 +19,16 @@
         child_retries: 'Retries on the same tier, with a sharper brief, before a task moves down the ladder.',
         setup_retries: 'Spawns that fail to start (bad pin, quota, missing CLI) before it reports instead of looping.',
     };
-    let state = { playbooks: [], profiles: [], catalog: [], bindings: [], draft: null, savedId: '', saved: '', tab: 'chart', preview: null };
+    let state = { playbooks: [], profiles: [], catalog: [], bindings: [], defaultId: 'default', draft: null, savedId: '', saved: '', tab: 'chart', preview: null };
     let previewTimer = null;
+    // Temporary-agent pin edits land on this tier member (index -1 = add on first pick).
+    let pinTarget = null;
+    const pinPicker = window.CuttleAgentPinPicker ? window.CuttleAgentPinPicker.create({
+        getCatalog: () => state.catalog,
+        title: 'Temporary agent',
+        subtitle: 'Harness, model and effort for this tier only. No profile to set up.',
+        onChange: onTemporaryPin,
+    }) : null;
 
     function toast(message, kind) {
         if (typeof window.showToast === 'function') window.showToast(message, kind || 'info');
@@ -44,7 +54,7 @@
 
     function snapshot(d) {
         const body = M.clone(d);
-        delete body.seed; delete body.missing_profiles; delete body.updated_at;
+        delete body.seed; delete body.missing_profiles; delete body.updated_at; delete body.is_default;
         return JSON.stringify(body);
     }
 
@@ -71,7 +81,7 @@
             return `<button type="button" class="orch-card${state.savedId === pb.id ? ' is-active' : ''}" data-open="${M.esc(pb.id)}">
                 <span class="orch-card-icon" aria-hidden="true"><span class="orch-ladder-dots">${ladderDots(pb)}</span></span>
                 <span class="orch-card-main">
-                    <span class="orch-card-title">${M.esc(pb.name)}</span>
+                    <span class="orch-card-title">${M.esc(pb.name)}${pb.id === state.defaultId ? '<span class="orch-default-star" title="Default for /orchestrate">★</span>' : ''}</span>
                     <span class="orch-card-sub">${M.esc(pb.id)} · ${(pb.tiers || []).length} tiers${pb.seed ? ' · not saved' : ''}</span>
                 </span>
                 ${missing ? `<span class="orch-dot-count is-bad" title="${missing} missing profile(s)">!</span>` : ''}
@@ -94,24 +104,42 @@
 
     // ── Org chart ───────────────────────────────────────────────────────
 
-    function profileChip(pid, index, tierIndex) {
-        const p = profileById(pid);
-        return `<li class="orch-member${p ? '' : ' is-missing'}${index === 0 ? ' is-default' : ''}">
-            <span class="orch-av orch-av--sm">${M.avatarHtml(p ? p.avatar : '')}</span>
+    function memberHtml(m, index, tierIndex, isDefault) {
+        const temp = M.isTemporary(m);
+        const p = temp ? null : profileById(m.profile);
+        const on = M.isOn(m);
+        const missing = !temp && !p;
+        const label = temp ? m.name : (p ? p.name : m.profile);
+        const pin = temp ? m : p;
+        const pinText = pin ? `<span aria-hidden="true">${M.esc(M.agentIcon(state.catalog, pin.agent))}</span> ${M.esc(M.pinLabel(state.catalog, pin))}` : 'Missing profile — create it in Agents';
+        const cls = ['orch-member', missing ? 'is-missing' : '', isDefault ? 'is-default' : '', on ? '' : 'is-off', temp ? 'is-temp' : ''].filter(Boolean).join(' ');
+        return `<li class="${cls}" data-member="${index}">
+            <label class="orch-switch" title="${on ? 'On — switch off to skip this agent' : 'Off — switch on to use this agent'}">
+                <input type="checkbox" data-toggle-member${on ? ' checked' : ''} aria-label="Use ${M.esc(label)}"><span aria-hidden="true"></span>
+            </label>
+            <span class="orch-av orch-av--sm">${temp ? `<span class="orch-av-emoji" aria-hidden="true">${M.esc(M.agentIcon(state.catalog, m.agent))}</span>` : M.avatarHtml(p ? p.avatar : '')}</span>
             <span class="orch-member-main">
-                <span class="orch-member-name">${M.esc(p ? p.name : pid)}${index === 0 ? '<span class="orch-tag is-accent">Default</span>' : ''}</span>
-                <span class="orch-member-pin">${p ? `<span aria-hidden="true">${M.esc(M.agentIcon(state.catalog, p.agent))}</span> ${M.esc(M.pinLabel(state.catalog, p))}` : 'Missing profile — create it in Agents'}</span>
+                <span class="orch-member-name">${temp
+                    ? `<input class="orch-member-rename" data-rename value="${M.esc(m.name)}" maxlength="60" aria-label="Temporary agent name">`
+                    : M.esc(label)}${temp ? '<span class="orch-tag">Temporary</span>' : ''}${isDefault ? '<span class="orch-tag is-accent">Default</span>' : ''}</span>
+                ${temp
+                    ? `<button type="button" class="orch-member-pin orch-pin-btn" data-edit-pin title="Change harness, model or effort">${pinText}</button>`
+                    : `<span class="orch-member-pin">${pinText}</span>`}
             </span>
             <span class="orch-member-actions">
-                ${index > 0 ? `<button type="button" class="orch-icon-btn" data-tier="${tierIndex}" data-up-profile="${M.esc(pid)}" title="Make default" aria-label="Make ${M.esc(pid)} the default">★</button>` : ''}
-                <button type="button" class="orch-icon-btn is-danger" data-tier="${tierIndex}" data-drop-profile="${M.esc(pid)}" title="Remove" aria-label="Remove ${M.esc(pid)}">✕</button>
+                ${index > 0 ? `<button type="button" class="orch-icon-btn" data-tier="${tierIndex}" data-promote title="Make default" aria-label="Make ${M.esc(label)} the default">★</button>` : ''}
+                <button type="button" class="orch-icon-btn is-danger" data-tier="${tierIndex}" data-drop-member title="Remove" aria-label="Remove ${M.esc(label)}">✕</button>
             </span>
         </li>`;
     }
 
     function tierHtml(tier, index, count) {
         const meta = M.ROLE_META[tier.role] || M.ROLE_META.worker;
-        const available = state.profiles.filter((p) => tier.profiles.indexOf(p.id) < 0);
+        const members = M.tierMembers(tier);
+        const used = new Set(members.map((m) => m.profile).filter(Boolean));
+        const available = state.profiles.filter((p) => !used.has(p.id));
+        const full = members.length >= M.MAX_MEMBERS;
+        const defaultIndex = members.findIndex(M.isOn);
         const roles = M.ROLES.map((r) => `<option value="${r}"${tier.role === r ? ' selected' : ''}>${M.ROLE_LABELS[r]}</option>`).join('');
         return `<li class="orch-tier role-${M.esc(tier.role)}" data-index="${index}">
             <div class="orch-tier-rail" aria-hidden="true"><span class="orch-tier-step">${index + 1}</span>${index < count - 1 ? '<span class="orch-tier-line"></span>' : ''}</div>
@@ -127,13 +155,15 @@
                     </span>
                 </div>
                 <p class="orch-tier-hint">${M.esc(meta.hint)}</p>
-                <ul class="orch-members">${tier.profiles.map((pid, i) => profileChip(pid, i, index)).join('')
-                    || '<li class="orch-member is-empty">No profiles yet — add one below.</li>'}</ul>
+                <ul class="orch-members">${members.map((m, i) => memberHtml(m, i, index, i === defaultIndex)).join('')
+                    || '<li class="orch-member is-empty">No agents yet — add a profile or a temporary agent below.</li>'}</ul>
+                ${members.length && defaultIndex < 0 ? '<p class="orch-tier-hint is-off">Every agent here is off, so this tier is skipped.</p>' : ''}
                 <div class="orch-tier-add">
-                    <select data-add-profile aria-label="Add a profile to this tier"${available.length ? '' : ' disabled'}>
-                        <option value="">${available.length ? 'Add a profile…' : 'All profiles added'}</option>
+                    <select data-add-profile aria-label="Add a profile to this tier"${available.length && !full ? '' : ' disabled'}>
+                        <option value="">${full ? `Tier is full (${M.MAX_MEMBERS})` : (available.length ? 'Add a profile…' : 'All profiles added')}</option>
                         ${available.map((p) => `<option value="${M.esc(p.id)}">${M.esc(p.name)} — ${M.esc(M.pinLabel(state.catalog, p))}</option>`).join('')}
                     </select>
+                    <button type="button" class="orch-small-btn" data-add-temp${full || !pinPicker ? ' disabled' : ''} title="Pick a harness, model and effort just for this tier">＋ Temporary agent</button>
                 </div>
                 <textarea class="orch-tier-use" data-field="use_for" rows="2" maxlength="600" placeholder="Use this tier for…" aria-label="Use this tier for">${M.esc(tier.use_for)}</textarea>
             </div>
@@ -187,12 +217,21 @@
     // ── Editor shell ────────────────────────────────────────────────────
 
     function startCommand(d) {
-        return `/orchestrate${d.id === 'default' ? '' : ' @' + d.id} <goal>`;
+        return `/orchestrate${d.id === state.defaultId ? '' : ' @' + d.id} <goal>`;
     }
 
     function renderSavebar() {
         const bar = $('orchSavebar');
         $('orchDelete').hidden = !state.draft || !state.savedId || !!state.draft.seed;
+        $('orchDuplicate').hidden = !state.draft;
+        const isDefault = !!state.draft && state.savedId === state.defaultId && !!state.savedId;
+        const defBtn = $('orchMakeDefault');
+        defBtn.hidden = !state.draft;
+        defBtn.disabled = isDefault || !state.savedId;
+        defBtn.classList.toggle('is-default', isDefault);
+        defBtn.textContent = isDefault ? '★ Default' : '☆ Make default';
+        defBtn.title = isDefault ? '/orchestrate uses this playbook when no @playbook is given'
+            : (state.savedId ? 'Use this playbook for /orchestrate without @playbook' : 'Save the playbook first');
         if (!state.draft) { bar.hidden = true; return; }
         const problems = M.playbookProblems(state.draft, state.profiles.map((p) => p.id));
         const dirty = isDirty() || !state.savedId || state.draft.seed;
@@ -268,7 +307,8 @@
         if (!pb) return;
         state.draft = M.clone(pb);
         state.savedId = pb.id;
-        state.saved = pb.seed ? '' : snapshot(pb);
+        // An untouched seed is not dirty; the savebar still offers to save it (draft.seed).
+        state.saved = snapshot(pb);
         renderEditor();
     }
 
@@ -284,6 +324,7 @@
             state.profiles = profiles.profiles || [];
             state.catalog = (catalog.agents || []).filter((a) => a && a.id);
             state.bindings = bindings.bindings || [];
+            state.defaultId = pbs.default_id || 'default';
             notice.hidden = true;
             content.hidden = false;
             const want = selectId || state.savedId || (state.playbooks[0] && state.playbooks[0].id);
@@ -301,9 +342,45 @@
 
     // ── Events ──────────────────────────────────────────────────────────
 
+    function memberIndex(el) {
+        const li = el.closest('[data-member]');
+        return li ? Number(li.dataset.member) : -1;
+    }
+
+    function openPin(tierIndex, index) {
+        if (!pinPicker) return;
+        const current = index >= 0 ? M.tierMembers(state.draft.tiers[tierIndex])[index] : null;
+        pinTarget = { tierIndex, index, autoName: !current || current.name === M.pinLabel(state.catalog, current) };
+        pinPicker.open(current ? { agent: current.agent, model: current.model, effort: current.effort } : null);
+    }
+
+    function onTemporaryPin(pin) {
+        const t = pinTarget;
+        if (!t || !state.draft || !state.draft.tiers[t.tierIndex]) return;
+        const tier = state.draft.tiers[t.tierIndex];
+        if (!pin.agent || pin.agent === 'none') return; // a temporary agent always runs on a harness
+        const prev = t.index >= 0 ? M.tierMembers(tier)[t.index] : null;
+        const member = M.temporaryMember(state.catalog, pin, t.autoName || !prev ? '' : prev.name);
+        if (t.index < 0) {
+            const next = M.addMember(tier, member);
+            if (M.tierMembers(next).length === M.tierMembers(tier).length) { toast('That agent is already in this tier', 'info'); return; }
+            state.draft.tiers[t.tierIndex] = next;
+            t.index = M.tierMembers(next).length - 1;
+        } else {
+            state.draft.tiers[t.tierIndex] = M.replaceMember(tier, t.index, member);
+        }
+        renderTiers();
+        changed();
+    }
+
     const tiersEl = $('orchTiers');
     tiersEl.addEventListener('input', (e) => {
         const box = e.target.closest('.orch-tier');
+        if (box && e.target.hasAttribute('data-rename')) {
+            const m = M.tierMembers(state.draft.tiers[Number(box.dataset.index)])[memberIndex(e.target)];
+            if (m) { m.name = e.target.value; changed(); }
+            return;
+        }
         const field = e.target.dataset.field;
         if (!box || !field || field === 'role') return;
         state.draft.tiers[Number(box.dataset.index)][field] = e.target.value;
@@ -318,7 +395,11 @@
             renderTiers();
             changed();
         } else if (e.target.hasAttribute('data-add-profile') && e.target.value) {
-            state.draft.tiers[i] = M.addProfileToTier(state.draft.tiers[i], e.target.value);
+            state.draft.tiers[i] = M.addMember(state.draft.tiers[i], e.target.value);
+            renderTiers();
+            changed();
+        } else if (e.target.hasAttribute('data-toggle-member')) {
+            state.draft.tiers[i] = M.toggleMember(state.draft.tiers[i], memberIndex(e.target));
             renderTiers();
             changed();
         }
@@ -333,11 +414,11 @@
         else if (btn.hasAttribute('data-remove-tier')) {
             if (tiers[i].profiles.length && !window.confirm(`Remove the ${tiers[i].label} tier?`)) return;
             tiers.splice(i, 1);
-        } else if (btn.dataset.dropProfile) tiers[i] = M.removeProfileFromTier(tiers[i], btn.dataset.dropProfile);
-        else if (btn.dataset.upProfile) {
-            const list = tiers[i].profiles.filter((p) => p !== btn.dataset.upProfile);
-            tiers[i].profiles = [btn.dataset.upProfile].concat(list);
-        } else return;
+        } else if (btn.hasAttribute('data-drop-member')) tiers[i] = M.removeMember(tiers[i], memberIndex(btn));
+        else if (btn.hasAttribute('data-promote')) tiers[i] = M.promoteMember(tiers[i], memberIndex(btn));
+        else if (btn.hasAttribute('data-add-temp')) { openPin(i, -1); return; }
+        else if (btn.hasAttribute('data-edit-pin')) { openPin(i, memberIndex(btn)); return; }
+        else return;
         renderTiers();
         changed();
     });
@@ -432,6 +513,28 @@
         setTab('chart');
         renderEditor();
         $('orchName').select();
+    });
+
+    $('orchDuplicate').addEventListener('click', () => {
+        if (!state.draft) return;
+        if (isDirty() && !window.confirm('Duplicate with your unsaved changes? The original stays as last saved.')) return;
+        state.draft = M.duplicatePlaybook(state.draft, state.playbooks.map((p) => p.id));
+        state.savedId = '';
+        state.saved = '';
+        renderEditor();
+        $('orchName').select();
+        toast('Copy ready — save it to keep it', 'info');
+    });
+    $('orchMakeDefault').addEventListener('click', async () => {
+        if (!state.savedId) return;
+        if (isDirty() && !window.confirm('Make the saved version the default? Unsaved changes stay unsaved.')) return;
+        try {
+            const data = await call('/api/orchestrator/default', 'PUT', { id: state.savedId });
+            state.defaultId = data.default_id;
+            toast(`/orchestrate now uses ${state.draft.name}`, 'success');
+            renderSidebar();
+            changed();
+        } catch (err) { toast(err.message, 'error'); }
     });
 
     $('orchSave').addEventListener('click', async () => {

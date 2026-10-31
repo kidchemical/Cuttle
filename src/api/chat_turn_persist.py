@@ -56,11 +56,14 @@ def persist_user_turn(
     badge_fn: Callable[..., Optional[dict]],
     project_merge_fn: Callable[..., Optional[dict]],
     request_data: Optional[dict] = None,
+    extra_meta: Optional[dict] = None,
 ) -> None:
     """Persist the user turn as history sees it (no digest, keeps thumbnails)."""
     if session_id is None or not history_text:
         return
     turn_meta = dict(base_meta) if isinstance(base_meta, dict) else {}
+    if isinstance(extra_meta, dict):
+        turn_meta.update(extra_meta)
     from api.chat_metadata import chat_op_metadata
 
     turn_meta.update(chat_op_metadata(request_data, session_id))

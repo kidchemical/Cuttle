@@ -36,7 +36,22 @@ def list_route():
     disabled = _disabled()
     if disabled:
         return disabled
-    return jsonify(success=True, playbooks=service.list_playbooks(_uid()))
+    uid = _uid()
+    return jsonify(success=True, playbooks=service.list_playbooks(uid), default_id=service.default_id(uid))
+
+
+@orchestrator_bp.put("/default")
+@owner_required
+def default_route():
+    """Pick the playbook ``/orchestrate`` uses when no ``@id`` is given."""
+    disabled = _disabled()
+    if disabled:
+        return disabled
+    body = request.get_json(silent=True) or {}
+    try:
+        return jsonify(success=True, default_id=service.set_default(_uid(), str(body.get("id") or "")))
+    except service.OrchestratorError as exc:
+        return _error(exc)
 
 
 @orchestrator_bp.get("/playbooks/<playbook_id>")

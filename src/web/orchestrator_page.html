@@ -9,9 +9,11 @@
     <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="/css/landing_page.css?v=20261028gpuBg">
     <link rel="stylesheet" href="/css/compact_page.css?v=20261015glass">
+    <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
+    <link rel="stylesheet" href="/css/chip_config_modal.css?v=20261030orchChip">
     <link rel="stylesheet" href="/css/searchable_select.css?v=20261011attachedMenus">
     <link rel="stylesheet" href="/css/page_controls.css?v=20261015glass">
-    <link rel="stylesheet" href="/css/orchestrator_page.css?v=20261029orch3">
+    <link rel="stylesheet" href="/css/orchestrator_page.css?v=20261030orch4">
 </head>
 <body class="compact-shell-page" data-page="orchestrator">
     <main class="orch-page orchestrator-page cuttle-page">
@@ -46,6 +48,8 @@
                         <input id="orchId" class="orch-id-input" maxlength="40" spellcheck="false" aria-label="Playbook id">
                         <span id="orchSeed" class="orch-tag" hidden>Default · not saved yet</span>
                         <span class="orch-grow"></span>
+                        <button type="button" id="orchMakeDefault" class="orch-small-btn orch-default-btn" hidden>☆ Make default</button>
+                        <button type="button" id="orchDuplicate" class="orch-small-btn" hidden title="Copy this playbook under a new id">Duplicate</button>
                         <button type="button" id="orchDelete" class="danger orch-small-btn" hidden>Delete playbook</button>
                         <button type="button" class="orch-code-chip" id="orchStartCmd" title="Copy">
                             <span class="orch-code-chip-label">Start</span><code></code><span class="orch-copy-icon" aria-hidden="true">⧉</span>
@@ -62,7 +66,7 @@
                 </nav>
 
                 <section class="orch-tab" data-panel="chart">
-                    <p class="orch-help orch-tab-intro">Tiers run top to bottom. Every task starts at the first worker tier and escalates down one tier at a time. In each tier the first profile is the default; the rest are alternates.</p>
+                    <p class="orch-help orch-tab-intro">Tiers run top to bottom. Every task starts at the first worker tier and escalates down one tier at a time. In each tier the first agent that is on is the default; the rest are alternates. Switch an agent off to skip it without removing it, or add a temporary agent when you don't need a saved profile.</p>
                     <ol id="orchTiers" class="orch-ladder"></ol>
                     <button type="button" class="orch-add-tier" id="orchAddTier"><span aria-hidden="true">＋</span> Add tier</button>
                 </section>
@@ -120,7 +124,9 @@
     <script src="/js/shared/toast.js"></script>
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/shared/page_controls.js?v=20261011pageControls2"></script>
-    <script src="/js/orchestrator/orchestrator_model.js?v=20261029orch3"></script>
-    <script src="/js/orchestrator/orchestrator_page.js?v=20261029orch3"></script>
+    <script src="/js/chat/chat_chip_config.js?v=20261030orchChip"></script>
+    <script src="/js/orchestrator/orchestrator_model.js?v=20261030orch4"></script>
+    <script src="/js/orchestrator/agent_pin_picker.js?v=20261029orch3"></script>
+    <script src="/js/orchestrator/orchestrator_page.js?v=20261030orch4"></script>
 </body>
 </html>
