@@ -202,8 +202,12 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
                 store.finish(op['id'], 'delivered', {'steered': True})
                 return {'schema_version': 1, 'ok': True, 'delivery': 'steered', 'handle': f"CH-{row['id']:06d}"}
             store.finish(op['id'], 'pending', {})
+            # The turn is live but took nothing: the send waits for that turn to end,
+            # however long that is. Say so, so an urgent send is not mistaken for delivered.
             return {'schema_version': 1, 'ok': True, 'delivery': 'queued', 'operation': store.get(op['id'], actor),
-                    'hint': 'Host-owned outbox dispatches when idle; no open browser required'}
+                    'target_busy': True, 'steer_reason': str(steered.get('reason') or 'rejected'),
+                    'hint': ('Target turn is live but not steerable; this waits until that turn ends. '
+                             'If it cannot wait, stop the target (`chat_cli stop`) or ask the user.')}
     op = store.create('send', actor, row['id'], {'text': text})
     return {'schema_version': 1, 'ok': True, 'delivery': 'queued', 'operation': op,
             'hint': 'Host-owned outbox dispatches when idle; no open browser required'}

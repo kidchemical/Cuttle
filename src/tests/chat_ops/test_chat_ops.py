@@ -36,9 +36,10 @@ def chats(tmp_path):
 class FakeHost:
     """Stands in for the loopback chat HTTP routes."""
 
-    def __init__(self, *, generating=False, steered=True):
+    def __init__(self, *, generating=False, steered=True, reason=None):
         self.generating = generating
         self.steered = steered
+        self.reason = reason
         self.calls = []
 
     def __call__(self, uid, sid, method, path, data=None, *, stream=False):
@@ -46,7 +47,7 @@ class FakeHost:
         if path == "/api/chat-live-status":
             return {"success": True, "generating": self.generating, "status": "working"}
         if path == "/api/chat-steer":
-            return {"success": True, "steered": self.steered}
+            return {"success": True, "steered": self.steered, **({"reason": self.reason} if self.reason else {})}
         if path == "/api/chat-cancel":
             return {"success": True, "cancelled": True}
         raise AssertionError(path)
@@ -124,6 +125,17 @@ def test_refused_steer_reuses_its_operation_as_the_queued_send(chats):
     out = service.send(_ch(target), "next", actor=_ch(sup), db=db, request=FakeHost(generating=True, steered=False))
     assert out["delivery"] == "queued" and out["operation"]["state"] == "pending"
     assert len(store.listing(sup)) == 1
+
+
+def test_refused_steer_says_the_send_waits_for_the_live_turn(chats):
+    db, _owner, sup, target, _foreign = chats
+    host = FakeHost(generating=True, steered=False, reason="no_steerable_run")
+    out = service.send(_ch(target), "pause now", actor=_ch(sup), db=db, request=host)
+    assert out["delivery"] == "queued" and out["target_busy"] is True
+    assert out["steer_reason"] == "no_steerable_run"
+    assert "chat_cli stop" in out["hint"]
+    idle = service.send(_ch(target), "later", actor=_ch(sup), db=db, request=FakeHost(generating=False))
+    assert "target_busy" not in idle
 
 
 def test_failed_steer_is_verified_not_resent_blindly(chats):

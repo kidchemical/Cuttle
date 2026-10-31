@@ -27,6 +27,7 @@ from core.agent_cli_env import agent_cli_env
 from scripts.utilities.agent_process import (
     attach_to_chat_run,
     format_interrupt_notice,
+    kill_process_tree,
     run_interruptible,
 )
 
@@ -88,7 +89,11 @@ def _default_timeout() -> float:
 
 
 def _background_wait_seconds() -> float:
-    """How long a finished turn may stay open for its background tasks (0 = never).
+    """How long one root ``result`` may wait on pending background tasks (0 = never).
+
+    The window restarts at every root ``result``: a follow-up turn that ends
+    while other tasks are still running opens a fresh wait, so a long chain of
+    short waits stays steerable instead of tripping one turn-wide budget.
 
     Kept under the 3600s idle budget: the wait is silent on stdout, so the
     idle deadline would otherwise end it first with a timeout instead of a note.
@@ -98,6 +103,20 @@ def _background_wait_seconds() -> float:
         return max(0.0, float(raw)) if raw else 3000.0
     except (TypeError, ValueError):
         return 3000.0
+
+
+def _background_exit_grace_seconds() -> float:
+    """After the wait limit closes stdin, how long the CLI gets to exit on its own.
+
+    Claude Code keeps running on stdin EOF while its background tasks are
+    alive (and follows up when they finish), so a run that ignores EOF is
+    reaped instead of staying "live" with no steer channel.
+    """
+    raw = (os.getenv("CLAUDE_BACKGROUND_EXIT_GRACE_SEC") or "").strip()
+    try:
+        return max(0.0, float(raw)) if raw else 30.0
+    except (TypeError, ValueError):
+        return 30.0
 
 
 def _task_label(tasks: List[Dict[str, Any]]) -> str:
@@ -511,10 +530,13 @@ class ClaudeCliTool:
         # (it read them); results: every root ``result`` (a late steer adds one).
         # bg: the CLI's latest background task list; a root ``result`` while it
         # is non-empty keeps stdin open so the task's notification can start
-        # the follow-up turn (closing stdin makes the CLI exit and kill them).
+        # the follow-up turn. The wait window restarts at each root ``result``
+        # and is cancelled while a follow-up runs. At the limit stdin closes;
+        # a CLI that keeps running on EOF is reaped after a short grace.
         st: Dict[str, Any] = {
             "token": None, "open": False, "sent": [], "echoed": [], "results": [],
             "bg": [], "waiting": False, "wait_timer": None, "abandoned": [],
+            "reap_timer": None, "reaped": False,
         }
         proc = None
         bg_wait = min(_background_wait_seconds(), max(0.0, resolved_timeout - 60.0))
@@ -551,12 +573,21 @@ class ClaudeCliTool:
             loop.call_soon_threadsafe(_write)
             return out
 
+        def _reap() -> None:
+            st["reap_timer"] = None
+            if proc is not None and proc.returncode is None:
+                st["reaped"] = True
+                stream.activity.emit("Claude Code ignored end of input — stopping it", force=True)
+                asyncio.ensure_future(kill_process_tree(proc))
+
         def _give_up_waiting() -> None:
             st["wait_timer"] = None
+            st["waiting"] = False
             if st["open"] and st["bg"]:
                 st["abandoned"] = [_task_label([t]) for t in st["bg"]]
                 stream.activity.emit("background wait limit reached — stopping Claude Code", force=True)
                 _close_input()
+                st["reap_timer"] = loop.call_later(_background_exit_grace_seconds(), _reap)
 
         def _on_line(raw: bytes) -> None:
             stream.feed(raw)
@@ -577,19 +608,23 @@ class ClaudeCliTool:
             elif obj.get("type") == "system" and obj.get("subtype") == "background_tasks_changed":
                 tasks = obj.get("tasks")
                 st["bg"] = [t for t in tasks if isinstance(t, dict)] if isinstance(tasks, list) else []
-                if st["waiting"]:
-                    stream.activity.emit(
-                        f"waiting on background task: {_task_label(st['bg'])}" if st["bg"]
-                        else "background task finished — Claude Code is following up",
-                        force=True,
-                    )
+                if st["waiting"] and not st["bg"]:
+                    # The follow-up turn is starting; its own result reopens the wait.
+                    if st["wait_timer"] is not None:
+                        st["wait_timer"].cancel()
+                        st["wait_timer"] = None
+                    st["waiting"] = False
+                    stream.activity.emit("background task finished — Claude Code is following up", force=True)
+                elif st["waiting"]:
+                    stream.activity.emit(f"waiting on background task: {_task_label(st['bg'])}", force=True)
             elif obj.get("type") == "result" and not obj.get("parent_tool_use_id"):
                 st["results"].append(obj)
                 if st["bg"] and st["open"] and bg_wait > 0:
                     # Stay steerable; the task's notification continues this reply.
-                    if not st["waiting"]:
-                        st["waiting"] = True
-                        st["wait_timer"] = loop.call_later(bg_wait, _give_up_waiting)
+                    if st["wait_timer"] is not None:
+                        st["wait_timer"].cancel()
+                    st["waiting"] = True
+                    st["wait_timer"] = loop.call_later(bg_wait, _give_up_waiting)
                     stream.activity.emit(f"waiting on background task: {_task_label(st['bg'])}", force=True)
                 else:
                     # EOF lets the CLI exit once queued steers are answered.
@@ -634,6 +669,9 @@ class ClaudeCliTool:
             }
         finally:
             _close_input()
+            if st["reap_timer"] is not None:
+                st["reap_timer"].cancel()
+                st["reap_timer"] = None
             stream.text.flush()
             stop_hb.set()
             await hb
@@ -693,7 +731,8 @@ class ClaudeCliTool:
                 **steer_info,
             }
 
-        ok = run.returncode == 0 and stream.result is not None and not errors
+        # A run reaped after the wait limit already answered; its exit code is ours.
+        ok = (run.returncode == 0 or st["reaped"]) and stream.result is not None and not errors
         if not ok and not errors and stream.result is None and not (run.timed_out or run.cancelled):
             errors.append("Claude Code ended without a terminal result")
         if not ok and not errors and err:
