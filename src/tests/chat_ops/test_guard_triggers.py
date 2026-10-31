@@ -200,6 +200,22 @@ def test_git_write_detection():
     assert not rules.forbidden_command("git diff dev/core-old", forbidden, wts)
 
 
+def test_git_write_detection_is_per_segment():
+    wts = {"/repo/core": "dev/core", "/repo/feature": "dev/feature"}
+    forbidden = ["dev/core", "master"]
+    # Reading the protected branch next to a write elsewhere is fine.
+    assert not rules.forbidden_command(
+        'cd "/repo/feature" && git show dev/core:a.txt > a.txt && git add a.txt'
+        ' && git commit -m "port from dev/core"', forbidden, wts)
+    assert not rules.forbidden_command("git -C /repo/core log -1 && cd /repo/feature && git commit -m x",
+                                       forbidden, wts)
+    assert not rules.forbidden_command("cd /repo/feature && git commit -F - <<EOF\nnot on master\nEOF",
+                                       forbidden, wts)
+    # A write that runs in the protected checkout still counts.
+    assert rules.forbidden_command("cd /repo/core && git commit -am wip", forbidden, wts)
+    assert rules.forbidden_command("git commit -am wip", forbidden, wts, cwd="/repo/core")
+
+
 def test_state_violation_wakes_once_until_it_clears(chats, repo):
     db, _owner, _sup, target, _child = chats
     sched = _schedule(chats)

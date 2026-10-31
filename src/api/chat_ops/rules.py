@@ -75,14 +75,46 @@ def worktree_branches(path):
     return found
 
 
-def forbidden_command(command, forbidden, worktrees):
-    """A git write naming a forbidden branch, or run inside a worktree that has one checked out."""
-    if not forbidden or not is_git_write(command):
+_SEGMENT = re.compile(r'&&|\|\||[;|\n]')
+_ARG = r'("(?:[^"\\]|\\.)*"|\'[^\']*\'|\S+)'
+_CD = re.compile(r'^\(?\s*(?:builtin\s+)?cd\s+' + _ARG)
+_GIT_C = re.compile(r'\bgit\s+-C\s+' + _ARG)
+_MESSAGE = re.compile(r'(?:\s-m|\s--message)(?:=|\s+)' + _ARG)
+
+
+def _unquote(arg):
+    return arg[1:-1] if len(arg) > 1 and arg[0] == arg[-1] and arg[0] in '"\'' else arg
+
+
+def forbidden_command(command, forbidden, worktrees, cwd=None):
+    """A git write that targets a forbidden branch.
+
+    Checked per shell segment (``&&``, ``||``, ``;``, ``|``, newline), so a read of
+    the protected checkout next to a write elsewhere does not count. A segment
+    counts when it is a git write and either names a forbidden branch outside its
+    commit message, or runs in a worktree that has one checked out (``git -C`` or
+    the last ``cd``)."""
+    if not forbidden:
         return False
-    for branch in forbidden:
-        if re.search(rf'(?<![\w/.-]){re.escape(branch)}(?![\w/.-])', command):
+    trees = {os.path.realpath(p): b for p, b in (worktrees or {}).items()}
+    here = cwd
+    for segment in _SEGMENT.split(command or ''):
+        part = segment.strip()
+        cd = _CD.match(part)
+        if cd:
+            here = os.path.join(here or '', _unquote(cd.group(1)))
+            continue
+        if not is_git_write(part):
+            continue
+        text = _MESSAGE.sub(' -m ""', part)
+        for branch in forbidden:
+            if re.search(rf'(?<![\w/.-]){re.escape(branch)}(?![\w/.-])', text):
+                return True
+        target = _GIT_C.search(part)
+        path = os.path.join(here or '', _unquote(target.group(1))) if target else here
+        if path and trees.get(os.path.realpath(path)) in forbidden:
             return True
-    return any(branch in forbidden and wt in command for wt, branch in worktrees.items())
+    return False
 
 
 def new_commits(path, old, new):

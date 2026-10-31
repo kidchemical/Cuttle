@@ -215,7 +215,7 @@ def _violations(op, branch, path, *, db=None, commands=()):
         worktrees = rules.worktree_branches(path) if commands else {}
         for sid, command in commands:
             if rules.forbidden_command(command, forbidden, worktrees):
-                moved.append(f'CH-{sid:06d} ran a git write against a forbidden branch: `{command[:200]}`')
+                moved.append(f'CH-{sid:06d} ran a git write against a forbidden branch: `{command[:2000]}`')
         tips = rules.branch_tips(path, forbidden)
         baseline = cfg.get('forbidden_tips')
         if baseline is None:  # schedule made before baselines existed
