@@ -10,6 +10,13 @@ patch the same id as work progresses. These are tool calls: do not emit
 active lists from the context digest or `tasks list` and reuse the list for the
 same concern. Include its intent in `description`; do not create empty stubs.
 
+Use Tasks for an agent's multi-step investigation, implementation, or other
+work, even when the user does not ask for a progress display. Skip a quick
+answer or small edit. Tasks show completed steps, not a live job progress bar:
+for a long-running OS job, also use a status-backed watch card as described in
+`action-forms.md`. Do not fabricate percentages for work without a measurable
+progress source.
+
 ```bash
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks list --session CH-000465
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks create --session CH-000465 --id auth-refactor --title "Auth refactor" --description "Ship the auth fix" --items '[{"id":"api","text":"Fix API"},{"id":"test","text":"Verify"}]'

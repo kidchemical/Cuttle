@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
     <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
-    <link rel="stylesheet" href="css/landing_page.css?v=20260926lightBg">
+    <link rel="stylesheet" href="css/landing_page.css?v=20261028gpuBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261015glass">
     <link rel="stylesheet" href="css/settings_page.css?v=20261018updateCenter">
     <link rel="stylesheet" href="css/searchable_select.css?v=20261011attachedMenus">
@@ -353,14 +353,14 @@
             </div>
 
             <div class="settings-group" id="timeoutsSettings">
-                <h3 class="settings-title"><span class="emoji">⏱️</span> Timeouts <span class="settings-scope" data-scope="server" title="Stored in this server's settings; applies to every chat it runs.">This server</span><button type="button" class="cuttle-info" data-tooltip="How long an agent turn may run, and how long Cuttle waits for a subagent round before cancelling its unfinished work. Raise these for long coding tasks." aria-label="About Timeouts">i</button></h3>
+                <h3 class="settings-title"><span class="emoji">⏱️</span> Timeouts <span class="settings-scope" data-scope="server" title="Stored in this server's settings; applies to every chat it runs.">This server</span><button type="button" class="cuttle-info" data-tooltip="How long an agent turn may run, and how long Cuttle waits for a subagent round before cancelling its unfinished work. Raise these for long coding tasks, or set 0 / leave blank for no limit." aria-label="About Timeouts">i</button></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Agent run limit</strong><button type="button" class="cuttle-info" data-tooltip="Maximum seconds for one agent turn before Cuttle stops the harness. Streaming CLIs treat this as an idle budget, so a productive turn keeps going." aria-label="About Agent run limit">i</button>
                     </div>
                     <div class="setting-control">
-                        <input type="number" id="agentRunTimeoutSeconds" class="setting-input" min="60" max="86400" step="60" inputmode="numeric" aria-label="Agent run limit in seconds">
-                        <span class="setting-description">seconds</span>
+                        <input type="number" id="agentRunTimeoutSeconds" class="setting-input" min="0" max="86400" step="60" inputmode="numeric" placeholder="Unlimited" aria-label="Agent run limit in seconds">
+                        <span class="setting-description">seconds (0 or blank = unlimited)</span>
                     </div>
                 </div>
                 <div class="setting-item">
@@ -368,8 +368,8 @@
                         <strong>Subagent supervision limit</strong><button type="button" class="cuttle-info" data-tooltip="How long a --wait subagent round may run before Cuttle cancels the work that has not finished." aria-label="About Subagent supervision limit">i</button>
                     </div>
                     <div class="setting-control">
-                        <input type="number" id="subagentWaitTimeoutSeconds" class="setting-input" min="60" max="86400" step="60" inputmode="numeric" aria-label="Subagent supervision limit in seconds">
-                        <span class="setting-description">seconds</span>
+                        <input type="number" id="subagentWaitTimeoutSeconds" class="setting-input" min="0" max="86400" step="60" inputmode="numeric" placeholder="Unlimited" aria-label="Subagent supervision limit in seconds">
+                        <span class="setting-description">seconds (0 or blank = unlimited)</span>
                     </div>
                 </div>
                 <div class="provider-picker">
@@ -524,13 +524,21 @@
             </section>
 
             <section class="settings-panel" id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" tabindex="0" hidden>
+            <div class="settings-group voice-experiment-map" id="voiceExperimentMap" hidden>
+                <h3 class="settings-title"><span class="emoji">🧭</span> Voice experiments you have on <span class="settings-scope" data-scope="server" title="Experimental flags are stored on the server — every device shares them.">This server</span></h3>
+                <ul id="voiceExperimentList"></ul>
+                <p class="setting-description">Turn these on or off in <a href="/settings_page.html?tab=experimental">Settings → Experimental</a>.</p>
+            </div>
+
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🔊</span> Spoken replies <button type="button" class="cuttle-info" data-tooltip="How Cuttle reads replies aloud: the play button on chat bubbles and replies in voice chat." aria-label="About Spoken replies">i</button> <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+                <h3 class="settings-title"><span class="emoji">🔊</span> Spoken replies <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+                <p class="setting-description" id="chatTtsScope">The voice Cuttle uses to read replies aloud — from the 🔊 button on a chat reply, and in voice chat.</p>
 
                 <div id="voiceTtsConfig">
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Show play button</strong><button type="button" class="cuttle-info" data-tooltip="Hide the speaker control on chat bubbles when off" aria-label="About Show play button">i</button>
+                        <strong>Read replies aloud</strong>
+                        <div class="setting-description" id="chatTtsEnabledHint">On: replies get a 🔊 button and voice chat speaks its answers.</div>
                     </div>
                     <div class="setting-control">
                         <label class="toggle-switch active" id="chatTtsEnabledToggle" onclick="toggleChatTtsEnabled(event)">
@@ -539,6 +547,7 @@
                         </label>
                     </div>
                 </div>
+                <div id="chatTtsDetails">
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Summarize before speaking</strong><button type="button" class="cuttle-info" data-tooltip="Cheaper + shorter audio. Short replies skip summarization automatically." aria-label="About Summarize before speaking">i</button>
@@ -564,15 +573,16 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
-                        <strong>Model</strong><button type="button" class="cuttle-info" data-tooltip="Speech model for the selected provider." aria-label="About TTS model">i</button>
+                        <strong>Model</strong><button type="button" class="cuttle-info" data-tooltip="Speech model for the selected provider. The table below compares them." aria-label="About TTS model">i</button>
                     </div>
                     <div class="setting-control setting-control--column">
-                        <select id="chatTtsModel" class="setting-input"><option value="">Loading…</option></select>
+                        <select id="chatTtsModel" class="setting-input" aria-label="Speech model"><option value="">Loading…</option></select>
                         <input id="chatTtsCustomModel" class="setting-input" aria-label="Custom speech model ID" placeholder="Custom model ID" hidden>
                         <button type="button" class="control-button btn-info" onclick="refreshChatTtsModels()">Refresh models</button>
                         <div id="chatTtsModelStatus" class="setting-description" role="status"></div>
                     </div>
                 </div>
+                <div class="voice-model-guide" id="chatTtsModelGuide" hidden></div>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Voice</strong><button type="button" class="cuttle-info" data-tooltip="Choose the voice used to read replies. The list belongs to the selected provider." aria-label="About Voice">i</button>
@@ -631,6 +641,7 @@
                 </div>
 </details>
                 <p id="chatTtsBackgroundNotice" class="setting-description" hidden>Reply narration uses the configured background execution chain. Its model, effort, and temperature are in <a href="/settings_page.html?tab=agents#backgroundHelpersSettings">Agents → Background helpers</a>. The narrator API choices below apply when no background chain is configured.</p>
+                </div><!-- /chatTtsDetails -->
                 <div class="setting-item">
                     <div class="setting-control" style="gap:8px;flex-wrap:wrap">
                         <button type="button" class="control-button btn-start" onclick="saveChatTtsSettings()"><span class="emoji">💾</span> Save chat voice</button>
@@ -645,7 +656,8 @@
 
             <!-- Experiment-owned: stays hidden unless a voice-engine flag is on. -->
             <div class="settings-group" id="voiceConversationGroup" hidden>
-                <h3 class="settings-title"><span class="emoji">🧪</span> Voice conversation <button type="button" class="cuttle-info" data-tooltip="Added by the voice experiments enabled in Settings → Experimental. Turning them off removes this section; voice chat then uses Spoken replies." aria-label="About Voice conversation">i</button> <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+                <h3 class="settings-title"><span class="emoji">🧪</span> Voice conversation <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+                <p class="setting-description">Chooses what runs when you start voice chat. Turning off the GPT-Live and OpenAI Realtime experiments removes this section, and voice chat goes back to the Standard engine.</p>
 
                 <div class="setting-item" id="voiceModeRow">
                     <div class="setting-label">
@@ -874,7 +886,7 @@
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261011menuPosition2"></script>
     <script src="/js/settings/settings_background_helpers.js?v=20261016separateProcessor"></script>
-    <script src="/js/settings/settings_voice_providers.js?v=20261012engines"></script>
+    <script src="/js/settings/settings_voice_providers.js?v=20261028guide"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
     <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
@@ -2271,6 +2283,13 @@
             }
         }
 
+        /** 0 from the server is unlimited: show a blank field with the "Unlimited" placeholder. */
+        function showTimeoutValues(d, agentEl, subEl) {
+            const fmt = (v) => (v == null || Number(v) <= 0) ? '' : String(v);
+            if (agentEl) agentEl.value = fmt(d.agent_run_seconds);
+            if (subEl) subEl.value = fmt(d.subagent_wait_seconds);
+        }
+
         async function loadTimeoutsSettings() {
             try {
                 const r = await fetch('/api/settings/timeouts');
@@ -2278,8 +2297,7 @@
                 if (!d.success) throw new Error(d.error || 'Failed to load');
                 const agentEl = document.getElementById('agentRunTimeoutSeconds');
                 const subEl = document.getElementById('subagentWaitTimeoutSeconds');
-                if (agentEl && d.agent_run_seconds != null) agentEl.value = String(d.agent_run_seconds);
-                if (subEl && d.subagent_wait_seconds != null) subEl.value = String(d.subagent_wait_seconds);
+                showTimeoutValues(d, agentEl, subEl);
             } catch (e) {
                 (window.showToast || alert)('Could not load timeout settings: ' + (e.message || e), 'error');
             }
@@ -2289,13 +2307,10 @@
             const agentEl = document.getElementById('agentRunTimeoutSeconds');
             const subEl = document.getElementById('subagentWaitTimeoutSeconds');
             const statusEl = document.getElementById('timeoutsStatus');
+            // Blank or 0 = unlimited (the server stores it as null).
             const payload = {};
-            if (agentEl && agentEl.value !== '') payload.agent_run_seconds = parseInt(agentEl.value, 10);
-            if (subEl && subEl.value !== '') payload.subagent_wait_seconds = parseInt(subEl.value, 10);
-            if (!Object.keys(payload).length) {
-                if (statusEl) statusEl.textContent = 'Enter at least one timeout.';
-                return;
-            }
+            if (agentEl) payload.agent_run_seconds = agentEl.value === '' ? null : parseInt(agentEl.value, 10);
+            if (subEl) payload.subagent_wait_seconds = subEl.value === '' ? null : parseInt(subEl.value, 10);
             try {
                 const r = await fetch('/api/settings/timeouts', {
                     method: 'POST',
@@ -2304,8 +2319,7 @@
                 });
                 const d = await r.json();
                 if (!d.success) throw new Error(d.error || 'Save failed');
-                if (agentEl && d.agent_run_seconds != null) agentEl.value = String(d.agent_run_seconds);
-                if (subEl && d.subagent_wait_seconds != null) subEl.value = String(d.subagent_wait_seconds);
+                showTimeoutValues(d, agentEl, subEl);
                 if (statusEl) statusEl.textContent = '';
                 (window.showToast || alert)('Timeouts saved', 'info');
             } catch (e) {
@@ -2386,6 +2400,7 @@
             const next = !checkbox.checked;
             checkbox.checked = next;
             if (toggle) toggle.classList.toggle('active', next);
+            voiceProvidersController().syncEnabled();
         }
 
         function toggleChatTtsSummarize(event) {

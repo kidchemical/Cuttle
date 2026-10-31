@@ -92,6 +92,12 @@ out.pendingWorktreeBranch = P.pendingChangesProject(EP, '/worktrees/b', 'main', 
 out.pendingWorktreeNoBranch = P.pendingChangesProject(EP, '/worktrees/b', '', 'uid-1');
 out.pendingKeepsExtraFields = P.pendingChangesProject(
   Object.assign({}, EP, { type: 'local', starred: true }), 'E:\\\\Projects\\\\DemoGame', '', '');
+const DISPLAY = [CUTTLE, Object.assign({}, EP, { display_name: 'EP' })];
+out.chipDisplay = P.projectChipLabel({ id: 7, name: 'Old EP name', path: '' }, DISPLAY);
+out.chipDisplayByPath = P.projectChipLabel({ id: null, name: '', path: EP.path }, DISPLAY);
+out.chipFallbackName = P.projectChipLabel({ id: 4, name: 'Cuttle', path: '' }, DISPLAY);
+out.chipUnregistered = P.projectChipLabel({ id: 99, name: 'Ghost', path: '' }, DISPLAY);
+out.chipNone = P.projectChipLabel(null, DISPLAY);
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -126,6 +132,16 @@ def test_lookups_and_mappers():
     assert res["storedObj"] == {"id": 7, "name": "Escape Purgatory", "path": "E:\\Projects\\DemoGame"}
     assert res["storedNameOnly"]["id"] == 7
     assert res["storedGhost"] == {"id": 9, "name": "Ghost", "path": "C:\\Ghost"}
+
+
+@node_only
+def test_project_chip_label_prefers_registry_display_name():
+    res = _run()
+    assert res["chipDisplay"] == "EP"
+    assert res["chipDisplayByPath"] == "EP"
+    assert res["chipFallbackName"] == "Cuttle"
+    assert res["chipUnregistered"] == "Ghost"
+    assert res["chipNone"] == ""
 
 
 @node_only

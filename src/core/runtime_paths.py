@@ -190,9 +190,11 @@ def electron_packaged_exe(project_root: Path) -> Optional[Path]:
 def electron_dev_bin(project_root: Path) -> Optional[Path]:
     root = Path(project_root)
     if is_windows():
+        # The real binary first: the .bin/electron.cmd shim runs in cmd.exe, and a
+        # detached launch of it opens an extra console window.
         candidates = [
-            root / "electron" / "node_modules" / ".bin" / "electron.cmd",
             root / "electron" / "node_modules" / "electron" / "dist" / "electron.exe",
+            root / "electron" / "node_modules" / ".bin" / "electron.cmd",
         ]
     else:
         candidates = [
@@ -221,14 +223,20 @@ def electron_display_args() -> List[str]:
 
 
 def electron_launch_argv(project_root: Path) -> Optional[List[str]]:
-    """Argv to open the desktop UI: packaged app, else local electron binary."""
+    """Argv for the Host's own desktop UI: packaged app, else local electron binary.
+
+    Always ``--mode=host``: whoever runs the daemon is the Host, so its window
+    must use the Host profile. Without it Electron falls back to the shared
+    default profile and restores any saved Client target (a laptop that was
+    once a Client opened its Host shortcut as a Client).
+    """
     root = Path(project_root)
     packaged = electron_packaged_exe(root)
     if packaged is not None:
-        return [str(packaged), *electron_display_args()]
+        return [str(packaged), *electron_display_args(), "--mode=host"]
     dev = electron_dev_bin(root)
     if dev is not None:
-        return [str(dev), *electron_display_args(), str(root / "electron")]
+        return [str(dev), *electron_display_args(), str(root / "electron"), "--mode=host"]
     return None
 
 
@@ -483,6 +491,11 @@ def ui_toast_path(project_root: Optional[Path] = None) -> Path:
 def flask_restart_status_path(project_root: Optional[Path] = None) -> Path:
     """Durable Flask-restart status (daemon owns stop/start/health)."""
     return instance_state_dir(project_root) / "cuttle_flask_restart_status.json"
+
+
+def flask_generation_path(project_root: Optional[Path] = None) -> Path:
+    """Last Flask generation the daemon handed out (monotonic across daemon boots)."""
+    return instance_state_dir(project_root) / "cuttle_flask_generation"
 
 
 def flask_restart_request_path(project_root: Optional[Path] = None) -> Path:

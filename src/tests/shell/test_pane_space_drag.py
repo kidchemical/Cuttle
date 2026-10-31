@@ -57,3 +57,22 @@ def test_tab_hover_visuals():
 def test_grip_tooltip_mentions_spaces():
     src = SHELL_JS.read_text(encoding="utf-8")
     assert "onto a space tab to move" in src
+
+
+def test_grip_drag_captures_pointer_across_space_switch():
+    # The hover auto-switch hides the drag source, which fires pointercancel
+    # at the grip. The grip must capture to a switch-surviving element and
+    # ignore that switch-induced cancel or the carry dies mid-drag.
+    src = SHELL_JS.read_text(encoding="utf-8")
+    body = src.split("function setupPaneReorder(", 1)[1].split(
+        "// ── Per-group split resize", 1
+    )[0]
+    assert "setPointerCapture" in body
+    assert "releasePointerCapture" in body
+    assert "recentAutoSwitch" in body
+
+
+def test_pane_drop_reports_recent_auto_switch():
+    src = OWNER_JS.read_text(encoding="utf-8")
+    assert "function recentAutoSwitch(" in src
+    assert "recentAutoSwitch" in src.split("canStartDrag, beginDrag, endDrag", 1)[1]

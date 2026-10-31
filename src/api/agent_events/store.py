@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS events (
  summary TEXT, payload TEXT, payload_ref TEXT, compacted TEXT, failed INTEGER NOT NULL DEFAULT 0,
  UNIQUE(query_id, block_id), FOREIGN KEY(query_id) REFERENCES runs(query_id)
 );
+CREATE INDEX IF NOT EXISTS runs_chat ON runs(chat_session_id,started_at);
 CREATE TABLE IF NOT EXISTS event_changes (
  id INTEGER PRIMARY KEY AUTOINCREMENT, event_id INTEGER NOT NULL,
  FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE
@@ -213,6 +214,34 @@ class EventStore:
         with self.connection() as conn:
             row=conn.execute('SELECT * FROM runs WHERE query_id=?',(qid,)).fetchone()
         return {**dict(row),'metadata':json.loads(row['metadata'])} if row else None
+
+    def session_runs(self, session_id):
+        """Durable runs for one chat, including interrupted process owners."""
+        with self.connection() as conn:
+            rows = conn.execute(
+                'SELECT * FROM runs WHERE chat_session_id=? ORDER BY started_at',
+                (str(int(session_id)),),
+            ).fetchall()
+        return [{**dict(row), 'metadata': json.loads(row['metadata'])} for row in rows]
+
+    def run_state(self, qid):
+        """(status, raw metadata JSON) without decoding, or None."""
+        with self.connection() as conn:
+            row=conn.execute('SELECT status,metadata FROM runs WHERE query_id=?',(qid,)).fetchone()
+        return (row['status'],row['metadata']) if row else None
+
+    def change_cursor(self):
+        with self.connection() as conn:
+            return conn.execute('SELECT COALESCE(MAX(id),0) FROM event_changes').fetchone()[0]
+
+    def run_changes(self, qid, after=0, limit=1000):
+        """Headers of one run's events revised after an event_changes cursor."""
+        with self.connection() as conn:
+            changes=conn.execute('''SELECT c.id,c.event_id,e.query_id FROM event_changes c
+                LEFT JOIN events e ON e.id=c.event_id WHERE c.id>? ORDER BY c.id LIMIT ?''',(after,limit)).fetchall()
+        ids=list(dict.fromkeys(r['event_id'] for r in changes if r['query_id']==qid))
+        return {'events':self.events(qid,event_ids=ids,limit=500) if ids else [],
+                'cursor':changes[-1]['id'] if changes else after}
 
     def active_runs(self):
         """Runs still executing (status='running'), oldest first, for the live strip."""

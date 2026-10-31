@@ -244,3 +244,66 @@ def test_check_only_ignores_upstream_ancestry(checkout, tmp_path):
     git(client, 'commit', '-am', 'host rev ahead of upstream')
     # Would be 'diverged' under the official merge preconditions.
     module.update_checkout(client, check_only=True)  # must not raise
+
+
+def _host_rewinds(tmp_path, remote, served):
+    """Host serves ``served`` once, then loses it: main is rebuilt from its parent."""
+    seed = tmp_path / 'seed'
+    git(seed, 'fetch', str(remote), 'main')
+    git(seed, 'reset', '--hard', f'{served}~1')
+    (seed / 'file.txt').write_text('host rewrote\n', encoding='utf-8')
+    git(seed, 'commit', '-am', 'host rewrote')
+    git(remote, 'fetch', '--force', str(seed), '+main:main')
+    return _bundle_main(remote, tmp_path / 'rewound.bundle')
+
+
+def _client_on_served_commit(module, tmp_path, client, remote):
+    seed = tmp_path / 'seed'
+    git(seed, 'fetch', str(remote), 'main')
+    git(seed, 'merge', '--ff-only', 'FETCH_HEAD')
+    (seed / 'file.txt').write_text('served then lost\n', encoding='utf-8')
+    git(seed, 'commit', '-am', 'served then lost')
+    git(remote, 'fetch', str(seed), 'main:main')
+    module.update_checkout(client, source='host', bundle=str(_bundle_main(remote, tmp_path / 'host.bundle')), branch='main')
+    return git(client, 'rev-parse', 'HEAD')
+
+
+def test_host_rewind_follows_when_client_is_on_a_host_delivered_commit(checkout, tmp_path):
+    """The Host lost a commit it already served (repo repair); the Client has nothing of its own."""
+    module = load_checkout_helper()
+    client, remote = checkout
+    served = _client_on_served_commit(module, tmp_path, client, remote)
+    bundle = _host_rewinds(tmp_path, remote, served)
+    module.update_checkout(client, source='host', bundle=str(bundle), branch='main')
+    assert git(client, 'rev-parse', 'HEAD') == git(remote, 'rev-parse', 'main')
+    kept = git(client, 'for-each-ref', '--format=%(objectname)', 'refs/cuttle/superseded/')
+    assert kept == served
+
+
+def test_host_rewind_trusts_heads_the_host_embedded(checkout, tmp_path):
+    """Clients updated before the local record existed are vouched for by the Host's job history."""
+    module = load_checkout_helper()
+    client, remote = checkout
+    served = _client_on_served_commit(module, tmp_path, client, remote)
+    git(client, 'update-ref', '-d', module.HOST_DELIVERED_REF)
+    bundle = _host_rewinds(tmp_path, remote, served)
+    with pytest.raises(module.UpdateRefused, match='not delivered by this Host'):
+        module.update_checkout(client, source='host', bundle=str(bundle), branch='main')
+    module.EMBEDDED_HOST_DELIVERED_HEADS = (served[:9],)
+    module.update_checkout(client, source='host', bundle=str(bundle), branch='main')
+    assert git(client, 'rev-parse', 'HEAD') == git(remote, 'rev-parse', 'main')
+
+
+def test_host_rewind_still_refuses_client_commits(checkout, tmp_path):
+    module = load_checkout_helper()
+    client, remote = checkout
+    served = _client_on_served_commit(module, tmp_path, client, remote)
+    module.EMBEDDED_HOST_DELIVERED_HEADS = (served[:9],)
+    (client / 'file.txt').write_text('client work\n', encoding='utf-8')
+    git(client, 'commit', '-am', 'client work')
+    before = git(client, 'rev-parse', 'HEAD')
+    bundle = _host_rewinds(tmp_path, remote, served)
+    with pytest.raises(module.UpdateRefused, match='local commits or diverged upstream'):
+        module.update_checkout(client, source='host', bundle=str(bundle), branch='main')
+    assert git(client, 'rev-parse', 'HEAD') == before
+    assert git(client, 'for-each-ref', 'refs/cuttle/superseded/') == ''

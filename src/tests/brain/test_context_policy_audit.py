@@ -374,11 +374,11 @@ def test_prepare_resume_detects_preparation_edit(fake_stores, tmp_path, monkeypa
     real_compute = cd.compute_snapshot
     calls = {"n": 0}
 
-    def _racing_compute(project_path):
+    def _racing_compute(project_path, chat_session_id=None):
         calls["n"] += 1
         if calls["n"] == 2:
             rule.write_text("Rule A v3 raced", encoding="utf-8")
-        return real_compute(project_path)
+        return real_compute(project_path, chat_session_id)
 
     monkeypatch.setattr(cd, "compute_snapshot", _racing_compute)
     with pytest.raises(cd.UnstablePreparationError):
@@ -400,11 +400,11 @@ def test_unstable_delta_prepare_sends_full(fake_stores, tmp_path, monkeypatch):
     real_compute = cd.compute_snapshot
     calls = {"n": 0}
 
-    def _racing_compute(project_path):
+    def _racing_compute(project_path, chat_session_id=None):
         calls["n"] += 1
         if calls["n"] == 2:
             rule.write_text("Rule A v3 raced mid-prepare", encoding="utf-8")
-        return real_compute(project_path)
+        return real_compute(project_path, chat_session_id)
 
     monkeypatch.setattr(cd, "compute_snapshot", _racing_compute)
     adapter._resume = "cli-1"
@@ -518,7 +518,7 @@ def test_snapshot_failure_still_sends_full_briefing(fake_stores, tmp_path, monke
     sid = "S-snapfail"
     adapter = _FakeAdapter()
 
-    def _raise(project_path):
+    def _raise(project_path, chat_session_id=None):
         raise OSError("snapshot store unreadable")
 
     monkeypatch.setattr(cd, "compute_snapshot", _raise)

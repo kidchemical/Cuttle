@@ -112,9 +112,52 @@
     display: none;
 }
 
-#chatTtsFetchVoicesBtn[hidden] {
+#chatTtsFetchVoicesBtn[hidden],
+#chatTtsPreviewBtn[hidden] {
     display: none;
 }
+
+/* Voice selects carry long model names; give them room to read in full. */
+@media (min-width: 641px) {
+    #panel-voice .setting-control--column {
+        flex: 0 1 420px;
+        width: 420px;
+    }
+}
+
+.voice-model-guide {
+    margin: 0 0 12px;
+    overflow-x: auto;
+}
+.voice-model-guide[hidden] { display: none; }
+.voice-model-guide table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.voice-model-guide :is(th, td) {
+    padding: 6px 8px;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--border-color);
+}
+.voice-model-guide th {
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+.voice-model-guide td:first-child { font-weight: 600; min-width: 120px; }
+.voice-model-guide td:last-child { white-space: nowrap; cursor: help; }
+.voice-model-guide tr.is-selected td {
+    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+}
+
+.voice-experiment-map ul {
+    margin: 0 0 8px;
+    padding-left: 18px;
+    font-size: 13px;
+    line-height: 1.5;
+}
+.voice-experiment-map li + li { margin-top: 4px; }
 
 /* Stacked controls beside the label (Voice selects + status lines). */
 .setting-control--column {

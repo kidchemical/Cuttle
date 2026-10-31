@@ -254,11 +254,12 @@ def _assert_blocked_api_free(blocked):
 def test_split_toolbars_inherit_shared_configuration(browser, static_server, mount):
     """Fresh template chrome must receive saved pins/order and feature gates."""
     layout = {
-        "layout_version": 11,
+        "layout_version": 13,
         "rail_items": ["nav-git", "nav-chat", "nav-apps", "nav-ide"],
         "rail_hidden": ["nav-editor", "nav-jobs", "nav-mesh", "nav-dashboards",
                         "nav-achievements", "nav-agent-feed", "nav-gizmos",
-                        "nav-test-lab", "nav-projects"],
+                        "nav-test-lab", "nav-secrets", "nav-orchestrator",
+                        "nav-agents", "nav-projects"],
         "rail_footer": ["nav-settings", "nav-workspace", "nav-account",
                         "nav-notifications", "panelToggle"],
         "rail_footer_hidden": ["nav-workspace"],

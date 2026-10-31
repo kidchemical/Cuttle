@@ -397,6 +397,14 @@ def _runtime_block(
     except Exception:
         pass
 
+    # Orchestrator chats carry their playbook brief in every fresh context, so
+    # an agent that joins after a harness switch still has it.
+    from api.orchestrator.service import brief_block
+
+    brief = brief_block(chat_session_id)
+    if brief:
+        parts += ["", brief]
+
     return "\n".join(parts).strip()
 
 

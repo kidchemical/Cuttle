@@ -67,6 +67,7 @@ def test_capabilities_are_directory_not_howto():
         "discord.md",
         "chat-history.md",
         "headless-turns.md",
+        "remote-access.md",
     ):
         assert name in text
         assert (_GLOBAL_DOCS / name).is_file()

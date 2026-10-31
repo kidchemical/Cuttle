@@ -71,6 +71,16 @@ def _parse_decorate(raw: str) -> List[str]:
     return out
 
 
+def _decorate_tags(raw: str) -> List[str]:
+    """Tag names from a ``%d`` decoration (``_parse_decorate`` drops the ``tag:`` kind)."""
+    s = (raw or "").strip().strip("()")
+    return [
+        part.strip()[5:].strip()
+        for part in _REF_SPLIT.split(s)
+        if part.strip().startswith("tag: ")
+    ]
+
+
 def list_local_branches(cwd: str) -> List[Dict[str, Any]]:
     """Local branch tips for the sidebar (cheap for-each-ref)."""
     root = resolve_git_workdir(cwd)
@@ -122,7 +132,7 @@ def collect_git_graph(
     Shape::
       {
         repo_root, branch, all_refs, limit, skip, has_more, branches,
-        commits: [{hash, short, parents, author, email, date, subject, refs}]
+        commits: [{hash, short, parents, author, email, date, subject, refs, tags}]
       }
     """
     root = resolve_git_workdir(cwd)
@@ -191,6 +201,7 @@ def collect_git_graph(
                 "email": parts[3] or "",
                 "date": parts[4] or "",
                 "refs": _parse_decorate(parts[5] or ""),
+                "tags": _decorate_tags(parts[5] or ""),
                 "subject": parts[6] or "",
             }
         )

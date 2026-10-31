@@ -53,7 +53,7 @@ jobs:
         working-directory: artifacts
         run: |
           rm -f SHA256SUMS-*.txt
-          sha256sum *.AppImage *.exe | tee SHA256SUMS
+          sha256sum *.AppImage *.deb *.exe | tee SHA256SUMS
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -3053,7 +3053,8 @@ body.has-video-background .chat-restore-loader {
 
 /* The default identity shares the rail's transparent full mascot. Custom
    profile photos keep their circular frame and cover sizing. */
-.message.assistant .message-avatar:has(.assistant-avatar-img--mascot) {
+.message.assistant .message-avatar:has(.assistant-avatar-img--mascot),
+.message.user.is-parent-speaker .message-avatar:has(.assistant-avatar-img--mascot) {
     background: transparent;
     border: none;
     border-radius: 0;
@@ -3061,6 +3062,7 @@ body.has-video-background .chat-restore-loader {
 }
 
 .message.assistant .message-avatar .assistant-avatar-img--mascot,
+.message.user.is-parent-speaker .message-avatar .assistant-avatar-img--mascot,
 .typing-orbit-core--glyph img.assistant-avatar-img--mascot,
 .subagent-fleet-avatar img.assistant-avatar-img--mascot {
     object-fit: contain;
@@ -4041,8 +4043,10 @@ pre.has-code-copy:hover .code-copy-btn,
     padding-left: 12px;
 }
 
+/* The status icon (spinner / attention dot) is absolutely positioned in the
+   first ~18px of the row; the sub-agent toggle must start after that slot. */
 .chat-history-item.has-subagents {
-    padding-left: 8px;
+    padding-left: 20px;
 }
 
 .history-subagent-group.is-collapsed > .history-subagent-children {
@@ -4060,9 +4064,9 @@ pre.has-code-copy:hover .code-copy-btn,
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
+    width: 18px;
     height: 22px;
-    margin-left: -2px;
+    margin-left: 0;
     padding: 0;
     border: none;
     border-radius: 6px;
@@ -4853,70 +4857,6 @@ pre.has-code-copy:hover .code-copy-btn,
     cursor: pointer;
 }
 
-.chip-config-modal-overlay {
-    z-index: 1000003;
-}
-
-.chip-config-modal {
-    max-width: 420px;
-    padding: 32px 28px 28px;
-}
-
-.chip-config-fields {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    margin-bottom: 24px;
-}
-
-.chip-config-field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.chip-config-field-label {
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: #a0aec0;
-}
-
-.chip-config-select {
-    width: 100%;
-    box-sizing: border-box;
-    padding: 11px 34px 11px 12px;
-    border-radius: 10px;
-    background-color: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    color: #e2e8f0;
-    font-size: 14px;
-    font-family: inherit;
-    cursor: pointer;
-    appearance: none;
-    -webkit-appearance: none;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a0aec0' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
-}
-
-.chip-config-select:focus {
-    outline: none;
-    border-color: rgba(139, 92, 246, 0.6);
-    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
-}
-
-.chip-config-select:disabled {
-    opacity: 0.6;
-    cursor: default;
-}
-
-.chip-config-select option {
-    background: #1e1e2e;
-    color: #e2e8f0;
-}
-
 .chip-config-input {
     width: 100%;
     box-sizing: border-box;
@@ -4964,16 +4904,6 @@ pre.has-code-copy:hover .code-copy-btn,
     cursor: default;
 }
 
-/* Searchable combobox (js/shared/searchable_select.js) fills the field. */
-.chip-config-field .cuttle-combo {
-    width: 100%;
-}
-
-.chip-config-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
 
 .slash-chips-inline {
     display: inline-flex;
@@ -6901,6 +6831,22 @@ button.cuttle-button.is-unselected {
     font-size: 0.85em;
     color: var(--text-secondary);
     margin-bottom: 10px;
+}
+
+/* Secret-vault fields (chat_secret_fields.js) */
+.cuttle-secret-command {
+    margin: 6px 0 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--bg-tertiary, rgba(127, 127, 127, 0.12));
+    font-size: 0.82em;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.cuttle-secret-field .form-help code,
+.cuttle-secret-approval .form-help code {
+    font-size: 0.95em;
 }
 
 .cuttle-action-form-progress {

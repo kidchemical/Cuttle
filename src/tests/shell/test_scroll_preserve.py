@@ -52,7 +52,27 @@ def test_jobs_page_uses_scroll_preserve():
     assert ".jobs-table-scroll" in js
 
 
-def test_pending_changes_panel_preserves_list_scroll():
+POLLED_PAGES = {
+    "chat_page.html": "/js/git/pending_changes_panel.js",
+    "ide_page.html": "/js/git/pending_changes_panel.js",
+    "git_graph_page.html": "/js/git/pending_changes_panel.js",
+    "jobs_page.html": "/js/jobs/jobs_page.js",
+    "mesh_page.html": "/js/mesh/mesh_page.js",
+    "gizmos_page.html": "/js/gizmos/gizmos_page.js",
+    "gizmo_popout.html": "/js/gizmos/gizmo_popout.js",
+}
+
+
+@pytest.mark.parametrize("page,consumer", sorted(POLLED_PAGES.items()))
+def test_polled_pages_load_scroll_preserve_before_consumer(page, consumer):
+    html = (WEB / page).read_text(encoding="utf-8")
+    helper = html.find("/js/shared/scroll_preserve.js")
+    assert helper != -1, page
+    assert helper < html.find(consumer), page
+
+
+def test_pending_changes_panel_routes_polled_markup_through_helper():
     js = (WEB / "js" / "git" / "pending_changes_panel.js").read_text(encoding="utf-8")
-    assert "list.scrollTop = listTop" in js
-    assert "list.scrollLeft = listLeft" in js
+    assert "CuttleScroll.setHtml" in js
+    for target in ("list", "stats", "branchEl"):
+        assert f"setPolledHtml({target}," in js, target

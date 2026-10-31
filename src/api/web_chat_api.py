@@ -207,6 +207,7 @@ def _no_cache_ui_assets(response):
 # Rate limiter — shared instance from limiter.py (auth_api.py imports from there too,
 # avoiding the circular-import that would occur if it imported from web_chat_api).
 from api.limiter import limiter
+from api.transcript_text import agent_visible_text
 limiter.init_app(app)
 
 # Live-status store — owned service (chat_live_status.py). Delivery, auth,
@@ -306,6 +307,13 @@ except Exception as _test_lab_err:
     print(f"[TEST_LAB] Failed to register routes: {_test_lab_err}")
 
 try:
+    from api.orchestrator.routes import orchestrator_bp, orchestrator_pages_bp
+    from api.subagents.profile_routes import agent_profiles_bp
+    for _bp in (orchestrator_bp, orchestrator_pages_bp, agent_profiles_bp): app.register_blueprint(_bp)
+except Exception as _orchestrator_err:
+    print(f"[ORCHESTRATOR] Failed to register routes: {_orchestrator_err}")
+
+try:
     from api.ide.routes import ide_bp, ide_pages_bp
     app.register_blueprint(ide_bp)
     app.register_blueprint(ide_pages_bp)
@@ -330,6 +338,13 @@ try:
     app.register_blueprint(gizmos_pages_bp)
 except Exception as _gizmos_err:
     print(f"[GIZMOS] Failed to register routes: {_gizmos_err}")
+
+try:
+    from api.secret_vault.routes import secret_vault_bp, secret_vault_pages_bp
+    app.register_blueprint(secret_vault_bp)
+    app.register_blueprint(secret_vault_pages_bp)
+except Exception as _secret_vault_err:
+    print(f"[SECRET VAULT] Failed to register routes: {_secret_vault_err}")
 
 try:
     from api.chat_vfx.routes import chat_vfx_bp
@@ -478,6 +493,15 @@ try:
     _jev_watch_start()
 except Exception as _jev_watch_err:
     print(f"[JEV] regress watcher not started: {_jev_watch_err}")
+
+# Existing-chat agent operations (durable outbox, check-ins, supervision UI routes).
+try:
+    from api.chat_ops.routes import chat_ops_bp
+    from api.chat_ops.worker import ensure_started as _chat_ops_start
+    app.register_blueprint(chat_ops_bp)
+    _chat_ops_start()
+except Exception as _chat_ops_err:
+    print(f"[CHAT OPS] worker not started: {_chat_ops_err}")
 
 # Chat bubble TTS (OpenAI summarize-then-speak, on-demand play button)
 try:
@@ -910,7 +934,6 @@ def process_message_with_bot(
                 session_kind=session_kind or 'web_anon',
                 routing_key=routing_key or f'web_anon_{session_id}',
                 is_owner=is_owner, project_path=_legacy_proj or '',
-                run_kwargs=_ident_kw,
             ),
             io=_legacy_io, delivery=_chat_delivery,
             claim=False,
@@ -1554,6 +1577,7 @@ def chat_cancel():
             return err
 
     cancel_sid = db_sid if db_sid is not None else sid
+    stopped_at = time.time()
     try:
         from api.chat_run_registry import cancel_session_runs
 
@@ -1561,6 +1585,9 @@ def chat_cancel():
     except Exception as e:
         print(f"[CHAT] cancel_session_runs failed: {e}")
         info = {'cancelled': False, 'error': str(e)}
+    if db_sid is not None:
+        from api.chat_turn_recovery import preserve_interrupted_turns
+        preserve_interrupted_turns(get_auth_db(), db_sid, stopped_at=stopped_at)
     try:
         from api.subagents.service import on_session_cancelled
 
@@ -2244,7 +2271,7 @@ def _format_pane_messages_for_prompt(pane_number: int, limit: int = 40):
     lines = []
     for msg in messages:
         role = (msg.get('role') or '?').upper()
-        content = (msg.get('content') or '').strip()
+        content = agent_visible_text(msg.get('content'))
         if len(content) > 4000:
             content = content[:4000] + '\n…(truncated)'
         lines.append(f'**{role}:** {content}')
@@ -2452,19 +2479,25 @@ def _auth_session_id_is_absent(chat_session_id) -> bool:
     return s in ("", "anon", "null", "undefined", "none")
 
 
-def _apply_request_agent_pins(session_id, data) -> None:
+def _apply_request_agent_pins(session_id, data, message_text=None) -> None:
     """Pin first-turn model/effort from the chat POST before badge + agent run.
 
     The client cannot POST ``/api/<agent>/effort`` until it knows the session id.
     That mint happens inside this request, and the post-adopt client POST races
     both ``_user_badge_metadata`` and the harness execute — so new-chat picks
     must arrive on the chat body as ``agent_pins``.
+
+    Cursor also pins from this-turn ``/model <id>`` in ``message_text``: the
+    composer joins that chip into the body, and the adapter peels it only
+    after the user badge has already been snapshotted.
     """
-    if session_id is None or not isinstance(data, dict):
+    if session_id is None:
         return
+    if not isinstance(data, dict):
+        data = {}
     pins = data.get('agent_pins')
-    if not isinstance(pins, dict) or not pins:
-        return
+    if not isinstance(pins, dict):
+        pins = {}
 
     def _entry(agent: str) -> dict:
         raw = pins.get(agent)
@@ -2550,8 +2583,23 @@ def _apply_request_agent_pins(session_id, data) -> None:
     except Exception as exc:
         print(f"[CHAT] apply claude agent_pins failed: {exc}", flush=True)
 
+    try:
+        cursor = _entry('cursor')
+        cursor_model = str((cursor or {}).get('model') or '').strip()
+        if not cursor_model:
+            from api.cursor_agent_commands import cursor_model_from_prompt
+            cursor_model = str(cursor_model_from_prompt(message_text or '') or '').strip()
+        if cursor_model:
+            from api.agent_harness.cwd import resolve_harness_cwd
+            from scripts.utilities.cursor_cli_session_store import update_cursor_agent_options
+            update_cursor_agent_options(
+                resolve_harness_cwd(''), session_id, model=cursor_model
+            )
+    except Exception as exc:
+        print(f"[CHAT] apply cursor agent_pins failed: {exc}", flush=True)
 
-_HARNESS_IDENTITY_AGENTS = frozenset({'muse', 'hermes', 'opencode', 'codex', 'claude'})
+
+_HARNESS_IDENTITY_AGENTS = frozenset({'muse', 'hermes', 'opencode', 'codex', 'claude', 'cursor'})
 
 
 def _harness_agent_from_message(message_text: str) -> Optional[str]:
@@ -2606,6 +2654,11 @@ def _load_harness_session_model_effort(agent: str, session_id) -> tuple:
             )
             model = str(load_claude_model(sid) or '').strip()
             effort = str(load_claude_effort(sid) or '').strip()
+        elif aid == 'cursor':
+            from scripts.utilities.cursor_cli_session_store import load_cursor_agent_options
+            model = str(
+                (load_cursor_agent_options('', sid) or {}).get('model') or ''
+            ).strip()
     except Exception:
         return '', ''
     return model, effort
@@ -2637,13 +2690,30 @@ def _freeze_send_identity(session_id, message_text, data=None) -> Optional[dict]
     agent = _harness_agent_from_message(message_text)
     if agent not in _HARNESS_IDENTITY_AGENTS:
         return None
+
+    pin_model, pin_effort = _request_agent_pin(data, agent)
+    sess_model, sess_effort = _load_harness_session_model_effort(agent, session_id)
+    if agent == 'cursor':
+        from api.agent_harness.agents.cursor.adapter import _resolve_cursor_model
+        from api.cursor_agent_commands import cursor_model_from_prompt
+
+        slash = cursor_model_from_prompt(message_text)
+        model = _resolve_cursor_model(
+            slash_preferred=slash,
+            session_model=pin_model or sess_model or None,
+            kernel_model=None,
+        )
+        return {
+            'agent': 'cursor',
+            'model': (model or '').strip() or 'auto',
+            'effort': '',
+            'model_source': 'slash' if slash else ('pin' if pin_model else 'session'),
+            'effort_source': '',
+        }
     from api.agent_harness.agent_defaults import (
         resolve_effective_effort,
         resolve_effective_model,
     )
-
-    pin_model, pin_effort = _request_agent_pin(data, agent)
-    sess_model, sess_effort = _load_harness_session_model_effort(agent, session_id)
     # This send's composer pin beats a stale session pin (adopt/POST race).
     model, model_source = resolve_effective_model(
         agent,
@@ -3523,6 +3593,37 @@ def chat_endpoint():
                 "session_id": chat_session_id,
             }), 403
 
+        # Authenticated chats: assign a DB session id before native control
+        # lanes (/restart, /branch, supervised, /help) so a first message sent
+        # from a fresh viewport mints the chat, persists both bubbles, and
+        # returns a session id the client can adopt — otherwise the turn has
+        # no CH- handle and is lost on viewport switch.
+        _auth_user, chat_session_id, _created_new_session = _resolve_auth_chat_session(chat_session_id)
+        if _auth_user and chat_session_id is not None:
+            try:
+                # First-turn dirty picks arrive here — must pin before user-badge
+                # metadata and harness execute (post-adopt client POSTs race both).
+                _apply_request_agent_pins(chat_session_id, data, message_content)
+            except Exception as _pin_err:
+                print(f"[CHAT] apply agent_pins failed: {_pin_err}", flush=True)
+        if _auth_user and _created_new_session:
+            try:
+                _preview = ' '.join((message_content or '').split())
+                if _preview:
+                    get_auth_db().set_session_name(
+                        chat_session_id,
+                        (_preview[:60] + ('…' if len(_preview) > 60 else '')),
+                        auto=True,
+                    )
+            except Exception as _ne:
+                print(f"[CHAT] provisional session name failed: {_ne}")
+
+        if _auth_user and chat_session_id is not None:
+            try:
+                _stamp_auth_session_project(_auth_user, chat_session_id, data)
+            except Exception as _se:
+                print(f"[CHAT] stamp session project failed: {_se}", flush=True)
+
         # Native Cuttle control command. Handled before sticky/starred agent
         # prefixing, the router, and any agent dispatch so it never becomes a
         # model turn (and never registers as active work against itself).
@@ -3682,33 +3783,9 @@ def chat_endpoint():
             from api.chat_turn_workflow import help_response as _help_response
             return jsonify(_help_response(chat_session_id))
 
-        # Authenticated chats: assign a DB session id before remaining slash-command
-        # handlers so the first message (including /cursor) can update the URL immediately.
-        _auth_user, chat_session_id, _created_new_session = _resolve_auth_chat_session(chat_session_id)
-        if _auth_user and chat_session_id is not None:
-            try:
-                # First-turn dirty picks arrive here — must pin before user-badge
-                # metadata and harness execute (post-adopt client POSTs race both).
-                _apply_request_agent_pins(chat_session_id, data)
-            except Exception as _pin_err:
-                print(f"[CHAT] apply agent_pins failed: {_pin_err}", flush=True)
-        if _auth_user and _created_new_session:
-            try:
-                _preview = ' '.join((message_content or '').split())
-                if _preview:
-                    get_auth_db().set_session_name(
-                        chat_session_id,
-                        (_preview[:60] + ('…' if len(_preview) > 60 else '')),
-                        auto=True,
-                    )
-            except Exception as _ne:
-                print(f"[CHAT] provisional session name failed: {_ne}")
-
-        if _auth_user and chat_session_id is not None:
-            try:
-                _stamp_auth_session_project(_auth_user, chat_session_id, data)
-            except Exception as _se:
-                print(f"[CHAT] stamp session project failed: {_se}", flush=True)
+        # Session already minted above (before native control lanes) so the
+        # first message — including /restart, /branch, /help, /cursor — can
+        # update the URL immediately. No second mint here.
 
         # Resolve host locations once before execution. Owned validation fails closed;
         # pin the chosen cwd for all subsequent helpers in this request.
@@ -3773,6 +3850,7 @@ def chat_endpoint():
             _send_identity = None
         _ident_run_kw = _harness_identity_run_kwargs(_send_identity)
 
+        _turn_history = {}  # typed text + meta when a project command expands
         def _persist_user_turn(sid):
             """Persist the user turn as history sees it (owned by chat_turn_persist)."""
             from api.chat_turn_persist import persist_user_turn as _owned
@@ -3781,20 +3859,20 @@ def chat_endpoint():
                 get_auth_db(),
                 sid,
                 message_text=message_content,
-                history_text=_attachment_history_text(message_content, _att_note),
+                history_text=_attachment_history_text(
+                    _turn_history.get('text', message_content), _att_note),
                 base_meta=_user_msg_meta,
                 identity=_send_identity,
                 badge_fn=_user_badge_metadata,
                 project_merge_fn=_merge_project_into_meta,
-                request_data=_current_request_data(),
+                request_data=data,
+                extra_meta=_turn_history.get('meta'),
             )
 
         # No-LLM launch gates — project-action confirm buttons and dynamic
         # action forms. Owned by api.chat_turn_workflow.run_launch_gate_lane;
         # the route only frames jsonify. Returns None for non-gate messages.
-        from api.chat_turn_workflow import (
-            run_launch_gate_lane as _run_launch_gate_lane,
-        )
+        from api.chat_turn_workflow import run_launch_gate_lane as _run_launch_gate_lane
 
         _launch_gate_body = _run_launch_gate_lane(
             message_content,
@@ -3810,9 +3888,7 @@ def chat_endpoint():
         # Runs before /cursor handlers so ``/cursor /build`` becomes a full agent prompt.
         # Owned by api.chat_turn_workflow.run_shell_action_lane; the route keeps
         # request capture, the busy SSE/409 transport and jsonify.
-        from api.chat_turn_workflow import (
-            run_shell_action_lane as _run_shell_action_lane,
-        )
+        from api.chat_turn_workflow import run_shell_action_lane as _run_shell_action_lane
 
         _shell_body, message_content, _shell_busy = _run_shell_action_lane(
             message_content,
@@ -3823,6 +3899,7 @@ def chat_endpoint():
             persist_user_turn=_persist_user_turn,
             make_saver=_make_auth_assistant_saver,
             rewrite_actions=_rewrite_assistant_response_actions,
+            remember_history=_turn_history.update,
         )
         if _shell_busy:
             busy_resp = _reject_if_chat_busy(chat_session_id, wants_stream)
@@ -4022,7 +4099,7 @@ def chat_endpoint():
                     chat_session_id,
                     'user',
                     history_message,
-                    metadata=_user_msg_meta,
+                    metadata={**(_user_msg_meta or {}), **_metadata_svc.chat_op_metadata(data, chat_session_id)} or None,
                 )
 
             def _pipeline_make_saver():
@@ -4633,7 +4710,7 @@ def api_shell_pane_messages(pane_number):
         # Trim bulky fields for agent consumption
         out = []
         for msg in messages:
-            content = msg.get('content') or ''
+            content = agent_visible_text(msg.get('content'))
             if len(content) > 8000:
                 content = content[:8000] + '\n…(truncated)'
             out.append({

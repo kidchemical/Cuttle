@@ -40,6 +40,8 @@ out.parseSkill = S.parseStoredSlashCommandHead('[Skill my-team/deploy] run it');
 out.parseMulti = S.parseStoredSlashCommandMessage('/cursor /usage now');
 out.parseBody = S.parseStoredSlashCommandMessage('just text');
 out.parseTitle = S.parseTitleSlashChips('/cursor /model refresh extra words here', {});
+out.parseTitleEmoji = S.parseTitleSlashChips('/cursor /model 🦘 jump stick bug', {});
+out.parseModelId = S.parseStoredSlashCommandHead('/model openai/gpt-4o rest', {});
 out.normalize = S.normalizeSlashCommandStored({ label: 'X', meta: '/x' });
 out.normalizeNull = S.normalizeSlashCommandStored(null);
 out.meta = S.slashCommandMetaFromUserMessage('/codex hi');
@@ -154,6 +156,13 @@ def test_parsing_matrix():
     assert res["parseModel"]["chips"][0]["meta"] == "/model"
     assert res["parseUnknown"] is None
     assert res["parseEmpty"] is None
+    # A renamed title's leading emoji is name text, not a `/model` id.
+    emoji = res["parseTitleEmoji"]
+    assert [c["meta"] for c in emoji["chips"]] == ["/cursor", "/model"]
+    assert not any(c.get("modelId") for c in emoji["chips"])
+    assert emoji["body"] == "\U0001F998 jump stick bug"
+    assert res["parseModelId"]["chips"][0]["modelId"] == "openai/gpt-4o"
+    assert res["parseModelId"]["body"] == "rest"
     assert res["parseSkill"]["chips"][0]["category"] == "skill"
     assert [c["meta"] for c in res["parseMulti"]["chips"]] == ["/cursor", "/usage"]
     assert res["parseMulti"]["body"] == "now"

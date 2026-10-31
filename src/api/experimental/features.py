@@ -26,6 +26,12 @@ register_flag(FlagSpec(
 ))
 
 register_flag(FlagSpec(
+    id="secret_vault", label="Secret vault",
+    description="Let agents use passwords, API keys and other secrets in commands without seeing them. Values are entered in chat secret fields or the Secrets App, kept in the OS keyring or a password-manager CLI, injected through env/stdin/files/askpass (ssh, sudo, git), and redacted from output. Use needs your approval per chat by default.",
+    default=False, category="agents", risk="medium", since="0.0.0", needs_restart=False, context_bundle=True,
+))
+
+register_flag(FlagSpec(
     id="google_signin", label="Google sign-in",
     description="Show Google sign-in and sign-up options, account linking, and Google photo controls on authentication and account screens.",
     default=False, category="ui", risk="low", since="0.0.0", needs_restart=False,
@@ -61,6 +67,12 @@ register_flag(FlagSpec(
     description="Show one card per sub-agent child chat under the parent reply: who ran it, live status, outcome (done, failed, cancelled, lost) and a one-line result.",
     # Default on: low-risk UI over a shipped capability.
     default=True, category="agents", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="chat_supervision", label="Chat supervision",
+    description="Show chat supervision in the UI: a header chip in the supervisor chat (target, interval, next check, check history, pause/cancel), a \"Supervised by\" badge with branch-rule warnings in the worker chat, queued messages, a \"Supervise this chat…\" menu action, and schedules on the Jobs page. Agent commands (python -m api.chat_cli supervise/send) work regardless.",
+    default=False, category="agents", risk="low", since="0.0.0", needs_restart=False,
 ))
 
 register_flag(FlagSpec(
@@ -124,6 +136,12 @@ register_flag(FlagSpec(
     id="test_lab", label="Test Lab",
     description="Inspect recognized test suites in registered projects, run a selected suite on demand, and review recent results in Apps → Test Lab.",
     default=False, category="ui", risk="medium", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="orchestrator", label="Orchestrator",
+    description="Standing orchestration setups: Apps → Agents edits sub-agent profiles (harness, model, effort, checked against each CLI's catalog) and Apps → Orchestrator edits playbooks (org-chart tiers, grind/retry limits, supervisor defaults). /orchestrate binds a chat to a playbook and keeps its brief in context across harness switches.",
+    default=False, category="agents", risk="low", since="0.0.0", needs_restart=False, context_bundle=True,
 ))
 
 register_flag(FlagSpec(

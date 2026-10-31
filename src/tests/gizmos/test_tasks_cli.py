@@ -89,6 +89,13 @@ def test_patch_set_done_and_description(tmp_path: Path):
     assert int(widget["revision"]) >= 2
 
 
+def test_patch_set_done_is_repeatable(tmp_path: Path):
+    _seed(tmp_path)
+    code, out = _run(["patch", "plan", "--set-done", "1", "--set-done", "2"])
+    assert code == 0
+    assert all(i["done"] for i in json.loads(out)["gizmo"]["payload"]["items"])
+
+
 def test_patch_ops_json(tmp_path: Path):
     _db, db_path, _owner, _sid = _seed(tmp_path)
     code, out = _run(

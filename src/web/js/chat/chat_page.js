@@ -300,6 +300,7 @@
         const wrap = document.getElementById('chatSessionTitle');
         const text = document.getElementById('chatSessionTitleText');
         if (!wrap || !text) return;
+        supervision.setSession(sessionId);
         if (sessionId == null || sessionId === '') {
             wrap.hidden = true;
             text.textContent = '';
@@ -416,6 +417,14 @@
         closeToast: function (id) {
             if (typeof window.closeCuttleToast === 'function') window.closeCuttleToast(id);
         },
+    });
+    // Chat supervision chip/badge/dialog (experimental `chat_supervision`).
+    const supervision = CuttleChatSupervision.create({
+        doc: document, fetch: (u, o) => fetch(u, o), now: () => Date.now(), escapeHtml: escapeHtmlInline,
+        enabledFlags: fetchEnabledExperimentalFlags, openChat: (sid) => loadChatSession(sid),
+        closeMenus: () => closeAllSessionMenus(), confirm: (m) => window.confirm(m),
+        toast: (m, k) => (window.showToast || function () {})(m, k), viewportWidth: () => window.innerWidth,
+        setInterval: (f, ms) => window.setInterval(f, ms), clearInterval: (t) => window.clearInterval(t),
     });
 
     // Branch shown on the segmented project chip (star | name | branch).
@@ -988,10 +997,10 @@
         return !!document.hidden;
     }
 
-    // Activity bubbles have no persisted message index or assistant reply.
-    // Keep them visible without including them in record/navigation decisions.
+    // Stopped bubbles keep their transcript slot: Stop persists an
+    // interrupted-agent-turn row, so they count toward message refs/nav.
     const CHAT_RECORD_SELECTOR =
-        '.message:not(#typing-indicator):not(#typing-indicator-remote):not([data-stopped="true"])';
+        '.message:not(#typing-indicator):not(#typing-indicator-remote)';
 
     /** Last real chat bubble in the open transcript (ignores typing placeholders). */
     function lastVisibleChatMessageEl() {
@@ -1120,6 +1129,7 @@
             try { meta = JSON.parse(meta); } catch (_) { meta = {}; }
         }
         if (!meta || typeof meta !== 'object') meta = {};
+        if (meta.kind === 'interrupted-agent-turn') el.dataset.stopped = 'true';
         const queryId = msg.query_id || meta.query_id;
         if (queryId) el.dataset.queryId = String(queryId);
         if (msg.slash_command_failed) meta = Object.assign({}, meta, { slash_command_failed: true });
@@ -3248,7 +3258,7 @@
                     || record;
                 setChatProject(live, { silent: true });
             } else {
-                currentProject = null;
+                assignChatProject(null);
                 reconcileChatProject();
             }
         } else {
@@ -3902,7 +3912,7 @@
     function projectChipHtml(proj, opts) {
         opts = opts || {};
         if (!proj || !(proj.name || proj.path)) return '';
-        const safe = escapeHtmlInline(proj.name || 'Project');
+        const safe = escapeHtmlInline(CuttleChatProject.projectChipLabel(proj, projects));
         const pathBit = (opts.composer && effectiveGitPath()) || proj.path || proj.name || '';
         const starred = isProjectStarred(proj);
         const showBranch = !!opts.composer || !!opts.header || !!opts.history;
@@ -4157,6 +4167,7 @@
                         claudeEffortBadge
                     ) || chip.label;
                 }
+                if (orchestrateChip.isChip(chip)) displayLabel = orchestrateChip.label(chip);
                 const safeLabel = escapeHtmlInline(displayLabel);
                 const starred = isSlashCommandStarred(chip.prefix);
                 let tipBase = starred
@@ -4289,6 +4300,7 @@
         chipConfigControl.bindRow(row, {
             chips: slashCtx[key].chips,
             composerChipAgentId,
+            onChip: orchestrateChip.open,
         });
         scheduleSlashChipCompactLabels(row);
         contextGauge.scheduleRefresh(60);
@@ -4344,6 +4356,13 @@
         getChatCheckout: () => currentCheckoutUid,
         setChatCheckout,
         showToast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+    });
+    // `/orchestrate` chip + playbook popup — owned by chat_orchestrate_chip.js.
+    const orchestrateChip = CuttleChatOrchestrateChip.create({
+        escapeHtml: escapeHtmlInline, showToast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+        openModal: (...args) => chipConfigControl.openCustom(...args), close: () => chipConfigControl.close(),
+        rerender: () => { ['welcome', 'chat'].forEach((k) => renderSlashChips(k, document.getElementById(k === 'chat' ? 'chatInput' : 'welcomeChatInput'))); saveComposerDraftControls(session.current() || 'new'); },
+        navigate: (page) => (window.parent !== window ? window.parent.postMessage({ type: 'cuttle-navigate', page }, '*') : window.location.assign(page)),
     });
 
     // Probe the worktrees feature once (server 404s it when disabled) so the
@@ -6217,11 +6236,7 @@
                 proj = { id: byId.id, name: byId.name || proj.name, path: byId.path || proj.path || '' };
             }
         }
-        const prevProjectId = currentProject && currentProject.id != null ? String(currentProject.id) : '';
-        currentProject = proj || null;
-        const nextProjectId = currentProject && currentProject.id != null ? String(currentProject.id) : '';
-        // A different project starts fresh (Local); the chip can rebind a worktree.
-        if (prevProjectId !== nextProjectId) { currentCheckoutUid = ''; currentCheckoutPath = ''; }
+        assignChatProject(proj);
         reportProjectToShell(effectiveGitPath());
         if (session.current()) {
             rememberSessionProject(session.current(), proj);
@@ -6249,6 +6264,14 @@
             // Stick in the transcript (default system toast fades after 3s and is not saved).
             addSystemMessage(`📁 Project: ${proj.name}${pathBit}`, { persist: true });
         }
+    }
+
+    /** Sole writer of currentProject: a worktree checkout never outlives its project. */
+    function assignChatProject(proj) {
+        const kept = CuttleChatProject.checkoutAfterProjectChange(currentProject, proj, { uid: currentCheckoutUid,
+            path: currentCheckoutPath }, window.CuttleChatWorktrees && window.CuttleChatWorktrees.checkoutForUid);
+        currentProject = proj || null;
+        currentCheckoutUid = kept.uid; currentCheckoutPath = kept.path;
     }
 
     /** Bind this chat to a worktree checkout (null/empty = Local/primary). */
@@ -6391,17 +6414,16 @@
         });
         const proj = decided.proj;
         const hadStored = decided.hadStored;
-        currentProject = proj || null;
+        assignChatProject(proj);
         // Restore the chat's bound worktree checkout (server row, then prefs).
         // An unsaved new chat has no session row yet: keep the in-memory pick
         // instead of clearing it, or the chip snaps back to the primary branch.
         if (session.current()) {
             const checkout = CuttleChatProject.resolveCheckoutBinding({
-                serverSession, prefs: mergedPrefs, stored,
+                serverSession, prefs: mergedPrefs, stored, project: currentProject,
                 checkoutForUid: window.CuttleChatWorktrees && window.CuttleChatWorktrees.checkoutForUid,
             });
-            currentCheckoutUid = checkout.uid;
-            currentCheckoutPath = checkout.path;
+            currentCheckoutUid = checkout.uid; currentCheckoutPath = checkout.path;
         }
         reportProjectToShell(effectiveGitPath());
         // Stamp the default onto prefs so history grouping matches the cwd chip
@@ -6439,7 +6461,7 @@
         // Always re-bind path from the live projects list when we have an id/name.
         // Stale localStorage often keeps name "Escape Purgatory" with path Cuttle.
         const rebound = CuttleChatProject.rebindProjectToRegistry(currentProject, projects);
-        currentProject = rebound.proj;
+        assignChatProject(rebound.proj);
         if (rebound.changed && session.current()) persistProjectForCurrentSession();
         return currentProject;
     }
@@ -6447,38 +6469,6 @@
     function applyOutboundProjectToRequest(requestBody) {
         CuttleChatProject.applyOutboundProjectToRequest(
             requestBody, resolveOutboundProject(), currentCheckoutUid);
-    }
-    
-    async function switchChatProject() {
-        const select = document.getElementById('projectSelect');
-        const projectId = parseInt(select.value);
-        
-        if (!projectId) {
-            currentProject = null;
-            updateProjectDisplay();
-            return;
-        }
-        
-        try {
-            const response = await fetch(`/api/projects/${projectId}/switch`, {
-                method: 'POST'
-            });
-            const data = await response.json();
-            
-            if (data.success) {
-                currentProject = data.data;
-                updateProjectDisplay();
-                console.log(`Switched to project: ${currentProject.name}`);
-                
-                // Show a brief notification
-                addSystemMessage(`📁 Switched to project: ${currentProject.name}`);
-            } else {
-                throw new Error(data.error || 'Failed to switch project');
-            }
-        } catch (error) {
-            console.error('Error switching project:', error);
-            addSystemMessage(`❌ Failed to switch project: ${error.message}`);
-        }
     }
     
     function addSystemMessage(message, opts = {}) {
@@ -7226,9 +7216,13 @@
                 // and the UI painted "No response received." while Cursor still ran.
             }
         } else if (!isLoadingThisSession()) {
-            // Keep remote waiting / history generating flags in sync without a GET.
+            // A turn started elsewhere (supervisor check-in, other device): fetch
+            // its user row now instead of waiting up to a full idle sync interval.
+            const startedElsewhere = stillGoing && !document.getElementById('typing-indicator-remote');
             updateRemoteWaitingFromMessages([], live);
-            if (!stillGoing) {
+            if (startedElsewhere) {
+                try { await syncSessionMessagesFromServer(); } catch (_) {}
+            } else if (!stillGoing) {
                 try {
                     await syncSessionMessagesFromServer();
                 } catch (_) {}
@@ -7371,7 +7365,10 @@
                 setLastSeenServerMessageId: function (v) { lastSeenServerMessageId = v; },
                 setDeferOpenChatGeneratingFromSessions: function (v) { deferOpenChatGeneratingFromSessions = v; },
                 getLastHydratedSessionProject: function () { return lastHydratedSessionProject; },
-                setLastHydratedSessionProject: function (v) { lastHydratedSessionProject = v; },
+                setLastHydratedSessionProject: function (v) {
+                    lastHydratedSessionProject = v;
+                    if (v) CuttleChatWorktrees.observeSessionCheckout(v.id, v);
+                },
             });
         }
         return _sessionLoader;
@@ -7396,7 +7393,7 @@
                 adoptFollowupQueue: adoptFollowupQueue,
                 applyHistorySubagentExpandState: () => historyPanel.applyHistorySubagentExpandState(),
                 applySessionIdentity: applySessionIdentity,
-                setCurrentProject: function (v) { currentProject = v; },
+                setCurrentProject: assignChatProject,
                 setHubLiveStatusCache: function (v) { hubLiveStatusCache = v; },
                 reconcileChatProject: reconcileChatProject,
                 refreshChatWidgets: refreshChatWidgets,
@@ -8602,6 +8599,10 @@
             // Keep badges truthful on incremental syncs too (same seeding as open).
             hydrateAgentSelectionFromSessionData(data, session.current());
             applySessionIdentity(data);
+            if (CuttleChatWorktrees.observeSessionCheckout(authSid, data)) {
+                lastHydratedSessionProject = CuttleChatProject.hydratedSessionSnapshot(authSid, data);
+                reconcileChatProject();
+            }
             if (data.session_name) {
                 rememberChatSessionTitle(session.current(), data.session_name);
                 updateChatSessionTitle(session.current());
@@ -8631,6 +8632,9 @@
                 }
                 return null;
             };
+            const stoppedQueryBubble = (qid) => document.querySelector(
+                `#chatMessages .message[data-stopped="true"] .message-query-log-link[data-query-id="${CSS.escape(String(qid))}"]`
+            )?.closest('.message');
             for (const msg of data.messages) {
                 if (msg == null || msg.id == null) continue;
                 const mid = Number(msg.id);
@@ -8648,6 +8652,7 @@
                         hasDomId: (id) => !!document.querySelector(
                             `#chatMessages .message[data-message-id="${Number(id)}"]`
                         ),
+                        hasStoppedQuery: (qid) => !!stoppedQueryBubble(qid),
                         findControlClaim: (crid, role) => {
                             const hit = controlClaimEl(crid, role);
                             return hit ? (hit.exact ? 'exact' : 'role') : null;
@@ -8661,6 +8666,9 @@
                     }
                 );
                 switch (syncDecision.decision) {
+                    case 'claim-interrupted':
+                        stampAssistantElFromServer(stoppedQueryBubble(syncDecision.queryId), msg);
+                        continue;
                     case 'update-in-place': {
                         const existing = document.querySelector(
                             `#chatMessages .message[data-message-id="${mid}"]`
@@ -8870,7 +8878,7 @@
                 + '</button>'
             );
         }
-        parts.push(gitPush.menuHtml(icons));
+        parts.push(gitPush.menuHtml(icons), supervision.menuHtml(sessionId, icons.subagents));
         if (_terminalMenuAvailable) {
             parts.push(
                 '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
@@ -11286,6 +11294,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
 
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${role}`;
+        if (opts.kind === 'interrupted-agent-turn') messageDiv.dataset.stopped = 'true';
         messageDiv.dataset.rawContent = String(content ?? '');
         if (opts.query_id) messageDiv.dataset.queryId = String(opts.query_id);
         if (opts.message_id != null && opts.message_id !== '') {
@@ -12081,7 +12090,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
             // Release live ids so later cleanup cannot remove the stopped activity.
             bubble.removeAttribute('id');
             bubble.dataset.stopped = 'true';
-            bubble.removeAttribute('data-message-index');
             bubble.removeAttribute('data-pin-key');
             bubble.classList.remove('is-pinned-message');
             bubble.dataset.rawContent = 'Agent stopped.';
@@ -12103,7 +12111,14 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 link.classList.remove('is-pending');
                 link.title = link.dataset.queryId ? 'View query log' : 'View query log index';
             }
+            // The typing footer has no share-ref button; the stopped bubble
+            // keeps its transcript slot, so give it a copyable message ref.
+            const icons = bubble.querySelector('.message-footer-icons');
+            if (icons && !icons.querySelector('.message-share-ref-btn')) {
+                icons.insertAdjacentHTML('beforeend', getShareRefButtonHtml());
+            }
         });
+        transcriptNav.updateMessageNav();
     }
 
     function removeTypingIndicator() {
@@ -13052,7 +13067,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                     // Only welcome / unsaved new chats pick up a tab override.
                     if (session.current()) return;
                     applyStarredSlashChips();
-                    currentProject = null;
+                    assignChatProject(null);
                     reconcileChatProject();
                 }
             });
@@ -13113,7 +13128,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
     window.sendWelcomeMessage = sendWelcomeMessage;
     window.handleWelcomeInputKeyDown = handleWelcomeInputKeyDown;
     window.autoResizeWelcomeTextarea = autoResizeWelcomeTextarea;
-    window.switchChatProject = switchChatProject;
     window.chatPageLoadSession = loadChatSession;
     window.loadChatSession = loadChatSession;
     window.chatPageNavigateToChatHandle = navigateToChatHandle;

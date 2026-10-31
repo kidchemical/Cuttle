@@ -4,6 +4,7 @@ LAN **device worker** mesh: host coordinates; machines claim allowlisted jobs.
 
 Canonical design: `docs/guides/CUTTLE_WORKERS.md` (under the Cuttle install).
 Install-local LAN / SSH / hostname notes: `<home>/personal/docs/cuttle-workers.md`.
+Ad-hoc commands on another machine → `remote-access.md` (the user's own SSH tool), not mesh shell.
 
 ## When to use (intent)
 

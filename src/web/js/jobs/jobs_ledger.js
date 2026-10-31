@@ -17,7 +17,10 @@ window.CuttleJobsLedger = (function () {
         cancelled: 'cancelled',
         expired: 'expired',
         leftover: 'leftover',
+        paused: 'paused',
     };
+    const KINDS = ['run', 'mesh', 'leftover', 'chat_op'];
+    const KIND_LABELS = { mesh: 'mesh', leftover: 'leftover', chat_op: 'chat' };
 
     function esc(s) {
         return String(s == null ? '' : s)
@@ -62,7 +65,7 @@ window.CuttleJobsLedger = (function () {
         const links = job.links || {};
         const status = STATUS_LABELS[job.status] || job.status || 'unknown';
         return {
-            kind: job.kind === 'mesh' || job.kind === 'leftover' ? job.kind : 'run',
+            kind: KINDS.indexOf(job.kind) >= 0 ? job.kind : 'run',
             id: job.id,
             shortId: job.short_id || String(job.id || '').slice(0, 8),
             label: job.label || meta.type || 'job',
@@ -84,7 +87,7 @@ window.CuttleJobsLedger = (function () {
     }
 
     function renderKindChip(kind, label) {
-        return '<span class="job-type-badge ' + esc(kind) + '">' + esc(kind === 'run' ? (label || 'agent') : 'mesh') + '</span>';
+        return '<span class="job-type-badge ' + esc(kind) + '">' + esc(kind === 'run' ? (label || 'agent') : (KIND_LABELS[kind] || kind)) + '</span>';
     }
 
     function statusPill(status) {
@@ -98,7 +101,8 @@ window.CuttleJobsLedger = (function () {
         if (row.actions.indexOf('cancel') >= 0) {
             parts.push(
                 '<button type="button" class="jobs-pager-btn" data-job-cancel="' + esc(row.id) + '"' +
-                ' data-job-kind="' + esc(row.kind) + '">' + (row.kind === 'leftover' ? 'Terminate' : 'Stop') + '</button>'
+                ' data-job-kind="' + esc(row.kind) + '">'
+                + (row.kind === 'leftover' ? 'Terminate' : row.kind === 'chat_op' ? 'Cancel' : 'Stop') + '</button>'
             );
         }
         if (row.actions.indexOf('rerun') >= 0) {
@@ -110,6 +114,9 @@ window.CuttleJobsLedger = (function () {
     }
 
     function nameCell(row) {
+        if (row.kind === 'chat_op' && row.chatLink) {
+            return '<a href="' + esc(row.chatLink) + '" class="hist-pr">' + esc(row.label) + '</a>';
+        }
         if (row.kind === 'run') {
             if (row.chatLink) {
                 return '<a href="' + esc(row.chatLink) + '" class="hist-pr">' + esc(row.label) + '</a>';
@@ -131,7 +138,7 @@ window.CuttleJobsLedger = (function () {
         const rows = (jobs || []).map(display).map(function (r) {
             const detail = r.detail || r.model || r.target;
             return '<tr>' +
-                '<td>' + esc(r.kind) + '</td>' +
+                '<td>' + esc(KIND_LABELS[r.kind] || r.kind) + '</td>' +
                 '<td class="jobs-cell-wrap">' + nameCell(r) + '</td>' +
                 '<td>' + statusPill(r.status) + '</td>' +
                 '<td>' + esc(r.when) + '</td>' +

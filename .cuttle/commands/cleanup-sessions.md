@@ -15,8 +15,9 @@ Follow the project skill **cuttle-cleanup-sessions**
 1. Parse hours from the user message if present (default **24**).
 2. Preview:
 
-```powershell
-.venv\Scripts\python.exe .cuttle\scripts\cleanup-idle-sessions.py --hours 24 --dry-run
+```bash
+.venv/bin/python .cuttle/scripts/cleanup-idle-sessions.py --hours 24 --dry-run
+# Windows: .venv\Scripts\python.exe .cuttle\scripts\cleanup-idle-sessions.py --hours 24 --dry-run
 ```
 
 3. Unless the user already said to delete now, show the dry-run summary, then delete with the same `--hours` (omit `--dry-run`). Keep starred unless they ask otherwise (`--include-starred`).

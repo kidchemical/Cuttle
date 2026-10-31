@@ -106,7 +106,7 @@
         let engine = 'webspeech';
         let recorder = null;
         let realtime = null;
-        let live = null, sharedVoice = null, detachVoice = null, voiceChatId = null;
+        let live = null, sharedVoice = null, detachVoice = null, voiceChatId = null, withdrawCallOffer = null;
         /** Document-lifetime runtime for a chat page opened without the shell. */
         let pageRuntime = null;
         let realtimeQueued = false;
@@ -191,7 +191,7 @@
                 hideActivity();
             }
             if (statusText != null) setStatus(statusText);
-            else if (phase === 'idle') setStatus('Tap the orb to talk');
+            else if (phase === 'idle') setStatus('');
             else if (phase === 'listening') setStatus(listeningText());
             else if (phase === 'processing') setStatus('Thinking…');
             else if (phase === 'speaking') setStatus('Speaking…');
@@ -213,7 +213,7 @@
             const hint = byId('voiceModeHint');
             if (hint) {
                 if (!hint.dataset.base) hint.dataset.base = hint.textContent;
-                const label = engine === 'live' ? 'GPT-Live · tap the orb to connect/disconnect' : engine === 'realtime' ? 'OpenAI Realtime · tap the orb to connect/disconnect'
+                const label = engine === 'live' ? 'GPT-Live · tap Call or the orb to connect' : engine === 'realtime' ? 'OpenAI Realtime · tap Call or the orb to connect'
                     : engine === 'server'
                     ? (Recorder.sourceKind() === 'native' ? 'Server transcription (app mic)' : 'Server transcription')
                     : serverKeyMissing ? 'Browser speech — server transcription needs an OpenAI API key'
@@ -559,6 +559,26 @@
                 onStatus:text=>{if(active)setPhase(text.startsWith('Disconnected')?'idle':text.startsWith('Speaking')?'speaking':'listening',text);},
                 onError:text=>{if(active)setPhase('idle',text);},
                 onUsage:priced=>{realtimeUsage=priced;host.refreshUsage?.();renderSessionUsage();}};
+        }
+
+        /** Call engines get the runtime's persistent Call button; it runs the same
+         *  connect path as tapping the orb so orb, status and transcript agree.
+         *  A chat with no id yet (new chat, restore in flight) still gets Call:
+         *  connecting creates the chat through voiceContext, exactly like the orb. */
+        function offerCall() {
+            withdrawCallOffer?.(); withdrawCallOffer = null;
+            if (engine !== 'live' && !(engine === 'realtime' && (host.sessionId?.() || host.adoptSession))) return;
+            const runtime = voiceRuntime();
+            if (!runtime || typeof runtime.offer !== 'function') return;
+            const frameAlive = conversationCallbacks().alive;
+            withdrawCallOffer = runtime.offer({
+                alive: () => active && frameAlive(),
+                connect: () => {
+                    if (!active || closing) return undefined;
+                    if ((engine === 'live' && live?.isOpen()) || (engine === 'realtime' && realtime?.isOpen())) return undefined;
+                    return startListening();
+                },
+            });
         }
 
         async function startLive() {
@@ -1095,7 +1115,7 @@
                 host.toast('Browser blocked autoplay — tap the mic once, then try again', 'error');
                 return;
             }
-            settlePhase('Tap the orb to talk');
+            settlePhase('');
         }
 
         function onGenerationStarted() {
@@ -1288,6 +1308,7 @@
                         : 'The selected voice engine needs microphone support; using existing voice input', 'error');
                 }
                 showEngine(wantServer, missing);
+                offerCall();
             }, () => {});
             hideActivity();
             clearPhrases();
@@ -1322,6 +1343,7 @@
                 if (live) void live.stop();
             }
             detachVoice?.();detachVoice=null;
+            withdrawCallOffer?.();withdrawCallOffer=null;
             realtimeQueued = false;
             wantListening = false;
             stopInput(false);
@@ -1399,7 +1421,7 @@
 
         function wire() {
             root.addEventListener('cuttle-session-usage-updated',renderSessionUsage);
-            root.addEventListener('pagehide',()=>{detachVoice?.();detachVoice=null;if(!sharedVoice)void live?.stop();});
+            root.addEventListener('pagehide',()=>{detachVoice?.();detachVoice=null;withdrawCallOffer?.();withdrawCallOffer=null;if(!sharedVoice)void live?.stop();});
             const mic = byId('voiceModeMicBtn');
             if (mic) {
                 mic.addEventListener('click', function (e) {

@@ -50,6 +50,36 @@ eq(project.resolveCheckoutBinding({ prefs: { checkoutUid: '' }, stored: stale })
 eq(project.resolveCheckoutBinding({ serverSession: { checkout_uid: 'old' }, prefs: stale }),
     { uid: 'old', path: '/old' }, 'matching offline path retained');
 
+// --- a checkout lives only as long as the chat stays on its project ---
+const demo = { id: 7, name: 'Demo', path: 'E:\\Demo' };
+const cuttleProj = { id: 4, name: 'Cuttle', path: '/c' };
+const wt = { uid: 'wt71', path: '/wt/71' };
+const reg = (uid) => (uid === 'wt71' ? { checkout_uid: 'wt71', project_id: 7, path: '/wt/71' } : null);
+eq(project.checkoutAfterProjectChange(demo, { id: '7', path: 'E:/Demo/' }, wt, reg), wt, 'same project (id) keeps checkout');
+eq(project.checkoutAfterProjectChange(demo, cuttleProj, wt, reg), { uid: '', path: '' }, 'project change drops checkout');
+eq(project.checkoutAfterProjectChange(demo, null, wt, reg), { uid: '', path: '' }, 'clearing the project drops checkout');
+eq(project.checkoutAfterProjectChange(null, demo, wt, reg), { uid: '', path: '' }, 'no prior project: nothing to inherit');
+eq(project.checkoutAfterProjectChange({ path: 'E:\\Demo' }, { path: 'e:/demo/' }, wt, null), wt, 'path identity when ids are absent');
+eq(project.checkoutAfterProjectChange({ id: 4, path: '/c' }, { id: 4, path: '/c' }, wt, reg), { uid: '', path: '' },
+    'registered checkout of another project never kept');
+eq(project.resolveCheckoutBinding({ prefs: { checkoutUid: 'wt71', checkoutPath: '/wt/71' }, project: cuttleProj, checkoutForUid: reg }),
+    { uid: '', path: '' }, 'restore drops a foreign checkout');
+eq(project.resolveCheckoutBinding({ prefs: { checkoutUid: 'wt71' }, project: demo, checkoutForUid: reg }),
+    { uid: 'wt71', path: '/wt/71' }, 'restore keeps its own project checkout');
+
+// --- server-side binding changes (agent `python -m api.worktrees bind`) ---
+eq(worktrees.observeSessionCheckout('9', { checkout_uid: null }), false, 'first payload is the baseline');
+eq(worktrees.observeSessionCheckout('9', { checkout_uid: null }), false, 'unchanged server binding');
+eq(worktrees.observeSessionCheckout('9', {
+    checkout_uid: 'agent', checkout: { checkout_uid: 'agent', path: '/wt/agent', branch: 'dev/agent' },
+}), true, 'server rebind is a change');
+eq(worktrees.checkoutForUid('agent').path, '/wt/agent', 'payload checkout remembered without a probe');
+eq(worktrees.observeSessionCheckout('9', {}), false, 'payload without checkout_uid ignored');
+eq(project.hydratedSessionSnapshot('9', { project_id: 1, checkout_uid: 'agent' }),
+    { id: '9', project_id: 1, project_name: undefined, project_path: undefined, checkout_uid: 'agent' },
+    'snapshot carries checkout_uid');
+eq(project.hydratedSessionSnapshot('9', { checkout_uid: 'x' }), null, 'no project → no snapshot');
+
 (async () => {
     global.fetch = async () => ({ status: 200, json: async () => ({
         worktrees: [{ checkout_uid: 'new', path: '/new', branch: 'refactor/work' }],

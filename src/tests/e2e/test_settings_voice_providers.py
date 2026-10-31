@@ -264,6 +264,49 @@ def test_voice_tab_without_experiments_shows_only_stock_settings(browser, static
     finally:page.close()
 
 
+def test_read_aloud_off_hides_dependent_settings_and_guide_compares_models(browser, static_server):
+    world=VoiceWorld()
+    original=world.handle
+    def handle(route):
+        path=urlparse(route.request.url).path
+        if path=='/api/tts/providers':
+            data={'success':True,'providers':[{'id':'openai','label':'OpenAI','configured':True,'default_model':'tts-new',
+                    'models':[{'id':'tts-new','label':'tts-new (recommended)','description':'Natural speech.','price':{'per_reply_usd':0.012,'rate':'$12 per 1M characters'}},
+                              {'id':'tts-old','label':'tts-old','description':'Older and flatter.','price':None}],
+                    'voices':[{'id':'alloy'}],'speed_range':[.25,4],'supports_stability':False,'supports_fetch_voices':False}],
+                  'summarize_providers':[{'id':'openai','label':'OpenAI','configured':True,'default_model':'gpt-text','suggested_models':['gpt-text']}]}
+        elif path=='/api/experimental/flags':
+            data={'success':True,'flags':[{'id':'voice_narrator','label':'Voice narrator','enabled':True},
+                                          {'id':'voice_live','label':'Voice: GPT-Live','enabled':False}]}
+        else: return original(route)
+        route.fulfill(content_type='application/json',body=json.dumps(data))
+    world.handle=handle
+    page=open_settings(browser,static_server,world); errors=[]
+    page.on('pageerror',lambda error:errors.append(str(error)))
+    try:
+        expect(page.locator('.agent-card[data-agent-id="opencode"]')).to_be_visible()
+        page.evaluate("CuttleSettingsTabs.setTab('voice')")
+        page.evaluate('voiceProvidersController().load()')
+        guide=page.locator('#chatTtsModelGuide')
+        expect(guide).to_contain_text('Natural speech.'); expect(guide).to_contain_text('≈ 1.2¢')
+        expect(guide.locator('tr.is-selected')).to_contain_text('tts-old')
+        expect(page.locator('#voiceExperimentMap')).to_be_visible()
+        expect(page.locator('#voiceExperimentList li')).to_have_count(1)
+        expect(page.locator('#voiceExperimentList')).to_contain_text('Voice narrator')
+        page.locator('#chatTtsEnabledToggle').click()
+        for hidden in ('#chatTtsDetails','#chatTtsPreviewBtn'):
+            expect(page.locator(hidden)).to_be_hidden()
+        expect(page.locator('#chatTtsEnabledHint')).to_contain_text('text only')
+        page.evaluate('saveChatTtsSettings()')
+        expect(page.locator('.cuttle-toast').last).to_contain_text('Chat voice saved')
+        assert world.conf['enabled'] is False
+        expect(page.locator('#chatTtsDetails')).to_be_hidden()
+        page.locator('#chatTtsEnabledToggle').click()
+        expect(page.locator('#chatTtsDetails')).to_be_visible()
+        assert not errors,errors
+    finally:page.close()
+
+
 def test_reloading_voice_tab_never_overwrites_saved_engine(browser, static_server):
     world=VoiceWorld();world.live_enabled=True;world.voice_chat['engine']='live'
     page=open_settings(browser,static_server,world)

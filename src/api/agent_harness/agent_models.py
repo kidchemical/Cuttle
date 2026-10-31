@@ -285,6 +285,79 @@ def effective_effort_options(
     return bool(fallback_supported), list(fallback_levels or [])
 
 
+def check_agent_pin(
+    target: str,
+    model: str = "",
+    effort: str = "",
+    *,
+    catalogs: Optional[Dict[str, Tuple[List[Dict[str, Any]], List[str], Dict[str, List[str]]]]] = None,
+) -> Optional[str]:
+    """Validate a harness + model + effort pin against the live CLI catalog.
+
+    Returns ``None`` when the pin can run, else a short error. Saves must match
+    the catalog the pickers show, so an unknown id refreshes that catalog once
+    before it is rejected. ``catalogs`` caches loads across several checks.
+    """
+    from api.agent_harness.catalog import get_agent
+
+    target = str(target or "").strip().lower()
+    model = str(model or "").strip()
+    effort = str(effort or "").strip().lower()
+    pair = get_agent(target) if target else None
+    if pair is None:
+        return f"Unknown agent {target or '(empty)'}"
+    if not (model or effort):
+        return None
+    manifest = pair[0]
+    catalogs = catalogs if catalogs is not None else {}
+
+    def _load(refresh: bool) -> None:
+        rows, _source = (load_agent_catalog(target, manifest.models, refresh=True) if refresh
+                         else load_agent_catalog(target, manifest.models))
+        catalogs[target] = (rows, catalog_model_ids(rows), catalog_model_efforts(rows))
+
+    def _snapshot() -> Tuple[List[str], Dict[str, List[str]], str]:
+        rows, ids, efforts = catalogs[target]
+        # Manifest ids are the verified offline set; some (Cursor ``grok-4.6``)
+        # run but are absent from the live listing.
+        ids = list(dict.fromkeys(list(ids) + list(manifest.models or [])))
+        # Aliases (Claude ``opus``) report the full id they resolve to; a pin
+        # may name either, and the alias row carries the effort facts.
+        lookup = model
+        if model and model not in ids:
+            for row in rows or []:
+                if str(row.get("resolved_model") or "") == model and row.get("id"):
+                    lookup = str(row["id"])
+                    break
+        return ids, efforts, lookup
+
+    if target not in catalogs:
+        _load(False)
+    model_ids, live_efforts, lookup = _snapshot()
+    refreshed = False
+    if model and manifest.supports_model_pin and lookup not in model_ids:
+        _load(True)
+        model_ids, live_efforts, lookup = _snapshot()
+        refreshed = True
+    if model and (not manifest.supports_model_pin or lookup not in model_ids):
+        return f"Unsupported model for {target}"
+    if effort:
+        def _levels() -> Tuple[bool, List[str]]:
+            return effective_effort_options(
+                live_efforts, lookup, manifest.supports_effort,
+                manifest.efforts, manifest.model_efforts,
+            )
+
+        supported, valid = _levels()
+        if (not supported or effort not in valid) and not refreshed:
+            _load(True)
+            model_ids, live_efforts, lookup = _snapshot()
+            supported, valid = _levels()
+        if not supported or effort not in valid:
+            return f"Unsupported effort for {target}"
+    return None
+
+
 def enrich_agent_catalog(agents: List[Dict[str, Any]], *, refresh: bool = False) -> List[Dict[str, Any]]:
     """Overwrite each available agent's ``models`` with its live catalog (Settings).
 

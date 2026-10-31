@@ -54,6 +54,12 @@ CUSTOM_NAME_SUBSTRINGS = (
     "credentials",
     "secret",
 )
+# Source and docs are named after what they handle (a secret-vault page, a
+# credentials test); the content scanners below read them line by line, so the
+# filename heuristic only applies to data-shaped files (json, yaml, txt, …).
+NAME_RULE_EXEMPT_SUFFIXES = (
+    ".py", ".js", ".mjs", ".cjs", ".ts", ".css", ".html", ".md",
+)
 
 
 def _run_git(*args: str, cwd: str | None = None, timeout: int = 120) -> subprocess.CompletedProcess:
@@ -115,6 +121,8 @@ def _blocked_path(path: str) -> str | None:
             continue
         if lowered.endswith(suffix.lower()):
             return f"blocked file type (*{suffix})"
+    if name.lower().endswith(NAME_RULE_EXEMPT_SUFFIXES):
+        return None
     for sub in CUSTOM_NAME_SUBSTRINGS:
         if sub in name.lower():
             return f"suspicious filename (contains '{sub}')"

@@ -9,6 +9,9 @@ User-visible changes to Cuttle. The format follows
 ## [Unreleased]
 
 ### Added
+- Agents run commands on other machines through the remote-access tool you
+  already use (OpenSSH, Tailscale SSH, Teleport or MeshCentral); see
+  `.cuttle_global/docs/remote-access.md`.
 - Configurable listener ports: set `CUTTLE_HTTPS_PORT`, `CUTTLE_HTTP_PORT` and
   `CUTTLE_PHONE_HTTPS_PORT` in Cuttle's `.env` (defaults 8080/8000/8888; needs a
   full daemon restart). Desktop and mobile clients keep the port you enter.
@@ -47,6 +50,13 @@ User-visible changes to Cuttle. The format follows
   `LOCAL_LLM_QUEUE_TIMEOUT_SEC` (default 120 s) instead of waiting forever.
 
 ### Fixed
+- Host-channel Client updates no longer get stuck after the Host rewinds or
+  rewrites a commit it already served. A Client still on a Host-delivered
+  commit follows the Host and keeps the old head under `refs/cuttle/superseded/`;
+  Client-made commits are still refused, with recovery steps in the error.
+- The Windows **Cuttle Host** shortcut opens one console instead of two,
+  and its app always opens in Host mode, even on a PC that was used as a
+  Client before. **Cuttle Daemon** no longer opens the app.
 - POSIX launchers and helper scripts are executable in fresh clones, and
   Windows `.cmd` scripts check out with CRLF.
 - Agent handoff reports when long messages were truncated and points to the

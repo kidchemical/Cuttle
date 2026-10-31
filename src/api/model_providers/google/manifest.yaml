@@ -96,12 +96,16 @@ speech:
   models:
   - id: gemini-2.5-flash-preview-tts
     label: Flash TTS (fast, cheap)
+    description: Quick, natural speech. Good default for Google.
   - id: gemini-2.5-pro-preview-tts
     label: Pro TTS (higher quality)
+    description: Better pacing and expression than Flash. Slower, about twice the price.
   - id: gemini-3.8-flash-tts
     label: Gemini 3.8 Flash TTS
+    description: Newer Flash generation. Price not yet listed in Cuttle.
   - id: gemini-3.8-flash-lite-tts
     label: Gemini 3.8 Flash-Lite TTS
+    description: Lightest, fastest Gemini voice. Price not yet listed in Cuttle.
   speed_range: null
   supports_stability: false
   fetch_voices: true

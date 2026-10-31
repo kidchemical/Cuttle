@@ -2,8 +2,19 @@
 (function () {
     'use strict';
 
+    // Live transport: one SSE stream per open run; the 1s poll is only the
+    // fallback (legacy payloads, no EventSource, stream refused).
     var pollTimer = null;
+    var liveSource = null;
     var currentId = '';
+    // Run metadata (Brain, sent prompt, tallies) is kept client-side and only
+    // re-sent by the server when its revision changes.
+    var metaFields = {};
+    var metaRev = '';
+    var streamCursor = 0;
+    var logExecuting = false;
+    var logEventStore = false;
+    var streamRefused = false;
     // Lazy-load accumulation: first chunk starts at firstAfter (0, or the
     // seq deep-link cursor); later chunks append after the newest loaded row.
     var firstAfter = 0;
@@ -330,24 +341,59 @@
         return extra;
     }
 
-    function fillEventBody(detailsEl, ev, durText) {
+    // Scroll offsets of a subtree (the root and every scrolled descendant),
+    // keyed by document order so a same-shaped re-render can restore them.
+    function captureScroll(root) {
+        var saved = [];
+        if (!root) return saved;
+        var nodes = [root].concat(Array.prototype.slice.call(root.querySelectorAll('*')));
+        nodes.forEach(function (n, i) {
+            if (n.scrollTop || n.scrollLeft) saved.push([i, n.scrollTop, n.scrollLeft]);
+        });
+        return saved;
+    }
+
+    function restoreScroll(root, saved) {
+        if (!root || !saved || !saved.length) return;
+        var nodes = [root].concat(Array.prototype.slice.call(root.querySelectorAll('*')));
+        saved.forEach(function (s) {
+            var n = nodes[s[0]];
+            if (!n) return;
+            n.scrollTop = s[1];
+            n.scrollLeft = s[2];
+        });
+    }
+
+    // refresh: re-fill an already open body in place (live row revised). The
+    // old content stays until the new one lands so the row never collapses.
+    function fillEventBody(detailsEl, ev, durText, refresh) {
         var slot = detailsEl && detailsEl.querySelector('.query-log-event-body');
-        if (!slot || slot.getAttribute('data-filled') === '1') return;
+        if (!slot || !ev) return;
+        if (!refresh && slot.getAttribute('data-filled') === '1') return;
         slot.setAttribute('data-filled', '1');
+        var token = (slot._fillToken || 0) + 1;
+        slot._fillToken = token;
+        function apply(detail) {
+            if (slot._fillToken !== token) return;
+            var saved = captureScroll(slot);
+            slot.innerHTML = eventBodyHtml(detail, durText);
+            if (detail.kind === 'edit' && window.CuttleEventDiff && (detail.patch || detail.text)) {
+                var diffHost = document.createElement('div'); slot.prepend(diffHost);
+                window.CuttleEventDiff.render(diffHost, detail.patch || detail.text);
+            }
+            restoreScroll(slot, saved);
+        }
         if (ev.detail_id) {
-            slot.textContent = 'Loading full detail…';
+            if (!refresh || !slot.hasChildNodes()) slot.textContent = 'Loading full detail…';
             fetch('/api/agent-events/events/' + ev.detail_id, {credentials: 'include', cache: 'no-store'})
                 .then(function (r) { if (!r.ok) throw new Error('Detail unavailable'); return r.json(); })
-                .then(function (row) {
-                    var detail = row.detail || row;
-                    slot.innerHTML = eventBodyHtml(detail, durText);
-                    if (detail.kind === 'edit' && window.CuttleEventDiff && (detail.patch || detail.text)) {
-                        var diffHost = document.createElement('div'); slot.prepend(diffHost);
-                        window.CuttleEventDiff.render(diffHost, detail.patch || detail.text);
-                    }
-                })
-                .catch(function (error) { slot.textContent = error.message; slot.removeAttribute('data-filled'); });
-        } else slot.innerHTML = eventBodyHtml(ev, durText);
+                .then(function (row) { apply(row.detail || row); })
+                .catch(function (error) {
+                    if (slot._fillToken !== token || refresh) return;
+                    slot.textContent = error.message;
+                    slot.removeAttribute('data-filled');
+                });
+        } else apply(ev);
     }
 
     function renderTimeline(data) {
@@ -375,13 +421,13 @@
             var abs = formatAbs(ev && ev.t);
             var absTitle = abs ? ' title="' + esc(abs) + '"' : '';
             if (!eventHasBody(ev)) {
-                return '<article class="query-log-event query-log-event--flat' + failCls + '" data-kind="' + esc(ev.kind) + '"' + nativeAttr + absTitle + '>' +
+                return '<article class="query-log-event query-log-event--flat' + failCls + '" data-kind="' + esc(ev.kind) + '" data-row="' + i + '"' + nativeAttr + absTitle + '>' +
                     '<div class="query-log-top">' + step +
                     '<div class="query-log-k">' + head + '</div>' + nativePill + relHtml + '</div>' +
                     (line ? '<div class="query-log-line">' + esc(line) + '</div>' : '') +
                     '</article>';
             }
-            return '<details class="query-log-event' + failCls + '" data-kind="' + esc(ev.kind) + '" data-i="' + i + '"' + nativeAttr + absTitle + '>' +
+            return '<details class="query-log-event' + failCls + '" data-kind="' + esc(ev.kind) + '" data-row="' + i + '"' + nativeAttr + absTitle + '>' +
                 '<summary>' + step + '<span class="query-log-k">' + head + '</span>' + nativePill +
                 (line ? '<span class="query-log-line">' + esc(line) + '</span>' : '') + relHtml +
                 '</summary>' +
@@ -389,45 +435,82 @@
                 '</details>';
         }).join('');
         if (data.event_store && data.has_more) {
-            html += '<div class="query-log-more" data-log-more>' +
+            html += '<div class="query-log-more" data-log-more data-ql-footer>' +
                 (data.loading_more
                     ? '<span class="query-log-spinner" aria-hidden="true"></span><span>Loading more steps…</span>'
                     : '<button type="button" data-log-more-btn>Load more steps (' + events.length + ' shown)</button>') +
                 '</div>';
         }
         if (isLive(data)) {
-            html += '<div class="query-log-live" aria-live="polite"><span class="query-log-spinner" aria-hidden="true"></span><span>Live…</span></div>';
+            html += '<div class="query-log-live" aria-live="polite" data-ql-footer><span class="query-log-spinner" aria-hidden="true"></span><span>Live…</span></div>';
         }
         return html;
     }
 
-    function bindTimeline(body, events, previousDetails) {
-        body.querySelectorAll('details.query-log-event').forEach(function (d) {
-            var index = d.getAttribute('data-i');
-            var signature = JSON.stringify(events[Number(index)]);
-            var previous = previousDetails && previousDetails[index];
-            if (previous && previous._eventSignature === signature) {
-                d.replaceWith(previous);
-                return;
-            }
-            d._eventSignature = signature;
-            d.addEventListener('toggle', function () {
-                var i = d.getAttribute('data-i');
-                var n = Number(i);
-                var ev = events[n];
-                if (d.open) {
-                    openKeys[eventKey(i)] = true;
-                    fillEventBody(d, ev, stepDuration(n, events));
-                } else {
-                    delete openKeys[eventKey(i)];
-                }
-            });
-            var i = d.getAttribute('data-i');
-            if (openKeys[eventKey(i)]) {
-                d.open = true;
-                fillEventBody(d, events[Number(i)], stepDuration(Number(i), events));
+    // Row listeners read body._qlEvents so a kept row sees the latest list.
+    function bindRow(body, node) {
+        var i = node.getAttribute('data-row');
+        var n = Number(i);
+        node._eventSignature = JSON.stringify((body._qlEvents || [])[n]);
+        if (node.tagName !== 'DETAILS') return;
+        node.addEventListener('toggle', function () {
+            var evs = body._qlEvents || [];
+            if (node.open) {
+                openKeys[eventKey(i)] = true;
+                fillEventBody(node, evs[n], stepDuration(n, evs));
+            } else {
+                delete openKeys[eventKey(i)];
             }
         });
+        if (openKeys[eventKey(i)]) {
+            node.open = true;
+            fillEventBody(node, body._qlEvents[n], stepDuration(n, body._qlEvents));
+        }
+    }
+
+    // A revised row: patch an open entry in place (replacing it would detach
+    // its scrollers and reset them to the top); swap anything else.
+    function updateRow(body, old, fresh) {
+        if (old.tagName === 'DETAILS' && fresh.tagName === 'DETAILS' && old.open) {
+            var n = Number(fresh.getAttribute('data-row'));
+            ['class', 'data-kind', 'data-native', 'title'].forEach(function (a) {
+                if (fresh.hasAttribute(a)) old.setAttribute(a, fresh.getAttribute(a));
+                else old.removeAttribute(a);
+            });
+            old.querySelector('summary').innerHTML = fresh.querySelector('summary').innerHTML;
+            old._eventSignature = JSON.stringify(body._qlEvents[n]);
+            fillEventBody(old, body._qlEvents[n], stepDuration(n, body._qlEvents), true);
+            return;
+        }
+        old.replaceWith(fresh);
+        bindRow(body, fresh);
+    }
+
+    // Keyed in-place update: unchanged rows are never detached, so their
+    // expanded bodies, inner scroll offsets and the reader's place all hold.
+    function reconcileTimeline(body, html, prefixHtml) {
+        var tpl = document.createElement('div');
+        tpl.innerHTML = html;
+        var existing = Object.create(null);
+        Array.prototype.forEach.call(body.children, function (n) {
+            if (n.hasAttribute('data-row')) existing[n.getAttribute('data-row')] = n;
+            else if (n.hasAttribute('data-ql-footer')) n.remove();
+        });
+        var prefix = body.querySelector(':scope > [data-ql-prefix]');
+        if (prefix && prefix._html !== prefixHtml) {
+            prefix.innerHTML = prefixHtml || '';
+            prefix._html = prefixHtml;
+        }
+        Array.prototype.slice.call(tpl.children).forEach(function (n) {
+            var key = n.getAttribute('data-row');
+            if (key == null) { body.appendChild(n); return; }
+            var old = existing[key];
+            delete existing[key];
+            if (!old) { body.appendChild(n); bindRow(body, n); return; }
+            if (old._eventSignature === JSON.stringify(body._qlEvents[Number(key)])) return;
+            updateRow(body, old, n);
+        });
+        Object.keys(existing).forEach(function (k) { existing[k].remove(); });
     }
 
     function renderKnown(data) {
@@ -473,14 +556,18 @@
     function paintTimelineInto(body, data, events, prefixHtml) {
         var atBottom = (body.scrollHeight - body.scrollTop - body.clientHeight) < 140;
         var prevTop = body.scrollTop;
-        // Reuse unchanged details so expanded payloads do not collapse and
-        // refetch on every poll, temporarily clamping the scroll position.
-        var previousDetails = Object.create(null);
-        body.querySelectorAll('details.query-log-event').forEach(function (d) {
-            previousDetails[d.getAttribute('data-i')] = d;
-        });
-        body.innerHTML = (prefixHtml || '') + renderTimeline(Object.assign({}, data, { events: events }));
-        bindTimeline(body, events, previousDetails);
+        var mode = lastTab + '|' + currentId;
+        var html = renderTimeline(Object.assign({}, data, { events: events }));
+        body._qlEvents = events;
+        if (body._qlMode === mode && events.length && body.querySelector(':scope > [data-row]')) {
+            reconcileTimeline(body, html, prefixHtml);
+        } else {
+            body.innerHTML = (prefixHtml ? '<div data-ql-prefix>' + prefixHtml + '</div>' : '') + html;
+            var prefix = body.querySelector(':scope > [data-ql-prefix]');
+            if (prefix) prefix._html = prefixHtml;
+            body._qlMode = events.length ? mode : '';
+            body.querySelectorAll(':scope > [data-row]').forEach(function (n) { bindRow(body, n); });
+        }
         if (atBottom && isLive(data)) {
             body.scrollTop = body.scrollHeight;
         } else {
@@ -491,14 +578,33 @@
         maybeSeqScroll(body, events);
     }
 
+    // Known / Sent / JSON are snapshots: live updates refresh the header but
+    // never re-render them under the reader (tab switches do).
+    function isStaticTab() {
+        return lastTab === 'known' || lastTab === 'sent' || lastTab === 'json';
+    }
+
+    // Run-wide Changes only move when an edit lands or the run finishes.
+    function changesRevision(data) {
+        return (data.events || []).filter(function (e) { return e.kind === 'edit'; })
+            .map(function (e) { return rowId(e) + ':' + (e.rev || 0); }).join(',') +
+            '|' + (isLive(data) ? 'live' : 'done');
+    }
+
     function renderBody(data) {
         var body = document.getElementById('queryLogBody');
         if (!body) return;
         body.classList.toggle('query-log-body--json', lastTab === 'json');
+        if (lastTab !== 'timeline' && !(lastTab === 'changes' && !data.event_store)) body._qlMode = '';
+        body._qlStatic = isStaticTab() ? currentId + '|' + lastTab : '';
         if (lastTab === 'changes' && data.event_store && window.CuttleQueryChanges && currentId) {
             // Run-wide, reconciled Changes (owner: CuttleQueryChanges).
             window.CuttleQueryChanges.mount(body, currentId, {
                 esc: esc,
+                revision: changesRevision(data),
+                isActive: (function (qid) {
+                    return function () { return lastTab === 'changes' && currentId === qid; };
+                })(currentId),
                 fetchJson: function (url) {
                     return fetch(url, { credentials: 'include', cache: 'no-store' }).then(function (r) {
                         return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || 'Changes unavailable'); return j; });
@@ -565,9 +671,9 @@
     function maybeSeqScroll(body, events) {
         if (!pendingSeqScroll || !body) return;
         var found = null;
-        body.querySelectorAll('.query-log-event').forEach(function (node) {
+        body.querySelectorAll('.query-log-event[data-row]').forEach(function (node) {
             if (found) return;
-            var i = Number(node.getAttribute('data-i'));
+            var i = Number(node.getAttribute('data-row'));
             var ev = (events || [])[i];
             if (ev && Number(ev.seq) === pendingSeqScroll) found = node;
         });
@@ -581,20 +687,60 @@
         }
     }
 
-    // Merge one server chunk into the accumulated view. Event-store chunks
-    // are cursor-paged headers; the legacy fallback is a full payload.
+    var CHUNK_ONLY = ['events', 'has_more', 'next_cursor', 'stream_cursor', 'meta_rev', 'meta_omitted', 'loading_more'];
+
+    function rememberMeta(fields) {
+        metaFields = Object.assign({}, fields);
+        CHUNK_ONLY.forEach(function (k) { delete metaFields[k]; });
+    }
+
+    // Merge one /log response into the accumulated view. Event-store chunks
+    // are cursor-paged headers (metadata only when our meta_rev was stale);
+    // the legacy fallback is a full payload.
     function ingestChunk(data) {
-        if (data && data.event_store) {
+        data = data || {};
+        logEventStore = !!data.event_store;
+        if (!data.meta_omitted) rememberMeta(data);
+        if (data.meta_rev) metaRev = data.meta_rev;
+        if (Number(data.stream_cursor) > streamCursor) streamCursor = Number(data.stream_cursor);
+        logExecuting = !!data.executing;
+        if (logEventStore) {
             logEvents = mergeLogRows(logEvents, data.events || []);
             logHasMore = !!data.has_more;
             logNextAfter = Number(data.next_cursor) || 0;
         } else {
-            logEvents = (data && data.events) || [];
+            logEvents = data.events || [];
             logHasMore = false;
             logNextAfter = 0;
         }
+    }
+
+    // One SSE message: revised rows of this run, `meta` when it changed.
+    // While older pages are still unloaded, unseen rows wait for paging so
+    // the list never skips steps.
+    function ingestStream(msg) {
+        if (msg.meta) rememberMeta(Object.assign({}, msg.meta, { query_id: currentId, event_store: true }));
+        if (msg.meta_rev) metaRev = msg.meta_rev;
+        if (msg.cursor) streamCursor = Math.max(streamCursor, Number(msg.cursor) || 0);
+        if (msg.executing != null) logExecuting = !!msg.executing;
+        var rows = msg.events || [];
+        if (logHasMore) {
+            var loaded = Object.create(null);
+            logEvents.forEach(function (ev) { loaded[rowId(ev)] = 1; });
+            rows = rows.filter(function (r) { return loaded[rowId(r)]; });
+        }
+        logEvents = mergeLogRows(logEvents, rows);
+        if (!logHasMore && logEvents.length) {
+            logNextAfter = Math.max(logNextAfter, rowId(logEvents[logEvents.length - 1]));
+        }
+    }
+
+    function currentView() {
         var overlay = ensureDom();
-        overlay._payload = Object.assign({}, data, {
+        overlay._payload = Object.assign({}, metaFields, {
+            query_id: metaFields.query_id || currentId,
+            executing: logExecuting,
+            event_store: logEventStore,
             events: logEvents,
             has_more: logHasMore,
             next_cursor: logNextAfter,
@@ -603,9 +749,8 @@
         return overlay._payload;
     }
 
-    function paint(data, force) {
-        var overlay = ensureDom();
-        var view = ingestChunk(data);
+    function paint(force) {
+        var view = currentView();
         var stamp = payloadStamp(view);
         var h = view.harness || {};
         var live = view.executing ? 'live' : (view.success === false ? 'failed' : 'done');
@@ -616,20 +761,21 @@
             (view.total_tokens ? ' · ' + view.total_tokens + ' tok' : '') +
             (view.total_execution_time ? ' · ' + Number(view.total_execution_time).toFixed(1) + 's' : '');
         if (!force && stamp === lastStamp) return;
+        var body = document.getElementById('queryLogBody');
+        if (!force && isStaticTab() && body && body._qlStatic === currentId + '|' + lastTab) return;
         lastStamp = stamp;
         renderBody(view);
     }
 
     function rerender() {
-        var overlay = ensureDom();
-        if (!overlay._payload) return;
-        overlay._payload.loading_more = logLoading;
+        if (!ensureDom()._payload) return;
         lastStamp = '';
-        paint(overlay._payload, true);
+        paint(true);
     }
 
     function fetchLog(qid, after, withSeq) {
-        var suffix = '?after=' + after + (withSeq && targetSeq ? '&seq=' + targetSeq : '');
+        var suffix = '?after=' + after + (withSeq && targetSeq ? '&seq=' + targetSeq : '') +
+            (metaRev ? '&meta_rev=' + encodeURIComponent(metaRev) : '');
         return fetch('/api/agent-events/runs/' + encodeURIComponent(qid) + '/log' + suffix, {credentials: 'include', cache: 'no-store'})
             .then(function(r) {
                 if (r.status === 404) return fetch('/api/query-log/' + encodeURIComponent(qid), {credentials: 'include', cache: 'no-store'});
@@ -637,41 +783,81 @@
             }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); });
     }
 
-    function stopPolling() {
+    function startPolling() {
+        if (!pollTimer) pollTimer = setInterval(tick, 1000);
+    }
+
+    function stopLive() {
+        if (liveSource) { liveSource.close(); liveSource = null; }
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     }
 
+    // Push transport for event-store runs. A refused stream (wrong type,
+    // 4xx) closes for good and falls back to polling; network drops are
+    // retried by EventSource itself from Last-Event-ID.
+    function startLive() {
+        stopLive();
+        if (!logEventStore || typeof window.EventSource !== 'function') { startPolling(); return; }
+        var qid = currentId;
+        var source = new EventSource('/api/agent-events/runs/' + encodeURIComponent(qid) + '/log/stream?after=' +
+            streamCursor + '&meta_rev=' + encodeURIComponent(metaRev));
+        liveSource = source;
+        source.onmessage = function (e) {
+            if (liveSource !== source || currentId !== qid) return;
+            var msg;
+            try { msg = JSON.parse(e.data); } catch (_) { return; }
+            ingestStream(msg);
+            paint(false);
+            if (!isLive(currentView())) stopLive();
+        };
+        source.addEventListener('end', function () {
+            if (liveSource === source) stopLive();
+        });
+        source.onerror = function () {
+            if (liveSource !== source || source.readyState !== 2) return;
+            liveSource = null;
+            streamRefused = true;
+            startPolling();
+        };
+    }
+
     function handleChunkResponse(res) {
+        logLoading = false;
         if (!res.ok) {
-            logLoading = false;
             var body = document.getElementById('queryLogBody');
             if (body && !(ensureDom()._payload)) {
                 body.innerHTML = '<p class="query-log-empty">' + esc(res.j && res.j.error || 'Log not found') + '</p>';
             }
+            // The run row may not exist yet (link clicked as the turn starts).
+            if (!liveSource) startPolling();
             return;
         }
-        logLoading = false;
-        paint(res.j, false);
-        if (!res.j.executing || hasFinishEvent({ events: logEvents })) {
-            stopPolling();
-        }
+        ingestChunk(res.j);
+        paint(false);
+        if (!isLive(currentView())) stopLive();
+        else if (!liveSource && !(pollTimer && (!logEventStore || streamRefused))) startLive();
     }
 
-    // Live poll: re-fetch the tail overlap (last few rows refresh in place,
-    // e.g. thinking text and tool phases) plus anything newer, and append.
+    function handleChunkError() {
+        logLoading = false;
+        if (!liveSource) startPolling();
+    }
+
+    // Poll fallback: re-fetch the tail overlap (last few rows refresh in
+    // place, e.g. thinking text and tool phases) plus anything newer.
     function tick() {
-        if (!currentId || logLoading) return;
+        if (!currentId || logLoading || liveSource) return;
         var overlay = document.getElementById('queryLogOverlay');
-        if ((overlay && overlay.hidden) || !['timeline','changes'].includes(lastTab)) return;
+        if ((overlay && overlay.hidden) || (logEvents.length && !['timeline','changes'].includes(lastTab))) return;
         if (!logEvents.length) {
             logLoading = true;
-            fetchLog(currentId, firstAfter, true).then(handleChunkResponse).catch(function () { logLoading = false; });
+            fetchLog(currentId, firstAfter, true).then(handleChunkResponse).catch(handleChunkError);
             return;
         }
         var keep = Math.min(logEvents.length, 9);
         var anchor = logEvents.length > keep ? rowId(logEvents[logEvents.length - keep - 1]) : firstAfter;
         logLoading = true;
-        fetchLog(currentId, anchor, false).then(handleChunkResponse).catch(function () { logLoading = false; });
+        fetchLog(currentId, anchor, false).then(handleChunkResponse).catch(handleChunkError);
     }
 
     // Changes → one step: switch to the timeline and bring that seq into view.
@@ -696,7 +882,9 @@
     function openInspector(queryId) {
         var qid = String(queryId || '').trim();
         if (!qid) return;
+        stopLive();
         firstAfter = 0; logEvents = []; logHasMore = false; logNextAfter = 0; logLoading = false;
+        metaFields = {}; metaRev = ''; streamCursor = 0; logExecuting = false; logEventStore = false; streamRefused = false;
         targetSeq = Number(new URLSearchParams(location.search).get('seq')) || 0;
         pendingSeqScroll = targetSeq;
         currentId = qid;
@@ -707,19 +895,19 @@
         var body = document.getElementById('queryLogBody');
         if (body) {
             body.innerHTML = '<p class="query-log-empty">Loading…</p>';
+            body._qlMode = '';
+            body._qlStatic = '';
             bindLazyScroll(body);
             body.scrollTop = 0;
         }
-        if (pollTimer) clearInterval(pollTimer);
         tick();
-        pollTimer = setInterval(tick, 1000);
     }
 
     function closeInspector() {
         if (document.body.classList.contains('query-log-standalone')) return;
         var overlay = document.getElementById('queryLogOverlay');
         if (overlay) overlay.hidden = true;
-        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        stopLive();
     }
 
     /**

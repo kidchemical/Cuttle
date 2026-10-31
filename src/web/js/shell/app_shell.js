@@ -25,7 +25,7 @@ const splitContainer = document.getElementById('splitContainer');
 
 // ── Restore rail & active page from session ──────────────────
 const STORAGE_PAGE = 'shell_page';
-const shellVoice = CuttleShellVoice.create({win:window, navigate:sid=>navigate(0,'/chat_page.html?chat='+encodeURIComponent(sid))});
+const shellVoice = CuttleShellVoice.create({win:window});
 const STORAGE_RAIL = 'shell_rail_collapsed';
 const STORAGE_SPLITS = 'shell_split_count';
 /** Durable multi-pane layout (survives browser/Electron close). */
@@ -790,6 +790,9 @@ const PAGE_TITLES = {
     '/achievements_page.html': 'Achievements',
     '/gizmos_page.html': 'Gizmos',
     '/test_lab_page.html': 'Test Lab',
+    '/secrets_page.html': 'Secrets',
+    '/orchestrator_page.html': 'Orchestrator',
+    '/agent_profiles_page.html': 'Agents',
     '/ide_page.html': 'IDE',
     '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',
@@ -2565,7 +2568,7 @@ function accountAvatarInnerHtml(user) {
         return window.CuttleAuth.userAvatarInnerHtml(user);
     }
     if (user.profile_image) {
-        return `<img src="${escapeHtml(user.profile_image)}" alt="">`;
+        return `<img src="${escapeHtml(user.profile_image)}" alt="" referrerpolicy="no-referrer">`;
     }
     return accountInitials(user);
 }
@@ -2687,44 +2690,22 @@ window.addEventListener('cuttle-auth-changed', function (ev) {
     setShellAuthUser((ev.detail && ev.detail.user) || null);
 });
 
-// ── Notifications popover (past toasts) ─────────────────────────
-function getNotificationsPopover() {
-    return document.getElementById('notificationsPopover');
-}
-
-function isNotificationsPopoverOpen() {
-    const pop = getNotificationsPopover();
-    return pop && pop.classList.contains('notifications-popover-open');
-}
-
-function openNotificationsPopover() {
+// ── Notifications popover (past toasts) → shell_notifications.js ──
+const shellNotifications = CuttleShellNotifications.create({
+    win: window,
+    doc: document,
+    openChat: (sid) => openChatFromNotification(sid),
+    openPage: (page) => navigate(0, page),
+    closeOtherPopovers: () => closeWorkspacePopover(),
+    syncBackdrop: () => setWorkspaceBackdropVisible(false),
+});
+function isNotificationsPopoverOpen() { return shellNotifications.isOpen(); }
+function closeNotificationsPopover() { shellNotifications.close(); }
+function toggleNotificationsPopover() { shellNotifications.toggle(); }
+document.getElementById('notificationsPopoverBackdrop')?.addEventListener('click', () => {
+    closeNotificationsPopover();
     closeWorkspacePopover();
-    const pop = getNotificationsPopover();
-    const back = document.getElementById('notificationsPopoverBackdrop');
-    if (pop) pop.classList.add('notifications-popover-open');
-    if (back) back.classList.add('notifications-popover-backdrop-visible');
-    renderNotificationsList();
-}
-
-function closeNotificationsPopover() {
-    const pop = getNotificationsPopover();
-    const back = document.getElementById('notificationsPopoverBackdrop');
-    if (pop) pop.classList.remove('notifications-popover-open');
-    if (typeof setWorkspaceBackdropVisible === 'function') setWorkspaceBackdropVisible(false);
-    else if (back) back.classList.remove('notifications-popover-backdrop-visible');
-}
-
-function toggleNotificationsPopover() {
-    if (isNotificationsPopoverOpen()) closeNotificationsPopover();
-    else {
-        closeWorkspacePopover();
-        openNotificationsPopover();
-    }
-}
-
-function notificationUnreadIconHTML() {
-    return '<span class="notifications-unread-icon" title="Unread response" aria-label="Unread response"></span>';
-}
+});
 
 function openChatFromNotification(sessionId) {
     if (sessionId == null || sessionId === '') return;
@@ -2755,60 +2736,6 @@ function openChatFromNotification(sessionId) {
 }
 window.openChatFromNotification = openChatFromNotification;
 
-function renderNotificationsList() {
-    const listEl = document.getElementById('notificationsPopoverList');
-    const emptyEl = document.getElementById('notificationsPopoverEmpty');
-    if (!listEl || !emptyEl) return;
-    const history = typeof window.getCuttleNotificationHistory === 'function' ? window.getCuttleNotificationHistory() : [];
-    if (history.length === 0) {
-        listEl.innerHTML = '';
-        listEl.style.display = 'none';
-        emptyEl.style.display = 'block';
-        return;
-    }
-    emptyEl.style.display = 'none';
-    listEl.style.display = 'block';
-    const VARIANTS = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
-    listEl.innerHTML = history.map((n, i) => {
-        const icon = VARIANTS[n.variant] || 'ℹ';
-        const timeStr = n.time ? new Date(n.time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '';
-        const linkHtml = n.linkUrl ? ` <a href="${escapeHtml(n.linkUrl)}" target="_blank" rel="noopener" class="notifications-popover-item-link">${escapeHtml(n.linkText || 'View query log')}</a>` : '';
-        const isUnreadResponse = !!(n.unread && !n.read);
-        const unreadIcon = isUnreadResponse ? notificationUnreadIconHTML() : '';
-        const unreadClass = isUnreadResponse ? ' is-unread' : '';
-        const clickable = n.sessionId ? ' is-clickable' : '';
-        const sidAttr = n.sessionId ? ` data-session-id="${escapeHtml(String(n.sessionId))}"` : '';
-        const idAttr = n.id ? ` data-notif-id="${escapeHtml(String(n.id))}"` : '';
-        return `<div class="notifications-popover-item notifications-popover-item-${n.variant}${unreadClass}${clickable}" data-index="${i}"${idAttr}${sidAttr}><span class="notifications-popover-item-icon">${escapeHtml(icon)}</span><span class="notifications-popover-item-message">${escapeHtml(n.message)}${linkHtml}</span>${unreadIcon}<span class="notifications-popover-item-time">${escapeHtml(timeStr)}</span></div>`;
-    }).join('');
-
-    listEl.querySelectorAll('.notifications-popover-item').forEach((el) => {
-        el.addEventListener('click', (e) => {
-            if (e.target.closest('a')) return;
-            const notifId = el.dataset.notifId;
-            if (notifId && typeof window.markCuttleNotificationsRead === 'function') {
-                window.markCuttleNotificationsRead(notifId);
-            }
-            const sid = el.dataset.sessionId;
-            if (sid) openChatFromNotification(sid);
-            else {
-                renderNotificationsList();
-                updateNotificationsBadge();
-            }
-        });
-    });
-}
-
-function updateNotificationsBadge() {
-    const unreadCount = typeof window.getCuttleUnreadNotificationCount === 'function'
-        ? window.getCuttleUnreadNotificationCount()
-        : 0;
-    document.querySelectorAll('.rail-badge-notifications').forEach(badge => {
-        badge.textContent = String(unreadCount);
-        badge.style.display = unreadCount > 0 ? '' : 'none';
-    });
-}
-
 /** Chats with replies awaiting attention (unread/error dots), minus visible panes. */
 function chatUnreadCount() {
     try {
@@ -2827,24 +2754,6 @@ function updateChatUnreadBadge() {
     });
     broadcastToFrames({ type: 'cuttle-chat-unread', count });
 }
-
-(function setupNotificationsPopover() {
-    const back = document.getElementById('notificationsPopoverBackdrop');
-    const clearBtn = document.getElementById('notificationsClearBtn');
-    if (back) back.addEventListener('click', () => {
-        closeNotificationsPopover();
-        closeWorkspacePopover();
-    });
-    if (clearBtn) {
-        clearBtn.addEventListener('click', () => {
-            if (typeof window.clearCuttleNotificationHistory === 'function') window.clearCuttleNotificationHistory();
-            renderNotificationsList();
-            updateNotificationsBadge();
-        });
-    }
-    window.addEventListener('cuttle-notification-added', updateNotificationsBadge);
-    updateNotificationsBadge();
-})();
 
 // ── Workspace save / load (cross-device split + open chats) ─────
 function getWorkspacePopover() {
@@ -3566,6 +3475,8 @@ function setupPaneReorder(colEl) {
     let activated = false;
     let dropTarget = null;
     let dropBefore = true;
+    let activePointerId = null;
+    let captureEl = null;
     // Cross-space carry (hover→switch, drop→move/swap) lives in the Spaces
     // owner (shell_spaces.js); the within-space pane reorder below stays here.
     const paneDrop = shellSpaces.paneDrop;
@@ -3577,6 +3488,17 @@ function setupPaneReorder(colEl) {
         window.removeEventListener('blur', onBlurCancel, true);
     };
 
+    const releasePointerCapture = () => {
+        try {
+            if (captureEl && activePointerId !== undefined && activePointerId !== null
+                && typeof captureEl.hasPointerCapture === 'function'
+                && captureEl.hasPointerCapture(activePointerId)) {
+                captureEl.releasePointerCapture(activePointerId);
+            }
+        } catch (_) {}
+        captureEl = null;
+    };
+
     const finish = (upEvent, cancelled) => {
         if (!dragging) return;
         const wasActive = activated;
@@ -3584,6 +3506,8 @@ function setupPaneReorder(colEl) {
         const before = dropBefore;
         dragging = false;
         activated = false;
+        releasePointerCapture();
+        activePointerId = null;
         unbindWindow();
         grip.classList.remove('is-dragging');
         colEl.classList.remove('is-pane-dragging');
@@ -3605,6 +3529,7 @@ function setupPaneReorder(colEl) {
 
     const onMove = (e) => {
         if (!dragging) return;
+        if (e.pointerId !== activePointerId) return;
         // A grip press whose release was missed must never start a button-less
         // drag on the next hover — cancel it instead of committing anything.
         if (e.buttons === 0) { finish(null, true); return; }
@@ -3618,6 +3543,18 @@ function setupPaneReorder(colEl) {
             colEl.classList.add('is-pane-dragging');
             document.body.style.cursor = 'grabbing';
             document.body.style.userSelect = 'none';
+            // Capture to the body, not the grip: the hover auto-switch hides
+            // the drag source (discarded subtree), which would otherwise fire
+            // pointercancel at the grip and kill the still-held carry. The
+            // body survives every space swap, so moves/ups keep flowing here.
+            try {
+                const capTarget = document.body || grip;
+                if (capTarget && typeof capTarget.setPointerCapture === 'function'
+                    && activePointerId !== undefined && activePointerId !== null) {
+                    capTarget.setPointerCapture(activePointerId);
+                    captureEl = capTarget;
+                }
+            } catch (_) {}
         }
 
         // Hit-test every live leaf (horizontal, vertical, nested). Prefer the
@@ -3657,9 +3594,22 @@ function setupPaneReorder(colEl) {
         dropTarget = hit;
     };
 
-    const onUp = (e) => finish(e, false);
-    const onCancel = () => finish(null, true);
-    const onBlurCancel = () => finish(null, true);
+    const onUp = (e) => {
+        if (e.pointerId !== activePointerId) return;
+        finish(e, false);
+    };
+    // The hover auto-switch hides the drag source, which fires pointercancel
+    // (and may blur) at the grip. That cancel belongs to the switch, not the
+    // user — keep carrying while the switch is fresh so the still-held grip
+    // can land on the new space.
+    const onCancel = () => {
+        if (paneDrop.recentAutoSwitch && paneDrop.recentAutoSwitch()) return;
+        finish(null, true);
+    };
+    const onBlurCancel = () => {
+        if (paneDrop.recentAutoSwitch && paneDrop.recentAutoSwitch()) return;
+        finish(null, true);
+    };
 
     grip.addEventListener('pointerdown', (e) => {
         if (e.button != null && e.button !== 0) return;
@@ -3669,6 +3619,7 @@ function setupPaneReorder(colEl) {
         e.stopPropagation();
         dragging = true;
         activated = false;
+        activePointerId = e.pointerId;
         startX = e.clientX;
         startY = e.clientY;
         dropTarget = null;
@@ -4052,9 +4003,9 @@ async function runShellHeartbeat() {
     shellHeartbeatInFlight = true;
     try {
         const tasks = [pollUiToasts(), pollJobsBadge()];
-        if (typeof window.__cuttleShellPollWorkers === 'function') {
-            tasks.push(Promise.resolve(window.__cuttleShellPollWorkers()));
-        }
+        ['__cuttleShellPollWorkers', '__cuttleShellPollSshApproval'].forEach((hook) => {
+            if (typeof window[hook] === 'function') tasks.push(Promise.resolve(window[hook]()));
+        });
         if (paneController?.hasSessions()) {
             tasks.push(paneController?.pollLiveStatusHub());
         }

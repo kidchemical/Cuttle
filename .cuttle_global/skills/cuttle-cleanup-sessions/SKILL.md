@@ -11,18 +11,20 @@ description: >-
 
 ## Quick path (preferred)
 
-From repo root `/path/to/Cuttle`:
+From the Cuttle repo root:
 
-```powershell
+```bash
 # Preview
-.venv\Scripts\python.exe .cuttle\scripts\cleanup-idle-sessions.py --hours 24 --dry-run
+.venv/bin/python .cuttle/scripts/cleanup-idle-sessions.py --hours 24 --dry-run
 
 # Delete (keeps starred)
-.venv\Scripts\python.exe .cuttle\scripts\cleanup-idle-sessions.py --hours 24
+.venv/bin/python .cuttle/scripts/cleanup-idle-sessions.py --hours 24
 
 # Also delete starred idles
-.venv\Scripts\python.exe .cuttle\scripts\cleanup-idle-sessions.py --hours 24 --include-starred
+.venv/bin/python .cuttle/scripts/cleanup-idle-sessions.py --hours 24 --include-starred
 ```
+
+Windows: same arguments with `.venv\Scripts\python.exe .cuttle\scripts\cleanup-idle-sessions.py`.
 
 Report `matched`, `deleted`, and whether any **starred** sessions were skipped.
 
@@ -36,7 +38,7 @@ Soft-delete only: `UPDATE chat_sessions SET is_active = 0` — same as
 
 DB: `<home>/db/cuttle_auth.db` — `<home>` is the per-user Cuttle home (`~/.local/share/cuttle`, `%LOCALAPPDATA%\Cuttle`, or `$CUTTLE_HOME`; `core.runtime_paths.cuttle_home()`).
 
-Script: [file:////path/to/Cuttle/.cuttle/scripts/cleanup-idle-sessions.py](file:////path/to/Cuttle/.cuttle/scripts/cleanup-idle-sessions.py)
+Script: `.cuttle/scripts/cleanup-idle-sessions.py` (Cuttle repo).
 
 ## Defaults agents must follow
 
@@ -44,7 +46,7 @@ Script: [file:////path/to/Cuttle/.cuttle/scripts/cleanup-idle-sessions.py](file:
 2. **Keep starred** unless the user says to include them (`--include-starred`).
 3. Do **not** call Flask session DELETE in a loop when the script can run — direct DB soft-delete is fine and does not need a Flask restart.
 4. Do **not** hard-delete rows or wipe `chat_messages` unless the user explicitly asks for a destructive purge.
-5. Never `taskkill` Flask as part of this cleanup.
+5. Never kill Flask (`kill`/`pkill`/`taskkill`) as part of this cleanup.
 
 ## Slash command
 

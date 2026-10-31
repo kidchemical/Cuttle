@@ -577,6 +577,72 @@ def test_shell_action_lane_prompt_action_replaces_message(monkeypatch):
     assert body is None and mc == "EXPANDED" and busy is False
 
 
+def test_shell_action_lane_prompt_action_remembers_typed_history(monkeypatch):
+    """History keeps the typed command; only the agent sees the expansion."""
+    import api.project_commands as pc
+
+    monkeypatch.setattr(
+        pc,
+        "try_expand_message_project_command",
+        lambda msg, path: {
+            "action": "prompt", "message": "/claude EXPANDED",
+            "command": {"name": "orchestrate"}, "args": "ship it",
+        },
+    )
+    remembered = []
+    _, mc, _ = _shell_lane(
+        "/claude /orchestrate ship it",
+        session_id=777,
+        auth_user=dict(USER),
+        data={},
+        resolve_project_path=lambda d: "/tmp/proj",
+        persist_user_turn=lambda sid: None,
+        make_saver=lambda sid: None,
+        rewrite_actions=lambda *a, **k: None,
+        remember_history=remembered.append,
+    )
+    assert mc == "/claude EXPANDED"
+    assert remembered == [{
+        "text": "/claude /orchestrate ship it",
+        "meta": {"project_command": {"name": "orchestrate", "args": "ship it"}},
+    }]
+
+
+def test_project_command_turn_persists_typed_text_not_expansion(
+    workflow_env, monkeypatch,
+):
+    """CH-001765: the saved user row must match the optimistic bubble.
+
+    Persisting the expanded prompt made sync add a second "user" bubble
+    (server ids sort above unstamped ones), so the expansion showed up
+    above the message the user actually typed.
+    """
+    wca, db = workflow_env
+    import api.project_commands as pc
+
+    monkeypatch.setattr(
+        pc,
+        "try_expand_message_project_command",
+        lambda msg, path: {
+            "action": "prompt", "message": "/cursor # Cuttle project command: build",
+            "command": {"name": "build"}, "args": "now",
+        },
+    )
+    seen = []
+
+    def fake_run(agent_id, prompt, chat_session_id, **kwargs):
+        seen.append(prompt)
+        return {"success": True, "response": "built", "type": "cursor"}
+
+    res = _post(wca, "/cursor /build now", runner=fake_run, monkeypatch=monkeypatch)
+    assert res.status_code == 200
+    assert seen == ["# Cuttle project command: build"]
+    user = db.rows[0]
+    assert user["role"] == "user"
+    assert user["content"] == "/cursor /build now"
+    assert user["metadata"]["project_command"] == {"name": "build", "args": "now"}
+
+
 def test_shell_action_lane_shell_action_persists(monkeypatch):
     """A shell project command runs as no-LLM, persists, and returns a body."""
     import api.project_commands as pc

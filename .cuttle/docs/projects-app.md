@@ -27,6 +27,9 @@ and chat history remain intact when paths or project names change.
 
 - **Add project** registers an existing host folder and initializes `.cuttle/`.
 - **Overview** edits name, description, tags, and an optional forge URL.
+  An optional **Display name** (stored as `config.display_name`, up to 60
+  characters) replaces the name on chat project chips, badges, and the project
+  picker; empty falls back to the name. The project ID remains the identity.
 - **Configuration** inventories shared/project layers and their personal overlays.
   It does not edit arbitrary config files or claim that every shared layer is enabled;
   the project's `GLOBAL.ini` still owns participation.

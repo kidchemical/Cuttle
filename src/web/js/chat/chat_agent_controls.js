@@ -2415,6 +2415,10 @@
                         model: S.claudeModel, effort: S.claudeEffort,
                         modelDirty: S.claudeModelDirty, effortDirty: S.claudeEffortDirty,
                     },
+                    cursor: {
+                        model: S.preferredModel, effort: '',
+                        modelDirty: false, effortDirty: false,
+                    },
                 },
             });
             if (Object.keys(pins).length) requestBody.agent_pins = pins;

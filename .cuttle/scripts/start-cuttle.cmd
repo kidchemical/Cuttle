@@ -69,6 +69,16 @@ if exist "%CUTTLE_EXE%" (
   )
   goto :eof
 )
+rem Source checkout: run the installed Electron binary directly (no console).
+set "ELECTRON_BIN=%ELECTRON_DIR%\node_modules\electron\dist\electron.exe"
+if exist "%ELECTRON_BIN%" (
+  if defined CUTTLE_HOST (
+    start "Cuttle Client" /D "%ELECTRON_DIR%" "%ELECTRON_BIN%" "%ELECTRON_DIR%" --client --host="%CUTTLE_HOST%"
+  ) else (
+    start "Cuttle Client" /D "%ELECTRON_DIR%" "%ELECTRON_BIN%" "%ELECTRON_DIR%" --client
+  )
+  goto :eof
+)
 where npm.cmd >nul 2>&1
 if errorlevel 1 (
   echo ERROR: No Cuttle.exe and npm.cmd not found.
@@ -99,7 +109,10 @@ if not exist "%DAEMON%" (
   exit /b 1
 )
 echo Starting Cuttle Host ^(daemon + app^) ...
-start "Cuttle Host" "%VENV_PY%" "%DAEMON%"
+rem Run the daemon in this window: `start` would open a second console.
+rem Closing this window stops the daemon; tray Exit is the normal shutdown.
+title Cuttle Host
+"%VENV_PY%" "%DAEMON%"
 goto :eof
 
 :START_DAEMON
@@ -111,7 +124,8 @@ if not exist "%VENV_PY%" (
   exit /b 1
 )
 echo Starting Cuttle daemon only ^(no app^) ...
-start "Cuttle Daemon" "%VENV_PY%" "%DAEMON%"
+title Cuttle Daemon
+"%VENV_PY%" "%DAEMON%" --no-ui
 goto :eof
 
 :MAKE_SHORTCUT

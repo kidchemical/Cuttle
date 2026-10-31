@@ -31,6 +31,27 @@ GOOGLE_TOKEN_RATES_USD_PER_MILLION = {
     "gemini-2.5-flash-preview-tts": {"input": 0.50, "output": 10.0},
     "gemini-2.5-pro-preview-tts": {"input": 1.0, "output": 20.0},
 }
+# A 1,000-character reply is about a minute of speech: ~250 text tokens in and
+# ~1,500 audio tokens out at Gemini's 25 audio tokens per second.
+_REPLY_CHARS = 1000
+_GOOGLE_REPLY_TOKENS = (250, 1500)
+
+
+def price_hint(provider_id: str, model: str) -> Optional[Dict[str, Any]]:
+    """List price plus an estimate for one ~1,000-character spoken reply."""
+    pid, mid = str(provider_id or "").strip().lower(), str(model or "").strip()
+    if pid == "google":
+        rates = GOOGLE_TOKEN_RATES_USD_PER_MILLION.get(mid)
+        if not rates:
+            return None
+        return {"per_reply_usd": estimate_google_cost_usd(mid, *_GOOGLE_REPLY_TOKENS),
+                "rate": f"${rates['input']:g} in / ${rates['output']:g} out per 1M tokens"}
+    table = {"openai": OPENAI_CHAR_RATES_USD_PER_MILLION,
+             "elevenlabs": ELEVENLABS_CHAR_RATES_USD_PER_MILLION}.get(pid, {})
+    if mid not in table:
+        return None
+    return {"per_reply_usd": estimate_cost_usd(pid, mid, chars=_REPLY_CHARS),
+            "rate": f"${table[mid]:g} per 1M characters"}
 
 
 class TtsProvider:
@@ -38,7 +59,7 @@ class TtsProvider:
 
     __slots__ = (
         "id", "label", "credential_env", "models", "default_model",
-        "voices", "speed_range", "supports_stability",
+        "voices", "speed_range", "supports_stability", "model_descriptions",
     )
 
     def __init__(
@@ -52,6 +73,7 @@ class TtsProvider:
         voices: Tuple[Tuple[str, str], ...] = (),
         speed_range: Optional[Tuple[float, float]] = None,
         supports_stability: bool = False,
+        model_descriptions: Optional[Dict[str, str]] = None,
     ) -> None:
         self.id = id
         self.label = label
@@ -61,6 +83,7 @@ class TtsProvider:
         self.voices = voices
         self.speed_range = speed_range
         self.supports_stability = supports_stability
+        self.model_descriptions = dict(model_descriptions or {})
 
     def credential_present(self) -> bool:
         return any((os.getenv(name) or "").strip() for name in self.credential_env)
@@ -75,7 +98,8 @@ class TtsProvider:
             "credential_env": list(self.credential_env),
             "credential_present": self.credential_present(),
             "configured": self.configured(),
-            "models": [{"id": m, "label": lab} for m, lab in self.models],
+            "models": [{"id": m, "label": lab, "description": self.model_descriptions.get(m, ""),
+                        "price": price_hint(self.id, m)} for m, lab in self.models],
             "default_model": self.default_model,
             "voices": [{"id": v, "label": lab} for v, lab in self.voices],
             "speed_range": list(self.speed_range) if self.speed_range else None,
@@ -92,7 +116,8 @@ _REGISTRY: Tuple[TtsProvider, ...] = tuple(
                 default_model=p.speech['default_model'],
                 voices=tuple((v['id'], v.get('label') or v['id']) for v in p.speech.get('voices', [])),
                 speed_range=tuple(p.speech['speed_range']) if p.speech.get('speed_range') else None,
-                supports_stability=p.speech.get('supports_stability', False))
+                supports_stability=p.speech.get('supports_stability', False),
+                model_descriptions={m['id']: m.get('description', '') for m in p.speech.get('models', [])})
     for p in manifests() if 'speech_generation' in p.operations
 )
 

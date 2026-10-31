@@ -792,6 +792,9 @@ class AuthDatabase:
     
     def verify_auth_session(self, session_token: str) -> Optional[Dict[str, Any]]:
         """Verify auth session and return user info if valid"""
+        if session_token.startswith('cuttle-chat-op.'):
+            from api.chat_ops.local_auth import verify
+            return verify(session_token, self)
         conn = self._get_connection()
         cursor = conn.cursor()
         
@@ -1841,6 +1844,19 @@ class AuthDatabase:
                 "AND json_valid(metadata) AND json_extract(metadata, '$.delivery_key') = ?",
                 (chat_session_id, delivery_key)).fetchone()
             return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def assistant_query_ids(self, chat_session_id: int) -> set[str]:
+        """Query receipts without loading transcript contents or large payloads."""
+        conn = self._get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT json_extract(metadata, '$.query_id') FROM chat_messages "
+                "WHERE chat_session_id=? AND role='assistant' AND json_valid(metadata)",
+                (int(chat_session_id),),
+            ).fetchall()
+            return {row[0] for row in rows if row[0]}
         finally:
             conn.close()
 

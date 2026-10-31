@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -986,6 +987,35 @@ class DeviceWorkerStore:
                 return [_row_job(r) for r in rows]
             finally:
                 conn.close()
+
+    def host_delivered_heads(self, worker_id: str, limit: int = 20) -> List[str]:
+        """HEADs that Host-channel self-updates left on ``worker_id``, newest first.
+
+        A Client still on one of these has no commits of its own, so it may
+        follow this Host when the Host rewinds or rewrites its branch.
+        """
+        with _lock:
+            conn = _connect(self.db_path)
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT json_extract(result_json, '$.head') FROM jobs
+                    WHERE type = 'cuttle_self_update' AND status = 'succeeded'
+                      AND target_worker_id = ?
+                      AND json_extract(params_json, '$.update_source') = 'host'
+                    ORDER BY completed_at DESC
+                    LIMIT ?
+                    """,
+                    (worker_id, max(1, min(int(limit), 200))),
+                ).fetchall()
+            finally:
+                conn.close()
+        heads: List[str] = []
+        for (head,) in rows:
+            text = str(head or "").strip().lower()
+            if re.fullmatch(r"[0-9a-f]{7,40}", text) and text not in heads:
+                heads.append(text)
+        return heads
 
     def list_batch_jobs(self, batch_id: str) -> List[Dict[str, Any]]:
         """Complete batch inventory, independent of the recent-jobs UI limit."""

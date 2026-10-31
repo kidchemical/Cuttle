@@ -19,6 +19,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 
 
@@ -31,6 +32,11 @@ class UpdateRefused(RuntimeError):
 # (the pin is public — the Host's cert fingerprint — and travels over the
 # already-trusted job channel). Empty on the checkout copy; set by submit.
 EMBEDDED_HOST_SPKI = ""
+# Short HEADs this Host's past self-updates left on this Client (newest first),
+# substituted by the Host on delivery. Empty on the checkout copy.
+EMBEDDED_HOST_DELIVERED_HEADS: tuple = ()
+# Local-only ref: the last commit a Host update delivered to this checkout.
+HOST_DELIVERED_REF = 'refs/cuttle/host-delivered'
 
 
 def git(repo: Path, *args: str) -> bytes:
@@ -71,6 +77,58 @@ def _fast_forward(repo: Path, target: bytes) -> None:
     require_clean(repo)  # Work created during fetch must be refused too.
     _ignored_collision_guard(repo, target)
     git(repo, 'merge', '--ff-only', '--no-overwrite-ignore', target)
+
+
+def _rev(repo: Path, ref: str) -> str:
+    try:
+        return git(repo, 'rev-parse', '--verify', '-q', f'{ref}^{{commit}}').decode().strip()
+    except UpdateRefused:
+        return ''
+
+
+def _host_delivered(repo: Path, head: str) -> bool:
+    """True when HEAD is exactly a commit a Host update put here (no Client work on top)."""
+    if head and _rev(repo, HOST_DELIVERED_REF) == head:
+        return True
+    return any(len(h) >= 7 and head.startswith(h.lower()) for h in EMBEDDED_HOST_DELIVERED_HEADS)
+
+
+def _follow_host(repo: Path, target: bytes) -> None:
+    """Fast-forward to the Host; follow a rewound Host branch only when nothing is ours.
+
+    A Host can lose or rewrite commits it already served (repo repair, amend,
+    reset). A Client still sitting on such a commit has nothing of its own to
+    lose, so it moves to the Host's branch and keeps the old head under
+    ``refs/cuttle/superseded/``. Any Client-made commit still refuses.
+    """
+    head = git(repo, 'rev-parse', 'HEAD').decode().strip()
+    tgt = target.decode()
+    try:
+        git(repo, 'merge-base', '--is-ancestor', 'HEAD', tgt)
+        ancestor = True
+    except UpdateRefused:
+        ancestor = False
+    if ancestor:
+        _fast_forward(repo, target)
+    elif _host_delivered(repo, head):
+        require_clean(repo)
+        _ignored_collision_guard(repo, target)
+        backup = f'refs/cuttle/superseded/{time.strftime("%Y%m%d-%H%M%S")}-{head[:9]}'
+        git(repo, 'update-ref', '-m', 'cuttle: host rewrote its branch; keep previous host head', backup, head)
+        print(f'host branch no longer contains {head[:9]} (host rewrote it); previous head kept at {backup}', flush=True)
+        git(repo, 'reset', '--keep', tgt)
+    else:
+        try:
+            ahead = git(repo, 'rev-list', '--count', f'{tgt}..HEAD').decode().strip()
+        except UpdateRefused:
+            ahead = '?'
+        raise UpdateRefused(
+            f'local commits or diverged upstream; reconcile before updating '
+            f'({ahead} commit(s) on {head[:9]} are not on the Host branch {tgt[:9]} and '
+            f'were not delivered by this Host. Keep them with `git branch keep/client-work HEAD`, '
+            f'then `git reset --keep {tgt[:9]}` to follow the Host.)'
+        )
+    git(repo, 'update-ref', '-m', 'cuttle: host update', HOST_DELIVERED_REF, tgt)
 
 
 _CONFIG_DIAG = []
@@ -245,7 +303,7 @@ def update_checkout(
         print(f'git fetch {bundle_path}', flush=True)
         git(repo, 'fetch', str(bundle_path), want or 'HEAD')
         target = git(repo, 'rev-parse', '--verify', 'FETCH_HEAD^{commit}').decode().strip().encode()
-        _fast_forward(repo, target)
+        _follow_host(repo, target)
         return
 
     upstream = git(repo, 'rev-parse', '--verify', '@{u}').decode().strip()

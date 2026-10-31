@@ -13,7 +13,39 @@ delivery orchestration here.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
+
+
+_CHAT_OP_ID = re.compile(r'[0-9a-f]{32}')
+
+
+def chat_op_metadata(request_data, session_id=None) -> dict:
+    """Stamp a chat-ops send's id on the user row so the sender can tell, after a
+    lost connection, whether the turn arrived (api.chat_ops.worker).
+
+    A send recorded in the chat-ops store for this chat renders as Cuttle, like
+    a parent's message to its sub-agent, not as the user. The store lookup is
+    what makes that speaker claim trustworthy; a bare id only gets the id."""
+    oid = (request_data or {}).get('chat_op_id') if isinstance(request_data, dict) else None
+    if not (isinstance(oid, str) and _CHAT_OP_ID.fullmatch(oid)):
+        return {}
+    meta = {'chat_op_id': oid}
+    try:
+        from api.chat_ops import store
+
+        op = store.find(oid)
+    except Exception:
+        op = None
+    bare = str(session_id or '').replace('db_session_', '')
+    if op and op.get('kind') in ('send', 'checkin') and str(op.get('target')) == bare:
+        handle = f"CH-{int(op['actor']):06d}"
+        meta.update({
+            'origin': 'chat_ops', 'speaker': 'Cuttle', 'speaker_kind': 'parent', 'avatar': 'cuttle',
+            'parent_session_id': int(op['actor']), 'parent_handle': handle,
+            'parent_label': 'Supervision check-in' if op['kind'] == 'checkin' else f'Sent by {handle}',
+        })
+    return meta
 
 
 def native_control_metadata(request_data, *, message=None, native_command=None) -> dict:
@@ -336,7 +368,16 @@ def user_badge_metadata(message_text: str, session_id, identity: Optional[dict] 
             meta += f' · effort {effort}'
         return {'slash_command': {'chips': [{'label': label, 'meta': meta, 'category': 'claude'}]}}
     # Cursor effort is baked into the model id.
-    model = ident_model if ident is not None else ''
+    # This-turn `/model <id>` (joined from the composer chip) must win: the
+    # session store is still Auto on a new chat until the adapter peels the
+    # slash, and freeze-identity used to skip Cursor entirely (CH-001567).
+    slash_model = ''
+    try:
+        from api.cursor_agent_commands import cursor_model_from_prompt
+        slash_model = str(cursor_model_from_prompt(text) or '').strip()
+    except Exception:
+        slash_model = ''
+    model = slash_model or (ident_model if ident is not None else '')
     try:
         if not model and sid:
             from scripts.utilities.cursor_cli_session_store import load_cursor_agent_options

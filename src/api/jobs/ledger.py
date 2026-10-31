@@ -140,6 +140,59 @@ def _mesh_detail(row: Dict[str, Any]) -> str:
     return ""
 
 
+_CHAT_OP_STATUS = {
+    "pending": "queued", "dispatching": "running", "verifying": "queued", "delivered": "succeeded", "done": "succeeded",
+    "failed": "failed", "cancelled": "cancelled", "unknown": "failed", "blocked": "failed",
+}
+
+
+def _chat_op_to_job(op: Dict[str, Any]) -> Dict[str, Any]:
+    target = f"CH-{int(op['target']):06d}"
+    actor = int(op["actor"])
+    if op["kind"] == "supervise":
+        # A live schedule is ongoing work, not a queued one-shot.
+        status = {"pending": "running", "dispatching": "running", "paused": "paused"}.get(
+            op["state"], _CHAT_OP_STATUS.get(op["state"], op["state"]))
+        every = int((op.get("payload") or {}).get("every") or 0)
+        label, detail = f"Supervise {target}", f"every {every // 60}m" if every else ""
+        seen = (op.get("result") or {}).get("last_seen") or {}
+        if seen.get("state"):
+            detail += f" · last seen {seen['state']}"
+    else:
+        status = _CHAT_OP_STATUS.get(op["state"], op["state"])
+        label = f"Send → {target}"
+        detail = str((op.get("payload") or {}).get("text") or "")[:120]
+    actions = ["cancel"] if op["state"] in ("pending", "paused", "verifying") or (
+        op["kind"] == "supervise" and op["state"] == "dispatching") else []
+    return {
+        "kind": "chat_op",
+        "id": op["id"],
+        "short_id": op["id"][:8],
+        "label": label,
+        "status": status,
+        "started_at": op.get("updated"),
+        "finished_at": None,
+        "duration_s": None,
+        "origin": {"chat_session_id": str(actor), "project_root": ""},
+        "target": target,
+        "meta": {"op_kind": op["kind"], "detail": detail,
+                 "error": str((op.get("result") or {}).get("error") or "")},
+        "links": {"chat": f"/chat_page.html?session={actor}"},
+        "actions": actions,
+    }
+
+
+def chat_op_jobs(limit: int = 200) -> List[Dict[str, Any]]:
+    """Supervision schedules and queued chat sends (``chat_supervision`` flag)."""
+    from api.experimental import is_enabled
+
+    if not is_enabled("chat_supervision"):
+        return []
+    from api.chat_ops import store
+
+    return [_chat_op_to_job(op) for op in store.recent(limit)]
+
+
 # ── queries ─────────────────────────────────────────────────────────────────
 
 
@@ -170,6 +223,10 @@ def unified_jobs(
     if kind in (None, "mesh"):
         for row in mesh_store().list_jobs(limit=max(limit, 200)):
             job = _mesh_to_job(row)
+            if _passes(job, status, active_only):
+                jobs.append(job)
+    if kind in (None, "chat_op"):
+        for job in chat_op_jobs(limit=max(limit, 200)):
             if _passes(job, status, active_only):
                 jobs.append(job)
     jobs.sort(key=lambda j: j.get("started_at") or 0, reverse=True)

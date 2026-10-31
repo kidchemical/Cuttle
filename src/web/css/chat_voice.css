@@ -8,7 +8,9 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: calc(64px + var(--cuttle-safe-top, 0px)) 20px calc(20px + var(--cuttle-safe-bottom, 0px));
+    /* --shell-voice-strip-h is only set here on a standalone chat page, where
+       the call strip is pinned over this document's bottom edge. */
+    padding: calc(64px + var(--cuttle-safe-top, 0px)) 20px calc(20px + max(var(--cuttle-safe-bottom, 0px), var(--shell-voice-strip-h, 0px)));
     /* Transparent — keep the same video/atmosphere as normal chat */
     background: transparent;
     overflow: hidden;
@@ -53,15 +55,28 @@
     color: var(--text-secondary);
 }
 
-/* The session total is pinned just under the fixed session title
-   (.chat-session-title: top 14px + 32px tall, + safe-area on phones). */
-.voice-mode-overlay > #voiceModeSessionUsage {
+/* Session total and voice-connection pills are pinned just under the fixed
+   session title (.chat-session-title: top 14px + 32px tall, + safe-area on
+   phones) and stack vertically so they never overlap. */
+.voice-mode-usage-stack {
     position: absolute;
     top: calc(52px + var(--cuttle-safe-top, 0px));
     left: 50%;
     transform: translateX(-50%);
     z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    /* Absolute + left:50% would otherwise shrink-to-fit to half the overlay
+       and wrap the token counts. */
+    width: max-content;
     max-width: calc(100% - 32px);
+    pointer-events: none;
+}
+
+.voice-mode-usage-stack > .voice-mode-session-usage {
+    pointer-events: auto;
 }
 
 .voice-mode-session-usage[hidden] {
@@ -79,6 +94,11 @@
 
 .voice-mode-session-usage .message-usage {
     margin: 0;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Per-reply usage under the voice transcript bubble. */
@@ -152,8 +172,8 @@ body.voice-mode .chat-chrome-menu {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 160px;
-    height: 160px;
+    width: 224px;
+    height: 224px;
     opacity: 0.35;
     transition: opacity 0.35s ease, transform 0.35s ease;
     transform: scale(0.92);
@@ -164,8 +184,8 @@ body.voice-mode .chat-chrome-menu {
     position: absolute;
     left: 50%;
     top: 50%;
-    width: 208px;
-    height: 208px;
+    width: 290px;
+    height: 290px;
     transform: translate(-50%, -50%);
     pointer-events: none;
 }
@@ -178,35 +198,35 @@ body.voice-mode .chat-chrome-menu {
 }
 
 .voice-mode-orbit.typing-orbit {
-    width: 120px;
-    height: 120px;
+    width: 168px;
+    height: 168px;
 }
 
 .voice-mode-orbit .typing-orbit-ring {
-    border-width: 1.5px;
+    border-width: 2px;
 }
 
 .voice-mode-orbit .typing-orbit-ring::before {
-    width: 8px;
-    height: 8px;
-    top: -4px;
-    margin-left: -4px;
+    width: 10px;
+    height: 10px;
+    top: -5px;
+    margin-left: -5px;
 }
 
 .voice-mode-orbit .typing-orbit-core {
-    width: 28px;
-    height: 28px;
-    margin: -14px 0 0 -14px;
+    width: 40px;
+    height: 40px;
+    margin: -20px 0 0 -20px;
 }
 
 .voice-mode-orbit .typing-orbit-sat {
-    width: 7px;
-    height: 7px;
+    width: 9px;
+    height: 9px;
 }
 
-.voice-mode-orbit .typing-orbit-sat--1 { --sat-r: 42px; }
-.voice-mode-orbit .typing-orbit-sat--2 { --sat-r: 42px; }
-.voice-mode-orbit .typing-orbit-sat--3 { --sat-r: 42px; }
+.voice-mode-orbit .typing-orbit-sat--1 { --sat-r: 59px; }
+.voice-mode-orbit .typing-orbit-sat--2 { --sat-r: 59px; }
+.voice-mode-orbit .typing-orbit-sat--3 { --sat-r: 59px; }
 
 .voice-mode-orbit .typing-orbit-sat {
     animation-name: voice-sat-orbit;
@@ -214,10 +234,10 @@ body.voice-mode .chat-chrome-menu {
 
 @keyframes voice-sat-orbit {
     from {
-        transform: rotate(0deg) translateX(42px) rotate(0deg);
+        transform: rotate(0deg) translateX(59px) rotate(0deg);
     }
     to {
-        transform: rotate(360deg) translateX(42px) rotate(-360deg);
+        transform: rotate(360deg) translateX(59px) rotate(-360deg);
     }
 }
 
@@ -417,13 +437,6 @@ body.voice-mode .chat-chrome-menu {
     50% { box-shadow: 0 0 0 16px color-mix(in srgb, var(--accent-color) 6%, transparent); }
 }
 
-.voice-mode-hint {
-    margin: 0;
-    font-size: 0.8rem;
-    color: var(--text-tertiary);
-    text-align: center;
-}
-
 .voice-mode-watch-btn {
     padding: 8px 18px;
     border-radius: 999px;
@@ -454,28 +467,33 @@ body.voice-mode .chat-chrome-menu {
         gap: 10px;
     }
     .voice-mode-orbit-wrap {
-        width: 96px;
-        height: 96px;
+        width: 136px;
+        height: 136px;
     }
     .voice-mode-wave-ring {
-        width: 128px;
-        height: 128px;
+        width: 180px;
+        height: 180px;
     }
     .voice-mode-orbit.typing-orbit {
-        width: 80px;
-        height: 80px;
+        width: 112px;
+        height: 112px;
+    }
+    .voice-mode-orbit .typing-orbit-core {
+        width: 32px;
+        height: 32px;
+        margin: -16px 0 0 -16px;
     }
     .voice-mode-orbit .typing-orbit-sat--1,
     .voice-mode-orbit .typing-orbit-sat--2,
-    .voice-mode-orbit .typing-orbit-sat--3 { --sat-r: 28px; }
+    .voice-mode-orbit .typing-orbit-sat--3 { --sat-r: 40px; }
     .voice-mode-orbit .typing-orbit-sat {
         animation-name: voice-sat-orbit-sm;
     }
 }
 
 @keyframes voice-sat-orbit-sm {
-    from { transform: rotate(0deg) translateX(28px) rotate(0deg); }
-    to { transform: rotate(360deg) translateX(28px) rotate(-360deg); }
+    from { transform: rotate(0deg) translateX(40px) rotate(0deg); }
+    to { transform: rotate(360deg) translateX(40px) rotate(-360deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {

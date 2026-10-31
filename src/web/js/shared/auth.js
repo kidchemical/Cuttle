@@ -99,7 +99,7 @@ function userAvatarInnerHtml(user, opts) {
     if (!user) return '?';
     if (user.profile_image) {
         const alt = (opts && opts.alt) || user.display_name || user.username || 'User';
-        return `<img src="${_escapeHtmlAttr(user.profile_image)}" alt="${_escapeHtmlAttr(alt)}">`;
+        return `<img src="${_escapeHtmlAttr(user.profile_image)}" alt="${_escapeHtmlAttr(alt)}" referrerpolicy="no-referrer">`;
     }
     return userAvatarInitials(user);
 }

@@ -28,6 +28,25 @@
         return checkoutByUid[String(uid || '')] || null;
     }
 
+    // Last server-side binding seen per chat, so a sync only re-applies a
+    // binding the server changed (an agent `bind`), never a local pick in flight.
+    const serverUidBySession = Object.create(null);
+
+    /**
+     * Note a messages payload's bound checkout. Returns true when the server's
+     * binding for this chat changed since the last payload seen for it.
+     */
+    function observeSessionCheckout(sessionId, data) {
+        if (!data || !Object.prototype.hasOwnProperty.call(data, 'checkout_uid')) return false;
+        if (data.checkout && data.checkout.checkout_uid) rememberWorktrees([data.checkout]);
+        const key = String(sessionId);
+        const uid = String(data.checkout_uid || '');
+        const changed = Object.prototype.hasOwnProperty.call(serverUidBySession, key)
+            && serverUidBySession[key] !== uid;
+        serverUidBySession[key] = uid;
+        return changed;
+    }
+
     function slug(name) {
         const s = String(name || '')
             .trim()
@@ -122,7 +141,10 @@
         }
     }
 
-    const api = { slug, defaultBranch, isEnabled, probe, list, create, remove, branchForUid, checkoutForUid };
+    const api = {
+        slug, defaultBranch, isEnabled, probe, list, create, remove, branchForUid, checkoutForUid,
+        observeSessionCheckout,
+    };
     const ns = (root.CuttleChatWorktrees = root.CuttleChatWorktrees || {});
     Object.assign(ns, api);
     if (typeof module !== 'undefined' && module.exports) module.exports = api;

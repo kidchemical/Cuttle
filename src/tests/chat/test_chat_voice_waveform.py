@@ -4,7 +4,8 @@ Contracts pinned here:
 - smoothLevel/mapLevel/ringRadii/barHeights are pure and bounded;
 - the overlay carries a subtle background canvas, a ring canvas around the
   orbit, and a session-total strip (hidden until usage is known);
-- the orb caption stays minimal ("Tap or hold the orb");
+- the orb carries no instruction text: no idle "tap the orb" status and no
+  caption under it;
 - the waveform script loads before chat_voice.js.
 """
 
@@ -67,10 +68,10 @@ def test_waveform_markup_hint_and_styles():
     assert bg_at > overlay_at, "subtle background waveform canvas"
     assert ring_at > overlay_at, "apparent ring canvas around the orbit"
     assert html.find('id="voiceModeSessionUsage"') > overlay_at
-    hint_at = html.find('id="voiceModeHint"')
-    hint_close = html.find('</p>', hint_at)
-    hint_text = html[html.find('>', hint_at) + 1:hint_close]
-    assert hint_text.strip() == "Tap or hold the orb"
+    assert 'id="voiceModeHint"' not in html, "no caption under the orb"
+    status_at = html.find('id="voiceModeStatus"')
+    assert html[html.find('>', status_at) + 1:html.find('</div>', status_at)].strip() == ""
+    assert "Tap the orb to talk" not in (CHAT_JS / "chat_voice.js").read_text(encoding="utf-8")
     order = [
         html.find('src="/js/chat/chat_voice_recorder.js'),
         html.find('src="/js/chat/chat_voice_waveform.js'),

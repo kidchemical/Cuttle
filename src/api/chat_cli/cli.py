@@ -78,8 +78,17 @@ def _message_payload(
     session_id: int,
     share_index: Optional[int],
     max_chars: Optional[int],
+    raw: bool = False,
 ) -> Dict[str, Any]:
+    from api.transcript_text import agent_visible_metadata, agent_visible_text
+
     content = msg.get("content") or ""
+    meta = msg.get("metadata")
+    if not raw:
+        # Another model's <think> narration in a tool result trips provider
+        # reasoning-extraction safeguards for the agent reading it.
+        content = agent_visible_text(content)
+        meta = agent_visible_metadata(meta)
     out: Dict[str, Any] = {
         "id": msg.get("id"),
         "session_id": int(session_id),
@@ -92,7 +101,6 @@ def _message_payload(
     if max_chars and isinstance(content, str) and len(content) > max_chars:
         out["content_truncated"] = True
         out["content_chars"] = len(content)
-    meta = msg.get("metadata")
     if meta is not None:
         out["metadata"] = _json_ready(meta)
     return out
@@ -246,6 +254,7 @@ def cmd_get(args: argparse.Namespace) -> int:
             session_id=sid,
             share_index=int(parsed["message_index"]),
             max_chars=max_chars,
+            raw=args.raw,
         )
         payload = {"ok": True, **body}
         _emit_text_once(
@@ -369,6 +378,7 @@ def cmd_session(args: argparse.Namespace) -> int:
                 session_id=sid,
                 share_index=share_index,
                 max_chars=max_chars,
+                raw=args.raw,
             )
         )
 
@@ -416,12 +426,14 @@ def cmd_search(args: argparse.Namespace) -> int:
             sys.stderr.write(msg + "\n")
         return 2
 
+    from api.transcript_text import agent_visible_text
+
     hits = db.search_user_chats(uid, args.query, limit=int(args.limit))
     results = []
     for row in hits:
         entry = _session_payload(dict(row))
         entry["match"] = row.get("match")
-        entry["snippet"] = row.get("snippet") or ""
+        entry["snippet"] = agent_visible_text(row.get("snippet") or "")
         if row.get("message_count") is not None:
             entry["message_count"] = row.get("message_count")
         results.append(entry)
@@ -454,6 +466,63 @@ def cmd_search(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
+
+
+def cmd_hook(args: argparse.Namespace) -> int:
+    from api.chat_ops import git_hook
+    try:
+        if args.command == 'install-hook':
+            payload = {'ok': True, **git_hook.install(args.repo, args.protect)}
+        else:
+            payload = {'ok': True, **git_hook.uninstall(args.repo)}
+    except ValueError as exc:
+        payload = {'ok': False, 'error': str(exc)}
+    _emit_text_once(payload, as_json=args.json,
+                    text_fn=lambda p: json.dumps(p, indent=2, ensure_ascii=False, default=str))
+    return 0 if payload['ok'] else 1
+
+
+_OPERATION_VERBS = ('operations', 'operation', 'cancel-operation', 'pause-operation', 'resume-operation')
+_CHAT_OP_VERBS = ('send', 'status', 'snapshot', 'stop', 'supervise') + _OPERATION_VERBS
+
+
+def cmd_operation(args: argparse.Namespace) -> int:
+    from api.chat_ops import service, store
+    db = _open_db(args.db)
+    verb = args.command
+    if verb in _OPERATION_VERBS:
+        actor = service.session_id(args.as_chat or __import__('os').environ.get('CUTTLE_CHAT_SESSION_ID'))
+        # Validate the acting chat before exposing its operation records.
+        service.context(actor, actor, db=db)
+        if verb == 'operations':
+            payload = {'schema_version': 1, 'ok': True, 'operations': store.listing(actor)}
+        else:
+            if verb == 'cancel-operation':
+                op = store.cancel(args.id, actor)
+            elif verb in ('pause-operation', 'resume-operation'):
+                op = store.set_paused(args.id, actor, verb == 'pause-operation')
+            else:
+                op = store.get(args.id, actor)
+            payload = {'schema_version': 1, 'ok': True, 'operation': op}
+    else:
+        kwargs = {'actor': args.as_chat, 'db': db}
+        if verb == 'send':
+            payload = service.send(args.handle, args.text, mode=args.mode, **kwargs)
+        elif verb == 'status':
+            payload = service.status(args.handle, **kwargs)
+        elif verb == 'snapshot':
+            payload = service.snapshot(args.handle, usage_agents=args.usage, **kwargs)
+        elif verb == 'stop':
+            payload = service.stop(args.handle, **kwargs)
+        else:
+            payload = service.supervise(args.handle, every=args.every, instructions=args.instructions,
+                required_branch=args.require_branch, required_path=args.require_path,
+                forbidden_branches=args.forbid_branch, model_tiers=json.loads(args.model_tiers),
+                agent=args.agent, forbidden_paths=args.forbid_paths,
+                on_violation=args.on_violation, **kwargs)
+    _emit_text_once(payload, as_json=args.json,
+                    text_fn=lambda p: json.dumps(p, indent=2, ensure_ascii=False, default=str))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -505,6 +574,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not truncate message content",
     )
+    get_p.add_argument(
+        "--raw", action="store_true",
+        help="Keep <think> blocks and post-processing originals (hidden by default)",
+    )
     get_p.set_defaults(func=cmd_get)
 
     sess_p = sub.add_parser(
@@ -545,6 +618,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sess_p.add_argument("--max-chars", type=int, default=500)
     sess_p.add_argument("--full", action="store_true")
+    sess_p.add_argument(
+        "--raw", action="store_true",
+        help="Keep <think> blocks and post-processing originals (hidden by default)",
+    )
     sess_p.set_defaults(func=cmd_session)
 
     search_p = sub.add_parser(
@@ -566,6 +643,56 @@ def build_parser() -> argparse.ArgumentParser:
         help="Auth user id (alternative to --from-chat)",
     )
     search_p.set_defaults(func=cmd_search)
+
+    for verb, help_text in (
+        ('install-hook', 'Install a git hook that refuses agent updates of protected branches'),
+        ('uninstall-hook', "Remove Cuttle's protected-branch git hook"),
+    ):
+        hook_p = sub.add_parser(verb, parents=[common], help=help_text)
+        hook_p.add_argument('repo', help='Path to any checkout of the repository')
+        if verb == 'install-hook':
+            hook_p.add_argument('--protect', action='append', default=[],
+                                help='Branch to protect (repeatable); stored in git config cuttle.protectBranch')
+        hook_p.set_defaults(func=cmd_hook)
+
+    for verb, help_text in (
+        ('send', 'Send to an existing chat: steer live turns, otherwise queue on the host'),
+        ('status', 'Busy, idle, awaiting input, error, and Tasks in one call'),
+        ('snapshot', 'Status plus reply, worktree/branch, jobs, watches and optional plan usage'),
+        ('stop', 'Stop the target chat through the ordinary cancellation path'),
+        ('supervise', 'Create durable recurring check-ins in the acting chat'),
+        ('operations', 'List your delivery requests and supervision profiles'),
+        ('operation', 'Inspect one delivery request or supervision profile'),
+        ('cancel-operation', 'Cancel a pending delivery or recurring supervision profile'),
+        ('pause-operation', 'Pause a supervision schedule (no checks until resumed)'),
+        ('resume-operation', 'Resume a paused supervision schedule; checks right away'),
+    ):
+        op = sub.add_parser(verb, parents=[common], help=help_text)
+        op.add_argument('--as', dest='as_chat', help='Acting chat (default CUTTLE_CHAT_SESSION_ID); same owner required')
+        if verb not in _OPERATION_VERBS:
+            op.add_argument('handle', help='Target session CH-…')
+        elif verb != 'operations':
+            op.add_argument('id', help='Operation id from send/supervise')
+        if verb == 'send':
+            op.add_argument('--text', required=True)
+            op.add_argument('--mode', choices=('auto', 'queue'), default='auto')
+        if verb == 'snapshot':
+            op.add_argument('--usage', action='append', default=[], help='Include plan usage for this agent (repeatable)')
+        if verb == 'supervise':
+            op.add_argument('--every', type=int, default=900, help='Seconds between checks, minimum 60')
+            op.add_argument('--instructions', required=True)
+            op.add_argument('--require-branch', default='')
+            op.add_argument('--require-path', default='')
+            op.add_argument('--forbid-branch', action='append', default=[])
+            op.add_argument('--forbid-paths', default='',
+                            help='Regex: an unattributed commit on a forbidden branch touching '
+                                 'matching files counts as a violation')
+            op.add_argument('--on-violation', action='append', default=[],
+                            help='What a guard violation does, in order (repeatable): wake (default), '
+                                 'stop, action:<.cuttle/actions name>, supervisor:<agent profile>')
+            op.add_argument('--model-tiers', default='{}', help='JSON object with worker/expert model guidance')
+            op.add_argument('--agent', default='', help='Run check-in turns on this harness (e.g. cursor); default: the chat\'s own')
+        op.set_defaults(func=cmd_operation)
 
     return p
 
@@ -592,6 +719,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return code
         return 1
     except Exception as e:
+        if getattr(args, 'command', '') in _CHAT_OP_VERBS:
+            # Request exceptions can contain Authorization headers; keep them
+            # out of logs and JSON. Validation errors are safe and actionable.
+            detail = str(e) if isinstance(e, ValueError) else 'Chat operation failed; check host availability and activation'
+            _emit_text_once({'schema_version': 1, 'ok': False, 'error': detail},
+                            as_json=args.json, text_fn=lambda p: p['error'])
+            return 2 if isinstance(e, ValueError) else 3
         sys.stderr.write(f"error: {e}\n")
         return 3
 

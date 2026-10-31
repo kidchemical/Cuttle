@@ -1,23 +1,86 @@
-/* One shell-owned voice connection; chat iframe presenters may come and go. */
+/* One shell-owned voice connection; chat iframe presenters may come and go.
+ *
+ * The call controls render as a docked strip in the shell layout (the host's
+ * #shellVoiceStrip slot, below the panes). Its height is published as the
+ * root CSS variable --shell-voice-strip-h so fixed overlays (side panels,
+ * their backdrop, toasts) stop above it instead of covering End voice.
+ *
+ * Presenters whose voice view can place a call (GPT-Live / Realtime) register
+ * an offer; while one is live and no call runs, the strip shows a Call button
+ * that runs the presenter's own connect path. The newest live offer wins.
+ */
 (function(root){
     'use strict';
-    function create({win,navigate}){
-        let active=null, muted=false, status='', usage=null, controller=null;
+    const STRIP_HEIGHT_VAR='--shell-voice-strip-h';
+    const SVG='<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+    const MIC_ICON=SVG+'<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>';
+    const MIC_OFF_ICON=SVG+'<line x1="2" y1="2" x2="22" y2="22"/><path d="M9 9v2a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 11v-1m14 0v1a7 7 0 0 1-.11 1.23"/><line x1="12" y1="18" x2="12" y2="22"/></svg>';
+    const CALL_ICON='<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><path d="M6.62 10.79a15.15 15.15 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24c1.12.37 2.33.57 3.57.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1.02l-2.2 2.2z"/></svg>';
+    const HANG_UP_ICON='<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.67-1.85.996.996 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>';
+    function create({win,mount}){
+        let active=null, muted=false, status='', failed=false, usage=null, controller=null, dialing=false;
         const listeners=new Map();
+        const offers=[];
         const doc=win.document;
         function isMobileShell(){try{return !!(win.isCuttleMobile||(win.cuttleMobile&&win.cuttleMobile.isNative));}catch(_){return false;}}
-        const bar=doc.createElement('div');bar.hidden=true;bar.className='shell-voice-controls';bar.setAttribute('role','region');bar.setAttribute('aria-label','Active voice conversation');
-        const style=doc.createElement('style');style.textContent='.shell-voice-controls{position:fixed;z-index:1600;right:calc(16px + var(--cuttle-safe-right, env(safe-area-inset-right, 0px)));bottom:calc(16px + var(--cuttle-safe-bottom, env(safe-area-inset-bottom, 0px)));left:auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap;max-width:calc(100vw - 32px - var(--cuttle-safe-left, env(safe-area-inset-left, 0px)) - var(--cuttle-safe-right, env(safe-area-inset-right, 0px)));padding:10px 14px;border:1px solid var(--border-color,#41414c);border-radius:14px;background:var(--bg-secondary,#20202a);color:var(--text-primary,#fff);box-shadow:0 4px 20px #0005}.shell-voice-controls[hidden]{display:none}.shell-voice-controls button{cursor:pointer;background:transparent;color:inherit;border:1px solid #7776;border-radius:8px;padding:6px 9px}.shell-voice-controls span{font-size:12px}';
-        doc.head.appendChild(style);doc.body.appendChild(bar);
-        const title=doc.createElement('button'),info=doc.createElement('span'),mute=doc.createElement('button'),end=doc.createElement('button');
-        mute.textContent='Mute';end.textContent='End voice';bar.append(title,info,mute,end);
-        title.onclick=()=>{if(active)navigate(active.session_id);};mute.onclick=()=>{muted=!muted;controller?.mute?.(muted);paint();};end.onclick=()=>void stop();
+        let bar=mount||(typeof doc.getElementById==='function'?doc.getElementById('shellVoiceStrip'):null);
+        const floating=!bar;
+        if(!bar){bar=doc.createElement('div');doc.body.appendChild(bar);}
+        bar.hidden=true;bar.className='shell-voice-strip'+(floating?' is-floating':'');bar.setAttribute('role','region');bar.setAttribute('aria-label','Voice call');
+        const call=doc.createElement('button'),mute=doc.createElement('button'),end=doc.createElement('button');
+        call.type='button';call.className='shell-voice-btn shell-voice-call';call.setAttribute('aria-label','Start voice call');call.title='Call';
+        mute.type='button';mute.className='shell-voice-btn shell-voice-mute';mute.setAttribute('aria-label','Mute');
+        end.type='button';end.className='shell-voice-btn shell-voice-end';end.setAttribute('aria-label','End voice');end.title='End call';
+        call.innerHTML=CALL_ICON;end.innerHTML=HANG_UP_ICON;bar.append(call,mute,end);
+        call.onclick=()=>void dial();mute.onclick=()=>{muted=!muted;controller?.mute?.(muted);paint();};end.onclick=()=>void stop();
+        function currentOffer(){
+            for(let i=offers.length-1;i>=0;i--){
+                let alive=false;try{alive=!offers[i].alive||offers[i].alive();}catch(_){}
+                if(alive)return offers[i];
+                offers.splice(i,1);
+            }
+            return null;
+        }
+        async function dial(){
+            const offer=currentOffer();
+            if(!offer){paint();return;}
+            if(active||dialing)return;
+            dialing=true;paint();
+            try{await offer.connect();}catch(_){}
+            finally{dialing=false;paint();}
+        }
+        function offer(entry){
+            const rec={connect:entry.connect,alive:entry.alive};
+            offers.push(rec);paint();
+            return ()=>{const i=offers.indexOf(rec);if(i!==-1)offers.splice(i,1);paint();};
+        }
+        function publishHeight(){
+            try{
+                const h=bar.hidden||typeof bar.getBoundingClientRect!=='function'?0:Math.ceil(bar.getBoundingClientRect().height);
+                doc.documentElement.style.setProperty(STRIP_HEIGHT_VAR,h+'px');
+            }catch(_){}
+        }
+        if(typeof win.ResizeObserver==='function'){try{new win.ResizeObserver(publishHeight).observe(bar);}catch(_){}}
         function emit(kind,...args){const group=listeners.get(String(active?.session_id));for(const listener of group||[])try{if(listener.alive&&!listener.alive()){group.delete(listener);continue;}listener[kind]?.(...args);}catch(_){}}
+        function stateName(){
+            if(failed)return 'error';
+            if(muted)return 'muted';
+            return !usage&&/^connecting/i.test(status||'Connecting')?'connecting':'live';
+        }
         function paint(){
-            bar.hidden=!active; if(!active)return;
-            title.textContent=(active.engine==='live'?'GPT-Live':'Realtime')+' · CH-'+String(active.session_id).padStart(6,'0');
-            info.textContent=(muted?'Muted · ':status+' · ')+(usage?(active.engine==='live'?Math.round(usage.duration_seconds||0)+'s':Math.round(usage.total_tokens||0)+' tokens')+' · ~$'+Number(usage.cost||0).toFixed(3):'Connecting');
-            mute.textContent=muted?'Unmute':'Mute';mute.setAttribute('aria-pressed',String(muted));
+            const wasHidden=bar.hidden;
+            const ready=!active&&!!currentOffer();
+            bar.hidden=!active&&!ready;
+            call.hidden=!ready;mute.hidden=!active;end.hidden=!active;
+            if(ready){
+                bar.setAttribute('data-state',dialing?'dialing':'ready');
+                call.disabled=dialing;call.setAttribute('aria-busy',String(dialing));
+            }
+            if(active){
+                bar.setAttribute('data-state',stateName());
+                mute.innerHTML=muted?MIC_OFF_ICON:MIC_ICON;mute.title=muted?'Unmute':'Mute';mute.setAttribute('aria-pressed',String(muted));
+            }
+            if(wasHidden!==bar.hidden)publishHeight();
         }
         function attach(sessionId,listener){
             const key=String(sessionId); if(!listeners.has(key))listeners.set(key,new Set());listeners.get(key).add(listener);
@@ -31,14 +94,17 @@
         async function start(context){
             if(active&&String(active.session_id)===String(context.session_id)&&active.engine===context.engine&&controller?.isOpen())return;
             await stop();
-            active={...context,transcripts:[]};muted=false;status='Connecting';usage=null;paint();
+            active={...context,transcripts:[]};muted=false;failed=false;status='Connecting';usage=null;paint();
             const own=active;
             const Engine=context.engine==='live'?win.CuttleChatVoiceLive:win.CuttleChatVoiceRealtime;
             controller=Engine.create({fetch:(...args)=>win.fetch(...args),experimentalFlags:async()=>{
                 const r=await win.fetch('/api/experimental/flags',{cache:'no-store'}),d=await r.json();
                 if(!r.ok||!d.success)throw new Error('Flags unavailable');return new Set(d.flags.filter(f=>f.enabled).map(f=>f.id));},
-                onStatus:text=>{if(active!==own)return;status=text;paint();emit('onStatus',text);if(text.startsWith('Disconnected')){active=null;paint();}},
-                onError:text=>{if(active!==own)return;status=text;paint();emit('onError',text);},
+                onStatus:text=>{if(active!==own)return;status=text;failed=false;paint();emit('onStatus',text);if(text.startsWith('Disconnected')){active=null;paint();}},
+                // A fatal engine error closes the connection and reports only
+                // onError (no "Disconnected"); end the call so the strip offers
+                // Call again instead of Mute/hang-up for a dead call.
+                onError:text=>{if(active!==own)return;status=text;failed=true;emit('onError',text);if(!controller?.isOpen?.())active=null;paint();},
                 onTranscript:(...args)=>{if(active!==own)return;active.transcripts.push(args);if(active.transcripts.length>1000)active.transcripts.shift();emit('onTranscript',...args);},
                 onUsage:value=>{if(active!==own)return;usage=value;paint();emit('onUsage',value);win.dispatchEvent(new win.Event('cuttle-voice-usage'));},
                 delegate:context.delegate,realtimeUsage:async payload=>{
@@ -53,7 +119,7 @@
         // so a screen lock must NOT hang up (only pagehide / explicit End do).
         doc.addEventListener('visibilitychange',()=>{if(doc.hidden&&!isMobileShell())void stop();});
         win.addEventListener('pagehide',()=>void stop());
-        const api={start,stop,attach,isOpen:sid=>!!(active&&String(active.session_id)===String(sid)&&controller?.isOpen()),
+        const api={start,stop,attach,offer,isOpen:sid=>!!(active&&String(active.session_id)===String(sid)&&controller?.isOpen()),
             engine:sid=>String(active?.session_id)===String(sid)?active.engine:null};
         win.cuttleVoiceRuntime=api;return api;
     }

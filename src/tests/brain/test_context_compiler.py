@@ -121,7 +121,10 @@ def test_handoff_only_when_agent_changes(tmp_path, monkeypatch):
     assert delta.from_agent == "antigravity"
     assert delta.to_agent == "opencode"
     assert "earlier question" in delta.text
-    assert "Agent handoff" in delta.text
+    # opencode never ran here: no "prefer your native resume" claim.
+    assert delta.mode == "join"
+    assert "has not run in this chat before" in delta.text
+    assert "native resume" not in delta.text
 
     # Legacy state (bare last-agent string): the same agent is caught up.
     ho._write_all({"42": "antigravity"})

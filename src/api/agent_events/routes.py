@@ -2,6 +2,7 @@
 import json
 import sqlite3
 import time
+import zlib
 from pathlib import Path
 from flask import Blueprint,Response,jsonify,request,send_from_directory,stream_with_context
 from api.http_authz import owner_required
@@ -112,28 +113,107 @@ def stream():
     return Response(generate(),mimetype='text/event-stream',headers={'Cache-Control':'no-store','X-Accel-Buffering':'no'})
 
 
+def _meta_rev(raw):
+    return format(zlib.crc32(raw.encode('utf-8')),'08x')
+
+
+def _log_row(row):
+    return {**row,'t':row['ts'],'detail_id':row['id']}
+
+
 @bp.get('/api/agent-events/runs/<qid>/log')
 @owner_required
 def run_log(qid):
+    """One page of a run's event headers. Run metadata (Brain, sent prompt,
+    tool tallies) rides along only when the caller's ``meta_rev`` is stale."""
     db=store()
-    found=db.run(qid)
-    if not found:
-        return jsonify(error='Run not found'),404
     try:
         after=int(request.args.get('after',0))
         seq=int(request.args.get('seq',0))
-        if seq:
-            with db.connection() as conn:
-                hit=conn.execute('SELECT id FROM events WHERE query_id=? AND seq>=? ORDER BY seq LIMIT 1',(qid,seq)).fetchone()
-            if hit:
-                after=hit['id']-1
-        rows=db.events(qid,after=after,limit=101)
-        more=len(rows)>100
-        rows=rows[:100]
-        data=dict(found['metadata'])
-        data.update(query_id=qid,executing=found['status']=='running',events=[{
-            **row,'t':row['ts'],'detail_id':row['id']
-        } for row in rows],event_store=True,has_more=more,next_cursor=rows[-1]['id'] if rows else after)
-        return jsonify(data)
     except ValueError as exc:
         return jsonify(error=str(exc)),400
+    # Cursor before rows: changes committed in between replay on the stream.
+    stream_cursor=db.change_cursor()
+    state=db.run_state(qid)
+    if not state:
+        return jsonify(error='Run not found'),404
+    status,raw=state
+    if seq:
+        with db.connection() as conn:
+            hit=conn.execute('SELECT id FROM events WHERE query_id=? AND seq>=? ORDER BY seq LIMIT 1',(qid,seq)).fetchone()
+        if hit:
+            after=hit['id']-1
+    rows=db.events(qid,after=after,limit=101)
+    more=len(rows)>100
+    rows=rows[:100]
+    rev=_meta_rev(raw)
+    if request.args.get('meta_rev')==rev:
+        data={'meta_omitted':True}
+    else:
+        data=json.loads(raw)
+    data.update(query_id=qid,executing=status=='running',events=[_log_row(row) for row in rows],
+                event_store=True,has_more=more,next_cursor=rows[-1]['id'] if rows else after,
+                stream_cursor=stream_cursor,meta_rev=rev)
+    return jsonify(data)
+
+
+LOG_STREAM_POLL_SEC=1.0
+LOG_STREAM_KEEPALIVE_SEC=15.0
+LOG_STREAM_MAX_SEC=600.0
+
+
+@bp.get('/api/agent-events/runs/<qid>/log/stream')
+@owner_required
+def run_log_stream(qid):
+    """Live tail of one run for the query log inspector (SSE).
+
+    Each message carries only that run's revised event headers since the
+    cursor, plus ``meta`` when the run metadata changed. Silent while the run
+    is idle; ends with an ``end`` event once the run is no longer running.
+    The connection is recycled after LOG_STREAM_MAX_SEC (the browser resumes
+    from Last-Event-ID)."""
+    db=store()
+    try:
+        cursor=int(request.headers.get('Last-Event-ID') or request.args.get('after',0))
+    except ValueError:
+        return jsonify(error='Invalid cursor'),400
+    if not db.run_state(qid):
+        return jsonify(error='Run not found'),404
+    client_rev=request.args.get('meta_rev','')
+
+    @stream_with_context
+    def generate():
+        nonlocal cursor
+        meta_rev=client_rev
+        executing=None
+        started=last_sent=time.monotonic()
+        while time.monotonic()-started<LOG_STREAM_MAX_SEC:
+            state=db.run_state(qid)
+            if not state:
+                yield 'event: end\ndata: {}\n\n'
+                return
+            # Status before changes, so the final scan sees every event the
+            # run committed before it finished.
+            live=state[0]=='running'
+            changes=db.run_changes(qid,cursor)
+            cursor=changes['cursor']
+            rev=_meta_rev(state[1])
+            msg={}
+            if changes['events']:
+                msg['events']=[_log_row(row) for row in changes['events']]
+            if rev!=meta_rev:
+                msg['meta']=json.loads(state[1])
+                meta_rev=rev
+            if msg or live!=executing:
+                executing=live
+                msg.update(executing=live,meta_rev=rev,cursor=cursor)
+                yield f'id: {cursor}\ndata: {json.dumps(msg)}\n\n'
+                last_sent=time.monotonic()
+            if not live:
+                yield 'event: end\ndata: {}\n\n'
+                return
+            if time.monotonic()-last_sent>=LOG_STREAM_KEEPALIVE_SEC:
+                yield ': keepalive\n\n'
+                last_sent=time.monotonic()
+            time.sleep(LOG_STREAM_POLL_SEC)
+    return Response(generate(),mimetype='text/event-stream',headers={'Cache-Control':'no-store','X-Accel-Buffering':'no'})

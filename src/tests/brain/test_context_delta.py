@@ -44,6 +44,32 @@ def test_build_resume_delta_none_when_unchanged(tmp_path):
     assert delta_text("9010", "cursor", path) is None
 
 
+def test_playbook_edit_reaches_resumed_orchestrator(tmp_path, monkeypatch):
+    """A playbook edit must reach a resumed orchestrator, not only a fresh briefing."""
+    from api.cuttle_brain import context_delta as cd
+
+    briefs = {"9020": "## Orchestrator playbook\nworker: grunt-codex"}
+    monkeypatch.setattr(cd, "_orchestrator_brief", lambda sid: briefs.get(str(sid), ""))
+    path = str(tmp_path)
+
+    ack_snapshot("9020", "codex", path)
+    assert delta_text("9020", "codex", path) is None
+
+    briefs["9020"] = "## Orchestrator playbook\nworker: grunt-muse"
+    resumed = delta_text("9020", "codex", path)
+    assert resumed is not None
+    assert "Orchestrator playbook updated" in resumed
+    assert "grunt-muse" in resumed
+
+    ack_snapshot("9020", "codex", path)
+    briefs.pop("9020")
+    assert "Orchestrator playbook removed" in delta_text("9020", "codex", path)
+
+    # Unbound chats never see an orchestrator section.
+    ack_snapshot("9021", "codex", path)
+    assert delta_text("9021", "codex", path) is None
+
+
 def test_clear_injected_snapshot(tmp_path):
     from api.cuttle_brain.context_delta import clear_injected_snapshot
 

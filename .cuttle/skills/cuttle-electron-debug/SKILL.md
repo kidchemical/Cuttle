@@ -23,33 +23,41 @@ and multi-pane chat SSE — browser will not reproduce those freezes.
 ## When to use
 
 - User: “Electron freezes”, “desktop locks”, Chat→Git, shell nav, tray app
-- Works on LAN/browser, fails in `Cuttle.exe`
+- Works on LAN/browser, fails in the desktop app
 - Suspected SSE / connection-pool / iframe teardown issues
 
 ## Attach (preferred workflow)
 
 ### 1. Launch Electron with CDP
 
-**Dev (picks up live `electron/main.js` + `preload.js`):**
+**Dev (picks up live `electron/main.js` + `preload.js`).** The Host holds a
+single-instance lock, so stop only the Host Electron UI first. Never kill the
+daemon or Flask; they keep running. Tell the user their window will relaunch.
 
-```powershell
-# Stop only the dev Electron instance (electron.exe) you are about to relaunch.
-# Never kill a packaged Cuttle Host, the daemon, or Flask — killing the Host breaks delivery.
-Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Process -FilePath "/path/to/Cuttle/electron\node_modules\electron\dist\electron.exe" `
-  -ArgumentList ".","--remote-debugging-port=9333" `
-  -WorkingDirectory "/path/to/Cuttle/electron"
+Linux (this repo's launcher forwards extra args):
+
+```bash
+pkill -f -- '--class=CuttleHost' || true
+setsid .cuttle/scripts/launch-cuttle-host.sh --remote-debugging-port=9333 >/dev/null 2>&1 &
 ```
 
-**Packaged** (`dist\win-unpacked\Cuttle.exe`): same `--remote-debugging-port=9333`
-arg if the asar `main.js` does not already enable it. Packaged **preload/main**
-come from `resources\app.asar` — Flask UI is still live from `:8000`, but IPC
-fixes need an asar rebuild/repack.
+Windows:
+
+```powershell
+Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath ".\electron\node_modules\electron\dist\electron.exe" `
+  -ArgumentList ".","--remote-debugging-port=9333" -WorkingDirectory ".\electron"
+```
+
+**Packaged** (`dist/linux-unpacked/cuttle-desktop`, `dist\win-unpacked\Cuttle.exe`): same
+`--remote-debugging-port=9333` arg. Packaged **preload/main** come from
+`resources/app.asar` — the Flask UI is still live from `:8000`, but IPC fixes
+need an asar rebuild/repack.
 
 ### 2. Confirm CDP
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:9333/json/list
+```bash
+curl -s http://127.0.0.1:9333/json/list
 ```
 
 Look for `type: page` with `app_shell.html` (UI prefers `http://127.0.0.1:8000`).
@@ -90,13 +98,13 @@ Git top-level page uses `?shell=1` and a **← Shell** link back to `app_shell.h
 |---|---|---|
 | Flask `:8000` | Live (hard-refresh / cache-bust `?v=`) | — |
 | `npm start` / `electron .` | Flask | Live from `electron/` |
-| `dist\win-unpacked\Cuttle.exe` | Flask | **asar only** — extract, copy, `npx asar pack` |
+| packaged (`linux-unpacked` / `win-unpacked`) | Flask | **asar only** — extract, copy, `npx asar pack` |
 
 ## Don'ts
 
 - Don't claim an Electron freeze is fixed after only testing in Chrome/Playwright
 - Don't keep hammering iframe teardown if CDP shows `location.href` itself is stuck under SSE — escalate to main-process `loadURL` / IPC
-- Don't kill Flask without asking (see restart-cuttle rule); restarting Electron is OK for desktop repro, but say so
+- Don't kill Flask (use the `flask.restart` action form); restarting Electron is OK for desktop repro, but say so
 - Don't leave a wedged Electron + open CDP session without telling the user
 
 ## Quick checklist

@@ -41,6 +41,18 @@ def test_registry_lists_three_configured_shaped_providers(monkeypatch):
     assert providers.get_provider("nope") is None
 
 
+def test_curated_models_explain_quality_and_reply_cost():
+    rows = {r["id"]: r for r in providers.list_providers()}
+    for row in rows.values():
+        for model in row["models"]:
+            assert model["description"], (row["id"], model["id"])
+    openai = {m["id"]: m for m in rows["openai"]["models"]}
+    assert openai["tts-1"]["price"] == {"per_reply_usd": 0.015, "rate": "$15 per 1M characters"}
+    google = {m["id"]: m for m in rows["google"]["models"]}
+    assert google["gemini-2.5-flash-preview-tts"]["price"]["per_reply_usd"] == pytest.approx(0.015125)
+    assert google["gemini-3.8-flash-tts"]["price"] is None
+
+
 def test_credential_presence_lights_up_configured(monkeypatch):
     monkeypatch.setenv("ELEVENLABS_API_KEY", "x" * 32)
     assert providers.get_provider("elevenlabs").configured() is True

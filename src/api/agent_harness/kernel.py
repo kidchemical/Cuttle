@@ -331,6 +331,7 @@ def _compile_agent_prompt(
             current_prompt=prompt,
             full_history=not manifest.resume,
             project_path=cwd,
+            has_native_session=has_resume,
         )
     except Exception as exc:
         # A failed handoff means the agent misses unseen conversation, not
@@ -396,7 +397,7 @@ def _compile_agent_prompt(
         try:
             from api.cuttle_brain.context_delta import compute_snapshot
 
-            stable_before = compute_snapshot(cwd)
+            stable_before = compute_snapshot(cwd, chat_session_id)
         except Exception as exc:
             # Bookkeeping only: the envelope below still carries the full
             # briefing, so this alone is an operator diagnostic, never a
@@ -463,7 +464,7 @@ def _compile_agent_prompt(
         try:
             from api.cuttle_brain.context_delta import compute_snapshot
 
-            prepared = compute_snapshot(cwd)
+            prepared = compute_snapshot(cwd, chat_session_id)
             if stable_before is None or prepared != stable_before:
                 prepared = None
         except Exception as exc:
@@ -602,11 +603,14 @@ def _resolve_agent_run_timeout() -> float:
     """Default turn budget: Settings → Agents (``timeouts.agent_run_seconds``).
 
     One source for every harness run that does not pass an explicit timeout;
-    falls back to 3600s if settings are unreadable.
+    0 (unlimited) becomes ``UNLIMITED_TURN_SECONDS``; falls back to 3600s if
+    settings are unreadable.
     """
+    from api.agent_harness.timeouts import turn_budget
+
     try:
         from managers.settings_manager import get_settings_manager
-        return float(get_settings_manager().get_timeouts()["agent_run_seconds"])
+        return turn_budget(get_settings_manager().get_timeouts()["agent_run_seconds"])
     except Exception:
         return 3600.0
 
@@ -640,6 +644,10 @@ def run_agent_web_command(
     """
     if timeout is None:
         timeout = _resolve_agent_run_timeout()
+    else:
+        from api.agent_harness.timeouts import turn_budget
+
+        timeout = turn_budget(timeout)
     pair = get_agent(agent_id, project_path=project_path)
     if not pair:
         return {
@@ -670,7 +678,7 @@ def run_agent_web_command(
     try:
         from api.query_events import QueryStatusTee, bind_query_id, reset_query_id
 
-        user_ctx = {"web_ui": True, "slash_command": slash}
+        user_ctx = {"web_ui": True, "slash_command": slash, "chat_session_id": sid}
         _put_status(status_queue, f"Starting {label}…")
         query_id = start_query_tracking(f"{slash} {prompt}", user_ctx)
         qid_token = bind_query_id(query_id)

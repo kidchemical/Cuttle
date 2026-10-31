@@ -22,9 +22,24 @@ html.is-cuttle-mobile .icon-rail {
     padding-bottom: 0;
 }
 
+/* Notifications / Workspace side panels fill the viewport height: keep their
+   header (Clear all) below the status bar and the list above the nav bar. */
+html.is-cuttle-mobile .notifications-popover {
+    padding-top: var(--cuttle-safe-top);
+    padding-bottom: max(0px, calc(var(--cuttle-safe-bottom) - var(--shell-voice-strip-h, 0px)));
+}
+
 html.is-cuttle-mobile .rail-footer {
-    /* Footer icons sit flush to the safe-area edge — never lower. */
-    padding-bottom: var(--cuttle-safe-bottom);
+    /* Footer icons sit flush to the safe-area edge — never lower. An active
+       voice strip below the rail already clears the nav bar. */
+    padding-bottom: max(0px, calc(var(--cuttle-safe-bottom) - var(--shell-voice-strip-h, 0px)));
+}
+
+/* Voice call strip is the shell's bottom edge while a call is live. */
+html.is-cuttle-mobile .shell-voice-strip {
+    padding-left: calc(16px + var(--cuttle-safe-left));
+    padding-right: calc(16px + var(--cuttle-safe-right));
+    padding-bottom: calc(12px + var(--cuttle-safe-bottom));
 }
 
 /* Collapsed blade tab: center in the *usable* viewport (between status +
@@ -47,7 +62,7 @@ html.is-cuttle-mobile .rail-expand-tab {
    stretching between top and bottom. */
 html.is-cuttle-mobile .shell-main iframe.shell-safe-inset {
     top: var(--cuttle-safe-top);
-    height: calc(100% - var(--cuttle-safe-top) - var(--cuttle-safe-bottom));
+    height: calc(100% - var(--cuttle-safe-top) - max(0px, calc(var(--cuttle-safe-bottom) - var(--shell-voice-strip-h, 0px))));
 }
 
 html.is-cuttle-mobile .mobile-apk-update-modal {

@@ -89,7 +89,10 @@ def test_project_chip_advertises_the_modal():
 
 
 def test_chip_modal_css_exists():
-    css = CHAT_CSS.read_text(encoding="utf-8")
+    # Shared by chat, the shell and app pages (css/chip_config_modal.css).
+    css = (CHAT_CSS.parent / "chip_config_modal.css").read_text(encoding="utf-8")
+    page = (CHAT_CSS.parent.parent / "chat_page.html").read_text(encoding="utf-8")
+    assert "chip_config_modal.css" in page
     assert ".chip-config-modal" in css
     assert ".chip-config-select" in css
     assert ".chip-config-field-label" in css

@@ -979,6 +979,14 @@ def submit_self_update(
             raise RuntimeError(f"self-update delivery file is empty: {name}")
         if name == "client-update-checkout.py" and host_pin:
             text = text.replace('EMBEDDED_HOST_SPKI = ""', f'EMBEDDED_HOST_SPKI = {host_pin!r}')
+        if name == "client-update-checkout.py" and source == "host":
+            # Heads this Host already delivered here: a Client still on one may
+            # follow a rewound/rewritten Host branch (old head kept in a backup ref).
+            delivered = tuple(get_store().host_delivered_heads(target_worker_id))
+            text = text.replace(
+                "EMBEDDED_HOST_DELIVERED_HEADS: tuple = ()",
+                f"EMBEDDED_HOST_DELIVERED_HEADS: tuple = {delivered!r}",
+            )
         params[key] = text
     params["script_name"] = "client-self-update.ps1"
     params["script_name_posix"] = "client-self-update.sh"

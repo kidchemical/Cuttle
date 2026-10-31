@@ -130,6 +130,7 @@
 
         function sync() {
             valueEl.textContent = selectedLabel() || 'No options loaded';
+            trigger.title = selectedLabel();
             trigger.disabled = !!select.disabled || effectivelyEmpty();
             wrap.classList.toggle('is-disabled', trigger.disabled);
             wrap.hidden = !!select.hidden;
@@ -178,6 +179,7 @@
                 li.setAttribute('aria-disabled', String(opt.disabled));
                 li.dataset.value = opt.value;
                 li.textContent = opt.textContent || '';
+                li.title = li.textContent;
                 if (opt.value === select.value) li.classList.add('is-selected');
                 if (opt.disabled) li.classList.add('is-disabled');
                 li.addEventListener('click', (e) => {

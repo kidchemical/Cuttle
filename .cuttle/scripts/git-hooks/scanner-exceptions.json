@@ -51,6 +51,20 @@
         "gitleaks": 1023
       },
       "reason": "keyboard shortcut; not an api key"
+    },
+    {
+      "commit": "85ede06ba094c9b77d600299e55421de1b83b0b5",
+      "file": "src/tests/secret_vault/test_secret_vault.py",
+      "blob": "4f339b7f1855cb79635b129756c90eee9f6ac96e",
+      "line": 143,
+      "line_sha256": "2cf75b1026e54705974ff4b440e237a06d22b1c15d60dca2f32f97e611886e3c",
+      "checks": {
+        "gitleaks": "generic-api-key"
+      },
+      "end_lines": {
+        "gitleaks": 143
+      },
+      "reason": "Synthetic fixture values (hunter2-Correct-Horse / KEY-MATERIAL-123 / 9876-pin) proving secret_vault delivery redacts injected values; not a credential"
     }
   ]
 }

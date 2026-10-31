@@ -12,7 +12,7 @@ Cuttle is for.
 
 ## Development setup
 
-Follow [Quick start](README.md#quick-start) to get a working `.venv`, then
+Follow [Run from source](README.md#run-from-source) to get a working `.venv`, then
 install the development dependencies and run the tests.
 
 POSIX:

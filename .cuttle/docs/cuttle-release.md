@@ -79,8 +79,12 @@ notes and do not appear in this feed. Keep the version bump at release time.
 Pushing a `vX.Y.Z` tag that matches `electron/package.json` runs
 `.github/workflows/release.yml`: Quality, Desktop smoke and the packaged Host
 build (`packaged-host.yml`) must all pass, then a **draft** GitHub Release is
-created with the Linux AppImage, Windows NSIS installer and portable exe plus a
-combined `SHA256SUMS`. Review the draft, write the notes, then publish it by
+created with the Linux AppImage and `.deb`, Windows NSIS installer and portable
+exe plus a combined `SHA256SUMS`. The `.deb` is the supported Ubuntu 24.04+
+install: its AppArmor profile grants `userns`, so Chromium keeps its sandbox. An
+AppImage cannot ship a setuid `chrome-sandbox` and aborts on hosts with
+`kernel.apparmor_restrict_unprivileged_userns=1`; CI's AppImage E2E passes
+`--no-sandbox` only for that reason, while the installed-deb E2E runs sandboxed. Review the draft, write the notes, then publish it by
 hand — CI never publishes.
 
 Packaged Hosts are self-contained: `electron/bundle-python.js` ships a

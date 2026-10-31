@@ -897,6 +897,7 @@ def run_shell_action_lane(
     persist_user_turn: Callable[[Any], None],
     make_saver: Callable[[Any], Optional[Callable[[Dict[str, Any]], None]]],
     rewrite_actions: Callable[..., Optional[Dict[str, Any]]],
+    remember_history: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Tuple[Optional[Dict[str, Any]], str, bool]:
     """Expand project-local ``.cuttle/commands/*.md`` (shell action or prompt).
 
@@ -908,7 +909,11 @@ def run_shell_action_lane(
       jsonifies. When the chat is busy first, ``(None, message_content, True)``
       and the transport-owning route frames its own busy SSE/409 response.
     * prompt action → ``(None, expanded_message, False)``; the route continues
-      with the expanded prompt (never terminal).
+      with the expanded prompt (never terminal). ``remember_history`` gets
+      ``{'text': <typed message>, 'meta': {'project_command': …}}`` so history
+      keeps what the user sent, not the expansion — otherwise the client's
+      optimistic bubble never matches the saved row and sync shows a second,
+      expanded "user" bubble above it.
     * anything else → ``(None, message_content, False)`` (unchanged).
     """
     try:
@@ -973,6 +978,14 @@ def run_shell_action_lane(
                 f"expanded (sticky={expanded.get('sticky')!r}) cwd={proj_path!r}",
                 flush=True,
             )
+            if remember_history is not None:
+                remember_history({
+                    'text': message_content,
+                    'meta': {'project_command': {
+                        'name': (expanded.get('command') or {}).get('name'),
+                        'args': expanded.get('args') or '',
+                    }},
+                })
             return None, expanded['message'], False
     except Exception as pc_err:
         print(f"[CHAT] project command expand failed: {pc_err}", flush=True)

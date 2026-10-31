@@ -211,6 +211,38 @@ Turning the flag off hides every gizmo and closes pop-outs; rows are kept.
 This applies to the experimental shell gizmos; established composer Tasks
 remain available independently of this flag.
 
+## Chat supervision
+
+Flag `chat_supervision` (off by default, no restart). It shows supervision
+that agents set up with `python -m api.chat_cli supervise` / `send`; those
+verbs work whether the flag is on or not, because the supervisor depends on
+them. The flag hides only the UI and its `/api/chat-ops/*` routes, which
+answer `{success:false, disabled:true}` while it is off.
+
+- **Supervisor chat:** a header chip, "Supervising CH-… · every 15m · next
+  2:28". Click it for rules, the last state seen, and check history
+  (skipped busy/no-change checks, wakes, rule breaks, errors; last 50 kept),
+  plus Pause/Resume and Cancel.
+- **Worker chat:** a "Supervised by CH-…" badge. It turns amber with ⚠ when a
+  branch or path rule is broken.
+- **Queued messages:** an "N queued" pill on the receiving chat. Each message
+  waits until that chat is idle and can be cancelled from the pill.
+- **Chat menu → Supervise this chat…:** creates a `Supervisor · CH-…` chat
+  in the same project and starts the schedule with a first briefing check
+  right away. Check-ins are sent as `/<agent> …`, so the chosen harness runs
+  each one.
+- **Jobs page:** schedules and queued sends appear as `chat` rows that can
+  be cancelled.
+
+Owner: `src/api/chat_ops/` (`routes`, `service.overview` /
+`start_supervisor`, `store.checks`); client
+`src/web/js/chat/chat_supervision_model.js` (pure) +
+`chat_supervision.js` (controller). Tests:
+`src/tests/chat_ops/test_chat_ops.py`,
+`src/tests/e2e/test_chat_supervision.py`. To remove the feature, delete the
+flag row, the blueprint registration, the two client scripts with their CSS,
+and the `chat_op` ledger source. The agent verbs stay.
+
 ## Test Lab App
 
 The Test Lab tile and pinned icon are hidden while disabled; its direct page
@@ -222,6 +254,82 @@ tests** to start them. Runs are bounded to 20 minutes, use the project's local
 Python environment when present, and keep their recent output in the Cuttle
 home database. Discovery supports pytest files, npm `test` scripts, Go modules,
 and Rust Cargo packages. Only the owner can inspect projects or start runs.
+
+## Orchestrator and Agents Apps
+
+Flag `orchestrator` (default off). Replaces restating an orchestration setup
+in every new orchestrator chat. **Apps → Agents** edits sub-agent profiles
+(name, avatar, harness, model, effort). **Runs on** opens the composer's agent
+chip modal (`CuttleChipConfig.openAgent` through `js/orchestrator/agent_pin_picker.js`,
+the same adapter shape Spaces overrides use), so long catalogs page lazily in
+the shared searchable list; never a native `<select>`/`<datalist>` per model.
+Every save is checked against that CLI's live model catalog plus its manifest
+ids, with live feedback while editing. The avatar (emoji grid or any emoji, an
+uploaded picture, an https URL, or the mascot) is what child-chat bubbles and
+fleet cards show for the profile; uploads are cropped to a 256 px PNG under
+`<home>/output/avatars/<user>/` (`api/subagents/profile_avatars.py`, not
+pruned). Built-ins are read-only; duplicate one to customize. The picker's
+styles live in the shared `css/chip_config_modal.css` (chat, shell and these
+Apps). **Apps →
+Orchestrator** edits playbooks: tiers in escalation order (worker →
+escalation → expert, each an ordered list of profiles, first = default),
+limits (solo attempts/minutes before delegating, same-tier retries, setup
+failures before reporting), supervisor defaults (interval, optional pinned
+agent, required branch/path, forbidden branches, instructions) and notes. It
+previews the rendered brief and builds the `chat_cli supervise` command for a
+target chat, and lists bound chats (unbind, supervise). The `default`
+playbook is a virtual seed until saved. Both Apps start stashed and are
+hidden while the flag is off; their pages and routes return 403.
+
+`/orchestrate [@playbook] <goal>` (feature bundle
+`.cuttle_global/features/orchestrator/`) binds the chat via
+`python -m api.orchestrator start`. The Context Compiler appends the bound
+brief to every fresh context for that chat, so an agent that joins after a
+harness switch still has it; turning the flag off withdraws it. Independently
+of the flag, `api.subagents.spawn` now rejects a child whose
+harness/model/effort cannot start before any child chat is created (effort
+for harnesses that bake it into the model id, like Cursor, is not checked).
+
+Owner `src/api/orchestrator/` (`model` pure / `store` / `service` / `routes` /
+`__main__`); profile transport `api/subagents/profile_routes.py`; shared pin
+check `api/agent_harness/agent_models.check_agent_pin`. Client
+`js/orchestrator/` (`orchestrator_model.js` pure + two page controllers),
+`css/orchestrator_page.css`. Tests: `src/tests/orchestrator/`. Teardown: the
+`api/orchestrator/__init__.py` docstring. Turning the flag off keeps
+playbooks, bindings and profiles; profiles keep working for `spawn`.
+
+## Secrets App (secret vault)
+
+Flag `secret_vault` (default off). Agents use passwords, API keys and other
+secrets in commands without seeing them. Open **Apps → Secrets** (stashed;
+hidden while the flag is off) to add or replace values, choose storage
+backends, set the approval policy (once per chat per secret by default, every
+use, or never), revoke approvals, and toggle output redaction. Agents ask for
+missing values with a chat card whose `secret` field PUTs straight to the
+vault. Approval cards (`secret_approval`) show the exact command.
+
+Owner `src/api/secret_vault/`. `core/` is stdlib-only and Cuttle-free:
+`backends` (OS keyring via the MIT `keyring` package, so Windows Credential
+Manager, macOS Keychain, Secret Service or KWallet; any CLI manager through
+argv templates, with presets for pass, secret-tool, 1Password `op`, Bitwarden
+`bw` and KeePassXC), `deliver` (env / 0600 temp file / stdin / askpass for
+ssh, sudo and git; never argv), `redact` (streaming, plus URL and base64
+forms), and `askpass` (refuses yes/no host-key prompts, retry cap).
+`service` keeps names, metadata and grants in `<home>/secret_vault/vault.json`
+(no values). `cards` builds chat cards, `routes` is owner-only transport with
+no value-returning route, and `__main__` holds the agent verbs (`status`,
+`list`, `request`, `run`, `grants`; there is deliberately no `get`). Client:
+`js/chat/chat_secret_fields.js` (`CuttleChatSecretFields`; inputs carry no
+`data-field-id`, so the generic collector never sees a value),
+`js/secret_vault/secrets_model.js` (pure) + `secrets_page.js`. Agent guidance
+is a context bundle: `.cuttle_global/features/secret_vault/`.
+
+Threat model: approval is enforced by Cuttle's CLI and is a consent record,
+not a sandbox against an agent running as the same OS user. Secrets stay out
+of transcripts, model context, provider logs, argv/process lists and command
+output. Tests: `src/tests/secret_vault/`. Teardown: see the
+`api/secret_vault/__init__.py` docstring. Turning the flag off keeps stored
+values in the keyring or manager and metadata in the Cuttle home.
 
 ## IDE App
 

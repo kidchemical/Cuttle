@@ -114,6 +114,9 @@ class ContextSnapshot:
     project_commands: Tuple[str, ...]
     skills: Tuple[str, ...] = ()
     features: Dict[str, str] = field(default_factory=dict)
+    # Hash of the chat's bound orchestrator brief ("" when unbound). Playbook
+    # edits must reach a resumed orchestrator, not only a fresh briefing.
+    orchestrator: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -126,6 +129,7 @@ class ContextSnapshot:
             "project_commands": list(self.project_commands),
             "skills": list(self.skills),
             "features": dict(self.features),
+            "orchestrator": self.orchestrator,
         }
 
     @classmethod
@@ -140,6 +144,7 @@ class ContextSnapshot:
             project_commands=tuple(raw.get("project_commands") or ()),
             skills=tuple(raw.get("skills") or ()),
             features=dict(raw.get("features") or {}),
+            orchestrator=str(raw.get("orchestrator") or ""),
         )
 
 
@@ -147,7 +152,20 @@ from api.experimental.context_bundles import capture_call
 
 
 @capture_call
-def compute_snapshot(project_path: Optional[str]) -> ContextSnapshot:
+def _orchestrator_brief(chat_session_id: Any) -> str:
+    if chat_session_id in (None, ""):
+        return ""
+    try:
+        from api.orchestrator.service import brief_block
+
+        return brief_block(chat_session_id)
+    except Exception:
+        return ""
+
+
+def compute_snapshot(
+    project_path: Optional[str], chat_session_id: Any = None
+) -> ContextSnapshot:
     """Capture the exact context state the fresh envelope would send.
 
     Applies the same GLOBAL.ini policy as ``compile_context`` (rules
@@ -172,6 +190,7 @@ def compute_snapshot(project_path: Optional[str]) -> ContextSnapshot:
                 global_docs = list_merged_names(docs_dir, ("*.md",), limit=40)
     from api.experimental.context_bundles import markdown, snapshot
     global_docs.extend(n for n, _ in markdown("docs", project_path))
+    brief = _orchestrator_brief(chat_session_id)
     return ContextSnapshot(
         schema_version=CONTEXT_SCHEMA_VERSION,
         global_rules=_rules_map(visible_global),
@@ -182,6 +201,7 @@ def compute_snapshot(project_path: Optional[str]) -> ContextSnapshot:
         project_commands=tuple(sorted(n if n.startswith("feature/") else Path(n).stem for n in (inv.get("commands") or []))),
         skills=tuple(skill_inventory(project_path)),
         features=snapshot(project_path),
+        orchestrator=_hash_text(brief) if brief else "",
     )
 
 
@@ -338,8 +358,23 @@ def build_delta_text(
     previous: ContextSnapshot,
     current: ContextSnapshot,
     project_path: Optional[str],
+    chat_session_id: Any = None,
 ) -> Optional[str]:
     parts: List[str] = ["## Context delta (since your session briefing)"]
+    if previous.orchestrator != current.orchestrator:
+        brief = _orchestrator_brief(chat_session_id) if current.orchestrator else ""
+        if brief:
+            parts += [
+                "### Orchestrator playbook updated",
+                "This brief replaces the one you had; follow it from now on.",
+                "",
+                brief,
+            ]
+        else:
+            parts += [
+                "### Orchestrator playbook removed",
+                "- This chat is no longer bound to a playbook; drop its brief.",
+            ]
     if previous.features != current.features:
         parts.append("### Feature context availability")
         for ref in sorted(set(previous.features) | set(current.features)):
@@ -474,12 +509,12 @@ def prepare_resume_delta(
         return None
     from api.experimental.context_bundles import captured
     with captured():
-        current = compute_snapshot(project_path)
-        delta = build_delta_text(previous, current, project_path)
+        current = compute_snapshot(project_path, chat_session_id)
+        delta = build_delta_text(previous, current, project_path, chat_session_id)
         if not delta:
             return None
         text = wrap_delta_block(delta)
-    if compute_snapshot(project_path) != current:
+    if compute_snapshot(project_path, chat_session_id) != current:
         raise UnstablePreparationError(
             "context changed during delta preparation; falling back to full"
         )

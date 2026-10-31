@@ -47,6 +47,9 @@
                     const n = parseFloat(raw);
                     if (Number.isFinite(n) && n > 0) out[side] = n;
                 });
+                // An active voice call strip occupies the bottom edge (shell_voice).
+                const strip = parseFloat(cs.getPropertyValue('--shell-voice-strip-h'));
+                if (Number.isFinite(strip) && strip > 0) out.bottom += strip;
             } catch (_) { /* no insets without computed style */ }
             return out;
         }

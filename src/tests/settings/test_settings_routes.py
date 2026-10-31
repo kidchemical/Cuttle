@@ -288,9 +288,41 @@ def test_timeouts_round_trip(tmp_path, monkeypatch):
 
     # Bounds + shape are enforced by the owned validator.
     for bad in ({"agent_run_seconds": 5}, {"subagent_wait_seconds": 999999},
-                {"agent_run_seconds": "soon"}, {}):
+                {"agent_run_seconds": "soon"}, {"agent_run_seconds": -1}, {}):
         res = ctx["client"].post("/api/settings/timeouts", json=bad, environ_base=LAN)
         assert res.status_code == 400, bad
+
+    # 0 and blank both mean unlimited; persisted as null so older releases
+    # (which clamp a stored 0 up to 60s) read it as their default instead.
+    res = ctx["client"].post(
+        "/api/settings/timeouts",
+        json={"agent_run_seconds": 0, "subagent_wait_seconds": None},
+        environ_base=LAN,
+    )
+    assert res.status_code == 200, res.get_json()
+    body = res.get_json()
+    assert body["agent_run_seconds"] == 0 and body["subagent_wait_seconds"] == 0
+    assert isolated.get_setting("timeouts") == {
+        "agent_run_seconds": None, "subagent_wait_seconds": None,
+    }
+
+
+def test_timeouts_unlimited_reaches_harness_budgets(tmp_path, monkeypatch):
+    """Settings 0 → kernel turn budget and subagent --wait deadline are unlimited."""
+    from api.agent_harness import kernel
+    from api.agent_harness.timeouts import UNLIMITED_TURN_SECONDS
+    from api.subagents import cli as sub_cli
+
+    isolated = _isolated_settings(monkeypatch, tmp_path)
+    assert kernel._resolve_agent_run_timeout() == 3600.0
+    isolated.update_setting("timeouts", lambda _cur: {
+        "agent_run_seconds": None, "subagent_wait_seconds": 0,
+    })
+    assert kernel._resolve_agent_run_timeout() == UNLIMITED_TURN_SECONDS
+    assert sub_cli._resolve_wait_timeout() == UNLIMITED_TURN_SECONDS
+    isolated.update_setting("timeouts", lambda _cur: {"agent_run_seconds": 7200})
+    assert kernel._resolve_agent_run_timeout() == 7200.0
+    assert sub_cli._resolve_wait_timeout() == 3600.0
 
 
 def test_settings_validators_owned():

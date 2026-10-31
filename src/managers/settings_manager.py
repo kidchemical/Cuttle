@@ -10,7 +10,10 @@ from typing import Optional, Dict, Any
 
 
 # Timeout policy bounds + defaults, shared by the manager resolver and the
-# settings route validator (one source of truth).
+# settings route validator (one source of truth). ``TIMEOUT_UNLIMITED`` (0)
+# means no limit; it is persisted as ``null`` because releases before the
+# unlimited option clamp a stored 0 up to TIMEOUT_MIN_SECONDS.
+TIMEOUT_UNLIMITED = 0
 TIMEOUT_MIN_SECONDS = 60
 TIMEOUT_MAX_SECONDS = 86400
 TIMEOUT_DEFAULTS = {
@@ -194,15 +197,23 @@ class SettingsManager:
 
         One source for consumers: the harness run cap
         (``api.agent_harness.kernel``) and the subagent ``--wait`` deadline
-        (``api.subagents``). Missing/invalid values fall back to the defaults.
+        (``api.subagents``). A saved 0 / null / blank is ``TIMEOUT_UNLIMITED``;
+        a missing key or invalid value falls back to the default.
         """
         raw = self.get_setting("timeouts") or {}
         resolved: Dict[str, int] = {}
         for key, fallback in TIMEOUT_DEFAULTS.items():
+            stored = raw.get(key, fallback) if isinstance(raw, dict) else fallback
+            if stored is None or (isinstance(stored, str) and not stored.strip()):
+                resolved[key] = TIMEOUT_UNLIMITED
+                continue
             try:
-                value = int(raw.get(key))
+                value = int(stored)
             except (TypeError, ValueError):
                 value = fallback
+            if value <= 0:
+                resolved[key] = TIMEOUT_UNLIMITED
+                continue
             resolved[key] = max(TIMEOUT_MIN_SECONDS, min(TIMEOUT_MAX_SECONDS, value))
         return resolved
 

@@ -145,6 +145,11 @@ def _handle_provider_event(run, raw):
         run.last_activity = time.monotonic()
         run.send({"type": "session.output_audio.delta", "delta": event.get("delta"), "event_id": event_id})
         return
+    if kind == "input_audio_buffer.speech_started":
+        # interrupt_response cancels the reply upstream, but the phone has
+        # already buffered audio ahead of playback; it must drop it too.
+        run.send({"type": "session.output_audio.clear", "event_id": event_id or uuid.uuid4().hex})
+        return
     if kind == "response.output_audio_transcript.delta":
         item_id = str(event.get("item_id") or "")
         run.output_seen.add(item_id)

@@ -74,6 +74,18 @@ out.pinsEmpty = A.buildAgentPinsForRequest({ message: 'hello', models: MODELS({
 out.pinsEffortOnly = A.buildAgentPinsForRequest({ message: '/hermes go', models: MODELS({
   hermes: { model: '', effort: 'ultra', modelDirty: false, effortDirty: false },
 }) });
+out.pinsCursorSlash = A.buildAgentPinsForRequest({
+  message: '/cursor /model cursor-grok-4.6-high fix it',
+  models: MODELS({ cursor: { model: 'auto', effort: '', modelDirty: false, effortDirty: false } }),
+});
+out.pinsCursorPreferred = A.buildAgentPinsForRequest({
+  message: '/cursor fix it',
+  models: MODELS({ cursor: { model: 'cursor-grok-4.6-high', effort: '', modelDirty: false, effortDirty: false } }),
+});
+out.pinsCursorAutoSkipped = A.buildAgentPinsForRequest({
+  message: '/cursor hello',
+  models: MODELS({ cursor: { model: 'auto', effort: '', modelDirty: false, effortDirty: false } }),
+});
 // codex fetch gate
 const G = (o) => A.codexEffortFetchForSend(Object.assign(
   { messageText: '/codex fix it', hasCodexChip: false, codexEffortDirty: false,
@@ -141,6 +153,9 @@ def test_agent_pins_for_request():
     assert res["pinsDirty"] == {"muse": {"model": "muse-spark-1.2"}}
     assert res["pinsEmpty"] == {}
     assert res["pinsEffortOnly"] == {"hermes": {"effort": "ultra"}}
+    assert res["pinsCursorSlash"] == {"cursor": {"model": "cursor-grok-4.6-high"}}
+    assert res["pinsCursorPreferred"] == {"cursor": {"model": "cursor-grok-4.6-high"}}
+    assert res["pinsCursorAutoSkipped"] == {}
 
 
 @node_only

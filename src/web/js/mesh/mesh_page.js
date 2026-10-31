@@ -131,9 +131,9 @@ let currentTab = readInitialJobsTab();
 let initialLoad = true;
 let pollTimer = null;
 
+// Poll-safe swap: skips unchanged markup, keeps scroll/open/focus state.
 function setHtmlIfChanged(el, html) {
-    if (!el) return;
-    if (el.innerHTML !== html) el.innerHTML = html;
+    return window.CuttleScroll.setHtml(el, html);
 }
 
 let openDeviceMenuKey = null;
@@ -234,19 +234,14 @@ function restoreDeviceMenu(key) {
 
 function setJobsTableHtml(el, html) {
     if (!el) return;
-    if (el.innerHTML === html) return;
     const prev = el.querySelector('.jobs-table-scroll');
     const left = prev ? prev.scrollLeft : 0;
     const top = prev ? prev.scrollTop : 0;
     const keepKey = openDeviceMenuKey;
     suppressDeviceMenuClose += 1;
     try {
-        el.innerHTML = html;
+        if (!setHtmlIfChanged(el, html)) return;
         const next = el.querySelector('.jobs-table-scroll');
-        if (next) {
-            next.scrollLeft = left;
-            next.scrollTop = top;
-        }
         if (keepKey) {
             openDeviceMenuKey = keepKey;
             restoreDeviceMenu(keepKey);
@@ -414,10 +409,8 @@ function renderDevices() {
     if (!el) return;
     if (!deviceWorkers.length) {
         const empty = '<div class="jobs-empty">No workers registered yet. Host daemon local worker should appear within a few seconds after restart.</div>';
-        if (el.innerHTML !== empty) {
-            if (openDeviceMenuKey && openDeviceMenuKey.indexOf('worker:') === 0) closeDeviceMenu();
-            el.innerHTML = empty;
-        }
+        if (window.CuttleScroll.setHtml(el, empty)
+            && openDeviceMenuKey && openDeviceMenuKey.indexOf('worker:') === 0) closeDeviceMenu();
         return;
     }
     const ordered = deviceWorkers.slice().sort(function (a, b) {
@@ -828,7 +821,7 @@ function renderPairing() {
     if (!el) return;
     if (!pendingPairing.length) {
         const empty = '<div class="jobs-empty">No devices waiting for approval. New Client connects appear here with a pairing code.</div>';
-        if (el.innerHTML !== empty) el.innerHTML = empty;
+        setHtmlIfChanged(el, empty);
         return;
     }
     const rows = pendingPairing.map(function (q) {

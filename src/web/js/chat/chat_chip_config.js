@@ -8,9 +8,14 @@
    branch list/switch transport, and the segmented project chip's branch
    cache.
 
+   Optional host labels (app pages reusing the picker, e.g. Apps →
+   Agents): `agentPickerTitle`, `agentPickerSubtitle`, `clearChoiceLabel`.
+
    Composed once per page by chat_page.js:
    `CuttleChipConfig.create(host)` returns
-   `{ openProject, openAgent, close, bindRow }`. The page keeps chat
+   `{ openProject, openAgent, close, bindRow, openCustom }` — `openCustom`
+   lends the same modal to other chip owners; `bindRow(row, { onChip })`
+   lets them claim a chip click first. The page keeps chat
    state, palette catalogs and setters, and chip rendering: they
    arrive as explicit `host` capabilities and this module never reads
    page scope directly.
@@ -233,7 +238,9 @@
         function selectHtml(id, label, options, selected, disabled) {
             return '<div class="chip-config-field">' +
                 '<span class="chip-config-field-label">' + esc(label) + '</span>' +
-                '<select class="chip-config-select" id="' + id + '"' + (disabled ? ' disabled' : '') + '>' +
+                // data-native-select: this module owns the combobox, so app-page
+                // skins (page_controls.js) leave it as the composer renders it.
+                '<select class="chip-config-select" data-native-select id="' + id + '"' + (disabled ? ' disabled' : '') + '>' +
                 optionsHtml(options, selected) + '</select></div>';
         }
 
@@ -452,7 +459,7 @@
             const isStarred = typeof h.isProjectStarred === 'function' ? h.isProjectStarred : () => false;
             let projOptions = projects.map((p) => ({
                 value: String(p && p.id != null ? p.id : ''),
-                label: ((p && isStarred(p)) ? '★ ' : '') + ((p && p.name) || ('Project ' + (p && p.id))),
+                label: ((p && isStarred(p)) ? '★ ' : '') + ((p && (p.display_name || p.name)) || ('Project ' + (p && p.id))),
             })).filter((o) => o.value !== '');
             const curId = current && current.id != null ? String(current.id) : '';
             if (defaultsMode) {
@@ -608,7 +615,7 @@
             const id = String(agentId || '').toLowerCase();
             const spec = id && h.getAgentSpec ? h.getAgentSpec(id) : null;
             let agentOptions = entries.map((e) => ({ value: e.id, label: e.label }));
-            if (defaultsMode) agentOptions = withClearChoice(agentOptions);
+            if (defaultsMode) agentOptions = withClearChoice(agentOptions, h.clearChoiceLabel);
             let fields = selectHtml('chipConfigAgent', 'Agent', agentOptions, id, !agentOptions.length);
             let modelOpts = [];
             let effortOpts = [];
@@ -623,10 +630,10 @@
                 fields += selectHtml('chipConfigEffort', 'Effort', effortOpts, spec.efforts.current());
             }
             openModal(
-                'Agent',
-                defaultsMode
+                h.agentPickerTitle || 'Agent',
+                h.agentPickerSubtitle || (defaultsMode
                     ? 'Choose the agent, model, and effort for new chats in this tab or group.'
-                    : 'Choose the agent, model, and effort for this chat.',
+                    : 'Choose the agent, model, and effort for this chat.'),
                 fields,
                 (el) => {
                     const agentSel = el.querySelector('#chipConfigAgent');
@@ -713,6 +720,8 @@
                     }
                     const idx = parseInt(el.getAttribute('data-chip-index'), 10);
                     const chip = Number.isFinite(idx) ? chips[idx] : null;
+                    // Other chip owners (e.g. the /orchestrate chip) claim their own clicks.
+                    if (chip && typeof opts.onChip === 'function' && opts.onChip(chip)) return;
                     const agentId = chip && classify ? classify(chip) : '';
                     if (agentId) openAgent(agentId);
                 };
@@ -739,7 +748,7 @@
             });
         }
 
-        return { openProject, openAgent, close, bindRow };
+        return { openProject, openAgent, close, bindRow, openCustom: openModal };
     }
 
     const api = {

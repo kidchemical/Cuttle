@@ -88,13 +88,27 @@
             if (Object.keys(entry).length) pins[agent] = entry;
         };
         const msg = String(p.message || '');
-        const activeMatch = msg.match(/^\/(muse|hermes|opencode|codex|claude)\b/i);
+        const activeMatch = msg.match(/^\/(muse|hermes|opencode|codex|claude|cursor)\b/i);
         const aid = activeMatch ? String(activeMatch[1]).toLowerCase() : '';
         if (aid === 'muse') put('muse', S.muse);
         else if (aid === 'hermes') put('hermes', S.hermes);
         else if (aid === 'opencode') put('opencode', S.opencode);
         else if (aid === 'codex') put('codex', S.codex);
         else if (aid === 'claude') put('claude', S.claude);
+        else if (aid === 'cursor') {
+            // Default composer state is Auto; sending that as a pin would
+            // clobber a starred Grok pick. Only attach a concrete model.
+            const slot = S.cursor || {};
+            const fromMsg = String(msg.replace(/^\/cursor\b\s*/i, '').trim());
+            const slash = fromMsg.match(/^\/model\s+(\S+)/i);
+            const slashId = slash && !/^(refresh|reload|sync)$/i.test(slash[1])
+                ? String(slash[1] || '').trim()
+                : '';
+            const mid = slashId || String(slot.model || '').trim();
+            if (mid && !/^auto$/i.test(mid) && !/^default$/i.test(mid)) {
+                put('cursor', { model: mid });
+            }
+        }
         const dirtyPut = (agent, slot) => {
             if (!slot || (!slot.modelDirty && !slot.effortDirty)) return;
             put(agent, slot);

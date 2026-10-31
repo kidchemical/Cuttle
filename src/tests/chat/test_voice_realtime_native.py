@@ -145,6 +145,25 @@ def test_native_realtime_bridges_audio_transcripts_and_tool(isolated, monkeypatc
                for e in connection.sent)
 
 
+def test_native_realtime_barge_in_clears_phone_playback(isolated, monkeypatch):
+    """Speech start cancels the reply upstream; buffered phone audio must be dropped too."""
+    flags.set_enabled("voice_realtime", True)
+    connection = FakeConnection()
+    with _fake_transport(connection):
+        out = service.start_native(user_id=7, chat_id=42, token="tok")
+        socket = FakeSocket([])
+        worker = threading.Thread(target=lambda: service.native_connection(out["id"], 7, socket), daemon=True)
+        worker.start()
+        connection.incoming.put({"type": "session.updated", "event_id": "u1", "session": {"id": "p1"}})
+        connection.incoming.put({"type": "response.output_audio.delta", "event_id": "a1", "delta": "AQI="})
+        connection.incoming.put({"type": "input_audio_buffer.speech_started", "event_id": "s1"})
+        _wait(lambda: any(e["type"] == "session.output_audio.clear" for e in socket.sent))
+        socket.close()
+        worker.join(timeout=5)
+    kinds = [e["type"] for e in socket.sent]
+    assert kinds.index("session.output_audio.delta") < kinds.index("session.output_audio.clear")
+
+
 def test_native_realtime_requires_the_flag(isolated, monkeypatch):
     flags.set_enabled("voice_realtime", False)
     with pytest.raises(PermissionError):

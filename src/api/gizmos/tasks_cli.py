@@ -26,8 +26,8 @@ def add_parser(sub):
             p.add_argument('--description', default='')
         if verb == 'patch':
             p.add_argument('--ops', help='JSON patch object: add, remove, set_text, items, description, …')
-            p.add_argument('--set-done')
-            p.add_argument('--set-undone')
+            p.add_argument('--set-done', action='append', help='item id(s), comma-separated; repeatable')
+            p.add_argument('--set-undone', action='append', help='item id(s), comma-separated; repeatable')
             p.add_argument('--description')
             p.add_argument('--title')
             p.add_argument('--status', choices=['active', 'archived'])
@@ -67,7 +67,7 @@ def run(args):
         if not isinstance(ops, dict):
             raise GizmoError('--ops must be a JSON object')
         for key in ('set_done', 'set_undone'):
-            raw = getattr(args, key)
+            raw = ','.join(getattr(args, key) or [])
             if raw:
                 ops[key] = list(ops.get(key) or []) + [i.strip() for i in raw.split(',') if i.strip()]
         for key in ('description', 'title', 'status'):

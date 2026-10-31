@@ -29,6 +29,25 @@
         });
     }
 
+    function captureScroll(root) {
+        var saved = [];
+        if (!root) return saved;
+        var nodes = [root].concat(Array.prototype.slice.call(root.querySelectorAll('*')));
+        nodes.forEach(function (n, i) {
+            if (n.scrollTop || n.scrollLeft) saved.push([i, n.scrollTop, n.scrollLeft]);
+        });
+        return saved;
+    }
+
+    function restoreScroll(root, saved) {
+        if (!root || !saved || !saved.length) return;
+        var nodes = [root].concat(Array.prototype.slice.call(root.querySelectorAll('*')));
+        saved.forEach(function (s) {
+            var n = nodes[s[0]];
+            if (n) { n.scrollTop = s[1]; n.scrollLeft = s[2]; }
+        });
+    }
+
     function verdictText(model) {
         var m = model || {};
         var text = VERDICT[m.verdict] || '';
@@ -92,22 +111,39 @@
 
     /**
      * Controller for one inspector body. deps: {fetchJson(url) → Promise,
-     * renderDiff(host, patch), openStep(seq), esc?}. Re-fetches only while the
-     * run is live; open file rows survive repaints.
+     * renderDiff(host, patch), openStep(seq), esc?, revision?, isActive?}.
+     * Re-fetches when `revision` moves (or every 3s while running without
+     * one); open file rows and scroll offsets survive repaints.
      */
     function mount(body, queryId, deps) {
         var state = body._queryChanges;
         if (!state || state.queryId !== queryId) {
             state = body._queryChanges = { queryId: queryId, model: null, fetchedAt: 0, snapshot: null, loading: false };
         }
+        // Open diffs carry their rendered nodes and scroll offsets across a
+        // repaint so a live model update never collapses or rewinds them.
         function paint() {
+            var prevTop = body.scrollTop;
             var open = {};
-            body.querySelectorAll('details.query-changes-file[open]').forEach(function (d) { open[d.getAttribute('data-path')] = 1; });
+            body.querySelectorAll('details.query-changes-file[open]').forEach(function (d) {
+                var slot = d.querySelector('[data-diff-slot]');
+                open[d.getAttribute('data-path')] = {
+                    nodes: slot ? Array.prototype.slice.call(slot.childNodes) : [],
+                    scroll: captureScroll(slot)
+                };
+            });
             body.innerHTML = renderHtml(state.model, deps.esc);
             body.querySelectorAll('details.query-changes-file').forEach(function (d) {
                 d.addEventListener('toggle', function () { if (d.open) fillDiff(d); });
-                if (open[d.getAttribute('data-path')]) { d.open = true; fillDiff(d); }
+                var prev = open[d.getAttribute('data-path')];
+                if (!prev) return;
+                var slot = d.querySelector('[data-diff-slot]');
+                if (slot) prev.nodes.forEach(function (n) { slot.appendChild(n); });
+                d.open = true;
+                restoreScroll(slot, prev.scroll);
+                fillDiff(d);
             });
+            body.scrollTop = prevTop;
             body.querySelectorAll('.query-changes-step').forEach(function (b) {
                 b.addEventListener('click', function (e) {
                     e.preventDefault(); e.stopPropagation();
@@ -127,31 +163,51 @@
             var slot = details.querySelector('[data-diff-slot]');
             if (!slot || slot.getAttribute('data-filled')) return;
             slot.setAttribute('data-filled', '1');
-            slot.textContent = 'Loading…';
+            if (!slot.hasChildNodes()) slot.textContent = 'Loading…';
             snapshotPatches().then(function (patches) {
                 var patch = patches[details.getAttribute('data-path')];
+                var saved = captureScroll(slot);
                 if (patch) deps.renderDiff(slot, patch);
                 else slot.textContent = 'No net diff in the turn snapshot. Open a step for the reported edit.';
+                restoreScroll(slot, saved);
             }).catch(function (error) {
                 slot.textContent = (error && error.message) || 'Diff unavailable';
                 slot.removeAttribute('data-filled');
             });
         }
-        var live = !state.model || state.model.status === 'running';
-        if (state.model) paint();
-        if (state.loading || (!live && state.model) || Date.now() - state.fetchedAt < 3000) return;
+        // Every live update lands here; repaint only when another tab replaced the body.
+        if (state.model && !body.querySelector('.query-changes')) paint();
+        // deps.revision (edit rows + run state) gates refetches; without one,
+        // a running model refreshes at most every 3s.
+        var revision = deps.revision == null ? null : String(deps.revision);
+        var stale = !state.model || (revision !== null
+            ? revision !== state.revision
+            : state.model.status === 'running' && Date.now() - state.fetchedAt >= 3000);
+        if (!stale) return;
+        if (state.loading) { state.pendingDeps = deps; return; }
         state.loading = true;
+        state.revision = revision;
         if (!state.model) body.innerHTML = '<p class="query-log-empty">Loading changes…</p>';
-        deps.fetchJson('/api/agent-events/runs/' + encodeURIComponent(queryId) + '/changes').then(function (model) {
+        // The host may have switched tabs while a fetch was in flight.
+        function active() { return body._queryChanges === state && (!deps.isActive || deps.isActive()); }
+        function settle() {
             state.loading = false;
             state.fetchedAt = Date.now();
+            var next = state.pendingDeps;
+            state.pendingDeps = null;
+            if (next && active()) mount(body, queryId, next);
+        }
+        deps.fetchJson('/api/agent-events/runs/' + encodeURIComponent(queryId) + '/changes').then(function (model) {
             var changed = JSON.stringify(model) !== JSON.stringify(state.model);
             if (changed) { state.model = model; state.snapshot = null; }
-            if (changed || !body.querySelector('.query-changes')) paint();
+            if (active() && (changed || !body.querySelector('.query-changes'))) paint();
+            settle();
         }).catch(function (error) {
-            state.loading = false;
-            state.fetchedAt = Date.now();
-            body.innerHTML = '<p class="query-log-empty">' + (deps.esc || defaultEsc)((error && error.message) || 'Changes unavailable') + '</p>';
+            state.revision = null;
+            if (!state.model && active()) {
+                body.innerHTML = '<p class="query-log-empty">' + (deps.esc || defaultEsc)((error && error.message) || 'Changes unavailable') + '</p>';
+            }
+            settle();
         });
     }
 

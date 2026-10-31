@@ -592,7 +592,7 @@
 
             const submitBtn = card.querySelector('[data-action-form-submit]');
             if (submitBtn) {
-                submitBtn.addEventListener('click', () => {
+                submitBtn.addEventListener('click', async () => {
                     const modeWrap = card.querySelector('[data-mode="multi"]');
                     if (modeWrap) {
                         const opts = [];
@@ -604,6 +604,33 @@
                     }
                     // form mode — collect fields
                     const fields = collectFormFields(card);
+                    // Secret-vault fields store values/grants first; only
+                    // "stored"/"granted" tokens join the answer.
+                    const secretFields = root.CuttleChatSecretFields;
+                    if (secretFields && secretFields.hasFields(card)) {
+                        if (card.__secretBusy) return;
+                        card.__secretBusy = true;
+                        let applied;
+                        try {
+                            applied = await secretFields.apply(card, {
+                                request: host.request,
+                                sessionId: (card.getAttribute('data-session-id') || '').trim()
+                                    || currentCtx().sessionId,
+                                signal: life.signal,
+                            });
+                        } catch (err) {
+                            applied = { error: (err && err.message) || 'Vault request failed.' };
+                        } finally {
+                            card.__secretBusy = false;
+                        }
+                        if (!isCurrent(card, life)) return;
+                        if (applied.error) {
+                            setStatus(applied.error, false);
+                            host.notify(applied.error, 'error');
+                            return;
+                        }
+                        Object.assign(fields, applied.fields);
+                    }
                     let cardSpec = {};
                     try { cardSpec = JSON.parse(card.getAttribute('data-spec') || '{}') || {}; } catch (_) {}
                     if (!CuttleChatActionForms.actionFormHasSideEffect(cardSpec)) {
@@ -1524,7 +1551,7 @@
             // Root-scoped scan: this controller settles only its own
             // root's cards. Generation semantics are unchanged.
             const cards = Array.from(chatRoot.querySelectorAll('.cuttle-action-form'))
-                .filter(isLinkedFlaskRestartCard);
+                .filter((card) => !card.__restartSettled && isLinkedFlaskRestartCard(card));
             if (!cards.length) return;
             let data = null;
             try {
@@ -1596,6 +1623,8 @@
                         collapseLockedActionForm(card, ['graceful'], 'Flask already restarted');
                         setActionFormCardProgress(card, 'Flask already restarted', 'ok');
                     }
+                    // Generations only grow: this card never needs another status poll.
+                    card.__restartSettled = true;
                     return;
                 }
                 if (inFlight && rid && (!currentFormId || !cardId || cardId === currentFormId
@@ -1633,7 +1662,7 @@
             if (linkPoll) return;
             try {
                 linkPoll = setInterval(() => {
-                    if (destroyed) return;
+                    if (destroyed || (typeof document !== 'undefined' && document.hidden)) return;
                     syncLinkedFlaskRestartCardsFromStatus().catch(() => {});
                     try { host.syncHistoryAwaiting(); } catch (_) {}
                 }, 2500);

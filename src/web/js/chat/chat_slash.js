@@ -324,7 +324,9 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
 
         // `/model <id> …` — consume the model id so it does not leak into the body
         // (and so we can collapse to a single Cursor badge).
-        const modelSetM = str.match(/^\/model\s+(\S+)\s*(.*)$/s);
+        // Ids are ASCII slugs (`gpt-5`, `openai/gpt-4o`, `model:tag`); a renamed
+        // title like `/model 🦘 jump bug` keeps the emoji in the name.
+        const modelSetM = str.match(/^\/model\s+([A-Za-z0-9][\w.:/@+-]*)(?=\s|$)\s*(.*)$/s);
         if (modelSetM) {
             const mid = modelSetM[1];
             const body = (modelSetM[2] || '').trim();
@@ -347,8 +349,11 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
             const cat = cmd.category || 'command';
             // `/model ` alone (list models) — handled here; `/model <id>` above.
             if (p === '/model ') {
-                if (str === '/model') {
-                    return { chips: [{ label: cmd.label, meta: '/model', category: cat }], body: '' };
+                if (str === '/model' || str.startsWith('/model ')) {
+                    return {
+                        chips: [{ label: cmd.label, meta: '/model', category: cat }],
+                        body: str.slice('/model'.length).trim(),
+                    };
                 }
                 continue;
             }

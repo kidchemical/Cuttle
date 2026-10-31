@@ -98,8 +98,8 @@ process.stdout.write(JSON.stringify({ ok: true }));
 """
 
 
-def _run():
-    script = HARNESS.replace("__SOURCE__", OWNER_JS.read_text(encoding="utf-8"))
+def _run(script=HARNESS):
+    script = script.replace("__SOURCE__", OWNER_JS.read_text(encoding="utf-8"))
     proc = subprocess.run(
         ["node", "-"], input=script,
         capture_output=True, text=True, encoding="utf-8", timeout=30,
@@ -111,3 +111,94 @@ def _run():
 @node_only
 def test_quick_drop_appends_leaf_to_target_space():
     assert _run()["ok"] is True
+
+
+HARNESS_HOVER = """
+const assert = require('node:assert/strict');
+global.window = {};
+const window = global.window;
+
+window.CuttleSpaces = {
+  DEFAULT_COLOR: '#e8eaed',
+  sanitizeColor: (c) => c || null,
+  loadSpacesState: () => window.__state,
+  saveSpacesState: (storage, state) => { window.__saved = JSON.parse(JSON.stringify(state)); },
+  createDefaultState: () => ({ active: 'A', spaces: [{ id: 'A', name: 'A' }], groups: [] }),
+  getSpaceById: (state, id) => (state.spaces || []).find((s) => s && s.id === id) || null,
+  getGroupById: () => null,
+  ensureGroupsArray: () => [],
+  pruneEmptyGroups: () => false,
+  pruneSources: () => {},
+  setUnreadPrefs() {}, setLocalQueues() {},
+};
+window.CuttleSessionPrefs = { create: () => ({ map: () => ({}), update() {}, invalidate() {} }), isKey: () => false };
+window.CuttleActivityBroker = { create: () => ({ start() {}, dispose() {}, sessions: async () => null, refresh() {} }) };
+
+__SOURCE__
+
+function makeTab(id, left) {
+  return {
+    dataset: { spaceId: id },
+    getBoundingClientRect: () => ({ left, right: left + 50, top: 0, bottom: 20 }),
+    classList: { add() {}, remove() {}, toggle() {} },
+    setAttribute() {}, scrollIntoView() {},
+    querySelector: () => null, insertBefore() {}, firstChild: null,
+  };
+}
+const doc = {
+  querySelectorAll: (sel) => (sel === '.shell-space-tab' ? [makeTab('A', 0), makeTab('B', 60)] : []),
+  querySelector: () => null, getElementById: () => null,
+  createElement: () => ({ dataset: {}, hidden: true, classList: { add() {}, remove() {} }, setAttribute() {}, removeAttribute() {} }),
+  addEventListener() {}, removeEventListener() {},
+  body: { classList: { add() {}, remove() {} } },
+};
+const win = {
+  setTimeout: (fn) => { fn(); return 1; }, clearTimeout() {},
+  location: { origin: 'https://cuttle.test' },
+  showToast() { (win.__toasts = win.__toasts || []).push(Array.from(arguments)); },
+  CSS: { escape: (s) => s },
+  addEventListener() {}, removeEventListener() {},
+};
+
+function makeHost() {
+  return {
+    win, doc, storage: { getItem: () => null, setItem() {} },
+    escapeHtml: (s) => String(s),
+    getOpenPaneSessions: () => [], flattenLayoutLeaves: () => [], chatSurfaceKind: () => 'chat',
+    broadcastToFrames() {}, broadcastUsageLiveWake() {}, updateUnreadBadge() {},
+    getAuthUserId: () => 1, isRestoring: () => false, snapshotLayout: () => null,
+    applySpaceRoot() {}, defaultSpaceRoot: () => null,
+    persistLastChatHandles() {}, clearLastChatColumn() {},
+    getSplitContainer: () => null, getSplitColumns: () => [], closeSplitColumn() {},
+    getColumnEl: () => ({}), getState: () => ({}), setState() {}, updateColumnUI() {},
+    replaceFrame: () => null, attachFrameLoadListener() {}, pageWithPaneSession: (i, p) => p,
+    canonicalizeShellPage: (p) => p, persistSplitLayout() {}, lastChatByColumn: new Map(),
+    newLeafId: () => 'leaf-x', newGroupId: () => 'grp-x', normalizeSplitOrientation: (o) => o,
+    setFocusedColumnDirect() {}, broadcastPaneFocus() {},
+  };
+}
+
+// Hover over tab B for the hold duration: the space switches but the
+// still-held grip keeps carrying the pane so it can land on a live pane.
+window.__state = { active: 'A', spaces: [{ id: 'A', name: 'A', root: null }, { id: 'B', name: 'B', root: null }], groups: [] };
+const api = window.CuttleShellSpaces.create(makeHost());
+const pd = api.paneDrop;
+pd.beginDrag({ type: 'leaf', id: 'L1', page: '/chat_page.html' }, { isConnected: true }, () => {});
+assert.equal(pd.recentAutoSwitch(), false);
+pd.trackHover({ clientX: 80, clientY: 10 });
+assert.equal(window.__state.active, 'B');
+assert.equal(pd.isActive(), true);
+assert.equal(pd.recentAutoSwitch(), true);
+// Release over a live pane (not a tab): the swap is consumed, drag ends.
+const livePane = { dataset: { column: '3' }, isConnected: true };
+assert.equal(pd.finishDrop({ clientX: 200, clientY: 200 }, livePane), true);
+assert.equal(pd.isActive(), false);
+assert.ok((win.__toasts || []).length >= 1, 'swap toast shown');
+
+process.stdout.write(JSON.stringify({ ok: true }));
+"""
+
+
+@node_only
+def test_hover_switch_keeps_drag_alive_for_live_swap():
+    assert _run(HARNESS_HOVER)["ok"] is True

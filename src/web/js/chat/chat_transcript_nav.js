@@ -72,7 +72,9 @@
 
         function getMessageRefForButton(btn) {
             const messageEl = btn && btn.closest ? btn.closest('.message') : null;
-            if (!messageEl || messageEl.dataset.stopped === 'true') return null;
+            // Stopped bubbles keep their transcript slot (Stop persists an
+            // interrupted-agent-turn row), so their ref stays copyable.
+            if (!messageEl) return null;
             let idx = parseInt(messageEl.dataset.messageIndex || '', 10);
             if (!Number.isFinite(idx) || idx < 1) {
                 const box = frameDoc.getElementById('chatMessages');

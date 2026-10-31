@@ -29,17 +29,76 @@ reads no longer import bcrypt at module load.
 
 Put flags **after** the verb (`get … --json`, not `--json get …`).
 
+`get` / `session` / `search` hide other agents' `<think>` narration and
+post-processing originals (they trip provider reasoning-extraction safeguards
+for the agent reading them). Read through `chat_cli`, not raw SQL; `--raw`
+shows stored text unchanged, but only for debugging storage, never to bring
+context into your own turn.
+
 | Verb | Use |
 |---|---|
 | `get CH-…` | Session summary, or one bubble when `CH-…-N` |
 | `session CH-…` | List bubbles with UI share indices |
 | `search "…"` | Title/body search (pass `--from-chat` on multi-user DBs) |
 | `parse CH-…` | Parse handle only (no DB) |
+| `status` / `snapshot` / `send` / `stop` / `supervise` | Operate on another chat. See [Talk to, inspect, or supervise an existing chat](#talk-to-inspect-or-supervise-an-existing-chat) |
 
 Exit codes: `0` ok, `2` not found / bad handle, `3` other error.
 
 Library (same semantics): `resolve_chat_handle_message`, 
 `AuthDatabase.get_message_by_share_index`. Design pattern: `.cuttle_global/docs/agent-ops-cli.md`.
+
+## Talk to, inspect, or supervise an existing chat
+
+Same CLI, one call each. Never mint auth tokens, curl `/api/chat`, or read
+Flask source for this. `api.subagents message` only reaches child chats it
+spawned. Use these verbs for any other chat (including a parent or sibling).
+The acting chat defaults to `CUTTLE_CHAT_SESSION_ID` (already set inside a
+Cuttle turn); pass `--as CH-…` otherwise. Both chats must have the same owner.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.chat_cli status   CH-001548 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli snapshot CH-001548 --usage codex --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli send     CH-001548 --text "Continue with the next open task." --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli stop     CH-001548 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli supervise CH-001548 --every 900 --agent cursor \
+  --instructions "Keep it on its Tasks list; nudge it when it stalls." \
+  --require-branch dev/multiplayer --forbid-branch dev/core --forbid-branch master \
+  --model-tiers '{"worker":["cursor auto","codex terra medium"],"expert":["claude opus"]}' --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli operations --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli cancel-operation <id> --json
+```
+
+| Verb | Use |
+|---|---|
+| `status CH-…` | `state`: `busy`, `idle`, `idle_with_work` (open Tasks items), `awaiting_input` (form waiting), `error`, `cancelled`; plus Tasks progress, follow-up queue, latest reply (`latest_reply.text` is the readable answer: post-processing wrapper and `<think>` removed, cards as `[card: …]`; `content` is the raw stored row) |
+| `snapshot CH-…` | `status` plus worktree binding, live branch, execution path, the chat's jobs and watch bars; `--usage <agent>` (repeatable) adds plan-usage windows |
+| `send CH-… --text` | A live turn is steered (`delivery: steered`). Otherwise it is queued in a host-owned outbox (`delivery: queued`) and sent when the chat goes idle. The browser does not need to be open. `--mode queue` never steers |
+| `stop CH-…` | Same as the Stop button |
+| `supervise CH-…` | Durable check-ins that survive your turn and Flask restarts. Each interval the host checks the target. It wakes **your** chat with a compact report only when the target is not busy and something changed, or when a branch/path rule is violated. A healthy, working target costs no tokens |
+| `supervise … --require-branch / --require-path / --forbid-branch` | Guard rules, checked on every interval **and** whenever the target or one of its sub-agent children finishes a tool call or rebinds its worktree. A new violation wakes you within seconds, even mid-turn. A commit landing on a forbidden branch from any checkout of the repo is reported once (the new tip becomes the baseline); wrong branch/checkout repeats each interval until fixed |
+| `supervise … --agent ID` | Prefix each check-in with `/<agent>` so that harness runs it (validated against the agent catalog) |
+| `operations` / `operation <id>` / `cancel-operation <id>` | Inspect or cancel your queued sends and supervision schedules |
+| `pause-operation <id>` / `resume-operation <id>` | Pause a schedule; resume checks right away |
+
+Send states: `pending` → `delivered` (host started the turn) / `done` /
+`failed`. If the connection drops mid-send (for example, Flask restarts), the
+send goes to `verifying`. Once the chat is idle, the host looks in its history
+for the send's id (`metadata.chat_op_id` on the user row). If the id is there,
+the send is `delivered`. If not, it was never received and is resent
+automatically. A message is never sent twice. Sends, steers and supervision
+check-ins render in the receiving chat as **Cuttle** (like a parent's message
+to a sub-agent), not as the user. This happens only when the chat-ops store
+holds that id for that chat. `unknown` now means three
+attempts never reached the chat; run `status` before resending by hand.
+
+**Supervising another chat:** run `status` once to orient, then `supervise`,
+then end your turn. Do not sleep-loop inside a turn. Each check-in arrives as
+a new turn in your chat. Act on the target with `send` (steer or queue). Do not
+message its sub-agent children unless asked.
+
+Sends and supervision need the host up (Flask on loopback); read-only `get` /
+`session` / `search` do not. Library: `api.chat_ops` (service, store, worker, rules, triggers).
 
 ## This chat vs other chats
 

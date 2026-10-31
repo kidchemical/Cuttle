@@ -236,6 +236,9 @@ function desktopLaunchMode() {
     const m = String(parseArgValue('--mode') || '').toLowerCase();
     if (m === 'host' || m === 'local') return 'host';
     if (m === 'client') return 'client';
+    // A window the daemon opened is the Host's own UI by definition. Older
+    // daemons omit --mode=host; never let them restore a saved Client target.
+    if (process.env.CUTTLE_HOSTED_BY_DAEMON === '1') return 'host';
     return '';
 }
 
@@ -2356,8 +2359,9 @@ if (LAUNCH_MODE === 'host') {
 }
 if (process.platform === 'linux' && ['host', 'client'].includes(LAUNCH_MODE)) {
     // Must precede ready; supplies both X11 WM_CLASS and Wayland app_id.
-    // --class does not override Electron's desktop identity.
-    app.setDesktopName(`cuttle-${LAUNCH_MODE}.desktop`);
+    // --class does not override Electron's desktop identity. Source launchers
+    // install per-mode entries; packaged builds ship one (package.json desktopName).
+    app.setDesktopName(app.isPackaged ? 'cuttle-desktop.desktop' : `cuttle-${LAUNCH_MODE}.desktop`);
 }
 
 // Single-instance lock: if another instance is already running, focus it and quit this one.
