@@ -127,15 +127,15 @@ def test_secret_fields_and_model_under_node():
 
 
 def test_static_wiring():
-    chat = (WEB / "chat_page.html").read_text()
+    chat = (WEB / "chat_page.html").read_text(encoding="utf-8")
     assert chat.index("chat_secret_fields.js") < chat.index("chat_action_forms.js")
-    shell = (WEB / "app_shell.html").read_text()
+    shell = (WEB / "app_shell.html").read_text(encoding="utf-8")
     assert 'data-page="/secrets_page.html"' in shell and 'id="nav-secrets"' in shell
-    rail = (WEB / "js" / "shell" / "shell_rail.js").read_text()
+    rail = (WEB / "js" / "shell" / "shell_rail.js").read_text(encoding="utf-8")
     assert "'nav-secrets': 'secret_vault'" in rail
     assert "'nav-secrets'" in rail.split("DEFAULT_RAIL_HIDDEN = [")[1].split("]")[0]
-    page = (WEB / "secrets_page.html").read_text()
+    page = (WEB / "secrets_page.html").read_text(encoding="utf-8")
     assert "secrets_model.js" in page and "secrets_page.js" in page
     assert 'name="value" type="password"' in page
-    cards = (WEB / "js" / "chat" / "chat_action_cards.js").read_text()
+    cards = (WEB / "js" / "chat" / "chat_action_cards.js").read_text(encoding="utf-8")
     assert "CuttleChatSecretFields" in cards and "secretFields.apply(" in cards

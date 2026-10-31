@@ -15,6 +15,7 @@ absolute semantics.
 from __future__ import annotations
 
 import time
+import threading
 from typing import Callable, Optional
 
 ABSOLUTE_MULTIPLIER = 4.0
@@ -22,7 +23,11 @@ ABSOLUTE_MIN_EXTRA = 600.0
 
 # "No limit" as a finite budget: every adapter does deadline arithmetic and
 # passes the value to asyncio/threading waits, which reject float('inf').
-UNLIMITED_TURN_SECONDS = 10 * 365 * 86400.0
+# Windows caps those waits at threading.TIMEOUT_MAX (~49.7 days), and the
+# absolute cap multiplies the idle budget, so stay well under it there.
+UNLIMITED_TURN_SECONDS = min(
+    10 * 365 * 86400.0, threading.TIMEOUT_MAX / (2 * ABSOLUTE_MULTIPLIER)
+)
 
 
 def turn_budget(seconds: Optional[float]) -> float:

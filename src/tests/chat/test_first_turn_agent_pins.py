@@ -237,7 +237,7 @@ def test_server_applies_pins_then_freezes_identity_for_badge_and_cli():
     api_dir = Path(__file__).resolve().parents[2] / "api"
     text = (api_dir / "web_chat_api.py").read_text(encoding="utf-8")
     main = text.index(
-        "# Authenticated chats: assign a DB session id before remaining slash-command"
+        "# Authenticated chats: assign a DB session id before native control"
     )
     apply = text.index(
         "_apply_request_agent_pins(chat_session_id, data, message_content)", main

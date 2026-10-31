@@ -247,7 +247,7 @@ class CommandBackend:
             raise self._err(proc, "read", self.get_argv[0])
         text = proc.stdout.decode("utf-8", "replace")
         if self.first_line:
-            text = text.split("\n", 1)[0]
+            text = text.split("\n", 1)[0].removesuffix("\r")
         if text.endswith("\r\n"):
             text = text[:-2]
         elif text.endswith("\n"):
