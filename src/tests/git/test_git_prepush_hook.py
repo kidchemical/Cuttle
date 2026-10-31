@@ -194,3 +194,16 @@ def test_real_private_key_in_same_test_filename_is_not_excepted(tmp_path):
     result = _run_hook(repo, _head(repo), base)
     assert result.returncode == 1
     assert any(hit['hook'] == 'secret-patterns' and hit['file'] == 'src/tests/git/test_github_app.py' for hit in _report(result)['findings'])
+
+
+@pytest.mark.parametrize('name,blocked', [
+    ('client_secret.json', True), ('credentials.yaml', True), ('secrets.txt', True),
+    ('secrets_page.js', False), ('test_secret_vault.py', False), ('secret-vault.md', False),
+])
+def test_filename_rule_targets_data_files_not_source(name, blocked):
+    import importlib.machinery, importlib.util
+    path = str(Path(__file__).resolve().parents[3] / '.cuttle' / 'scripts' / 'git-hooks' / 'pre-push')
+    spec = importlib.util.spec_from_loader('cuttle_pre_push', importlib.machinery.SourceFileLoader('cuttle_pre_push', path))
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    assert (hook._blocked_path('dir/' + name) is not None) is blocked
