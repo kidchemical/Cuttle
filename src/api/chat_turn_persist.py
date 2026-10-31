@@ -226,6 +226,15 @@ def make_assistant_saver(
         except Exception as e:
             print(f"[CHAT] persist assistant message failed: {e}")
             return
+        if nonlocal_res.get('background_job'):
+            # A run that outlived this turn posts its later answers as new
+            # bubbles through this same saver (api.agent_harness.background_wait).
+            try:
+                from api.agent_harness.background_wait import bind_saver
+
+                bind_saver(nonlocal_res['background_job'], on_save, nonlocal_res)
+            except Exception as _bw:
+                print(f"[CHAT] background wait bind failed: {_bw}", flush=True)
         try:
             schedule_autoname(chat_session_id)
         except Exception as _te:

@@ -9,7 +9,11 @@ follow-ups into the live run; the CLI folds them in at the next tool boundary,
 or answers them as an extra turn after the first ``result``. The same open
 stdin keeps the run alive while its own background tasks (``Bash`` with
 ``run_in_background``, ``Monitor``, …) are pending: the CLI starts a follow-up
-turn when one finishes, and that answer merges into this reply.
+turn when one finishes. With a ``background`` wait
+(``api.agent_harness.background_wait``) the turn returns at the first such
+``result`` (reply + watch card) and the run continues on its own thread, each
+later answer becoming its own bubble; without one the answer merges into this
+reply.
 Auth: the user's native Claude login/config; host API credentials are isolated.
 """
 
@@ -17,9 +21,11 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextvars
 import json
 import os
 import shutil
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
@@ -391,12 +397,92 @@ def _undelivered_notice(texts: List[str]) -> str:
     )
 
 
+def _waiting_label(tasks: List[Dict[str, Any]]) -> str:
+    from api.agent_harness.background_wait import waiting_label
+
+    return waiting_label([_task_label([t]) for t in tasks])
+
+
+def _unread_steers(st: Dict[str, Any]) -> List[str]:
+    unread = list(st["echoed"])
+    out: List[str] = []
+    for text in st["sent"]:
+        if text in unread:
+            unread.remove(text)
+        else:
+            out.append(text)
+    return out
+
+
+def _finish_detached(wait: Any, run: Any, st: Dict[str, Any], bg_wait: float) -> None:
+    """End of a run that outlived its turn: terminal card state + closing notice bubble."""
+    notes: List[str] = []
+    undelivered = _unread_steers(st)
+    if undelivered:
+        notes.append(_undelivered_notice(undelivered))
+    if run.cancelled:
+        wait.finish("failed", "Stopped")
+        return
+    if run.timed_out:
+        reason = run.reason or "timed out"
+        notes.append(format_interrupt_notice(
+            "Claude Code", reason, elapsed_sec=run.elapsed_sec, session_saved=True, resume_slash="claude",
+        ))
+        wait.finish("failed", f"Claude Code {reason}", notice="\n\n".join(notes))
+    elif st["abandoned"]:
+        notes.append(_abandoned_notice(st["abandoned"], bg_wait))
+        wait.finish("failed", f"Stopped waiting after {int(bg_wait // 60)} min", notice="\n\n".join(notes))
+    elif st["bg"] or (run.returncode not in (0, None) and not st["reaped"]):
+        detail = f" (exit {run.returncode})" if run.returncode not in (0, None) else ""
+        wait.finish("failed", f"Claude Code ended before its background work finished{detail}",
+                    notice="\n\n".join(notes))
+    else:
+        wait.finish("done", "Background work finished", notice="\n\n".join(notes))
+
+
 def _abandoned_notice(labels: List[str], waited: float) -> str:
     lines = "\n".join(f"- {label}" for label in labels)
     return (
         f"Stopped waiting for background work after {int(waited // 60)} min; it ended with this turn:\n"
         f"{lines}"
     )
+
+
+class _Detach:
+    """Hand-off between a turn and a Claude run that may outlive it.
+
+    The run executes on its own thread and event loop, so it can keep the CLI's
+    stdin open after the turn's loop (``asyncio.run`` in the kernel) closes.
+    ``turn`` resolves once: with the early reply at the first background wait,
+    or with the normal result when the run never waits.
+    """
+
+    def __init__(self, wait: Any):
+        self.wait = wait
+        self.turn: "concurrent.futures.Future" = concurrent.futures.Future()
+        self.detached = False
+
+    async def run(self, coro: Any) -> Dict[str, Any]:
+        ctx = contextvars.copy_context()
+
+        def _main() -> None:
+            try:
+                res = ctx.run(asyncio.run, coro)
+            except BaseException as exc:  # noqa: BLE001 - reported to whoever still listens
+                if not self.turn.done():
+                    self.turn.set_exception(exc)
+                elif self.detached:
+                    self.wait.finish("failed", f"Claude Code background run failed: {exc}")
+                return
+            if not self.turn.done():
+                self.turn.set_result(res)
+
+        threading.Thread(target=_main, name="claude-background-run", daemon=True).start()
+        return await asyncio.wrap_future(self.turn)
+
+    def hand_off(self, reply: Dict[str, Any]) -> None:
+        self.detached = True
+        self.turn.set_result(reply)
 
 
 def usage_for_query_report(usage: Dict[str, Any], model: str) -> Dict[str, Any]:
@@ -452,7 +538,18 @@ class ClaudeCliTool:
         permission_mode: str = "bypassPermissions",
         cancel_event: Any = None,
         steerable: bool = False,
+        background: Any = None,
+        _ctl: Optional[_Detach] = None,
     ) -> Dict[str, Any]:
+        if background is not None and steerable and _ctl is None:
+            ctl = _Detach(background)
+            return await ctl.run(self.execute_prompt(
+                prompt, cwd=cwd, resume=resume, status_queue=status_queue,
+                chat_session_id=chat_session_id, timeout=timeout,
+                permission_mode=permission_mode, cancel_event=cancel_event,
+                steerable=True, background=background, _ctl=ctl,
+            ))
+        ctl = _ctl
         if not (prompt or "").strip():
             return {"success": False, "error": "No prompt provided", "output": ""}
 
@@ -536,7 +633,7 @@ class ClaudeCliTool:
         st: Dict[str, Any] = {
             "token": None, "open": False, "sent": [], "echoed": [], "results": [],
             "bg": [], "waiting": False, "wait_timer": None, "abandoned": [],
-            "reap_timer": None, "reaped": False,
+            "reap_timer": None, "reaped": False, "posted": 0,
         }
         proc = None
         bg_wait = min(_background_wait_seconds(), max(0.0, resolved_timeout - 60.0))
@@ -589,6 +686,46 @@ class ClaudeCliTool:
                 _close_input()
                 st["reap_timer"] = loop.call_later(_background_exit_grace_seconds(), _reap)
 
+        def _parsed_since(start: int) -> Dict[str, Any]:
+            return _merge_results([_parse_claude_json(json.dumps(r)) for r in st["results"][start:]])
+
+        def _deliver_result(waits: bool) -> None:
+            """Detachable runs: hand the turn its reply at the first wait, then post each answer."""
+            if not ctl.detached:
+                if not waits:
+                    return
+                parsed = _parsed_since(0)
+                try:
+                    card = ctl.wait.start([_task_label([t]) for t in st["bg"]], pid=proc.pid)
+                except Exception as exc:
+                    print(f"[claude] background detach unavailable: {exc}", flush=True)
+                    return  # keep today's single-reply wait
+                st["posted"] = len(st["results"])
+                sid = parsed.get("session_id") or stream.session_id or rid or None
+                _persist(sid)
+                errors = list(parsed.get("errors") or [])
+                # The turn (and its status queue) ends here; the run reports on its card.
+                stream.activity.status_queue = None
+                ctl.hand_off({
+                    "success": not errors,
+                    "output": f"{(parsed.get('output') or '').strip()}\n\n{card}".strip(),
+                    "error": errors[0] if errors else None,
+                    "usage": parsed.get("usage") or {},
+                    "claude_session_id": sid,
+                    "returncode": None,
+                    "stderr": "",
+                    "steered": len(st["echoed"]),
+                    "undelivered_steers": [],
+                    "background_job": ctl.wait.job_id,
+                })
+                return
+            parsed = _parsed_since(st["posted"])
+            st["posted"] = len(st["results"])
+            ctl.wait.followup(parsed.get("output") or "", usage=parsed.get("usage"),
+                              errors=parsed.get("errors"))
+            if waits:
+                ctl.wait.progress(_waiting_label(st["bg"]))
+
         def _on_line(raw: bytes) -> None:
             stream.feed(raw)
             if not steerable:
@@ -605,6 +742,8 @@ class ClaudeCliTool:
                 if echoed.strip() in (t.strip() for t in pending):
                     st["echoed"].append(next(t for t in pending if t.strip() == echoed.strip()))
                     stream.activity.emit(f"steer received: {' '.join(echoed.split())[:100]}", force=True)
+                    if ctl is not None and ctl.detached:
+                        ctl.wait.progress("Claude Code is answering your message…")
             elif obj.get("type") == "system" and obj.get("subtype") == "background_tasks_changed":
                 tasks = obj.get("tasks")
                 st["bg"] = [t for t in tasks if isinstance(t, dict)] if isinstance(tasks, list) else []
@@ -615,11 +754,16 @@ class ClaudeCliTool:
                         st["wait_timer"] = None
                     st["waiting"] = False
                     stream.activity.emit("background task finished — Claude Code is following up", force=True)
+                    if ctl is not None and ctl.detached:
+                        ctl.wait.progress("Background task finished — Claude Code is following up…")
                 elif st["waiting"]:
                     stream.activity.emit(f"waiting on background task: {_task_label(st['bg'])}", force=True)
             elif obj.get("type") == "result" and not obj.get("parent_tool_use_id"):
                 st["results"].append(obj)
-                if st["bg"] and st["open"] and bg_wait > 0:
+                waits = bool(st["bg"] and st["open"] and bg_wait > 0)
+                if ctl is not None:
+                    _deliver_result(waits)
+                if waits:
                     # Stay steerable; the task's notification continues this reply.
                     if st["wait_timer"] is not None:
                         st["wait_timer"].cancel()
@@ -677,6 +821,10 @@ class ClaudeCliTool:
             await hb
 
         err = run.stderr.decode("utf-8", errors="replace").strip()
+        if ctl is not None and ctl.detached:
+            _persist(stream.session_id)
+            _finish_detached(ctl.wait, run, st, bg_wait)
+            return {"success": True, "output": "", "detached": True}
         if len(st["results"]) > 1:
             parsed = _merge_results([_parse_claude_json(json.dumps(r)) for r in st["results"]])
         elif stream.result is not None:

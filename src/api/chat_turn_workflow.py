@@ -1346,7 +1346,7 @@ def build_harness_stream_turn(
     agent_id: str,
     prompt: str,
     auth_user: Any,
-    persist_user_turn: Callable[[Any], None],
+    persist_user_turn: Callable[..., None],
     make_saver: Callable[..., Any],
     notify_mobile: Callable[[Any, Dict[str, Any]], None],
     run_harness: Callable[..., Dict[str, Any]],
@@ -1377,6 +1377,7 @@ def build_harness_stream_turn(
         ),
         notify_mobile=lambda b: notify_mobile(session_id, b),
         format_shortcut=_format_shortcut,
+        persist_steered_user=lambda meta: (persist_user_turn(session_id, meta) if auth_user else None),
     )
     prepared = PreparedAgentTurn(
         message=message_content, session_id=session_id,
@@ -1396,7 +1397,7 @@ def run_harness_sync_turn(
     agent_id: str,
     prompt: str,
     auth_user: Any,
-    persist_user_turn: Callable[[Any], None],
+    persist_user_turn: Callable[..., None],
     make_saver: Callable[..., Any],
     notify_mobile: Callable[[Any, Dict[str, Any]], None],
     delivery: Any,
@@ -1440,6 +1441,7 @@ def run_harness_sync_turn(
         should_save=lambda b: bool(auth_user and result_kept_for_history(b)),
         notify_mobile=lambda b: notify_mobile(session_id, b),
         format_shortcut=_unreachable,
+        persist_steered_user=lambda meta: (persist_user_turn(session_id, meta) if auth_user else None),
     )
     out = submit_agent_turn(
         PreparedAgentTurn(

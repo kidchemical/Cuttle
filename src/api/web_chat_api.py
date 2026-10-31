@@ -3851,7 +3851,7 @@ def chat_endpoint():
         _ident_run_kw = _harness_identity_run_kwargs(_send_identity)
 
         _turn_history = {}  # typed text + meta when a project command expands
-        def _persist_user_turn(sid):
+        def _persist_user_turn(sid, steer_meta=None):
             """Persist the user turn as history sees it (owned by chat_turn_persist)."""
             from api.chat_turn_persist import persist_user_turn as _owned
 
@@ -3866,7 +3866,7 @@ def chat_endpoint():
                 badge_fn=_user_badge_metadata,
                 project_merge_fn=_merge_project_into_meta,
                 request_data=data,
-                extra_meta=_turn_history.get('meta'),
+                extra_meta={**(_turn_history.get('meta') or {}), **(steer_meta or {})} or None,
             )
 
         # No-LLM launch gates — project-action confirm buttons and dynamic
