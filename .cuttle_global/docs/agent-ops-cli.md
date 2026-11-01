@@ -38,6 +38,7 @@ agent toolkit.
 | Git worktrees + a chat's active worktree (chip) | `python -m api.worktrees` (list, create, adopt, bind, show, remove, orphans, reconcile) | [Worktrees](#worktrees) below |
 | Job watch bars | `python -m api.job_watch` | `action-forms.md` |
 | Unified Jobs ledger | `python -m api.jobs` (list, inflight, view, cancel, rerun, stats) | Jobs |
+| Live work tree (chats, waits, schedules, the OS processes their agents own — detached included) | `python -m api.jobs work-tree` / `end-process PID --create-time T` | `agent-events.md` (Running now) |
 | Dashboards / Model Benchmarks | `python -m api.dashboards` | `dashboards.md` |
 | Jev judgments | `python -m api.jev` | `jev.md` |
 | Shadow dev instance (implemented, Linux verified) | `PYTHONPATH=src .venv/bin/python -m api.dev_instance prepare --candidate .` then `PYTHONPATH=src .venv/bin/python -m api.dev_instance up --candidate . --port 0` (foreground; Ctrl+C stops only its owned child and deletes its snapshot; `prune` clears stale ones) | Cuttle project `docs/architecture/development-instance-safety.md` |
