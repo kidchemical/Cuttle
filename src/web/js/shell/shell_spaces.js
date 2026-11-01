@@ -1117,6 +1117,7 @@
                         rows.push({
                             id: sid,
                             running: !!(s.generating || s.awaiting_action),
+                            background: !!s.background,
                             attention: s.attention,
                             queue: CuttleSpaces.followupKind(parseSpaceFollowupQueue(
                                 s.followup_queue != null ? s.followup_queue : s.followups)),

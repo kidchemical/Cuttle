@@ -7936,3 +7936,66 @@ html.cuttle-bg-paused .chat-restore-spinner {
 .history-section-count.has-input, .history-subagent-count-badge.has-input {
     background: color-mix(in srgb, #3b82f6 28%, transparent); color: #60a5fa;
 }
+
+/* History row: idle chat whose agents still own work (chat_history_view.js). */
+.history-kind-badge.history-bg-badge {
+    color: var(--accent-color, #667eea);
+    animation: chat-bg-breathe 2.4s ease-in-out infinite;
+}
+
+/* Background-work bubble pinned at the end of the transcript (chat_background_work.js). */
+.chat-bg-work {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 0 14px 46px;
+    padding: 10px 14px;
+    max-width: min(640px, calc(100% - 60px));
+    border: 1px dashed color-mix(in srgb, var(--accent-color, #667eea) 55%, var(--border-color));
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--accent-color, #667eea) 7%, transparent);
+    color: var(--text-primary);
+    font-size: 0.86em;
+}
+.chat-bg-work.is-scheduled { border-style: dotted; opacity: 0.85; }
+.chat-bg-ring {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--accent-color, #667eea);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--accent-color, #667eea) 60%, transparent);
+    animation: chat-bg-breathe 2.4s ease-in-out infinite;
+}
+.chat-bg-work.is-scheduled .chat-bg-ring { animation: none; border-style: dashed; box-shadow: none; }
+.chat-bg-body { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.chat-bg-title { font-weight: 650; display: flex; gap: 8px; align-items: baseline; }
+.chat-bg-elapsed, .chat-bg-meta, .chat-bg-pct { color: var(--text-secondary); font-size: 0.86em; font-weight: 400; font-variant-numeric: tabular-nums; }
+.chat-bg-label, .chat-bg-meta, .chat-bg-watch-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-bg-label { color: var(--text-secondary); }
+.chat-bg-watch { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.chat-bg-watch-label { flex: 1; min-width: 0; }
+.chat-bg-bar { width: 110px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--text-secondary) 20%, transparent); overflow: hidden; flex-shrink: 0; }
+.chat-bg-fill { display: block; height: 100%; background: var(--accent-color, #667eea); }
+.chat-bg-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.chat-bg-details { font-size: 0.86em; color: var(--accent-color, #667eea); text-decoration: none; }
+.chat-bg-stop {
+    font: inherit;
+    font-size: 0.82em;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 3px 11px;
+    cursor: pointer;
+}
+.chat-bg-stop:hover:not(:disabled) { border-color: #f87171; color: #f87171; }
+.chat-bg-stop:disabled { opacity: 0.6; cursor: default; }
+@keyframes chat-bg-breathe { 50% { opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) {
+    .chat-bg-ring, .history-kind-badge.history-bg-badge { animation: none; }
+}
+@media (max-width: 600px) {
+    .chat-bg-work { margin-left: 8px; max-width: calc(100% - 16px); }
+}

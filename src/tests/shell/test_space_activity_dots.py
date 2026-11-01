@@ -14,7 +14,7 @@ def test_space_activity_priority_order():
     # Aggregation owner is spaces_activity.js (Phase 1); the tab-strip owner
     # (shell_spaces.js) delegates.
     mod = (Path(__file__).resolve().parents[3] / "src" / "web" / "js" / "spaces" / "spaces_activity.js").read_text(encoding="utf-8")
-    assert "const RANK = { input: 6, running: 5, error: 4, unread: 3, queued: 2, paused: 1 }" in mod
+    assert "const RANK = { input: 7, running: 6, error: 5, unread: 4, background: 3, queued: 2, paused: 1 }" in mod
     # Running is evaluated before (and outranks) every dot state.
     agg = mod.split("function selectSpaceActivity(", 1)[1].split(
         "const api = {", 1

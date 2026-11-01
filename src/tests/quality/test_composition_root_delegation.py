@@ -65,6 +65,7 @@ CHAT_OWNERS = (
     ("chat_chip_config.js", "CuttleChipConfig", "CuttleChipConfig."),
     ("chat_worktrees.js", "CuttleChatWorktrees", "CuttleChatWorktrees."),
     ("chat_orchestrate_chip.js", "CuttleChatOrchestrateChip", "CuttleChatOrchestrateChip.create("),
+    ("chat_background_work.js", "CuttleChatBackgroundWork", "CuttleChatBackgroundWork.create("),
 )
 
 # (owner file, namespace, root call-site needle)

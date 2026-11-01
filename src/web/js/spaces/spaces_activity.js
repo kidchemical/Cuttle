@@ -1,7 +1,9 @@
 /* ================================================================
    Cuttle Spaces — activity aggregation (spaces_activity.js)
    Owner: Spaces subsystem. Pure aggregation: which dot a space tab shows.
-   Priority: input > running > error > unread > queued > paused > none.
+   Priority: input > running > error > unread > background > queued > paused > none.
+   `background`: an idle chat whose agents still own a detached wait, watch
+   job or processes (sessions list `background`, api.jobs.work_tree).
    Transport (server poll, localStorage reads, postMessage) and DOM
    patching stay in the shell; the observation maps live here as
    explicitly owned module state (resettable for tests).
@@ -21,12 +23,13 @@
 (function (root) {
     'use strict';
 
-    const RANK = { input: 6, running: 5, error: 4, unread: 3, queued: 2, paused: 1 };
+    const RANK = { input: 7, running: 6, error: 5, unread: 4, background: 3, queued: 2, paused: 1 };
     const LABEL = {
         input: 'Awaiting your input',
         running: 'Active',
         error: 'Unread error',
         unread: 'Unread',
+        background: 'Working in background',
         queued: 'Queued prompt',
         paused: 'Paused queued prompt',
     };
@@ -35,7 +38,7 @@
 
     /** sourceKey -> { at, owned:Set<bare>, entries:Map<bare,{activity,running}>, runningSince:Map<bare,ms> } */
     const _sources = new Map();
-    /** bare -> { running, queue, at } — `at` is the poll start time. */
+    /** bare -> { running, background, queue, at } — `at` is the poll start time. */
     const _server = new Map();
     const _attention = new Map();
     /** bare -> '' | 'input' | 'unread' | 'error' (a row exists ⇒ prefs decide). */
@@ -140,7 +143,7 @@
             const running = !!r.running;
             const queue = r.queue == null ? (prev ? prev.queue : '') : cleanKind(r.queue);
             if (prev && prev.running && !running) finished.push(bare);
-            _server.set(bare, { running, queue, at });
+            _server.set(bare, { running, background: !!r.background, queue, at });
         });
         return finished;
     }
@@ -267,6 +270,8 @@
             else if (srv) activity = srv.queue || '';
             if (!activity && _local.has(bare)) activity = _local.get(bare);
         }
+        // Idle but its agents still own work: below unread/error, above a queue.
+        if (!running && srv && srv.background && (RANK[activity] || 0) < RANK.background) activity = 'background';
         if (!running && !activity) return null;
         return visibleAttention
             ? { activity: activity || '', running, visibleAttention: true }

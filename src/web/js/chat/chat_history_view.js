@@ -317,6 +317,10 @@
                 projectChip,
                 parts.chipsHtml,
                 contentBadge,
+                // Idle, but its agents still own a wait/watch/processes (sessions list `background`).
+                session.background && !running
+                    ? '<span class="history-kind-badge history-bg-badge" title="Agent work still running in the background">background</span>'
+                    : '',
                 starred ? historyStarredIconHTML() : '',
             ]);
             const statusKind = running ? 'running' : attention;

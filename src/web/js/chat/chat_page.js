@@ -2869,6 +2869,8 @@
         chipCategoryClass: slashCommandChipCategoryClass,
     });
 
+    // Idle chat's background work (waits, watches, schedules, owned processes): chat_background_work.js.
+    const backgroundWork = CuttleChatBackgroundWork.create({ win: window, currentSession: () => session.current(), sessionIdsEqual, isBusy: () => isLoadingThisSession() });
     // Media thumbs, lightbox and image Copy / Save menu: owned by chat_media.js.
     // Host-document listeners ride the frame teardown signal.
     const chatMedia = CuttleChatMedia.create({
@@ -7165,6 +7167,7 @@
         noteWidgetsRevision(live);
 
         try { subagentLaunchers.syncLive(live.subagents); } catch (_) {}
+        try { backgroundWork.sync(live, sessionId); } catch (_) {}
         if (isLoadingThisSession()) {
             const statusLabel = live.status || undefined;
             ensureLocalTypingIndicator(statusLabel);
@@ -8010,6 +8013,7 @@
         refreshTypingIndicatorHeaderBadges();
         noteWidgetsRevision(liveStatus);
         updateSupervisedTaskIndicator(liveStatus, session.current());
+        try { backgroundWork.sync(liveStatus, session.current()); } catch (_) {}
         // Local stream owns this chat's turn — keep/restore the typing bubble
         // (it is wiped when switching chats or after a hard refresh race).
         if (

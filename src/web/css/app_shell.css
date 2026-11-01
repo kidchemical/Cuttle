@@ -1130,6 +1130,17 @@ body.is-reordering-spaces iframe {
     box-shadow: 0 0 5px rgba(234, 179, 8, 0.7);
 }
 
+.shell-space-activity.is-background {
+    background: transparent;
+    border: 2px solid #667eea;
+    box-shadow: 0 0 5px rgba(102, 126, 234, 0.55);
+    animation: shell-space-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes shell-space-breathe {
+    50% { opacity: 0.45; }
+}
+
 .shell-space-activity.is-running {
     width: 8px;
     height: 8px;
@@ -1146,6 +1157,7 @@ body.is-reordering-spaces iframe {
 }
 
 @media (prefers-reduced-motion: reduce) {
+    .shell-space-activity.is-background { animation: none; }
     .shell-space-activity.is-running {
         animation: none;
         border-top-color: rgba(102, 126, 234, 0.3);
