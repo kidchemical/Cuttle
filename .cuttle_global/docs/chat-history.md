@@ -71,7 +71,7 @@ PYTHONPATH=src .venv/bin/python -m api.chat_cli cancel-operation <id> --json
 
 | Verb | Use |
 |---|---|
-| `status CH-…` | `state`: `busy`, `idle`, `idle_with_work` (open Tasks items), `awaiting_input` (form waiting), `error`, `cancelled`; plus Tasks progress, follow-up queue, latest reply (`latest_reply.text` is the readable answer: post-processing wrapper and `<think>` removed, cards as `[card: …]`; `content` is the raw stored row) |
+| `status CH-…` | `state`: `busy`, `idle`, `idle_with_work` (open Tasks items), `waiting_background` (turn ended but its CLI is still waiting on its own background task and will post a follow-up by itself; `live.background_wait` lists it, so don't nudge), `awaiting_input` (form waiting), `error`, `cancelled`; plus Tasks progress, follow-up queue, latest reply (`latest_reply.text` is the readable answer: post-processing wrapper and `<think>` removed, cards as `[card: …]`; `content` is the raw stored row) |
 | `snapshot CH-…` | `status` plus worktree binding, live branch, execution path, the chat's jobs and watch bars; `--usage <agent>` (repeatable) adds plan-usage windows |
 | `send CH-… --text` | A live turn is steered (`delivery: steered`). Otherwise it is queued in a host-owned outbox (`delivery: queued`) and sent when the chat goes idle. The browser does not need to be open. `--mode queue` never steers. `target_busy: true` (with `steer_reason`) means the turn is live but took nothing: the send waits for that whole turn to end. If it cannot wait (pause, move, stop work), run `stop` on the target or ask the user; do not cancel it and wait for idle |
 | `stop CH-…` | Same as the Stop button |
