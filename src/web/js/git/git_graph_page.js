@@ -62,6 +62,8 @@
     /** HEAD branch from last graph load (for tip preference) */
     let graphHeadBranch = '';
     let graphHasMore = false;
+    /** Edges to unloaded parents extend to the list bottom (set per layout). */
+    let edgesOpenEnded = false;
     let graphLoadingMore = false;
     /** Last load-more failure; stops auto-loading until the user retries. */
     let graphMoreError = '';
@@ -452,16 +454,21 @@
      * past the lines crossing that row instead of under them.
      */
     function assignTextLanes(rows) {
+        const openFrom = [];
         rows.forEach((r) => { r.textLane = r.lane; });
         rows.forEach((r, i) => {
             (r.commit.parents || []).forEach((ph, pi) => {
                 const j = hashToRow.get(ph);
                 if (j == null) {
-                    // Stub toward a parent on a page not loaded yet: dips into the next row.
+                    // Parent not in the list. On a page not loaded yet the edge
+                    // runs to the bottom (openLane); otherwise a one-row stub.
                     const edge = r.edges && r.edges[pi];
                     const toLane = edge && edge.toLane != null ? edge.toLane : r.lane;
-                    if (i + 1 < rows.length) {
-                        rows[i + 1].textLane = Math.max(rows[i + 1].textLane, r.lane, toLane);
+                    const hi = Math.max(r.lane, toLane);
+                    if (edgesOpenEnded) {
+                        openFrom.push([i + 1, hi]);
+                    } else if (i + 1 < rows.length) {
+                        rows[i + 1].textLane = Math.max(rows[i + 1].textLane, hi);
                     }
                     return;
                 }
@@ -471,9 +478,23 @@
                 }
             });
         });
+        // Open-ended edges cross every row below their child.
+        openFrom.sort((a, b) => a[0] - b[0]);
+        let oi = 0;
+        let openMax = -1;
+        for (let k = 0; k < rows.length; k++) {
+            while (oi < openFrom.length && openFrom[oi][0] <= k) {
+                openMax = Math.max(openMax, openFrom[oi][1]);
+                oi++;
+            }
+            if (rows[k].textLane < openMax) rows[k].textLane = openMax;
+        }
     }
 
     function layoutGraph(list) {
+        // Unfiltered history with more pages: a missing parent is just not
+        // loaded yet, and its lane stays reserved below — draw the line on.
+        edgesOpenEnded = graphHasMore && !isFiltering();
         layoutRows = assignLanes(list);
         hashToRow = new Map();
         layoutRows.forEach((r, i) => hashToRow.set(r.commit.hash, i));
@@ -659,18 +680,27 @@
                 let y2;
                 let edgeBranch = childBranch;
                 if (j == null) {
-                    const edgeMeta = (r.edges || []).find((e) =>
-                        e.fromLane === r.lane && ((pi === 0 && !e.merge) || (pi > 0 && e.merge))
-                    );
+                    // assignLanes pushes one edge per parent, in parent order.
+                    const edgeMeta = r.edges && r.edges[pi];
                     const stubLane = (edgeMeta && edgeMeta.toLane != null)
                         ? edgeMeta.toLane
                         : (r.lane + (pi ? pi : 0));
                     x2 = laneX(stubLane);
-                    y2 = y1 + ROW_H * 0.85;
                     if (pi > 0) {
                         // Stubbed merge side — keep distinct from the merge commit.
                         edgeBranch = sideBranchId(ph);
                     }
+                    if (edgesOpenEnded) {
+                        // Bend into the reserved lane, then run to the list
+                        // bottom; the next page connects it to the parent.
+                        if (totalH < yMin || y1 > yMax) continue;
+                        const bendY = Math.min(y1 + ROW_H, totalH);
+                        const col = colorForBranch(edgeBranch);
+                        paths += edgePath(x1, y1, x2, bendY, col, edgeBranch);
+                        paths += edgePath(x2, bendY, x2, totalH, col, edgeBranch);
+                        continue;
+                    }
+                    y2 = y1 + ROW_H * 0.85;
                 } else {
                     const dest = layoutRows[j];
                     x2 = laneX(dest.lane);
