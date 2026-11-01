@@ -1,6 +1,7 @@
 """Claude Code NDJSON activity; final result stays separate from progress."""
 
 import json
+import re
 
 from api.agent_harness.activity import ActivityEmitter, TextActivityLog, ToolActivityLog, text_preview
 
@@ -131,3 +132,26 @@ class ClaudeStream:
         prefix = f"root:{self.last_root_message or 'pending'}:"
         return "\n".join(text for (kind, key), text in self.text.buffers.items()
                          if kind == "writing" and key.startswith(prefix)).strip()
+
+    def earlier_writing(self):
+        """Every root-level text segment written this run, in order."""
+        return [text for (kind, key), text in self.text.buffers.items()
+                if kind == "writing" and key.startswith("root:") and text]
+
+
+# Interactive Cuttle blocks (choice cards, confirms) render only from the final
+# reply; one written before a later tool call would otherwise vanish.
+_UI_BLOCK = re.compile(r"<cuttle_action_form\b[^>]*>.*?</cuttle_action_form>|<cuttle_confirm\b[^>]*>.*?</cuttle_confirm>",
+                       re.DOTALL)
+
+
+def carry_ui_blocks(segments, final):
+    """``final`` plus any card/confirm block from earlier segments it does not already contain."""
+    final = final or ""
+    carried = []
+    for segment in segments or []:
+        for block in _UI_BLOCK.findall(segment or ""):
+            if block not in final and block not in carried:
+                carried.append(block)
+    return (final.rstrip() + "\n\n" + "\n\n".join(carried)).strip() if carried else final
+

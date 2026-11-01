@@ -837,6 +837,8 @@ class ClaudeCliTool:
         usage = parsed.get("usage") or {}
         errors = list(parsed.get("errors") or [])
         display = (parsed.get("output") or "").strip()
+        from scripts.utilities.claude_stream import carry_ui_blocks
+        display = carry_ui_blocks(stream.earlier_writing(), display)
         unread = list(st["echoed"])
         undelivered: List[str] = []
         for text in st["sent"]:
