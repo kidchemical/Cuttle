@@ -85,10 +85,18 @@ def status(target, actor=None, *, db=None, request=None):
         state = 'awaiting_input'
     elif latest and is_error(latest.get('content'), latest.get('metadata')):
         state = 'error'
-    elif any(t['done'] < t['total'] for t in progress):
-        state = 'idle_with_work'
     else:
-        state = 'idle'
+        from api.agent_harness.background_wait import running_on_disk
+        waits = running_on_disk(sid)
+        if waits:
+            # The turn ended but its CLI is still waiting on background work and
+            # will post a follow-up bubble by itself (agent_harness.background_wait).
+            state = 'waiting_background'
+            live = {**live, 'background_wait': waits}
+        elif any(t['done'] < t['total'] for t in progress):
+            state = 'idle_with_work'
+        else:
+            state = 'idle'
     return {'schema_version': 1, 'ok': True, 'handle': f'CH-{sid:06d}', 'state': state,
             'live': live, 'attention': attention, 'tasks': progress,
             'followups': db.get_followup_state(sid, uid),

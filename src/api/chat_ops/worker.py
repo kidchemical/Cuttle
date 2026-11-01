@@ -114,7 +114,7 @@ def _signature(snap, violations):
                        [(t['id'], t['done'], t['total']) for t in snap['tasks']]])
 
 
-_STATE_TEXT = {'busy': 'working', 'idle': 'idle, nothing open', 'idle_with_work': 'idle with open Tasks items',
+_STATE_TEXT = {'busy': 'working', 'waiting_background': 'waiting on its own background task (it wakes by itself)', 'idle': 'idle, nothing open', 'idle_with_work': 'idle with open Tasks items',
                'awaiting_input': 'waiting on a question card', 'error': 'stopped on an error',
                'cancelled': 'stopped (cancelled)'}
 CHECKIN_REPLY_CHARS = 2500
@@ -369,14 +369,14 @@ def _check_in(op, db, actor, sid, request):
     progress_at = previous.get('progress_at') or now
     if progress != previous.get('progress'):
         progress_at = now
-    stalled = snap['state'] == 'busy' and now - progress_at >= cfg.get('stall_after', STALL_SEC)
+    stalled = snap['state'] in ('busy', 'waiting_background') and now - progress_at >= cfg.get('stall_after', STALL_SEC)
     tracking = {'progress': progress, 'progress_at': now if stalled else progress_at}
     if stalled:
         seen['stalled_min'] = int((now - progress_at) // 60)
     # A working target or an unchanged picture costs no supervisor tokens.
     if not violations and not briefing and not stalled and (
-            snap['state'] == 'busy' or signature == previous.get('signature')):
-        reason = 'busy' if snap['state'] == 'busy' else 'unchanged'
+            snap['state'] in ('busy', 'waiting_background') or signature == previous.get('signature')):
+        reason = snap['state'] if snap['state'] in ('busy', 'waiting_background') else 'unchanged'
         store.record_check(op['id'], 'skipped', {**seen, 'reason': reason})
         store.finish(op['id'], 'pending', {**previous, **tracking, 'last_check': time.time(),
                                             'last_seen': seen, 'skipped': reason, 'guard_reported': found}, due=nxt)

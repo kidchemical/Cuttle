@@ -279,6 +279,28 @@ def bind_saver(job_id: Any, saver: Callable[[Dict[str, Any]], None], base: Dict[
     return True
 
 
+def running_on_disk(chat_session_id: Any) -> List[Dict[str, Any]]:
+    """Running detached waits for a chat, read from their watch status files.
+
+    Works from any process (``chat_cli`` runs outside Flask, where ``_active``
+    lives); a wait whose CLI process is gone does not count."""
+    from api.job_watch import output_dir, pid_alive
+
+    key = _key(chat_session_id)
+    found = []
+    for path in output_dir().glob("*-bg-*-status.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        pid = int(data.get("pid") or 0)
+        if (str(data.get("chat_session_id")) == key and data.get("state") == "running"
+                and pid and pid_alive(pid)):
+            found.append({"job_id": data.get("run_id"), "label": data.get("label"),
+                          "started_at": data.get("started_at"), "pid": pid})
+    return found
+
+
 def detached_wait(chat_session_id: Any, agent_id: Optional[str] = None) -> Optional[BackgroundWait]:
     """The chat's running detached wait (optionally for one agent), if any."""
     key = _key(chat_session_id)
