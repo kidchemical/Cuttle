@@ -48,7 +48,14 @@ CEILINGS = {
     # This DOM + fetch panel logic is page orchestration and cannot live in
     # chat_usage.js (contractually pure, no DOM/I/O); session data loading
     # already lives in the chat_session owner. Behavior merged, not relocated.
-    "src/web/js/chat/chat_page.js": 13417,
+    # +6 (2026-11-01): composer-lock call sites only — create(host), the
+    # session-switch and identity hand-offs, the supervision -> lock callback,
+    # the menu item and the composer send guard. Lock decisions, storage and
+    # DOM effects live in chat_composer_lock.js.
+    # 2026-11-01: 13,423 -> 13,095. Transcript export moved to chat_export.js;
+    # the session menu items, header dropdown and terminal probe moved to
+    # chat_session_menu.js (dead #terminalOpenBtn wiring dropped).
+    "src/web/js/chat/chat_page.js": 13095,
     # Phase 7 (2026-10-11): 8,280 -> 4,182. app_shell.js now composes the pane
     # lifecycle (shell_panes), Spaces UI (shell_spaces), rail/apps (shell_rail)
     # and Electron chrome/mobile/SSH (shell_electron, shell_mobile) owners.

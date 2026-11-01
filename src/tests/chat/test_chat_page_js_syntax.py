@@ -38,10 +38,12 @@ def test_chat_page_js_parses():
     )
 
 
-def test_history_action_icons_function_present():
-    """Guard the exact deletion that broke parse: header must precede its body."""
+def test_session_menu_icons_come_from_history_view_owner():
+    """Menu icons are CuttleChatHistoryView's; the session menu owner gets them
+    through its host (the old page alias _historyActionIcons is gone)."""
     text = CHAT_JS.read_text(encoding="utf-8")
-    assert "function _historyActionIcons() {" in text
+    assert "icons: () => CuttleChatHistoryView.historyActionIcons()" in text
+    assert "function _historyActionIcons(" not in text
 
 
 def test_save_chat_session_keep_search_moved_to_owner():
@@ -119,7 +121,7 @@ def test_git_push_menu_moved_to_owner():
     assert "gitPush.openSubmenu(trigger)" in text
     assert "gitPush.push(e, root || null)" in text
     assert "gitPush.setupConfirmModal();" in text
-    assert "gitPush.refreshMenuMode(dropdown);" in text
+    assert "afterFill: (dropdown) => gitPush.refreshMenuMode(dropdown)" in text
     # The old page-side implementations are gone (one owner, no duplicates).
     assert "function gitPushMenuHtml(" not in text
     assert "function applyGitPushMenuMode(" not in text

@@ -224,6 +224,7 @@ async function scenario(cfg) {
   const window = {};
   const LOG = () => {}, LOG_ERR = () => {};
   const isSessionGenerating = () => cfg.generating;
+  const composerLock = { blocksSend: () => false };  // unlocked chat (chat_composer_lock.js)
   const composeMessageWithSlashChip = (t) => t.value;
   const isSendableComposerMessage = (m, a) =>
     CuttleChatComposer.isSendableComposerMessage(m, a, null);

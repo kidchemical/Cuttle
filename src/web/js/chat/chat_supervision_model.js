@@ -128,6 +128,11 @@
         return { chips, badges, queued, warn, empty: !chips.length && !badges.length && !queued.length };
     }
 
+    /** True when another chat supervises this one (paused schedules count). */
+    function isSupervised(overview) {
+        return !!(overview && Array.isArray(overview.supervised_by) && overview.supervised_by.length);
+    }
+
     function rulesText(s) {
         const bits = [];
         if (s.required_branch) bits.push('stay on ' + s.required_branch);
@@ -189,7 +194,7 @@
 
     const api = {
         SCHEMA_VERSION, INTERVALS, fmtInterval, fmtClock, nextLabel, chipText, badgeText,
-        historyRow, view, dialogDefaults, supervisePayload,
+        historyRow, view, isSupervised, dialogDefaults, supervisePayload,
     };
     if (typeof module === 'object' && module.exports) module.exports = api;
     root.CuttleChatSupervisionModel = api;

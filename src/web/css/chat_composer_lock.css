@@ -1,0 +1,44 @@
+/* Composer lock (chat_composer_lock.js): sub-agent and supervised chats open
+   with the input parts inert and a lock badge centered on the composer.
+   Stop and the context gauge stay live; unlock from the chat menu. */
+
+.input-wrapper.is-composer-locked {
+    position: relative;
+    border-style: dashed;
+}
+
+.input-wrapper.is-composer-locked [inert] {
+    opacity: 0.35;
+    filter: grayscale(0.5);
+    user-select: none;
+}
+
+/* The badge says what this composer is; "Type your message…" would not. */
+.input-wrapper.is-composer-locked .chat-input::placeholder { color: transparent; }
+
+.composer-lock-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    border-radius: inherit;
+}
+
+.composer-lock-overlay[hidden] { display: none; }
+
+.composer-lock-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    color: var(--text-secondary, #b0b0c0);
+    background: var(--input-bg, rgba(20, 20, 28, 0.9));
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.16));
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+    pointer-events: auto;
+    cursor: help;
+}
