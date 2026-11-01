@@ -254,7 +254,7 @@ body.compact-shell-page :where(
     .job-card, .running-now-card, .job-stat-card, .jobs-table-scroll,
     .jobs-empty, .jobs-loading, .dash-card, .dash-stat-card, .dash-widget,
     .test-lab-notice, .test-lab-stat, .test-lab-suite, .test-lab-run, .test-lab-output-section,
-    .re-card, .feed-toolbar, .feed-step, .feed-active-entry, .feed-empty,
+    .re-card, .feed-toolbar, .feed-step, .work-owner, .work-mesh, .feed-empty,
     .achievement-card, .gizmos-create, .gizmo-item, .gizmos-empty,
     .projects-app .panel, .projects-app .metric, .projects-app .project-sidebar,
     .projects-app .detail-header, .projects-app .tabs, .projects-app #detail > .empty,
