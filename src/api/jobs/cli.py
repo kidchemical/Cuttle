@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 
-from api.jobs import ledger
+from api.jobs import ledger, processes, work_tree
 from api.jobs.service import JobNotCancellableError, JobNotFoundError, JobNotRerunnableError, cancel_job, job_stats, rerun_mesh_job
 
 
@@ -27,6 +27,11 @@ def main():
     p_rerun = sub.add_parser("rerun", help="Re-submit a terminal mesh job")
     p_rerun.add_argument("job_id")
 
+    sub.add_parser("work-tree", help="Chats with live work and the processes they own (detached included)")
+    p_end = sub.add_parser("end-process", help="End an agent-owned process tree: end-process PID --create-time T")
+    p_end.add_argument("pid", type=int)
+    p_end.add_argument("--create-time", type=float, required=True, help="create_time from work-tree (PID reuse guard)")
+
     p_view = sub.add_parser("view", help="View one job: view <run|mesh> <id>")
     p_view.add_argument("kind", choices=["run", "mesh"])
     p_view.add_argument("job_id")
@@ -42,13 +47,17 @@ def main():
             out = job_stats(hours=args.hours)
         elif args.verb == "cancel":
             out = cancel_job(args.kind, args.job_id)
+        elif args.verb == "work-tree":
+            out = work_tree.work_tree()
+        elif args.verb == "end-process":
+            out = processes.end_process(args.pid, args.create_time)
         elif args.verb == "rerun":
             out = rerun_mesh_job(args.job_id)
         else:
             out = {"job": ledger.get_job(args.kind, args.job_id)}
         print(json.dumps(out, ensure_ascii=False, default=str))
         return 0
-    except (JobNotFoundError, JobNotCancellableError, JobNotRerunnableError) as exc:
+    except (JobNotFoundError, JobNotCancellableError, JobNotRerunnableError, LookupError, PermissionError) as exc:
         print(json.dumps({"error": str(exc)}))
         return 1
     except Exception as exc:

@@ -95,6 +95,7 @@ class BackgroundWait:
         self._lock = threading.Lock()
         self._state: Optional[str] = None  # None until start → running → done/failed
         self._started_at = ""
+        self._started_ts = 0.0  # epoch: started_at is naive local time (ambiguous across DST)
         self._t0 = 0.0
         self._ended_at = 0.0
         self._pid: Optional[int] = None
@@ -107,6 +108,7 @@ class BackgroundWait:
     def start(self, tasks: List[str], *, pid: Optional[int]) -> str:
         """Begin the wait; returns the watch-card markup for the first reply."""
         self._started_at = datetime.now().isoformat(timespec="seconds")
+        self._started_ts = time.time()
         self._t0 = time.monotonic()
         self._pid = int(pid) if pid else None
         self._write("running", waiting_label(tasks))
@@ -214,6 +216,7 @@ class BackgroundWait:
     def _write(self, state: str, label: str, *, final: bool = False) -> None:
         extra: Dict[str, Any] = {
             "started_at": self._started_at,
+            "started_ts": self._started_ts,
             "run_id": self.job_id,
             "agent": self.agent_id,
             "chat_session_id": self.key,
@@ -279,25 +282,30 @@ def bind_saver(job_id: Any, saver: Callable[[Dict[str, Any]], None], base: Dict[
     return True
 
 
-def running_on_disk(chat_session_id: Any) -> List[Dict[str, Any]]:
-    """Running detached waits for a chat, read from their watch status files.
+def running_on_disk(chat_session_id: Any = None) -> List[Dict[str, Any]]:
+    """Running detached waits for a chat (every chat when None), from their status files.
 
     Works from any process (``chat_cli`` runs outside Flask, where ``_active``
     lives); a wait whose CLI process is gone does not count."""
     from api.job_watch import output_dir, pid_alive
 
-    key = _key(chat_session_id)
+    key = None if chat_session_id is None else _key(chat_session_id)
     found = []
     for path in output_dir().glob("*-bg-*-status.json"):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        pid = int(data.get("pid") or 0)
-        if (str(data.get("chat_session_id")) == key and data.get("state") == "running"
+        try:
+            pid = int(data.get("pid") or 0)
+        except (TypeError, ValueError):
+            pid = 0
+        if ((key is None or str(data.get("chat_session_id")) == key) and data.get("state") == "running"
                 and pid and pid_alive(pid)):
             found.append({"job_id": data.get("run_id"), "label": data.get("label"),
-                          "started_at": data.get("started_at"), "pid": pid})
+                          "started_at": data.get("started_at"), "started_ts": data.get("started_ts"), "pid": pid,
+                          "chat_session_id": str(data.get("chat_session_id") or ""),
+                          "agent": data.get("agent") or ""})
     return found
 
 

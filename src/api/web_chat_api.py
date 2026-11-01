@@ -214,6 +214,7 @@ limiter.init_app(app)
 # run-registry, and supervised orchestration import the service directly;
 # this module keeps thin wrappers so existing callers/tests are untouched.
 from api import chat_live_status as _live_status_svc
+from api.chat_live_extras import live_status_extras  # subagents + background work
 # Status-queue registry + emit fanout — owned service (chat_status.py).
 # Turn producers import the service directly; this module keeps a thin
 # cancel-injecting wrapper so existing call sites are untouched.
@@ -687,15 +688,6 @@ def _public_live_generating(session_id, live=None):
     except Exception:
         pass
     return generating, live_active, False, live or {}
-
-
-def _live_parent_subagents(session_id) -> list:
-    try:
-        from api.subagents.service import public_parent_subagents
-
-        return public_parent_subagents(session_id) or []
-    except Exception:
-        return []
 
 
 def _clear_live_status_on_stream_done(session_id, *, stale: bool, cancelled: bool) -> None:
@@ -1745,7 +1737,7 @@ def chat_live_status():
         'cancelled': cancelled,
         'supervised_task': supervised,
         'widgets_revision': widgets_revision,
-        'subagents': _live_parent_subagents(sid),
+        **live_status_extras(sid),
     })
 
 
@@ -1819,7 +1811,7 @@ def chat_live_status_batch():
             # Electron / app-shell poll this batch instead of per-pane live-status;
             # without widgets_revision the Tasks strip never refreshes until reload.
             'widgets_revision': widgets_revision,
-            'subagents': _live_parent_subagents(sid),
+            **live_status_extras(sid),
         }
         # Also index under bare / db_session_ aliases for easy client lookup.
         if db_sid is not None:

@@ -1,7 +1,8 @@
 """Flask transport for the unified Jobs surface (/api/jobs).
 
 Composition stays in web_chat_api; this file owns only HTTP. Read model in
-api.jobs.ledger, control + telemetry in api.jobs.service.
+api.jobs.ledger (+ live owner tree in api.jobs.work_tree), control + telemetry
+in api.jobs.service, agent-owned process control in api.jobs.processes.
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ from __future__ import annotations
 from flask import Blueprint, jsonify, request
 
 from api.http_authz import owner_required
-from api.jobs import ledger
+from api.jobs import ledger, processes, work_tree
 from api.jobs.service import (
     JobNotCancellableError,
     JobNotFoundError,
@@ -90,3 +91,36 @@ def rerun_route(job_id: str):
         return jsonify(success=False, error=str(e)), 404
     except JobNotRerunnableError as e:
         return jsonify(success=False, error=str(e)), 409
+
+@jobs_bp.get("/work-tree")
+@owner_required
+def work_tree_route():
+    """Every chat with live work: turns, waits, watches, schedules, owned processes."""
+    return jsonify(work_tree.work_tree())
+
+
+@jobs_bp.post("/processes/<int:pid>/end")
+@owner_required
+def end_process_route(pid: int):
+    """End one agent-owned process tree; ``create_time`` must match the listed process."""
+    body = request.get_json(silent=True) or {}
+    try:
+        result = processes.end_process(pid, body.get("create_time"))
+    except LookupError as e:
+        return jsonify(success=False, error=str(e)), 404
+    except PermissionError as e:
+        return jsonify(success=False, error=str(e)), 403
+    work_tree.invalidate()
+    return jsonify(success=True, **result)
+
+
+@jobs_bp.post("/chats/<chat>/end-processes")
+@owner_required
+def end_chat_processes_route(chat: str):
+    """End every process a chat's agents left running (after its turn is stopped)."""
+    try:
+        result = processes.end_chat_processes(chat)
+    except LookupError as e:
+        return jsonify(success=False, error=str(e)), 404
+    work_tree.invalidate()
+    return jsonify(success=True, **result)

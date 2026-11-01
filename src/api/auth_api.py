@@ -877,6 +877,13 @@ def get_chat_sessions():
             for s in sessions:
                 s['generating'] = False
                 s['awaiting_action'] = False
+        # Idle chats whose agents still own waits/watches/processes (api.jobs.work_tree).
+        try:
+            from api.jobs.work_tree import mark_background
+
+            mark_background(sessions)
+        except Exception:
+            pass
 
         try:
             ids = [int(s['id']) for s in sessions if s.get('id') is not None]
@@ -957,6 +964,13 @@ def search_chat_sessions():
             for s in sessions:
                 s['generating'] = False
                 s['awaiting_action'] = False
+        # Idle chats whose agents still own waits/watches/processes (api.jobs.work_tree).
+        try:
+            from api.jobs.work_tree import mark_background
+
+            mark_background(sessions)
+        except Exception:
+            pass
 
         try:
             ids = [int(s['id']) for s in sessions if s.get('id') is not None]
