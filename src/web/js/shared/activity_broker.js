@@ -15,7 +15,9 @@
             if (snapshotScope !== currentScope) { snapshot = null; at = 0; }
             if (!force && snapshot && host.now() - at < 2000) return Promise.resolve(snapshot);
             if (inFlight) {
-                if (inFlightScope === currentScope) return inFlight;
+                // A forced read follows a write (archive, rename, delete): a
+                // fetch already in flight may predate it, so wait and reload.
+                if (inFlightScope === currentScope && !force) return inFlight;
                 return inFlight.catch(() => {}).then(() => sessions(force, requesterScope));
             }
             inFlightScope = currentScope;

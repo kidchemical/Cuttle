@@ -303,8 +303,18 @@ function buildQueueHost(o) {
         load:async()=>{pulseLoads++;return [{id:101}];},publish(){}});
     await pulses.sessions();for(let i=0;i<100;i++)pulses.refresh();
     assert.equal(pulseLoads,1);assert.equal(timerDelay,2000);pulses.dispose();
+    // A forced read after a write (archive/rename/delete) skips the cached
+    // snapshot and never joins a fetch that started before the write.
+    let writeLoads=0;const pending=[];
+    const writes=Broker.create({now:()=>0,setTimeout,clearTimeout,publish(){},
+        load:()=>{writeLoads++;return new Promise(r=>pending.push(r));}});
+    const preWrite=writes.sessions();const postWrite=writes.sessions(true);
+    pending.shift()([{id:'before-archive'}]);await preWrite;await Promise.resolve();
+    assert.equal(writeLoads,2);pending.shift()([]);assert.deepEqual(await postWrite,[]);
+    const cached=writes.sessions();assert.deepEqual(await cached,[]);assert.equal(writeLoads,2);
+    const forced=writes.sessions(true);assert.equal(writeLoads,3);pending.shift()([]);await forced;writes.dispose();
     const blockedStorage=storage();blockedStorage.setItem=()=>{throw Error('quota');};
     const volatile=P.create(blockedStorage);volatile.update('101',{attentionWrite:{through_id:7}});
     assert.equal(volatile.get('101').attentionWrite.through_id,7);
-    console.log('ui-state-sync: 17 regression scenarios passed');
+    console.log('ui-state-sync: 18 regression scenarios passed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

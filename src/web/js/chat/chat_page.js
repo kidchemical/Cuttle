@@ -6867,7 +6867,8 @@
         });
     }
 
-    function refreshChatHistoryList(event) {
+    function refreshChatHistoryList(event, opts) { // opts.force / Refresh click: bypass session cache after writes
+        const force = !!event || !!(opts && opts.force);
         if (event) {
             event.stopPropagation();
             event.preventDefault();
@@ -6888,7 +6889,7 @@
             return Promise.resolve();
         }
         if (isAuthMode() && typeof loadChatSessions === 'function') {
-            return Promise.resolve(loadChatSessions()).then(function () {
+            return Promise.resolve(loadChatSessions({ force })).then(function () {
                 // Prefer re-applying search/filters — a full list paint races with
                 // typing (open refresh, generating poll, title refresh timers).
                 historyPanel.reloadKeepingSearch();
@@ -9192,7 +9193,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             return;
         }
         // Archiving the open chat keeps it open — it only leaves the list.
-        await refreshChatHistoryList();
+        await refreshChatHistoryList(null, { force: true });
         await refreshArchivedSessions();
     }
 
@@ -9255,7 +9256,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 await createNewChat();
             }
             clearSessionPrefs(sessionId);
-            await refreshChatHistoryList();
+            await refreshChatHistoryList(null, { force: true });
             // Deleting from the Archived section must update its count too.
             await refreshArchivedSessions();
             return;

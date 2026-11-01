@@ -670,7 +670,7 @@
                 }
                 closeHistoryRenameModal();
                 // refreshChatHistoryList already re-applies search/filters when active.
-                await deps.refreshChatHistoryList();
+                await deps.refreshChatHistoryList(null, { force: true });
                 if (deps.currentSessionId() != null && deps.sessionIdsEqual(deps.currentSessionId(), sid)) {
                     deps.updateChatSessionTitle(sid);
                 }
