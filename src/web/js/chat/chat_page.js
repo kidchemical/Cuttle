@@ -10294,6 +10294,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
             currentSessionId: session.current(),
             isViewing: (id) => isViewingSession(id),
         });
+        // Adopt a server-assigned id without yanking the open chat mid-turn;
+        // gate (stale turn after New Chat never re-adopts) is CuttleTurnGuard's.
+        const adoptTurnSession = (sid) => {
+            if (CuttleTurnGuard.shouldAdoptStreamSession(turnNavGen, turnGeneration, boundSessionId, sid, {
+                currentSessionId: session.current(), sessionIdsEqual, isViewing: (id) => isViewingSession(id),
+            })) adoptChatSessionId(sid);
+        };
         try {
             await ensureAuthChatSession();
             // Send to API with project context (stream for status updates; JSON fallback if SSE fails)
@@ -10425,20 +10432,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                                         const sid = canonicalizeChatSessionId(streamEv.sessionId);
                                         requestBody.session_id = sid;
                                         if (boundSessionId == null) boundSessionId = sid;
-                                        // Never yank the open chat to a different id mid-turn.
-                                        // The freshness/binding truth table lives in
-                                        // CuttleTurnGuard.shouldAdoptStreamSession; a stale
-                                        // turn after New Chat (welcome is
-                                        // currentSessionId == null) must not re-adopt chat A.
-                                        if (CuttleTurnGuard.shouldAdoptStreamSession(
-                                            turnNavGen, turnGeneration, boundSessionId, sid, {
-                                                currentSessionId: session.current(),
-                                                sessionIdsEqual: sessionIdsEqual,
-                                                isViewing: (id) => isViewingSession(id),
-                                            }
-                                        )) {
-                                            adoptChatSessionId(sid);
-                                        }
+                                        adoptTurnSession(sid);
                                         continue;
                                     }
                                     const streamPlan = CuttleChatPendingResult.planStreamEvent(
@@ -10671,6 +10665,9 @@ function downloadTranscriptMarkdown(text, sessionId) {
 
             if (data && data.session_id != null && boundSessionId == null) {
                 boundSessionId = canonicalizeChatSessionId(data.session_id);
+                // JSON (control lane) has no SSE session event — adopt here or
+                // the paint gate reads a fresh chat's reply as "navigated away".
+                adoptTurnSession(boundSessionId);
             }
 
             // Finalize disposition is owned by chat_pending_result.js — the

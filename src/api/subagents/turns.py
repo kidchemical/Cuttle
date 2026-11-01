@@ -9,6 +9,7 @@ from dataclasses import replace
 from typing import Any, Callable, Dict, Optional
 
 import api.subagents.store as store
+from api.subagents.stop_watch import ChildStopWatch
 from api.subagents.types import (
     ChildRecord,
     ChildSpec,
@@ -340,6 +341,9 @@ def run_child_turn(
             status_queue=sink,
         )
     )
+    # Stop / chat-cancel / the agent feed's End run in Flask, which may not
+    # kill this process's CLI; they record a stop request this watch acts on.
+    stop_watch = ChildStopWatch(db, child.id, int(child.session_id)).start()
     try:
         result = run(
             agent=spec.agent,
@@ -358,6 +362,7 @@ def run_child_turn(
             "response": f"Subagent failed: {exc}",
         }
     finally:
+        stop_watch.turn_finished()
         sink.close()
         try:
             from api import chat_delivery

@@ -48,7 +48,15 @@ def _row_child(row: Any) -> ChildRecord:
         live_status=str(d.get("live_status") or ""),
         live_status_at=str(d.get("live_status_at") or ""),
         live_turn_id=str(d.get("live_turn_id") or ""),
+        stop_requested_at=_float_or_none(d.get("stop_requested_at")),
     )
+
+
+def _float_or_none(value: Any) -> Optional[float]:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _load_children(db, batch_id: str) -> List[ChildRecord]:
@@ -379,6 +387,27 @@ def update_child(
     )
     conn.commit()
     conn.close()
+
+
+def request_stop(db, child_id: str, *, at: Optional[float] = None) -> None:
+    """Record a Stop for this child, whatever its status.
+
+    The owning process (``api.subagents.stop_watch``) kills the child's CLI
+    when it sees this; a caller in another process cannot (it may only signal
+    its own descendants). Set on terminal rows too: a finished Claude turn can
+    leave its CLI running a detached background wait.
+    """
+    import time
+
+    conn = db._get_connection()
+    try:
+        conn.execute(
+            "UPDATE subagent_children SET stop_requested_at = ? WHERE id = ?",
+            (float(at if at is not None else time.time()), str(child_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def update_child_live_status(db, child_id: str, turn_id: str, text: str) -> bool:

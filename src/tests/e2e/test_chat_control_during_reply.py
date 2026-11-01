@@ -195,3 +195,45 @@ def test_control_preserves_remote_waiting_bubble(chat_surface):
     assert _ef(page).evaluate('window.__liveReply.remote.isConnected')
     assert frame.locator('#typing-indicator').count() == 0
     assert not errors
+
+
+NEW_SID = 1847
+
+
+def test_restart_from_new_chat_adopts_minted_session_and_shows_reply(browser, static_server):
+    """A fresh chat's /restart gets its session minted server-side (JSON reply,
+    no SSE session event). The page must adopt that id and paint the card —
+    it used to drop the reply as "navigated away" and show nothing."""
+    page = browser.new_page(viewport={'width': 1280, 'height': 800})
+    apply_request_guard(page.context, static_server)
+    world = SyncWorld()
+    world.scenario[str(NEW_SID)] = {'session_name': '/restart', 'followups': [], 'messages': [],
+                                    'live': {'active': False, 'generating': False, 'status': None}}
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.add_init_script(FETCH_HOOK)
+    page.route(f'{static_server}/api/**', world.handle)
+    page.route(f'{static_server}/qa-host.html', lambda route: route.fulfill(
+        content_type='text/html', body='<iframe style="border:0;width:100%;height:96vh" src="/chat_page.html?new=1"></iframe>'))
+    page.goto(f'{static_server}/qa-host.html', wait_until='domcontentloaded')
+    frame = page.frame_locator('iframe')
+    frame.locator('#welcomeChatInput').wait_for(state='visible')
+    frame.locator('#welcomeChatInput').fill('/restart when-idle')
+    frame.locator('#welcomeChatInput').press('Escape')
+    frame.locator('#welcomeSendButton').click(timeout=5000)
+    _ef(page).wait_for_function('window.__liveReply.control !== null', timeout=5000)
+    resolved = _ef(page).evaluate(r"""(sid) => {
+      const state = window.__liveReply;
+      const response = 'Restart controls\n\n' + window.CuttleSupervised.buildRestartFormHtml();
+      const cid = state.control.body.control_request_id;
+      state.control.resolve({success: true, response, session_id: sid,
+        type: 'flask_restart', native_command: '/restart', control_request_id: cid});
+      return {response, cid};
+    }""", NEW_SID)
+    world.scenario[str(NEW_SID)]['messages'] = [
+        dict(_msg(1, 'user', '/restart when-idle'), metadata={'control_request_id': resolved['cid']}),
+        dict(_msg(2, 'assistant', resolved['response']), metadata={'control_request_id': resolved['cid']})]
+    frame.locator('.message.assistant').filter(has_text='Restart controls').wait_for(timeout=5000)
+    assert _ef(page).evaluate('new URLSearchParams(location.search).get("chat")') == str(NEW_SID)
+    assert not errors
+    page.close()
