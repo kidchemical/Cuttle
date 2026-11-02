@@ -28,7 +28,7 @@ The user talks to **Cuttle**. Cuttle (orchestrator + Brain) decides when work sh
 | Local host worker loop | Daemon thread `run_device_workers_loop` in `cuttle_daemon.py` |
 | Client sidecar | `electron/device-worker/cuttle_device_worker.py` (stdlib; shipped in Client asar) + Electron `startWorkerSidecar()` |
 | Sidecar log (Client) | `%APPDATA%/cuttle-desktop/device-worker.log` (Electron console on exit) |
-| Job types | `ping`, `file_copy`, `blender_render`, `shell`, `execute_shell_*`, `cuttle_self_update` |
+| Job types | `ping`, `file_copy`, `blender_render`, `shell`, `cuttle_self_update` |
 | Platform verbs | `.cuttle_global/actions/workers-*.yaml` + `python -m api.device_workers.cli` |
 | Host intent | `workers.plan` / `POST /api/workers/plan` (heuristics); `auto_mesh` default off |
 | Blender farm | Default **work_steal** chunks (untargeted queue); `distribution=pinned` for legacy equal splits; per-frame timing in job results; EWMA `render_profile` on worker meta |
@@ -104,16 +104,14 @@ Platform verb: `workers.self-update` (`target` = laptop `worker_id`). This is th
 
 **Version signal:** `cuttle_version` comes from `electron/package.json`. Bump SemVer only at release time using `.cuttle/scripts/bump-cuttle-version.py`; see the [release runbook](../../.cuttle/docs/cuttle-release.md). Git revision mismatch and stale boot revision also flag workers after ordinary pushes, without a version bump. Host `workers.list` exposes `host_cuttle_version`, `outdated_workers`, and per-worker `needs_update` so Jobs UI / agents can offer self-update.
 
-### Shell transports (three tiers)
+### Shell on workers
 
 | Job type | Transport | Default | Use when |
 |---|---|---|---|
 | `shell` | Pull-based recipes on the worker | **on** | Safe named ops (`git_status`, `git_pull`, …) |
-| `execute_shell_unsafe` | Local cmdline **on the worker** (worker already claimed the job) | **off** (`execute_shell_unsafe_enabled`) | Need real shell; accept risk; optional `execute_shell_prefixes`. Legacy type name `execute_shell` still accepted. |
-| `execute_shell_ssh` | Worker runs `ssh user@host command` (OpenSSH client) | **off** (`execute_shell_ssh_enabled`) | SSH is already how you admin that box; still not the enroll/claim plane |
 | `cuttle_self_update` | Detached script (daemon-owned) | **on** (job allowlisted) | Update Client checkout + restart UI — **prefer this over shell/SSH for pull+restart** |
 
-SSH is a **shell transport**, not the control plane. Enroll/claim/self-update stay pull-based through the client daemon.
+There is no free-form shell job (`execute_shell_unsafe` / `execute_shell_ssh` were removed 2026-11-01). Ad-hoc commands on another machine use the user's own OpenSSH or similar ([`remote-access.md`](../../.cuttle_global/docs/remote-access.md)); approval and access control live in that tool. Enroll/claim/self-update stay pull-based through the client daemon.
 
 ## Platform surface (agent-agnostic)
 
@@ -199,7 +197,7 @@ Scheduler inputs: required capabilities, estimated cost, “avoid interactive ho
 ```text
 submit → queued → claimed → running → (heartbeat) → succeeded | failed | cancelled
                                                       ├─ lease expiry → requeue (safe types, attempts left)
-                                                      ├─ lease expiry → cancel (unsafe shell / max attempts)
+                                                      ├─ lease expiry → cancel (no_requeue_types / max attempts)
                                                       └─ queued past expires_at → cancel (TTL)
 ```
 
@@ -304,7 +302,7 @@ Success criteria for the benchmark: correct frames, sensible scheduling (idle GP
 
 `apps/mobile` today is **LAN UI + notifications only** (no `/api/workers` enroll/claim). That is correct for now.
 
-**Someday (low value vs PC mesh):** a thin native/JS edge — camera/`capture_photo` → upload, richer HITL on the phone for unsafe-shell approvals, maybe `ping` + battery/GPS ads — **not** Python sidecar, Blender, UNC `file_copy`, or shell recipes. Keep mobile out of the PC worker executor path unless a real pinch use-case shows up.
+**Someday (low value vs PC mesh):** a thin native/JS edge — camera/`capture_photo` → upload, maybe `ping` + battery/GPS ads — **not** Python sidecar, Blender, UNC `file_copy`, or shell recipes. Keep mobile out of the PC worker executor path unless a real pinch use-case shows up.
 
 ## Non-goals
 
@@ -314,8 +312,8 @@ Success criteria for the benchmark: correct frames, sensible scheduling (idle GP
 - Public internet mesh without Tailscale/VPN + auth.
 - **Per-harness workers tutorials** (Cursor-only, Codex-only, …) — platform contract only.
 - **Manual Jobs submit as the product path** — observability/debug only.
-- **SSH as required control plane** — enroll/claim/self-update stay pull-based; SSH is optional for `execute_shell_ssh` only.
-- **Ungated arbitrary remote shell** — `execute_shell_unsafe` / `execute_shell_ssh` default **off**; prefer recipes + `cuttle_self_update`. When enabled, first use in a worker process is HITL-gated (Approve once / session / Deny); one session grant covers both kinds. Queued jobs expire by type TTL; unsafe kinds never requeue after lease death.
+- **SSH as control plane** — enroll/claim/self-update stay pull-based; SSH is the user's own tool for ad-hoc commands, outside the mesh.
+- **Free-form shell jobs** — the mesh runs named recipes and `cuttle_self_update` only; arbitrary commands go through OpenSSH (Cuttle doesn't reinvent a remote shell).
 
 ## Open questions (defer to implementation)
 

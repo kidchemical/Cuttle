@@ -14,7 +14,7 @@ Match this doc when the user (or a good batch candidate) involves:
 - File copy / staging across PCs
 - Blender / render farm / frame sharding
 - **Remote Client update** (checkout update + restart Cuttle on laptop from host)
-- Shell on a worker (recipes, local execute_shell_unsafe, or execute_shell_ssh)
+- Shell recipes on a worker (`git_pull`, `git_status`, …)
 - Mesh compute, capability ads, claim/lease jobs
 
 **Not** this doc: same-machine supervised Cursor → `SUPERVISED_COORDINATOR.md`.
@@ -84,20 +84,19 @@ Settings → Check for updates and the titlebar Update button open:
 - Self-updates report `advanced` + a `no-op` note; the UI surfaces "nothing to update"
   instead of a false success.
 
-## Shell: three tiers
+## Shell on workers
 
-| Type | What | Default |
-|---|---|---|
-| `shell` | Named recipes only (`git_pull`, `git_status`, …) | available |
-| `execute_shell_unsafe` | Free-form **local** cmdline on the worker after claim | **off** — `device_workers.execute_shell_unsafe_enabled` |
-| `execute_shell_ssh` | Worker runs OpenSSH `ssh user@host …` | **off** — `execute_shell_ssh_enabled` + `ssh_host` |
-| `cuttle_self_update` | Detached fetch/fast-forward + restart Electron/daemon | prefer for Client updates |
+| Type | What |
+|---|---|
+| `shell` | Named recipes only (`git_pull`, `git_status`, …) |
+| `cuttle_self_update` | Detached fetch/fast-forward + restart Electron/daemon; prefer for Client updates |
 
-Use **SSH for ad-hoc shell** when you already trust SSH into that machine. Do **not** use SSH for enroll/claim or as a substitute for `cuttle_self_update`.
+There is no free-form shell job. Ad-hoc commands on another machine go through the
+user's own OpenSSH (or Tailscale/Teleport/MeshCentral) → `remote-access.md`; access
+control and approval live in that tool. Do **not** use SSH for enroll/claim or as a
+substitute for `cuttle_self_update`.
 
-Optional: `device_workers.execute_shell_prefixes` (list of allowed command prefixes) when either unsafe/ssh execute is on.
-
-### LAN-only SSH (explicit pairing, per-install identities)
+### LAN-only SSH keys (explicit pairing, per-install identities)
 
 Cuttle distributes **no shared trusted key**. Each installation owns its
 keypair and every target authorizes exactly the peer keys its operator
@@ -112,10 +111,9 @@ unrelated installations.
    (elevated on Windows; LAN CIDR + loopback `from=` restriction applied):
    - Windows: `install-cuttle-mesh-lan-key.ps1 -PubKeyFile <peer.pub> -Alias <name>`
    - Linux/macOS: `install-cuttle-mesh-lan-key.sh --pubkey <peer.pub> --alias <name>`
-3. Point `<home>/config/settings.json` at **this** install's private key
-   (`device_workers.ssh_host` / `ssh_identity`).
+3. Add a `Host` entry for the target in this machine's `~/.ssh/config`
+   (`IdentityFile` = this install's private key) and run plain `ssh <alias>`.
 
-Configure keys / `authorized_keys` / `ssh_host` in `<home>/config/settings.json` for **this** install.
 Document your LAN CIDR, key paths, and host aliases under
 `<home>/personal/docs/cuttle-workers.md` — do not commit them to the tracked global doc.
 
@@ -124,9 +122,8 @@ longer ships or installs it, and pairing never purges existing
 `authorized_keys` entries — removing a legacy entry is a deliberate manual
 rotation on that machine, not a side effect of pairing.
 
-**HITL:** first `execute_shell_unsafe` or `execute_shell_ssh` in a worker process pops a Cuttle modal.
 **Queue TTL:** jobs get `expires_at` (defaults vary by type). Override with `ttl_seconds` / `expires_at` on submit.
-**No requeue for unsafe:** lease death on `execute_shell_*` cancels; safer types requeue until `max_attempts`.
+**Requeue:** lease death requeues until `max_attempts`, except types listed in `device_workers.no_requeue_types`.
 
 ## Platform verbs
 
@@ -149,7 +146,7 @@ type runs under **soft idle + hard absolute** timeouts:
 | | Soft (idle) | Hard (absolute) | Progress mode |
 |---|---|---|---|
 | `blender_render` | 45m without a new durable frame | 24h safety net | `units` (frames on disk) |
-| `shell` / `execute_shell_*` | off (0) | 4h | `alive` (process still running) |
+| `shell` | off (0) | 4h | `alive` (process still running) |
 | Override | `params.idle_timeout_seconds` | `params.hard_timeout_seconds` or raise via `timeout_seconds` | `params.progress_mode` |
 
 Heartbeats may carry `progress` (`units_done` / `last_unit_id`). Lease renew still
@@ -254,7 +251,7 @@ Log: `%LOCALAPPDATA%\cuttle-desktop\client-self-update.log`
 ## Do not
 
 - Make SSH the enroll/claim control plane
-- Enable `execute_shell_unsafe` / `execute_shell_ssh` casually on untrusted sessions
+- Add a free-form shell job type to the mesh; use the user's SSH (`remote-access.md`)
 - Expect Electron-only sidecar to self-update (use **client daemon**)
 - Treat Capacitor mobile as a PC mesh worker (no Python claim loop / Blender / shell on phone). **Someday / low priority:** thin sensor+HITL edge only — see `CUTTLE_WORKERS.md` § W5.
 

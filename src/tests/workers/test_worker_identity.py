@@ -297,31 +297,6 @@ def test_owner_routes_require_owner_session(client, monkeypatch):
     )
 
 
-def test_worker_can_poll_only_its_own_approval(client, monkeypatch):
-    from api.device_workers import ssh_approval as sa
-    import api.device_workers.routes as routes
-
-    monkeypatch.setattr(sa, "_pending", {})
-    a = _pair_token(client, "worker-a")
-    b = _pair_token(client, "worker-b")
-    # Drop the owner session: worker-bearer scoping must apply below.
-    monkeypatch.setattr(
-        routes,
-        "_ui_operator_or_401",
-        lambda: ({"success": False, "error": "denied"}, 401),
-    )
-    row = client.post(
-        "/api/workers/ssh-approval/request",
-        json={"worker_id": "worker-a"},
-        headers=_bearer(a),
-        environ_base=LAN,
-    ).get_json()["request"]
-    path = f"/api/workers/ssh-approval/{row['id']}"
-    assert client.get(path, headers=_bearer(a), environ_base=LAN).status_code == 200
-    assert client.get(path, headers=_bearer(b), environ_base=LAN).status_code == 403
-    assert client.get(path, environ_base=LAN).status_code == 401
-
-
 @pytest.mark.parametrize("source", ["environment", "settings", "secret-file"])
 def test_retired_shared_token_cannot_authenticate_or_enroll(client, monkeypatch, tmp_path, source):
     from api.device_workers import config

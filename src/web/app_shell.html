@@ -382,22 +382,6 @@
     </div>
 </div>
 
-<!-- Device-worker unsafe-shell approval (first execute_shell_unsafe / execute_shell_ssh per worker process) -->
-<div class="auth-modal-overlay" id="sshApprovalModal" hidden role="dialog" aria-modal="true" aria-labelledby="sshApprovalTitle" aria-describedby="sshApprovalSubtitle">
-    <div class="auth-modal logout-confirm-modal" style="max-width:440px;">
-        <div class="auth-modal-header">
-            <h2 class="auth-modal-title" id="sshApprovalTitle">Unsafe shell approval</h2>
-            <p class="auth-modal-subtitle" id="sshApprovalSubtitle">A Cuttle worker wants to run an unsafe shell job.</p>
-            <p class="auth-modal-subtitle" id="sshApprovalMeta" style="opacity:.75;font-size:.85rem;margin-top:.5rem;"></p>
-        </div>
-        <div class="logout-confirm-actions" style="flex-direction:column;gap:8px;">
-            <button type="button" class="logout-confirm-btn logout-confirm-submit" id="sshApprovalOnce" style="width:100%;">Approve this request once</button>
-            <button type="button" class="logout-confirm-btn logout-confirm-submit" id="sshApprovalSession" style="width:100%;background:transparent;border:1px solid currentColor;">Approve for the rest of this worker session</button>
-            <button type="button" class="logout-confirm-btn logout-confirm-cancel" id="sshApprovalDeny" style="width:100%;">Deny</button>
-        </div>
-    </div>
-</div>
-
 <div id="railAddPicker" class="rail-add-picker" hidden role="menu" aria-label="Add page to sidebar">
     <div class="rail-add-picker-title">Add to sidebar</div>
     <div class="rail-add-picker-list"></div>

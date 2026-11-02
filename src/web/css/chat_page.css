@@ -7948,9 +7948,11 @@ html.cuttle-bg-paused .chat-restore-spinner {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin: 8px 0 14px 46px;
+    align-self: center;
+    box-sizing: border-box;
+    width: min(640px, 100%);
+    margin: 8px auto 14px;
     padding: 10px 14px;
-    max-width: min(640px, calc(100% - 60px));
     border: 1px dashed color-mix(in srgb, var(--accent-color, #667eea) 55%, var(--border-color));
     border-radius: 14px;
     background: color-mix(in srgb, var(--accent-color, #667eea) 7%, transparent);
@@ -7997,5 +7999,5 @@ html.cuttle-bg-paused .chat-restore-spinner {
     .chat-bg-ring, .history-kind-badge.history-bg-badge { animation: none; }
 }
 @media (max-width: 600px) {
-    .chat-bg-work { margin-left: 8px; max-width: calc(100% - 16px); }
+    .chat-bg-work { width: calc(100% - 16px); }
 }

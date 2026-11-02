@@ -160,19 +160,7 @@ def default_settings() -> Dict[str, Any]:
         "allowed_path_prefixes": [],
         # When true, host may auto-suggest/enqueue mesh plans (still prefer explicit verbs).
         "auto_mesh": False,
-        # Dangerous: free-form local shell on the worker (prefer recipes / cuttle_self_update).
-        "execute_shell_unsafe_enabled": False,
-        # Optional SSH transport for shell (not used for enroll/claim/self-update).
-        "execute_shell_ssh_enabled": False,
-        "ssh_host": "",
-        "ssh_user": "",
-        "ssh_port": 22,
-        "ssh_identity": "",
-        # Optional command prefix allowlist for execute_shell_unsafe / execute_shell_ssh (empty = any).
-        "execute_shell_prefixes": [],
         "shell_recipes": {},
-        "ssh_approval_required": True,
-        "ssh_approval_timeout_seconds": 300,
         # Queue hygiene: type TTLs / attempt budgets (see job_policy.py).
         "queue_ttl_seconds": {},
         "max_attempts": {},

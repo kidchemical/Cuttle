@@ -22,8 +22,6 @@ ALLOWED_TYPES = frozenset(
         "file_copy",
         "blender_render",
         "shell",  # named recipes only (safe default)
-        "execute_shell_unsafe",  # free-form local cmdline — opt-in, dangerous
-        "execute_shell_ssh",  # same intent over SSH — opt-in transport
         "cuttle_self_update",
     }
 )
@@ -161,13 +159,11 @@ def execute_job(job: Dict[str, Any], auth_token: Optional[str] = None) -> Dict[s
         "file_copy",
         "blender_render",
         "shell",
-        "execute_shell_unsafe",
-        "execute_shell_ssh",
         "cuttle_self_update",
     }:
         raise JobExecError(f"unsupported job type: {raw_type or jtype}")
     params = job.get("params") if isinstance(job.get("params"), dict) else {}
-    # Thread job id for HITL prompts
+    # Thread the job id into params for job-scoped logs
     if job.get("id") and "_job_id" not in params:
         params = {**params, "_job_id": str(job.get("id"))}
     if jtype == "ping":
@@ -183,268 +179,9 @@ def execute_job(job: Dict[str, Any], auth_token: Optional[str] = None) -> Dict[s
         return _blender_render(params)
     if jtype == "shell":
         return _shell_recipe(params)
-    if jtype == "execute_shell_unsafe":
-        return _execute_shell_unsafe(params, auth_token=auth_token)
-    if jtype == "execute_shell_ssh":
-        return _execute_shell_ssh(params, auth_token=auth_token)
     if jtype == "cuttle_self_update":
         return _cuttle_self_update(params)
     raise JobExecError(f"unsupported job type: {raw_type or jtype}")
-
-
-def _dw_settings() -> Dict[str, Any]:
-    """Live machine settings through the shared persistence owner."""
-    try:
-        from managers.settings_manager import get_settings_manager
-
-        sm = get_settings_manager()
-        try:
-            sm.reload()
-        except Exception:
-            pass
-        block = sm.get_setting("device_workers") or {}
-        return block if isinstance(block, dict) else {}
-    except Exception:
-        return {}
-
-
-def _execute_shell_unsafe_enabled() -> bool:
-    env = (os.environ.get("CUTTLE_DEVICE_WORKERS_EXECUTE_SHELL_UNSAFE") or "").strip().lower()
-    if env in ("0", "false", "no", "off"):
-        return False
-    if env in ("1", "true", "yes", "on"):
-        return True
-    return bool(_dw_settings().get("execute_shell_unsafe_enabled"))
-
-
-def _execute_shell_ssh_enabled() -> bool:
-    env = (os.environ.get("CUTTLE_DEVICE_WORKERS_EXECUTE_SHELL_SSH") or "").strip().lower()
-    if env in ("0", "false", "no", "off"):
-        return False
-    if env in ("1", "true", "yes", "on"):
-        return True
-    return bool(_dw_settings().get("execute_shell_ssh_enabled"))
-
-
-def _command_allowed(command: str) -> bool:
-    """Optional prefix allowlist when execute_shell_unsafe / ssh is on (empty = any)."""
-    prefixes = _dw_settings().get("execute_shell_prefixes")
-    if not isinstance(prefixes, list) or not prefixes:
-        return True
-    cmd = (command or "").strip()
-    for pref in prefixes:
-        p = str(pref or "").strip()
-        if p and cmd.startswith(p):
-            return True
-    return False
-
-
-def _execute_shell_unsafe(
-    params: Dict[str, Any], auth_token: Optional[str] = None
-) -> Dict[str, Any]:
-    if not _execute_shell_unsafe_enabled():
-        raise JobExecError(
-            "execute_shell_unsafe disabled — set device_workers.execute_shell_unsafe_enabled=true "
-            "(dangerous; prefer shell recipes or cuttle_self_update)"
-        )
-    command = str(params.get("command") or params.get("cmd") or "").strip()
-    if not command:
-        raise JobExecError("execute_shell_unsafe requires params.command")
-    if not _command_allowed(command):
-        raise JobExecError(
-            "execute_shell_unsafe command rejected by execute_shell_prefixes allowlist"
-        )
-    _ensure_unsafe_shell_hitl(
-        job_kind="execute_shell_unsafe",
-        target="local",
-        command=command,
-        job_id=str(params.get("_job_id") or ""),
-        auth_token=auth_token,
-    )
-    cwd = str(params.get("cwd") or "").strip()
-    if cwd:
-        if not path_allowed(cwd) and not Path(_expand(cwd)).exists():
-            raise JobExecError(f"cwd not allowlisted: {cwd}")
-        workdir = str(Path(_expand(cwd)).resolve())
-    else:
-        workdir = str(_repo_root(params))
-
-    from api.device_workers.job_policy import resolve_timeouts
-    from api.device_workers.long_run import HardTimeoutError, IdleTimeoutError, run_long_process
-
-    idle_s, hard_s, prog_mode = resolve_timeouts(
-        job_type="execute_shell_unsafe", params=params
-    )
-    on_prog = params.get("_on_progress")
-    try:
-        completed = run_long_process(
-            command,
-            hard_timeout_seconds=hard_s,
-            idle_timeout_seconds=idle_s,
-            progress_mode=prog_mode,
-            on_progress=on_prog if callable(on_prog) else None,
-            cwd=workdir,
-            shell=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except IdleTimeoutError as e:
-        raise JobExecError(
-            f"execute_shell_unsafe idle timeout ({int(e.idle)}s)"
-        ) from e
-    except HardTimeoutError as e:
-        raise JobExecError(
-            f"execute_shell_unsafe timed out ({int(e.hard)}s)"
-        ) from e
-    except OSError as e:
-        raise JobExecError(f"execute_shell_unsafe failed: {e}") from e
-    out = (completed.stdout or "").strip()
-    err = (completed.stderr or "").strip()
-    if completed.returncode != 0:
-        raise JobExecError(
-            f"execute_shell_unsafe exit {completed.returncode}: {(err or out)[-800:]}"
-        )
-    return {
-        "ok": True,
-        "kind": "execute_shell_unsafe",
-        "transport": "local",
-        "cwd": workdir,
-        "stdout": out[-4000:],
-        "stderr": err[-1000:],
-        "elapsed_seconds": float(completed.elapsed_seconds),
-    }
-
-
-def _execute_shell_ssh(
-    params: Dict[str, Any], auth_token: Optional[str] = None
-) -> Dict[str, Any]:
-    """Run a command on this machine via local OpenSSH client to a configured target.
-
-    Intended for cases where pull-based recipes are wrong and you already trust SSH
-    into the worker (or a sibling host). Still opt-in and never the enroll/claim plane.
-    """
-    if not _execute_shell_ssh_enabled():
-        raise JobExecError(
-            "execute_shell_ssh disabled — set device_workers.execute_shell_ssh_enabled=true "
-            "and configure ssh_host (params or settings)"
-        )
-    command = str(params.get("command") or params.get("cmd") or "").strip()
-    if not command:
-        raise JobExecError("execute_shell_ssh requires params.command")
-    if not _command_allowed(command):
-        raise JobExecError("execute_shell_ssh command rejected by execute_shell_prefixes allowlist")
-
-    block = _dw_settings()
-    ssh_host = str(params.get("ssh_host") or block.get("ssh_host") or "").strip()
-    ssh_user = str(params.get("ssh_user") or block.get("ssh_user") or "").strip()
-    ssh_port = int(params.get("ssh_port") or block.get("ssh_port") or 22)
-    identity = str(params.get("ssh_identity") or block.get("ssh_identity") or "").strip()
-    if not ssh_host:
-        raise JobExecError("execute_shell_ssh requires ssh_host (params or device_workers.ssh_host)")
-
-    target = f"{ssh_user}@{ssh_host}" if ssh_user else ssh_host
-    _ensure_unsafe_shell_hitl(
-        job_kind="execute_shell_ssh",
-        target=target,
-        command=command,
-        job_id=str(params.get("_job_id") or ""),
-        auth_token=auth_token,
-    )
-
-    argv = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-p", str(ssh_port)]
-    if identity:
-        argv.extend(["-i", identity, "-o", "IdentitiesOnly=yes"])
-    argv.extend([target, command])
-
-    from api.device_workers.job_policy import resolve_timeouts
-    from api.device_workers.long_run import HardTimeoutError, IdleTimeoutError, run_long_process
-
-    idle_s, hard_s, prog_mode = resolve_timeouts(
-        job_type="execute_shell_ssh", params=params
-    )
-    on_prog = params.get("_on_progress")
-    try:
-        completed = run_long_process(
-            argv,
-            hard_timeout_seconds=hard_s,
-            idle_timeout_seconds=idle_s,
-            progress_mode=prog_mode,
-            on_progress=on_prog if callable(on_prog) else None,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except FileNotFoundError as e:
-        raise JobExecError("ssh client not found on PATH (install OpenSSH Client)") from e
-    except IdleTimeoutError as e:
-        raise JobExecError(f"execute_shell_ssh idle timeout ({int(e.idle)}s)") from e
-    except HardTimeoutError as e:
-        raise JobExecError(f"execute_shell_ssh timed out ({int(e.hard)}s)") from e
-    except OSError as e:
-        raise JobExecError(f"execute_shell_ssh failed: {e}") from e
-    out = (completed.stdout or "").strip()
-    err = (completed.stderr or "").strip()
-    if completed.returncode != 0:
-        raise JobExecError(
-            f"execute_shell_ssh exit {completed.returncode}: {(err or out)[-800:]}"
-        )
-    return {
-        "ok": True,
-        "kind": "execute_shell_ssh",
-        "transport": "ssh",
-        "target": target,
-        "stdout": out[-4000:],
-        "stderr": err[-1000:],
-        "elapsed_seconds": float(completed.elapsed_seconds),
-    }
-
-
-def _ensure_unsafe_shell_hitl(
-    *,
-    job_kind: str,
-    target: str = "",
-    command: str = "",
-    job_id: str = "",
-    auth_token: Optional[str] = None,
-) -> None:
-    """Block until user approves first unsafe shell in this worker process (or session grant)."""
-    from api.device_workers import ssh_approval as sa
-    from api.device_workers.config import worker_id as local_worker_id
-
-    if not sa.unsafe_shell_approval_required():
-        return
-    if sa.session_granted():
-        return
-    # Bypass only for explicit tests
-    if os.environ.get("CUTTLE_SSH_APPROVAL_BYPASS", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    ):
-        return
-
-    wid = local_worker_id()
-    block = _dw_settings()
-    timeout = float(
-        block.get("unsafe_shell_approval_timeout_seconds")
-        or block.get("ssh_approval_timeout_seconds")
-        or 300
-    )
-    decision = sa.request_via_coordinator(
-        worker_id=wid,
-        target=target,
-        command_preview=command,
-        job_id=job_id,
-        job_kind=job_kind,
-        timeout_seconds=timeout,
-        auth_token=auth_token,
-    )
-    if decision == "session":
-        sa.grant_session()
-        return
-    if decision == "once":
-        return
-    if decision == "timeout":
-        raise JobExecError("Unsafe shell approval timed out — no response in Cuttle UI")
-    raise JobExecError("Unsafe shell denied by user in Cuttle UI")
 
 
 def _repo_root(params: Dict[str, Any] | None = None) -> Path:
@@ -1365,8 +1102,6 @@ def validate_job_submission(job_type: str, params: Dict[str, Any]) -> Tuple[bool
         "file_copy",
         "blender_render",
         "shell",
-        "execute_shell_unsafe",
-        "execute_shell_ssh",
         "cuttle_self_update",
     }
     if jtype not in canonical:
@@ -1394,12 +1129,6 @@ def validate_job_submission(job_type: str, params: Dict[str, Any]) -> Tuple[bool
             return False, "shell requires params.recipe"
         if recipe not in _shell_recipes():
             return False, f"shell recipe not allowlisted: {recipe}"
-    if jtype == "execute_shell_unsafe":
-        if not str(params.get("command") or params.get("cmd") or "").strip():
-            return False, "execute_shell_unsafe requires params.command"
-    if jtype == "execute_shell_ssh":
-        if not str(params.get("command") or params.get("cmd") or "").strip():
-            return False, "execute_shell_ssh requires params.command"
     if jtype == "cuttle_self_update":
         pass
     return True, ""
