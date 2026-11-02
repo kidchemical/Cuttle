@@ -83,6 +83,7 @@ def test_schedules_alone_do_not_light_the_activity_dot(sources):
     assert work_tree.background_session_ids() == {"5"}
     bg = work_tree.background_summary(1822)
     assert bg["working"] is False and bg["schedules"][0]["label"] == "Supervise CH-001821"
+    assert bg["schedules"][0]["target"] == "CH-001821"  # the card links to the supervised chat
     rows = [{"id": 5, "generating": False}, {"id": 1822}, {"id": 7}, {"id": 5, "generating": True}]
     work_tree.mark_background(rows)
     assert [r["background"] for r in rows] == [True, False, False, False]

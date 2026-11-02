@@ -884,6 +884,7 @@ def get_chat_sessions():
             mark_background(sessions)
         except Exception:
             pass
+        _mark_session_relations(sessions, user['id'])
 
         try:
             ids = [int(s['id']) for s in sessions if s.get('id') is not None]
@@ -911,6 +912,23 @@ def get_chat_sessions():
             'success': False,
             'error': 'Failed to get sessions'
         }), 500
+
+
+def _mark_session_relations(sessions, user_id):
+    """History-tree links beyond ``parent_session_id``: the chat supervising
+    each row (``api.chat_ops``) and orchestrator-bound chats (``api.orchestrator``)."""
+    try:
+        from api.chat_ops.service import mark_supervision
+
+        mark_supervision(sessions)
+    except Exception:
+        pass
+    try:
+        from api.orchestrator.service import mark_orchestrators
+
+        mark_orchestrators(sessions, user_id)
+    except Exception:
+        pass
 
 
 @auth_bp.route('/sessions/search', methods=['GET'])
@@ -971,6 +989,7 @@ def search_chat_sessions():
             mark_background(sessions)
         except Exception:
             pass
+        _mark_session_relations(sessions, user['id'])
 
         try:
             ids = [int(s['id']) for s in sessions if s.get('id') is not None]

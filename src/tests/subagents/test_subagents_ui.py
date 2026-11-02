@@ -33,8 +33,10 @@ _PAGE_HELPERS = (
 # History nesting algorithms now live in chat_history_view.js (Slice 3A commit 3).
 _VIEW_HELPERS = (
     "historyEntryParentId",
+    "historyEntrySupervisorId",
     "historyLookupNestedEntry",
     "nestHistoryEntries",
+    "nestedParentId",
     "historySessionAncestorIds",
     "isHistorySubagentGroupExpanded",
     "visibleHistoryRoots",
@@ -129,6 +131,28 @@ const pinned = visibleHistoryRoots(many, 5, { currentSessionId: 20 });
 assert.ok(pinned.some((e) => String(e.sessionId) === '8'), JSON.stringify(pinned.map((e) => e.sessionId)));
 assert.strictEqual(historySubagentToggleTitle(3, false, false), 'Show 3 sub-agents');
 assert.strictEqual(historySubagentToggleTitle(1, true, false), 'Hide 1 sub-agent');
+
+// Supervision: a chat with no sub-agent parent nests under its supervisor;
+// sub-agent links win, and a supervision cycle leaves both rows roots.
+const sup = nestHistoryEntries([
+  { sessionId: 30, serverSession: { id: 30, supervises_session_ids: [31] } },
+  { sessionId: 31, serverSession: { id: 31, supervisor_session_id: 30 } },
+  { sessionId: 32, serverSession: { id: 32, parent_session_id: 31 } },
+  { sessionId: 33, serverSession: { id: 33, parent_session_id: 30, supervisor_session_id: 31 } },
+]);
+assert.deepStrictEqual(sup.roots.map((e) => e.sessionId), [30]);
+assert.strictEqual(sup.relationOf.get('31'), 'supervised');
+assert.strictEqual(sup.relationOf.get('33'), 'subagent');
+assert.deepStrictEqual(historySessionAncestorIds(32, sup), ['31', '30']);
+assert.strictEqual(isHistorySubagentGroupExpanded('30', sup, { currentSessionId: 32 }), true);
+const loop = nestHistoryEntries([
+  { sessionId: 40, serverSession: { id: 40, supervisor_session_id: 41 } },
+  { sessionId: 41, serverSession: { id: 41, supervisor_session_id: 40 } },
+]);
+assert.strictEqual(loop.roots.length, 1);
+assert.strictEqual(loop.childrenByParent.get('41').length, 1);
+assert.strictEqual(historySubagentToggleTitle(2, false, false, 1), 'Show 1 sub-agent + 1 supervised chat');
+assert.strictEqual(historySubagentToggleTitle(1, true, false, 1), 'Hide 1 supervised chat');
 
 console.log('ok');
 """
@@ -294,11 +318,12 @@ def test_subagent_markup_present():
     assert "applySessionIdentity" in js
     assert "toggleHistorySubagentGroup" in js
     # Nested-tree markup/expansion moved to the view + panel owners (3A commit 3);
-    # the page keeps the window forwarder and the menu "Show sub-agents" item.
+    # the page keeps the window forwarder; the session menu owns "Show sub-agents".
     assert "history-subagent-group" in view_js
     assert "history-subagent-group" in panel_js
     assert "history-subagent-toggle" in view_js
-    assert "Show sub-agents" in js
+    menu_js = (CHAT_JS.parent / "chat_session_menu.js").read_text(encoding="utf-8")
+    assert "Show sub-agents" in menu_js
     assert ".subagent-launchers" in css
     assert ".history-subagent-group.is-collapsed" in css
     assert ".history-subagent-toggle" in css

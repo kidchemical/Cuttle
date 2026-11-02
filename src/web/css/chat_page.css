@@ -4039,23 +4039,18 @@ pre.has-code-copy:hover .code-copy-btn,
     flex-shrink: 0;
 }
 
-.chat-history-item.is-subagent {
-    padding-left: 12px;
-}
-
-/* The status icon (spinner / attention dot) is absolutely positioned in the
-   first ~18px of the row; the sub-agent toggle must start after that slot. */
-.chat-history-item.has-subagents {
-    padding-left: 20px;
-}
-
+/* Tree rows keep the base row padding: the status icon (spinner / attention
+   dot) sits absolutely in the first 16px and every title starts right after
+   it. Nesting is one fixed 16px step per level (9 + 1 + 6), with the guide
+   line dropping from the parent's status-icon column; the expand chevron
+   rides in the meta line so it never shifts a title off its siblings. */
 .history-subagent-group.is-collapsed > .history-subagent-children {
     display: none;
 }
 
 .history-subagent-children {
-    margin: 0 0 2px 10px;
-    padding-left: 8px;
+    margin: 0 0 2px 9px;
+    padding-left: 6px;
     border-left: 1px solid color-mix(in srgb, var(--border-color) 75%, transparent);
 }
 
@@ -4064,12 +4059,12 @@ pre.has-code-copy:hover .code-copy-btn,
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
-    height: 22px;
+    width: 14px;
+    height: 14px;
     margin-left: 0;
     padding: 0;
     border: none;
-    border-radius: 6px;
+    border-radius: 4px;
     background: transparent;
     color: var(--text-tertiary);
     cursor: pointer;
@@ -4158,6 +4153,22 @@ pre.has-code-copy:hover .code-copy-btn,
 
 .history-subagent-badge {
     opacity: 0.9;
+}
+
+/* Supervision / orchestration roles (history tree relationships). */
+.history-kind-badge.history-orchestrator-badge {
+    border-color: color-mix(in srgb, #a855f7 50%, var(--border-color));
+    background: color-mix(in srgb, #a855f7 16%, transparent);
+}
+
+.history-kind-badge.history-supervisor-badge {
+    border-color: color-mix(in srgb, #14b8a6 50%, var(--border-color));
+    background: color-mix(in srgb, #14b8a6 16%, transparent);
+}
+
+.history-kind-badge.history-supervised-badge {
+    border-color: color-mix(in srgb, #14b8a6 35%, var(--border-color));
+    background: transparent;
 }
 
 /* Orbital processing core */
@@ -7981,6 +7992,21 @@ html.cuttle-bg-paused .chat-restore-spinner {
 .chat-bg-fill { display: block; height: 100%; background: var(--accent-color, #667eea); }
 .chat-bg-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
 .chat-bg-details { font-size: 0.86em; color: var(--accent-color, #667eea); text-decoration: none; }
+.chat-bg-work.is-clickable { cursor: pointer; }
+.chat-bg-work.is-clickable:hover { opacity: 1; border-color: var(--accent-color, #667eea); }
+.chat-bg-open {
+    font: inherit;
+    font-size: 0.82em;
+    font-weight: 600;
+    color: var(--accent-color, #667eea);
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--accent-color, #667eea) 45%, var(--border-color));
+    border-radius: 999px;
+    padding: 3px 11px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.chat-bg-open:hover { background: color-mix(in srgb, var(--accent-color, #667eea) 14%, transparent); }
 .chat-bg-stop {
     font: inherit;
     font-size: 0.82em;

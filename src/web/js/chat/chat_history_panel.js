@@ -1746,7 +1746,8 @@
                 else group.removeAttribute('data-force-expanded');
                 const countEl = group.querySelector(':scope > .chat-history-item [data-child-count]');
                 const count = countEl ? (Number(countEl.getAttribute('data-child-count')) || 0) : 0;
-                const title = view.historySubagentToggleTitle(count, expanded, force);
+                const supervised = countEl ? (Number(countEl.getAttribute('data-supervised-count')) || 0) : 0;
+                const title = view.historySubagentToggleTitle(count, expanded, force, supervised);
                 group.querySelectorAll(':scope > .chat-history-item .history-subagent-toggle, :scope > .chat-history-item .history-subagent-count-badge').forEach((el) => {
                     el.title = title;
                     el.setAttribute('aria-label', title);

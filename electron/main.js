@@ -1174,9 +1174,17 @@ async function startWorkerSidecar() {
 
     // Prefer cuttle_client_daemon when it is already owning the worker loop
     // (safe self-update / git pull benchmark — Electron must not double-claim).
-    try {
-        const statusFile = path.join(app.getPath('userData'), 'client-daemon-status.json');
-        if (fs.existsSync(statusFile)) {
+    // The daemon writes its status under its own state dir
+    // (cuttle_client_daemon._userdata: %LOCALAPPDATA% first), which is not
+    // Electron's userData (%APPDATA% on Windows), so check both.
+    const daemonStateBase = process.env.LOCALAPPDATA || process.env.APPDATA || os.homedir();
+    const statusFiles = [
+        path.join(daemonStateBase, 'cuttle-desktop', 'client-daemon-status.json'),
+        path.join(app.getPath('userData'), 'client-daemon-status.json'),
+    ];
+    for (const statusFile of [...new Set(statusFiles)]) {
+        try {
+            if (!fs.existsSync(statusFile)) continue;
             const st = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
             const age = Date.now() / 1000 - Number(st.updated_at || 0);
             if (st.state === 'running' && age >= 0 && age < 45 && st.owns_worker) {
@@ -1186,9 +1194,9 @@ async function startWorkerSidecar() {
                 );
                 return;
             }
+        } catch (err) {
+            console.warn('client-daemon status check failed:', statusFile, err.message || err);
         }
-    } catch (err) {
-        console.warn('client-daemon status check failed:', err.message || err);
     }
 
     let workerToken = cfg.workerToken || '';

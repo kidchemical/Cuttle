@@ -1,5 +1,6 @@
 """Chat background-work bubble (chat_background_work.js), isolated in a browser."""
 import json
+import re
 
 from playwright.sync_api import expect
 
@@ -59,6 +60,40 @@ def test_bubble_stays_last_hides_while_generating_and_stops(browser, static_serv
         assert cancels == [{'session_id': '1821', 'cancel_jobs': True}]
         page.evaluate('live => bw.sync({ ...live, background: null }, "1821")', LIVE)
         expect(bubble).to_have_count(0)
+        assert not errors
+    finally:
+        page.close()
+
+
+SCHEDULED = {'success': True, 'generating': False, 'active': False, 'background': {
+    'label': 'Supervise CH-001821 · every 15m', 'process_count': 0, 'detached_count': 0,
+    'waits': [], 'watches': [], 'started_at': None, 'working': False, 'feed': False,
+    'schedules': [{'id': 'op1', 'label': 'Supervise CH-001821', 'detail': 'every 15m',
+                   'status': 'running', 'target': 'CH-001821'}]}}
+
+
+def test_supervising_card_opens_the_supervised_chat(browser, static_server):
+    page = browser.new_page(viewport={'width': 900, 'height': 700})
+    errors = []
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    try:
+        page.goto(static_server + '/agent_feed.html')
+        page.set_content('<link rel="stylesheet" href="' + static_server + '/css/chat_page.css">'
+                         '<div id="chatMessages"><div class="message assistant">reply</div></div>')
+        page.add_script_tag(url=static_server + '/js/chat/chat_background_work.js')
+        page.evaluate('''() => {
+            window.opened = [];
+            window.bw = CuttleChatBackgroundWork.create({ win: window, currentSession: () => '1822',
+                sessionIdsEqual: (a, b) => String(a) === String(b), isBusy: () => false,
+                openChat: (sid) => window.opened.push(sid) });
+        }''')
+        page.evaluate('live => bw.sync(live, "1822")', SCHEDULED)
+        card = page.locator('#chat-background-work')
+        expect(card.locator('.chat-bg-title')).to_contain_text('Supervising')
+        expect(card).to_have_class(re.compile(r'\bis-clickable\b'))
+        card.locator('.chat-bg-open').click()
+        card.locator('.chat-bg-meta').click()
+        assert page.evaluate('() => window.opened') == ['1821', '1821']
         assert not errors
     finally:
         page.close()

@@ -301,7 +301,7 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
         "waits": [{"job_id": w.get("job_id"), "label": w.get("label"), "started_at": w.get("started_at")}
                   for w in e["waits"]],
         "watches": [{k: w.get(k) for k in ("job_id", "label", "percent", "started_at")} for w in e["watches"]],
-        "schedules": [{k: s.get(k) for k in ("id", "label", "detail", "status")} for s in e["schedules"]],
+        "schedules": [{k: s.get(k) for k in ("id", "label", "detail", "status", "target")} for s in e["schedules"]],
         "process_count": int(e.get("process_count") or 0),
         "detached_count": int(e.get("detached_count") or 0),
         "started_at": _earliest_start(e),

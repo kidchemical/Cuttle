@@ -53,6 +53,13 @@ Electron alone cannot safely pull+restart itself (same class of problem as killi
 ```
 
 Connect Electron Client to the host at least once first (writes `desktop-config.json`).
+The daemon reads host, ports, endpoint and TLS pins from Electron's userData
+(`%APPDATA%\cuttle-desktop`, `~/.config/cuttle-desktop[-client|-host]`) and keeps
+its own worker credentials + `client-daemon-status.json` in
+`%LOCALAPPDATA%\cuttle-desktop`. A daemon that cannot start records
+`state: failed` and the reason in that status file — check it before
+hand-starting a worker. Never start a worker from an SSH session: Windows
+OpenSSH ends its processes when the session closes.
 
 ## Update channels (official vs host)
 

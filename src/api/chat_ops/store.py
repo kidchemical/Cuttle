@@ -184,6 +184,16 @@ def patch_result(oid, **fields):
     _patch(oid, 'result', fields)
 
 
+def supervisor_links():
+    """``{target: actor}`` for supervision schedules still in force (paused
+    included); when a chat has several supervisors the newest one wins."""
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT actor, target FROM operations WHERE kind='supervise' "
+            "AND state IN ('pending','dispatching','paused') ORDER BY updated ASC").fetchall()
+    return {int(r['target']): int(r['actor']) for r in rows}
+
+
 def supervising(targets):
     """Live supervision schedules on any of ``targets``."""
     targets = [int(t) for t in targets]

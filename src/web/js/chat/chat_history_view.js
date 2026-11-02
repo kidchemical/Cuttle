@@ -216,10 +216,26 @@
             const parentId = s.parent_session_id != null ? String(s.parent_session_id) : '';
             const itemOpts = extraOpts || {};
             const childCount = Math.max(0, Number(itemOpts.subagentChildCount) || 0);
+            const supervisedCount = Math.min(childCount, Math.max(0, Number(itemOpts.supervisedChildCount) || 0));
             const subExpanded = !!itemOpts.subagentExpanded;
             const subForce = !!itemOpts.subagentForceExpanded;
             const subagentClass = (origin === 'subagent' || parentId) ? ' is-subagent' : '';
             const hasSubagentsClass = childCount > 0 ? ' has-subagents' : '';
+            const handle = (id) => 'CH-' + String(id).padStart(6, '0');
+            const supervisorId = s.supervisor_session_id != null && s.supervisor_session_id !== ''
+                ? String(s.supervisor_session_id) : '';
+            const supervises = (Array.isArray(s.supervises_session_ids) ? s.supervises_session_ids : [])
+                .map((x) => String(x)).filter(Boolean);
+            const supervisedClass = supervisorId ? ' is-supervised' : '';
+            const orchestratorBadge = s.orchestrator
+                ? '<span class="history-kind-badge history-role-badge history-orchestrator-badge" title="Orchestrator: runs a playbook over sub-agents">Orchestrator</span>'
+                : '';
+            const supervisorBadge = supervises.length
+                ? `<span class="history-kind-badge history-role-badge history-supervisor-badge" title="${escapeHtml('Supervises ' + supervises.map(handle).join(', '))}">Supervisor</span>`
+                : '';
+            const supervisedBadge = supervisorId
+                ? `<span class="history-kind-badge history-role-badge history-supervised-badge" title="${escapeHtml('Supervised by ' + handle(supervisorId))}">Supervised</span>`
+                : '';
             const discordName = String(s.discord_username || '').trim();
             const participants = Array.isArray(s.discord_participants) ? s.discord_participants : [];
             const participantNames = participants
@@ -249,15 +265,15 @@
                 <span class="history-msg-count">${count}</span>
                </span>`
                 : '';
-            const subToggleTitle = ctx.historySubagentToggleTitle(childCount, subExpanded, subForce);
+            const subToggleTitle = ctx.historySubagentToggleTitle(childCount, subExpanded, subForce, supervisedCount);
             const subCountBadge = childCount > 0
-                ? `<button type="button" class="history-subagent-count-badge" data-child-count="${childCount}" title="${escapeHtml(subToggleTitle)}" aria-label="${escapeHtml(subToggleTitle)}" onclick="window.toggleHistorySubagentGroup('${sid}', event)">
+                ? `<button type="button" class="history-subagent-count-badge" data-child-count="${childCount}" data-supervised-count="${supervisedCount}" title="${escapeHtml(subToggleTitle)}" aria-label="${escapeHtml(subToggleTitle)}" onclick="window.toggleHistorySubagentGroup('${sid}', event)">
                 <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M8.4 7.2c2.2 2 2.2 7.6 0 9.6"/><path d="M8.5 12H15.5"/></svg>
                 <span class="history-msg-count">${childCount}</span>
                </button>`
                 : '';
             const subToggle = childCount > 0
-                ? `<button type="button" class="history-subagent-toggle" data-child-count="${childCount}" aria-expanded="${subExpanded ? 'true' : 'false'}" aria-controls="history-subagents-${escapeHtml(String(sid))}-kids" title="${escapeHtml(subToggleTitle)}" aria-label="${escapeHtml(subToggleTitle)}" onclick="window.toggleHistorySubagentGroup('${sid}', event)">
+                ? `<button type="button" class="history-subagent-toggle" data-child-count="${childCount}" data-supervised-count="${supervisedCount}" aria-expanded="${subExpanded ? 'true' : 'false'}" aria-controls="history-subagents-${escapeHtml(String(sid))}-kids" title="${escapeHtml(subToggleTitle)}" aria-label="${escapeHtml(subToggleTitle)}" onclick="window.toggleHistorySubagentGroup('${sid}', event)">
                 <span class="history-subagent-chevron" aria-hidden="true">
                     <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
                         <polyline points="6 9 12 15 18 9"/>
@@ -276,11 +292,10 @@
             const contentBadge = isContentMatch
                 ? `<span class="history-kind-badge history-match-badge" title="Matched in message body">In messages</span>`
                 : '';
-            return `<div class="chat-history-item${active}${runningClass}${unreadClass}${errorClass}${queuedClass}${pausedClass}${starredClass}${openClass}${subagentClass}${hasSubagentsClass}" data-session-id="${sid}" data-parent-session-id="${escapeHtml(parentId)}" data-search-match="${isContentMatch ? 'content' : 'title'}" data-chat-title="${escapeHtml(title).replace(/"/g, '&quot;')}" onclick="window.chatPageLoadSession('${sid}')">
+            return `<div class="chat-history-item${active}${runningClass}${unreadClass}${errorClass}${queuedClass}${pausedClass}${starredClass}${openClass}${subagentClass}${supervisedClass}${hasSubagentsClass}" data-session-id="${sid}" data-parent-session-id="${escapeHtml(parentId)}" data-supervisor-session-id="${escapeHtml(supervisorId)}" data-search-match="${isContentMatch ? 'content' : 'title'}" data-chat-title="${escapeHtml(title).replace(/"/g, '&quot;')}" onclick="window.chatPageLoadSession('${sid}')">
             ${ctx.historyAttentionIconHTML(statusKind)}
-            ${subToggle}
             <div class="history-item-body">
-                ${historyItemMetaHTML([projectChip, parts.chipsHtml, discordBadge, subagentBadge, contentBadge, subCountBadge, badge, starredIcon])}
+                ${historyItemMetaHTML([subToggle, subCountBadge, projectChip, orchestratorBadge, supervisorBadge, supervisedBadge, parts.chipsHtml, discordBadge, subagentBadge, contentBadge, badge, starredIcon])}
                 <div class="chat-title">${parts.titleHtml}</div>
                 ${snippetHtml}
             </div>
@@ -466,6 +481,23 @@
         return null;
     }
 
+    /** The chat supervising this entry (live chat_ops schedule), or ''. */
+    function historyEntrySupervisorId(entry) {
+        if (!entry) return '';
+        const s = entry.serverSession || entry.session || {};
+        const sup = s.supervisor_session_id;
+        if (sup == null || sup === '') return '';
+        return String(sup);
+    }
+
+    /**
+     * Build the history tree. A row nests under its sub-agent parent
+     * (`parent_session_id`); a chat with no parent in the list nests under the
+     * chat supervising it (`supervisor_session_id`). Links that would close a
+     * cycle (A supervises B, B supervises A) leave the row a root.
+     * Returns { roots, childrenByParent, byId, parentOf, relationOf } where
+     * relationOf maps child id → 'subagent' | 'supervised'.
+     */
     function nestHistoryEntries(entries) {
         const list = Array.isArray(entries) ? entries.slice() : [];
         const byId = new Map();
@@ -473,18 +505,48 @@
             const id = String(e && e.sessionId != null ? e.sessionId : '');
             if (id) byId.set(id, e);
         });
+        const parentOf = new Map();
+        const relationOf = new Map();
+        const leadsTo = (from, target) => {
+            const seen = new Set();
+            let cur = from;
+            while (cur && !seen.has(cur)) {
+                if (cur === target) return true;
+                seen.add(cur);
+                cur = parentOf.get(cur) || '';
+            }
+            return false;
+        };
+        const link = (id, pid, relation) => {
+            if (!id || !pid || pid === id || !byId.has(pid) || parentOf.has(id)) return;
+            if (leadsTo(pid, id)) return;
+            parentOf.set(id, pid);
+            relationOf.set(id, relation);
+        };
+        // Sub-agent links first: they are structural; supervision only adopts
+        // chats that have no parent of their own in this list.
+        list.forEach((e) => link(String(e && e.sessionId != null ? e.sessionId : ''), historyEntryParentId(e), 'subagent'));
+        list.forEach((e) => link(String(e && e.sessionId != null ? e.sessionId : ''), historyEntrySupervisorId(e), 'supervised'));
         const childrenByParent = new Map();
         const roots = [];
         list.forEach((e) => {
-            const pid = historyEntryParentId(e);
-            if (pid && byId.has(pid)) {
+            const id = String(e && e.sessionId != null ? e.sessionId : '');
+            const pid = id ? parentOf.get(id) : '';
+            if (pid) {
                 if (!childrenByParent.has(pid)) childrenByParent.set(pid, []);
                 childrenByParent.get(pid).push(e);
             } else {
                 roots.push(e);
             }
         });
-        return { roots: roots, childrenByParent: childrenByParent, byId: byId };
+        return { roots, childrenByParent, byId, parentOf, relationOf };
+    }
+
+    function nestedParentId(nested, entry) {
+        if (nested && nested.parentOf && entry && entry.sessionId != null) {
+            return nested.parentOf.get(String(entry.sessionId)) || '';
+        }
+        return historyEntryParentId(entry);
     }
 
     function historySessionAncestorIds(sessionId, nested, opts) {
@@ -496,7 +558,7 @@
             if (seen.has(key)) break;
             seen.add(key);
             const entry = historyLookupNestedEntry(nested, cur, opts);
-            const pid = historyEntryParentId(entry);
+            const pid = nestedParentId(nested, entry);
             if (!pid) break;
             if (!historyLookupNestedEntry(nested, pid, opts)) break;
             ids.push(pid);
@@ -553,11 +615,16 @@
         return n === 1 ? 'sub-agent' : 'sub-agents';
     }
 
-    function historySubagentToggleTitle(count, expanded, force) {
+    /** `supervised` of the `count` children are supervised chats, the rest sub-agents. */
+    function historySubagentToggleTitle(count, expanded, force, supervised) {
         const n = Math.max(0, Number(count) || 0);
-        const noun = historySubagentNoun(n);
-        const amount = n ? (n + ' ' + noun) : noun;
-        if (force) return amount + ' (open because this chat is a sub-agent)';
+        const sup = Math.min(n, Math.max(0, Number(supervised) || 0));
+        const subs = n - sup;
+        const parts = [];
+        if (subs || !sup) parts.push(subs ? (subs + ' ' + historySubagentNoun(subs)) : historySubagentNoun(0));
+        if (sup) parts.push(sup + ' supervised ' + (sup === 1 ? 'chat' : 'chats'));
+        const amount = parts.join(' + ');
+        if (force) return amount + ' (open because the current chat is inside)';
         return (expanded ? 'Hide ' : 'Show ') + amount;
     }
 
@@ -604,10 +671,13 @@
                         ? opts.sessionIdsEqual(id, pid)
                         : String(id) === String(pid);
                 }));
+            const supervisedKids = kids.filter((k) => nested.relationOf.get(String(k.sessionId)) === 'supervised').length;
             const itemHtml = renderEntry(entry, {
                 subagentChildCount: kids.length,
+                supervisedChildCount: supervisedKids,
                 subagentExpanded: expanded,
                 subagentForceExpanded: force,
+                treeRelation: nested.relationOf.get(pid) || '',
             });
             if (!kids.length) return itemHtml;
             const safePid = esc(pid);
@@ -718,6 +788,7 @@
         historyGroupToggleHTML,
         entryIsStarred,
         historyEntryParentId,
+        historyEntrySupervisorId,
         historyLookupNestedEntry,
         nestHistoryEntries,
         historySessionAncestorIds,

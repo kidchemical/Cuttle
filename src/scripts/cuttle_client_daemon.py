@@ -48,15 +48,103 @@ def desktop_config_path() -> Path:
     return _userdata() / "desktop-config.json"
 
 
-def load_desktop_config() -> Dict[str, Any]:
-    path = desktop_config_path()
-    if not path.is_file():
-        return {}
+# Keys this daemon writes into its own desktop-config.json. Everything else
+# (host, ports, endpoint policy, tlsPins, workerMode) is owned by the Electron
+# app, which keeps its config under its own userData directory.
+_WORKER_CRED_KEYS = ("workerToken", "workerId", "workerEnrolledAt")
+
+
+def _read_json(path: Path) -> Dict[str, Any]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
     except Exception:
+        pass
+    return {}
+
+
+def electron_config_paths() -> list:
+    """Electron userData ``desktop-config.json`` candidates (electron/main.js).
+
+    The default userData is ``<appData>/cuttle-desktop`` (``%APPDATA%`` on
+    Windows, ``$XDG_CONFIG_HOME`` on Linux, Application Support on macOS);
+    ``--mode=host|client`` launches use ``~/.config/cuttle-desktop-<mode>``.
+    """
+    home = Path.home()
+    xdg = os.environ.get("XDG_CONFIG_HOME") or str(home / ".config")
+    bases = []
+    if os.environ.get("APPDATA"):
+        bases.append(Path(os.environ["APPDATA"]) / "cuttle-desktop")
+    bases += [
+        home / ".config" / "cuttle-desktop-client",
+        home / ".config" / "cuttle-desktop-host",
+        Path(xdg) / "cuttle-desktop",
+        home / "Library" / "Application Support" / "cuttle-desktop",
+    ]
+    own = desktop_config_path()
+    out = []
+    for base in bases:
+        path = base / "desktop-config.json"
+        if path != own and path not in out:
+            out.append(path)
+    return out
+
+
+def _electron_config() -> Dict[str, Any]:
+    """The Electron app's config: the newest one that names a host, with
+    ``tlsPins`` merged from every candidate."""
+    found = []
+    pins: Dict[str, Any] = {}
+    for path in electron_config_paths():
+        data = _read_json(path)
+        if not data:
+            continue
+        if isinstance(data.get("tlsPins"), dict):
+            pins.update(data["tlsPins"])
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        found.append((bool(str(data.get("host") or "").strip()), mtime, data))
+    if not found:
         return {}
+    found.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    out = dict(found[0][2])
+    if pins:
+        out["tlsPins"] = {**pins, **(out.get("tlsPins") or {})}
+    return out
+
+
+def _enrolled_at(cfg: Dict[str, Any]) -> float:
+    try:
+        return float(cfg.get("workerEnrolledAt") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def load_desktop_config() -> Dict[str, Any]:
+    """Effective config: Electron's connection settings + worker credentials.
+
+    The daemon's own file (``%LOCALAPPDATA%\\cuttle-desktop``) used to be the
+    only source, but the host and pinned TLS key live in Electron's userData
+    (``%APPDATA%\\cuttle-desktop`` on Windows), so a daemon started by the
+    updater found no host and exited. Credentials come from whichever file
+    enrolled most recently.
+    """
+    own = _read_json(desktop_config_path())
+    electron = _electron_config()
+    cfg = dict(electron)
+    for key, value in own.items():
+        if key not in cfg and key not in _WORKER_CRED_KEYS:
+            cfg[key] = value
+    if own.get("workerToken") and (
+        not electron.get("workerToken") or _enrolled_at(own) >= _enrolled_at(electron)
+    ):
+        for key in _WORKER_CRED_KEYS:
+            if key in own:
+                cfg[key] = own[key]
+    return cfg
 
 
 _status_lock = threading.Lock()
@@ -233,29 +321,59 @@ def enroll(cfg: Dict[str, Any], bases: list) -> Dict[str, Any]:
 def save_desktop_config(patch: Dict[str, Any]) -> None:
     path = desktop_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    cur = load_desktop_config()
+    # Only the daemon's own file: never copy Electron-owned settings into it.
+    cur = _read_json(path)
     cur.update(patch)
     cur["updatedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     path.write_text(json.dumps(cur, indent=2), encoding="utf-8")
 
 
+def _console_safe() -> None:
+    """Never die printing: a redirected stdout on Windows is cp1252, and the
+    daemon/worker log lines contain characters like '\u2192'."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="backslashreplace")
+        except Exception:
+            pass
+
+
+def _exit_failed(rc: int, reason: str) -> int:
+    """Print ``reason`` and record it in the status file, so a stale
+    ``running`` from an earlier daemon never outlives this one."""
+    print(f"[CLIENT-DAEMON] {reason}", flush=True)
+    try:
+        write_status({"state": "failed", "error": reason, "owns_worker": False})
+    except Exception:
+        pass
+    return rc
+
+
 def main() -> int:
+    _console_safe()
     cfg = load_desktop_config()
     if cfg.get("workerMode") is False:
-        print("[CLIENT-DAEMON] workerMode=false — exiting")
+        print("[CLIENT-DAEMON] workerMode=false - exiting")
+        write_status({"state": "stopped", "owns_worker": False})
         return 0
 
     host = str(cfg.get("host") or os.environ.get("CUTTLE_FLASK_HOST") or "").strip()
     if not host:
-        print("[CLIENT-DAEMON] No host in desktop-config.json — connect Client once first")
-        return 2
+        searched = [str(desktop_config_path())] + [str(p) for p in electron_config_paths()]
+        return _exit_failed(
+            2,
+            "No host in desktop-config.json (searched: " + "; ".join(searched)
+            + ") - connect the Client app once first",
+        )
     # Enrollment, the worker loop, and status share the selected endpoint.
     # Single policies contain no alternate protocol or listener.
     try:
         bases = coordinator_bases(cfg, host)
     except ValueError as exc:
-        print(f"[CLIENT-DAEMON] {exc}")
-        return 2
+        return _exit_failed(2, str(exc))
     selected_base = bases[0]
     # Remote HTTPS trust = the key the desktop app pinned for this host:port.
     from api.tls_cert import PIN_ENV, desktop_pin
@@ -290,8 +408,7 @@ def main() -> int:
         token = str(cfg.get("workerToken") or "")
         worker_id = str(cfg.get("workerId") or socket.gethostname()).lower().replace(" ", "-")
         if not token:
-            print(f"[CLIENT-DAEMON] enroll failed and no token: {e}")
-            return 1
+            return _exit_failed(1, f"enroll failed and no token: {e}")
         print(f"[CLIENT-DAEMON] enroll failed ({e}); using saved token")
 
     os.environ["CUTTLE_DEVICE_WORKERS_ENABLED"] = "1"
@@ -328,7 +445,7 @@ def main() -> int:
 
     from api.device_workers.worker_loop import run_remote_worker_loop
 
-    print(f"[CLIENT-DAEMON] worker loop → {selected_base} id={worker_id}")
+    print(f"[CLIENT-DAEMON] worker loop -> {selected_base} id={worker_id}", flush=True)
     try:
         run_remote_worker_loop(
             should_continue=lambda: not stop.is_set(),

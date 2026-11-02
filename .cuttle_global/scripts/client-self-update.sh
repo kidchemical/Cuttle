@@ -50,6 +50,8 @@ fi
 
 PY="$REPO/.venv/bin/python3"
 [[ -x "$PY" ]] || PY="$REPO/.venv/bin/python"
+# Packaged Client: REPO is resources/app; the bundled runtime is resources/python.
+[[ -x "$PY" ]] || PY="$(dirname -- "$REPO")/python/bin/python3"
 [[ -x "$PY" ]] || PY="python3"
 
 # SkipPull skips the completed merge, never the lifecycle safety recheck.

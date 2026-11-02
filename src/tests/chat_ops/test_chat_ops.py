@@ -554,6 +554,27 @@ def test_start_supervisor_creates_a_briefed_chat_in_the_target_project(chats):
         service.start_supervisor(_ch(foreign), user_id=owner, agent="cursor", instructions="x", db=db)
 
 
+def test_mark_supervision_links_history_rows(chats, monkeypatch):
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    monkeypatch.setattr("api.experimental.is_enabled", lambda f: f == "chat_supervision")
+    rows = [{"id": sup}, {"id": target}, {"id": 999}]
+    service.mark_supervision(rows)
+    assert rows[0]["supervises_session_ids"] == [target] and rows[0]["supervisor_session_id"] is None
+    assert rows[1]["supervisor_session_id"] == sup and rows[1]["supervises_session_ids"] == []
+    assert rows[2]["supervisor_session_id"] is None
+    service.set_paused(sched["id"], owner, True, db=db)  # a paused schedule still links
+    service.mark_supervision(rows)
+    assert rows[1]["supervisor_session_id"] == sup
+    service.cancel(sched["id"], owner, db=db)
+    service.mark_supervision(rows)
+    assert rows[1]["supervisor_session_id"] is None and rows[0]["supervises_session_ids"] == []
+    _schedule(chats)
+    monkeypatch.setattr("api.experimental.is_enabled", lambda f: False)
+    service.mark_supervision(rows)
+    assert rows[1]["supervisor_session_id"] is None
+
+
 def test_overview_splits_supervising_supervised_and_queued(chats):
     db, owner, sup, target, _foreign = chats
     sched = _schedule(chats)

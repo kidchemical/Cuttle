@@ -2892,7 +2892,7 @@
     });
 
     // Idle chat's background work (waits, watches, schedules, owned processes): chat_background_work.js.
-    const backgroundWork = CuttleChatBackgroundWork.create({ win: window, currentSession: () => session.current(), sessionIdsEqual, isBusy: () => isLoadingThisSession() });
+    const backgroundWork = CuttleChatBackgroundWork.create({ win: window, currentSession: () => session.current(), sessionIdsEqual, isBusy: () => isLoadingThisSession(), openChat: (sid) => loadChatSession(sid) });
     // Media thumbs, lightbox and image Copy / Save menu: owned by chat_media.js.
     // Host-document listeners ride the frame teardown signal.
     const chatMedia = CuttleChatMedia.create({

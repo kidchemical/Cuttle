@@ -9,7 +9,9 @@
 
    `plan(background, nowSec)` is pure; `create(host)` owns the DOM element,
    its Stop action and keeping it last in #chatMessages.
-   host: { win, currentSession(), sessionIdsEqual(a,b), isBusy() } */
+   Supervision schedules name the chat they drive; the card links to it
+   ("Open CH-…", and a schedule-only card opens it on click).
+   host: { win, currentSession(), sessionIdsEqual(a,b), isBusy(), openChat(bareId) } */
 (function(root) {
     'use strict';
     const ID = 'chat-background-work';
@@ -45,6 +47,11 @@
         if (n) meta.push(plural(n, 'process', 'processes') + (d ? ' (' + d + ' detached)' : ''));
         if (waits.length > 1) meta.push(plural(waits.length, 'wait', 'waits'));
         schedules.forEach((s) => meta.push([s.label, s.detail].filter(Boolean).join(' · ')));
+        const targets = [];
+        schedules.forEach((s) => {
+            const t = handle(s && s.target);
+            if (/^CH-\d+$/.test(t) && !targets.includes(t)) targets.push(t);
+        });
         const starts = waits.map((w) => epoch(w.started_at)).concat([epoch(bg.started_at)]).filter((t) => t != null);
         return {
             title: waits.length ? 'Waiting in background' : watches.length ? 'Job running'
@@ -60,6 +67,7 @@
             stop: (waits.length || watches.length) ? 'chat' : (n ? 'processes' : null),
             processCount: n,
             feed: !!bg.feed,
+            targets,
         };
     }
 
@@ -129,6 +137,25 @@
             }
         }
 
+        function openTarget(h) {
+            const id = bare(h);
+            if (!id || typeof host.openChat !== 'function') return;
+            host.openChat(id);
+        }
+
+        function onCardClick(ev) {
+            const t = ev.target;
+            const btn = t && t.closest && t.closest('.chat-bg-open');
+            if (btn) {
+                ev.preventDefault();
+                openTarget(btn.getAttribute('data-chat-handle'));
+                return;
+            }
+            if (t && t.closest && t.closest('a, button')) return;
+            const p = current && current.plan;
+            if (p && !p.working && !p.stop && p.targets.length === 1) openTarget(p.targets[0]);
+        }
+
         function render(sid, p) {
             let node = el();
             const box = container();
@@ -141,6 +168,10 @@
                 node.setAttribute('aria-live', 'polite');
             }
             node.classList.toggle('is-scheduled', !p.working);
+            // Schedule-only card with one target: the whole card opens it.
+            const opensOnClick = !p.working && !p.stop && p.targets.length === 1;
+            node.classList.toggle('is-clickable', opensOnClick);
+            node.title = opensOnClick ? 'Open ' + p.targets[0] : '';
             const mk = (tag, cls, text) => {
                 const n = doc.createElement(tag);
                 n.className = cls;
@@ -168,6 +199,13 @@
             });
             if (p.meta.length) body.append(mk('div', 'chat-bg-meta', p.meta.join(' · ')));
             const actions = mk('div', 'chat-bg-actions');
+            p.targets.forEach((t) => {
+                const b = mk('button', 'chat-bg-open', 'Open ' + t);
+                b.type = 'button';
+                b.setAttribute('data-chat-handle', t);
+                b.title = 'Open the supervised chat ' + t;
+                actions.append(b);
+            });
             if (p.feed) {
                 const a = mk('a', 'chat-bg-details', 'Details');
                 a.href = '/agent_feed.html?chat=' + encodeURIComponent(handle(sid));
@@ -184,6 +222,10 @@
             node.replaceChildren(ring, body, actions);
             if (node.parentNode !== box) box.appendChild(node);
             keepLast();
+            if (!node.__bgOpenBound) {
+                node.__bgOpenBound = true;
+                node.addEventListener('click', onCardClick);
+            }
             if (!observer && win.MutationObserver) {
                 observer = new win.MutationObserver(keepLast);
                 observer.observe(box, { childList: true });

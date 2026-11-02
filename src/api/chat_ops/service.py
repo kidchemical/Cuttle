@@ -389,6 +389,25 @@ def overview(session, user_id, *, db=None):
             'supervised_by': supervised_by, 'queued': queued}
 
 
+def mark_supervision(sessions):
+    """Set ``supervisor_session_id`` (the chat supervising this row) and
+    ``supervises_session_ids`` (chats this row supervises) on session-list rows,
+    so the history panel can nest supervised chats under their supervisor."""
+    from api.experimental import is_enabled
+    links = store.supervisor_links() if is_enabled('chat_supervision') else {}
+    links = {t: a for t, a in links.items() if t != a}
+    targets = {}
+    for target, actor in links.items():
+        targets.setdefault(actor, []).append(target)
+    for row in sessions:
+        try:
+            sid = int(row.get('id'))
+        except (TypeError, ValueError):
+            continue
+        row['supervisor_session_id'] = links.get(sid)
+        row['supervises_session_ids'] = sorted(targets.get(sid, []))
+
+
 def _schedule_view(op):
     cfg, result = op['payload'], op['result'] or {}
     seen = result.get('last_seen') or {}
