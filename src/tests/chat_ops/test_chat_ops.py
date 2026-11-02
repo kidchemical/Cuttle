@@ -659,3 +659,74 @@ def test_checkin_text_is_markdown_without_raw_json():
     assert "{" not in text and "\\n" not in text
     snap["latest_reply"] = {"text": "x" * (worker.CHECKIN_REPLY_CHARS + 10)}
     assert "(start)" in worker.checkin_text(cfg, snap, [])
+
+
+# --- stall detection: what counts as progress, backoff, wording --------------
+
+
+def test_new_reply_or_subagent_reply_counts_as_progress(chats, monkeypatch):
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    clock = [1000.0]
+    monkeypatch.setattr(worker.time, "time", lambda: clock[0])
+    monkeypatch.setattr(worker, "_git_head", lambda path: "abc")
+    _tick(chats, sched, _snap("busy"), monkeypatch)
+    clock[0] += worker.STALL_SEC - 60
+    assert _tick(chats, sched, _snap("busy", reply_id=2), monkeypatch) == []  # its own new reply
+    clock[0] += worker.STALL_SEC - 60
+    child = db.create_chat_session(owner, "lane")
+    conn = db._get_connection()
+    conn.execute("UPDATE chat_sessions SET parent_session_id=? WHERE id=?", (target, child))
+    conn.commit()
+    conn.close()
+    db.add_message(child, "assistant", "lane reporting")
+    assert _tick(chats, sched, _snap("busy", reply_id=2), monkeypatch) == []  # a sub-agent spoke
+    clock[0] += worker.STALL_SEC + 60
+    assert len(_tick(chats, sched, _snap("busy", reply_id=2), monkeypatch)) == 1
+
+
+def test_waiting_background_stall_reads_as_a_wait_and_backs_off(chats, monkeypatch):
+    sched = _schedule(chats)
+    clock = [1000.0]
+    monkeypatch.setattr(worker.time, "time", lambda: clock[0])
+    monkeypatch.setattr(worker, "_git_head", lambda path: "abc")
+    snap = _snap("waiting_background")
+    snap["live"]["background_wait"] = [{"job_id": "claude-bg-2-abc", "started_ts": 900.0}]
+    _tick(chats, sched, snap, monkeypatch)
+    clock[0] += worker.STALL_SEC + 60
+    [first] = _tick(chats, sched, snap, monkeypatch)
+    text = first["payload"]["text"]
+    assert "waiting on background work" in text and "retry loop" not in text
+    store.finish(first["id"], "done", {})
+    # Second stall without progress needs twice the window.
+    clock[0] += worker.STALL_SEC + 60
+    assert len(_tick(chats, sched, snap, monkeypatch)) == 1
+    clock[0] += worker.STALL_SEC
+    checkins = _tick(chats, sched, snap, monkeypatch)
+    assert len(checkins) == 2
+    assert all("No progress for" in c["payload"]["text"] for c in checkins)
+    for c in checkins:
+        store.finish(c["id"], "done", {})
+    # A newly started wait is progress: the window and the backoff reset.
+    snap["live"]["background_wait"] = [{"job_id": "claude-bg-2-def", "started_ts": clock[0]}]
+    clock[0] += 2 * worker.STALL_SEC
+    assert len(_tick(chats, sched, snap, monkeypatch)) == 2
+    clock[0] += worker.STALL_SEC + 60
+    assert len(_tick(chats, sched, snap, monkeypatch)) == 3
+
+
+# --- stop holds queued sends -------------------------------------------------
+
+
+def test_stop_cancels_sends_queued_for_the_target(chats):
+    db, _owner, sup, target, _foreign = chats
+    host = FakeHost(generating=True, steered=False, reason="not steerable")
+    service.send(_ch(target), "later 1", actor=_ch(sup), db=db, request=host)
+    service.send(_ch(target), "later 2", actor=_ch(sup), db=db, request=host)
+    assert len(store.due()) == 2
+    out = service.stop(_ch(target), actor=_ch(sup), db=db, request=host)
+    assert out["cancelled"] is True
+    assert sorted(o["text"] for o in out["cancelled_sends"]) == ["later 1", "later 2"]
+    assert store.due() == []
+    assert all(o["state"] == "cancelled" for o in store.listing(sup) if o["kind"] == "send")
+    assert ("POST", "/api/chat-cancel", target, None) in host.calls

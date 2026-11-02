@@ -214,8 +214,10 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
             # however long that is. Say so, so an urgent send is not mistaken for delivered.
             return {'schema_version': 1, 'ok': True, 'delivery': 'queued', 'operation': store.get(op['id'], actor),
                     'target_busy': True, 'steer_reason': str(steered.get('reason') or 'rejected'),
-                    'hint': ('Target turn is live but not steerable; this waits until that turn ends. '
-                             'If it cannot wait, stop the target (`chat_cli stop`) or ask the user.')}
+                    'hint': ('Target turn is live but not steerable; this waits until that turn ends, '
+                             'however long. Let it: stopping the target throws away its running work. '
+                             'Only when the user asked to pause or stop it, run `chat_cli stop` '
+                             '(which also drops queued sends).')}
     op = store.create('send', actor, row['id'], {'text': text})
     return {'schema_version': 1, 'ok': True, 'delivery': 'queued', 'operation': op,
             'hint': 'Host-owned outbox dispatches when idle; no open browser required'}
@@ -399,5 +401,11 @@ def _schedule_view(op):
 
 
 def stop(target, actor=None, *, db=None, request=None):
+    """Stop the target's turn and drop sends still queued for it, so the stop
+    holds: an outbox send would otherwise restart the chat as soon as it idles."""
     db, actor, row = context(target, actor, db=db)
-    return (request or transport.request)(row['user_id'], row['id'], 'POST', '/api/chat-cancel')
+    held = store.cancel_sends_to(row['id'])
+    out = dict((request or transport.request)(row['user_id'], row['id'], 'POST', '/api/chat-cancel') or {})
+    out['cancelled_sends'] = [{'id': o['id'], 'from': f"CH-{o['actor']:06d}", 'text': o['payload'].get('text', '')[:200]}
+                              for o in held]
+    return out

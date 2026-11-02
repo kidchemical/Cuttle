@@ -37,6 +37,13 @@ configure a remote-access server yourself.
   Long jobs follow `headless-turns.md`.
 - Mind the remote shell: Windows OpenSSH defaults to `cmd.exe`; quote for it, or run
   `powershell -NoProfile -Command "…"`.
+- **A remote job outlives your chat.** Stopping a Cuttle chat (or a sub-agent)
+  does not stop processes it started on another machine. Before starting a
+  long remote job (transfer, build, import), record where to find it so the
+  next lane can end it: write a pidfile or use a unique name, and note both in
+  the project's resume notes. A lane that replaces a stopped one checks for and
+  ends the old lane's remote processes first, then verifies any file the old
+  job was writing (checksum) before using it.
 
 ## 3. Approval lives in the tool
 

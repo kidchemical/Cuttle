@@ -68,7 +68,11 @@
         const d = (check && check.detail) || {};
         let text;
         if (check.outcome === 'skipped') {
-            text = 'skipped, ' + (d.reason === 'busy' ? 'busy' : 'no change');
+            text = 'skipped, ' + (d.reason === 'busy' ? 'busy'
+                : d.reason === 'waiting_background' ? 'waiting on background work' : 'no change');
+        } else if (check.outcome === 'stalled') {
+            text = 'no progress' + (d.stalled_min ? ' for ' + d.stalled_min + ' min' : '') + ', woke supervisor';
+            if (d.state) text += ' (' + d.state + ')';
         } else {
             text = OUTCOME_TEXT[check.outcome] || String(check.outcome || 'checked');
             if (check.outcome !== 'error' && d.state) text += ' (' + d.state + ')';
@@ -78,7 +82,7 @@
             time: fmtClock(check.at, opts),
             text: text,
             tone: check.outcome === 'violation' || check.outcome === 'error' ? 'warn'
-                : check.outcome === 'woke' ? 'active' : 'muted',
+                : check.outcome === 'woke' || check.outcome === 'stalled' ? 'active' : 'muted',
             violations: Array.isArray(d.violations) ? d.violations : [],
         };
     }
