@@ -7,10 +7,11 @@
    unlocks one chat from the ☰ menu; that choice is remembered on this
    device until they lock it again.
 
-   Pure decisions: isSubagentIdentity / lockReason / isLocked /
-   parseUnlocked / withUnlocked. Controller: create(host) makes the input
-   parts `inert` (text, agent + project chips, attach / enhance / send)
-   and leaves Stop and the context gauge live. Facts arrive from the page
+   Pure decisions: isSubagentIdentity / lockReason / isLocked / lockCaption /
+   parseUnlocked / withUnlocked. Controller: create(host) collapses the
+   composer to one short row (lock icon + caption naming the controlling
+   chat); the input parts are hidden and `inert` (text, agent + project
+   chips, attach / enhance / send, context gauge). Stop stays live. Facts arrive from the page
    (setIdentity, from the messages payload) and the supervision controller
    (setSupervised); the controller never fetches and reads no page globals.
    ================================================================ */
@@ -22,7 +23,7 @@
     const WRAP_ID = 'chatComposerWrap';
     // Made inert while locked. Stop and the context gauge stay usable.
     const LOCKED_PARTS = ['#chatSlashChipsRow', '#chatAttachChipsRow', '.textarea-with-slash-menu',
-        '#enhanceButton', '#attachButton', '#sendButton'];
+        '#chatContextGauge', '#enhanceButton', '#attachButton', '#sendButton'];
     const REASON_TEXT = { subagent: 'sub-agent chat', supervised: 'supervised chat' };
     /** Padlock icon; `open` draws the shackle released. */
     function lockSvg(size, open) {
@@ -55,6 +56,15 @@
         return 'Composer locked (' + (REASON_TEXT[reason] || 'agent chat') + '). Unlock it from the chat menu (☰).';
     }
 
+    /** Caption beside the lock: who drives this chat and why typing is off. `by` = "CH-…" or ''. */
+    function lockCaption(reason, by) {
+        const sub = reason === 'subagent';
+        const who = by || (sub ? 'Its parent chat' : 'Another chat');
+        return { lead: '', who, handle: !!by,
+            rest: (sub ? ' runs this sub-agent chat' : ' is supervising this chat')
+                + ', so typing here is locked. Unlock it from the ☰ menu.' };
+    }
+
     /** Stored unlocked-chat list → array of session id strings (bad input → []). */
     function parseUnlocked(raw) {
         try {
@@ -84,7 +94,11 @@
         let session = '';
         let subagent = false;
         let supervised = false;
+        let parentId = null;
+        let supervisor = '';
         let overlay = null;
+        const display = (sid) => (sid == null || sid === '' ? ''
+            : String((host.displayId && host.displayId(sid)) || ''));
 
         function storage() {
             try { return host.storage(); } catch (_) { return null; }
@@ -108,7 +122,8 @@
             if (overlay && overlay.parentNode === wrap) return overlay;
             overlay = doc.createElement('div');
             overlay.className = 'composer-lock-overlay';
-            overlay.innerHTML = '<span class="composer-lock-badge" role="img">' + lockSvg(16, false) + '</span>';
+            overlay.innerHTML = '<span class="composer-lock-badge" role="img">' + lockSvg(14, false) + '</span>'
+                + '<span class="composer-lock-caption"></span>';
             wrap.appendChild(overlay);
             return overlay;
         }
@@ -127,10 +142,33 @@
                 const title = lockTitle(reason());
                 badge.setAttribute('title', title);
                 badge.setAttribute('aria-label', title);
+                renderCaption(overlay.lastChild);
                 overlay.hidden = false;
             } else if (overlay) {
                 overlay.hidden = true;
             }
+        }
+
+        function controller() {
+            return reason() === 'subagent' ? display(parentId) : (supervisor || '');
+        }
+
+        function renderCaption(el) {
+            const c = lockCaption(reason(), controller());
+            el.textContent = '';
+            el.appendChild(doc.createTextNode(c.lead));
+            if (c.handle && host.openChat) {
+                const link = doc.createElement('button');
+                link.type = 'button';
+                link.className = 'composer-lock-handle';
+                link.setAttribute('data-composer-lock-open', c.who);
+                link.title = 'Open ' + c.who;
+                link.textContent = c.who;
+                el.appendChild(link);
+            } else {
+                el.appendChild(doc.createTextNode(c.who));
+            }
+            el.appendChild(doc.createTextNode(c.rest));
         }
 
         /** Open chat changed: forget the last chat's facts (unlocked until this chat's arrive). */
@@ -140,6 +178,8 @@
             session = key;
             subagent = false;
             supervised = false;
+            parentId = null;
+            supervisor = '';
             apply();
         }
 
@@ -147,13 +187,15 @@
         function setIdentity(sid, identity) {
             setSession(sid);
             subagent = isSubagentIdentity(identity);
+            parentId = subagent && identity ? identity.parentSessionId : null;
             apply();
         }
 
         /** From the supervision controller; ignored when it reports for another chat. */
-        function setSupervised(sid, on) {
+        function setSupervised(sid, on, by) {
             if (keyOf(sid) !== session) return;
             supervised = !!on;
+            supervisor = on ? String(by || '') : '';
             apply();
         }
 
@@ -185,6 +227,12 @@
         }
 
         doc.addEventListener('click', (ev) => {
+            const open = ev.target.closest && ev.target.closest('[data-composer-lock-open]');
+            if (open) {
+                ev.preventDefault();
+                host.openChat(open.getAttribute('data-composer-lock-open').replace(/^CH-0*/i, ''));
+                return;
+            }
             const btn = ev.target.closest && ev.target.closest('[data-composer-lock]');
             if (!btn) return;
             ev.preventDefault();
@@ -199,7 +247,7 @@
     }
 
     const api = {
-        STORAGE_KEY, LOCKED_PARTS, isSubagentIdentity, lockReason, isLocked, lockTitle,
+        STORAGE_KEY, LOCKED_PARTS, isSubagentIdentity, lockReason, isLocked, lockTitle, lockCaption,
         parseUnlocked, withUnlocked, create,
     };
     if (typeof module === 'object' && module.exports) module.exports = api;

@@ -21,7 +21,7 @@ public final class CuttleApi {
 
     private CuttleApi() {}
 
-    static synchronized OkHttpClient client() {
+    public static synchronized OkHttpClient client() {
         if (client == null) {
             client = buildClient();
         }

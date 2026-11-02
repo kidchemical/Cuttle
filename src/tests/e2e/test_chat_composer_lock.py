@@ -1,6 +1,8 @@
 """Composer lock in the chat page (chat_composer_lock.js).
 
-* a sub-agent child chat opens locked: input parts inert, lock badge shown,
+* a sub-agent child chat opens locked: composer collapses to one short row
+  (input parts, chips and buttons hidden + inert; lock + caption naming the
+  parent CH- handle, which opens that chat),
   typing and Send do nothing; Unlock in the ☰ menu frees it, the choice
   survives a reload, and Lock composer locks it again
 * a supervised chat (``supervised_by`` from chat-ops) locks only while the
@@ -36,7 +38,7 @@ class ChildWorld(CardWorld):
 
 
 def _try_type(page, frame, text):
-    frame.locator("#chatComposerWrap").click(position={"x": 60, "y": 50}, force=True)
+    frame.locator("#chatComposerWrap .composer-lock-badge").click(force=True)
     page.keyboard.type(text)
     return frame.locator("#chatInput").input_value()
 
@@ -54,10 +56,15 @@ def test_subagent_chat_opens_locked_and_unlocks_from_menu(browser, static_server
         frame.locator("#chatComposerWrap.is-composer-locked").wait_for()
         expect(frame.locator(".composer-lock-overlay .composer-lock-badge")).to_be_visible()
         assert "sub-agent chat" in frame.locator(".composer-lock-badge").get_attribute("aria-label")
-        for sel in ("#chatSlashChipsRow", ".textarea-with-slash-menu", "#sendButton", "#attachButton"):
+        for sel in ("#chatSlashChipsRow", ".textarea-with-slash-menu", "#sendButton", "#attachButton",
+                    "#chatContextGauge"):
             assert frame.locator(f"#chatComposerWrap {sel}").get_attribute("inert") is not None, sel
+        for sel in (".textarea-with-slash-menu", "#sendButton", "#chatContextGauge"):
+            expect(frame.locator(f"#chatComposerWrap {sel}")).to_be_hidden()
         assert frame.locator("#stopButton").get_attribute("inert") is None
-        assert frame.locator("#chatContextGauge").get_attribute("inert") is None
+        caption = frame.locator(".composer-lock-caption")
+        expect(caption).to_contain_text("CH-000007 runs this sub-agent chat")
+        assert frame.locator("#chatComposerWrap").bounding_box()["height"] < 60
 
         assert _try_type(page, frame, "oops wrong chat") == ""
         frame.locator("html").evaluate("() => window.sendMessage()")
@@ -99,6 +106,8 @@ def test_supervised_chat_locks_while_supervision_flag_is_on(browser, static_serv
     try:
         frame.locator("#chatComposerWrap.is-composer-locked").wait_for()
         assert "supervised chat" in frame.locator(".composer-lock-badge").get_attribute("aria-label")
+        expect(frame.locator(".composer-lock-caption")).to_contain_text("CH-001581 is supervising this chat")
+        expect(frame.locator(".composer-lock-handle")).to_have_text("CH-001581")
         _toggle_flag(frame, world, False)
         expect(frame.locator("#chatComposerWrap.is-composer-locked")).to_have_count(0)
         _toggle_flag(frame, world, True)

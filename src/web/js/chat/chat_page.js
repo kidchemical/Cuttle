@@ -427,8 +427,8 @@
         closeMenus: () => closeAllSessionMenus(), toast: (m, k) => (window.showToast || function () {})(m, k),
     });
     const composerLock = CuttleChatComposerLock.create({ doc: document, storage: () => window.localStorage,
-        sessionKey: canonicalizeChatSessionId, closeMenus: () => closeAllSessionMenus(),
-        toast: (m, k) => (window.showToast || function () {})(m, k) });
+        sessionKey: canonicalizeChatSessionId, displayId: formatChatDisplayId, closeMenus: () => closeAllSessionMenus(),
+        openChat: (sid) => loadChatSession(sid), toast: (m, k) => (window.showToast || function () {})(m, k) });
     const sessionMenu = CuttleChatSessionMenu.create({
         win: window, icons: () => CuttleChatHistoryView.historyActionIcons(), escapeHtml: escapeHtmlInline,
         facts: (sid) => ({ displayId: formatChatDisplayId(sid) || '', starred: isChatSessionStarred(sid),
@@ -442,7 +442,7 @@
     // Chat supervision chip/badge/dialog (experimental `chat_supervision`).
     const supervision = CuttleChatSupervision.create({
         doc: document, fetch: (u, o) => fetch(u, o), now: () => Date.now(), escapeHtml: escapeHtmlInline,
-        onSupervised: (sid, on) => composerLock.setSupervised(sid, on),
+        onSupervised: (sid, on, by) => composerLock.setSupervised(sid, on, by),
         enabledFlags: fetchEnabledExperimentalFlags, openChat: (sid) => loadChatSession(sid),
         closeMenus: () => closeAllSessionMenus(), confirm: (m) => window.confirm(m),
         toast: (m, k) => (window.showToast || function () {})(m, k), viewportWidth: () => window.innerWidth,

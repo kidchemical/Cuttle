@@ -137,6 +137,12 @@
         return !!(overview && Array.isArray(overview.supervised_by) && overview.supervised_by.length);
     }
 
+    /** The chat driving this one ("CH-…") from the first supervised_by schedule, or ''. */
+    function supervisorOf(overview) {
+        const first = isSupervised(overview) ? overview.supervised_by[0] : null;
+        return String((first && first.supervisor) || '');
+    }
+
     function rulesText(s) {
         const bits = [];
         if (s.required_branch) bits.push('stay on ' + s.required_branch);
@@ -198,7 +204,7 @@
 
     const api = {
         SCHEMA_VERSION, INTERVALS, fmtInterval, fmtClock, nextLabel, chipText, badgeText,
-        historyRow, view, isSupervised, dialogDefaults, supervisePayload,
+        historyRow, view, isSupervised, supervisorOf, dialogDefaults, supervisePayload,
     };
     if (typeof module === 'object' && module.exports) module.exports = api;
     root.CuttleChatSupervisionModel = api;

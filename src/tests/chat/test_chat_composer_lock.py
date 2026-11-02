@@ -40,6 +40,10 @@ console.log(JSON.stringify({
   blank: L.withUnlocked(['1'], '', true),
   capped: L.withUnlocked(many, 'new', true),
   title: L.lockTitle('supervised'),
+  captions: [L.lockCaption('supervised', 'CH-001581'), L.lockCaption('subagent', ''),
+             L.lockCaption('supervised', '')],
+  supBy: [S.supervisorOf({supervised_by: [{supervisor: 'CH-000009'}]}), S.supervisorOf({supervised_by: []}),
+          S.supervisorOf(null)],
   sup: [S.isSupervised({supervised_by: [{id: 's'}]}), S.isSupervised({supervised_by: []}),
         S.isSupervised({supervising: [{id: 's'}]}), S.isSupervised(null)],
 }));
@@ -81,3 +85,13 @@ def test_unlock_list_parse_and_update():
 def test_supervised_only_when_another_chat_supervises_this_one():
     # A supervisor chat (supervising, not supervised_by) is not locked.
     assert _run()["sup"] == [True, False, False, False]
+
+
+def test_caption_names_the_controlling_chat():
+    r = _run()
+    sup, sub, anon = r["captions"]
+    assert sup["handle"] is True and sup["who"] == "CH-001581"
+    assert "supervising this chat" in sup["rest"] and "☰" in sup["rest"]
+    assert sub["handle"] is False and sub["who"] == "Its parent chat" and "sub-agent" in sub["rest"]
+    assert anon["who"] == "Another chat"
+    assert r["supBy"] == ["CH-000009", "", ""]

@@ -35,6 +35,7 @@ import com.cuttle.mobile.notify.NotifyPrefs;
 import com.cuttle.mobile.notify.CuttleApi;
 import com.cuttle.mobile.notify.NetworkUtil;
 import com.cuttle.mobile.notify.ShellUpdate;
+import com.cuttle.mobile.media.MediaExport;
 import com.cuttle.mobile.voice.NativeMic;
 import com.cuttle.mobile.voice.LiveVoiceAudio;
 import com.cuttle.mobile.voice.VoiceCallService;
@@ -370,6 +371,9 @@ public class MainActivity extends BridgeActivity {
         webView.getSettings().setJavaScriptEnabled(true);
         webView.getSettings().setDomStorageEnabled(true);
         webView.addJavascriptInterface(new CuttleShellBridge(), "CuttleShellNative");
+        // WebView drops <a download> / attachment responses without a listener.
+        webView.setDownloadListener((url, userAgent, contentDisposition, mimetype, contentLength) ->
+            MediaExport.save(this, readBaseUrl(), url, "", contentDisposition, mimetype));
     }
 
     public boolean isShowingCuttleUi() {
@@ -437,6 +441,8 @@ public class MainActivity extends BridgeActivity {
                 + "  setSessionCookie:function(u,t){try{CuttleShellNative.setSessionCookie(u||'',t||'')}catch(e){}},"
                 + "  requestMicrophone:function(){try{CuttleShellNative.requestMicrophone()}catch(e){}},"
                 + "  openAppSettings:function(){try{CuttleShellNative.openAppSettings()}catch(e){}},"
+                + "  copyImage:function(u){try{CuttleShellNative.copyImage(String(u||''));return true}catch(e){return false}},"
+                + "  saveMedia:function(u,n){try{CuttleShellNative.saveMedia(String(u||''),String(n||''));return true}catch(e){return false}},"
                 + "  micStart:function(){try{return CuttleShellNative.micStart()}catch(e){return 'error:'+e}},"
                 + "  micLevels:function(){try{return CuttleShellNative.micLevels()}catch(e){return ''}},"
                 + "  micCut:function(k){try{return CuttleShellNative.micCut(!!k)}catch(e){return ''}},"
@@ -1074,6 +1080,18 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void micStop() {
             nativeMic.stop();
+        }
+
+        /** Copy a Cuttle-server image to the system clipboard (toast reports the result). */
+        @JavascriptInterface
+        public void copyImage(String url) {
+            MediaExport.copyImage(MainActivity.this, readBaseUrl(), url);
+        }
+
+        /** Save a Cuttle-server file to Pictures/Movies/Download → Cuttle (toast reports the result). */
+        @JavascriptInterface
+        public void saveMedia(String url, String filename) {
+            MediaExport.save(MainActivity.this, readBaseUrl(), url, filename, "", "");
         }
 
         /** Open app details so the user can enable Microphone after a deny. */
