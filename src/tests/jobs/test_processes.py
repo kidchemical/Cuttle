@@ -94,7 +94,11 @@ def test_scan_attributes_marked_processes(marked_child):
     assert {r["pid"] for r in found} >= {marked_child.pid}
     root = next(r for r in found if r["pid"] == marked_child.pid)
     assert root["run_id"] == "run1" and root["agent_id"] == "claude"
-    assert len(found) == 2  # the grandchild inherited the marker
+    # Every descendant inherited the marker (the grandchild; on Windows a venv
+    # python.exe is a launcher, so each spawn is a launcher + interpreter pair).
+    descendants = {c.pid for c in psutil.Process(marked_child.pid).children(recursive=True)}
+    assert descendants and descendants <= {r["pid"] for r in found}
+    assert len(found) == 1 + len(descendants)
 
 
 def test_shadow_instance_neither_sees_nor_ends_host_processes(marked_child, monkeypatch, tmp_path):

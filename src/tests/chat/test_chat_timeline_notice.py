@@ -62,7 +62,8 @@ def out():
     proc = subprocess.run(
         ["node", "-e", HARNESS],
         capture_output=True, text=True, encoding="utf-8", timeout=30,
-        env={"MOD_JS": str(MOD_JS), "GAUGE_JS": str(GAUGE_JS), "PATH": shutil.os.environ.get("PATH", "")},
+        # Full parent env: Windows node aborts (CSPRNG) without SYSTEMROOT.
+        env={**shutil.os.environ, "MOD_JS": str(MOD_JS), "GAUGE_JS": str(GAUGE_JS)},
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)

@@ -218,10 +218,14 @@ def _scan_now() -> List[Dict[str, Any]]:
 
 
 def scan(*, max_age: float = SCAN_TTL_SEC) -> List[Dict[str, Any]]:
-    """Attributed live processes (copies), from a scan at most ``max_age`` old."""
+    """Attributed live processes (copies), from a scan at most ``max_age`` old.
+
+    ``max_age <= 0`` always rescans: Windows' monotonic clock ticks every
+    ~15 ms, so ``now - at <= 0`` can hold right after a previous scan.
+    """
     now = time.monotonic()
     with _lock:
-        if _cache["at"] and now - _cache["at"] <= max_age:
+        if max_age > 0 and _cache["at"] and now - _cache["at"] <= max_age:
             return [dict(r) for r in _cache["records"]]
     records = _scan_now()
     with _lock:

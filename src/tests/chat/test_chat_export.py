@@ -43,7 +43,7 @@ def _run():
     node = shutil.which("node")
     if not node:
         pytest.skip("node not installed")
-    out = subprocess.run([node, "-e", HARNESS], capture_output=True, text=True, timeout=30,
+    out = subprocess.run([node, "-e", HARNESS], capture_output=True, text=True, encoding="utf-8", timeout=30,
                          env={**os.environ, "MOD": str(MOD)})
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)
