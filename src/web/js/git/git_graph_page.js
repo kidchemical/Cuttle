@@ -767,28 +767,21 @@
             && !branches.some((b) => b && b.name === label);
     }
 
-    /** Ref chips by kind; HEAD folds into the checked-out branch chip. */
+    /** Show HEAD first, followed by the commit's branch and tag refs. */
     function refChipsHtml(c) {
         const refs = Array.isArray(c.refs) ? c.refs : [];
         const tags = new Set(Array.isArray(c.tags) ? c.tags : []);
-        const headBranch = String(graphHeadBranch || '');
-        const headFolded = refs.includes('HEAD') && !!headBranch && refs.includes(headBranch);
-        return refs.map((lab) => {
-            if (lab === 'HEAD' && headFolded) return '';
+        const head = refs.includes('HEAD')
+            ? '<span class="git-graph-ref is-head" title="' + esc(graphHeadBranch ? 'HEAD → ' + graphHeadBranch : 'HEAD (detached)') + '">HEAD</span>'
+            : '';
+        return head + refs.filter((lab) => lab !== 'HEAD').map((lab) => {
             let kind = 'is-local';
             let title = lab;
-            if (lab === 'HEAD') {
-                kind = 'is-head';
-                title = 'HEAD (detached)';
-            } else if (tags.has(lab)) {
+            if (tags.has(lab)) {
                 kind = 'is-tag';
                 title = 'Tag ' + lab;
             } else if (isRemoteRef(lab)) {
                 kind = 'is-remote';
-            }
-            if (headFolded && lab === headBranch) {
-                kind += ' is-head';
-                title = 'HEAD → ' + lab;
             }
             return '<span class="git-graph-ref ' + kind + '" title="' + esc(title) + '">' + esc(lab) + '</span>';
         }).join('');

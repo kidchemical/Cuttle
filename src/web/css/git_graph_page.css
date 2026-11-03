@@ -708,10 +708,11 @@ html.git-graph-root *::-webkit-scrollbar-corner {
 .git-graph-ref.is-head {
     background: rgba(251, 191, 36, 0.18);
     color: #fcd34d;
-    border-color: rgba(251, 191, 36, 0.5);
+    border-color: rgba(251, 191, 36, 0.75);
+    font-weight: 750;
 }
 
-/* Checked-out branch: HEAD folds into the branch chip as a dot. */
+/* A distinct marker makes the current commit easy to spot. */
 .git-graph-ref.is-head::before {
     content: '';
     width: 6px;

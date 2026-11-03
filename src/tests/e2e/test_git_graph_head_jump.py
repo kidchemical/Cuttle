@@ -23,10 +23,10 @@ class RepoAPI:
 
     def _commit(self, i, h):
         refs = []
-        if h == self.head:
-            refs.append("HEAD")
         if i == 0:
             refs.append("main")
+        if h == self.head:
+            refs.append("HEAD")
         return {"hash": h, "short": h[:7], "parents": [HASHES[i + 1]] if i + 1 < len(HASHES) else [],
                 "author": "Owner", "email": "o@example.com", "date": "2026-10-01T12:00:00+00:00",
                 "subject": f"commit {i}", "refs": refs, "tags": []}
@@ -85,6 +85,8 @@ def _open(page, i):
 
 def test_click_commit_then_checkout_and_return(page_api):
     page, api, errors = page_api
+    chips = page.locator(f'.git-graph-row[data-hash="{HASHES[0]}"] .git-graph-ref')
+    assert chips.all_text_contents() == ["HEAD", "main"]
     bar = _open(page, 0)
     assert bar.inner_text().strip() == "HEAD"
     assert bar.locator("button").count() == 0
@@ -97,6 +99,7 @@ def test_click_commit_then_checkout_and_return(page_api):
     page.wait_for_function(
         "() => document.getElementById('gitGraphSubtitle').textContent.includes('HEAD detached at')")
     assert api.checkouts == [HASHES[2]]
+    assert page.locator(f'.git-graph-row[data-hash="{HASHES[2]}"] .git-graph-ref').first.inner_text() == "HEAD"
     bar = page.locator(".git-graph-head-actions")
     bar.get_by_text("HEAD · detached").wait_for()
 
