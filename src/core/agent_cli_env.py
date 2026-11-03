@@ -24,12 +24,17 @@ def operation_actor(*, source="cli", session_id=None, agent_id=None, user_id=Non
 
 
 @contextmanager
-def agent_operation_context(*, session_id, agent_id, model=None, run_id=None, project_path=None):
-    """Per-execution attribution, never mutate the Flask process environment."""
+def agent_operation_context(*, session_id, agent_id, model=None, run_id=None, project_path=None,
+                            supervised=None):
+    """Per-execution attribution, never mutate the Flask process environment.
+
+    ``supervised`` is a non-empty reason when the turn runs unattended for the
+    user (sub-agent, supervised chat); git's protected-branch hook keys on it.
+    """
     values = {
         "CUTTLE_CHAT_SESSION_ID": session_id, "CUTTLE_AGENT_ID": agent_id,
         "CUTTLE_AGENT_MODEL": model, "CUTTLE_AGENT_RUN_ID": run_id,
-        "CUTTLE_AGENT_PROJECT_PATH": project_path,
+        "CUTTLE_AGENT_PROJECT_PATH": project_path, "CUTTLE_SUPERVISED": supervised,
     }
     token = _operation_context.set({k: str(v) if v is not None else "" for k, v in values.items()})
     try:

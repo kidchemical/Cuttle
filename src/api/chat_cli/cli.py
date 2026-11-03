@@ -645,7 +645,7 @@ def build_parser() -> argparse.ArgumentParser:
     search_p.set_defaults(func=cmd_search)
 
     for verb, help_text in (
-        ('install-hook', 'Install a git hook that refuses agent updates of protected branches'),
+        ('install-hook', 'Install (or upgrade) a git hook that refuses supervised-agent updates of protected branches'),
         ('uninstall-hook', "Remove Cuttle's protected-branch git hook"),
     ):
         hook_p = sub.add_parser(verb, parents=[common], help=help_text)

@@ -904,11 +904,19 @@ def run_agent_web_command(
                     print(f"[agent_events] snapshot start unavailable: {exc}", flush=True)
             except Exception:
                 edit_baseline = None
+            try:
+                from api.chat_ops.git_hook import supervised_reason
+                supervised = supervised_reason(sid)
+            except Exception as exc:
+                print(f"[agent_harness] supervision lookup failed for CH-{sid}: {exc}", flush=True)
+                supervised = ''
+
             def _run_execute(prompt_text: str, resume_id: Optional[str]) -> AgentResult:
                 from core.agent_cli_env import agent_operation_context
 
                 with agent_operation_context(session_id=sid, agent_id=manifest.id,
-                                             model=model, run_id=query_id, project_path=cwd):
+                                             model=model, run_id=query_id, project_path=cwd,
+                                             supervised=supervised):
                     return asyncio.run(
                         adapter.execute(
                             prompt_text,

@@ -15,13 +15,15 @@ def _git(path, *args, env=None, check=True):
                           env=env)
 
 
-def _env(agent, checkout=None):
+def _env(agent, checkout=None, supervised="subagent"):
     env = {k: v for k, v in os.environ.items()
-           if k not in ("CUTTLE_CHAT_SESSION_ID", "CUTTLE_AGENT_PROJECT_PATH")}
+           if k not in ("CUTTLE_CHAT_SESSION_ID", "CUTTLE_AGENT_PROJECT_PATH", "CUTTLE_SUPERVISED")}
     env.update({"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
                 "GIT_COMMITTER_EMAIL": "t@t"})
     if agent:
         env["CUTTLE_CHAT_SESSION_ID"] = "42"
+        if supervised:
+            env["CUTTLE_SUPERVISED"] = supervised
     if checkout:
         env["CUTTLE_AGENT_PROJECT_PATH"] = str(checkout)
     return env
@@ -37,9 +39,9 @@ def repo(tmp_path):
     return path
 
 
-def _commit(repo, branch, *, agent, checkout=None):
+def _commit(repo, branch, *, agent, checkout=None, supervised="subagent"):
     _git(repo, "checkout", "-q", branch, env=_env(False))
-    out = _git(repo, "commit", "--allow-empty", "-m", "x", env=_env(agent, checkout), check=False)
+    out = _git(repo, "commit", "--allow-empty", "-m", "x", env=_env(agent, checkout, supervised), check=False)
     _git(repo, "checkout", "-q", "dev/feature", env=_env(False))
     return out
 
@@ -47,17 +49,19 @@ def _commit(repo, branch, *, agent, checkout=None):
 # --- git hook ------------------------------------------------------------------
 
 
-def test_hook_refuses_agents_outside_the_branch_checkout_only(repo):
+def test_hook_refuses_supervised_agents_outside_the_branch_checkout_only(repo):
     result = git_hook.install(repo, ["dev/core"])
     assert result["protected"] == ["dev/core"]
     other = repo.parent / "other-wt"
     _git(repo, "worktree", "add", "-q", "-b", "dev/other", str(other), env=_env(False))
-    # An agent working in another worktree may not touch dev/core.
+    # A sub-agent / supervised chat working in another worktree may not touch dev/core.
     refused = _commit(repo, "dev/core", agent=True, checkout=other)
     assert refused.returncode != 0 and "may not update protected branch 'dev/core'" in refused.stderr
+    assert "supervised: subagent" in refused.stderr
+    assert _commit(repo, "dev/core", agent=True, checkout=other, supervised="supervised").returncode != 0
     # No checkout known: refused too (conservative).
     assert _commit(repo, "dev/core", agent=True).returncode != 0
-    # The user's own commit, and an agent whose checkout is on dev/core, pass.
+    # The user's terminal, and a supervised agent whose checkout is on dev/core, pass.
     assert _commit(repo, "dev/core", agent=False).returncode == 0
     assert _commit(repo, "dev/core", agent=True, checkout=repo).returncode == 0
     # The outside agent keeps working on its own branch.
@@ -65,6 +69,35 @@ def test_hook_refuses_agents_outside_the_branch_checkout_only(repo):
     # Non-commit ref updates are caught too.
     moved = _git(repo, "branch", "-f", "dev/core", "dev/other", env=_env(True, other), check=False)
     assert moved.returncode != 0
+
+
+def test_hook_lets_a_user_driven_top_level_chat_update_protected_branches(repo):
+    git_hook.install(repo, ["dev/core"])
+    other = repo.parent / "other-wt"
+    _git(repo, "worktree", "add", "-q", "-b", "dev/other", str(other), env=_env(False))
+    assert _commit(repo, "dev/core", agent=True, checkout=other, supervised="").returncode == 0
+    moved = _git(repo, "branch", "-f", "dev/core", "dev/other", env=_env(True, other, supervised=""),
+                 check=False)
+    assert moved.returncode == 0, moved.stderr
+
+
+def test_install_upgrades_an_older_cuttle_hook_in_place(repo):
+    hook = git_hook.hooks_dir(repo) / git_hook.HOOK_NAME
+    hook.write_text("#!/bin/sh\n# cuttle-protect-branch-hook v1\nexit 1\n")
+    git_hook.install(repo, ["dev/core"])
+    assert git_hook.MARKER in hook.read_text() and "v1" not in hook.read_text()
+
+
+def test_supervised_reason_marks_subagents_and_supervised_targets_only(chats, monkeypatch):
+    db, owner, sup, target = chats
+    assert git_hook.supervised_reason(target, db=db) == ""
+    assert git_hook.supervised_reason(None, db=db) == ""
+    child = db.create_subagent_chat_session(owner, parent_session_id=target, session_name="lane")
+    assert git_hook.supervised_reason(child, db=db) == "subagent"
+    service.supervise(f"CH-{target:06d}", f"CH-{sup:06d}", every=900, instructions="watch", db=db)
+    assert git_hook.supervised_reason(target, db=db) == "supervised"
+    # The supervisor chat itself is the user's, not supervised.
+    assert git_hook.supervised_reason(sup, db=db) == ""
 
 
 def test_hook_never_overwrites_a_foreign_hook_and_uninstall_only_removes_ours(repo):
