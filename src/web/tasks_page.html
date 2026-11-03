@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tasks - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
+    <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="/css/landing_page.css?v=20261028gpuBg">
+    <link rel="stylesheet" href="/css/compact_page.css?v=20261015glass">
+    <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
+    <link rel="stylesheet" href="/css/searchable_select.css?v=20261011attachedMenus">
+    <link rel="stylesheet" href="/css/page_controls.css?v=20261015glass">
+    <link rel="stylesheet" href="/css/orchestrator_page.css?v=20261103tasks1">
+    <link rel="stylesheet" href="/css/tasks_page.css?v=20261103tasks1">
+</head>
+<body class="compact-shell-page" data-page="tasks">
+    <main class="orch-page tasks-page cuttle-page">
+        <header class="compact-page-title has-actions">
+            <div class="compact-page-heading">
+                <h1>Tasks</h1>
+                <p>Every Tasks list you and your agents keep: where it shows up, what's done, and who changed it.</p>
+            </div>
+            <div class="compact-page-actions">
+                <button id="tasksRefresh" type="button" aria-label="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 6M20 4v7h-7"/></svg><span class="desktop-label">Refresh</span></button>
+                <button id="tasksNew" type="button" class="primary">New list</button>
+            </div>
+        </header>
+
+        <section id="tasksNotice" class="orch-notice" role="status" aria-live="polite">Loading Tasks…</section>
+
+        <section id="tasksContent" class="orch-split" hidden>
+            <aside class="orch-sidebar" aria-label="Tasks lists">
+                <input id="tasksSearch" type="search" placeholder="Search lists, tasks, chats" aria-label="Search Tasks lists" autocomplete="off">
+                <div class="tasks-filter" role="tablist" aria-label="Status">
+                    <button type="button" role="tab" data-status="active" aria-selected="true">Active <span data-count="active"></span></button>
+                    <button type="button" role="tab" data-status="archived" aria-selected="false">Archived <span data-count="archived"></span></button>
+                    <button type="button" role="tab" data-status="all" aria-selected="false">All <span data-count="all"></span></button>
+                </div>
+                <div id="tasksList" class="orch-cards" aria-live="polite"></div>
+            </aside>
+
+            <section class="orch-panel orch-editor tasks-editor" id="tasksEditor" aria-live="polite"></section>
+        </section>
+
+        <div class="orch-savebar" id="tasksSavebar" hidden>
+            <span class="orch-savebar-state" id="tasksSaveState"></span>
+            <span class="orch-grow"></span>
+            <button type="button" id="tasksDiscard">Discard</button>
+            <button type="button" id="tasksSave" class="primary">Save changes</button>
+        </div>
+    </main>
+    <script src="/js/shared/shared_navigation.js"></script>
+    <script src="/js/shared/toast.js"></script>
+    <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
+    <script src="/js/shared/page_controls.js?v=20261011pageControls2"></script>
+    <script src="/js/tasks/tasks_model.js?v=20261103tasks1"></script>
+    <script src="/js/tasks/tasks_page.js?v=20261103tasks1"></script>
+</body>
+</html>

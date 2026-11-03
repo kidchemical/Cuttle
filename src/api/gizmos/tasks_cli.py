@@ -24,6 +24,8 @@ def add_parser(sub):
             p.add_argument('--scope', choices=['session', 'project'], default='session')
             p.add_argument('--edit-mode', choices=['agent', 'shared'], default='agent')
             p.add_argument('--description', default='')
+            p.add_argument('--link', action='append', metavar='CH-…',
+                           help='also show this list in another chat (repeatable, comma-separated)')
         if verb == 'patch':
             p.add_argument('--ops', help='JSON patch object: add, remove, set_text, items, description, …')
             p.add_argument('--set-done', action='append', help='item id(s), comma-separated; repeatable')
@@ -31,8 +33,16 @@ def add_parser(sub):
             p.add_argument('--description')
             p.add_argument('--title')
             p.add_argument('--status', choices=['active', 'archived'])
+            p.add_argument('--link', action='append', metavar='CH-…',
+                           help='link more chats (repeatable, comma-separated)')
+            p.add_argument('--unlink', action='append', metavar='CH-…',
+                           help='remove linked chats (repeatable, comma-separated)')
         if verb == 'history':
             p.add_argument('--limit', type=int, default=100)
+
+
+def _split(values):
+    return [v.strip() for v in ','.join(values or []).split(',') if v.strip()]
 
 
 def run(args):
@@ -57,7 +67,8 @@ def run(args):
             raise GizmoError('--items must be a JSON array') from exc
         row = tasks.create(gizmo_id=args.gizmo_id, title=args.title, items=items,
                            description=args.description, scope=args.scope, edit_mode=args.edit_mode,
-                           session_id=sid, user_id=uid, actor=actor)
+                           session_id=sid, user_id=uid, actor=actor,
+                           linked_sessions=_split(args.link) or None)
         return {'success': True, 'gizmo': row}
     if cmd == 'patch':
         try:
@@ -70,6 +81,10 @@ def run(args):
             raw = ','.join(getattr(args, key) or [])
             if raw:
                 ops[key] = list(ops.get(key) or []) + [i.strip() for i in raw.split(',') if i.strip()]
+        for key in ('link', 'unlink'):
+            values = _split(getattr(args, key))
+            if values:
+                ops[key] = list(ops.get(key) or []) + values
         for key in ('description', 'title', 'status'):
             value = getattr(args, key)
             if value is not None:

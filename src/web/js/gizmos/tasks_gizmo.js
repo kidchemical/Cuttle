@@ -30,6 +30,10 @@
         var getSessionId = options.getSessionId || function () { return null; };
         var getProjectPath = options.getProjectPath || function () { return ''; };
         var fetchFn = options.fetchFn || fetch;
+        var navigate = options.navigate || function (page) {
+            if (global.parent && global.parent !== global) global.parent.postMessage({ type: 'cuttle-navigate', page: page }, '*');
+            else global.location.assign(page);
+        };
         var $ = function (id) {
             return root.getElementById ? root.getElementById(id) : document.getElementById(id);
         };
@@ -66,6 +70,17 @@
             widgets = [];
             revision = 0;
             render();
+        }
+
+        /** List shown here only because this chat is linked to it (not its home chat/project). */
+        function isLinkedHere(w) {
+            var sid = sessionParam();
+            if (!sid || (w.linked_sessions || []).map(String).indexOf(sid) === -1) return false;
+            if (w.scope === 'project') {
+                var norm = function (p) { return String(p || '').replace(/\\/g, '/').replace(/\/+$/, ''); };
+                return norm(getProjectPath()) !== norm(w.project_path);
+            }
+            return String(w.session_id || '') !== sid;
         }
 
         function renderTaskItems(items, shared) {
@@ -112,7 +127,11 @@
                 var counts = countTasks(items);
                 var isOpen = !!expanded[w.id];
                 var shared = String(w.edit_mode || 'agent').toLowerCase() === 'shared';
-                var scopeLabel = (w.scope === 'project') ? 'Project' : 'This chat';
+                var linkedHere = isLinkedHere(w);
+                var scopeLabel = linkedHere ? 'Linked' : ((w.scope === 'project') ? 'Project' : 'This chat');
+                var scopeTip = linkedHere
+                    ? 'Linked to this chat from another chat. Manage its chats in the Tasks app.'
+                    : 'Pin to this chat or whole project';
                 var editLabel = shared ? 'Shared' : 'Agent';
                 var title = esc(w.title || 'Tasks');
                 var desc = String(w.description || '').trim();
@@ -138,9 +157,10 @@
                     '<button type="button" class="chat-widget-scope" data-widget-edit data-tooltip="Agent-managed (default) or Shared (you can check boxes)">' +
                     editLabel +
                     '</button>' +
-                    '<button type="button" class="chat-widget-scope" data-widget-scope data-tooltip="Pin to this chat or whole project">' +
+                    '<button type="button" class="chat-widget-scope" data-widget-scope data-tooltip="' + esc(scopeTip) + '">' +
                     scopeLabel +
                     '</button>' +
+                    '<button type="button" class="chat-widget-archive" data-widget-manage data-tooltip="Open in the Tasks app" aria-label="Open in the Tasks app">↗</button>' +
                     '<button type="button" class="chat-widget-archive" data-widget-archive data-tooltip="Archive">✕</button>' +
                     '</div>' +
                     '<div class="chat-widget-body" ' + (isOpen ? '' : 'hidden') + '>' +
@@ -308,9 +328,18 @@
                     });
                     return;
                 }
+                if (t.closest('[data-widget-manage]')) {
+                    navigate('/tasks_page.html?list=' + encodeURIComponent(wid));
+                    return;
+                }
                 if (t.closest('[data-widget-scope]')) {
                     var w = widgets.find(function (x) { return x.id === wid; });
                     if (!w) return;
+                    if (isLinkedHere(w)) {
+                        // Do not move another chat's list here; links are managed in the App.
+                        navigate('/tasks_page.html?list=' + encodeURIComponent(wid) + '&tab=chats');
+                        return;
+                    }
                     var next = w.scope === 'project' ? 'session' : 'project';
                     var body = {
                         scope: next,
