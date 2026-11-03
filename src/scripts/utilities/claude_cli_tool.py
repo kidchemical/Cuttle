@@ -140,8 +140,12 @@ def _status_put(status_queue: Optional["queue_module.Queue"], message: str) -> N
         pass
 
 
-def _parse_claude_json(raw: str) -> Dict[str, Any]:
-    """Parse ``claude -p --output-format json`` stdout into text + usage + session."""
+def _parse_claude_json(raw: str, segments: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Parse ``claude -p --output-format json`` stdout into text + usage + session.
+
+    ``segments`` are the turn's streamed root text blocks; when given they form
+    the reply, since the result's own text is only the last message.
+    """
     text = (raw or "").strip()
     if not text:
         return {"output": "", "session_id": None, "usage": {}, "errors": []}
@@ -182,6 +186,10 @@ def _parse_claude_json(raw: str) -> Dict[str, Any]:
         if isinstance(val, str) and val.strip():
             output = val.strip()
             break
+    if segments:
+        from scripts.utilities.claude_stream import join_segments
+
+        output = join_segments(segments, output)
 
     usage: Dict[str, Any] = {}
     raw_usage = obj.get("usage") if isinstance(obj.get("usage"), dict) else {}
@@ -686,8 +694,13 @@ class ClaudeCliTool:
                 _close_input()
                 st["reap_timer"] = loop.call_later(_background_exit_grace_seconds(), _reap)
 
+        def _parse_result(index: int) -> Dict[str, Any]:
+            # st["results"] and stream.result_segments both count root results.
+            segs = stream.result_segments
+            return _parse_claude_json(json.dumps(st["results"][index]), segs[index] if index < len(segs) else None)
+
         def _parsed_since(start: int) -> Dict[str, Any]:
-            return _merge_results([_parse_claude_json(json.dumps(r)) for r in st["results"][start:]])
+            return _merge_results([_parse_result(i) for i in range(start, len(st["results"]))])
 
         def _deliver_result(waits: bool) -> None:
             """Detachable runs: hand the turn its reply at the first wait, then post each answer."""
@@ -826,12 +839,14 @@ class ClaudeCliTool:
             _finish_detached(ctl.wait, run, st, bg_wait)
             return {"success": True, "output": "", "detached": True}
         if len(st["results"]) > 1:
-            parsed = _merge_results([_parse_claude_json(json.dumps(r)) for r in st["results"]])
+            parsed = _parsed_since(0)
         elif stream.result is not None:
-            parsed = _parse_claude_json(json.dumps(stream.result))
+            parsed = _parse_claude_json(json.dumps(stream.result),
+                                        stream.result_segments[-1] if stream.result_segments else None)
         else:
             parsed = {
-                "output": stream.partial_output(), "session_id": stream.session_id, "usage": {}, "errors": [],
+                "output": "\n\n".join(s.strip() for s in stream.pending_writing()),
+                "session_id": stream.session_id, "usage": {}, "errors": [],
             }
         session_id = parsed.get("session_id") or stream.session_id or rid or None
         usage = parsed.get("usage") or {}

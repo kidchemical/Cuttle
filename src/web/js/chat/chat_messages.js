@@ -303,9 +303,11 @@
         } catch (_) { return null; }
     }
 
+    /** The agent's own reply first, then whatever post-processing added. */
     function postprocessedBody(text) {
         const parsed = splitPostprocessedResponse(text);
-        return parsed ? parsed.response : text;
+        if (!parsed) return text;
+        return [parsed.original.trim(), parsed.response.trim()].filter(Boolean).join('\n\n');
     }
 
     /**
@@ -318,16 +320,16 @@
         const d = deps || {};
         let out = String(text || '');
         const thinkBlocks = [];
-        // Host-generated original reply disclosure. JSON framing keeps quoted
-        // markup inert; its contents use the ordinary escaped markdown renderer.
+        // Append-mode post-processing: the agent's reply stays the visible body
+        // and the processor's text follows under its own label. JSON framing
+        // keeps quoted markup inert; the original uses the escaped markdown renderer.
         const processed = splitPostprocessedResponse(out);
         if (processed) {
             const placeholder = '{{CUTTLE_THINK_' + thinkBlocks.length + '}}';
             const content = typeof d.formatMessage === 'function'
                 ? d.formatMessage(processed.original) : d.escapeHtmlInline(processed.original);
-            thinkBlocks.push('<details class="response-original-block"><summary>Original response</summary>'
-                + '<div class="response-original-content">' + content + '</div></details>'
-                + '<div class="response-postprocessed-label">Post-processed response</div>');
+            thinkBlocks.push('<div class="response-original-content">' + content + '</div>'
+                + '<div class="response-postprocessed-label">Added by post-processing</div>');
             out = placeholder + '\n\n' + processed.response;
         }
         const pushThinkBlock = (content) => {

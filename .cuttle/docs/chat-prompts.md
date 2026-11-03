@@ -30,10 +30,13 @@ refreshes it without reloading; disabling preserves its saved preferences.
    These selections are stored independently; Background helpers never supplies
    a default chain. An empty post-processing chain skips the pass.
 
-Descriptions use the standard info tooltips. Append displays **Original response**
-as a collapsed disclosure before the processed response; expanding it renders
-the original Markdown. The same layout survives chat reload. Replace displays
-only the processed reply.
+Descriptions use the standard info tooltips. Append displays the agent's full
+reply as the bubble body, then the processed text under an **Added by
+post-processing** label; copy text carries both in that order. Append skips
+replies shorter than `MIN_APPEND_CHARS` (400) in `api.response_postprocessing`
+(metadata `skipped`/`short`), so a one-liner never gains words the agent did not
+write. The same layout survives chat reload. Replace displays only the
+processed reply.
 
 The pass runs after a successful final reply, before saving, notification and
 delivery. Sync and SSE responses, saved history and pending-result recovery all

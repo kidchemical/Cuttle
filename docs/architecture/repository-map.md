@@ -300,8 +300,8 @@ the opt-in `response_postprocessing` experimental pass via restricted
 `chat_coordinator` also applies it to unclaimed compatibility turns.
 Its executor chain is stored in `response_postprocessing.chain`, independently
 of Background helpers preferences; the shared helper engine and picker provide
-API/CLI capabilities. `chat_messages.js` owns the collapsed original-reply
-disclosure and processed copy text. `settings_chat_preferences.js` owns the General/Agents editors. Behavior and
+API/CLI capabilities. `chat_messages.js` owns the append layout (original
+reply as the body, labelled processed text after) and copy text. `settings_chat_preferences.js` owns the General/Agents editors. Behavior and
 settings contracts: [Chat prompts](../../.cuttle/docs/chat-prompts.md).
 
 **Direct model APIs:** `api.model_providers` owns validated provider manifests,

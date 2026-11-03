@@ -18,6 +18,11 @@ class ClaudeStream:
         self.messages = {}
         self.blocks = {}
         self.last_root_message = None
+        # Root text segments each root ``result`` closed, in order. The CLI's
+        # ``result`` field carries only the last message's text, so a turn
+        # that writes, runs tools, then writes again needs these to be whole.
+        self.result_segments = []
+        self._closed_keys = 0
 
     def _block(self, scope, message_id, index, block, *, complete=False, key=None):
         key = key or f"{scope}:{message_id}:{index}"
@@ -52,6 +57,8 @@ class ClaudeStream:
                 self.activity.emit("Claude Code compacted context", force=True)
         elif typ == "result" and scope == "root":
             self.result = obj
+            self.result_segments.append(self.pending_writing())
+            self._closed_keys = len(self._root_writing_keys())
             if not any(kind == "writing" for kind, key in self.text.buffers):
                 self.text.save("writing", str(obj.get("result") or ""), "result")
         elif typ == "stream_event":
@@ -137,6 +144,23 @@ class ClaudeStream:
         """Every root-level text segment written this run, in order."""
         return [text for (kind, key), text in self.text.buffers.items()
                 if kind == "writing" and key.startswith("root:") and text]
+
+    def _root_writing_keys(self):
+        return [key for key in self.text.buffers if key[0] == "writing" and key[1].startswith("root:")]
+
+    def pending_writing(self):
+        """Root text segments written since the last root ``result``, in order."""
+        keys = self._root_writing_keys()[self._closed_keys:]
+        return [self.text.buffers[key] for key in keys if self.text.buffers[key].strip()]
+
+
+def join_segments(segments, final=""):
+    """Every text segment of a turn in order; ``final`` is added only if no segment carries it."""
+    body = "\n\n".join(s.strip() for s in segments or [] if s and s.strip())
+    final = (final or "").strip()
+    if final and final not in body:
+        body = (body + "\n\n" + final).strip()
+    return body
 
 
 # Interactive Cuttle blocks (choice cards, confirms) render only from the final

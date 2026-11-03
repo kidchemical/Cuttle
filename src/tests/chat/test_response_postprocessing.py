@@ -18,6 +18,7 @@ def settings(monkeypatch, tmp_path):
     monkeypatch.delenv('CUTTLE_EXPERIMENTAL', raising=False)
     private.set_setting('background_helpers', {'chain': [{'kind': 'api', 'target': 'fake'}], 'tasks': {}})
     monkeypatch.setattr(bg, 'generate', lambda *a, **k: pytest.fail('Unexpected executor call'))
+    monkeypatch.setattr(pp, 'MIN_APPEND_CHARS', 0)
     return private
 
 
@@ -39,6 +40,20 @@ def test_success_passes_config_and_preserves_original(settings, monkeypatch, mod
     assert seen[0][2]['chain'] == cp.processor_preferences()['chain']
     pp.process_result(body)
     assert len(seen) == 1  # same terminal body cannot be processed twice
+
+
+def test_append_skips_short_replies_but_replace_still_runs(settings, monkeypatch):
+    """A TL;DR of "ready" invents sentences the agent never wrote (CH-002000 setup turn)."""
+    monkeypatch.setattr(pp, 'MIN_APPEND_CHARS', 400)
+    body = {'success': True, 'response': 'ready'}
+    pp.process_result(body)
+    assert body == {'success': True, 'response': 'ready',
+                    'postprocessing': {'status': 'skipped', 'reason': 'short'}}
+    monkeypatch.setattr(bg, 'generate', lambda *a, **kw: TextResult('Listo'))
+    settings.set_setting('response_postprocessing', {**cp.processor_preferences(), 'mode': 'replace'})
+    body = {'success': True, 'response': 'ready'}
+    pp.process_result(body)
+    assert body['response'] == 'Listo' and body['postprocessing']['status'] == 'completed'
 
 
 @pytest.mark.parametrize('disable', ['flag', 'kill_switch', 'preference', 'no_executor'])

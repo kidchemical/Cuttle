@@ -16,6 +16,9 @@ _CONTROL = re.compile(r'<\s*/?\s*cuttle_[\w-]+\b', re.I)
 _CONTROL_BLOCK = re.compile(
     r'<\s*(cuttle_[\w-]+)\b[^>]*?(?:/\s*>|>[\s\S]*?<\s*/\s*\1\s*>)', re.I)
 MAX_RESPONSE_CHARS = 120000
+# Appending to a reply this short (a one-liner, "ready") only adds words the
+# agent never wrote; replace mode is an explicit rewrite and has no floor.
+MIN_APPEND_CHARS = 400
 
 
 def _split_controls(text):
@@ -59,6 +62,9 @@ def _process_result(result, *, cancelled, status):
         result['postprocessing'] = {'status': 'skipped', 'reason': 'interactive_or_oversized'}
         return
     prose, controls = split
+    if prefs['mode'] == 'append' and len(prose) < MIN_APPEND_CHARS:
+        result['postprocessing'] = {'status': 'skipped', 'reason': 'short'}
+        return
     tail = ''.join('\n\n' + block for block in controls)
     try:
         from api import background_helpers
