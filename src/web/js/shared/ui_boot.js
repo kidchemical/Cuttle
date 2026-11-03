@@ -26,12 +26,15 @@
     /* 'sweep' (default) | 'rise'; css/chat_activity_status.css. */
     var ACTIVITY_STATUS_KEY = 'cuttleActivityStatusStyle';
 
-    /* Text preferences (Settings → Appearance → Text & fonts). Each is one
-       localStorage key; '' / missing = "Use theme setting" (no override).
-       A set value becomes `data-pref-<id>` + `--cuttle-pref-<id>` on <html>;
-       css/text_prefs.css maps them onto the chat surfaces. Values are ids
-       from this table, never raw CSS from storage. */
-    var UI_FONTS = [
+    /* Text preferences (Settings → Appearance → Text & fonts).
+       One row per area of the chat UI, each with a Font and a Size. A missing
+       localStorage value = "Use theme setting" (no override). A set value
+       becomes `data-pref-<id>` + `--cuttle-pref-<id>` on <html>; the area
+       selectors live in css/text_prefs.css. Values are ids from this table,
+       never raw CSS from storage. Sizes are always a % of the theme's size
+       and scale the whole area (CSS zoom), so every piece of text in it —
+       usage lines, timestamps, labels — follows, not just a hand-picked few. */
+    var SANS_FONTS = [
         ['system', 'System UI', "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif"],
         ['inter', 'Inter', "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif"],
         ['plex', 'IBM Plex Sans', "'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif"],
@@ -46,41 +49,55 @@
         ['fira', 'Fira Code', "'Fira Code', ui-monospace, Menlo, Consolas, monospace"],
         ['courier', 'Courier', "'Courier New', Courier, monospace"]
     ];
-    function pxOptions(list) {
-        return list.map(function (n) { return [String(n), n + 'px', n + 'px']; });
-    }
-    function scaleOptions(list) {
-        return list.map(function (n) { return [String(n), n + '%', String(n / 100)]; });
-    }
-    var TEXT_PREFS = [
-        { id: 'font-ui', key: 'cuttlePrefFontUi', label: 'Interface font', options: UI_FONTS },
-        { id: 'font-chat', key: 'cuttlePrefFontChat', label: 'Chat font', options: UI_FONTS },
-        { id: 'font-code', key: 'cuttlePrefFontCode', label: 'Code font', options: CODE_FONTS },
-        { id: 'size-chat', key: 'cuttlePrefSizeChat', label: 'Message text size', options: pxOptions([12, 13, 14, 15, 16, 17, 18, 20, 22]) },
-        { id: 'size-code', key: 'cuttlePrefSizeCode', label: 'Code text size', options: pxOptions([11, 12, 13, 14, 15, 16, 18]) },
-        { id: 'size-composer', key: 'cuttlePrefSizeComposer', label: 'Composer text size', options: pxOptions([13, 14, 15, 16, 17, 18, 20]) },
-        { id: 'scale-chips', key: 'cuttlePrefScaleChips', label: 'Chips & badges size', options: scaleOptions([80, 90, 100, 110, 125, 140]) },
-        { id: 'scale-history', key: 'cuttlePrefScaleHistory', label: 'Chat history list size', options: scaleOptions([85, 90, 100, 110, 125, 140]) }
+    var SIZE_SCALE = [85, 90, 100, 110, 125, 150].map(function (n) {
+        return [String(n), n + '%', String(n / 100)];
+    });
+    /* hint: what the row covers (settings tooltip). size:false = no size
+       (the interface already scales with app / browser zoom). */
+    var TEXT_AREAS = [
+        { area: 'messages', label: 'Messages', fonts: SANS_FONTS, size: true,
+          hint: 'Message text plus everything in the transcript: names, timestamps, token usage, status lines, cards.' },
+        { area: 'composer', label: 'Composer', fonts: SANS_FONTS, size: true,
+          hint: 'The message box and everything around it: chips, buttons, context and usage readouts.' },
+        { area: 'code', label: 'Code', fonts: CODE_FONTS, size: true,
+          hint: 'Code blocks, inline code, paths and chat handles. Use theme setting follows the text around it; a picked size is exact.' },
+        { area: 'chips', label: 'Chips & badges', fonts: SANS_FONTS, size: true,
+          hint: 'Agent, project, command, file and attachment chips. Use theme setting follows the area they sit in; a picked size is exact.' },
+        { area: 'history', label: 'Chat history', fonts: SANS_FONTS, size: true,
+          hint: 'The chat history sidebar: search, filters and the chat list.' },
+        { area: 'interface', label: 'Interface', fonts: SANS_FONTS, size: false,
+          hint: 'Everything else: headers, menus, dialogs, settings and other apps. Use Ctrl +/− (app or browser zoom) for its size.' }
     ];
+    var TEXT_PREFS = [];
+    TEXT_AREAS.forEach(function (a) {
+        var cap = a.area.charAt(0).toUpperCase() + a.area.slice(1);
+        TEXT_PREFS.push({ id: 'font-' + a.area, key: 'cuttlePrefFont' + cap, area: a.area, kind: 'font', options: a.fonts });
+        if (a.size) TEXT_PREFS.push({ id: 'size-' + a.area, key: 'cuttlePrefSize' + cap, area: a.area, kind: 'size', options: SIZE_SCALE });
+    });
 
-    /* Chip visibility (Settings → Appearance → Chat chips). On by default;
-       localStorage '0' hides it via `data-hide-<id>` on <html>
-       (css/chat_chip_prefs.css). Purely visual: a hidden composer chip
-       still applies its project / sticky agent to the next send. */
-    var CHIP_PREFS = [
-        { id: 'bubble-project', key: 'cuttleChipBubbleProject', label: 'Project chip in messages' },
-        { id: 'bubble-agent', key: 'cuttleChipBubbleAgent', label: 'Agent chip in messages' },
-        { id: 'composer-project', key: 'cuttleChipComposerProject', label: 'Project chip in composer' },
-        { id: 'composer-agent', key: 'cuttleChipComposerAgent', label: 'Agent chip in composer' }
-    ];
-
-    function applyChipPrefs() {
-        for (var i = 0; i < CHIP_PREFS.length; i++) {
-            var hidden = read(CHIP_PREFS[i].key) === '0';
-            if (hidden) root.setAttribute('data-hide-' + CHIP_PREFS[i].id, '');
-            else root.removeAttribute('data-hide-' + CHIP_PREFS[i].id);
-        }
+    /* One-time move from the first Text & fonts layout (mixed px / % rows). */
+    function migrateTextPrefs() {
+        try {
+            if (localStorage.getItem('cuttlePrefTextV') === '2') return;
+            var ui = localStorage.getItem('cuttlePrefFontUi');
+            var chat = localStorage.getItem('cuttlePrefFontChat');
+            if (ui && !localStorage.getItem('cuttlePrefFontInterface')) localStorage.setItem('cuttlePrefFontInterface', ui);
+            if (chat) {
+                if (!localStorage.getItem('cuttlePrefFontMessages')) localStorage.setItem('cuttlePrefFontMessages', chat);
+                if (!localStorage.getItem('cuttlePrefFontComposer')) localStorage.setItem('cuttlePrefFontComposer', chat);
+            }
+            var chips = localStorage.getItem('cuttlePrefScaleChips');
+            var hist = localStorage.getItem('cuttlePrefScaleHistory');
+            if (chips && !localStorage.getItem('cuttlePrefSizeChips')) localStorage.setItem('cuttlePrefSizeChips', chips);
+            if (hist && !localStorage.getItem('cuttlePrefSizeHistory')) localStorage.setItem('cuttlePrefSizeHistory', hist);
+            ['cuttlePrefFontUi', 'cuttlePrefFontChat', 'cuttlePrefSizeChat', 'cuttlePrefSizeCode',
+             'cuttlePrefSizeComposer', 'cuttlePrefScaleChips', 'cuttlePrefScaleHistory'].forEach(function (k) {
+                localStorage.removeItem(k);
+            });
+            localStorage.setItem('cuttlePrefTextV', '2');
+        } catch (_) {}
     }
+    migrateTextPrefs();
 
     function textPrefValue(pref) {
         var raw = read(pref.key);
@@ -103,6 +120,26 @@
             }
         }
     }
+
+    /* Chip visibility (Settings → Appearance → Chat chips). On by default;
+       localStorage '0' hides it via `data-hide-<id>` on <html>
+       (css/chat_chip_prefs.css). Purely visual: a hidden composer chip
+       still applies its project / sticky agent to the next send. */
+    var CHIP_PREFS = [
+        { id: 'bubble-project', key: 'cuttleChipBubbleProject', label: 'Project chip in messages' },
+        { id: 'bubble-agent', key: 'cuttleChipBubbleAgent', label: 'Agent chip in messages' },
+        { id: 'composer-project', key: 'cuttleChipComposerProject', label: 'Project chip in composer' },
+        { id: 'composer-agent', key: 'cuttleChipComposerAgent', label: 'Agent chip in composer' }
+    ];
+
+    function applyChipPrefs() {
+        for (var i = 0; i < CHIP_PREFS.length; i++) {
+            var hidden = read(CHIP_PREFS[i].key) === '0';
+            if (hidden) root.setAttribute('data-hide-' + CHIP_PREFS[i].id, '');
+            else root.removeAttribute('data-hide-' + CHIP_PREFS[i].id);
+        }
+    }
+
 
     /* Every theme rides on one of the three base classes so page stylesheets
        that only know dark/midnight/light keep working; non-base themes add a
@@ -806,30 +843,25 @@
         animationsEnabled: animationsEnabled,
         transitionMs: transitionMs,
         refresh: apply,
-        /** [{id, key, label, options:[{value, label}]}] — '' means theme default. */
-        textPrefs: function () {
-            return TEXT_PREFS.map(function (p) {
-                return {
-                    id: p.id, key: p.key, label: p.label,
-                    value: (textPrefValue(p) || [''])[0],
-                    options: p.options.map(function (o) { return { value: o[0], label: o[1] }; })
-                };
-            });
-        },
-        /** [{id, key, label, enabled}] — chip visibility toggles. */
-        chipPrefs: function () {
-            return CHIP_PREFS.map(function (p) {
-                return { id: p.id, key: p.key, label: p.label, enabled: read(p.key) !== '0' };
-            });
-        },
-        setChipPref: function (id, enabled) {
-            for (var i = 0; i < CHIP_PREFS.length; i++) {
-                if (CHIP_PREFS[i].id !== id) continue;
-                write(CHIP_PREFS[i].key, enabled ? '1' : '0');
-                applyChipPrefs();
-                return true;
+        /** Areas for Settings: [{area, label, hint, font:{id,value,options}, size:{…}|null}].
+            Option value '' = "Use theme setting". */
+        textAreas: function () {
+            function pick(id) {
+                for (var i = 0; i < TEXT_PREFS.length; i++) {
+                    var p = TEXT_PREFS[i];
+                    if (p.id !== id) continue;
+                    return {
+                        id: p.id, key: p.key,
+                        value: (textPrefValue(p) || [''])[0],
+                        options: p.options.map(function (o) { return { value: o[0], label: o[1] }; })
+                    };
+                }
+                return null;
             }
-            return false;
+            return TEXT_AREAS.map(function (a) {
+                return { area: a.area, label: a.label, hint: a.hint,
+                         font: pick('font-' + a.area), size: a.size ? pick('size-' + a.area) : null };
+            });
         },
         setTextPref: function (id, value) {
             for (var i = 0; i < TEXT_PREFS.length; i++) {
