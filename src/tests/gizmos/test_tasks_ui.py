@@ -28,7 +28,7 @@ def test_tasks_render_tool_progress_and_shared_edits():
             if path == '/fixture':
                 return route.fulfill(body=fixture, content_type='text/html')
             if path == '/tasks.js':
-                return route.fulfill(body=SCRIPT.read_text(), content_type='text/javascript')
+                return route.fulfill(body=SCRIPT.read_text(encoding="utf-8"), content_type='text/javascript')
             if path == '/api/gizmos/tasks':
                 return route.fulfill(json={'success': True, 'gizmos': state['rows'], 'revision': state['revision']})
             if path.endswith('/items/a'):
@@ -85,7 +85,7 @@ def test_tasks_refresh_preserves_each_list_scroll_and_skips_unchanged_paint(widt
             if path == '/fixture':
                 return route.fulfill(body=fixture, content_type='text/html')
             if path == '/tasks.js':
-                return route.fulfill(body=SCRIPT.read_text(), content_type='text/javascript')
+                return route.fulfill(body=SCRIPT.read_text(encoding="utf-8"), content_type='text/javascript')
             if path == '/api/gizmos/tasks':
                 return route.fulfill(json={'success': True, 'gizmos': state['rows'],
                                            'revision': state['revision']})
@@ -155,7 +155,7 @@ def test_linked_lists_say_linked_and_open_the_tasks_app():
             if path == '/fixture':
                 return route.fulfill(body=fixture, content_type='text/html')
             if path == '/tasks.js':
-                return route.fulfill(body=SCRIPT.read_text(), content_type='text/javascript')
+                return route.fulfill(body=SCRIPT.read_text(encoding="utf-8"), content_type='text/javascript')
             if path == '/api/gizmos/tasks':
                 return route.fulfill(json={'success': True, 'gizmos': rows, 'revision': 1})
             patches.append(path)
