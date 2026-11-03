@@ -9,6 +9,12 @@
  *
  * Tab ids are read from the markup (.settings-tab[data-tab]) rather than a
  * hardcoded list, so adding a tab is a markup edit.
+ *
+ * Layout: the tab list is a vertical sidebar. Narrow screens show it as an
+ * index you tap into; `body[data-settings-view]` (index|panel) carries that
+ * state and only the phone media query reads it. Every tab change fires
+ * `cuttle:settings-tab` on document so the subpage owner
+ * (settings_subpages.js) can reset its breadcrumb without importing this.
  */
 (function () {
     'use strict';
@@ -55,6 +61,12 @@
         return normalize(fromUrl) || normalize(readStored()) || tabIds()[0] || null;
     }
 
+    function hasUrlTab() {
+        try {
+            return !!normalize(new URLSearchParams(window.location.search).get('tab'));
+        } catch (_) { return false; }
+    }
+
     function syncUrl(id) {
         if (!window.history || typeof window.history.replaceState !== 'function') return;
         try {
@@ -63,6 +75,23 @@
             else url.searchParams.delete('tab');
             window.history.replaceState(null, '', url.pathname + url.search + url.hash);
         } catch (_) {}
+    }
+
+    function setView(view) {
+        const body = document.body;
+        if (body && typeof body.setAttribute === 'function') body.setAttribute('data-settings-view', view);
+    }
+
+    function emit(name, detail) {
+        if (typeof document.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+        try { document.dispatchEvent(new CustomEvent(name, { detail: detail })); } catch (_) {}
+    }
+
+    function tabLabel(id) {
+        const btn = document.querySelector(TAB_SELECTOR + '[data-tab="' + id + '"]');
+        if (!btn) return id;
+        const label = btn.querySelector ? btn.querySelector('.settings-tab-label') : null;
+        return String((label || btn).textContent || id).trim();
     }
 
     function runLoaders(id) {
@@ -98,13 +127,24 @@
             writeStored(next);
             if (options.syncUrl !== false) syncUrl(next);
         }
+        if (options.view !== false) setView('panel');
         // Panels stay in the DOM (hidden), so loaders are safe to run on
         // activation rather than at page load — that is what keeps a phone from
         // fetching API keys, LAN status, and TTS prefs it will never look at.
         runLoaders(next);
 
         if (typeof options.onChange === 'function') options.onChange(next);
+        emit('cuttle:settings-tab', { tab: next, label: tabLabel(next) });
         return next;
+    }
+
+    /** Phone: back to the category list. Desktop keeps the panel (CSS ignores the view). */
+    function showIndex() {
+        setView('index');
+        syncUrl(null);
+        emit('cuttle:settings-index', { tab: current });
+        const btn = current ? focusTab(current) : null;
+        if (!btn && typeof window.scrollTo === 'function') window.scrollTo(0, 0);
     }
 
     function currentTab() {
@@ -171,10 +211,13 @@
 
         // Tabs are requested while hidden tabs are still loading; run the
         // restored tab's loaders once its panel is actually displayed.
+        // A deep link opens its panel; a bare visit starts on the phone index.
+        const linked = hasUrlTab();
         const initial = readInitialTab();
-        setTab(initial, { persist: false, syncUrl: false });
+        setTab(initial, { persist: false, syncUrl: false, view: false });
+        setView(linked ? 'panel' : 'index');
         writeStored(initial);
-        syncUrl(initial);
+        if (linked) syncUrl(initial);
     }
 
     window.CuttleSettingsTabs = {
@@ -184,5 +227,7 @@
         register: register,
         refresh: refresh,
         tabIds: tabIds,
+        tabLabel: tabLabel,
+        showIndex: showIndex,
     };
 })();
