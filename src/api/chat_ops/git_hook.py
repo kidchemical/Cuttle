@@ -6,8 +6,8 @@ by exiting non-zero in the ``prepared`` phase. Protected branches are standard
 per-repository git config (``git config --add cuttle.protectBranch <branch>``),
 shared by every worktree and never in the tree. Only supervised agent turns are
 refused: processes carrying ``CUTTLE_SUPERVISED`` (set by the turn launcher for
-sub-agent children, orchestrator lanes and chats under a live supervise
-schedule; see :func:`supervised_reason`) whose own checkout
+sub-agent children, orchestrator lanes and chats under a live, unpaused
+supervise schedule; see :func:`supervised_reason`) whose own checkout
 (``CUTTLE_AGENT_PROJECT_PATH``) is not on that branch. A top-level chat the user
 drives directly, an agent working in the branch's own checkout, the user's
 terminal, editors and the Git UI pass. The hook never calls Cuttle, so it works
@@ -73,14 +73,15 @@ def supervised_reason(session_id, db=None):
     """Why a chat's agent turns run unattended, for ``CUTTLE_SUPERVISED``; '' when user-driven.
 
     ``subagent`` covers child chats (orchestrator lanes are spawned as children);
-    ``supervised`` covers targets of a supervise schedule in force (paused included).
+    ``supervised`` covers targets of a supervise schedule that is live; a paused schedule
+    does not count (the chat is user-driven while its supervision is paused).
     """
     try:
         sid = int(session_id)
     except (TypeError, ValueError):
         return ''
     from api.chat_ops import store
-    if sid in store.supervisor_links():
+    if store.actively_supervised(sid):
         return 'supervised'
     if db is None:
         from api.auth_db import get_auth_db

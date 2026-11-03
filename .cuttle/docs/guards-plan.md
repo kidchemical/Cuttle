@@ -17,7 +17,8 @@ and aborts the transaction by exiting non-zero in the `prepared` phase.
 - **Whose updates**: only supervised agent turns — processes carrying
   `CUTTLE_SUPERVISED` (non-empty reason: `subagent` for child chats, which
   includes orchestrator lanes; `supervised` for targets of a `chat_cli
-  supervise` schedule in force) whose own checkout (`CUTTLE_AGENT_PROJECT_PATH`)
+  supervise` schedule that is live; a paused
+  schedule does not count) whose own checkout (`CUTTLE_AGENT_PROJECT_PATH`)
   is not on that branch, so agents working in the dev/core checkout keep
   working. The kernel sets the marker per turn (`git_hook.supervised_reason`).
   A top-level chat the user drives directly may update protected branches when

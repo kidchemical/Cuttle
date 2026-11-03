@@ -96,6 +96,14 @@ def test_supervised_reason_marks_subagents_and_supervised_targets_only(chats, mo
     assert git_hook.supervised_reason(child, db=db) == "subagent"
     service.supervise(f"CH-{target:06d}", f"CH-{sup:06d}", every=900, instructions="watch", db=db)
     assert git_hook.supervised_reason(target, db=db) == "supervised"
+    # Paused supervision is not supervision: the chat is the user's again until resumed.
+    op = store.supervising([target])[0]
+    store.set_paused(op["id"], op["actor"], True)
+    assert git_hook.supervised_reason(target, db=db) == ""
+    assert store.supervisor_links().get(target) == sup  # UI grouping still sees the paused link
+    assert git_hook.supervised_reason(child, db=db) == "subagent"
+    store.set_paused(op["id"], op["actor"], False)
+    assert git_hook.supervised_reason(target, db=db) == "supervised"
     # The supervisor chat itself is the user's, not supervised.
     assert git_hook.supervised_reason(sup, db=db) == ""
 

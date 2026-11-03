@@ -186,12 +186,22 @@ def patch_result(oid, **fields):
 
 def supervisor_links():
     """``{target: actor}`` for supervision schedules still in force (paused
-    included); when a chat has several supervisors the newest one wins."""
+    included, for UI grouping); when a chat has several supervisors the newest
+    one wins. Use :func:`actively_supervised` to ask whether a chat is
+    supervised right now."""
     with connection() as conn:
         rows = conn.execute(
             "SELECT actor, target FROM operations WHERE kind='supervise' "
             "AND state IN ('pending','dispatching','paused') ORDER BY updated ASC").fetchall()
     return {int(r['target']): int(r['actor']) for r in rows}
+
+
+def actively_supervised(target):
+    """Whether ``target`` has a live (pending/dispatching, not paused) supervision schedule."""
+    with connection() as conn:
+        return conn.execute(
+            "SELECT 1 FROM operations WHERE kind='supervise' AND state IN ('pending','dispatching') "
+            "AND target=? LIMIT 1", (int(target),)).fetchone() is not None
 
 
 def supervising(targets):
