@@ -8,7 +8,8 @@
  *
  * localStorage keys: theme, cuttleVideoBackgroundActive,
  * cuttleBackgroundEffectBlend, cuttleUiAnimations, cuttleUiTransitionMs,
- * cuttleVideoBackgroundList, cuttleVideoBackgroundEnabled, cuttleChatBubbles
+ * cuttleVideoBackgroundList, cuttleVideoBackgroundEnabled, cuttleChatBubbles,
+ * cuttleActivityStatusStyle
  */
 (function () {
     'use strict';
@@ -22,6 +23,67 @@
     var ANIM_MS_KEY = 'cuttleUiTransitionMs';
     /* '0' = flat chat messages (no bubbles); css/chat_flat_messages.css. */
     var CHAT_BUBBLES_KEY = 'cuttleChatBubbles';
+    /* 'sweep' (default) | 'rise'; css/chat_activity_status.css. */
+    var ACTIVITY_STATUS_KEY = 'cuttleActivityStatusStyle';
+
+    /* Text preferences (Settings → Appearance → Text & fonts). Each is one
+       localStorage key; '' / missing = "Use theme setting" (no override).
+       A set value becomes `data-pref-<id>` + `--cuttle-pref-<id>` on <html>;
+       css/text_prefs.css maps them onto the chat surfaces. Values are ids
+       from this table, never raw CSS from storage. */
+    var UI_FONTS = [
+        ['system', 'System UI', "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif"],
+        ['inter', 'Inter', "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif"],
+        ['plex', 'IBM Plex Sans', "'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif"],
+        ['rounded', 'Rounded', "ui-rounded, 'SF Pro Rounded', 'Nunito', 'Varela Round', system-ui, sans-serif"],
+        ['serif', 'Serif', "ui-serif, Georgia, 'Iowan Old Style', 'Times New Roman', serif"],
+        ['mono', 'Monospace', "ui-monospace, 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace"]
+    ];
+    var CODE_FONTS = [
+        ['system', 'System monospace', "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"],
+        ['cascadia', 'Cascadia Code', "'Cascadia Code', 'Cascadia Mono', ui-monospace, Consolas, monospace"],
+        ['jetbrains', 'JetBrains Mono', "'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace"],
+        ['fira', 'Fira Code', "'Fira Code', ui-monospace, Menlo, Consolas, monospace"],
+        ['courier', 'Courier', "'Courier New', Courier, monospace"]
+    ];
+    function pxOptions(list) {
+        return list.map(function (n) { return [String(n), n + 'px', n + 'px']; });
+    }
+    function scaleOptions(list) {
+        return list.map(function (n) { return [String(n), n + '%', String(n / 100)]; });
+    }
+    var TEXT_PREFS = [
+        { id: 'font-ui', key: 'cuttlePrefFontUi', label: 'Interface font', options: UI_FONTS },
+        { id: 'font-chat', key: 'cuttlePrefFontChat', label: 'Chat font', options: UI_FONTS },
+        { id: 'font-code', key: 'cuttlePrefFontCode', label: 'Code font', options: CODE_FONTS },
+        { id: 'size-chat', key: 'cuttlePrefSizeChat', label: 'Message text size', options: pxOptions([12, 13, 14, 15, 16, 17, 18, 20, 22]) },
+        { id: 'size-code', key: 'cuttlePrefSizeCode', label: 'Code text size', options: pxOptions([11, 12, 13, 14, 15, 16, 18]) },
+        { id: 'size-composer', key: 'cuttlePrefSizeComposer', label: 'Composer text size', options: pxOptions([13, 14, 15, 16, 17, 18, 20]) },
+        { id: 'scale-chips', key: 'cuttlePrefScaleChips', label: 'Chips & badges size', options: scaleOptions([80, 90, 100, 110, 125, 140]) },
+        { id: 'scale-history', key: 'cuttlePrefScaleHistory', label: 'Chat history list size', options: scaleOptions([85, 90, 100, 110, 125, 140]) }
+    ];
+
+    function textPrefValue(pref) {
+        var raw = read(pref.key);
+        for (var i = 0; i < pref.options.length; i++) {
+            if (pref.options[i][0] === raw) return pref.options[i];
+        }
+        return null;
+    }
+
+    function applyTextPrefs() {
+        for (var i = 0; i < TEXT_PREFS.length; i++) {
+            var pref = TEXT_PREFS[i];
+            var opt = textPrefValue(pref);
+            if (opt) {
+                root.setAttribute('data-pref-' + pref.id, opt[0]);
+                root.style.setProperty('--cuttle-pref-' + pref.id, opt[2]);
+            } else {
+                root.removeAttribute('data-pref-' + pref.id);
+                root.style.removeProperty('--cuttle-pref-' + pref.id);
+            }
+        }
+    }
 
     /* Every theme rides on one of the three base classes so page stylesheets
        that only know dark/midnight/light keep working; non-base themes add a
@@ -431,6 +493,8 @@
         root.classList.toggle('in-shell', framed);
         root.classList.toggle('cuttle-anim', animationsEnabled());
         root.classList.toggle('cuttle-flat-messages', read(CHAT_BUBBLES_KEY) === '0');
+        root.setAttribute('data-activity-status', read(ACTIVITY_STATUS_KEY) === 'rise' ? 'rise' : 'sweep');
+        applyTextPrefs();
         root.classList.add('cuttle-booted');
         root.style.setProperty('--cuttle-transition-ms', transitionMs() + 'ms');
         if (state.video) write(VIDEO_ACTIVE_KEY, '1');
@@ -722,6 +786,28 @@
         animationsEnabled: animationsEnabled,
         transitionMs: transitionMs,
         refresh: apply,
+        /** [{id, key, label, options:[{value, label}]}] — '' means theme default. */
+        textPrefs: function () {
+            return TEXT_PREFS.map(function (p) {
+                return {
+                    id: p.id, key: p.key, label: p.label,
+                    value: (textPrefValue(p) || [''])[0],
+                    options: p.options.map(function (o) { return { value: o[0], label: o[1] }; })
+                };
+            });
+        },
+        setTextPref: function (id, value) {
+            for (var i = 0; i < TEXT_PREFS.length; i++) {
+                if (TEXT_PREFS[i].id !== id) continue;
+                try {
+                    if (value) localStorage.setItem(TEXT_PREFS[i].key, String(value));
+                    else localStorage.removeItem(TEXT_PREFS[i].key);
+                } catch (_) {}
+                applyTextPrefs();
+                return true;
+            }
+            return false;
+        },
         themes: THEMES.map(function (t) {
             return { id: t.id, label: t.label, icon: t.icon, base: t.base, group: t.group };
         }),

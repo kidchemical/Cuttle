@@ -1,0 +1,81 @@
+/* Activity status style "Rise" (Settings → Appearance → Activity status).
+ *
+ * ui_boot.js sets <html data-activity-status="rise">; js/chat/chat_status_motion.js
+ * wraps each status text in .status-motion-line and passes the previous text
+ * through data-status-prev. Plain text instead of the gradient sweep: the new
+ * line rises in and fades in; the old one rises away and fades out.
+ */
+
+:root[data-activity-status="rise"] .typing-status,
+:root[data-activity-status="rise"].theme-glitch .typing-status {
+    position: relative;
+    font-style: normal;
+    background: none;
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+    color: var(--text-secondary);
+    filter: none;
+    animation: none;
+}
+
+:root[data-activity-status="rise"] .typing-status > .status-motion-line {
+    display: block;
+    animation: cuttle-status-rise-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+:root[data-activity-status="rise"] .typing-status.status-motion-a::before,
+:root[data-activity-status="rise"] .typing-status.status-motion-b::before {
+    content: attr(data-status-prev);
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    pointer-events: none;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+:root[data-activity-status="rise"] .typing-status.status-motion-a::before {
+    animation: cuttle-status-rise-out-a 320ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+:root[data-activity-status="rise"] .typing-status.status-motion-b::before {
+    animation: cuttle-status-rise-out-b 320ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@keyframes cuttle-status-rise-in {
+    from { opacity: 0; transform: translateY(0.75em); }
+    to { opacity: 1; transform: none; }
+}
+
+/* Two identical keyframes: alternating between them restarts the ghost. */
+@keyframes cuttle-status-rise-out-a {
+    from { opacity: 1; transform: none; }
+    to { opacity: 0; transform: translateY(-0.75em); }
+}
+
+@keyframes cuttle-status-rise-out-b {
+    from { opacity: 1; transform: none; }
+    to { opacity: 0; transform: translateY(-0.75em); }
+}
+
+/* Sub-agent fleet cards borrow the sweep; keep them plain in this style. */
+:root[data-activity-status="rise"] .subagent-fleet-summary--live {
+    background: none;
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+    color: var(--text-secondary);
+    font-style: normal;
+    animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root[data-activity-status="rise"] .typing-status > .status-motion-line {
+        animation: none;
+    }
+    :root[data-activity-status="rise"] .typing-status.status-motion-a::before,
+    :root[data-activity-status="rise"] .typing-status.status-motion-b::before {
+        display: none;
+    }
+}

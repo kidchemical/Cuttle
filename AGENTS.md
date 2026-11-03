@@ -118,6 +118,7 @@ the post-refactor baseline: `chat_page.js` 13,405 / `app_shell.js` 4,182 /
 | Task | Owner (code) | Entry interface | Tests |
 |---|---|---|---|
 | New chat-page feature | `src/web/js/chat/chat_<domain>.js` owner (pure module + controller with explicit `host`/`deps`); `chat_page.js` only orchestrates | owner namespace (`Cuttle*`) + `create(host)` | owner suite + `test_composition_root_delegation.py` |
+| Inline transcript row (not a user/assistant bubble) | pick the family in `docs/architecture/chat-inline-surfaces.md`: **timeline notice** `chat_timeline_notice.js` (facts: project/worktree/stop/model/compacted), **live status card** `chat_background_work.js` (running work, pinned last), **action card** (`cuttle_action_form`); never a hand-rolled row | `addSystemMessage({type,label,detail,state}, opts)` / `CuttleChatBackgroundWork` / action-forms runbook | `test_chat_timeline_notice.py` + `e2e/test_chat_background_work.py` |
 | New shell feature | `src/web/js/shell/shell_<domain>.js` owner; `app_shell.js` composes | `CuttleShell*` namespace | `src/tests/shell/` + `test_composition_root_delegation.py` |
 | New backend route family | an `api.<owner>.routes` blueprint (never a new `@app.route` on `web_chat_api.py`) | blueprint `register_blueprint` | `test_architecture_boundaries.py` + route suite |
 | New settings route | `src/api/settings_routes.py` + `managers/settings_manager.py` (never `web_chat_api.py`) | HTTP route + `get_settings_manager()` | settings suites |

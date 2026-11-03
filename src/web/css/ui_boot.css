@@ -10,6 +10,7 @@
 @import url("safe_area.css");
 @import url("design_tokens.css?v=20261025polish");
 @import url("themes.css?v=20260923themes");
+@import url("text_prefs.css?v=20261102prefs");
 
 :root {
     --cuttle-transition-ms: 220ms;

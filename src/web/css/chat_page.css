@@ -3018,7 +3018,7 @@ body.has-video-background .chat-restore-loader {
     box-sizing: border-box;
 }
 .timeline-notice-icon { flex-shrink: 0; line-height: 1; }
-.timeline-notice-label { font-weight: 600; overflow-wrap: anywhere; }
+.timeline-notice-label { font-weight: 500; overflow-wrap: anywhere; }
 .timeline-notice-detail {
     color: var(--text-secondary);
     font-variant-numeric: tabular-nums;

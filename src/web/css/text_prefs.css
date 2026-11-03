@@ -1,0 +1,55 @@
+/* Text & font preferences (Settings → Appearance → Text & fonts).
+ *
+ * js/shared/ui_boot.js sets `data-pref-<id>` + `--cuttle-pref-<id>` on <html>
+ * only when the user picked a value; "Use theme setting" leaves both unset,
+ * so nothing here applies and each theme (e.g. Matrix's monospace) keeps its
+ * own type. When set, the choice beats the theme on purpose — hence the
+ * `body` in each selector and !important on font-family (themes.css uses it).
+ * Imported by ui_boot.css after themes.css, so it reaches every page.
+ */
+
+/* Fonts */
+:root[data-pref-font-ui] body,
+:root[data-pref-font-ui] body :is(button, input, select, textarea, h1, h2, h3, h4, h5, h6) {
+    font-family: var(--cuttle-pref-font-ui) !important;
+}
+
+:root[data-pref-font-chat] body .message-content,
+:root[data-pref-font-chat] body .message-content :is(h1, h2, h3, h4, h5, h6),
+:root[data-pref-font-chat] body .chat-input {
+    font-family: var(--cuttle-pref-font-chat) !important;
+}
+
+:root[data-pref-font-code] body .message-content :is(code, pre, pre code, kbd, samp),
+:root[data-pref-font-code] body .message-content pre code.hljs {
+    font-family: var(--cuttle-pref-font-code) !important;
+}
+
+/* Sizes (px) */
+:root[data-pref-size-chat] body .message-content {
+    font-size: var(--cuttle-pref-size-chat);
+}
+
+:root[data-pref-size-code] body .message-content :is(code, pre),
+:root[data-pref-size-code] body .message-content pre code {
+    font-size: var(--cuttle-pref-size-code);
+}
+
+:root[data-pref-size-composer] body .chat-input {
+    font-size: var(--cuttle-pref-size-composer);
+}
+
+/* Scales: these surfaces are built in px, so zoom keeps their proportions. */
+:root[data-pref-scale-chips] body :is(
+    .slash-command-chip,
+    .md-link-chip,
+    .attach-chip,
+    .history-filter-chip,
+    a.chat-handle-link
+) {
+    zoom: var(--cuttle-pref-scale-chips);
+}
+
+:root[data-pref-scale-history] body .chat-history {
+    zoom: var(--cuttle-pref-scale-history);
+}

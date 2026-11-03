@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Settings - Cuttle</title>
-    <link rel="stylesheet" href="/css/ui_boot.css?v=20260927blendTarget">
-    <script src="/js/shared/ui_boot.js?v=20260926safeArea"></script>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20261102prefs">
+    <script src="/js/shared/ui_boot.js?v=20261102prefs"></script>
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20261028gpuBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261015glass">
@@ -205,6 +205,17 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
+                        <strong>Activity Status Style</strong><button type="button" class="cuttle-info" data-tooltip="How the live status line (thoughts, tool calls) looks while an agent works." aria-label="About Activity Status Style">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <select id="activityStatusStyleSelect" class="setting-input" style="min-width: 200px;" onchange="changeActivityStatusStyle()">
+                            <option value="sweep">Gradient sweep</option>
+                            <option value="rise">Rise &amp; fade</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
                         <strong>Page Transitions</strong><button type="button" class="cuttle-info" data-tooltip="Fade gently when switching pages." aria-label="About Page Transitions">i</button>
                     </div>
                     <div class="setting-control">
@@ -301,6 +312,18 @@
                     </div>
                 </div>
 </details>
+            </div>
+            <div class="settings-group" id="textPrefsGroup">
+                <h3 class="settings-title"><span class="emoji">🔤</span> Text &amp; fonts <span class="settings-scope" data-scope="device" title="Stored in this browser only.">This device</span><button type="button" class="cuttle-info" data-tooltip="Fonts and sizes for chats, code, chips and the history list. &quot;Use theme setting&quot; keeps each theme's own type." aria-label="About Text &amp; fonts">i</button></h3>
+                <div id="textPrefsRows"></div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Reset text &amp; fonts</strong><button type="button" class="cuttle-info" data-tooltip="Set every row above back to Use theme setting." aria-label="About Reset text &amp; fonts">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <button type="button" class="control-button" onclick="window.cuttleTextPrefs &amp;&amp; window.cuttleTextPrefs.resetAll()">Use theme for all</button>
+                    </div>
+                </div>
             </div>
             </section>
 
@@ -899,6 +922,7 @@
     <script src="/js/settings/settings_background_helpers.js?v=20261016separateProcessor"></script>
     <script src="/js/settings/settings_voice_providers.js?v=20261028guide"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
+    <script src="/js/settings/settings_text_prefs.js?v=20261102prefs"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
     <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
     <script>
@@ -959,6 +983,16 @@
             const on = localStorage.getItem(CHAT_BUBBLES_KEY) === '0';
             localStorage.setItem(CHAT_BUBBLES_KEY, on ? '1' : '0');
             loadChatBubbleSettings();
+            loadActivityStatusStyle();
+            if (window.CuttleSettingsTextPrefs && window.CuttleUiBoot) {
+                window.cuttleTextPrefs = window.CuttleSettingsTextPrefs.create({
+                    boot: window.CuttleUiBoot,
+                    container: document.getElementById('textPrefsRows'),
+                    notify: notifyUiAnimChange,
+                    toast: (msg) => (window.showToast || showNotification)(msg, 'info'),
+                });
+                window.cuttleTextPrefs.render();
+            }
             notifyUiAnimChange();
             (window.showToast || showNotification)(on ? 'Message bubbles enabled' : 'Message bubbles disabled', 'info');
         }
@@ -969,6 +1003,21 @@
             const checkbox = document.getElementById('chatBubblesEnabled');
             if (toggle) toggle.classList.toggle('active', enabled);
             if (checkbox) checkbox.checked = enabled;
+        }
+
+        const ACTIVITY_STATUS_KEY = 'cuttleActivityStatusStyle';
+
+        function changeActivityStatusStyle() {
+            const select = document.getElementById('activityStatusStyleSelect');
+            const style = select && select.value === 'rise' ? 'rise' : 'sweep';
+            localStorage.setItem(ACTIVITY_STATUS_KEY, style);
+            notifyUiAnimChange();
+            (window.showToast || showNotification)(style === 'rise' ? 'Activity status: rise & fade' : 'Activity status: gradient sweep', 'info');
+        }
+
+        function loadActivityStatusStyle() {
+            const select = document.getElementById('activityStatusStyleSelect');
+            if (select) select.value = localStorage.getItem(ACTIVITY_STATUS_KEY) === 'rise' ? 'rise' : 'sweep';
         }
 
         function previewUiTransitionMs() {
