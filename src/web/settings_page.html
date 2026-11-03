@@ -988,24 +988,6 @@
             const on = localStorage.getItem(CHAT_BUBBLES_KEY) === '0';
             localStorage.setItem(CHAT_BUBBLES_KEY, on ? '1' : '0');
             loadChatBubbleSettings();
-            loadActivityStatusStyle();
-            if (window.CuttleSettingsTextPrefs && window.CuttleUiBoot) {
-                window.cuttleTextPrefs = window.CuttleSettingsTextPrefs.create({
-                    boot: window.CuttleUiBoot,
-                    container: document.getElementById('textPrefsRows'),
-                    notify: notifyUiAnimChange,
-                    toast: (msg) => (window.showToast || showNotification)(msg, 'info'),
-                });
-                window.cuttleTextPrefs.render();
-            }
-            if (window.CuttleSettingsChipPrefs && window.CuttleUiBoot) {
-                window.CuttleSettingsChipPrefs.create({
-                    boot: window.CuttleUiBoot,
-                    container: document.getElementById('chipPrefsRows'),
-                    notify: notifyUiAnimChange,
-                    toast: (msg) => (window.showToast || showNotification)(msg, 'info'),
-                }).render();
-            }
             notifyUiAnimChange();
             (window.showToast || showNotification)(on ? 'Message bubbles enabled' : 'Message bubbles disabled', 'info');
         }
@@ -2959,6 +2941,24 @@
             updateThemeSelector();
             loadUiAnimationSettings();
             loadChatBubbleSettings();
+            loadActivityStatusStyle();
+            if (window.CuttleSettingsTextPrefs && window.CuttleUiBoot) {
+                window.cuttleTextPrefs = window.CuttleSettingsTextPrefs.create({
+                    boot: window.CuttleUiBoot,
+                    container: document.getElementById('textPrefsRows'),
+                    notify: notifyUiAnimChange,
+                    toast: (msg) => (window.showToast || showNotification)(msg, 'info'),
+                });
+                window.cuttleTextPrefs.render();
+            }
+            if (window.CuttleSettingsChipPrefs && window.CuttleUiBoot) {
+                window.CuttleSettingsChipPrefs.create({
+                    boot: window.CuttleUiBoot,
+                    container: document.getElementById('chipPrefsRows'),
+                    notify: notifyUiAnimChange,
+                    toast: (msg) => (window.showToast || showNotification)(msg, 'info'),
+                }).render();
+            }
             
             // Update toggle visual state
             const toggle = document.getElementById('notificationsToggle');
