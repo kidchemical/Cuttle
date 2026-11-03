@@ -10,9 +10,14 @@ body.compact-shell-page {
     --control-height: 34px;
     --control-radius: 999px;
     --field-radius: 12px;
-    --button-surface: color-mix(in srgb, var(--text-primary) 9%, transparent);
-    --button-hover: color-mix(in srgb, var(--text-primary) 15%, transparent);
+    /* Opaque fills mixed from the theme surface: readable over glass cards and
+       video wallpaper, and measurable against their own edge. */
+    --button-surface: color-mix(in srgb, var(--bg-secondary) 89%, var(--text-primary) 11%);
+    --button-hover: color-mix(in srgb, var(--bg-secondary) 82%, var(--text-primary) 18%);
     --button-outline: color-mix(in srgb, var(--text-primary) 24%, transparent);
+    /* Hairline one step from the fill, so unselected buttons stay findable on
+       every theme (test_panel_themes contrast guard). */
+    --button-edge: color-mix(in srgb, var(--button-surface) 76%, var(--text-primary) 24%);
     --field-surface: color-mix(in srgb, var(--text-primary) 6%, transparent);
     --field-hover: color-mix(in srgb, var(--text-primary) 16%, transparent);
     --control-hover: color-mix(in srgb, var(--bg-secondary) 88%, var(--text-primary) 12%);
@@ -39,7 +44,7 @@ body.compact-shell-page :is(.control-button, .btn, .re-btn, .git-graph-btn, .his
     min-width: 0;
     max-width: 100%;
     padding: 6px 16px;
-    border: 1px solid transparent;
+    border: 1px solid var(--button-edge);
     border-radius: var(--control-radius);
     background: var(--button-surface);
     color: var(--text-primary);
@@ -58,7 +63,7 @@ body.compact-shell-page :is(.control-button, .btn, .re-btn, .git-graph-btn, .his
     .test-lab-suite button, .test-lab-run button, .test-lab-output-section button,
     .gizmos-form button, .gizmo-item-actions button, .jobs-filter button, .hist-filter button, .jobs-pager-btn, .feed-controls button, .feed-footer button):hover:not(:disabled) {
     background: var(--button-hover);
-    border-color: transparent;
+    border-color: var(--button-edge);
     box-shadow: none;
     transform: none;
 }
