@@ -306,6 +306,9 @@ EXPECTED_ROUTE_DENIES = frozenset({
     ("GET", "/api/git/pending-changes"),
     # Branch/repo discovery spawns `git rev-parse`; stays blocked for B1.
     ("GET", "/api/git/repos"),
+    # Linked-account OAuth status (auth.js header probe): private provider
+    # state, so the shadow keeps it a real 403.
+    ("GET", "/api/auth/oauth/status"),
 })
 
 # Modern page preferences, empty-queue probes and VFX remain denied by the private shadow. Enumerate
@@ -314,6 +317,8 @@ def _expected_optional_deny(method, path):
     return ((method, path) in EXPECTED_ROUTE_DENIES
             or (method == "PUT" and re.fullmatch(r"/api/auth/sessions/[0-9]+/composer", path))
             or (method == "GET" and re.fullmatch(r"/api/chat-vfx/[0-9]+", path))
+            # Session usage chip (chat_session_usage.js) reads the voice ledger.
+            or (method == "GET" and re.fullmatch(r"/api/voice-stt/usage/[0-9]+", path))
             or (method == "POST" and re.fullmatch(r"/api/auth/sessions/[0-9]+/followups/take", path)))
 
 
@@ -330,7 +335,8 @@ def _assert_child_guard_profile(state, label):
     counts = state["blocked_counts"]
     for kind in ("file", "socket", "subprocess", "executor"):
         assert counts.get(kind, 0) == 0, (
-            f"{label}: unexpected {kind} denies: {counts}")
+            f"{label}: unexpected {kind} denies: {counts}; "
+            f"{[e for e in state.get('blocked_attempts', []) if 'blocked route' not in e][:12]}")
     # Sole full-log key of the public contract (S1 restores it full).
     attempts = state["blocked_attempts"]
     unexpected = []
@@ -459,7 +465,10 @@ def test_shadow_stop_resend_no_stale(shadow, browser, viewport):
         assert stopped.count() == 1
         assert stopped.locator('.slash-command-chip--header').count() > 0
         assert stopped.locator('.slash-command-chip--header:not(.slash-command-chip--error)').count() == 0
-        assert stopped.get_attribute('data-message-index') is None
+        # The stopped bubble keeps its transcript slot (user row, then the
+        # stopped turn): Stop's interrupted-agent-turn row is what makes the
+        # ref canonical, so it is not dropped from message numbering.
+        assert stopped.get_attribute('data-message-index') == '2'
 
         # Wait for the exact production system row before sending again.
         def _stop_persisted():

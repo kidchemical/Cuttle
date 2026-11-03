@@ -36,9 +36,10 @@ def chats(tmp_path):
 class FakeHost:
     """Stands in for the loopback chat HTTP routes."""
 
-    def __init__(self, *, generating=False, steered=True):
+    def __init__(self, *, generating=False, steered=True, reason=None):
         self.generating = generating
         self.steered = steered
+        self.reason = reason
         self.calls = []
 
     def __call__(self, uid, sid, method, path, data=None, *, stream=False):
@@ -46,7 +47,7 @@ class FakeHost:
         if path == "/api/chat-live-status":
             return {"success": True, "generating": self.generating, "status": "working"}
         if path == "/api/chat-steer":
-            return {"success": True, "steered": self.steered}
+            return {"success": True, "steered": self.steered, **({"reason": self.reason} if self.reason else {})}
         if path == "/api/chat-cancel":
             return {"success": True, "cancelled": True}
         raise AssertionError(path)
@@ -124,6 +125,17 @@ def test_refused_steer_reuses_its_operation_as_the_queued_send(chats):
     out = service.send(_ch(target), "next", actor=_ch(sup), db=db, request=FakeHost(generating=True, steered=False))
     assert out["delivery"] == "queued" and out["operation"]["state"] == "pending"
     assert len(store.listing(sup)) == 1
+
+
+def test_refused_steer_says_the_send_waits_for_the_live_turn(chats):
+    db, _owner, sup, target, _foreign = chats
+    host = FakeHost(generating=True, steered=False, reason="no_steerable_run")
+    out = service.send(_ch(target), "pause now", actor=_ch(sup), db=db, request=host)
+    assert out["delivery"] == "queued" and out["target_busy"] is True
+    assert out["steer_reason"] == "no_steerable_run"
+    assert "chat_cli stop" in out["hint"]
+    idle = service.send(_ch(target), "later", actor=_ch(sup), db=db, request=FakeHost(generating=False))
+    assert "target_busy" not in idle
 
 
 def test_failed_steer_is_verified_not_resent_blindly(chats):
@@ -542,6 +554,27 @@ def test_start_supervisor_creates_a_briefed_chat_in_the_target_project(chats):
         service.start_supervisor(_ch(foreign), user_id=owner, agent="cursor", instructions="x", db=db)
 
 
+def test_mark_supervision_links_history_rows(chats, monkeypatch):
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    monkeypatch.setattr("api.experimental.is_enabled", lambda f: f == "chat_supervision")
+    rows = [{"id": sup}, {"id": target}, {"id": 999}]
+    service.mark_supervision(rows)
+    assert rows[0]["supervises_session_ids"] == [target] and rows[0]["supervisor_session_id"] is None
+    assert rows[1]["supervisor_session_id"] == sup and rows[1]["supervises_session_ids"] == []
+    assert rows[2]["supervisor_session_id"] is None
+    service.set_paused(sched["id"], owner, True, db=db)  # a paused schedule still links
+    service.mark_supervision(rows)
+    assert rows[1]["supervisor_session_id"] == sup
+    service.cancel(sched["id"], owner, db=db)
+    service.mark_supervision(rows)
+    assert rows[1]["supervisor_session_id"] is None and rows[0]["supervises_session_ids"] == []
+    _schedule(chats)
+    monkeypatch.setattr("api.experimental.is_enabled", lambda f: False)
+    service.mark_supervision(rows)
+    assert rows[1]["supervisor_session_id"] is None
+
+
 def test_overview_splits_supervising_supervised_and_queued(chats):
     db, owner, sup, target, _foreign = chats
     sched = _schedule(chats)
@@ -647,3 +680,74 @@ def test_checkin_text_is_markdown_without_raw_json():
     assert "{" not in text and "\\n" not in text
     snap["latest_reply"] = {"text": "x" * (worker.CHECKIN_REPLY_CHARS + 10)}
     assert "(start)" in worker.checkin_text(cfg, snap, [])
+
+
+# --- stall detection: what counts as progress, backoff, wording --------------
+
+
+def test_new_reply_or_subagent_reply_counts_as_progress(chats, monkeypatch):
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    clock = [1000.0]
+    monkeypatch.setattr(worker.time, "time", lambda: clock[0])
+    monkeypatch.setattr(worker, "_git_head", lambda path: "abc")
+    _tick(chats, sched, _snap("busy"), monkeypatch)
+    clock[0] += worker.STALL_SEC - 60
+    assert _tick(chats, sched, _snap("busy", reply_id=2), monkeypatch) == []  # its own new reply
+    clock[0] += worker.STALL_SEC - 60
+    child = db.create_chat_session(owner, "lane")
+    conn = db._get_connection()
+    conn.execute("UPDATE chat_sessions SET parent_session_id=? WHERE id=?", (target, child))
+    conn.commit()
+    conn.close()
+    db.add_message(child, "assistant", "lane reporting")
+    assert _tick(chats, sched, _snap("busy", reply_id=2), monkeypatch) == []  # a sub-agent spoke
+    clock[0] += worker.STALL_SEC + 60
+    assert len(_tick(chats, sched, _snap("busy", reply_id=2), monkeypatch)) == 1
+
+
+def test_waiting_background_stall_reads_as_a_wait_and_backs_off(chats, monkeypatch):
+    sched = _schedule(chats)
+    clock = [1000.0]
+    monkeypatch.setattr(worker.time, "time", lambda: clock[0])
+    monkeypatch.setattr(worker, "_git_head", lambda path: "abc")
+    snap = _snap("waiting_background")
+    snap["live"]["background_wait"] = [{"job_id": "claude-bg-2-abc", "started_ts": 900.0}]
+    _tick(chats, sched, snap, monkeypatch)
+    clock[0] += worker.STALL_SEC + 60
+    [first] = _tick(chats, sched, snap, monkeypatch)
+    text = first["payload"]["text"]
+    assert "waiting on background work" in text and "retry loop" not in text
+    store.finish(first["id"], "done", {})
+    # Second stall without progress needs twice the window.
+    clock[0] += worker.STALL_SEC + 60
+    assert len(_tick(chats, sched, snap, monkeypatch)) == 1
+    clock[0] += worker.STALL_SEC
+    checkins = _tick(chats, sched, snap, monkeypatch)
+    assert len(checkins) == 2
+    assert all("No progress for" in c["payload"]["text"] for c in checkins)
+    for c in checkins:
+        store.finish(c["id"], "done", {})
+    # A newly started wait is progress: the window and the backoff reset.
+    snap["live"]["background_wait"] = [{"job_id": "claude-bg-2-def", "started_ts": clock[0]}]
+    clock[0] += 2 * worker.STALL_SEC
+    assert len(_tick(chats, sched, snap, monkeypatch)) == 2
+    clock[0] += worker.STALL_SEC + 60
+    assert len(_tick(chats, sched, snap, monkeypatch)) == 3
+
+
+# --- stop holds queued sends -------------------------------------------------
+
+
+def test_stop_cancels_sends_queued_for_the_target(chats):
+    db, _owner, sup, target, _foreign = chats
+    host = FakeHost(generating=True, steered=False, reason="not steerable")
+    service.send(_ch(target), "later 1", actor=_ch(sup), db=db, request=host)
+    service.send(_ch(target), "later 2", actor=_ch(sup), db=db, request=host)
+    assert len(store.due()) == 2
+    out = service.stop(_ch(target), actor=_ch(sup), db=db, request=host)
+    assert out["cancelled"] is True
+    assert sorted(o["text"] for o in out["cancelled_sends"]) == ["later 1", "later 2"]
+    assert store.due() == []
+    assert all(o["state"] == "cancelled" for o in store.listing(sup) if o["kind"] == "send")
+    assert ("POST", "/api/chat-cancel", target, None) in host.calls

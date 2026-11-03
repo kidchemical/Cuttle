@@ -163,8 +163,92 @@
         return { ok: true, items: normalizeAttachmentList(data.files) };
     }
 
+    const PASTE_IMAGE_EXT = {
+        'image/png': '.png',
+        'image/jpeg': '.jpg',
+        'image/jpg': '.jpg',
+        'image/gif': '.gif',
+        'image/webp': '.webp',
+        'image/bmp': '.bmp',
+    };
+
+    function _pad2(n) {
+        return String(n).padStart(2, '0');
+    }
+
+    /**
+     * Upload name for a pasted image. Clipboard images arrive as a bare
+     * `image.png` (or no name at all); give each a unique, extension-correct
+     * name so `/api/upload` accepts it and same-second pastes don't collide.
+     */
+    function pastedImageName(mime, index, now) {
+        const d = now instanceof Date ? now : new Date();
+        const ext = PASTE_IMAGE_EXT[String(mime || '').toLowerCase()] || '.png';
+        const stamp =
+            d.getFullYear() + _pad2(d.getMonth() + 1) + _pad2(d.getDate()) + '-' +
+            _pad2(d.getHours()) + _pad2(d.getMinutes()) + _pad2(d.getSeconds());
+        return 'pasted-' + stamp + '-' + (Number(index) + 1) + ext;
+    }
+
+    /**
+     * Image files carried by a paste's `clipboardData`, renamed for upload.
+     * Returns [] when the paste should stay a normal text paste: no images,
+     * or the clipboard also carries plain text (e.g. spreadsheet cells
+     * copied with a rendered preview image).
+     */
+    function clipboardImageFiles(clipboardData, now) {
+        const dt = clipboardData;
+        if (!dt) return [];
+        const types = Array.from(dt.types || []);
+        if (types.includes('text/plain')) return [];
+        let files = [];
+        if (dt.items && dt.items.length) {
+            for (const item of Array.from(dt.items)) {
+                if (item && item.kind === 'file' && /^image\//i.test(item.type || '')) {
+                    const f = item.getAsFile && item.getAsFile();
+                    if (f) files.push(f);
+                }
+            }
+        }
+        if (!files.length && dt.files && dt.files.length) {
+            files = Array.from(dt.files).filter((f) => f && /^image\//i.test(f.type || ''));
+        }
+        return files.map((f, i) => {
+            const type = f.type || 'image/png';
+            const name = pastedImageName(type, i, now);
+            try {
+                return new File([f], name, { type });
+            } catch (_) {
+                return f;
+            }
+        });
+    }
+
+    /**
+     * Wire composer textareas so pasting an image attaches it like the 📎
+     * button: `upload(files)` is the page's existing upload path. Text
+     * pastes are left alone. Browser-only (no-op without `document`).
+     */
+    function bindPasteUpload(textareaIds, upload) {
+        if (typeof document === 'undefined') return;
+        for (const id of textareaIds || []) {
+            const ta = document.getElementById(id);
+            if (!ta || ta.dataset.pasteUpload) continue;
+            ta.dataset.pasteUpload = '1';
+            ta.addEventListener('paste', (e) => {
+                const files = clipboardImageFiles(e.clipboardData);
+                if (!files.length) return;
+                e.preventDefault();
+                upload(files);
+            });
+        }
+    }
+
     const api = {
         isImageAttachment,
+        bindPasteUpload,
+        pastedImageName,
+        clipboardImageFiles,
         normalizeAttachmentList,
         stripAttachedNote,
         parseAttachedFilenames,

@@ -32,7 +32,11 @@ if (-not (Test-Path -LiteralPath $Repo)) {
 }
 
 $py = Join-Path $Repo '.venv\Scripts\python.exe'
+# Packaged Client: Repo is resources\app and the bundled interpreter sits
+# beside it (resources\python). Bare 'python' (PATH) lacks Cuttle's deps.
+if (-not (Test-Path -LiteralPath $py)) { $py = Join-Path (Split-Path -Parent $Repo) 'python\python.exe' }
 if (-not (Test-Path -LiteralPath $py)) { $py = 'python' }
+Log "python=$py"
 # SkipPull skips the completed merge, never the lifecycle safety recheck.
 $helper = Join-Path $PSScriptRoot 'client-update-checkout.py'
 $checkArgs = @('--repo', $Repo)

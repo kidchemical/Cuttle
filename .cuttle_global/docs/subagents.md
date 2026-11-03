@@ -41,7 +41,7 @@ Always pass `--json` when a parent agent will parse the result.
 |---|---|
 | `all` (default) | Run in parallel; wait for every child |
 | `first` | Parallel; first completed reply wins; cancel the rest |
-| `serial` | Run one after another in `--child` order |
+| `serial` | Run one after another in `--child` order; cancelling the running step cancels the steps after it |
 
 ### Lifetime
 
@@ -62,9 +62,12 @@ timeout), and `cancel` to terminally stop stuck work.
 round is still unfinished, `spawn --wait` terminally cancels the unfinished
 work it owns and exits nonzero (1) instead of abandoning active rows.
 Serial children run synchronously one at a time, so `--timeout` does not
-deadline-interrupt an individual synchronous turn; cancellation is
-cooperative (rows flip terminal, runners that ignore cancellation run until
-the supervising process exits). `message --wait` runs the follow-up turn to
+deadline-interrupt an individual synchronous turn. Cancel (`cancel`, chat
+Stop, `/api/chat-cancel`, the agent feed's End) flips the row and records a
+stop request on it; the process that runs the child turn polls that request
+and kills the child's CLI within about a second, including a CLI a finished
+Claude turn left in a detached background wait. Only the owning process can
+kill it: Cuttle signals only its own descendants. `message --wait` runs the follow-up turn to
 completion — its `--timeout` is accepted but not enforced on the turn.
 `wait` is observation-only: it never starts pending work and never cancels
 another owner's batch. Crash/SIGKILL recovery (rows left active with no

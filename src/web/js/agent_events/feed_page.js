@@ -4,7 +4,8 @@
     const form=document.getElementById('feedFilters'),followButton=document.getElementById('feedFollow');
     const activeEl=document.getElementById('feedActive');
     let rows=[],filters={},following=true,pending=[],before=0,source,streamCursor=0;
-    let activeRuns=[],activeTimer=0,activeSig='';
+    // Running now (chats, their waits/watches/schedules and owned processes): feed_work.js.
+    const work=window.CuttleAgentWorkPanel?CuttleAgentWorkPanel.create({root:activeEl,openChat:new URLSearchParams(location.search).get('chat'),status:text=>{if(status)status.textContent=text;}}):null;
     const expanded=new Map();
     const motion=window.matchMedia('(prefers-reduced-motion: reduce)');
     const animations=new Set();
@@ -112,76 +113,6 @@
             }
         }
     }
-    function renderActive() {
-        if(!activeEl) return;
-        activeEl.hidden=!activeRuns.length;
-        if(!activeRuns.length) {activeSig='';return;}
-        // The 5s poll must not rebuild an unchanged strip (restarts the orbit
-        // animations and drops hover/focus on End).
-        const sig=JSON.stringify(activeRuns.map(run=>[run.query_id,run.agent_id,run.chat_session_id]));
-        if(sig===activeSig && activeEl.childElementCount) return;
-        activeSig=sig;
-        const fragment=document.createDocumentFragment();
-        const title=node('h2','Active now');title.className='feed-active-title';fragment.append(title);
-        for(const run of activeRuns) {
-            const entry=document.createElement('div');entry.className='feed-active-entry';
-            const row=document.createElement(run.chat_session_id?'a':'div');row.className='feed-active-row';
-            if(run.chat_session_id) row.href='/chat_page.html?chat='+encodeURIComponent(run.chat_session_id);
-            const orbit=document.createElement('span');orbit.className='typing-orbit typing-orbit--feed';orbit.setAttribute('aria-hidden','true');
-            orbit.innerHTML='<span class="typing-orbit-ring"></span><span class="typing-orbit-ring typing-orbit-ring--inner"></span><span class="typing-orbit-core"></span><span class="typing-orbit-sat typing-orbit-sat--1"></span><span class="typing-orbit-sat typing-orbit-sat--2"></span><span class="typing-orbit-sat typing-orbit-sat--3"></span><span class="typing-orbit-beam"></span>';
-            const chip=node('span',run.agent_id||'Agent');chip.className='feed-active-agent';
-            const text=node('span','is active');text.className='feed-active-text';
-            const dots=document.createElement('span');dots.className='feed-active-dots';dots.setAttribute('aria-hidden','true');
-            dots.append(node('i',''),node('i',''),node('i',''));
-            text.append(dots);
-            row.append(orbit,chip,text);
-            if(run.chat_session_id) {
-                const chat=node('span','CH-'+String(run.chat_session_id).padStart(6,'0'));chat.className='feed-active-chat';
-                row.append(chat);
-            }
-            entry.append(row);
-            // Any live chat can be ended here: the stop hits the same cancel
-            // path as the chat page's Stop button.
-            if(run.chat_session_id) {
-                const handle='CH-'+String(run.chat_session_id).padStart(6,'0');
-                const end=node('button','End');end.type='button';end.className='feed-active-end';
-                end.title='End this running chat';end.setAttribute('aria-label','End '+handle);
-                end.addEventListener('click',event=>{
-                    event.preventDefault();event.stopPropagation();
-                    if(!window.confirm('End the running chat '+handle+'?')) return;
-                    endRun(run,end);
-                });
-                entry.append(end);
-            }
-            fragment.append(entry);
-        }
-        activeEl.replaceChildren(fragment);
-    }
-    async function endRun(run,button) {
-        if(!run||!run.chat_session_id) return;
-        if(button){button.disabled=true;button.textContent='Ending…';}
-        try {
-            const response=await fetch('/api/chat-cancel',{method:'POST',credentials:'include',
-                headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({session_id:run.chat_session_id,cancel_jobs:true})});
-            const data=await response.json().catch(()=>({}));
-            if(!response.ok||!data.success) throw new Error(data.error||'Could not end the chat');
-            if(status) status.textContent='Ended '+('CH-'+String(run.chat_session_id).padStart(6,'0'));
-            await loadActive();
-        } catch(error) {
-            if(button){button.disabled=false;button.textContent='End';}
-            if(status) status.textContent=error.message;
-        }
-    }
-    async function loadActive() {
-        try {
-            const response=await fetch('/api/agent-events/active',{credentials:'include',cache:'no-store'});
-            if(!response.ok) return;
-            const data=await response.json();
-            activeRuns=data.runs||[];
-            renderActive();
-        } catch(_) {}
-    }
     function applyIncoming(incoming) {
         if(!following) {pending=CuttleAgentFeed.merge(pending,incoming);followButton.textContent=pending.length+' updated steps · Resume live';return;}
         rows=CuttleAgentFeed.merge(rows,incoming).slice(0,1000);
@@ -203,7 +134,7 @@
         history.replaceState(null,'','?'+new URLSearchParams(filters));
     }
     form.addEventListener('submit',async(event)=>{event.preventDefault();readFilters();rows=[];before=0;form.querySelector('.feed-advanced').open=false;await load().then(connectStream).catch(error=>status.textContent=error.message);});
-    function resume() {following=true;followButton.setAttribute('aria-pressed','true');followButton.textContent='Following live';applyIncoming(pending);pending=[];loadActive();}
+    function resume() {following=true;followButton.setAttribute('aria-pressed','true');followButton.textContent='Following live';applyIncoming(pending);pending=[];if(work)work.refresh();}
     followButton.addEventListener('click',()=>{if(following){following=false;followButton.textContent='Paused · Resume live';followButton.setAttribute('aria-pressed','false');}else resume();});
     form.querySelector('[name=kind]').addEventListener('change',()=>form.requestSubmit());
     document.getElementById('feedOlder').addEventListener('click',async()=>{following=false;followButton.setAttribute('aria-pressed','false');followButton.textContent='Resume live';rows=[];await load().catch(error=>status.textContent=error.message);});
@@ -216,12 +147,11 @@
         source.onerror=()=>{status.textContent='Reconnecting…';};
         source.onopen=()=>{status.textContent='Live · latest activity first';};
     }
-    loadActive();
-    activeTimer=setInterval(()=>{if(following) loadActive();},5000);
+    if(work) work.start();
     load().then(connectStream).catch(error=>status.textContent=error.message);
     window.addEventListener('pagehide',()=>{
         if(source)source.close();
-        if(activeTimer)clearInterval(activeTimer);
+        if(work)work.stop();
         if(renderFrame)cancelAnimationFrame(renderFrame);
         animations.forEach(animation=>animation.cancel());animations.clear();
     });

@@ -169,6 +169,13 @@ def _cancel_child(db, session_id: int) -> None:
         store.update_child(
             db, child.id, status=STATUS_CANCELLED, finished=True
         )
+    if child:
+        # The CLI belongs to the process running the turn (often the spawn
+        # CLI, not this one); its stop watch kills it on this request.
+        try:
+            store.request_stop(db, child.id)
+        except Exception:
+            pass
     try:
         from api.chat_run_registry import cancel_session_runs
 
@@ -383,6 +390,29 @@ def spawn(
     return payload
 
 
+def _serial_stopped(batch: BatchRecord) -> bool:
+    """A serial chain stops at a cancelled step; later steps never start."""
+    if batch.status in TERMINAL_BATCH:
+        return True
+    return any(c.status == STATUS_CANCELLED for c in batch.children)
+
+
+def _cancel_serial_rest(db, batch: BatchRecord, *, after: int) -> None:
+    """Cancel the pending steps after ``after`` (sort index) of a serial batch.
+
+    The batch then reads ``cancelled``, not ``done``, so the parent's ``wait``
+    does not report a stopped chain as finished.
+    """
+    for child in batch.children:
+        if child.sort_index > after and child.status == STATUS_PENDING:
+            store.update_child(db, child.id, status=STATUS_CANCELLED, finished=True)
+    batch = _refresh(db, batch.id)
+    if batch.status not in TERMINAL_BATCH and all(
+        c.status in TERMINAL_CHILD for c in batch.children
+    ):
+        store.update_batch(db, batch.id, status=STATUS_CANCELLED, finished=True)
+
+
 def _run_serial(
     db,
     batch: BatchRecord,
@@ -392,9 +422,13 @@ def _run_serial(
     project_path: str,
 ) -> None:
     for item in created:
-        child = store.get_child(db, item["child"].id)
-        if not child or child.status == STATUS_CANCELLED:
+        if _serial_stopped(_refresh(db, batch.id)):
             break
+        child = store.get_child(db, item["child"].id)
+        if not child:
+            break
+        if child.status != STATUS_PENDING:
+            continue
         run_child_turn(
             db,
             child,
@@ -402,6 +436,9 @@ def _run_serial(
             project_path=project_path,
             runner=runner,
         )
+        ended = store.get_child(db, child.id)
+        if ended and ended.status == STATUS_CANCELLED:
+            _cancel_serial_rest(db, _refresh(db, batch.id), after=ended.sort_index)
         batch = _finalize_if_complete(db, batch)
         _maybe_extras(db, batch)
         if batch.collect == COLLECT_FIRST and batch.status in TERMINAL_BATCH:
@@ -489,6 +526,8 @@ def _kick_pending(db, batch: BatchRecord, *, runner: Optional[TurnRunner]) -> No
 
 def _kick_next_serial(db, batch: BatchRecord, *, runner: Optional[TurnRunner]) -> None:
     if any(c.status == STATUS_RUNNING for c in batch.children):
+        return
+    if _serial_stopped(batch):
         return
     parent = _parent_row(db, batch.parent_session_id)
     project_path = _execution_path_for_parent(parent)
@@ -592,6 +631,11 @@ def cancel_session(session_id: int, *, db=None) -> Dict[str, Any]:
     child = store.get_child_by_session(db, int(session_id))
     if child:
         _cancel_child(db, int(session_id))
+        batch = _refresh(db, child.batch_id)
+        if batch.collect == COLLECT_SERIAL and child.status not in TERMINAL_CHILD:
+            # Ending the running step ends the chain. Otherwise the spawn
+            # process starts the next step and the agent "comes back".
+            _cancel_serial_rest(db, batch, after=child.sort_index)
         batch = _finalize_if_complete(db, _refresh(db, child.batch_id))
         _maybe_extras(db, batch)
         return {"ok": True, "cancelled": "child", "batch": batch.public()}

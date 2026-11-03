@@ -20,9 +20,14 @@ _active = {}
 # wait this long (and for the chat to go idle) before reading history.
 VERIFY_GRACE_SEC = 30
 MAX_SEND_ATTEMPTS = 3
-# A busy target whose Tasks and git HEAD have not moved for this long wakes the
-# supervisor anyway: one long turn can hide a retry loop for hours.
+# A busy target whose Tasks, git HEAD, replies, sub-agents and background waits
+# have not moved for this long wakes the supervisor anyway: one long turn can
+# hide a retry loop for hours.
 STALL_SEC = 45 * 60
+# Each stall wake without progress since the last doubles the window, up to
+# this factor, so a legitimately long wait does not wake the supervisor every
+# 45 minutes (each wake is a full supervisor turn).
+STALL_BACKOFF_MAX = 4
 
 
 def _uncertain(op, reason):
@@ -114,7 +119,7 @@ def _signature(snap, violations):
                        [(t['id'], t['done'], t['total']) for t in snap['tasks']]])
 
 
-_STATE_TEXT = {'busy': 'working', 'idle': 'idle, nothing open', 'idle_with_work': 'idle with open Tasks items',
+_STATE_TEXT = {'busy': 'working', 'waiting_background': 'waiting on its own background task (it wakes by itself)', 'idle': 'idle, nothing open', 'idle_with_work': 'idle with open Tasks items',
                'awaiting_input': 'waiting on a question card', 'error': 'stopped on an error',
                'cancelled': 'stopped (cancelled)'}
 CHECKIN_REPLY_CHARS = 2500
@@ -132,7 +137,12 @@ def checkin_text(cfg, snap, violations, stalled_min=None):
     if any(where):
         joined = ' · '.join(w for w in where if w)
         lines.append(joined[0].upper() + joined[1:])
-    if stalled_min:
+    if stalled_min and snap['state'] == 'waiting_background':
+        lines += ['', f'**No progress for {stalled_min} min:** its turn ended and it is waiting on background '
+                  'work, but no new reply, commit, Tasks change or sub-agent reply since. Check that the job '
+                  'it waits on is still running and will report; if that job is done or gone, send it the '
+                  'result. A long build or transfer that is still moving needs no message.']
+    elif stalled_min:
         lines += ['', f'**No progress for {stalled_min} min:** still mid-turn, but no commit and no Tasks '
                   'change. Check its run logs for a retry loop; if it keeps repeating a failing attempt, '
                   'steer it to escalate now.']
@@ -174,9 +184,42 @@ def _git_head(path):
     return out.stdout.strip() if out.returncode == 0 else ''
 
 
-def _progress(snap):
+def _children_progress(db, sid):
+    """Newest message id per sub-agent chat (two levels down): a lane that is
+    talking is progress for the orchestrator waiting on it."""
+    if db is None:
+        return []
+    try:
+        conn = db._get_connection()
+    except Exception:
+        return []
+    try:
+        found, frontier = [], [int(sid)]
+        for _depth in range(2):
+            if not frontier:
+                break
+            marks = ','.join('?' * len(frontier))
+            rows = conn.execute(
+                f'SELECT s.id, (SELECT MAX(m.id) FROM chat_messages m WHERE m.chat_session_id = s.id) '
+                f'FROM chat_sessions s WHERE s.parent_session_id IN ({marks})', frontier).fetchall()
+            frontier = [int(r[0]) for r in rows]
+            found += [(int(r[0]), r[1]) for r in rows]
+        return sorted(found)
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def _progress(snap, db=None):
+    """What counts as the target moving: a commit, a Tasks change, a new reply of
+    its own or of a sub-agent, or a newly started background wait."""
+    waits = (snap.get('live') or {}).get('background_wait') or []
     return json.dumps([_git_head(snap.get('execution_path')),
-                       [(t['id'], t['done'], t['total']) for t in snap['tasks']]])
+                       [(t['id'], t['done'], t['total']) for t in snap['tasks']],
+                       (snap.get('latest_reply') or {}).get('id'),
+                       _children_progress(db, snap.get('session_id') or snap['handle'][3:]),
+                       sorted(str(w.get('started_ts') or w.get('started_at') or '') for w in waits)])
 
 
 def _lineage_queries(db, sid):
@@ -215,7 +258,7 @@ def _violations(op, branch, path, *, db=None, commands=()):
         worktrees = rules.worktree_branches(path) if commands else {}
         for sid, command in commands:
             if rules.forbidden_command(command, forbidden, worktrees):
-                moved.append(f'CH-{sid:06d} ran a git write against a forbidden branch: `{command[:200]}`')
+                moved.append(f'CH-{sid:06d} ran a git write against a forbidden branch: `{command[:2000]}`')
         tips = rules.branch_tips(path, forbidden)
         baseline = cfg.get('forbidden_tips')
         if baseline is None:  # schedule made before baselines existed
@@ -365,18 +408,25 @@ def _check_in(op, db, actor, sid, request):
     # The first check of a UI-started schedule always briefs the new supervisor.
     briefing = bool(cfg.get('brief_on_start')) and not previous.get('last_checkin')
     now = time.time()
-    progress = _progress(snap)
+    progress = _progress(snap, db)
     progress_at = previous.get('progress_at') or now
+    streak = int(previous.get('stall_streak') or 0)
     if progress != previous.get('progress'):
         progress_at = now
-    stalled = snap['state'] == 'busy' and now - progress_at >= cfg.get('stall_after', STALL_SEC)
-    tracking = {'progress': progress, 'progress_at': now if stalled else progress_at}
+        streak = 0
+    window = cfg.get('stall_after', STALL_SEC) * min(2 ** streak, STALL_BACKOFF_MAX)
+    stalled = snap['state'] in ('busy', 'waiting_background') and now - progress_at >= window
+    tracking = {'progress': progress, 'progress_at': now if stalled else progress_at,
+                'stall_streak': streak + 1 if stalled else streak}
     if stalled:
-        seen['stalled_min'] = int((now - progress_at) // 60)
+        seen['stalled_min'] = int((now - (previous.get('stalled_since') or progress_at)) // 60)
+        tracking['stalled_since'] = previous.get('stalled_since') or progress_at
+    elif streak == 0:
+        tracking['stalled_since'] = None
     # A working target or an unchanged picture costs no supervisor tokens.
     if not violations and not briefing and not stalled and (
-            snap['state'] == 'busy' or signature == previous.get('signature')):
-        reason = 'busy' if snap['state'] == 'busy' else 'unchanged'
+            snap['state'] in ('busy', 'waiting_background') or signature == previous.get('signature')):
+        reason = snap['state'] if snap['state'] in ('busy', 'waiting_background') else 'unchanged'
         store.record_check(op['id'], 'skipped', {**seen, 'reason': reason})
         store.finish(op['id'], 'pending', {**previous, **tracking, 'last_check': time.time(),
                                             'last_seen': seen, 'skipped': reason, 'guard_reported': found}, due=nxt)

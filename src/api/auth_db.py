@@ -292,6 +292,10 @@ class AuthDatabase:
             'ALTER TABLE subagent_children ADD COLUMN live_status TEXT',
             'ALTER TABLE subagent_children ADD COLUMN live_status_at TEXT',
             'ALTER TABLE subagent_children ADD COLUMN live_turn_id TEXT',
+            # stop_requested_at: epoch seconds of the last Stop / cancel for this
+            # child. Only the process running the child turn can kill its CLI
+            # (api.subagents.stop_watch polls this column there).
+            'ALTER TABLE subagent_children ADD COLUMN stop_requested_at REAL',
         ):
             try:
                 cursor.execute(col_sql)

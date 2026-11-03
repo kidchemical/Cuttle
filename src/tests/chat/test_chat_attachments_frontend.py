@@ -214,3 +214,48 @@ def test_chat_attachments_module_parses():
     import subprocess as sp
     proc = sp.run(["node", "--check", str(MOD_JS)], capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
+
+
+PASTE_HARNESS = """
+const A = require(process.env.MOD_JS);
+const now = new Date(2026, 10, 2, 9, 5, 7);
+const img = (type) => new File([new Uint8Array([1, 2, 3])], 'image.png', { type });
+const dt = (types, files) => ({
+  types,
+  items: files.map((f) => ({ kind: 'file', type: f.type, getAsFile: () => f })),
+  files,
+});
+const out = {};
+out.name = A.pastedImageName('image/jpeg', 0, now);
+out.unknownExt = A.pastedImageName('image/heic', 2, now);
+const two = A.clipboardImageFiles(dt(['Files'], [img('image/png'), img('image/webp')]), now);
+out.two = two.map((f) => [f.name, f.type]);
+out.withText = A.clipboardImageFiles(dt(['text/plain', 'Files'], [img('image/png')]), now).length;
+out.htmlAndImage = A.clipboardImageFiles(dt(['text/html', 'Files'], [img('image/png')]), now).length;
+out.pdfOnly = A.clipboardImageFiles(dt(['Files'], [img('application/pdf')]), now).length;
+out.filesOnly = A.clipboardImageFiles({ types: ['Files'], files: [img('image/gif')] }, now).map((f) => f.name);
+out.none = A.clipboardImageFiles(null).length;
+console.log(JSON.stringify(out));
+"""
+
+
+@node_only
+def test_clipboard_image_paste_plan():
+    proc = subprocess.run(
+        ["node", "-e", PASTE_HARNESS],
+        capture_output=True, text=True, timeout=30,
+        env={**__import__("os").environ, "MOD_JS": str(MOD_JS)},
+    )
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["name"] == "pasted-20261102-090507-1.jpg"
+    assert out["unknownExt"] == "pasted-20261102-090507-3.png"
+    assert out["two"] == [
+        ["pasted-20261102-090507-1.png", "image/png"],
+        ["pasted-20261102-090507-2.webp", "image/webp"],
+    ]
+    assert out["withText"] == 0
+    assert out["htmlAndImage"] == 1
+    assert out["pdfOnly"] == 0
+    assert out["filesOnly"] == ["pasted-20261102-090507-1.gif"]
+    assert out["none"] == 0

@@ -301,6 +301,7 @@
         const text = document.getElementById('chatSessionTitleText');
         if (!wrap || !text) return;
         supervision.setSession(sessionId);
+        composerLock.setSession(sessionId);
         if (sessionId == null || sessionId === '') {
             wrap.hidden = true;
             text.textContent = '';
@@ -418,9 +419,30 @@
             if (typeof window.closeCuttleToast === 'function') window.closeCuttleToast(id);
         },
     });
+    const transcriptExport = CuttleChatExport.create({
+        win: window, storage: () => window.localStorage, isAuthMode: () => isAuthMode(),
+        authSessionId: toAuthDbSessionId, displayId: formatChatDisplayId, title: getChatSessionDisplayTitle,
+        format: { messageOpts: authMessageOptsFromServer, stripAgentChrome: stripLegacyAgentChrome,
+            normalizeSlashCommand: normalizeSlashCommandStored, assistantName: () => assistantDisplayName({}) },
+        closeMenus: () => closeAllSessionMenus(), toast: (m, k) => (window.showToast || function () {})(m, k),
+    });
+    const composerLock = CuttleChatComposerLock.create({ doc: document, storage: () => window.localStorage,
+        sessionKey: canonicalizeChatSessionId, displayId: formatChatDisplayId, closeMenus: () => closeAllSessionMenus(),
+        openChat: (sid) => loadChatSession(sid), toast: (m, k) => (window.showToast || function () {})(m, k) });
+    const sessionMenu = CuttleChatSessionMenu.create({
+        win: window, icons: () => CuttleChatHistoryView.historyActionIcons(), escapeHtml: escapeHtmlInline,
+        facts: (sid) => ({ displayId: formatChatDisplayId(sid) || '', starred: isChatSessionStarred(sid),
+            archived: isChatSessionArchived(sid), canArchive: isAuthMode() && !isTerminalSessionId(sid),
+            subagentGroup: historyPanel.historySubagentGroupOwnedBy(sid) }),
+        extraItems: (sid, icons) => [gitPush.menuHtml(icons), supervision.menuHtml(sid, icons.subagents),
+            composerLock.menuHtml(sid)],
+        currentSession: () => session.current(), closeHistoryMenu: () => historyPanel.closeMenu(),
+        afterFill: (dropdown) => gitPush.refreshMenuMode(dropdown),
+    });
     // Chat supervision chip/badge/dialog (experimental `chat_supervision`).
     const supervision = CuttleChatSupervision.create({
         doc: document, fetch: (u, o) => fetch(u, o), now: () => Date.now(), escapeHtml: escapeHtmlInline,
+        onSupervised: (sid, on, by) => composerLock.setSupervised(sid, on, by),
         enabledFlags: fetchEnabledExperimentalFlags, openChat: (sid) => loadChatSession(sid),
         closeMenus: () => closeAllSessionMenus(), confirm: (m) => window.confirm(m),
         toast: (m, k) => (window.showToast || function () {})(m, k), viewportWidth: () => window.innerWidth,
@@ -1472,6 +1494,7 @@
                 }
             });
         }
+        CuttleChatAttachments.bindPasteUpload(['chatInput', 'welcomeChatInput'], uploadChatFiles);
     }
 
     /** Wand button state per composer: lets a second click undo the rewrite. */
@@ -2869,6 +2892,8 @@
         chipCategoryClass: slashCommandChipCategoryClass,
     });
 
+    // Idle chat's background work (waits, watches, schedules, owned processes): chat_background_work.js.
+    const backgroundWork = CuttleChatBackgroundWork.create({ win: window, currentSession: () => session.current(), sessionIdsEqual, isBusy: () => isLoadingThisSession(), openChat: (sid) => loadChatSession(sid) });
     // Media thumbs, lightbox and image Copy / Save menu: owned by chat_media.js.
     // Host-document listeners ride the frame teardown signal.
     const chatMedia = CuttleChatMedia.create({
@@ -3861,9 +3886,9 @@
         sessionHasActiveFollowup,
         refreshLocalOpenPanes,
         // Row menu + modal orchestration capabilities.
-        buildSessionMenuHTML,
+        buildSessionMenuHTML: sessionMenu.html,
         refreshGitPushMenuMode: gitPush.refreshMenuMode,
-        closeChatChromeMenu,
+        closeChatChromeMenu: sessionMenu.close,
         isTerminalSessionId,
         getChatSessionDisplayTitle,
         readTerminalSessionRegistry,
@@ -4058,7 +4083,7 @@
         const command = ordered.filter((c) => !isAgentHeaderChip(c));
         return (
             projectHtml +
-            slashCommandChipsHeaderHtml(agent, failed) +
+            slashCommandChipsHeaderHtml(agent, failed, true) +
             slashCommandChipsHeaderHtml(command, failed)
         );
     }
@@ -4235,6 +4260,7 @@
                     starredClass +
                     noShortenClass +
                     segmentedClass +
+                    (isAgentHeaderChip(chip) ? '" data-agent-chip="1' : '') +
                     '" role="group" aria-label="' +
                     safeAria +
                     '"' +
@@ -4978,7 +5004,7 @@
         '<svg class="slash-chip-error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>';
 
     /** Compact chip(s) beside assistant name (reply to slash commands). */
-    function slashCommandChipHeaderHtml(label, metaPrefix, category, isError) {
+    function slashCommandChipHeaderHtml(label, metaPrefix, category, isError, isAgent) {
         const chip = {
             label: label,
             meta: metaPrefix,
@@ -5009,6 +5035,8 @@
             errClass +
             noShortenClass +
             segmentedClass +
+            // Marks the agent badge for Settings → chip visibility (CSS only).
+            (isAgent ? '" data-agent-chip="1' : '') +
             '" role="img" aria-label="' +
             aria +
             '"' +
@@ -5024,10 +5052,10 @@
         );
     }
 
-    function slashCommandChipsHeaderHtml(chipList, isError) {
+    function slashCommandChipsHeaderHtml(chipList, isError, isAgent) {
         if (!chipList || !chipList.length) return '';
         const failed = !!isError;
-        return chipList.map((c) => slashCommandChipHeaderHtml(c.label, c.meta, c.category, failed)).join('');
+        return chipList.map((c) => slashCommandChipHeaderHtml(c.label, c.meta, c.category, failed, isAgent)).join('');
     }
 
     function prettyCursorModelLabel(model) {
@@ -6260,9 +6288,8 @@
         loadProjectCommandsForPalette();
         loadHarnessAgentsForPalette();
         if (!opts.silent && proj) {
-            const pathBit = proj.path ? ` → \`${proj.path}\`` : '';
             // Stick in the transcript (default system toast fades after 3s and is not saved).
-            addSystemMessage(`📁 Project: ${proj.name}${pathBit}`, { persist: true });
+            addSystemMessage({ type: 'project', label: `Project: ${proj.name}`, detail: proj.path || '' }, { persist: true });
         }
     }
 
@@ -6294,9 +6321,9 @@
         reportProjectToShell(effectiveGitPath());
         if (uid) {
             const branch = checkout && checkout.branch ? checkout.branch : uid;
-            addSystemMessage(`\u{1F33F} Worktree: ${branch}`, { persist: true });
+            addSystemMessage({ type: 'worktree', label: `Worktree: ${branch}` }, { persist: true });
         } else {
-            addSystemMessage('\u{1F4C1} Local checkout', { persist: true });
+            addSystemMessage({ type: 'checkout', label: 'Local checkout' }, { persist: true });
         }
     }
 
@@ -6471,124 +6498,38 @@
             requestBody, resolveOutboundProject(), currentCheckoutUid);
     }
     
+    /** Add a timeline notice: `message` is a notice spec or legacy text (see chat_timeline_notice.js). */
     function addSystemMessage(message, opts = {}) {
-        const messagesContainer = document.getElementById('chatMessages');
-        if (!messagesContainer) return;
-        
-        // Only add if chat area is visible
-        if (document.getElementById('chatArea').style.display === 'none') {
-            return;
-        }
-
-        let messageDiv = null;
-        if (opts.kind) {
-            const existingList = messagesContainer.querySelectorAll(
-                `.message.system[data-kind="${CSS.escape(String(opts.kind))}"]`
-            );
-            const existing = existingList.length ? existingList[existingList.length - 1] : null;
-            // Update the latest matching notice when it still belongs to this turn
-            // (after the last user bubble). Otherwise insert a new one.
-            if (existing && opts.replace !== false) {
-                const users = messagesContainer.querySelectorAll('.message.user');
-                const lastUser = users.length ? users[users.length - 1] : null;
-                const stale = lastUser
-                    && (existing.compareDocumentPosition(lastUser) & Node.DOCUMENT_POSITION_FOLLOWING);
-                if (!stale) {
-                    const content = existing.querySelector('.system-message');
-                    if (content) content.textContent = message;
-                    existing.dataset.rawContent = String(message ?? '');
-                    if (!opts.skipScroll) transcriptNav.autoScrollChatToBottom();
-                    // Already durable — do not POST a duplicate row on text tweak.
-                    if (opts.persist && !existing.dataset.messageId) {
-                        durablePersistSystemMessage(existing, message, opts);
-                    }
-                    return existing;
-                }
-            }
-        }
-        
-        messageDiv = document.createElement('div');
-        messageDiv.className = 'message system';
-        if (opts.kind) messageDiv.dataset.kind = String(opts.kind);
-        messageDiv.dataset.rawContent = String(message ?? '');
-        if (opts.message_id != null && opts.message_id !== '') {
-            messageDiv.dataset.messageId = String(opts.message_id);
-        }
-        messageDiv.innerHTML = `
-            <div class="message-content system-message">${escapeHtml(message)}</div>
-        `;
-        
-        if (opts.prepend) {
-            const anchor = opts.insertBefore
-                || messagesContainer.querySelector('.message')
-                || messagesContainer.firstChild;
-            if (anchor) messagesContainer.insertBefore(messageDiv, anchor);
-            else messagesContainer.appendChild(messageDiv);
-        } else {
-            messagesContainer.appendChild(messageDiv);
-        }
-        if (!opts.skipScroll) transcriptNav.autoScrollChatToBottom();
-
-        // Sticky notices (e.g. Stopped generating) stay until the next send.
-        // ``persist`` also means durable: write to the auth chat log so refresh /
-        // other devices keep the same timeline.
-        if (opts.persist) {
-            if (!messageDiv.dataset.messageId) {
-                durablePersistSystemMessage(messageDiv, message, opts);
-            }
-            return messageDiv;
-        }
-        
-        // Auto-remove after 3 seconds
-        setTimeout(() => {
-            messageDiv.style.transition = 'opacity 0.3s';
-            messageDiv.style.opacity = '0';
-            setTimeout(() => messageDiv.remove(), 300);
-        }, 3000);
-        return messageDiv;
+        return timelineNotices().add(message, opts);
     }
 
-    /** Write a system notice into chat_messages so it survives refresh / devices. */
-    function durablePersistSystemMessage(el, message, opts) {
-        opts = opts || {};
-        if (!el || !isAuthMode() || session.current() == null) return;
-        if (el.dataset.persistInFlight === '1' || el.dataset.messageId) return;
-        const bare = toAuthDbSessionId(session.current());
-        if (!bare || !/^\d+$/.test(String(bare))) return;
-        el.dataset.persistInFlight = '1';
-        const body = {
-            role: 'system',
-            content: String(message ?? ''),
-        };
-        if (opts.kind) body.kind = String(opts.kind);
-        fetch(`/api/auth/sessions/${encodeURIComponent(bare)}/messages`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        })
-            .then((r) => r.json().catch(() => ({})))
-            .then((data) => {
-                if (data && data.success && data.message_id != null) {
-                    el.dataset.messageId = String(data.message_id);
-                    const mid = Number(data.message_id);
-                    if (Number.isFinite(mid) && mid > lastSeenServerMessageId) {
-                        lastSeenServerMessageId = mid;
-                    }
-                }
-            })
-            .catch((e) => console.warn('[Cuttle Chat] persist system notice failed:', e))
-            .finally(() => {
-                delete el.dataset.persistInFlight;
-            });
+    // Timeline notices (project / worktree / stop / model / compact rows) are
+    // owned by chat_timeline_notice.js; the page supplies scope as capabilities.
+    let timelineNoticesCtl = null;
+    function timelineNotices() {
+        if (!timelineNoticesCtl) timelineNoticesCtl = CuttleChatTimelineNotice.create({
+            doc: document, win: window, escapeHtml, fetch: (url, o) => fetch(url, o),
+            container: () => document.getElementById('chatMessages'),
+            isVisible: () => document.getElementById('chatArea').style.display !== 'none',
+            autoScroll: () => transcriptNav.autoScrollChatToBottom(),
+            persistTarget: () => {
+                if (!isAuthMode() || session.current() == null) return null;
+                const bare = toAuthDbSessionId(session.current());
+                return bare && /^\d+$/.test(String(bare)) ? String(bare) : null;
+            },
+            onPersisted: (mid) => {
+                if (Number.isFinite(mid) && mid > lastSeenServerMessageId) lastSeenServerMessageId = mid;
+            },
+        });
+        return timelineNoticesCtl;
     }
 
     function isCancelledAgentText(text) {
         return /^\s*\[CANCELLED\]/i.test(String(text || ''));
     }
 
-    function ensureGenerationStopNotice(text) {
-        addSystemMessage(text, { persist: true, kind: 'generation-stop' });
+    function ensureGenerationStopNotice(label) {
+        addSystemMessage({ type: 'stop', label }, { persist: true, kind: 'generation-stop' });
     }
 
     /**
@@ -6602,7 +6543,7 @@
         if (!isCancelledAgentText(text)) return false;
         const live = stopState.userStopped || generation.loading;
         if (opts.announce === true || (opts.announce !== false && live)) {
-            ensureGenerationStopNotice('⏹ Generation cancelled.');
+            ensureGenerationStopNotice('Generation cancelled.');
         }
         return true;
     }
@@ -6865,7 +6806,8 @@
         });
     }
 
-    function refreshChatHistoryList(event) {
+    function refreshChatHistoryList(event, opts) { // opts.force / Refresh click: bypass session cache after writes
+        const force = !!event || !!(opts && opts.force);
         if (event) {
             event.stopPropagation();
             event.preventDefault();
@@ -6886,7 +6828,7 @@
             return Promise.resolve();
         }
         if (isAuthMode() && typeof loadChatSessions === 'function') {
-            return Promise.resolve(loadChatSessions()).then(function () {
+            return Promise.resolve(loadChatSessions({ force })).then(function () {
                 // Prefer re-applying search/filters — a full list paint races with
                 // typing (open refresh, generating poll, title refresh timers).
                 historyPanel.reloadKeepingSearch();
@@ -7165,6 +7107,7 @@
         noteWidgetsRevision(live);
 
         try { subagentLaunchers.syncLive(live.subagents); } catch (_) {}
+        try { backgroundWork.sync(live, sessionId); } catch (_) {}
         if (isLoadingThisSession()) {
             const statusLabel = live.status || undefined;
             ensureLocalTypingIndicator(statusLabel);
@@ -8010,6 +7953,7 @@
         refreshTypingIndicatorHeaderBadges();
         noteWidgetsRevision(liveStatus);
         updateSupervisedTaskIndicator(liveStatus, session.current());
+        try { backgroundWork.sync(liveStatus, session.current()); } catch (_) {}
         // Local stream owns this chat's turn — keep/restore the typing bubble
         // (it is wiped when switching chats or after a hard refresh race).
         if (
@@ -8788,266 +8732,9 @@
         return sessionLifecycle().saveChatSession(message, role, opts);
     }
 
-    // Owned by chat_history_view.js (CuttleChatHistoryView.historyActionIcons) —
-    // thin alias so the shared chrome menu builder keeps a page-local name.
-    function _historyActionIcons() {
-        return CuttleChatHistoryView.historyActionIcons();
-    }
-
-    /** True until /api/terminal/status says otherwise — shared by both overflow menus. */
-    let _terminalMenuAvailable = true;
-
-    /**
-     * Shared overflow items for chrome + history session menus.
-     * Order: Copy → Star → Mark unread → Rename → Sub-agents → Git push → Terminal → Voice → Archive → Delete.
-     */
-    function buildSessionMenuHTML(sessionId, opts) {
-        opts = opts || {};
-        const icons = _historyActionIcons();
-        const hasSession = sessionId != null && sessionId !== '';
-        const starred = hasSession && !!isChatSessionStarred(sessionId);
-        const displayId = hasSession ? (formatChatDisplayId(sessionId) || '') : '';
-        const includeRename = hasSession && opts.includeRename !== false;
-        const includeDelete = hasSession && opts.includeDelete !== false;
-        const sid = hasSession ? String(sessionId).replace(/\\/g, '\\\\').replace(/'/g, "\\'") : '';
-        const copyLabel = displayId ? ('Copy ' + displayId) : 'Copy chat ID';
-        const starLabel = starred ? 'Unstar chat' : 'Star chat';
-        const parts = [];
-
-        if (hasSession && displayId) {
-            parts.push(
-                '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-                + ' data-menu-action="copy-id" title="Copy chat ID" aria-label="'
-                + escapeHtmlInline(copyLabel) + '"'
-                + ' onclick="window.copyChatSessionId(\'' + sid + '\', event)">'
-                + icons.copy
-                + '<span class="chat-chrome-menu-item-label">' + escapeHtmlInline(copyLabel) + '</span>'
-                + '<span class="chat-id-badge-label" hidden>' + escapeHtmlInline(displayId) + '</span>'
-                + '</button>'
-            );
-        }
-        if (hasSession) {
-            parts.push(
-                '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-                + ' title="Export transcript (Markdown)" aria-label="Export transcript (Markdown)"'
-                + ' onclick="window.chatPageExportSession(\'' + sid + '\', event)">'
-                + icons.download
-                + '<span class="chat-chrome-menu-item-label">Export</span>'
-                + '</button>'
-            );
-        }
-        if (hasSession) {
-            parts.push(
-                '<button type="button" class="chat-chrome-menu-item'
-                + (starred ? ' is-starred' : '') + '" role="menuitem"'
-                + ' title="' + starLabel + '" aria-label="' + starLabel + '"'
-                + ' onclick="window.chatPageToggleStarSession(\'' + sid + '\', event)">'
-                + icons.starOutline + icons.starFilled
-                + '<span class="chat-chrome-menu-item-label">' + starLabel + '</span>'
-                + '</button>'
-            );
-            parts.push(
-                '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-                + ' title="Mark as unread" aria-label="Mark as unread"'
-                + ' onclick="window.chatPageMarkUnreadSession(\'' + sid + '\', event)">'
-                + icons.unread
-                + '<span class="chat-chrome-menu-item-label">Mark as unread</span>'
-                + '</button>'
-            );
-        }
-        if (includeRename) {
-            parts.push(
-                '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-                + ' title="Rename" aria-label="Rename"'
-                + ' onclick="window.chatPageRenameSession(\'' + sid + '\', event)">'
-                + icons.pencil
-                + '<span class="chat-chrome-menu-item-label">Rename</span>'
-                + '</button>'
-            );
-        }
-        const subGroup = historyPanel.historySubagentGroupOwnedBy(sessionId);
-        if (subGroup && subGroup.getAttribute('data-force-expanded') !== '1') {
-            const collapsed = subGroup.classList.contains('is-collapsed');
-            const subLabel = collapsed ? 'Show sub-agents' : 'Hide sub-agents';
-            parts.push(
-                '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-                + ' title="' + subLabel + '" aria-label="' + subLabel + '"'
-                + ' onclick="window.toggleHistorySubagentGroup(\'' + sid + '\', event)">'
-                + icons.subagents
-                + '<span class="chat-chrome-menu-item-label">' + subLabel + '</span>'
-                + '</button>'
-            );
-        }
-        parts.push(gitPush.menuHtml(icons), supervision.menuHtml(sessionId, icons.subagents));
-        if (_terminalMenuAvailable) {
-            parts.push(
-                '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-                + ' title="Open terminal" aria-label="Open terminal"'
-                + ' onclick="window.chatPageOpenTerminalFromMenu(event)">'
-                + icons.terminal
-                + '<span class="chat-chrome-menu-item-label">Terminal</span>'
-                + '</button>'
-            );
-        }
-        parts.push(
-            '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-            + ' title="Voice mode" aria-label="Voice mode"'
-            + ' onclick="window.chatPageEnterVoiceMode(event)">'
-            + icons.voice
-            + '<span class="chat-chrome-menu-item-label">Voice</span>'
-            + '</button>'
-        );
-        // Archive lives on server sessions only (local-fallback and terminal
-        // entries have no archived state to toggle).
-        if (hasSession && isAuthMode() && !isTerminalSessionId(sessionId)) {
-            const archived = !!((opts && opts.archived) || isChatSessionArchived(sessionId));
-            const archiveLabel = archived ? 'Unarchive' : 'Archive';
-            parts.push(
-                '<button type="button" class="chat-chrome-menu-item" role="menuitem"'
-                + ' title="' + archiveLabel + '" aria-label="' + archiveLabel + '"'
-                + ' onclick="window.chatPageToggleArchiveSession(\'' + sid + '\', event)">'
-                + (archived ? icons.unarchive : icons.archive)
-                + '<span class="chat-chrome-menu-item-label">' + archiveLabel + '</span>'
-                + '</button>'
-            );
-        }
-        if (includeDelete) {
-            parts.push(
-                '<button type="button" class="chat-chrome-menu-item is-danger" role="menuitem"'
-                + ' title="Delete" aria-label="Delete"'
-                + ' onclick="window.chatPageRequestDeleteSession(\'' + sid + '\', event)">'
-                + icons.trash
-                + '<span class="chat-chrome-menu-item-label">Delete</span>'
-                + '</button>'
-            );
-        }
-        return parts.join('');
-    }
-
     function closeAllSessionMenus() {
         historyPanel.closeMenu();
-        closeChatChromeMenu();
-    }
-
-    function exportHHMM(ts) {
-        if (!ts) return '';
-        const d = new Date(ts);
-        if (Number.isNaN(d.getTime())) return '';
-        const hh = String(d.getHours()).padStart(2, '0');
-        const mm = String(d.getMinutes()).padStart(2, '0');
-        return hh + ':' + mm;
-    }
-
-    function exportAgentDisplayName(agent) {
-        const name = String(agent || '');
-        return ({ codex: 'Codex', cursor: 'Cursor', claude: 'Claude Code', muse: 'Muse Code', deepseek: 'DeepSeek', opencode: 'OpenCode', hermes: 'Hermes' })[name] || name;
-    }
-
-    /** Author label for one exported row: subagent speaker → routing badge → slash chip → UI fallback. */
-    function exportMessageAuthor(role, opts) {
-        const speaker = opts && opts.speaker && String(opts.speaker).trim();
-        if (speaker) return speaker;
-        if (role === 'user') return 'You';
-        const badge = opts && opts.routing_badge;
-        if (badge && badge.agent) return exportAgentDisplayName(badge.agent);
-        const sc = normalizeSlashCommandStored(opts && opts.slash_command);
-        if (sc && sc.chips && sc.chips.length) {
-            const meta = String((sc.chips[0] && sc.chips[0].meta) || '');
-            const m = meta.match(/^\/([a-z][\w-]*)/);
-            if (m) return exportAgentDisplayName(m[1]);
-            const label = String((sc.chips[0] && sc.chips[0].label) || '').split(/\s*[—-]\s*/)[0].trim();
-            if (label) return label;
-        }
-        return assistantDisplayName({});
-    }
-
-function buildTranscriptMarkdown(sessionId, messages, isAuth) {
-        const title = String(getChatSessionDisplayTitle(sessionId).trim() || 'Chat transcript');
-        const lines = [];
-        const displayId = formatChatDisplayId(sessionId) || String(sessionId);
-        const at = new Date();
-        lines.push('# ' + title);
-        lines.push('Chat: ' + displayId + ' · Exported ' + at.toISOString().slice(0, 16).replace('T', ' ') + ' UTC');
-        lines.push('---');
-        lines.push('');
-        messages.filter((m) => m && m.role !== 'system').forEach((m) => {
-            const role = String(m.role || 'user');
-            const opts = authMessageOptsFromServer(m);
-            const contentRaw = String(m.content ?? '');
-            const body = role === 'assistant' ? stripLegacyAgentChrome(contentRaw) : contentRaw;
-            if (!body) return;
-            const ts = opts.timestamp > 0 ? Number(opts.timestamp) : 0;
-            const author = exportMessageAuthor(role, opts);
-            const stamp = exportHHMM(ts);
-            lines.push('**' + (stamp ? stamp + ' — ' : '') + author + '**');
-            lines.push('');
-            body.trim().split(/\r\n|\r|\n/).forEach((line) => lines.push(line));
-            lines.push('');
-        });
-        return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
-    }
-
-function downloadTranscriptMarkdown(text, sessionId) {
-        const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const displayId = formatChatDisplayId(sessionId) || 'chat';
-        const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-        const filename = 'cuttle-chat-' + String(displayId).replace(/[^A-Za-z0-9_-]/g, '').toLowerCase() + '-' + stamp + '.md';
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.rel = 'noopener';
-        a.style.display = 'none';
-        document.body.appendChild(a);
-        a.click();
-        try { a.remove(); } catch (_) {}
-        setTimeout(function () { try { URL.revokeObjectURL(url); } catch (_) {} }, 4000);
-        return filename;
-    }
-
-    async function exportChatSession(sessionId, event) {
-        if (event) {
-            event.stopPropagation();
-            event.preventDefault();
-        }
-        if (sessionId == null || sessionId === '') return;
-        closeAllSessionMenus();
-        if (isAuthMode()) {
-            const authSid = toAuthDbSessionId(sessionId);
-            if (authSid == null || authSid === '') return;
-            const tz = -new Date().getTimezoneOffset();
-            const displayId = formatChatDisplayId(authSid) || String(authSid);
-            const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-            const safeId = String(displayId).replace(/[^A-Za-z0-9_-]/g, '').toLowerCase();
-            const filename = 'cuttle-chat-' + safeId + '-' + stamp + '.md';
-            const a = document.createElement('a');
-            a.href = '/api/auth/sessions/' + encodeURIComponent(authSid) + '/export?tz=' + tz;
-            a.download = filename;
-            a.rel = 'noopener';
-            a.style.display = 'none';
-            document.body.appendChild(a);
-            a.click();
-            try { a.remove(); } catch (_) {}
-            (window.showToast || function () {})('Exported ' + filename, 'success');
-            return;
-        }
-        let messages = null;
-        try {
-            const sessions = JSON.parse(localStorage.getItem('chatSessions') || '{}');
-            const s = sessions[sessionId] || sessions[String(sessionId)];
-            if (s && Array.isArray(s.messages)) messages = s.messages;
-        } catch (_) {}
-        if (!messages || !messages.some((m) => m && m.role !== 'system')) {
-            (window.showToast || function () {})('Nothing to export yet', 'error');
-            return;
-        }
-        const md = buildTranscriptMarkdown(sessionId, messages, false);
-        try {
-            const filename = downloadTranscriptMarkdown(md, sessionId);
-            (window.showToast || function () {})('Exported ' + filename, 'success');
-        } catch (e) {
-            (window.showToast || function () {})('Export failed: ' + String((e && e.message) || e), 'error');
-        }
+        sessionMenu.close();
     }
 
     async function toggleStarChatSession(sessionId, event) {
@@ -9188,7 +8875,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             return;
         }
         // Archiving the open chat keeps it open — it only leaves the list.
-        await refreshChatHistoryList();
+        await refreshChatHistoryList(null, { force: true });
         await refreshArchivedSessions();
     }
 
@@ -9251,7 +8938,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 await createNewChat();
             }
             clearSessionPrefs(sessionId);
-            await refreshChatHistoryList();
+            await refreshChatHistoryList(null, { force: true });
             // Deleting from the Archived section must update its count too.
             await refreshArchivedSessions();
             return;
@@ -10181,7 +9868,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         // Keep the stopped activity and durable notice immediately; cancellation
         // can take seconds, and its acknowledgment must not replace the notice.
         retainStoppedAgentBubble();
-        if (announce) ensureGenerationStopNotice('⏹ Stopped generating.');
+        if (announce) ensureGenerationStopNotice('Stopped generating.');
         try {
             if (activeRequestController) activeRequestController.abort();
         } catch (_) {}
@@ -10294,6 +9981,13 @@ function downloadTranscriptMarkdown(text, sessionId) {
             currentSessionId: session.current(),
             isViewing: (id) => isViewingSession(id),
         });
+        // Adopt a server-assigned id without yanking the open chat mid-turn;
+        // gate (stale turn after New Chat never re-adopts) is CuttleTurnGuard's.
+        const adoptTurnSession = (sid) => {
+            if (CuttleTurnGuard.shouldAdoptStreamSession(turnNavGen, turnGeneration, boundSessionId, sid, {
+                currentSessionId: session.current(), sessionIdsEqual, isViewing: (id) => isViewingSession(id),
+            })) adoptChatSessionId(sid);
+        };
         try {
             await ensureAuthChatSession();
             // Send to API with project context (stream for status updates; JSON fallback if SSE fails)
@@ -10425,20 +10119,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
                                         const sid = canonicalizeChatSessionId(streamEv.sessionId);
                                         requestBody.session_id = sid;
                                         if (boundSessionId == null) boundSessionId = sid;
-                                        // Never yank the open chat to a different id mid-turn.
-                                        // The freshness/binding truth table lives in
-                                        // CuttleTurnGuard.shouldAdoptStreamSession; a stale
-                                        // turn after New Chat (welcome is
-                                        // currentSessionId == null) must not re-adopt chat A.
-                                        if (CuttleTurnGuard.shouldAdoptStreamSession(
-                                            turnNavGen, turnGeneration, boundSessionId, sid, {
-                                                currentSessionId: session.current(),
-                                                sessionIdsEqual: sessionIdsEqual,
-                                                isViewing: (id) => isViewingSession(id),
-                                            }
-                                        )) {
-                                            adoptChatSessionId(sid);
-                                        }
+                                        adoptTurnSession(sid);
                                         continue;
                                     }
                                     const streamPlan = CuttleChatPendingResult.planStreamEvent(
@@ -10671,6 +10352,9 @@ function downloadTranscriptMarkdown(text, sessionId) {
 
             if (data && data.session_id != null && boundSessionId == null) {
                 boundSessionId = canonicalizeChatSessionId(data.session_id);
+                // JSON (control lane) has no SSE session event — adopt here or
+                // the paint gate reads a fresh chat's reply as "navigated away".
+                adoptTurnSession(boundSessionId);
             }
 
             // Finalize disposition is owned by chat_pending_result.js — the
@@ -11094,6 +10778,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             LOG_ERR('sendMessage: chatInput not found');
             return;
         }
+        if (overrideText == null && composerLock.blocksSend()) return;
         const composerSource = overrideText != null ? { id: input.id, value: overrideText } : input;
         const message = composeMessageWithSlashChip(composerSource).trim();
         const attachments = overrideText != null ? [] : pendingAttachments.slice();
@@ -11222,6 +10907,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
             parentSessionId: (data && data.parent_session_id != null) ? data.parent_session_id : null,
             origin: String((data && data.origin) || '').trim(),
         };
+        composerLock.setIdentity(session.current(), currentAgentIdentity);
     }
 
     function profileAvatarInnerHtml(avatar) {
@@ -11281,7 +10967,8 @@ function downloadTranscriptMarkdown(text, sessionId) {
                 );
                 if (already) return already;
             }
-            return addSystemMessage(String(content ?? ''), {
+            const saved = opts.timeline_notice ? { timeline_notice: opts.timeline_notice } : null;
+            return addSystemMessage(CuttleChatTimelineNotice.fromRow(content, opts.kind, saved), {
                 persist: true,
                 kind: opts.kind,
                 message_id: mid,
@@ -11680,6 +11367,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
         getSessionId: () => session.current(),
         getProjectPath: () => (currentProject && currentProject.path) ? String(currentProject.path) : '',
         toast: (message, variant) => (window.showToast || function () {})(message, variant),
+        notice: { add: (spec, o) => addSystemMessage(spec, o), update: (el, spec, o) => timelineNotices().update(el, spec, o) },
     });
 
     // Transcript navigation: follow-latest scroll, nav rail + pins, jumps,
@@ -13146,7 +12834,7 @@ function downloadTranscriptMarkdown(text, sessionId) {
     window.chatPageMarkUnreadSession = markSessionUnreadManual;
     window.chatPageMarkCurrentUnreadFromMenu = markCurrentSessionUnreadFromMenu;
 
-    window.chatPageExportSession = exportChatSession;
+    window.chatPageExportSession = transcriptExport.exportSession;
     window.chatPageGitPush = (event, repoRoot) => gitPush.push(event, repoRoot);
 
     document.addEventListener('click', function (e) {
@@ -13305,94 +12993,6 @@ function downloadTranscriptMarkdown(text, sessionId) {
         }
         window.location.href = page;
     }
-
-    const terminalOpenBtn = document.getElementById('terminalOpenBtn');
-    if (terminalOpenBtn) {
-        // Legacy static control — kept for compatibility if present.
-        terminalOpenBtn.addEventListener('click', function(e) {
-            openTerminalFromMenu(e);
-        });
-    }
-    fetch('/api/terminal/status', { credentials: 'same-origin' })
-        .then((resp) => {
-            if (!resp.ok) {
-                _terminalMenuAvailable = false;
-                if (terminalOpenBtn) {
-                    terminalOpenBtn.hidden = true;
-                    terminalOpenBtn.setAttribute('aria-hidden', 'true');
-                }
-            }
-        })
-        .catch(() => {
-            const host = (window.location.hostname || '').toLowerCase();
-            const loopback = host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
-            if (!loopback) {
-                _terminalMenuAvailable = false;
-                if (terminalOpenBtn) {
-                    terminalOpenBtn.hidden = true;
-                    terminalOpenBtn.setAttribute('aria-hidden', 'true');
-                }
-            }
-        });
-
-    function isChatChromeMenuOpen() {
-        const dropdown = document.getElementById('chatChromeMenuDropdown');
-        return !!(dropdown && !dropdown.hidden);
-    }
-
-    function closeChatChromeMenu() {
-        const btn = document.getElementById('chatChromeMenuBtn');
-        const dropdown = document.getElementById('chatChromeMenuDropdown');
-        if (dropdown) dropdown.hidden = true;
-        if (btn) btn.setAttribute('aria-expanded', 'false');
-    }
-
-    function fillChatChromeMenu() {
-        const dropdown = document.getElementById('chatChromeMenuDropdown');
-        if (!dropdown) return;
-        const sid = session.current();
-        const hasSession = sid != null && sid !== '';
-        dropdown.innerHTML = buildSessionMenuHTML(hasSession ? sid : null, {
-            includeRename: hasSession,
-            includeDelete: hasSession,
-        });
-        gitPush.refreshMenuMode(dropdown);
-    }
-
-    function toggleChatChromeMenu(forceOpen) {
-        const btn = document.getElementById('chatChromeMenuBtn');
-        const dropdown = document.getElementById('chatChromeMenuDropdown');
-        if (!btn || !dropdown) return;
-        const open = forceOpen == null ? dropdown.hidden : !!forceOpen;
-        if (open) {
-            historyPanel.closeMenu();
-            fillChatChromeMenu();
-        }
-        dropdown.hidden = !open;
-        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    }
-
-    const chatChromeMenuBtn = document.getElementById('chatChromeMenuBtn');
-    if (chatChromeMenuBtn) {
-        chatChromeMenuBtn.addEventListener('click', function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            toggleChatChromeMenu();
-        });
-    }
-
-    document.addEventListener('click', function (e) {
-        if (!isChatChromeMenuOpen()) return;
-        const menu = document.getElementById('chatChromeMenu');
-        if (menu && menu.contains(e.target)) return;
-        closeChatChromeMenu();
-    });
-
-    document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && isChatChromeMenuOpen()) {
-            closeChatChromeMenu();
-        }
-    });
 
     // Expose for headless e2e verification (history nav + badge)
     try {

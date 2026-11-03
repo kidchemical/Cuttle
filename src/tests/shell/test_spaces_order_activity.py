@@ -40,8 +40,14 @@ const seen = A.selectSpaceActivity(['s1'], (id) => entries[id], true, new Set(['
 const entries9 = { 9: { activity: 'error', running: false } };
 const seenReverse = A.selectSpaceActivity(['9'], (id) => entries9[id], true, new Set(['db_session_9']));
 const variants = A.sidVariants('db_session_7');
+// Idle chat whose agents still own work: its own dot, never above unread.
+A.noteServerSnapshot([{ id: '11', running: false, background: true }, { id: '12', running: true, background: true }], 1);
+A.setUnreadPrefs({ db_session_7: { hasUnread: true }, db_session_13: { hasUnread: true } });
+A.noteServerSnapshot([{ id: '13', running: false, background: true }], 1);
+const bg = { idle: A.lookupSessionActivity('11', 2), busy: A.lookupSessionActivity('12', 2),
+  unread: A.lookupSessionActivity('13', 2), label: A.LABEL.background };
 process.stdout.write(JSON.stringify({ re1, re2, re3, applied, order: st.spaces.map((s) => s.id),
-  look, kinds, best, seen, seenReverse, variants, rank: A.RANK }));
+  look, kinds, best, seen, seenReverse, variants, rank: A.RANK, bg }));
 """
 
 
@@ -69,13 +75,17 @@ def test_reorder_keeps_hidden_slots():
 @node_only
 def test_activity_priority_and_seen_suppression():
     res = _run()
-    assert res["rank"] == {"input": 6, "running": 5, "error": 4, "unread": 3, "queued": 2, "paused": 1}
+    assert res["rank"] == {"input": 7, "running": 6, "error": 5, "unread": 4, "background": 3, "queued": 2, "paused": 1}
     assert res["look"] == {"activity": "unread", "running": False}
     assert res["kinds"] == {"q": "paused", "a": "queued", "e": ""}
     assert res["best"] == "running"  # running outranks unread + queued
     assert res["seen"] == ""  # unread on a visible chat is already seen
     assert res["seenReverse"] == ""  # reverse id form also suppresses
     assert res["variants"] == ["db_session_7", "7"]
+    assert res["bg"]["idle"] == {"activity": "background", "running": False}
+    assert res["bg"]["busy"] == {"activity": "", "running": True}  # a live turn spins instead
+    assert res["bg"]["unread"] == {"activity": "unread", "running": False}  # unread outranks it
+    assert res["bg"]["label"] == "Working in background"
 
 
 LIFECYCLE = """

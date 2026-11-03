@@ -22,6 +22,23 @@ own vendor shapes; the event owner owns persistence, snapshots and retention.
   (outcome unknown). On upgrade, unfinished legacy web runs from before the
   current process boot are recovered the same way. Recovery never uses an age
   limit or kills an agent process.
+- Agent Feed → **Running now** is the task/process manager: one row per chat
+  with live work — a turn, a detached Claude wait, watch jobs bound to it,
+  supervision schedules it runs — expanding to the OS processes its agents own,
+  parents above children, sub-agent chats nested under their parent. Ownership
+  is the run marker every harness CLI gets in its environment
+  (`CUTTLE_CHAT_SESSION_ID` / `CUTTLE_AGENT_RUN_ID`); children inherit it, so a
+  `nohup`/`setsid` build re-parented to init stays attributed and is flagged
+  **detached**. **End** terminates one process tree (identity-checked by creation
+  time; refuses Flask, the daemon, their ancestors and unmarked processes);
+  **End all** stops the chat (`/api/chat-cancel`) and ends every process it
+  owns. A launcher that clears the environment (`env -i`, a service manager,
+  containers) produces work this cannot attribute. Owner: `api.jobs.work_tree` +
+  `api.jobs.processes` (`GET /api/jobs/work-tree`,
+  `POST /api/jobs/processes/<pid>/end`, `POST /api/jobs/chats/<id>/end-processes`;
+  `python -m api.jobs work-tree`). The same read feeds live-status `background`
+  (the chat's pinned background-work bubble) and the sessions list `background`
+  flag (history badge, space/pane activity dot "Working in background").
 - Settings → Data → Databases: sizes for known stores, plus agent-events policy,
   prune, vacuum and typed-confirm reset. Other stores currently expose sizes;
   their owning subsystems retain their existing maintenance interfaces.

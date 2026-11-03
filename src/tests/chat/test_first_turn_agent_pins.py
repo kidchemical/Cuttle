@@ -243,7 +243,7 @@ def test_server_applies_pins_then_freezes_identity_for_badge_and_cli():
         "_apply_request_agent_pins(chat_session_id, data, message_content)", main
     )
     freeze = text.index("_freeze_send_identity(", main)
-    persist_turn = text.index("def _persist_user_turn(sid):", main)
+    persist_turn = text.index("def _persist_user_turn(sid, steer_meta=None):", main)
     delegation = text.index("persist_user_turn as _owned", persist_turn)
     ident_delegated = text.index("identity=_send_identity", delegation)
     badge_delegated = text.index("badge_fn=_user_badge_metadata", delegation)

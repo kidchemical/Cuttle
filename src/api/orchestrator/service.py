@@ -251,6 +251,16 @@ def list_bindings(user_id: int, *, db=None) -> List[Dict[str, Any]]:
     return out
 
 
+def mark_orchestrators(sessions: List[Dict[str, Any]], user_id: int) -> None:
+    """Set ``orchestrator`` on session-list rows bound to a playbook."""
+    bound = {int(b["session_id"]) for b in store.list_bindings(user_id)} if enabled() else set()
+    for row in sessions:
+        try:
+            row["orchestrator"] = int(row.get("id")) in bound
+        except (TypeError, ValueError):
+            row["orchestrator"] = False
+
+
 def brief_block(chat_session_id: Any) -> str:
     """Context Compiler hook: the bound chat's brief, or ``""``. Never raises."""
     try:

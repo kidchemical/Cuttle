@@ -1,0 +1,151 @@
+/* Text & font preferences (Settings → Appearance → Text & fonts).
+ *
+ * js/shared/ui_boot.js sets `data-pref-<font|size>-<area>` +
+ * `--cuttle-pref-<…>` on <html> only when the user picked a value; "Use
+ * theme setting" leaves both unset, so nothing here applies and each theme
+ * (e.g. Matrix's monospace) keeps its own type. Imported by ui_boot.css after
+ * themes.css, so it reaches every page and wins specificity ties with themes.
+ *
+ * Coverage is by AREA, not by hand-picked text selectors:
+ *   Fonts — every element in the area, except the monospace set below
+ *           (owned by the Code row) and embedded editors/terminals.
+ *   Sizes — CSS zoom on the area's top-level children, so every label,
+ *           timestamp, usage line and icon in it scales together. Chips and
+ *           code scale relative to the area they sit in.
+ *
+ * Precedence (later rule wins ties, all !important for fonts):
+ *   Interface < Messages / Composer / History < Chips < Code.
+ *
+ * Monospace set — keep in sync when a chat stylesheet adds a mono element:
+ *   code, pre, kbd, samp, .hljs, .history-chat-handle, .hslp-prefix,
+ *   a.chat-handle-link, .project-path, .slash-cmd-meta, .terminal-body,
+ *   .timeline-notice--code-detail .timeline-notice-detail,
+ *   .pending-changes-file, .query-changes-path, .query-log-json,
+ *   .query-log-pre, .cuttle-lightbox-path
+ */
+
+/* ── Fonts ─────────────────────────────────────────────────────────── */
+
+:root[data-pref-font-interface][data-pref-font-interface] body,
+:root[data-pref-font-interface][data-pref-font-interface] body :not(:where(
+    code, pre, kbd, samp, .hljs, .history-chat-handle, .hslp-prefix, a.chat-handle-link,
+    .project-path, .slash-cmd-meta, .terminal-body, .timeline-notice--code-detail .timeline-notice-detail,
+    .pending-changes-file, .query-changes-path, .query-log-json, .query-log-pre, .cuttle-lightbox-path,
+    .monaco-editor, .xterm
+), :where(
+    code, pre, kbd, samp, .hljs, .history-chat-handle, .hslp-prefix, a.chat-handle-link,
+    .project-path, .slash-cmd-meta, .terminal-body, .timeline-notice--code-detail .timeline-notice-detail,
+    .pending-changes-file, .query-changes-path, .query-log-json, .query-log-pre, .cuttle-lightbox-path,
+    .monaco-editor, .xterm
+) *) {
+    font-family: var(--cuttle-pref-font-interface) !important;
+}
+
+:root[data-pref-font-messages] body :is(.chat-messages, .chat-messages :not(:where(
+    code, pre, kbd, samp, .hljs, .history-chat-handle, .hslp-prefix, a.chat-handle-link,
+    .project-path, .slash-cmd-meta, .terminal-body, .timeline-notice--code-detail .timeline-notice-detail,
+    .pending-changes-file, .query-changes-path, .query-log-json, .query-log-pre, .cuttle-lightbox-path
+), :where(
+    code, pre, kbd, samp, .hljs, .history-chat-handle, .hslp-prefix, a.chat-handle-link,
+    .project-path, .slash-cmd-meta, .terminal-body, .timeline-notice--code-detail .timeline-notice-detail,
+    .pending-changes-file, .query-changes-path, .query-log-json, .query-log-pre, .cuttle-lightbox-path
+) *)) {
+    font-family: var(--cuttle-pref-font-messages) !important;
+}
+
+:root[data-pref-font-composer] body :is(.chat-input-container, .welcome-input-container,
+    :is(.chat-input-container, .welcome-input-container) :not(:where(
+    code, pre, kbd, samp, .hljs, .hslp-prefix, .project-path, .slash-cmd-meta
+), :where(code, pre, kbd, samp, .hljs, .hslp-prefix, .project-path, .slash-cmd-meta) *)) {
+    font-family: var(--cuttle-pref-font-composer) !important;
+}
+
+:root[data-pref-font-history] body :is(.chat-history-panel, .chat-history-panel :not(:where(
+    code, pre, kbd, samp, .history-chat-handle, .hslp-prefix, .project-path
+), :where(code, pre, kbd, samp, .history-chat-handle, .hslp-prefix, .project-path) *)) {
+    font-family: var(--cuttle-pref-font-history) !important;
+}
+
+:root[data-pref-font-chips] body :is(
+    .slash-command-chip, .md-link-chip, .attach-chip, .history-filter-chip
+),
+:root[data-pref-font-chips] body :is(
+    .slash-command-chip, .md-link-chip, .attach-chip, .history-filter-chip
+) * {
+    font-family: var(--cuttle-pref-font-chips) !important;
+}
+
+:root[data-pref-font-code] body :is(
+    code, pre, kbd, samp, .hljs, .history-chat-handle, .hslp-prefix, a.chat-handle-link,
+    .project-path, .slash-cmd-meta, .terminal-body, .timeline-notice--code-detail .timeline-notice-detail,
+    .pending-changes-file, .query-changes-path, .query-log-json, .query-log-pre, .cuttle-lightbox-path
+) {
+    font-family: var(--cuttle-pref-font-code) !important;
+}
+
+/* ── Sizes (% of the theme's size, via zoom) ───────────────────────── */
+
+/* Each transcript row: message text, sender, timestamps, token usage,
+   footers, status line, timeline notices, cards. Zooming the rows (not the
+   scroll container) keeps scroll math in unzoomed pixels. */
+:root[data-pref-size-messages] body .chat-messages > * {
+    zoom: var(--cuttle-pref-size-messages);
+}
+
+/* Composer box, chip row, buttons, context gauge, session usage. */
+:root[data-pref-size-composer] body :is(.chat-input-container, .welcome-input-container) {
+    zoom: var(--cuttle-pref-size-composer);
+}
+
+/* Sidebar contents; the panel keeps its width. */
+:root[data-pref-size-history] body .chat-history-panel > * {
+    zoom: var(--cuttle-pref-size-history);
+}
+
+/* Chips and code: "Use theme setting" follows the area they sit in (the
+   area's zoom already applies). A picked % is exact — a % of the theme's
+   size wherever they appear — so the area's zoom is divided back out. */
+
+:root[data-pref-size-chips] body :is(.slash-command-chip, .md-link-chip, .attach-chip, .history-filter-chip) {
+    zoom: var(--cuttle-pref-size-chips);
+}
+:root[data-pref-size-chips] body .chat-messages :is(.slash-command-chip, .md-link-chip, .attach-chip, .history-filter-chip) {
+    zoom: calc(var(--cuttle-pref-size-chips) / var(--cuttle-pref-size-messages, 1));
+}
+:root[data-pref-size-chips] body :is(.chat-input-container, .welcome-input-container) :is(.slash-command-chip, .md-link-chip, .attach-chip, .history-filter-chip) {
+    zoom: calc(var(--cuttle-pref-size-chips) / var(--cuttle-pref-size-composer, 1));
+}
+:root[data-pref-size-chips] body .chat-history-panel :is(.slash-command-chip, .md-link-chip, .attach-chip, .history-filter-chip) {
+    zoom: calc(var(--cuttle-pref-size-chips) / var(--cuttle-pref-size-history, 1));
+}
+
+/* Outermost monospace element only, so `pre code` doesn't scale twice. */
+
+:root[data-pref-size-code] body :is(code, pre, kbd, samp, .history-chat-handle, .hslp-prefix, a.chat-handle-link,
+    .project-path, .slash-cmd-meta, .terminal-body, .timeline-notice--code-detail .timeline-notice-detail,
+    .pending-changes-file, .query-changes-path, .query-log-json, .query-log-pre, .cuttle-lightbox-path):not(:is(code, pre, kbd, samp, .history-chat-handle, .hslp-prefix, a.chat-handle-link,
+    .project-path, .slash-cmd-meta, .terminal-body, .timeline-notice--code-detail .timeline-notice-detail,
+    .pending-changes-file, .query-changes-path, .query-log-json, .query-log-pre, .cuttle-lightbox-path) *) {
+    zoom: var(--cuttle-pref-size-code);
+}
+:root[data-pref-size-code] body .chat-messages :is(code, pre, kbd, samp, .history-chat-handle, .hslp-prefix, a.chat-handle-link,
+    .project-path, .slash-cmd-meta, .terminal-body, .timeline-notice--code-detail .timeline-notice-detail,
+    .pending-changes-file, .query-changes-path, .query-log-json, .query-log-pre, .cuttle-lightbox-path):not(:is(code, pre, kbd, samp, .history-chat-handle, .hslp-prefix, a.chat-handle-link,
+    .project-path, .slash-cmd-meta, .terminal-body, .timeline-notice--code-detail .timeline-notice-detail,
+    .pending-changes-file, .query-changes-path, .query-log-json, .query-log-pre, .cuttle-lightbox-path) *) {
+    zoom: calc(var(--cuttle-pref-size-code) / var(--cuttle-pref-size-messages, 1));
+}
+:root[data-pref-size-code] body :is(.chat-input-container, .welcome-input-container) :is(code, pre, kbd, samp, .history-chat-handle, .hslp-prefix, a.chat-handle-link,
+    .project-path, .slash-cmd-meta, .terminal-body, .timeline-notice--code-detail .timeline-notice-detail,
+    .pending-changes-file, .query-changes-path, .query-log-json, .query-log-pre, .cuttle-lightbox-path):not(:is(code, pre, kbd, samp, .history-chat-handle, .hslp-prefix, a.chat-handle-link,
+    .project-path, .slash-cmd-meta, .terminal-body, .timeline-notice--code-detail .timeline-notice-detail,
+    .pending-changes-file, .query-changes-path, .query-log-json, .query-log-pre, .cuttle-lightbox-path) *) {
+    zoom: calc(var(--cuttle-pref-size-code) / var(--cuttle-pref-size-composer, 1));
+}
+:root[data-pref-size-code] body .chat-history-panel :is(code, pre, kbd, samp, .history-chat-handle, .hslp-prefix, a.chat-handle-link,
+    .project-path, .slash-cmd-meta, .terminal-body, .timeline-notice--code-detail .timeline-notice-detail,
+    .pending-changes-file, .query-changes-path, .query-log-json, .query-log-pre, .cuttle-lightbox-path):not(:is(code, pre, kbd, samp, .history-chat-handle, .hslp-prefix, a.chat-handle-link,
+    .project-path, .slash-cmd-meta, .terminal-body, .timeline-notice--code-detail .timeline-notice-detail,
+    .pending-changes-file, .query-changes-path, .query-log-json, .query-log-pre, .cuttle-lightbox-path) *) {
+    zoom: calc(var(--cuttle-pref-size-code) / var(--cuttle-pref-size-history, 1));
+}

@@ -1,0 +1,77 @@
+/* Composer lock (chat_composer_lock.js): sub-agent and supervised chats open
+   with the composer collapsed to one short row — lock icon + a caption naming
+   the controlling chat. Input parts are hidden (and inert); Stop stays live.
+   Unlock from the chat menu. */
+
+.input-wrapper.is-composer-locked {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    min-height: 0;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    border-style: dashed;
+}
+
+/* No buttons, chips or textarea while locked; only Stop (when a turn runs). */
+.input-wrapper.is-composer-locked #chatSlashChipsRow,
+.input-wrapper.is-composer-locked #chatAttachChipsRow,
+.input-wrapper.is-composer-locked .textarea-with-slash-menu,
+.input-wrapper.is-composer-locked .composer-actions > :not(#stopButton) {
+    display: none !important;
+}
+
+.input-wrapper.is-composer-locked .chat-composer-inner {
+    order: 2;
+    flex: 0 0 auto;
+    width: auto;
+    min-height: 0;
+}
+
+.input-wrapper.is-composer-locked .composer-top-row {
+    margin: 0;
+    min-height: 0;
+}
+
+.composer-lock-overlay {
+    order: 1;
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.composer-lock-overlay[hidden] { display: none; }
+
+.composer-lock-badge {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    color: var(--text-secondary, #b0b0c0);
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.16));
+    cursor: help;
+}
+
+.composer-lock-caption {
+    min-width: 0;
+    font-size: 12.5px;
+    line-height: 1.35;
+    color: var(--text-secondary, #b0b0c0);
+}
+
+.composer-lock-handle {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-weight: 600;
+    color: var(--accent-color, #8ab4ff);
+    cursor: pointer;
+}
+
+.composer-lock-handle:hover { text-decoration: underline; }

@@ -40,13 +40,19 @@
             return data;
         }
 
+        // Tell the page whether this chat is under supervision (composer lock).
+        // A failed poll reports nothing, so a network blip keeps the last answer.
+        function reportSupervised(sid, on, by) {
+            if (host.onSupervised) host.onSupervised(sid, on, by || '');
+        }
+
         async function refresh() {
             const sid = numericSession(session);
             const mine = ++seq;
-            if (!enabled || !sid) { overview = null; render(); return; }
+            if (!enabled || !sid) { overview = null; render(); reportSupervised(session, false); return; }
             try {
                 const data = await call('GET', '/api/chat-ops/sessions/' + sid);
-                if (mine === seq) { overview = data; render(); }
+                if (mine === seq) { overview = data; render(); reportSupervised(session, M.isSupervised(data), M.supervisorOf(data)); }
             } catch (_) {
                 if (mine === seq) { overview = null; render(); }
             }

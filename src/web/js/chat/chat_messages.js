@@ -118,6 +118,7 @@
             parent_user_message_id: meta.parent_user_message_id || undefined,
             coordinator_response_message_id: meta.coordinator_response_message_id || undefined,
             kind: meta.kind || m.kind || undefined,
+            timeline_notice: meta.timeline_notice || undefined,
             subagents: meta.subagents || m.subagents || undefined,
             subagent_batch_id: meta.subagent_batch_id || undefined,
         };

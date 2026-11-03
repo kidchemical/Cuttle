@@ -396,6 +396,18 @@
                 else if (action === 'zoom-out') lightboxZoomBy(1 / _LIGHTBOX_ZOOM_STEP);
                 else if (action === 'zoom-toggle') toggleLightboxSizeMode();
             });
+            const dlLink = el.querySelector('.cuttle-lightbox-download');
+            if (dlLink) {
+                dlLink.addEventListener('click', function (e) {
+                    const item = _lightboxItems && _lightboxItems[_lightboxIndex];
+                    const win = el.ownerDocument.defaultView;
+                    const bridge = item ? nativeMediaBridge(win) : null;
+                    if (!bridge) return;
+                    const href = dlLink.getAttribute('href') || item.download || mediaDownloadUrl(item.src);
+                    const name = dlLink.getAttribute('download') || mediaDownloadFilename(item.src, item.title);
+                    if (bridge.saveMedia(absoluteMediaUrl(href, win), name)) e.preventDefault();
+                });
+            }
             const stage = el.querySelector('.cuttle-lightbox-stage');
             if (stage) {
                 stage.addEventListener('pointerdown', onLightboxPointerDown);
@@ -1042,6 +1054,35 @@
             void doc;
         }
 
+        // Cuttle Mobile (Android WebView): <a download> is a no-op and the async
+        // clipboard cannot hold images, so hand the URL to the native shell
+        // (window.cuttleMobile lives on the top shell window).
+        function nativeMediaBridge(win) {
+            const wins = [win, frameWin];
+            try {
+                wins.push(lightboxHostWindow());
+            } catch (_) {}
+            try {
+                wins.push(frameWin.top);
+            } catch (_) {}
+            for (let i = 0; i < wins.length; i++) {
+                try {
+                    const m = wins[i] && wins[i].cuttleMobile;
+                    if (m && typeof m.copyImage === 'function' && typeof m.saveMedia === 'function') return m;
+                } catch (_) {}
+            }
+            return null;
+        }
+
+        function absoluteMediaUrl(u, win) {
+            const w = win || frameWin;
+            try {
+                return new URL(String(u || ''), w.location.href).href;
+            } catch (_) {
+                return String(u || '');
+            }
+        }
+
         async function copyImageToClipboard(src, win) {
             const u = String(src || '').trim();
             if (!u || !isSafeMediaSrc(u)) throw new Error('Invalid image');
@@ -1073,6 +1114,8 @@
             if (!href) throw new Error('Nothing to save');
             const filename = mediaDownloadFilename(src, title);
             const doc = (ownerDoc && ownerDoc.body) ? ownerDoc : frameDoc;
+            const bridge = nativeMediaBridge(doc.defaultView);
+            if (bridge && bridge.saveMedia(absoluteMediaUrl(href, doc.defaultView), filename)) return;
             const a = doc.createElement('a');
             a.href = href;
             a.download = filename;
@@ -1157,7 +1200,10 @@
                 const action = btn.getAttribute('data-media-ctx');
                 const win = (doc.defaultView) || frameWin;
                 hideMediaCtxMenu();
-                if (action === 'copy') {
+                const bridge = action === 'copy' ? nativeMediaBridge(win) : null;
+                if (bridge && bridge.copyImage(absoluteMediaUrl(media.src, win))) {
+                    // The shell shows its own toast with the result.
+                } else if (action === 'copy') {
                     copyImageToClipboard(media.src, win)
                         .then(function () {
                             mediaCtxToast('Image copied', 'success');

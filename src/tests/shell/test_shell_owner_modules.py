@@ -76,16 +76,16 @@ def test_shell_delegates_electron_chrome_and_zoom():
     assert "cuttleTitlebarCancelHide" not in page
 
 
-def test_mobile_owner_holds_detection_update_and_ssh_approval():
+def test_mobile_owner_holds_detection_and_update():
     owner = MOBILE_JS.read_text(encoding="utf-8")
     assert "function isCuttleMobileShell()" in owner
     assert "function cuttleIsMobileClient()" in owner
     assert "function cuttleOpenMobileServerSettings()" in owner
     assert "function cuttleSyncMobileServerRows()" in owner
     assert "(function initMobileAppShell() {" in owner
-    assert "(function initSshApprovalModal() {" in owner
-    assert "id=\"sshApprovalModal\"" not in owner  # modal markup stays in HTML
-    assert "'/api/workers/ssh-approval/'" in owner
+    # The unsafe-shell approval modal is retired (remote commands use OpenSSH).
+    assert "initSshApprovalModal" not in owner
+    assert "/api/workers/ssh-approval/" not in owner
 
 
 def test_shell_delegates_mobile_and_keeps_shared_wiring():

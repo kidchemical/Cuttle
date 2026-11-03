@@ -801,80 +801,6 @@ def test_render_profile_ewma(tmp_path):
     assert w["meta"]["render_profile"]["eevee"]["samples"] == 2
 
 
-def test_ssh_approval_once_and_session():
-    from api.device_workers import ssh_approval as sa
-
-    sa.clear_session_grant()
-    row = sa.create_request(
-        worker_id="kcstower",
-        target="cuttle-lan",
-        command_preview="echo hi",
-    )
-    assert row["status"] == "pending"
-    assert sa.list_pending()
-    decided = sa.decide(row["id"], "once")
-    assert decided["status"] == "once"
-    assert not sa.session_granted()
-
-    row2 = sa.create_request(worker_id="kcstower", target="cuttle-lan", command_preview="hostname")
-    sa.decide(row2["id"], "session")
-    sa.grant_session()
-    assert sa.session_granted()
-    sa.clear_session_grant()
-    assert not sa.session_granted()
-
-
-def test_ssh_hitl_blocks_without_approval(monkeypatch):
-    from api.device_workers import executor as ex
-    from api.device_workers import ssh_approval as sa
-    from api.device_workers.executor import JobExecError
-
-    sa.clear_session_grant()
-    monkeypatch.setenv("CUTTLE_SSH_APPROVAL_BYPASS", "0")
-    monkeypatch.setattr(ex, "_execute_shell_ssh_enabled", lambda: True)
-    monkeypatch.setattr(ex, "_command_allowed", lambda c: True)
-    monkeypatch.setattr(ex, "_dw_settings", lambda: {
-        "execute_shell_ssh_enabled": True,
-        "ssh_host": "cuttle-lan",
-        "ssh_identity": "",
-        "ssh_approval_required": True,
-        "ssh_approval_timeout_seconds": 1,
-        "execute_shell_prefixes": ["echo "],
-    })
-    monkeypatch.setattr(
-        sa,
-        "request_via_coordinator",
-        lambda **kw: "deny",
-    )
-    monkeypatch.setattr(sa, "unsafe_shell_approval_required", lambda: True)
-    monkeypatch.setattr(sa, "session_granted", lambda: False)
-
-    with pytest.raises(JobExecError, match="denied"):
-        ex.execute_job({"type": "execute_shell_ssh", "params": {"command": "echo hi"}})
-
-
-def test_execute_shell_unsafe_hitl_blocks_without_approval(monkeypatch):
-    from api.device_workers import executor as ex
-    from api.device_workers import ssh_approval as sa
-    from api.device_workers.executor import JobExecError
-
-    sa.clear_session_grant()
-    monkeypatch.setenv("CUTTLE_SSH_APPROVAL_BYPASS", "0")
-    monkeypatch.setattr(ex, "_execute_shell_unsafe_enabled", lambda: True)
-    monkeypatch.setattr(ex, "_command_allowed", lambda c: True)
-    monkeypatch.setattr(ex, "_dw_settings", lambda: {
-        "execute_shell_unsafe_enabled": True,
-        "ssh_approval_required": True,
-        "execute_shell_prefixes": ["echo "],
-    })
-    monkeypatch.setattr(sa, "request_via_coordinator", lambda **kw: "deny")
-    monkeypatch.setattr(sa, "unsafe_shell_approval_required", lambda: True)
-    monkeypatch.setattr(sa, "session_granted", lambda: False)
-
-    with pytest.raises(JobExecError, match="denied"):
-        ex.execute_job({"type": "execute_shell_unsafe", "params": {"command": "echo hi"}})
-
-
 def test_shell_recipe_allowlist_and_self_update_schedules(tmp_path, monkeypatch):
     from api.device_workers import executor as ex
 
@@ -911,12 +837,11 @@ def test_shell_recipe_allowlist_and_self_update_schedules(tmp_path, monkeypatch)
     assert result.get("scheduled") is True
     assert calls, "expected detached updater spawn"
 
-    # execute_shell_unsafe defaults off
-    try:
-        ex.execute_job({"type": "execute_shell_unsafe", "params": {"command": "echo hi"}})
-        assert False, "expected JobExecError"
-    except ex.JobExecError as e:
-        assert "disabled" in str(e).lower() or "unsafe" in str(e).lower()
+    # Free-form shell job types are gone: remote commands use the user's own SSH.
+    for retired in ("execute_shell_unsafe", "execute_shell_ssh"):
+        with pytest.raises(ex.JobExecError, match="unsupported job type"):
+            ex.execute_job({"type": retired, "params": {"command": "echo hi"}})
+        assert not ex.validate_job_submission(retired, {"command": "echo hi"})[0]
 
 
 def test_queue_ttl_expires_before_claim(worker_db):
@@ -942,34 +867,6 @@ def test_queue_ttl_expires_before_claim(worker_db):
     assert n == 1
     assert worker_db.get_job(job["id"])["status"] == "cancelled"
     assert worker_db.claim_jobs(worker_id="w", capabilities={}) == []
-
-
-def test_unsafe_shell_lease_does_not_requeue(worker_db):
-    job = worker_db.submit_job(
-        job_type="execute_shell_unsafe",
-        params={"command": "echo hi"},
-        max_attempts=1,
-    )
-    claimed = worker_db.claim_jobs(
-        worker_id="w1", capabilities={}, lease_seconds=60
-    )
-    assert claimed
-    assert claimed[0]["attempts"] == 1
-    import sqlite3
-    from api.device_workers.store import database_path
-
-    conn = sqlite3.connect(str(database_path()))
-    conn.execute(
-        "UPDATE jobs SET claim_expires = ? WHERE id = ?",
-        (time.time() - 10, claimed[0]["id"]),
-    )
-    conn.commit()
-    conn.close()
-    worker_db.reclaim_expired()
-    done = worker_db.get_job(job["id"])
-    assert done["status"] == "cancelled"
-    assert "does not requeue" in (done.get("error") or "")
-    assert worker_db.claim_jobs(worker_id="w2", capabilities={}) == []
 
 
 def test_ping_lease_requeue_until_max_attempts(worker_db):
@@ -1116,7 +1013,7 @@ def test_fail_retry_respects_max_attempts(worker_db):
         job_type="blender_render", attempts=5, max_attempts=5, retry=True
     )[0] == "fail"
     assert fail_disposition(
-        job_type="execute_shell_unsafe", attempts=1, max_attempts=1, retry=True
+        job_type="ping", attempts=1, max_attempts=1, retry=True
     )[0] == "fail"
 
     job = worker_db.submit_job(

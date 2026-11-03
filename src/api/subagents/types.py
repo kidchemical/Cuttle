@@ -126,6 +126,7 @@ class ChildRecord:
     live_status: str = ""
     live_status_at: str = ""
     live_turn_id: str = ""
+    stop_requested_at: Optional[float] = None
 
     def handle(self) -> str:
         return chat_handle(self.session_id)

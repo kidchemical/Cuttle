@@ -87,6 +87,23 @@ def cancel(oid, actor):
     return get(oid, actor)
 
 
+def cancel_sends_to(target):
+    """Cancel every queued send to a chat; returns the cancelled operations.
+
+    A stopped chat must stay stopped: a send still in the outbox would start a
+    new turn the moment the chat goes idle."""
+    now = time.time()
+    with connection() as conn:
+        rows = [public(r) for r in conn.execute(
+            "SELECT * FROM operations WHERE kind='send' AND target=? AND state IN ('pending','verifying')",
+            (int(target),))]
+        if rows:
+            marks = ','.join('?' * len(rows))
+            conn.execute(f"UPDATE operations SET state='cancelled', updated=? WHERE id IN ({marks})",
+                         (now, *[r['id'] for r in rows]))
+    return rows
+
+
 def set_paused(oid, actor, paused):
     """Pause or resume a schedule; a resumed schedule checks right away."""
     now = time.time()
@@ -165,6 +182,16 @@ def patch_payload(oid, **fields):
 def patch_result(oid, **fields):
     """Merge fields into an operation's result without touching state or due."""
     _patch(oid, 'result', fields)
+
+
+def supervisor_links():
+    """``{target: actor}`` for supervision schedules still in force (paused
+    included); when a chat has several supervisors the newest one wins."""
+    with connection() as conn:
+        rows = conn.execute(
+            "SELECT actor, target FROM operations WHERE kind='supervise' "
+            "AND state IN ('pending','dispatching','paused') ORDER BY updated ASC").fetchall()
+    return {int(r['target']): int(r['actor']) for r in rows}
 
 
 def supervising(targets):

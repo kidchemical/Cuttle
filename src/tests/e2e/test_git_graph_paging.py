@@ -148,3 +148,36 @@ def test_ref_chips_by_kind(git_page):
     assert "is-head" in chips.nth(0).get_attribute("class")
     assert "is-tag" in chips.nth(1).get_attribute("class")
     assert errors == []
+
+
+def _edge_bottoms(page, lane_x):
+    """Lowest y each drawn edge reaches on the given lane x (SVG coordinates)."""
+    return page.evaluate(
+        """(x) => [...document.querySelectorAll('#gitGraphSvg .git-graph-edge')]
+            .map((p) => p.getAttribute('d').match(/-?[\\d.]+/g).map(Number))
+            .filter((n) => n[n.length - 2] === x)
+            .map((n) => n[n.length - 1])""",
+        lane_x,
+    )
+
+
+def test_edge_to_unloaded_parent_runs_to_list_bottom(git_page):
+    # A branch tip on page 1 whose parent is on page 2 used to stop after a
+    # short stub until the parent row loaded; it now runs down its lane.
+    api = GraphAPI()
+    tip = "f" * 40
+    api.commits.insert(1, {
+        "hash": tip, "short": tip[:7], "parents": [api.commits[100]["hash"]],
+        "author": "Owner", "email": "o@example.com", "date": "2026-10-01T12:00:00+00:00",
+        "subject": "origin dev tip", "refs": ["origin/dev"], "tags": [],
+    })
+    page, _api, errors = git_page(height=600, api=api)
+    page.wait_for_function("() => document.getElementById('gitGraphSubtitle').textContent.startsWith('60')")
+    svg_h = float(page.locator("#gitGraphSvg").get_attribute("height"))
+    side_lane_x = 16 + 14  # GUTTER_PAD + one LANE_W
+    assert svg_h in _edge_bottoms(page, side_lane_x)
+    # Rows the open line crosses inset their text past it.
+    inset = page.locator(".git-graph-row").nth(5).evaluate(
+        "(el) => getComputedStyle(el).getPropertyValue('--text-inset').trim()")
+    assert inset == f"{side_lane_x + 14}px"
+    assert errors == []

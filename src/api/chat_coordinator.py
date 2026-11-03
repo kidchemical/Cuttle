@@ -100,7 +100,10 @@ class AgentTurnIO:
     """One surface's arm implementations. All members are required —
     no silent defaults. ``run_router`` returning None means abstain
     (owned no-LLM fallback). The pipeline arm needs no runner: an empty
-    message has nothing to execute, so the owned fallback applies."""
+    message has nothing to execute, so the owned fallback applies.
+    ``persist_steered_user`` (optional) persists the user row with steer
+    metadata; lanes that set it let a harness message steer into the chat's
+    detached background run (``_steer_into_background``)."""
 
     run_harness: Callable[..., Dict[str, Any]]
     run_router: Callable[..., Optional[Dict[str, Any]]]
@@ -109,6 +112,7 @@ class AgentTurnIO:
     should_save: Callable[[Dict[str, Any]], bool]
     notify_mobile: Optional[Callable[[Dict[str, Any]], None]]
     format_shortcut: Callable[[str, AgentSelection], Dict[str, Any]]
+    persist_steered_user: Optional[Callable[[Dict[str, Any]], None]] = None
 
 
 @dataclass(frozen=True)
@@ -138,6 +142,38 @@ class StreamTurnIO:
     notify_mobile: Optional[Callable[[Dict[str, Any]], None]]
     format_shortcut: Callable[[str, AgentSelection], Dict[str, Any]]
     run_pipeline: Optional[Callable[..., Dict[str, Any]]] = None
+    persist_steered_user: Optional[Callable[[Dict[str, Any]], None]] = None
+
+
+def _steer_into_background(
+    prepared: PreparedAgentTurn,
+    sel: AgentSelection,
+    persist_steered_user: Optional[Callable[[Dict[str, Any]], None]],
+) -> Optional[Dict[str, Any]]:
+    """Harness message for a chat whose run outlived its turn → steer, not a new run.
+
+    The chat is idle but its CLI is still open on a background wait
+    (``api.agent_harness.background_wait``); a second turn would start another
+    ``--resume`` writer on the same CLI session. Returns the no-reply body
+    (the answer arrives as a follow-up bubble) or None to run normally.
+    """
+    if persist_steered_user is None or sel.kind != "harness" or prepared.session_id is None:
+        return None
+    from api.agent_harness.background_wait import steer_detached
+
+    info = steer_detached(prepared.session_id, sel.agent_id, sel.prompt or "")
+    if info is None:
+        return None
+    persist_steered_user({"steered": True, "steered_agent": info.get("agent")})
+    return {
+        "success": True,
+        "response": "",
+        "no_reply": True,
+        "steered": True,
+        "agent": info.get("agent"),
+        "session_id": prepared.session_id,
+        "type": "background_steer",
+    }
 
 
 def _after_run(
@@ -214,6 +250,9 @@ def submit_agent_turn(
             if isinstance(body, dict):
                 _after(body)
             return AgentTurnResult(body=body, status=200, selection=sel)
+        steered = _steer_into_background(prepared, sel, io.persist_steered_user)
+        if steered is not None:
+            return AgentTurnResult(body=steered, status=200, selection=sel)
         body, status = _run_lane(
             prepared.session_id,
             delivery=delivery,
@@ -312,6 +351,11 @@ def submit_agent_stream_turn(
         return
 
     if sel.kind == "harness":
+        steered = _steer_into_background(prepared, sel, io.persist_steered_user)
+        if steered is not None:
+            yield ("shortcut", steered)
+            return
+
         def _run(queue):
             return io.run_harness(
                 sel.agent_id, sel.prompt,

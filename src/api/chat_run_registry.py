@@ -122,6 +122,20 @@ def session_job_ids(session_id) -> List[str]:
         return sorted(found)
 
 
+def job_bindings() -> Dict[str, List[str]]:
+    """Every chat's bound watch-job ids, keyed by bare chat id (aliases collapsed)."""
+    from api.session_keys import bare_chat_session_id
+
+    out: Dict[str, set] = {}
+    with _lock:
+        items = [(k, set(v or ())) for k, v in _session_jobs.items()]
+    for key, jobs in items:
+        bare = bare_chat_session_id(key) or str(key)
+        if jobs:
+            out.setdefault(bare, set()).update(jobs)
+    return {k: sorted(v) for k, v in out.items()}
+
+
 def clear_session_jobs(session_id, job_id: Optional[str] = None) -> None:
     keys = _session_keys(session_id)
     ident = str(job_id or "").strip()

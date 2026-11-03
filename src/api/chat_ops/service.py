@@ -85,10 +85,18 @@ def status(target, actor=None, *, db=None, request=None):
         state = 'awaiting_input'
     elif latest and is_error(latest.get('content'), latest.get('metadata')):
         state = 'error'
-    elif any(t['done'] < t['total'] for t in progress):
-        state = 'idle_with_work'
     else:
-        state = 'idle'
+        from api.agent_harness.background_wait import running_on_disk
+        waits = running_on_disk(sid)
+        if waits:
+            # The turn ended but its CLI is still waiting on background work and
+            # will post a follow-up bubble by itself (agent_harness.background_wait).
+            state = 'waiting_background'
+            live = {**live, 'background_wait': waits}
+        elif any(t['done'] < t['total'] for t in progress):
+            state = 'idle_with_work'
+        else:
+            state = 'idle'
     return {'schema_version': 1, 'ok': True, 'handle': f'CH-{sid:06d}', 'state': state,
             'live': live, 'attention': attention, 'tasks': progress,
             'followups': db.get_followup_state(sid, uid),
@@ -202,8 +210,14 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
                 store.finish(op['id'], 'delivered', {'steered': True})
                 return {'schema_version': 1, 'ok': True, 'delivery': 'steered', 'handle': f"CH-{row['id']:06d}"}
             store.finish(op['id'], 'pending', {})
+            # The turn is live but took nothing: the send waits for that turn to end,
+            # however long that is. Say so, so an urgent send is not mistaken for delivered.
             return {'schema_version': 1, 'ok': True, 'delivery': 'queued', 'operation': store.get(op['id'], actor),
-                    'hint': 'Host-owned outbox dispatches when idle; no open browser required'}
+                    'target_busy': True, 'steer_reason': str(steered.get('reason') or 'rejected'),
+                    'hint': ('Target turn is live but not steerable; this waits until that turn ends, '
+                             'however long. Let it: stopping the target throws away its running work. '
+                             'Only when the user asked to pause or stop it, run `chat_cli stop` '
+                             '(which also drops queued sends).')}
     op = store.create('send', actor, row['id'], {'text': text})
     return {'schema_version': 1, 'ok': True, 'delivery': 'queued', 'operation': op,
             'hint': 'Host-owned outbox dispatches when idle; no open browser required'}
@@ -375,6 +389,25 @@ def overview(session, user_id, *, db=None):
             'supervised_by': supervised_by, 'queued': queued}
 
 
+def mark_supervision(sessions):
+    """Set ``supervisor_session_id`` (the chat supervising this row) and
+    ``supervises_session_ids`` (chats this row supervises) on session-list rows,
+    so the history panel can nest supervised chats under their supervisor."""
+    from api.experimental import is_enabled
+    links = store.supervisor_links() if is_enabled('chat_supervision') else {}
+    links = {t: a for t, a in links.items() if t != a}
+    targets = {}
+    for target, actor in links.items():
+        targets.setdefault(actor, []).append(target)
+    for row in sessions:
+        try:
+            sid = int(row.get('id'))
+        except (TypeError, ValueError):
+            continue
+        row['supervisor_session_id'] = links.get(sid)
+        row['supervises_session_ids'] = sorted(targets.get(sid, []))
+
+
 def _schedule_view(op):
     cfg, result = op['payload'], op['result'] or {}
     seen = result.get('last_seen') or {}
@@ -387,5 +420,11 @@ def _schedule_view(op):
 
 
 def stop(target, actor=None, *, db=None, request=None):
+    """Stop the target's turn and drop sends still queued for it, so the stop
+    holds: an outbox send would otherwise restart the chat as soon as it idles."""
     db, actor, row = context(target, actor, db=db)
-    return (request or transport.request)(row['user_id'], row['id'], 'POST', '/api/chat-cancel')
+    held = store.cancel_sends_to(row['id'])
+    out = dict((request or transport.request)(row['user_id'], row['id'], 'POST', '/api/chat-cancel') or {})
+    out['cancelled_sends'] = [{'id': o['id'], 'from': f"CH-{o['actor']:06d}", 'text': o['payload'].get('text', '')[:200]}
+                              for o in held]
+    return out

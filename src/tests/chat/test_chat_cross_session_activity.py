@@ -133,13 +133,20 @@ def test_detach_does_not_reenable_orphan_pending_waiter():
 
 def test_sse_session_adopt_not_from_zombie_when_welcome():
     """A background turn must not adopt into the New Chat welcome splash."""
-    session = _sse_session_arm(_src())
-    assert "adoptChatSessionId(" in session
-    # Zombie adopt gate now lives in the owner (CuttleTurnGuard
+    src = _src()
+    session = _sse_session_arm(src)
+    # The SSE arm adopts through the per-turn adoptTurnSession helper (shared
+    # with the JSON fallback), never adoptChatSessionId directly.
+    assert "adoptTurnSession(sid)" in session
+    assert "adoptChatSessionId(" not in session
+    start = src.index("const adoptTurnSession = (sid) => {")
+    helper = src[start:src.index("\n        };", start)]
+    # Zombie adopt gate lives in the owner (CuttleTurnGuard
     # .shouldAdoptStreamSession); the page feeds it the nav generation and
     # the live session snapshot. Same contract: a turn from before the
     # navigation bump never adopts into the new UI (behavior pinned in
     # test_chat_turn_guard.py::test_stream_session_adopt_gate).
-    assert "CuttleTurnGuard.shouldAdoptStreamSession(" in session
-    assert "turnNavGen, turnGeneration" in session
-    assert "currentSessionId: session.current()" in session
+    assert "CuttleTurnGuard.shouldAdoptStreamSession(" in helper
+    assert "turnNavGen, turnGeneration" in helper
+    assert "currentSessionId: session.current()" in helper
+    assert helper.index("shouldAdoptStreamSession(") < helper.index("adoptChatSessionId(sid)")

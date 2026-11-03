@@ -161,7 +161,7 @@ window.CuttleAuth = {
     adoptSessions: sessions => { chatSessions = sessions || []; },
     isAuthenticated: () => !!currentUser,
     setCurrentChatSession: (id) => { currentChatSession = id; },
-    loadChatSessions: () => loadChatSessions(),
+    loadChatSessions: (opts) => loadChatSessions(opts),
     openAuthModal: (tab) => openAuthModal(tab || 'login'),
     logout: (opts) => handleLogout(opts || {}),
     userAvatarInitials: (user) => userAvatarInitials(user),
@@ -1002,13 +1002,17 @@ async function handleLogout(opts = {}) {
 
 /**
  * Load user's chat sessions (does not broadcast — callers emit once if needed).
+ * Pass `{force: true}` right after a session write so a cached snapshot from
+ * before the write is not reused.
  */
-async function loadChatSessions() {
+async function loadChatSessions(opts) {
     if (!_pageNeedsChatSessions()) return;
     const requestingUserId = currentUser ? currentUser.id : null;
+    // `force` after a write: skip the shell broker's 2s snapshot cache.
+    const force = !!(opts && opts.force);
     try {
         const broker = window.parent !== window && window.parent.cuttleActivityBroker;
-        const data = broker ? {success: true, sessions: await broker.sessions(false, requestingUserId)}
+        const data = broker ? {success: true, sessions: await broker.sessions(force, requestingUserId)}
             : await (await fetch('/api/auth/sessions', {credentials: 'include'})).json();
 
         if ((currentUser ? currentUser.id : null) !== requestingUserId) return;

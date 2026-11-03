@@ -8,7 +8,8 @@
  *
  * localStorage keys: theme, cuttleVideoBackgroundActive,
  * cuttleBackgroundEffectBlend, cuttleUiAnimations, cuttleUiTransitionMs,
- * cuttleVideoBackgroundList, cuttleVideoBackgroundEnabled
+ * cuttleVideoBackgroundList, cuttleVideoBackgroundEnabled, cuttleChatBubbles,
+ * cuttleActivityStatusStyle
  */
 (function () {
     'use strict';
@@ -20,6 +21,125 @@
     var BLEND_KEY = 'cuttleBackgroundEffectBlend';
     var ANIM_KEY = 'cuttleUiAnimations';
     var ANIM_MS_KEY = 'cuttleUiTransitionMs';
+    /* '0' = flat chat messages (no bubbles); css/chat_flat_messages.css. */
+    var CHAT_BUBBLES_KEY = 'cuttleChatBubbles';
+    /* 'sweep' (default) | 'rise'; css/chat_activity_status.css. */
+    var ACTIVITY_STATUS_KEY = 'cuttleActivityStatusStyle';
+
+    /* Text preferences (Settings → Appearance → Text & fonts).
+       One row per area of the chat UI, each with a Font and a Size. A missing
+       localStorage value = "Use theme setting" (no override). A set value
+       becomes `data-pref-<id>` + `--cuttle-pref-<id>` on <html>; the area
+       selectors live in css/text_prefs.css. Values are ids from this table,
+       never raw CSS from storage. Sizes are always a % of the theme's size
+       and scale the whole area (CSS zoom), so every piece of text in it —
+       usage lines, timestamps, labels — follows, not just a hand-picked few. */
+    var SANS_FONTS = [
+        ['system', 'System UI', "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif"],
+        ['inter', 'Inter', "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif"],
+        ['plex', 'IBM Plex Sans', "'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif"],
+        ['rounded', 'Rounded', "ui-rounded, 'SF Pro Rounded', 'Nunito', 'Varela Round', system-ui, sans-serif"],
+        ['serif', 'Serif', "ui-serif, Georgia, 'Iowan Old Style', 'Times New Roman', serif"],
+        ['mono', 'Monospace', "ui-monospace, 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace"]
+    ];
+    var CODE_FONTS = [
+        ['system', 'System monospace', "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"],
+        ['cascadia', 'Cascadia Code', "'Cascadia Code', 'Cascadia Mono', ui-monospace, Consolas, monospace"],
+        ['jetbrains', 'JetBrains Mono', "'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace"],
+        ['fira', 'Fira Code', "'Fira Code', ui-monospace, Menlo, Consolas, monospace"],
+        ['courier', 'Courier', "'Courier New', Courier, monospace"]
+    ];
+    var SIZE_SCALE = [85, 90, 100, 110, 125, 150].map(function (n) {
+        return [String(n), n + '%', String(n / 100)];
+    });
+    /* hint: what the row covers (settings tooltip). size:false = no size
+       (the interface already scales with app / browser zoom). */
+    var TEXT_AREAS = [
+        { area: 'messages', label: 'Messages', fonts: SANS_FONTS, size: true,
+          hint: 'Message text plus everything in the transcript: names, timestamps, token usage, status lines, cards.' },
+        { area: 'composer', label: 'Composer', fonts: SANS_FONTS, size: true,
+          hint: 'The message box and everything around it: chips, buttons, context and usage readouts.' },
+        { area: 'code', label: 'Code', fonts: CODE_FONTS, size: true,
+          hint: 'Code blocks, inline code, paths and chat handles. Use theme setting follows the text around it; a picked size is exact.' },
+        { area: 'chips', label: 'Chips & badges', fonts: SANS_FONTS, size: true,
+          hint: 'Agent, project, command, file and attachment chips. Use theme setting follows the area they sit in; a picked size is exact.' },
+        { area: 'history', label: 'Chat history', fonts: SANS_FONTS, size: true,
+          hint: 'The chat history sidebar: search, filters and the chat list.' },
+        { area: 'interface', label: 'Interface', fonts: SANS_FONTS, size: false,
+          hint: 'Everything else: headers, menus, dialogs, settings and other apps. Use Ctrl +/− (app or browser zoom) for its size.' }
+    ];
+    var TEXT_PREFS = [];
+    TEXT_AREAS.forEach(function (a) {
+        var cap = a.area.charAt(0).toUpperCase() + a.area.slice(1);
+        TEXT_PREFS.push({ id: 'font-' + a.area, key: 'cuttlePrefFont' + cap, area: a.area, kind: 'font', options: a.fonts });
+        if (a.size) TEXT_PREFS.push({ id: 'size-' + a.area, key: 'cuttlePrefSize' + cap, area: a.area, kind: 'size', options: SIZE_SCALE });
+    });
+
+    /* One-time move from the first Text & fonts layout (mixed px / % rows). */
+    function migrateTextPrefs() {
+        try {
+            if (localStorage.getItem('cuttlePrefTextV') === '2') return;
+            var ui = localStorage.getItem('cuttlePrefFontUi');
+            var chat = localStorage.getItem('cuttlePrefFontChat');
+            if (ui && !localStorage.getItem('cuttlePrefFontInterface')) localStorage.setItem('cuttlePrefFontInterface', ui);
+            if (chat) {
+                if (!localStorage.getItem('cuttlePrefFontMessages')) localStorage.setItem('cuttlePrefFontMessages', chat);
+                if (!localStorage.getItem('cuttlePrefFontComposer')) localStorage.setItem('cuttlePrefFontComposer', chat);
+            }
+            var chips = localStorage.getItem('cuttlePrefScaleChips');
+            var hist = localStorage.getItem('cuttlePrefScaleHistory');
+            if (chips && !localStorage.getItem('cuttlePrefSizeChips')) localStorage.setItem('cuttlePrefSizeChips', chips);
+            if (hist && !localStorage.getItem('cuttlePrefSizeHistory')) localStorage.setItem('cuttlePrefSizeHistory', hist);
+            ['cuttlePrefFontUi', 'cuttlePrefFontChat', 'cuttlePrefSizeChat', 'cuttlePrefSizeCode',
+             'cuttlePrefSizeComposer', 'cuttlePrefScaleChips', 'cuttlePrefScaleHistory'].forEach(function (k) {
+                localStorage.removeItem(k);
+            });
+            localStorage.setItem('cuttlePrefTextV', '2');
+        } catch (_) {}
+    }
+    migrateTextPrefs();
+
+    function textPrefValue(pref) {
+        var raw = read(pref.key);
+        for (var i = 0; i < pref.options.length; i++) {
+            if (pref.options[i][0] === raw) return pref.options[i];
+        }
+        return null;
+    }
+
+    function applyTextPrefs() {
+        for (var i = 0; i < TEXT_PREFS.length; i++) {
+            var pref = TEXT_PREFS[i];
+            var opt = textPrefValue(pref);
+            if (opt) {
+                root.setAttribute('data-pref-' + pref.id, opt[0]);
+                root.style.setProperty('--cuttle-pref-' + pref.id, opt[2]);
+            } else {
+                root.removeAttribute('data-pref-' + pref.id);
+                root.style.removeProperty('--cuttle-pref-' + pref.id);
+            }
+        }
+    }
+
+    /* Chip visibility (Settings → Appearance → Chat chips). On by default;
+       localStorage '0' hides it via `data-hide-<id>` on <html>
+       (css/chat_chip_prefs.css). Purely visual: a hidden composer chip
+       still applies its project / sticky agent to the next send. */
+    var CHIP_PREFS = [
+        { id: 'bubble-project', key: 'cuttleChipBubbleProject', label: 'Project chip in messages' },
+        { id: 'bubble-agent', key: 'cuttleChipBubbleAgent', label: 'Agent chip in messages' },
+        { id: 'composer-project', key: 'cuttleChipComposerProject', label: 'Project chip in composer' },
+        { id: 'composer-agent', key: 'cuttleChipComposerAgent', label: 'Agent chip in composer' }
+    ];
+
+    function applyChipPrefs() {
+        for (var i = 0; i < CHIP_PREFS.length; i++) {
+            var hidden = read(CHIP_PREFS[i].key) === '0';
+            if (hidden) root.setAttribute('data-hide-' + CHIP_PREFS[i].id, '');
+            else root.removeAttribute('data-hide-' + CHIP_PREFS[i].id);
+        }
+    }
+
 
     /* Every theme rides on one of the three base classes so page stylesheets
        that only know dark/midnight/light keep working; non-base themes add a
@@ -428,6 +548,10 @@
         applyTo(document.body);
         root.classList.toggle('in-shell', framed);
         root.classList.toggle('cuttle-anim', animationsEnabled());
+        root.classList.toggle('cuttle-flat-messages', read(CHAT_BUBBLES_KEY) === '0');
+        root.setAttribute('data-activity-status', read(ACTIVITY_STATUS_KEY) === 'rise' ? 'rise' : 'sweep');
+        applyTextPrefs();
+        applyChipPrefs();
         root.classList.add('cuttle-booted');
         root.style.setProperty('--cuttle-transition-ms', transitionMs() + 'ms');
         if (state.video) write(VIDEO_ACTIVE_KEY, '1');
@@ -719,6 +843,53 @@
         animationsEnabled: animationsEnabled,
         transitionMs: transitionMs,
         refresh: apply,
+        /** Areas for Settings: [{area, label, hint, font:{id,value,options}, size:{…}|null}].
+            Option value '' = "Use theme setting". */
+        textAreas: function () {
+            function pick(id) {
+                for (var i = 0; i < TEXT_PREFS.length; i++) {
+                    var p = TEXT_PREFS[i];
+                    if (p.id !== id) continue;
+                    return {
+                        id: p.id, key: p.key,
+                        value: (textPrefValue(p) || [''])[0],
+                        options: p.options.map(function (o) { return { value: o[0], label: o[1] }; })
+                    };
+                }
+                return null;
+            }
+            return TEXT_AREAS.map(function (a) {
+                return { area: a.area, label: a.label, hint: a.hint,
+                         font: pick('font-' + a.area), size: a.size ? pick('size-' + a.area) : null };
+            });
+        },
+        /** [{id, key, label, enabled}] — chip visibility toggles. */
+        chipPrefs: function () {
+            return CHIP_PREFS.map(function (p) {
+                return { id: p.id, key: p.key, label: p.label, enabled: read(p.key) !== '0' };
+            });
+        },
+        setChipPref: function (id, enabled) {
+            for (var i = 0; i < CHIP_PREFS.length; i++) {
+                if (CHIP_PREFS[i].id !== id) continue;
+                write(CHIP_PREFS[i].key, enabled ? '1' : '0');
+                applyChipPrefs();
+                return true;
+            }
+            return false;
+        },
+        setTextPref: function (id, value) {
+            for (var i = 0; i < TEXT_PREFS.length; i++) {
+                if (TEXT_PREFS[i].id !== id) continue;
+                try {
+                    if (value) localStorage.setItem(TEXT_PREFS[i].key, String(value));
+                    else localStorage.removeItem(TEXT_PREFS[i].key);
+                } catch (_) {}
+                applyTextPrefs();
+                return true;
+            }
+            return false;
+        },
         themes: THEMES.map(function (t) {
             return { id: t.id, label: t.label, icon: t.icon, base: t.base, group: t.group };
         }),

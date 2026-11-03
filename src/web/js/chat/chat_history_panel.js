@@ -670,7 +670,7 @@
                 }
                 closeHistoryRenameModal();
                 // refreshChatHistoryList already re-applies search/filters when active.
-                await deps.refreshChatHistoryList();
+                await deps.refreshChatHistoryList(null, { force: true });
                 if (deps.currentSessionId() != null && deps.sessionIdsEqual(deps.currentSessionId(), sid)) {
                     deps.updateChatSessionTitle(sid);
                 }
@@ -1734,19 +1734,52 @@
             });
         }
 
+        /* Chat whose enclosing groups were last revealed. Navigating into a chat
+           clears an explicit "collapsed" on its ancestors once, so it is visible;
+           after that the user's collapse click wins again. */
+        let revealedForSession = null;
+
+        function revealCurrentSubagentGroups(prefs) {
+            const current = deps.currentSessionId();
+            if (current == null || current === '') {
+                revealedForSession = null;
+                return false;
+            }
+            if (revealedForSession != null && deps.sessionIdsEqual(revealedForSession, current)) return false;
+            const rows = doc.querySelectorAll('#chatHistory .chat-history-item');
+            let listed = false;
+            for (let i = 0; i < rows.length && !listed; i++) {
+                if (deps.sessionIdsEqual(rows[i].dataset.sessionId, current)) listed = true;
+            }
+            if (!listed) return false; // list not painted yet: reveal on a later pass
+            revealedForSession = current;
+            let changed = false;
+            doc.querySelectorAll('.history-subagent-group').forEach((group) => {
+                const pid = group.getAttribute('data-parent-session-id') || '';
+                if (prefs[pid] === 'collapsed' && historySubagentGroupContainsCurrent(group)) {
+                    delete prefs[pid];
+                    changed = true;
+                }
+            });
+            if (changed) writeHistorySubagentExpandPrefs(prefs);
+            return changed;
+        }
+
         function applyHistorySubagentExpandState() {
             const searchActive = historySearchQueryActive();
             const prefs = readHistorySubagentExpandPrefs();
+            revealCurrentSubagentGroups(prefs);
             doc.querySelectorAll('.history-subagent-group').forEach((group) => {
                 const pid = group.getAttribute('data-parent-session-id') || '';
-                const force = historySubagentGroupContainsCurrent(group);
-                const expanded = force || searchActive || prefs[pid] === 'expanded';
+                const force = prefs[pid] !== 'collapsed' && historySubagentGroupContainsCurrent(group);
+                const expanded = searchActive || force || prefs[pid] === 'expanded';
                 group.classList.toggle('is-collapsed', !expanded);
                 if (force) group.setAttribute('data-force-expanded', '1');
                 else group.removeAttribute('data-force-expanded');
                 const countEl = group.querySelector(':scope > .chat-history-item [data-child-count]');
                 const count = countEl ? (Number(countEl.getAttribute('data-child-count')) || 0) : 0;
-                const title = view.historySubagentToggleTitle(count, expanded, force);
+                const supervised = countEl ? (Number(countEl.getAttribute('data-supervised-count')) || 0) : 0;
+                const title = view.historySubagentToggleTitle(count, expanded, force, supervised);
                 group.querySelectorAll(':scope > .chat-history-item .history-subagent-toggle, :scope > .chat-history-item .history-subagent-count-badge').forEach((el) => {
                     el.title = title;
                     el.setAttribute('aria-label', title);
@@ -1773,7 +1806,7 @@
             }
             closeHistoryItemMenu();
             const group = historySubagentGroupOwnedBy(sessionId);
-            if (!group || group.getAttribute('data-force-expanded') === '1') return;
+            if (!group) return;
             const expand = group.classList.contains('is-collapsed');
             setHistorySubagentGroupExpanded(group.getAttribute('data-parent-session-id') || sessionId, expand);
         }

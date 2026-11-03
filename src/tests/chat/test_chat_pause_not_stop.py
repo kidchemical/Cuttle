@@ -68,7 +68,8 @@ def test_pause_handler_uses_release_helper():
 
 def test_stopped_generating_only_from_explicit_stop():
     src = _src()
-    needle = "ensureGenerationStopNotice('⏹ Stopped generating.')"
+    # The ⏹ icon comes from the 'stop' timeline-notice type, not the label.
+    needle = "ensureGenerationStopNotice('Stopped generating.')"
     assert src.count(needle) == 1
     stop = _fn_body(src, "async function stopGenerating")
     assert needle in stop

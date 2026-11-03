@@ -3006,6 +3006,57 @@ body.has-video-background .chat-restore-loader {
     font-size: 0.9em;
 }
 
+/* Timeline notices (chat_timeline_notice.js): icon · label · detail, one look
+   for every "something happened" row. Running rows spin; error rows tint red. */
+.timeline-notice {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 4px 8px;
+    max-width: min(640px, 100%);
+    box-sizing: border-box;
+}
+.timeline-notice-icon { flex-shrink: 0; line-height: 1; }
+.timeline-notice-label { font-weight: 500; overflow-wrap: anywhere; }
+.timeline-notice-detail {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+.timeline-notice-detail::before { content: '\00B7'; margin-right: 8px; opacity: 0.7; }
+.timeline-notice--code-detail .timeline-notice-detail {
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.92em;
+}
+.timeline-notice-elapsed {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    font-variant-numeric: tabular-nums;
+}
+.timeline-notice.is-running {
+    border-style: dashed;
+    border-color: color-mix(in srgb, var(--accent-color) 55%, var(--border-color));
+}
+.timeline-notice.is-error {
+    border-color: color-mix(in srgb, #f87171 55%, var(--border-color));
+    background: color-mix(in srgb, #f87171 8%, var(--bg-secondary)) !important;
+}
+.timeline-notice-spinner {
+    flex-shrink: 0;
+    width: 12px;
+    height: 12px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--accent-color) 25%, transparent);
+    border-top-color: var(--accent-color);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--accent-color) 45%, transparent);
+    animation: context-gauge-orbit 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+    .timeline-notice-spinner { animation: none; }
+}
+
 .message-avatar {
     width: 36px;
     height: 36px;
@@ -4039,23 +4090,18 @@ pre.has-code-copy:hover .code-copy-btn,
     flex-shrink: 0;
 }
 
-.chat-history-item.is-subagent {
-    padding-left: 12px;
-}
-
-/* The status icon (spinner / attention dot) is absolutely positioned in the
-   first ~18px of the row; the sub-agent toggle must start after that slot. */
-.chat-history-item.has-subagents {
-    padding-left: 20px;
-}
-
+/* Tree rows keep the base row padding: the status icon (spinner / attention
+   dot) sits absolutely in the first 16px and every title starts right after
+   it. Nesting is one fixed 16px step per level (9 + 1 + 6), with the guide
+   line dropping from the parent's status-icon column; the expand chevron
+   rides in the meta line so it never shifts a title off its siblings. */
 .history-subagent-group.is-collapsed > .history-subagent-children {
     display: none;
 }
 
 .history-subagent-children {
-    margin: 0 0 2px 10px;
-    padding-left: 8px;
+    margin: 0 0 2px 9px;
+    padding-left: 6px;
     border-left: 1px solid color-mix(in srgb, var(--border-color) 75%, transparent);
 }
 
@@ -4064,12 +4110,12 @@ pre.has-code-copy:hover .code-copy-btn,
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
-    height: 22px;
+    width: 14px;
+    height: 14px;
     margin-left: 0;
     padding: 0;
     border: none;
-    border-radius: 6px;
+    border-radius: 4px;
     background: transparent;
     color: var(--text-tertiary);
     cursor: pointer;
@@ -4158,6 +4204,22 @@ pre.has-code-copy:hover .code-copy-btn,
 
 .history-subagent-badge {
     opacity: 0.9;
+}
+
+/* Supervision / orchestration roles (history tree relationships). */
+.history-kind-badge.history-orchestrator-badge {
+    border-color: color-mix(in srgb, #a855f7 50%, var(--border-color));
+    background: color-mix(in srgb, #a855f7 16%, transparent);
+}
+
+.history-kind-badge.history-supervisor-badge {
+    border-color: color-mix(in srgb, #14b8a6 50%, var(--border-color));
+    background: color-mix(in srgb, #14b8a6 16%, transparent);
+}
+
+.history-kind-badge.history-supervised-badge {
+    border-color: color-mix(in srgb, #14b8a6 35%, var(--border-color));
+    background: transparent;
 }
 
 /* Orbital processing core */
@@ -4509,9 +4571,32 @@ pre.has-code-copy:hover .code-copy-btn,
 .context-gauge-btn.context-gauge--hot .context-gauge-arc {
     stroke: #f87171;
 }
+/* Compacting: the ring becomes an accent sweep orbiting the track (same
+   motif as the typing orbit); the popover still opens to show progress. */
 .context-gauge-btn.context-gauge--busy {
-    opacity: 0.7;
-    pointer-events: none;
+    color: var(--accent-color, #667eea);
+}
+.context-gauge-btn.context-gauge--busy .context-gauge-svg {
+    animation: context-gauge-orbit 1.1s linear infinite;
+}
+.context-gauge-btn.context-gauge--busy .context-gauge-arc {
+    stroke: var(--accent-color, #667eea);
+    stroke-dasharray: 28 72;
+    filter: drop-shadow(0 0 2px color-mix(in srgb, var(--accent-color, #667eea) 70%, transparent));
+}
+.context-gauge-btn.context-gauge--busy .context-gauge-track {
+    animation: context-gauge-breathe 1.6s ease-in-out infinite;
+}
+@keyframes context-gauge-orbit {
+    from { transform: rotate(-90deg); }
+    to { transform: rotate(270deg); }
+}
+@keyframes context-gauge-breathe {
+    50% { stroke: color-mix(in srgb, var(--accent-color, #667eea) 38%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .context-gauge-btn.context-gauge--busy .context-gauge-svg,
+    .context-gauge-btn.context-gauge--busy .context-gauge-track { animation: none; }
 }
 .context-gauge-pct {
     display: none;
@@ -7935,4 +8020,84 @@ html.cuttle-bg-paused .chat-restore-spinner {
 .history-section-unread-dot.is-input { background: #3b82f6; box-shadow: 0 0 8px #3b82f688; }
 .history-section-count.has-input, .history-subagent-count-badge.has-input {
     background: color-mix(in srgb, #3b82f6 28%, transparent); color: #60a5fa;
+}
+
+/* History row: idle chat whose agents still own work (chat_history_view.js). */
+.history-kind-badge.history-bg-badge {
+    color: var(--accent-color, #667eea);
+    animation: chat-bg-breathe 2.4s ease-in-out infinite;
+}
+
+/* Background-work bubble pinned at the end of the transcript (chat_background_work.js). */
+.chat-bg-work {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    align-self: center;
+    box-sizing: border-box;
+    width: min(640px, 100%);
+    margin: 8px auto 14px;
+    padding: 10px 14px;
+    border: 1px dashed color-mix(in srgb, var(--accent-color, #667eea) 55%, var(--border-color));
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--accent-color, #667eea) 7%, transparent);
+    color: var(--text-primary);
+    font-size: 0.86em;
+}
+.chat-bg-work.is-scheduled { border-style: dotted; opacity: 0.85; }
+.chat-bg-ring {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--accent-color, #667eea);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--accent-color, #667eea) 60%, transparent);
+    animation: chat-bg-breathe 2.4s ease-in-out infinite;
+}
+.chat-bg-work.is-scheduled .chat-bg-ring { animation: none; border-style: dashed; box-shadow: none; }
+.chat-bg-body { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.chat-bg-title { font-weight: 650; display: flex; gap: 8px; align-items: baseline; }
+.chat-bg-elapsed, .chat-bg-meta, .chat-bg-pct { color: var(--text-secondary); font-size: 0.86em; font-weight: 400; font-variant-numeric: tabular-nums; }
+.chat-bg-label, .chat-bg-meta, .chat-bg-watch-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-bg-label { color: var(--text-secondary); }
+.chat-bg-watch { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.chat-bg-watch-label { flex: 1; min-width: 0; }
+.chat-bg-bar { width: 110px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--text-secondary) 20%, transparent); overflow: hidden; flex-shrink: 0; }
+.chat-bg-fill { display: block; height: 100%; background: var(--accent-color, #667eea); }
+.chat-bg-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.chat-bg-details { font-size: 0.86em; color: var(--accent-color, #667eea); text-decoration: none; }
+.chat-bg-work.is-clickable { cursor: pointer; }
+.chat-bg-work.is-clickable:hover { opacity: 1; border-color: var(--accent-color, #667eea); }
+.chat-bg-open {
+    font: inherit;
+    font-size: 0.82em;
+    font-weight: 600;
+    color: var(--accent-color, #667eea);
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--accent-color, #667eea) 45%, var(--border-color));
+    border-radius: 999px;
+    padding: 3px 11px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.chat-bg-open:hover { background: color-mix(in srgb, var(--accent-color, #667eea) 14%, transparent); }
+.chat-bg-stop {
+    font: inherit;
+    font-size: 0.82em;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 3px 11px;
+    cursor: pointer;
+}
+.chat-bg-stop:hover:not(:disabled) { border-color: #f87171; color: #f87171; }
+.chat-bg-stop:disabled { opacity: 0.6; cursor: default; }
+@keyframes chat-bg-breathe { 50% { opacity: 0.4; } }
+@media (prefers-reduced-motion: reduce) {
+    .chat-bg-ring, .history-kind-badge.history-bg-badge { animation: none; }
+}
+@media (max-width: 600px) {
+    .chat-bg-work { width: calc(100% - 16px); }
 }

@@ -4003,7 +4003,7 @@ async function runShellHeartbeat() {
     shellHeartbeatInFlight = true;
     try {
         const tasks = [pollUiToasts(), pollJobsBadge()];
-        ['__cuttleShellPollWorkers', '__cuttleShellPollSshApproval'].forEach((hook) => {
+        ['__cuttleShellPollWorkers'].forEach((hook) => {
             if (typeof window[hook] === 'function') tasks.push(Promise.resolve(window[hook]()));
         });
         if (paneController?.hasSessions()) {

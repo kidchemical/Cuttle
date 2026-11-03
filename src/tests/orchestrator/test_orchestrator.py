@@ -226,6 +226,18 @@ def test_bind_brief_and_context_block(tmp_path, orch, monkeypatch):
     assert service.unbind(sid, db=db) and service.brief_block(sid) == ""
 
 
+def test_mark_orchestrators_flags_bound_history_rows(tmp_path, orch):
+    db, owner, other, sid, other_sid = _seed_db(tmp_path)
+    service.bind(sid, "default", "", db=db)
+    rows = [{"id": sid}, {"id": other_sid}, {"id": None}]
+    service.mark_orchestrators(rows, owner)
+    assert [r["orchestrator"] for r in rows] == [True, False, False]
+    flags.set_enabled("orchestrator", False)
+    service.mark_orchestrators(rows, owner)
+    assert rows[0]["orchestrator"] is False
+    flags.set_enabled("orchestrator", True)
+
+
 def test_compiled_context_carries_brief_for_bound_chat(tmp_path, orch, monkeypatch):
     db, owner, _other, sid, _ = _seed_db(tmp_path)
     monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)

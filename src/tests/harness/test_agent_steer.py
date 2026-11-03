@@ -671,6 +671,25 @@ if mode == "finishes":
     out({"type": "system", "subtype": "task_notification", "task_id": "b1", "status": "completed"})
     out({"type": "system", "subtype": "init", "model": "fake"})
     result("CI is green")
+if mode == "chain":
+    # Two short waits back to back: each under the limit, together over it.
+    for n, label in ((2, "watch deploy"), (3, None)):
+        time.sleep(0.7)
+        try:
+            if q.get_nowait() is None:
+                sys.exit(0)
+        except queue.Empty:
+            pass
+        out({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
+        out({"type": "system", "subtype": "init", "model": "fake"})
+        if label:
+            out({"type": "system", "subtype": "background_tasks_changed",
+                 "tasks": [{"task_id": f"b{n}", "task_type": "local_bash", "description": label}]})
+        result(f"step {n}")
+if mode == "ignores_eof":
+    # The real CLI keeps going on EOF while a background task is alive.
+    time.sleep(30)
+    sys.exit(0)
 # Like the real CLI: exit on stdin EOF (that kills any still-running task).
 while q.get(timeout=20) is not None:
     pass
@@ -711,6 +730,33 @@ def test_claude_background_wait_is_capped(tmp_path, monkeypatch):
     assert res["output"].startswith("started the watcher")
     assert "Stopped waiting for background work" in res["output"]
     assert "- watch CI" in res["output"]
+
+
+@pytestmark_posix
+def test_claude_background_wait_restarts_per_result(tmp_path, monkeypatch):
+    """The limit is per wait, not per turn: a chain of short waits stays open."""
+    monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "1")
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "chain", 5757)
+    assert res["success"] is True
+    assert res["output"] == "started the watcher\n\nstep 2\n\nstep 3"
+    assert "Stopped waiting" not in res["output"]
+
+
+@pytestmark_posix
+def test_claude_reaped_when_it_ignores_eof_after_wait_limit(tmp_path, monkeypatch):
+    """A CLI that keeps running after the limit closes stdin is stopped, not left
+    "live" with no steer channel (CH-001548 ran unsteerable for hours)."""
+    import time
+
+    monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "1")
+    monkeypatch.setenv("CLAUDE_BACKGROUND_EXIT_GRACE_SEC", "0.5")
+    started = time.monotonic()
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "ignores_eof", 5858)
+    assert time.monotonic() - started < 15
+    assert res["success"] is True
+    assert res["output"].startswith("started the watcher")
+    assert "Stopped waiting for background work" in res["output"]
+    assert steer.active_agent(5858) is None
 
 
 @pytestmark_posix

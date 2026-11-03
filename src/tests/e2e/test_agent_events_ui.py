@@ -104,44 +104,73 @@ def test_feed_and_full_detail(browser,static_server):
     finally:page.close()
 
 
-def test_feed_active_strip_and_finish_states(browser,static_server):
+def test_feed_running_tree_and_finish_states(browser,static_server):
     page=browser.new_page(viewport={'width':1100,'height':900})
     errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
     ok={'id':1,'query_id':'q1','seq':1,'kind':'finish','ts':1,'rev':1,'summary':'finish','failed':0,'agent_id':'codex'}
     fail={'id':2,'query_id':'q2','seq':1,'kind':'finish','ts':2,'rev':1,'summary':'finish','failed':1,'agent_id':'cursor'}
     def handle(route):
         url=route.request.url
-        if '/active' in url:
-            body={'runs':[{'query_id':'q1','agent_id':'codex','model':'cheap','chat_session_id':'1066','project_root':'/p','started_at':1}]}
-        elif '/stream' in url:
+        if '/stream' in url:
             route.fulfill(content_type='text/event-stream',body=': offline test\n\n');return
-        else:
-            body={'events':[ok,fail],'next_cursor':2,'stream_cursor':2}
+        body={'events':[ok,fail],'next_cursor':2,'stream_cursor':2}
         route.fulfill(content_type='application/json',body=json.dumps(body))
     page.route('**/api/agent-events**',handle)
-    cancels=[]
+    proc=lambda pid,name,**kw:{'pid':pid,'ppid':1,'name':name,'create_time':1000.5,'cmdline':'/usr/bin/'+name+' --x',
+                              'rss':50*1024*1024,'detached':False,'parent_chat':None,'children':[],**kw}
+    owner={'chat_session_id':'1821','handle':'CH-001821','title':'Multiplayer orchestrator','project':'/p',
+           'state':'waiting','label':'Waiting on: fg12','run':None,'started_at':1000,
+           'waits':[{'job_id':'claude-bg-1821-x','label':'Waiting on: fg12','started_at':1000}],
+           'watches':[],'schedules':[],'process_count':3,'detached_count':1,'parent':None,'children':[],
+           'processes':[proc(10,'claude',children=[proc(11,'bash')]),proc(20,'run-gate.sh',detached=True,run_id='20750a06')]}
+    sup={'chat_session_id':'1822','handle':'CH-001822','title':'Supervisor','project':'','state':'scheduled',
+         'label':'Supervise CH-001821 · every 15m','run':None,'started_at':None,'waits':[],'watches':[],
+         'schedules':[{'id':'op1','label':'Supervise CH-001821','detail':'every 15m','status':'running',
+                       'target':'CH-001821','cancellable':True}],
+         'process_count':0,'detached_count':0,'parent':None,'children':[],'processes':[]}
+    tree={'schema_version':1,'owners':[owner,sup],'mesh':[],'totals':{'chats':2,'processes':3,'detached':1}}
+    posts=[]
+    def on_jobs(route):
+        if route.request.method=='POST':
+            posts.append((route.request.url.split('/api/')[1],json.loads(route.request.post_data or '{}')))
+            body={'success':True,'ended':[{'ended':2}] if 'end-processes' in route.request.url else 1,'name':'run-gate.sh'}
+        else:body=tree
+        route.fulfill(content_type='application/json',body=json.dumps(body))
+    page.route('**/api/jobs/**',on_jobs)
     def on_cancel(route):
-        cancels.append(json.loads(route.request.post_data or '{}'))
+        posts.append(('chat-cancel',json.loads(route.request.post_data or '{}')))
         route.fulfill(content_type='application/json',body=json.dumps({'success':True,'cancelled':True}))
     page.route('**/api/chat-cancel',on_cancel)
     page.on('dialog',lambda dialog:dialog.accept())
     try:
         page.goto(static_server+'/agent_feed.html')
         expect(page.locator('#feedActive')).to_be_visible()
-        expect(page.locator('.feed-active-row')).to_have_count(1)
-        expect(page.locator('.feed-active-agent')).to_have_text('codex')
-        expect(page.locator('.feed-active-text')).to_contain_text('is active')
-        assert page.locator('.feed-active-row .typing-orbit--feed').count()==1
-        assert page.locator('.feed-active-dots i').count()==3
-        active_row=page.locator('.feed-active-row').first
-        assert active_row.get_attribute('href')=='/chat_page.html?chat=1066'
-        expect(active_row.locator('.feed-active-chat')).to_have_text('CH-001066')
-        # Any live chat can be ended from the strip (same cancel path as Stop).
-        end=page.locator('.feed-active-end')
-        expect(end).to_have_text('End')
-        end.click()
-        expect(page.locator('#feedStatus')).to_contain_text('Ended CH-001066')
-        assert cancels==[{'session_id':'1066','cancel_jobs':True}]
+        expect(page.locator('.work-totals')).to_have_text('2 chats · 3 processes · 1 detached')
+        row=page.locator('.work-owner[data-chat="1821"]')
+        expect(row.locator('.work-state')).to_have_text('Waiting in background')
+        expect(row.locator('.work-label')).to_have_text('Waiting on: fg12')
+        assert row.locator('.work-chat').get_attribute('href')=='/chat_page.html?chat=1821'
+        expect(row.locator('.work-badge.is-detached').first).to_have_text('1 detached')
+        assert row.locator('summary .typing-orbit--feed').count()==1
+        # Collapsed until clicked; the tree then shows the CLI, its child and the detached gate.
+        expect(row.locator('.work-proc[data-pid="11"]')).to_be_hidden()
+        row.locator('summary .work-title').click()
+        expect(row.locator('.work-proc[data-pid="11"]')).to_be_visible()
+        expect(row.locator('.work-proc[data-pid="20"] .work-badge.is-detached')).to_have_text('detached')
+        row.locator('.work-proc[data-pid="10"] > .work-proc-row .work-proc-toggle').click()
+        expect(row.locator('.work-proc[data-pid="11"]')).to_be_hidden()
+        row.locator('.work-proc[data-pid="20"] .work-proc-end').click()
+        expect(page.locator('#feedStatus')).to_contain_text('Ended run-gate.sh')
+        assert posts[-1]==('jobs/processes/20/end',{'create_time':1000.5})
+        row.locator('summary .work-end').click()
+        expect(page.locator('#feedStatus')).to_contain_text('Ended CH-001821 · 2 processes')
+        assert posts[-2:]==[('chat-cancel',{'session_id':'1821','cancel_jobs':True}),('jobs/chats/1821/end-processes',{})]
+        sup_row=page.locator('.work-owner[data-chat="1822"]')
+        expect(sup_row.locator('.work-state')).to_have_text('Supervising')
+        assert sup_row.locator('summary .work-end').count()==0
+        sup_row.locator('summary .work-title').click()
+        sup_row.locator('.work-line-end').click()
+        assert posts[-1]==('jobs/chat_op/op1/cancel',{})
         expect(page.locator('.feed-step[data-state=ok]')).to_have_count(1)
         expect(page.locator('.feed-step[data-state=error]')).to_have_count(1)
         assert page.locator('.feed-step[data-state=ok] .feed-title').inner_text()=='Finished'

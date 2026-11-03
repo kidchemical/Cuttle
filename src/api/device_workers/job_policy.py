@@ -8,8 +8,6 @@ from typing import Any, Dict, Optional, Tuple
 DEFAULT_QUEUE_TTL_SECONDS: Dict[str, int] = {
     "ping": 5 * 60,
     "shell": 30 * 60,
-    "execute_shell_unsafe": 10 * 60,
-    "execute_shell_ssh": 10 * 60,
     "file_copy": 2 * 3600,
     "blender_render": 12 * 3600,
     "cuttle_self_update": 45 * 60,
@@ -19,17 +17,11 @@ DEFAULT_QUEUE_TTL_SECONDS: Dict[str, int] = {
 DEFAULT_MAX_ATTEMPTS: Dict[str, int] = {
     "ping": 3,
     "shell": 2,
-    "execute_shell_unsafe": 1,
-    "execute_shell_ssh": 1,
     "file_copy": 2,
     # Extra room for shrink-and-retry after partial durable progress.
     "blender_render": 5,
     "cuttle_self_update": 1,
 }
-
-UNSAFE_SHELL_TYPES = frozenset(
-    {"execute_shell_unsafe", "execute_shell_ssh"}
-)
 
 _FALLBACK_TTL = 6 * 3600
 _FALLBACK_MAX_ATTEMPTS = 2
@@ -47,13 +39,6 @@ def _settings_block() -> Dict[str, Any]:
 
 def normalize_job_type(job_type: str) -> str:
     return (job_type or "").strip()
-
-
-def is_unsafe_shell_type(job_type: str) -> bool:
-    return normalize_job_type(job_type) in {
-        "execute_shell_unsafe",
-        "execute_shell_ssh",
-    } or (job_type or "").strip() in UNSAFE_SHELL_TYPES
 
 
 def default_queue_ttl_seconds(job_type: str) -> int:
@@ -86,9 +71,7 @@ def default_max_attempts(job_type: str) -> int:
 
 
 def requeue_on_lease_expiry(job_type: str) -> bool:
-    """Unsafe shell never requeues; others may if attempts remain."""
-    if is_unsafe_shell_type(job_type):
-        return False
+    """Requeue unless settings list the type in no_requeue_types."""
     block = _settings_block()
     never = block.get("no_requeue_types")
     kind = normalize_job_type(job_type)
@@ -187,8 +170,6 @@ def fail_disposition(
 DEFAULT_IDLE_TIMEOUT_SECONDS: Dict[str, int] = {
     "ping": 0,
     "shell": 0,
-    "execute_shell_unsafe": 0,
-    "execute_shell_ssh": 0,
     "file_copy": 0,
     # Durable units (frames) must keep advancing; stuck blender = idle kill + gap-fill.
     "blender_render": 45 * 60,
@@ -198,8 +179,6 @@ DEFAULT_IDLE_TIMEOUT_SECONDS: Dict[str, int] = {
 DEFAULT_HARD_TIMEOUT_SECONDS: Dict[str, int] = {
     "ping": 5 * 60,
     "shell": 4 * 3600,
-    "execute_shell_unsafe": 4 * 3600,
-    "execute_shell_ssh": 4 * 3600,
     "file_copy": 2 * 3600,
     # Absolute safety net only — soft idle + progress keep long Cycles alive.
     "blender_render": 24 * 3600,

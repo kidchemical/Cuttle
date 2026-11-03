@@ -6,6 +6,10 @@ stdin left open) accept extra input while a turn is live. Their turn runners
 register a send callback here once the harness has the turn;
 ``POST /api/chat-steer`` looks the chat up and forwards the text.
 
+A Claude run that outlived its turn on a background wait
+(``api.agent_harness.background_wait``) stays registered here, so the chat is
+idle yet steerable; ``api.chat_coordinator`` routes harness sends into it.
+
 Anything that cannot be steered (no live registration, a different slash
 command, the harness rejecting a turn that just finished) returns
 ``steered=False`` so the client falls back to its follow-up queue.
