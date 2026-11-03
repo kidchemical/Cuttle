@@ -11,6 +11,7 @@ import json
 import os
 import re
 import threading
+import time
 import uuid
 import sys
 from datetime import datetime
@@ -150,6 +151,9 @@ def sanitize_grid(raw: Any) -> Optional[Dict[str, Any]]:
 
 
 
+_WRITE_LOCK = threading.Lock()
+
+
 def _atomic_write_json(path: Path, data: Any) -> None:
     """Write ``data`` to ``path`` atomically.
 
@@ -162,7 +166,18 @@ def _atomic_write_json(path: Path, data: Any) -> None:
     )
     try:
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
+        # Same-process writers take turns; on Windows a replace racing another
+        # replace (or a reader holding the file) fails with PermissionError,
+        # so retry briefly for writers in other processes.
+        with _WRITE_LOCK:
+            for attempt in range(20):
+                try:
+                    tmp.replace(path)
+                    break
+                except PermissionError:
+                    if attempt == 19:
+                        raise
+                    time.sleep(0.005 * (attempt + 1))
     finally:
         try:
             tmp.unlink()
