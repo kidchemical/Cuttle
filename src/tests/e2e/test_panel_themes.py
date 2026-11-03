@@ -8,7 +8,7 @@ from playwright.sync_api import expect
 from .test_shared_diff_modal import browser, static_server, apply_request_guard  # noqa: F401
 
 THEMES = ['dark', 'midnight', 'light', 'sakura', 'mint', 'lavender', 'paper',
-          'graphite', 'nord', 'rgb', 'synthwave', 'glitch', 'matrix']
+          'graphite', 'onyx', 'nord', 'rgb', 'synthwave', 'glitch', 'matrix']
 
 # Resolve CSS Color 4 values through canvas, compositing translucent colors.
 CONTRAST = '''([foreground, background]) => {

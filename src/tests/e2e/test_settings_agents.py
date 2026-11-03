@@ -114,6 +114,19 @@ class AgentWorld(IsolatedAPI):
         route.fulfill(content_type="application/json", body=json.dumps(data))
 
 
+def go_to_tab(page, name):
+    """Sidebar tab click; on phones the sidebar sits behind the Settings index."""
+    if not page.locator('.settings-sidebar').is_visible():
+        page.locator('.settings-crumbs button', has_text='Settings').click()
+    page.get_by_role('tab', name=name).click()
+
+
+def open_system_prompt(page):
+    go_to_tab(page, 'General')
+    if not page.locator('#sharedSystemPromptEditor').is_visible():
+        page.locator('.settings-link-row', has_text='System prompt').click()
+
+
 def open_settings(browser, static_server, world, width=1280):
     page = browser.new_page(viewport={"width": width, "height": 900})
     apply_request_guard(page.context, static_server)
@@ -149,7 +162,7 @@ def test_prompt_editors_and_processor_roundtrip(browser, static_server, width):
         expect(processor.get_by_role('status').last).to_contain_text('saved')
         assert world.processor == {'enabled': True, 'prompt': 'Three bullet TLDR', 'mode': 'replace', 'chain': []}
 
-        page.get_by_role('tab', name='General').click()
+        open_system_prompt(page)
         shared = page.locator('#sharedSystemPromptEditor')
         expect(shared.get_by_role('textbox')).to_have_value('Shared instructions')
         shared.get_by_role('textbox').fill('Use short sentences')
@@ -161,9 +174,9 @@ def test_prompt_editors_and_processor_roundtrip(browser, static_server, width):
         assert errors == []
 
         page.reload(wait_until='domcontentloaded')
-        page.get_by_role('tab', name='General').click()
+        open_system_prompt(page)
         expect(page.locator('#sharedSystemPromptEditor textarea')).to_have_value('Use short sentences')
-        page.get_by_role('tab', name='Agents', exact=False).click()
+        go_to_tab(page, 'Agents')
         card = page.locator('.agent-card[data-agent-id="alpha"]')
         card.locator('.agent-card-head').click()
         expect(card.get_by_role('textbox', name='Alpha Agent system prompt', exact=True)).to_have_value('Explain with examples')
@@ -204,7 +217,7 @@ def test_disabled_processor_hides_panel_and_task_but_keeps_prompts(browser, stat
         card = page.locator('.agent-card[data-agent-id="alpha"]')
         card.locator('.agent-card-head').click()
         expect(card.get_by_role('textbox', name='Alpha Agent system prompt', exact=True)).to_be_visible()
-        page.get_by_role('tab', name='General').click()
+        open_system_prompt(page)
         expect(page.locator('#sharedSystemPromptEditor textarea')).to_be_visible()
     finally:
         page.close()
@@ -277,7 +290,7 @@ def test_processor_has_independent_executor_toggle_and_info_tooltips(browser, st
         toggle = processor.get_by_role('switch', name='Process completed replies')
         expect(toggle).to_have_class('toggle-switch')
         bounds = toggle.bounding_box()
-        assert bounds['width'] == 50 and bounds['height'] == 24
+        assert bounds['width'] == 44 and bounds['height'] == 26  # shared pill toggle (page_controls.css)
         assert processor.get_by_role('textbox', name='Post-processing instructions').bounding_box()['height'] >= 110
         toggle.focus()
         toggle.press('Space')
@@ -361,7 +374,7 @@ def test_rows_keyboard_reload_and_phone_layout(browser, static_server):
         expect(head).to_have_attribute("aria-expanded", "true")
         expect(detail).to_be_visible()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        assert page.locator("#agentAdvanced").get_attribute("open") is None
+        expect(page.locator('[data-subpage="git"]')).to_be_hidden()
         page.locator("#panel-agents").screenshot(path="temp/settings-agents-mobile.png")
         page.set_viewport_size({"width": 1280, "height": 900})
         page.locator("#panel-agents").screenshot(path="temp/settings-agents-desktop.png")

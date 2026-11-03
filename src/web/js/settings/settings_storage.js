@@ -10,6 +10,32 @@
         const data=await response.json();if(!response.ok)throw new Error(data.error||'Database operation failed');return data;
     }
     const FIELD_LABELS={'retention_days':'Full detail days','thinking_full_days':'Full thinking days','quota_mb':'Quota (decimal MB)','starred_retention_days':'Starred chat days (-1 = same; 0 = age exemption)'};
+    function formatBytes(bytes) {
+        const mb=(Number(bytes)||0)/1e6;
+        return mb>=1000?(mb/1000).toFixed(2)+' GB':mb.toFixed(1)+' MB';
+    }
+    /* Summary card: small label, big size, quota bar + caption (when the store has a quota). */
+    function statCard(store) {
+        const stat=document.createElement('div');stat.className='settings-stat';
+        const label=node('h4',store.label);label.className='settings-stat-label';
+        const value=node('p',formatBytes(store.bytes));value.className='settings-stat-value';
+        stat.append(label,value);
+        const quotaMb=store.policy&&typeof store.policy.quota_mb==='number'?store.policy.quota_mb:null;
+        const foot=document.createElement('div');foot.className='settings-stat-foot';
+        if(quotaMb) {
+            const pct=Math.max(0,Math.min(100,Math.round(store.bytes/(quotaMb*1e6)*100)));
+            const bar=document.createElement('div');bar.className='settings-stat-bar';
+            bar.setAttribute('role','meter');bar.setAttribute('aria-label',store.label+' quota usage');
+            bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax','100');bar.setAttribute('aria-valuenow',String(pct));
+            if(store.over_quota||pct>=100)bar.classList.add('is-over');
+            const fill=document.createElement('span');fill.style.width=pct+'%';bar.append(fill);stat.append(bar);
+            foot.append(node('span',pct+'% of quota'),node('span',formatBytes(quotaMb*1e6)+' quota'));
+        } else if(store.events!=null) {
+            foot.append(node('span',Number(store.events).toLocaleString()+' steps'));
+        }
+        if(foot.childNodes.length)stat.append(foot);
+        return stat;
+    }
     function summarize(result) {
         if(result==null||typeof result!=='object')return String(result);
         if(typeof result.bytes==='number')return (result.bytes/1e6).toFixed(1)+' MB';
@@ -20,9 +46,9 @@
         try {
             const data=await request('');host.replaceChildren();
             for(const store of data.stores) {
-                const section=document.createElement('section');section.className='setting-item';
+                const section=document.createElement('section');section.className='setting-item storage-store';
                 const body=document.createElement('div');body.className='setting-label';
-                body.append(node('h4',store.label),node('p',(store.bytes/1e6).toFixed(1)+' MB'+(store.events!=null?' · '+store.events+' steps':'')));
+                body.append(statCard(store));
                 const status=node('p',store.capture_error?'Capture error: '+store.capture_error:store.over_quota?'Over quota: active turns or retained metadata prevent further compaction.':'');status.setAttribute('role','status');
                 let controls=false;
                 if(store.configurable&&store.policy) {
@@ -52,8 +78,8 @@
                         catch(error){status.textContent=error.message;}finally{save.disabled=false;}
                     });body.append(form);
                     if(typeof store.policy.quota_mb==='number') {
-                        const quota=document.createElement('meter');quota.min=0;quota.max=store.policy.quota_mb*1e6;quota.value=store.bytes;quota.setAttribute('aria-label',store.label+' quota usage');body.append(quota);
-                        body.append(node('p','Quota can compact older completed steps before their retention window ends. Attribution metadata remains. Git snapshot objects use repository storage separately.'));
+                        const note=node('p','Quota can compact older completed steps before their retention window ends. Attribution metadata remains. Git snapshot objects use repository storage separately.');
+                        note.className='setting-description';body.append(note);
                     }
                 }
                 for(const operation of ['prune','vacuum']) {

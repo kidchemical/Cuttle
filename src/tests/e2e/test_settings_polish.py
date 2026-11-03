@@ -31,6 +31,9 @@ def test_all_settings_tabs_fit_phone_and_desktop(browser, static_server, tab):
             expect(page.locator('[data-credential-summary="openai"]')).to_have_text('Saved')
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), tab
         if tab in ('appearance', 'providers', 'voice'):
+            if tab == 'appearance':
+                # Wallpaper adjustments live on the Wallpaper subpage.
+                page.evaluate("CuttleSettingsSubpages.open('appearance', 'wallpaper')")
             details = panel.locator('.settings-disclosure')
             assert details.count()
             for i in range(details.count()):

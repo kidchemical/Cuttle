@@ -157,6 +157,13 @@ def gizmos_page():
     return send_from_directory(_WEB, "gizmos_page.html")
 
 
+@gizmos_pages_bp.route("/tasks_page.html")
+@authenticated_required
+def tasks_page():
+    """Tasks App: manager for every Tasks list (always available, no flag)."""
+    return send_from_directory(_WEB, "tasks_page.html")
+
+
 @gizmos_pages_bp.route("/gizmo_popout.html")
 @authenticated_required
 def gizmo_popout_page():

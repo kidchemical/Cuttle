@@ -503,6 +503,16 @@ detail popover, and polling. Electron main owns pop-out windows; the shell
 sends the wanted id set through `gizmo-popouts-sync`. Runbook:
 `.cuttle_global/docs/gizmos.md`.
 
+**Tasks App (not flag-gated):** Apps → Tasks manages every Tasks list a user
+owns. Writes stay in `api.gizmos.tasks` (links via `linked_sessions` on the
+same auth-owned row, delete, `expected_revision` guard); `api.gizmos.tasks_manager`
+is the read model (all lists + chat names, orchestration-family suggestions via
+deferred `api.subagents.store` / `api.chat_ops.store` reads). Client:
+`js/tasks/tasks_model.js` (`CuttleTasksModel`, pure tree/list/history logic) +
+`tasks_page.js` (controller) on the shared Orchestrator page skin. Tests:
+`tests/gizmos/test_tasks_app*.py`, `e2e/test_tasks_app.py`. Notes:
+`.cuttle/docs/tasks-app.md`.
+
 **Chat VFX:** `api.chat_vfx` owns validated transient confetti/toast events and
 session-scoped SQLite delivery (`python -m api.chat_vfx`); `chat_vfx.routes`
 owns authenticated HTTP transport. `chat_vfx.js` owns the renderer and a

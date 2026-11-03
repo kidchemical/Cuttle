@@ -1,7 +1,7 @@
-/* Orchestrator + Agents Apps (shared). Loaded after page_controls.css, so
+/* Orchestrator + Agents + Tasks Apps (shared skin). Loaded after page_controls.css, so
    form controls start from the shared app-page skin and only diverge where
    these pages need a distinct surface (title inputs, ladder, steppers). */
-body[data-page="orchestrator"], body[data-page="agents"] {
+body[data-page="orchestrator"], body[data-page="agents"], body[data-page="tasks"] {
     --orch-text: var(--text-primary, #e2e8f0);
     --orch-muted: var(--text-secondary, #a0aec0);
     --orch-accent: var(--accent-color, #8b5cf6);
@@ -26,7 +26,7 @@ body[data-page="orchestrator"], body[data-page="agents"] {
    icon buttons) becomes a scroll container and Electron draws scrollbars on
    it. Reset inside these pages; real scrollers set overflow explicitly. */
 .orch-page :where(*), .orch-avp :where(*),
-body:is([data-page="agents"], [data-page="orchestrator"]) .chip-config-modal :where(*) { overflow: visible; }
+body:is([data-page="agents"], [data-page="orchestrator"], [data-page="tasks"]) .chip-config-modal :where(*) { overflow: visible; }
 
 /* ── Buttons ─────────────────────────────────────────────────────── */
 .orch-page [hidden] { display: none !important; }

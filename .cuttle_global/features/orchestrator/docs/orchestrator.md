@@ -53,6 +53,17 @@ PYTHONPATH=src .venv/bin/python -m api.orchestrator supervise-command CH-<orches
 Run the returned `command` from the supervisor chat. It omits `--agent` unless
 the playbook pins one, so check-ins follow that chat's own agent.
 
+## Playbook edits while it runs
+
+A bound orchestrator gets the edited brief at its **next turn** (resume delta
+"Orchestrator playbook updated"); a turn already running keeps the old one.
+Saving the playbook also updates each supervision schedule on a bound chat:
+fields still matching the old playbook (interval, instructions, guards, model
+guidance) take the new values, fields set on the schedule itself are kept, and
+the supervisor gets one **Supervision update** check-in naming the change. On
+that check-in, steer the orchestrator only if its live turn is doing work the
+edit affects; otherwise end the turn.
+
 ## Editing
 
 Profiles: `python -m api.subagents profiles save --id … --agent … --model … --effort …`

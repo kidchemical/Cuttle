@@ -24,6 +24,7 @@ PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --set-do
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --ops '{"add":[{"item":{"id":"docs","text":"Update docs"}}],"description":"Validation remains"}'
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks get auth-refactor
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks history auth-refactor
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --link CH-000470,CH-000471 --unlink CH-000468
 ```
 
 Flags go after the verb. JSON output; exit `0` success, `2` invalid/not found.
@@ -39,6 +40,16 @@ the list. `--status archived` manually archives. Patch supports `set_done`,
 `set_undone`, `set_text`, `add`, `remove`, `items`, `description`, `title`,
 `scope`, and `edit_mode`; scope changes require `--session`.
 
+**Linked chats.** Besides its home chat (or project), a list can be linked to
+specific chats: `--link CH-…` on `create`/`patch` (repeatable or comma-separated),
+`--unlink CH-…` to drop one; ops `link`, `unlink`, `linked_sessions` (replace).
+Linked chats show the list in their composer and in their agents' context
+digest, and can patch it like the home chat. An orchestrator should link its
+plan to its supervisor and sub-agent chats instead of creating a list per chat;
+sub-agents then check off their items on the shared list. Links must be the
+same user's chats. The **Tasks App** (Apps → Tasks) suggests links from the
+home chat's sub-agent parent/children and live supervision schedules.
+
 Tasks render in the composer dock rather than the install-wide usage docks.
 They do not require the experimental flag. This preserves existing behavior;
 all existing lists remain in the same auth-owned rows, with no state copy.
@@ -49,9 +60,12 @@ including archives, while the agent is working.
 
 Authenticated REST (each caller can access only their own tasks/chats):
 
-- `GET /api/gizmos/tasks?session_id=465` → `{success, gizmos, revision}`
-- `POST /api/gizmos/tasks` `{id?, session_id, title?, items, description?, scope?, edit_mode?}`
-- `GET|PATCH /api/gizmos/tasks/<id>` → `{success, gizmo}`; PATCH accepts task ops and `session_id`
+- `GET /api/gizmos/tasks?session_id=465` → `{success, gizmos, revision}` (home, project and linked lists)
+- `GET /api/gizmos/tasks?all=1` → `{success, lists, chats, revision}`: every list (active + archived) with `home_chat`/`linked_chats`, for the Tasks App
+- `POST /api/gizmos/tasks` `{id?, session_id, title?, items, description?, scope?, edit_mode?, linked_sessions?}`
+- `GET|PATCH|DELETE /api/gizmos/tasks/<id>` → `{success, gizmo}`; PATCH accepts task ops, `session_id`, and
+  `expected_revision` (409 `conflict` when the list changed since it was read); `?summary=1` adds chat names
+- `GET /api/gizmos/tasks/<id>/related` → orchestration-family chats (sub-agent parent/children, supervisors)
 - `PATCH /api/gizmos/tasks/<id>/items/<item_id>` `{done: true, session_id}` (shared lists)
 - `GET /api/gizmos/tasks/<id>/history?limit=100` → `{success, events}`
 

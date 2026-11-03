@@ -208,6 +208,26 @@
     --t-shadow: rgba(0, 0, 0, 0.4);
 }
 
+/* Onyx: near-black layered surfaces with an off-white accent — the
+   minimal monochrome look (soft cards, light pill primaries, dark knobs). */
+:root.theme-onyx,
+:root.theme-onyx body {
+    --t-bg: #0a0a0b;
+    --t-surface: #151516;
+    --t-surface-2: #1e1e20;
+    --t-rail: #0d0d0e;
+    --t-text: #f2f1ee;
+    --t-muted: #9d9da2;
+    --t-border: #262628;
+    --t-accent: #f0eee9;
+    --t-accent-2: #cfcdc8;
+    --t-on-accent: #111112;
+    --t-user-text: #111112;
+    --t-assistant-bubble: #18181a;
+    --t-input: #1a1a1c;
+    --t-shadow: rgba(0, 0, 0, 0.5);
+}
+
 :root.theme-nord,
 :root.theme-nord body {
     --t-bg: #2e3440;

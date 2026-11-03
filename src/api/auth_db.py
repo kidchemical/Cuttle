@@ -353,6 +353,15 @@ class AuthDatabase:
             )
         except sqlite3.OperationalError:
             pass
+        try:
+            # Extra chats a list is linked to (JSON array of chat session ids),
+            # beyond its home chat or project: one plan shared by an
+            # orchestrator, its supervisor and its sub-agents.
+            cursor.execute(
+                "ALTER TABLE chat_widgets ADD COLUMN linked_sessions TEXT NOT NULL DEFAULT '[]'"
+            )
+        except sqlite3.OperationalError:
+            pass
         cursor.execute(
             'CREATE INDEX IF NOT EXISTS idx_chat_widgets_user_status '
             'ON chat_widgets(user_id, status)'
@@ -2293,7 +2302,25 @@ class AuthDatabase:
                 d["payload"] = json.loads(payload)
             except Exception:
                 d["payload"] = {}
+        d["linked_sessions"] = AuthDatabase._decode_linked_sessions(d.get("linked_sessions"))
         return d
+
+    @staticmethod
+    def _decode_linked_sessions(raw) -> List[int]:
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw or "[]")
+            except Exception:
+                raw = []
+        out: List[int] = []
+        for value in raw if isinstance(raw, list) else []:
+            try:
+                sid = int(value)
+            except (TypeError, ValueError):
+                continue
+            if sid > 0 and sid not in out:
+                out.append(sid)
+        return out
 
     def get_chat_session_by_id(self, session_id: int) -> Optional[Dict[str, Any]]:
         """Load a chat session row by id (no ownership check — internal use)."""
@@ -2342,6 +2369,11 @@ class AuthDatabase:
         if session_id is not None:
             scope_bits.append("(scope = 'session' AND session_id = ?)")
             params.append(int(session_id))
+            scope_bits.append(
+                "EXISTS (SELECT 1 FROM json_each(chat_widgets.linked_sessions) "
+                "WHERE json_each.value = ?)"
+            )
+            params.append(int(session_id))
         if proj:
             scope_bits.append("(scope = 'project' AND project_path = ?)")
             params.append(proj)
@@ -2377,7 +2409,10 @@ class AuthDatabase:
         actor: Optional[Dict[str, Any]] = None,
         operation: str = "update",
         expected_revision: Optional[int] = None,
+        linked_sessions: Optional[List[int]] = None,
     ) -> Optional[Dict[str, Any]]:
+        """Insert or replace one widget row. ``linked_sessions=None`` keeps the
+        stored links (an empty list clears them)."""
         if isinstance(payload, (dict, list)):
             payload_s = json.dumps(payload, ensure_ascii=False)
         else:
@@ -2403,12 +2438,16 @@ class AuthDatabase:
                 if expected_revision is not None and int(prev["revision"] if prev else 0) != expected_revision:
                     raise ValueError("Tasks revision conflict")
                 rev = int(prev["revision"] if prev else 0) + 1
+                links = self._decode_linked_sessions(
+                    linked_sessions if linked_sessions is not None
+                    else (prev["linked_sessions"] if prev else [])
+                )
                 cursor.execute(
                     '''
                     INSERT INTO chat_widgets (
                         id, user_id, type, title, description, scope, session_id, project_path,
-                        payload, status, edit_mode, revision, updated_at, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        payload, status, edit_mode, revision, linked_sessions, updated_at, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     ON CONFLICT(id) DO UPDATE SET
                         user_id = excluded.user_id,
                         type = excluded.type,
@@ -2421,6 +2460,7 @@ class AuthDatabase:
                         status = excluded.status,
                         edit_mode = excluded.edit_mode,
                         revision = excluded.revision,
+                        linked_sessions = excluded.linked_sessions,
                         updated_at = CURRENT_TIMESTAMP
                     ''',
                     (
@@ -2436,6 +2476,7 @@ class AuthDatabase:
                         str(status or "active"),
                         edit_n,
                         rev,
+                        json.dumps(links),
                     ),
                 )
                 cursor.execute(
@@ -2455,6 +2496,36 @@ class AuthDatabase:
         finally:
             conn.close()
         return self._decode_widget_row(row)
+
+    def delete_chat_widget(self, widget_id: str, *, user_id: int, actor: Optional[Dict[str, Any]] = None) -> bool:
+        """Delete one widget row; the audit keeps its final state.
+
+        The event's ``after_state`` is a ``{"deleted": true}`` marker so
+        :meth:`widgets_revision_for` still observes the removal.
+        """
+        conn = self._get_connection()
+        try:
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                prev = conn.execute(
+                    "SELECT * FROM chat_widgets WHERE id = ? AND user_id = ?",
+                    (str(widget_id), int(user_id)),
+                ).fetchone()
+                if not prev:
+                    return False
+                conn.execute("DELETE FROM chat_widgets WHERE id = ?", (str(widget_id),))
+                from core.agent_cli_env import operation_actor
+                conn.execute(
+                    'INSERT INTO task_gizmo_events '
+                    '(gizmo_id, user_id, operation, actor, before_state, after_state) VALUES (?, ?, ?, ?, ?, ?)',
+                    (str(widget_id), int(user_id), "delete",
+                     json.dumps(actor if actor is not None else operation_actor(source="local", user_id=user_id)),
+                     json.dumps(self._decode_widget_row(prev)),
+                     json.dumps({"id": str(widget_id), "deleted": True})),
+                )
+            return True
+        finally:
+            conn.close()
 
     def task_gizmo_history(self, widget_id: str, *, user_id: int, limit: int = 100):
         conn = self._get_connection()

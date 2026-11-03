@@ -29,11 +29,60 @@ def session_context(session_id, *, user_id=None, db=None):
     return int(row['user_id']), sid, model._norm_project_path(row.get('project_path'))
 
 
+MAX_LINKS = 50
+
+
 def public(row):
-    return {**row, 'placement': {'dock': 'composer'},
+    return {**row, 'linked_sessions': list(row.get('linked_sessions') or []),
+            'placement': {'dock': 'composer'},
             'config': {k: row.get(k) for k in ('scope', 'session_id', 'project_path',
                                               'description', 'edit_mode', 'status')}
-                      | {'items': (row.get('payload') or {}).get('items', [])}}
+                      | {'items': (row.get('payload') or {}).get('items', []),
+                         'linked_sessions': list(row.get('linked_sessions') or [])}}
+
+
+def _resolve_links(handles, *, user_id, db):
+    """Chat handles/ids → session ids owned by ``user_id`` (order kept, deduped)."""
+    if handles is None:
+        return None
+    if not isinstance(handles, list):
+        raise GizmoError('linked chats must be an array of chat handles')
+    out = []
+    for handle in handles:
+        _, sid, _ = session_context(handle, user_id=user_id, db=db)
+        if sid not in out:
+            out.append(sid)
+    if len(out) > MAX_LINKS:
+        raise GizmoError(f'a Tasks list can link at most {MAX_LINKS} chats')
+    return out
+
+
+def _apply_link_ops(current, ops, *, user_id, db):
+    """``linked_sessions`` replaces; ``link`` / ``unlink`` edit incrementally."""
+    if not any(key in ops for key in ('linked_sessions', 'link', 'unlink')):
+        return None
+    links = list(current or [])
+    if 'linked_sessions' in ops:
+        links = _resolve_links(ops['linked_sessions'], user_id=user_id, db=db)
+    for sid in _resolve_links(ops.get('link') or [], user_id=user_id, db=db):
+        if sid not in links:
+            links.append(sid)
+    drop = set()
+    for handle in ops.get('unlink') or []:
+        parsed = parse_handle(handle)
+        if parsed:
+            drop.add(parsed)
+    links = [sid for sid in links if sid not in drop]
+    if len(links) > MAX_LINKS:
+        raise GizmoError(f'a Tasks list can link at most {MAX_LINKS} chats')
+    return links
+
+
+def parse_handle(handle):
+    """Session id for a CH- handle / numeric id, or None (no ownership check)."""
+    from api.cuttle_ui_capabilities import parse_chat_handle
+    parsed = parse_chat_handle(handle if isinstance(handle, int) else str(handle or ''))
+    return int(parsed['session_id']) if parsed else None
 
 
 def list_tasks(*, user_id, session_id=None, project_path='', status='active', db=None):
@@ -53,7 +102,8 @@ def get(gizmo_id, *, user_id=None, db=None):
 
 
 def create(*, gizmo_id=None, title='Tasks', items=None, description='', scope='session',
-           edit_mode='agent', session_id=None, user_id=None, actor=None, db=None):
+           edit_mode='agent', session_id=None, user_id=None, actor=None, db=None,
+           linked_sessions=None):
     db = database(db)
     uid, sid, project = session_context(session_id, user_id=user_id, db=db)
     gid = str(gizmo_id or model._new_id('tasks')).strip()
@@ -71,8 +121,10 @@ def create(*, gizmo_id=None, title='Tasks', items=None, description='', scope='s
     if not payload['items']:
         raise GizmoError('create Tasks with real items')
     _validate(payload)
+    links = [l for l in (_resolve_links(linked_sessions, user_id=uid, db=db) or [])
+             if not (scope == 'session' and l == sid)]
     try:
-        row = db.upsert_chat_widget(widget_id=gid, user_id=uid, wtype='tasks',
+        row = db.upsert_chat_widget(widget_id=gid, user_id=uid, wtype='tasks', linked_sessions=links,
             title=str(title or 'Tasks')[:200], scope=scope, session_id=sid,
             project_path=project, payload=payload,
             status=model.resolve_tasks_widget_status(payload), edit_mode=edit_mode,
@@ -103,7 +155,7 @@ def patch(gizmo_id, ops, *, user_id=None, session_id=None, actor=None, db=None, 
     if not isinstance(ops, dict):
         raise GizmoError('patch must be an object')
     db = database(db)
-    for key in ('set_done', 'set_undone', 'remove', 'add', 'items'):
+    for key in ('set_done', 'set_undone', 'remove', 'add', 'items', 'link', 'unlink', 'linked_sessions'):
         if key in ops and not isinstance(ops[key], list):
             raise GizmoError(f'{key} must be an array')
     if 'set_text' in ops and not isinstance(ops['set_text'], dict):
@@ -116,9 +168,18 @@ def patch(gizmo_id, ops, *, user_id=None, session_id=None, actor=None, db=None, 
     else:
         sid = None
         project = ''
+    expected = ops.get('expected_revision')
+    if expected is not None:
+        try:
+            expected = int(expected)
+        except (TypeError, ValueError):
+            raise GizmoError('expected_revision must be an integer')
     for attempt in range(5):
         row = get(gizmo_id, user_id=user_id, db=db)
         uid = int(row['user_id'])
+        if expected is not None and int(row['revision']) != expected:
+            raise GizmoError('This Tasks list changed since you opened it; reload to see the latest.',
+                             'conflict')
         if item_edit and row.get('edit_mode') != 'shared':
             raise GizmoError('This Tasks list is agent-managed; switch to Shared to edit.', 'forbidden')
         scope = ops.get('scope', row['scope'])
@@ -132,6 +193,10 @@ def patch(gizmo_id, ops, *, user_id=None, session_id=None, actor=None, db=None, 
             raise GizmoError('project-scoped Tasks require a project')
         payload = model.apply_tasks_patch(row['payload'], ops)
         _validate(payload)
+        links = _apply_link_ops(row.get('linked_sessions'), ops, user_id=uid, db=db)
+        home = sid if scope != row['scope'] else row.get('session_id')
+        if links is not None and scope == 'session':
+            links = [l for l in links if l != home]
         requested = ops.get('status')
         item_ops = any(key in ops for key in ('items', 'add', 'remove', 'set_done', 'set_undone'))
         if requested is None and not item_ops:
@@ -143,13 +208,23 @@ def patch(gizmo_id, ops, *, user_id=None, session_id=None, actor=None, db=None, 
                 project_path=target_project if scope == 'project' else '', payload=payload,
                 status=model.resolve_tasks_widget_status(payload, requested=requested),
                 edit_mode=edit, description=model._description_from_sources(ops, existing=row),
-                expected_revision=row['revision'], operation='patch',
+                expected_revision=row['revision'], operation='patch', linked_sessions=links,
                 actor=actor or operation_actor(session_id=sid, user_id=uid))
             return public(updated)
         except ValueError as exc:
-            if 'revision conflict' not in str(exc) or attempt == 4:
+            if 'revision conflict' not in str(exc) or attempt == 4 or expected is not None:
                 raise GizmoError(str(exc), 'conflict') from exc
     raise GizmoError('Tasks revision conflict', 'conflict')
+
+
+def delete(gizmo_id, *, user_id=None, actor=None, db=None):
+    db = database(db)
+    row = get(gizmo_id, user_id=user_id, db=db)
+    uid = int(row['user_id'])
+    if not db.delete_chat_widget(gizmo_id, user_id=uid,
+                                 actor=actor or operation_actor(user_id=uid)):
+        raise GizmoError('Tasks gizmo not found', 'not_found')
+    return True
 
 
 def history(gizmo_id, *, user_id=None, limit=100, db=None):

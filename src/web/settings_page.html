@@ -9,10 +9,10 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20261028gpuBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261015glass">
-    <link rel="stylesheet" href="css/settings_page.css?v=20261018updateCenter">
+    <link rel="stylesheet" href="css/settings_page.css?v=20261103sidebar">
     <link rel="stylesheet" href="css/searchable_select.css?v=20261011attachedMenus">
-<link rel="stylesheet" href="/css/storage_settings.css?v=20261007">
-<link rel="stylesheet" href="/css/page_controls.css?v=20261015glass">
+<link rel="stylesheet" href="/css/storage_settings.css?v=20261103cards">
+<link rel="stylesheet" href="/css/page_controls.css?v=20261103pills">
 <script defer src="/js/shared/page_controls.js?v=20261011menuPosition2"></script>
 </head>
 <body class="compact-shell-page" data-page="settings">
@@ -25,23 +25,31 @@
                 <p>Make Cuttle feel like yours.</p>
             </div>
 
-            <div class="settings-tabs" role="tablist" aria-label="Settings categories">
-                <button type="button" class="settings-tab" role="tab" data-tab="general" aria-controls="panel-general" aria-selected="true" id="tab-general">📋 <span>General</span></button>
-                <button type="button" class="settings-tab" role="tab" data-tab="appearance" aria-controls="panel-appearance" aria-selected="false" id="tab-appearance">🎨 <span>Appearance</span></button>
-                <button type="button" class="settings-tab" role="tab" data-tab="agents" aria-controls="panel-agents" aria-selected="false" id="tab-agents">🤖 <span>Agents</span></button>
-                <button type="button" class="settings-tab" role="tab" data-tab="experimental" aria-controls="panel-experimental" aria-selected="false" id="tab-experimental">🧪 <span>Experimental</span></button>
-                <button type="button" class="settings-tab" role="tab" data-tab="providers" aria-controls="panel-providers" aria-selected="false" id="tab-providers">🔑 <span>Providers</span></button>
-                <button type="button" class="settings-tab" role="tab" data-tab="voice" aria-controls="panel-voice" aria-selected="false" id="tab-voice">🔊 <span>Voice</span></button>
-                <button type="button" class="settings-tab" role="tab" data-tab="devices" aria-controls="panel-devices" aria-selected="false" id="tab-devices">📱 <span>Devices</span></button>
-                <button type="button" class="settings-tab" role="tab" data-tab="data" aria-controls="panel-data" aria-selected="false" id="tab-data">💾 <span>Data</span></button>
-                <button type="button" class="settings-tab" role="tab" data-tab="account" aria-controls="panel-account" aria-selected="false" id="tab-account">👤 <span>Account</span></button>
-            </div>
+            <div class="settings-layout">
+            <aside class="settings-sidebar">
+                <div class="settings-tabs" role="tablist" aria-label="Settings categories" aria-orientation="vertical">
+                    <p class="settings-nav-label" aria-hidden="true">Workspace</p>
+                    <button type="button" class="settings-tab" role="tab" data-tab="general" aria-controls="panel-general" aria-selected="true" id="tab-general"><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg><span class="settings-tab-label">General</span><span class="settings-tab-chevron" aria-hidden="true"></span></button>
+                    <button type="button" class="settings-tab" role="tab" data-tab="appearance" aria-controls="panel-appearance" aria-selected="false" id="tab-appearance"><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.13a1.64 1.64 0 0 1 1.67-1.67h2c3.05 0 5.55-2.5 5.55-5.55C21.97 6.01 17.46 2 12 2z"/></svg><span class="settings-tab-label">Appearance</span><span class="settings-tab-chevron" aria-hidden="true"></span></button>
+                    <button type="button" class="settings-tab" role="tab" data-tab="voice" aria-controls="panel-voice" aria-selected="false" id="tab-voice"><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4.7a.7.7 0 0 0-1.2-.5L6.41 7.59A1.4 1.4 0 0 1 5.42 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.42a1.4 1.4 0 0 1 .99.41l3.39 3.39a.7.7 0 0 0 1.2-.5z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.36 18.36a9 9 0 0 0 0-12.73"/></svg><span class="settings-tab-label">Voice</span><span class="settings-tab-chevron" aria-hidden="true"></span></button>
+                    <p class="settings-nav-label" aria-hidden="true">Agents &amp; models</p>
+                    <button type="button" class="settings-tab" role="tab" data-tab="agents" aria-controls="panel-agents" aria-selected="false" id="tab-agents"><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg><span class="settings-tab-label">Agents</span><span class="settings-tab-chevron" aria-hidden="true"></span></button>
+                    <button type="button" class="settings-tab" role="tab" data-tab="providers" aria-controls="panel-providers" aria-selected="false" id="tab-providers"><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.59 17.41A2 2 0 0 0 2 18.83V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.17a2 2 0 0 0 1.42-.59l.81-.81a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r="1"/></svg><span class="settings-tab-label">Providers</span><span class="settings-tab-chevron" aria-hidden="true"></span></button>
+                    <button type="button" class="settings-tab" role="tab" data-tab="experimental" aria-controls="panel-experimental" aria-selected="false" id="tab-experimental"><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2v6a2 2 0 0 0 .25.96l5.5 10.08A2 2 0 0 1 18 22H6a2 2 0 0 1-1.76-2.96l5.51-10.08A2 2 0 0 0 10 8V2"/><path d="M6.45 15h11.1"/><path d="M8.5 2h7"/></svg><span class="settings-tab-label">Experimental</span><span class="settings-tab-chevron" aria-hidden="true"></span></button>
+                    <p class="settings-nav-label" aria-hidden="true">System</p>
+                    <button type="button" class="settings-tab" role="tab" data-tab="devices" aria-controls="panel-devices" aria-selected="false" id="tab-devices"><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8"/><path d="M10 19v-4"/><path d="M7 19h5"/><rect width="6" height="10" x="16" y="12" rx="2"/></svg><span class="settings-tab-label">Devices</span><span class="settings-tab-chevron" aria-hidden="true"></span></button>
+                    <button type="button" class="settings-tab" role="tab" data-tab="data" aria-controls="panel-data" aria-selected="false" id="tab-data"><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg><span class="settings-tab-label">Data</span><span class="settings-tab-chevron" aria-hidden="true"></span></button>
+                    <button type="button" class="settings-tab" role="tab" data-tab="account" aria-controls="panel-account" aria-selected="false" id="tab-account"><svg class="settings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M7 20.66V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.66"/></svg><span class="settings-tab-label">Account</span><span class="settings-tab-chevron" aria-hidden="true"></span></button>
+                </div>
+            </aside>
+            <div class="settings-main">
+            <nav class="settings-crumbs" aria-label="Breadcrumb" hidden></nav>
 
             <!-- General is the pre-activation panel: if the tab script fails to
                  load, the page still renders its settings instead of nothing. -->
             <section class="settings-panel active" id="panel-general" role="tabpanel" aria-labelledby="tab-general" tabindex="0">
             <div class="settings-group" id="cuttleReleaseSettings">
-                <h3 class="settings-title">📦 Cuttle updates <span class="settings-scope" data-scope="server">This server checkout</span><button type="button" class="cuttle-info" data-tooltip="Check for updates lists every channel this install can use and what each would change. Nothing installs until you pick a channel and confirm it. The titlebar Update button opens the same window." aria-label="About 📦 Cuttle updates">i</button></h3>
+                <h3 class="settings-title">Cuttle updates <span class="settings-scope" data-scope="server">This server checkout</span><button type="button" class="cuttle-info" data-tooltip="Check for updates lists every channel this install can use and what each would change. Nothing installs until you pick a channel and confirm it. The titlebar Update button opens the same window." aria-label="About Cuttle updates">i</button></h3>
                 <div class="setting-item setting-item--stack">
                     <div class="setting-control setting-control--stack">
                         <button type="button" class="control-button" data-release-version title="Copy version and Git revision">Cuttle version</button>
@@ -103,7 +111,7 @@
             </div>
 
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">📋</span> General <span class="settings-scope" data-scope="device" title="Stored in this browser only — other devices and the server are unaffected.">This device</span></h3>
+                <h3 class="settings-title">General <span class="settings-scope" data-scope="device" title="Stored in this browser only — other devices and the server are unaffected.">This device</span></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Welcome page</strong><button type="button" class="cuttle-info" data-tooltip="Show the welcome screen on next app startup" aria-label="About Welcome page">i</button>
@@ -137,7 +145,7 @@
             </div>
 
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🔔</span> Notifications <span class="settings-scope" data-scope="device" title="Stored in this browser only.">This device</span></h3>
+                <h3 class="settings-title">Notifications <span class="settings-scope" data-scope="device" title="Stored in this browser only.">This device</span></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Desktop Notifications</strong><button type="button" class="cuttle-info" data-tooltip="In-app notifications and completion notifications" aria-label="About Desktop Notifications">i</button>
@@ -170,7 +178,7 @@
                     </div>
                 </div>
             </div>
-            <div class="settings-group" id="sharedSystemPromptSettings">
+            <div class="settings-group" id="sharedSystemPromptSettings" data-subpage="system-prompt" data-subpage-icon="message" data-subpage-title="System prompt" data-subpage-desc="Instructions added to every chat.">
                 <h3 class="settings-title">System prompt <span class="settings-scope" data-scope="server">All chats</span></h3>
                 <div id="sharedSystemPromptEditor"></div>
             </div>
@@ -178,7 +186,7 @@
 
             <section class="settings-panel" id="panel-appearance" role="tabpanel" aria-labelledby="tab-appearance" tabindex="0" hidden>
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🎨</span> Appearance <span class="settings-scope" data-scope="mixed" title="Theme and transitions are per-browser; wallpaper playlists sync to the server.">This device + server</span></h3>
+                <h3 class="settings-title">Appearance <span class="settings-scope" data-scope="device" title="Stored in this browser only.">This device</span></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Theme</strong><button type="button" class="cuttle-info" data-tooltip="Choose your preferred theme" aria-label="About Theme">i</button>
@@ -232,9 +240,12 @@
                     <div class="setting-control">
                         <input type="range" id="uiTransitionMs" min="100" max="500" step="20" value="220" style="width: 160px; vertical-align: middle;" oninput="previewUiTransitionMs()">
                         <span id="uiTransitionMsLabel" style="min-width: 55px; display: inline-block;">220ms</span>
-                        <button class="control-button btn-start" onclick="saveUiTransitionMs()"><span class="emoji">💾</span> Save</button>
+                        <button class="control-button btn-start" onclick="saveUiTransitionMs()">Save</button>
                     </div>
                 </div>
+            </div>
+            <div class="settings-group" id="wallpaperSettings" data-subpage="wallpaper" data-subpage-icon="image" data-subpage-title="Wallpaper" data-subpage-desc="Video background playlist, blend and color effect.">
+                <h3 class="settings-title">Wallpaper <span class="settings-scope" data-scope="mixed" title="Playback and blend are per-browser; playlists sync to the server.">This device + server</span></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Video Background</strong><button type="button" class="cuttle-info" data-tooltip="Play the wallpaper playlist behind the UI. Off keeps your playlist saved but stops playback." aria-label="About Video Background">i</button>
@@ -254,7 +265,7 @@
                         <div class="video-playlist-toolbar">
                             <select id="videoPlaylistSelect" class="setting-input" onchange="switchVideoPlaylist(this.value)" aria-label="Active playlist"></select>
                             <button class="control-button btn-start" id="videoPlaylistNewBtn" onclick="showNewVideoPlaylistInput()" title="Create a playlist">+ New playlist</button>
-                            <button class="control-button btn-stop" id="videoPlaylistDeleteBtn" onclick="deleteVideoPlaylist()" title="Delete this playlist">🗑️ Delete</button>
+                            <button class="control-button btn-stop" id="videoPlaylistDeleteBtn" onclick="deleteVideoPlaylist()" title="Delete this playlist">Delete</button>
                         </div>
                         <div id="videoPlaylistNewRow" class="video-playlist-toolbar" style="display: none;">
                             <input type="text" id="videoPlaylistNewName" class="setting-input" maxlength="40" placeholder="Playlist name"
@@ -265,8 +276,8 @@
                         <div id="videoBackgroundList" class="video-list-container"></div>
                         <div class="video-playlist-toolbar">
                             <button class="control-button btn-start" onclick="addVideoBackgroundEntry()" title="Add video">+ Add</button>
-                            <button class="control-button btn-stop" onclick="clearVideoBackground()" title="Clear all">🗑️ Clear All</button>
-                            <button class="control-button btn-info" onclick="saveVideoBackground()">💾 Save</button>
+                            <button class="control-button btn-stop" onclick="clearVideoBackground()" title="Clear all">Clear All</button>
+                            <button class="control-button btn-info" onclick="saveVideoBackground()">Save</button>
                         </div>
                     </div>
                 </div>
@@ -279,7 +290,7 @@
                     <div class="setting-control">
                         <input type="number" id="videoBackgroundDuration" min="5" max="600" value="60" style="width: 80px;">
                         <span>seconds</span>
-                        <button class="control-button btn-start" onclick="saveVideoBackgroundDuration()">💾 Save</button>
+                        <button class="control-button btn-start" onclick="saveVideoBackgroundDuration()">Save</button>
                     </div>
                 </div>
                 <div class="setting-item">
@@ -313,12 +324,12 @@
                 </div>
 </details>
             </div>
-            <div class="settings-group" id="chipPrefsGroup">
-                <h3 class="settings-title"><span class="emoji">🏷️</span> Chat chips <span class="settings-scope" data-scope="device" title="Stored in this browser only.">This device</span><button type="button" class="cuttle-info" data-tooltip="Show or hide the project and agent chips on messages and in the composer. Hidden composer chips still apply to what you send." aria-label="About Chat chips">i</button></h3>
+            <div class="settings-group" id="chipPrefsGroup" data-subpage="chips" data-subpage-icon="tag" data-subpage-title="Chat chips" data-subpage-desc="Project and agent chips on messages and the composer.">
+                <h3 class="settings-title">Chat chips <span class="settings-scope" data-scope="device" title="Stored in this browser only.">This device</span><button type="button" class="cuttle-info" data-tooltip="Show or hide the project and agent chips on messages and in the composer. Hidden composer chips still apply to what you send." aria-label="About Chat chips">i</button></h3>
                 <div id="chipPrefsRows"></div>
             </div>
-            <div class="settings-group" id="textPrefsGroup">
-                <h3 class="settings-title"><span class="emoji">🔤</span> Text &amp; fonts <span class="settings-scope" data-scope="device" title="Stored in this browser only.">This device</span><button type="button" class="cuttle-info" data-tooltip="A font and a size for each area of the chat. Sizes are a percentage of the theme's own size and scale everything in that area. &quot;Use theme setting&quot; keeps each theme's own type." aria-label="About Text &amp; fonts">i</button></h3>
+            <div class="settings-group" id="textPrefsGroup" data-subpage="fonts" data-subpage-icon="type" data-subpage-title="Text &amp; fonts" data-subpage-desc="A font and size for each area of the chat.">
+                <h3 class="settings-title">Text &amp; fonts <span class="settings-scope" data-scope="device" title="Stored in this browser only.">This device</span><button type="button" class="cuttle-info" data-tooltip="A font and a size for each area of the chat. Sizes are a percentage of the theme's own size and scale everything in that area. &quot;Use theme setting&quot; keeps each theme's own type." aria-label="About Text &amp; fonts">i</button></h3>
                 <div id="textPrefsRows"></div>
                 <div class="setting-item">
                     <div class="setting-label">
@@ -331,245 +342,15 @@
             </div>
             </section>
 
-            <section class="settings-panel" id="panel-agents" role="tabpanel" aria-labelledby="tab-agents" tabindex="0" hidden>
-            <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🤖</span> Agents <span class="settings-scope" data-scope="server" title="Detection runs on the server that hosts the agent; a CLI installed on another machine is invisible here.">This server</span><button type="button" class="cuttle-info" data-tooltip="Pick one with /name in any chat. Cuttle never installs them — tap a row for setup and defaults." aria-label="About 🤖 Agents">i</button></h3>
-
-                <div id="agentCliList" class="agent-cli-list"></div>
-                <button type="button" class="control-button agent-refresh" onclick="refreshAgentSetup(this)">Check again</button>
-                <span id="agentSetupStatus" role="status" aria-live="polite"></span>
-            </div>
-
-            <div class="settings-group" id="responsePostprocessingSettings" hidden>
-                <h3 class="settings-title">Response post-processing <span class="settings-scope">Experimental</span></h3>
-                <div id="responsePostprocessingEditor"></div>
-            </div>
-
-            <div class="settings-group" id="backgroundHelpersSettings">
-                <h3 class="settings-title">🧠 Background helpers <span class="settings-scope" data-scope="server">All devices</span><button type="button" class="cuttle-info" data-tooltip="Choose how Cuttle generates titles, commit suggestions, enhanced prompts, narration, and routing decisions. Each task follows the Default chain unless you give it its own. CLI helpers use your existing CLI login and allowance." aria-label="About Background helpers">i</button></h3>
-                <div class="setting-control setting-control--stack">
-                    <label>Configure <select id="backgroundTask" class="setting-input" aria-label="Background task"></select></label>
-                    <label id="backgroundOverrideRow" hidden><input id="backgroundOverride" type="checkbox"> Use a chain for this task</label>
-                    <div id="backgroundInheritance" class="setting-description"></div>
-                    <div id="backgroundChain"></div>
-                    <div class="provider-picker">
-                        <button id="backgroundAdd" type="button" class="control-button" disabled>Add fallback</button>
-                        <button id="backgroundReset" type="button" class="control-button" hidden>Reset to Default</button>
-                        <button type="button" class="control-button btn-start" onclick="saveCompletionProviders()">💾 Save background helpers</button>
-                    </div>
-                    <div id="backgroundStatus" class="setting-description" role="status"></div>
-                </div>
-            </div>
-
-            <details class="settings-group settings-advanced" id="agentAdvanced">
-                <summary class="settings-advanced-summary"><span class="emoji">🛠️</span> Advanced <span class="settings-advanced-hint">Git, drop-in folders, router, name</span></summary>
-
-            <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🌿</span> Git <span class="settings-scope" data-scope="server" title="Saved in this server's settings; applies to every chat it runs.">This server</span></h3>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Auto-commit agent edits</strong><button type="button" class="cuttle-info" data-tooltip="After each successful agent turn, commit only the files that turn changed, with a suggested message and Cuttle&#x27;s commit attribution. Your other uncommitted files are left alone (but a file the agent touched is committed whole, including any edits you had in it). Never pushes. Off by default." aria-label="About Auto-commit agent edits">i</button>
-                    </div>
-                    <div class="setting-control">
-                        <label class="toggle-switch" id="gitAutoCommitToggle" onclick="toggleGitAutoCommit(event)">
-                            <input type="checkbox" id="gitAutoCommitEnabled" style="display: none;">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Committing unreviewed agent changes</strong><button type="button" class="cuttle-info" data-tooltip="With Agent review on (Settings → Experimental), committing a file whose agent changes you have not kept or undone keeps them. Warn first asks before committing (with a Don&#x27;t ask again option); Keep and commit skips the question." aria-label="About committing unreviewed agent changes">i</button>
-                    </div>
-                    <div class="setting-control">
-                        <select id="agentReviewCommitPolicy" class="setting-input" onchange="saveAgentReviewCommitPolicy()" aria-label="Committing unreviewed agent changes">
-                            <option value="warn">Warn first</option>
-                            <option value="keep">Keep and commit</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-
-            <div class="settings-group" id="timeoutsSettings">
-                <h3 class="settings-title"><span class="emoji">⏱️</span> Timeouts <span class="settings-scope" data-scope="server" title="Stored in this server's settings; applies to every chat it runs.">This server</span><button type="button" class="cuttle-info" data-tooltip="How long an agent turn may run, and how long Cuttle waits for a subagent round before cancelling its unfinished work. Raise these for long coding tasks, or set 0 / leave blank for no limit." aria-label="About Timeouts">i</button></h3>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Agent run limit</strong><button type="button" class="cuttle-info" data-tooltip="Maximum seconds for one agent turn before Cuttle stops the harness. Streaming CLIs treat this as an idle budget, so a productive turn keeps going." aria-label="About Agent run limit">i</button>
-                    </div>
-                    <div class="setting-control">
-                        <input type="number" id="agentRunTimeoutSeconds" class="setting-input" min="0" max="86400" step="60" inputmode="numeric" placeholder="Unlimited" aria-label="Agent run limit in seconds">
-                        <span class="setting-description">seconds (0 or blank = unlimited)</span>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Subagent supervision limit</strong><button type="button" class="cuttle-info" data-tooltip="How long a --wait subagent round may run before Cuttle cancels the work that has not finished." aria-label="About Subagent supervision limit">i</button>
-                    </div>
-                    <div class="setting-control">
-                        <input type="number" id="subagentWaitTimeoutSeconds" class="setting-input" min="0" max="86400" step="60" inputmode="numeric" placeholder="Unlimited" aria-label="Subagent supervision limit in seconds">
-                        <span class="setting-description">seconds (0 or blank = unlimited)</span>
-                    </div>
-                </div>
-                <div class="provider-picker">
-                    <button type="button" class="control-button btn-start" onclick="saveTimeoutsSettings()"><span class="emoji">💾</span> Save timeouts</button>
-                </div>
-                <div id="timeoutsStatus" class="setting-description" role="status" aria-live="polite"></div>
-            </div>
-
-            <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">➕</span> Add your own agent <span class="settings-scope" data-scope="mixed" title="Instance and project roots are read straight from disk; a project root only runs after you opt in.">This instance + project</span><button type="button" class="cuttle-info" data-tooltip="Drop a folder named after the agent with a manifest.yaml and an adapter.py. It joins the catalog next reload — no Cuttle fork, no core change." aria-label="About ➕ Add your own agent This instance + project">i</button></h3>
-
-                <div class="setting-item setting-item--stack">
-                    <div class="setting-label"><strong>Discovery roots</strong></div>
-                    <div class="setting-control setting-control--stack">
-                        <div id="agentDropInRoots" class="provider-status"></div>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Run project adapters</strong>
-                        <button type="button" class="cuttle-info" id="projectAdaptersNote" data-tooltip="Load adapter.py from a project's .cuttle/agents/. That is third-party code running on this server, so it stays off until you opt in." aria-label="About Run project adapters">i</button>
-                    </div>
-                    <div class="setting-control">
-                        <label class="toggle-switch" id="projectAdaptersToggle" onclick="toggleProjectAdapters(event)">
-                            <input type="checkbox" id="projectAdaptersEnabled" style="display: none;">
-                            <span class="slider"></span>
-                        </label>
-                    </div>
-                </div>
-            </div>
-
-            <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🧭</span> Routing &amp; identity <span class="settings-scope" data-scope="mixed" title="Agent name is per-browser; router settings are stored on the server.">This device + server</span></h3>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Agent router</strong><button type="button" class="cuttle-info" data-tooltip="Routing brain, use cases, and escalation targets. Leaving it off sends every chat straight to the agent you typed." aria-label="About Agent router">i</button>
-                    </div>
-                    <div class="setting-control">
-                        <button class="control-button btn-info" onclick="openRouterEditor()">🧭 Open router editor</button>
-                    </div>
-                </div>
-                <div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Agent Name</strong><button type="button" class="cuttle-info" data-tooltip="The name your assistant introduces itself by" aria-label="About Agent Name">i</button>
-                    </div>
-                    <div class="setting-control">
-                        <input type="text" id="agentName" class="setting-input" placeholder="Cuttle" value="Cuttle">
-                        <button class="control-button btn-start" onclick="saveAgentName()"><span class="emoji">💾</span> Save</button>
-                    </div>
-                </div>
-            </div>
-            </details>
-            </section>
-
-            <section class="settings-panel" id="panel-experimental" role="tabpanel" aria-labelledby="tab-experimental" tabindex="0" hidden>
-            <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🧪</span> Features <span class="settings-scope" data-scope="server" title="Stored in settings.json — these apply to every device and client that talks to this Cuttle.">All devices</span><button type="button" class="cuttle-info" data-tooltip="Experimental features may change. Each switch shows its current state. Set CUTTLE_EXPERIMENTAL=0 in Cuttle's .env (~/.local/share/cuttle or %LOCALAPPDATA%\\Cuttle) to force all experiments off." aria-label="About experiments">i</button></h3>
-                <div id="experimentalFlagList" class="experimental-flag-list">
-                    <div class="provider-status">Loading experimental features…</div>
-                </div>
-            </div>
-            </section>
-
-            <section class="settings-panel" id="panel-providers" role="tabpanel" aria-labelledby="tab-providers" tabindex="0" hidden>
-            <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🔑</span> API Keys <span class="settings-scope" data-scope="server" title="Used by this server's optional direct API features.">This server</span><button type="button" class="cuttle-info" data-tooltip="Optional credentials for Cuttle’s direct API features. CLI agents use their own login and configuration; these keys are never passed to them." aria-label="About 🔑 API Keys">i</button></h3>
-
-                <details class="settings-disclosure" id="openaiCredential">
-<summary>OpenAI <span class="credential-summary" data-credential-summary="openai">Checking…</span></summary>
-<div class="setting-item">
-                    <div class="setting-label">
-                        <strong>OpenAI API Key</strong><button type="button" class="cuttle-info" data-tooltip="Optional: OpenAI titles, commit suggestions, prompt enhancement, API-mode routing, attachment vision, and OpenAI voice." aria-label="About OpenAI API Key">i</button>
-                    </div>
-                    <div class="setting-control">
-                        <input type="password" id="openaiKey" class="setting-input" placeholder="sk-...">
-                        <button class="control-button btn-info" onclick="testApiKey('openai')"><span class="emoji">🧪</span> Test</button>
-                        <button class="control-button btn-start" onclick="saveApiKey('openai')"><span class="emoji">💾</span> Save</button>
-                    </div>
-                </div>
-</details>
-                
-                <details class="settings-disclosure" id="anthropicCredential">
-<summary>Anthropic <span class="credential-summary" data-credential-summary="anthropic">Checking…</span></summary>
-<div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Anthropic API Key</strong><button type="button" class="cuttle-info" data-tooltip="Optional: Anthropic titles, commit suggestions, prompt enhancement, and attachment vision." aria-label="About Anthropic API Key">i</button>
-                    </div>
-                    <div class="setting-control">
-                        <input type="password" id="anthropicKey" class="setting-input" placeholder="sk-ant-...">
-                        <button class="control-button btn-info" onclick="testApiKey('anthropic')"><span class="emoji">🧪</span> Test</button>
-                        <button class="control-button btn-start" onclick="saveApiKey('anthropic')"><span class="emoji">💾</span> Save</button>
-                    </div>
-                </div>
-</details>
-
-                <details class="settings-disclosure" id="elevenlabsCredential">
-<summary>ElevenLabs <span class="credential-summary" data-credential-summary="elevenlabs">Checking…</span></summary>
-<div class="setting-item">
-                    <div class="setting-label">
-                        <strong>ElevenLabs API Key</strong><button type="button" class="cuttle-info" data-tooltip="Optional: large voice library, per-voice speed and stability controls. Get a key at elevenlabs.io." aria-label="About ElevenLabs API Key">i</button>
-                    </div>
-                    <div class="setting-control">
-                        <input type="password" id="elevenlabsKey" class="setting-input" placeholder="sk_...">
-                        <button class="control-button btn-info" onclick="testApiKey('elevenlabs')"><span class="emoji">🧪</span> Test</button>
-                        <button class="control-button btn-start" onclick="saveApiKey('elevenlabs')"><span class="emoji">💾</span> Save</button>
-                    </div>
-                </div>
-</details>
-
-                <details class="settings-disclosure" id="googleCredential">
-<summary>Google <span class="credential-summary" data-credential-summary="google">Checking…</span></summary>
-<div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Google AI Studio Key</strong><button type="button" class="cuttle-info" data-tooltip="Optional: Gemini text-to-speech voices. Free tier at aistudio.google.com." aria-label="About Google API Key">i</button>
-                    </div>
-                    <div class="setting-control">
-                        <input type="password" id="googleKey" class="setting-input" placeholder="AIza...">
-                        <button class="control-button btn-info" onclick="testApiKey('google')"><span class="emoji">🧪</span> Test</button>
-                        <button class="control-button btn-start" onclick="saveApiKey('google')"><span class="emoji">💾</span> Save</button>
-                    </div>
-                </div>
-</details>
-
-                <details class="settings-disclosure" id="openrouterCredential">
-<summary>OpenRouter <span class="credential-summary" data-credential-summary="openrouter">Checking…</span></summary>
-<div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Management API Key</strong><button type="button" class="cuttle-info" data-tooltip="Account-level Management key used to read credit balance and usage for the OpenRouter meter. It is separate from the completion API key and cannot run requests. Create one at openrouter.ai/settings/management-keys." aria-label="About OpenRouter Management API Key">i</button>
-                    </div>
-                    <div class="setting-control">
-                        <input type="password" id="openrouterKey" class="setting-input" placeholder="sk-or-v1-...">
-                        <button class="control-button btn-info" onclick="testApiKey('openrouter')"><span class="emoji">🧪</span> Test</button>
-                        <button class="control-button btn-start" onclick="saveApiKey('openrouter')"><span class="emoji">💾</span> Save</button>
-                    </div>
-                </div>
-</details>
-
-                <details class="settings-disclosure" id="discordCredential">
-<summary>Discord <span class="credential-summary" data-credential-summary="discord">Checking…</span></summary>
-<div class="setting-item">
-                    <div class="setting-label">
-                        <strong>Discord Bot Token</strong><button type="button" class="cuttle-info" data-tooltip="Optional REST token for channel read and confirmed discord.post. Does not start a chat gateway." aria-label="About Discord Bot Token">i</button>
-                    </div>
-                    <div class="setting-control">
-                        <input type="password" id="discordKey" class="setting-input" placeholder="Bot token...">
-                        <button class="control-button btn-info" onclick="testApiKey('discord')"><span class="emoji">🧪</span> Test</button>
-                        <button class="control-button btn-start" onclick="saveApiKey('discord')"><span class="emoji">💾</span> Save</button>
-                    </div>
-                </div>
-</details>
-            </div>
-            </section>
-
             <section class="settings-panel" id="panel-voice" role="tabpanel" aria-labelledby="tab-voice" tabindex="0" hidden>
             <div class="settings-group voice-experiment-map" id="voiceExperimentMap" hidden>
-                <h3 class="settings-title"><span class="emoji">🧭</span> Voice experiments you have on <span class="settings-scope" data-scope="server" title="Experimental flags are stored on the server — every device shares them.">This server</span></h3>
+                <h3 class="settings-title">Voice experiments you have on <span class="settings-scope" data-scope="server" title="Experimental flags are stored on the server — every device shares them.">This server</span></h3>
                 <ul id="voiceExperimentList"></ul>
                 <p class="setting-description">Turn these on or off in <a href="/settings_page.html?tab=experimental">Settings → Experimental</a>.</p>
             </div>
 
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">🔊</span> Spoken replies <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+                <h3 class="settings-title">Spoken replies <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
                 <p class="setting-description" id="chatTtsScope">The voice Cuttle uses to read replies aloud — from the 🔊 button on a chat reply, and in voice chat.</p>
 
                 <div id="voiceTtsConfig">
@@ -682,8 +463,8 @@
                 </div><!-- /chatTtsDetails -->
                 <div class="setting-item">
                     <div class="setting-control" style="gap:8px;flex-wrap:wrap">
-                        <button type="button" class="control-button btn-start" onclick="saveChatTtsSettings()"><span class="emoji">💾</span> Save chat voice</button>
-                        <button type="button" class="control-button btn-info" id="chatTtsPreviewBtn" onclick="previewChatTtsVoice(event)" title="Synthesize a sample with the exact provider, model, voice, and tunables shown above (cached for 7 days)">🔊 Try voice</button>
+                        <button type="button" class="control-button btn-start" onclick="saveChatTtsSettings()">Save chat voice</button>
+                        <button type="button" class="control-button btn-info" id="chatTtsPreviewBtn" onclick="previewChatTtsVoice(event)" title="Synthesize a sample with the exact provider, model, voice, and tunables shown above (cached for 7 days)">Try voice</button>
                     </div>
                 </div>
                 <div class="setting-item">
@@ -694,7 +475,7 @@
 
             <!-- Experiment-owned: stays hidden unless a voice-engine flag is on. -->
             <div class="settings-group" id="voiceConversationGroup" hidden>
-                <h3 class="settings-title"><span class="emoji">🧪</span> Voice conversation <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+                <h3 class="settings-title">Voice conversation <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
                 <p class="setting-description">Chooses what runs when you start voice chat. Turning off the GPT-Live and OpenAI Realtime experiments removes this section, and voice chat goes back to the Standard engine.</p>
 
                 <div class="setting-item" id="voiceModeRow">
@@ -714,7 +495,7 @@
                         <div class="setting-label"><strong>Voice</strong></div>
                         <div class="setting-control setting-control--column">
                             <select id="voiceLiveVoice" class="setting-input"></select>
-                            <button type="button" class="control-button btn-info" id="voiceLivePreviewBtn" onclick="voiceProvidersController().previewLive()" title="Plays the same voice through OpenAI text-to-speech. A real GPT-Live sample would open a session billed by the minute.">🔊 Preview voice</button>
+                            <button type="button" class="control-button btn-info" id="voiceLivePreviewBtn" onclick="voiceProvidersController().previewLive()" title="Plays the same voice through OpenAI text-to-speech. A real GPT-Live sample would open a session billed by the minute.">Preview voice</button>
                             <div class="setting-description" id="voiceLivePreviewStatus" role="status"></div>
                         </div>
                     </div>
@@ -731,7 +512,7 @@
                     <div class="setting-item"><div class="setting-label"><strong>Spoken progress</strong><div class="setting-description">Minimum seconds between spoken progress updates while the agent works. 0 speaks every backend update.</div></div><div class="setting-control"><input type="number" id="voiceLiveProgress" class="setting-input" min="0" max="300" step="5" value="0" aria-label="Spoken progress interval in seconds"></div></div>
                     <div class="setting-description" id="voiceLiveStatus" role="status"></div>
                     <p class="setting-description">$0.05 per active minute, billed per second, plus your agent's usage. Microphone mute keeps the connection active; End voice disconnects it. Voice continues across Spaces.</p>
-                    <button type="button" class="control-button btn-start" onclick="voiceProvidersController().saveLive()"><span class="emoji">💾</span> Save GPT-Live settings</button>
+                    <button type="button" class="control-button btn-start" onclick="voiceProvidersController().saveLive()">Save GPT-Live settings</button>
                 </div>
 
                 <div id="voiceRealtimeConfig" hidden>
@@ -750,7 +531,7 @@
                         </div>
                         <div class="setting-control setting-control--column">
                             <select id="voiceRealtimeVoice" class="setting-input"><option value="">Loading…</option></select>
-                            <button type="button" class="control-button btn-info" id="voiceRealtimePreviewBtn" onclick="voiceProvidersController().previewRealtime()" title="Speaks one sentence with the selected Realtime model and voice (a real, fraction-of-a-cent API call; replays are cached for 7 days).">🔊 Preview voice</button>
+                            <button type="button" class="control-button btn-info" id="voiceRealtimePreviewBtn" onclick="voiceProvidersController().previewRealtime()" title="Speaks one sentence with the selected Realtime model and voice (a real, fraction-of-a-cent API call; replays are cached for 7 days).">Preview voice</button>
                             <div class="setting-description" id="voiceRealtimePreviewStatus" role="status"></div>
                         </div>
                     </div>
@@ -763,14 +544,241 @@
                         </div>
                     </div>
                     <div class="setting-description" id="voiceRealtimeStatus" role="status"></div>
-                    <button type="button" class="control-button btn-start" onclick="saveVoiceRealtimeSettings()"><span class="emoji">💾</span> Save Realtime settings</button>
+                    <button type="button" class="control-button btn-start" onclick="saveVoiceRealtimeSettings()">Save Realtime settings</button>
+                </div>
+            </div>
+            </section>
+
+            <section class="settings-panel" id="panel-agents" role="tabpanel" aria-labelledby="tab-agents" tabindex="0" hidden>
+            <div class="settings-group">
+                <h3 class="settings-title">Agents <span class="settings-scope" data-scope="server" title="Detection runs on the server that hosts the agent; a CLI installed on another machine is invisible here.">This server</span><button type="button" class="cuttle-info" data-tooltip="Pick one with /name in any chat. Cuttle never installs them — tap a row for setup and defaults." aria-label="About Agents">i</button></h3>
+
+                <div id="agentCliList" class="agent-cli-list"></div>
+                <button type="button" class="control-button agent-refresh" onclick="refreshAgentSetup(this)">Check again</button>
+                <span id="agentSetupStatus" role="status" aria-live="polite"></span>
+            </div>
+
+            <div class="settings-group" id="responsePostprocessingSettings" hidden>
+                <h3 class="settings-title">Response post-processing <span class="settings-scope">Experimental</span></h3>
+                <div id="responsePostprocessingEditor"></div>
+            </div>
+
+            <div class="settings-group" id="backgroundHelpersSettings">
+                <h3 class="settings-title">Background helpers <span class="settings-scope" data-scope="server">All devices</span><button type="button" class="cuttle-info" data-tooltip="Choose how Cuttle generates titles, commit suggestions, enhanced prompts, narration, and routing decisions. Each task follows the Default chain unless you give it its own. CLI helpers use your existing CLI login and allowance." aria-label="About Background helpers">i</button></h3>
+                <div class="setting-control setting-control--stack">
+                    <label>Configure <select id="backgroundTask" class="setting-input" aria-label="Background task"></select></label>
+                    <label id="backgroundOverrideRow" hidden><input id="backgroundOverride" type="checkbox"> Use a chain for this task</label>
+                    <div id="backgroundInheritance" class="setting-description"></div>
+                    <div id="backgroundChain"></div>
+                    <div class="provider-picker">
+                        <button id="backgroundAdd" type="button" class="control-button" disabled>Add fallback</button>
+                        <button id="backgroundReset" type="button" class="control-button" hidden>Reset to Default</button>
+                        <button type="button" class="control-button btn-start" onclick="saveCompletionProviders()">Save background helpers</button>
+                    </div>
+                    <div id="backgroundStatus" class="setting-description" role="status"></div>
+                </div>
+            </div>
+
+
+            <div class="settings-group" data-subpage="git" data-subpage-icon="git" data-subpage-title="Git" data-subpage-desc="Auto-commit agent edits and how unreviewed changes commit.">
+                <h3 class="settings-title">Git <span class="settings-scope" data-scope="server" title="Saved in this server's settings; applies to every chat it runs.">This server</span></h3>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Auto-commit agent edits</strong><button type="button" class="cuttle-info" data-tooltip="After each successful agent turn, commit only the files that turn changed, with a suggested message and Cuttle&#x27;s commit attribution. Your other uncommitted files are left alone (but a file the agent touched is committed whole, including any edits you had in it). Never pushes. Off by default." aria-label="About Auto-commit agent edits">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch" id="gitAutoCommitToggle" onclick="toggleGitAutoCommit(event)">
+                            <input type="checkbox" id="gitAutoCommitEnabled" style="display: none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Committing unreviewed agent changes</strong><button type="button" class="cuttle-info" data-tooltip="With Agent review on (Settings → Experimental), committing a file whose agent changes you have not kept or undone keeps them. Warn first asks before committing (with a Don&#x27;t ask again option); Keep and commit skips the question." aria-label="About committing unreviewed agent changes">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <select id="agentReviewCommitPolicy" class="setting-input" onchange="saveAgentReviewCommitPolicy()" aria-label="Committing unreviewed agent changes">
+                            <option value="warn">Warn first</option>
+                            <option value="keep">Keep and commit</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-group" id="timeoutsSettings" data-subpage="timeouts" data-subpage-icon="timer" data-subpage-title="Timeouts" data-subpage-desc="How long an agent turn or subagent round may run.">
+                <h3 class="settings-title">Timeouts <span class="settings-scope" data-scope="server" title="Stored in this server's settings; applies to every chat it runs.">This server</span><button type="button" class="cuttle-info" data-tooltip="How long an agent turn may run, and how long Cuttle waits for a subagent round before cancelling its unfinished work. Raise these for long coding tasks, or set 0 / leave blank for no limit." aria-label="About Timeouts">i</button></h3>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Agent run limit</strong><button type="button" class="cuttle-info" data-tooltip="Maximum seconds for one agent turn before Cuttle stops the harness. Streaming CLIs treat this as an idle budget, so a productive turn keeps going." aria-label="About Agent run limit">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" id="agentRunTimeoutSeconds" class="setting-input" min="0" max="86400" step="60" inputmode="numeric" placeholder="Unlimited" aria-label="Agent run limit in seconds">
+                        <span class="setting-description">seconds (0 or blank = unlimited)</span>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Subagent supervision limit</strong><button type="button" class="cuttle-info" data-tooltip="How long a --wait subagent round may run before Cuttle cancels the work that has not finished." aria-label="About Subagent supervision limit">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="number" id="subagentWaitTimeoutSeconds" class="setting-input" min="0" max="86400" step="60" inputmode="numeric" placeholder="Unlimited" aria-label="Subagent supervision limit in seconds">
+                        <span class="setting-description">seconds (0 or blank = unlimited)</span>
+                    </div>
+                </div>
+                <div class="provider-picker">
+                    <button type="button" class="control-button btn-start" onclick="saveTimeoutsSettings()">Save timeouts</button>
+                </div>
+                <div id="timeoutsStatus" class="setting-description" role="status" aria-live="polite"></div>
+            </div>
+
+            <div class="settings-group" data-subpage="drop-ins" data-subpage-icon="folder-plus" data-subpage-title="Add your own agent" data-subpage-desc="Drop-in folders and project adapters.">
+                <h3 class="settings-title">Add your own agent <span class="settings-scope" data-scope="mixed" title="Instance and project roots are read straight from disk; a project root only runs after you opt in.">This instance + project</span><button type="button" class="cuttle-info" data-tooltip="Drop a folder named after the agent with a manifest.yaml and an adapter.py. It joins the catalog next reload — no Cuttle fork, no core change." aria-label="About Add your own agent This instance + project">i</button></h3>
+
+                <div class="setting-item setting-item--stack">
+                    <div class="setting-label"><strong>Discovery roots</strong></div>
+                    <div class="setting-control setting-control--stack">
+                        <div id="agentDropInRoots" class="provider-status"></div>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Run project adapters</strong>
+                        <button type="button" class="cuttle-info" id="projectAdaptersNote" data-tooltip="Load adapter.py from a project's .cuttle/agents/. That is third-party code running on this server, so it stays off until you opt in." aria-label="About Run project adapters">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch" id="projectAdaptersToggle" onclick="toggleProjectAdapters(event)">
+                            <input type="checkbox" id="projectAdaptersEnabled" style="display: none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-group" data-subpage="routing" data-subpage-icon="compass" data-subpage-title="Routing &amp; identity" data-subpage-desc="Agent router and the name your assistant uses.">
+                <h3 class="settings-title">Routing &amp; identity <span class="settings-scope" data-scope="mixed" title="Agent name is per-browser; router settings are stored on the server.">This device + server</span></h3>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Agent router</strong><button type="button" class="cuttle-info" data-tooltip="Routing brain, use cases, and escalation targets. Leaving it off sends every chat straight to the agent you typed." aria-label="About Agent router">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <button class="control-button btn-info" onclick="openRouterEditor()">Open router editor</button>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Agent Name</strong><button type="button" class="cuttle-info" data-tooltip="The name your assistant introduces itself by" aria-label="About Agent Name">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="text" id="agentName" class="setting-input" placeholder="Cuttle" value="Cuttle">
+                        <button class="control-button btn-start" onclick="saveAgentName()">Save</button>
+                    </div>
+                </div>
+            </div>
+            </section>
+
+            <section class="settings-panel" id="panel-providers" role="tabpanel" aria-labelledby="tab-providers" tabindex="0" hidden>
+            <div class="settings-group">
+                <h3 class="settings-title">API Keys <span class="settings-scope" data-scope="server" title="Used by this server's optional direct API features.">This server</span><button type="button" class="cuttle-info" data-tooltip="Optional credentials for Cuttle’s direct API features. CLI agents use their own login and configuration; these keys are never passed to them." aria-label="About API Keys">i</button></h3>
+
+                <details class="settings-disclosure" id="openaiCredential">
+<summary>OpenAI <span class="credential-summary" data-credential-summary="openai">Checking…</span></summary>
+<div class="setting-item">
+                    <div class="setting-label">
+                        <strong>OpenAI API Key</strong><button type="button" class="cuttle-info" data-tooltip="Optional: OpenAI titles, commit suggestions, prompt enhancement, API-mode routing, attachment vision, and OpenAI voice." aria-label="About OpenAI API Key">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="password" id="openaiKey" class="setting-input" placeholder="sk-...">
+                        <button class="control-button btn-info" onclick="testApiKey('openai')">Test</button>
+                        <button class="control-button btn-start" onclick="saveApiKey('openai')">Save</button>
+                    </div>
+                </div>
+</details>
+                
+                <details class="settings-disclosure" id="anthropicCredential">
+<summary>Anthropic <span class="credential-summary" data-credential-summary="anthropic">Checking…</span></summary>
+<div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Anthropic API Key</strong><button type="button" class="cuttle-info" data-tooltip="Optional: Anthropic titles, commit suggestions, prompt enhancement, and attachment vision." aria-label="About Anthropic API Key">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="password" id="anthropicKey" class="setting-input" placeholder="sk-ant-...">
+                        <button class="control-button btn-info" onclick="testApiKey('anthropic')">Test</button>
+                        <button class="control-button btn-start" onclick="saveApiKey('anthropic')">Save</button>
+                    </div>
+                </div>
+</details>
+
+                <details class="settings-disclosure" id="elevenlabsCredential">
+<summary>ElevenLabs <span class="credential-summary" data-credential-summary="elevenlabs">Checking…</span></summary>
+<div class="setting-item">
+                    <div class="setting-label">
+                        <strong>ElevenLabs API Key</strong><button type="button" class="cuttle-info" data-tooltip="Optional: large voice library, per-voice speed and stability controls. Get a key at elevenlabs.io." aria-label="About ElevenLabs API Key">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="password" id="elevenlabsKey" class="setting-input" placeholder="sk_...">
+                        <button class="control-button btn-info" onclick="testApiKey('elevenlabs')">Test</button>
+                        <button class="control-button btn-start" onclick="saveApiKey('elevenlabs')">Save</button>
+                    </div>
+                </div>
+</details>
+
+                <details class="settings-disclosure" id="googleCredential">
+<summary>Google <span class="credential-summary" data-credential-summary="google">Checking…</span></summary>
+<div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Google AI Studio Key</strong><button type="button" class="cuttle-info" data-tooltip="Optional: Gemini text-to-speech voices. Free tier at aistudio.google.com." aria-label="About Google API Key">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="password" id="googleKey" class="setting-input" placeholder="AIza...">
+                        <button class="control-button btn-info" onclick="testApiKey('google')">Test</button>
+                        <button class="control-button btn-start" onclick="saveApiKey('google')">Save</button>
+                    </div>
+                </div>
+</details>
+
+                <details class="settings-disclosure" id="openrouterCredential">
+<summary>OpenRouter <span class="credential-summary" data-credential-summary="openrouter">Checking…</span></summary>
+<div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Management API Key</strong><button type="button" class="cuttle-info" data-tooltip="Account-level Management key used to read credit balance and usage for the OpenRouter meter. It is separate from the completion API key and cannot run requests. Create one at openrouter.ai/settings/management-keys." aria-label="About OpenRouter Management API Key">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="password" id="openrouterKey" class="setting-input" placeholder="sk-or-v1-...">
+                        <button class="control-button btn-info" onclick="testApiKey('openrouter')">Test</button>
+                        <button class="control-button btn-start" onclick="saveApiKey('openrouter')">Save</button>
+                    </div>
+                </div>
+</details>
+
+                <details class="settings-disclosure" id="discordCredential">
+<summary>Discord <span class="credential-summary" data-credential-summary="discord">Checking…</span></summary>
+<div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Discord Bot Token</strong><button type="button" class="cuttle-info" data-tooltip="Optional REST token for channel read and confirmed discord.post. Does not start a chat gateway." aria-label="About Discord Bot Token">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <input type="password" id="discordKey" class="setting-input" placeholder="Bot token...">
+                        <button class="control-button btn-info" onclick="testApiKey('discord')">Test</button>
+                        <button class="control-button btn-start" onclick="saveApiKey('discord')">Save</button>
+                    </div>
+                </div>
+</details>
+            </div>
+            </section>
+
+            <section class="settings-panel" id="panel-experimental" role="tabpanel" aria-labelledby="tab-experimental" tabindex="0" hidden>
+            <div class="settings-group">
+                <h3 class="settings-title">Features <span class="settings-scope" data-scope="server" title="Stored in settings.json — these apply to every device and client that talks to this Cuttle.">All devices</span><button type="button" class="cuttle-info" data-tooltip="Experimental features may change. Each switch shows its current state. Set CUTTLE_EXPERIMENTAL=0 in Cuttle's .env (~/.local/share/cuttle or %LOCALAPPDATA%\\Cuttle) to force all experiments off." aria-label="About experiments">i</button></h3>
+                <div id="experimentalFlagList" class="experimental-flag-list">
+                    <div class="provider-status">Loading experimental features…</div>
                 </div>
             </div>
             </section>
 
             <section class="settings-panel" id="panel-devices" role="tabpanel" aria-labelledby="tab-devices" tabindex="0" hidden>
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">📱</span> Phone / LAN access <span class="settings-scope" data-scope="server" title="Server-side discovery config. Toggling requires a Flask restart.">This server</span></h3>
+                <h3 class="settings-title">Phone / LAN access <span class="settings-scope" data-scope="server" title="Server-side discovery config. Toggling requires a Flask restart.">This server</span></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Allow phones on home Wi‑Fi</strong><button type="button" class="cuttle-info" data-tooltip="Lets phones reach Cuttle over LAN. Use the configured portal URLs below (custom listener ports apply). Toggle requires a Flask restart." aria-label="About Allow phones on home Wi‑Fi">i</button>
@@ -790,13 +798,13 @@
                     <div class="setting-control setting-control--column">
                         <code id="lanHttpUrl" style="font-size:12px;word-break:break-all">—</code>
                         <code id="lanHttpsUrl" style="font-size:12px;word-break:break-all">—</code>
-                        <button type="button" class="control-button btn-info" onclick="loadLanAccessSettings()">🔄 Refresh</button>
+                        <button type="button" class="control-button btn-info" onclick="loadLanAccessSettings()">Refresh</button>
                     </div>
                 </div>
             </div>
 
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">💻</span> Desktop app <span class="settings-scope" data-scope="server" title="Reports the host's Electron shell state.">This server</span></h3>
+                <h3 class="settings-title">Desktop app <span class="settings-scope" data-scope="server" title="Reports the host's Electron shell state.">This server</span></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Laptop Electron client</strong><button type="button" class="cuttle-info" data-tooltip="The desktop app can connect to this PC over LAN instead of starting a second Cuttle. Copy electron/dist/win-unpacked to the laptop once, then choose “Connect to Cuttle” and use the same address as Chrome. After that, an Update button appears in the laptop titlebar when this PC has a newer desktop shell. This host PC (Start Cuttle / local mode) does not show that button." aria-label="About Laptop Electron client">i</button>
@@ -812,13 +820,13 @@
                 <div id="storageStores" aria-live="polite">Loading databases…</div>
             </div>
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">💾</span> Data Management <span class="settings-scope" data-scope="device" title="Exports the browser-local settings file. Server settings are not included.">This device</span></h3>
+                <h3 class="settings-title">Data Management <span class="settings-scope" data-scope="device" title="Exports the browser-local settings file. Server settings are not included.">This device</span></h3>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Export Settings</strong><button type="button" class="cuttle-info" data-tooltip="Download appearance and preferences for this browser." aria-label="About Export Settings">i</button>
                     </div>
                     <div class="setting-control">
-                        <button class="control-button btn-info" onclick="exportSettings()">📥 Export Settings</button>
+                        <button class="control-button btn-info" onclick="exportSettings()">Export Settings</button>
                     </div>
                 </div>
                 
@@ -827,7 +835,7 @@
                         <strong>Import Settings</strong><button type="button" class="cuttle-info" data-tooltip="Restore this browser’s preferences from an exported file." aria-label="About Import Settings">i</button>
                     </div>
                     <div class="setting-control">
-                        <button class="control-button btn-restart" onclick="importSettings()">📤 Import Settings</button>
+                        <button class="control-button btn-restart" onclick="importSettings()">Import Settings</button>
                     </div>
                 </div>
             </div>
@@ -835,7 +843,7 @@
 
             <section class="settings-panel" id="panel-account" role="tabpanel" aria-labelledby="tab-account" tabindex="0" hidden>
             <div class="settings-group">
-                <h3 class="settings-title"><span class="emoji">👤</span> GitHub App <span class="settings-scope" data-scope="server" title="Stored on this server — App ID in settings.json, private key in a server-local file. Every device on this server shares it.">This server</span><button type="button" class="cuttle-info" data-tooltip="Connect and verify your GitHub App to attribute commits made through Cuttle’s Git controls to its bot account. This applies to GitHub repositories owned by the verified installation account. The private key stays on this server; verification uses short-lived tokens." aria-label="About 👤 GitHub App">i</button></h3>
+                <h3 class="settings-title">GitHub App <span class="settings-scope" data-scope="server" title="Stored on this server — App ID in settings.json, private key in a server-local file. Every device on this server shares it.">This server</span><button type="button" class="cuttle-info" data-tooltip="Connect and verify your GitHub App to attribute commits made through Cuttle’s Git controls to its bot account. This applies to GitHub repositories owned by the verified installation account. The private key stays on this server; verification uses short-lived tokens." aria-label="About GitHub App">i</button></h3>
 
                 <div id="githubAppEntry" hidden>
                     <div class="setting-item">
@@ -853,9 +861,9 @@
                             <div class="setting-description" id="githubAppEntryHint">Verified against github.com.</div>
                         </div>
                         <div class="setting-control">
-                            <button class="control-button btn-info" onclick="testGitHubApp()"><span class="emoji">🔄</span> Re-check</button>
-                            <button class="control-button btn-start" onclick="githubAppEdit()">✏️ Edit</button>
-                            <button class="control-button btn-stop" onclick="githubAppRemove()">🗑️ Remove</button>
+                            <button class="control-button btn-info" onclick="testGitHubApp()">Re-check</button>
+                            <button class="control-button btn-start" onclick="githubAppEdit()">Edit</button>
+                            <button class="control-button btn-stop" onclick="githubAppRemove()">Remove</button>
                         </div>
                     </div>
                 </div>
@@ -883,7 +891,7 @@
                         <div class="setting-control setting-control--stack">
                             <textarea id="githubAppPrivateKey" class="setting-input" rows="4" placeholder="-----BEGIN RSA PRIVATE KEY-----" autocomplete="off" spellcheck="false" style="width: 100%; font-family: monospace;"></textarea>
                             <div>
-                                <button class="control-button btn-start" onclick="saveGitHubApp()"><span class="emoji">💾</span> Save</button>
+                                <button class="control-button btn-start" onclick="saveGitHubApp()">Save</button>
                                 <button class="control-button btn-info" id="githubAppCancelBtn" onclick="loadGitHubAppSettings()" hidden>Cancel</button>
                             </div>
                             <div id="githubAppStatus" class="provider-status">Not connected yet.</div>
@@ -909,6 +917,8 @@
                 </div>
             </details>
             </section>
+            </div>
+            </div>
         </div>
     </div>
 
@@ -919,13 +929,14 @@
     <script src="/js/shared/toast.js"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
     <script src="/js/settings/settings_releases.js?v=20261018updateCenter"></script>
-    <script src="/js/settings/settings_storage.js?v=20261007"></script>
+    <script src="/js/settings/settings_storage.js?v=20261103cards"></script>
     <script src="/js/settings/settings_chat_preferences.js?v=20261016separateProcessor"></script>
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261011menuPosition2"></script>
     <script src="/js/settings/settings_background_helpers.js?v=20261016separateProcessor"></script>
     <script src="/js/settings/settings_voice_providers.js?v=20261028guide"></script>
-    <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
+    <script src="/js/settings/settings_page_tabs.js?v=20261103sidebar"></script>
+    <script src="/js/settings/settings_subpages.js?v=20261103sidebar"></script>
     <script src="/js/settings/settings_text_prefs.js?v=20261102prefs"></script>
     <script src="/js/settings/settings_chip_prefs.js?v=20261103chips"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
@@ -1847,7 +1858,7 @@
             _videoPlaylistDeleteTimer = null;
             if (btn) {
                 delete btn.dataset.armed;
-                btn.innerHTML = '🗑️ Delete';
+                btn.textContent = 'Delete';
             }
         }
 

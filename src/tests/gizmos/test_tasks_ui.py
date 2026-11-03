@@ -28,7 +28,7 @@ def test_tasks_render_tool_progress_and_shared_edits():
             if path == '/fixture':
                 return route.fulfill(body=fixture, content_type='text/html')
             if path == '/tasks.js':
-                return route.fulfill(body=SCRIPT.read_text(), content_type='text/javascript')
+                return route.fulfill(body=SCRIPT.read_text(encoding="utf-8"), content_type='text/javascript')
             if path == '/api/gizmos/tasks':
                 return route.fulfill(json={'success': True, 'gizmos': state['rows'], 'revision': state['revision']})
             if path.endswith('/items/a'):
@@ -85,7 +85,7 @@ def test_tasks_refresh_preserves_each_list_scroll_and_skips_unchanged_paint(widt
             if path == '/fixture':
                 return route.fulfill(body=fixture, content_type='text/html')
             if path == '/tasks.js':
-                return route.fulfill(body=SCRIPT.read_text(), content_type='text/javascript')
+                return route.fulfill(body=SCRIPT.read_text(encoding="utf-8"), content_type='text/javascript')
             if path == '/api/gizmos/tasks':
                 return route.fulfill(json={'success': True, 'gizmos': state['rows'],
                                            'revision': state['revision']})
@@ -118,3 +118,56 @@ def test_tasks_refresh_preserves_each_list_scroll_and_skips_unchanged_paint(widt
             assert page.locator('.chat-widget-body').first.evaluate('(el) => el.scrollTop') == 0
         finally:
             browser.close()
+
+
+def test_linked_lists_say_linked_and_open_the_tasks_app():
+    """A list linked into this chat is labeled Linked; its scope chip and ↗ open
+    the Tasks App instead of moving another chat's list here."""
+    playwright = pytest.importorskip('playwright.sync_api')
+    rows = [
+        {'id': 'home', 'type': 'tasks', 'title': 'Home', 'scope': 'session', 'session_id': 7,
+         'status': 'active', 'edit_mode': 'agent', 'revision': 1, 'linked_sessions': [],
+         'payload': {'items': [{'id': 'a', 'text': 'A'}]}},
+        {'id': 'shared', 'type': 'tasks', 'title': 'Orchestration', 'scope': 'session', 'session_id': 3,
+         'status': 'active', 'edit_mode': 'agent', 'revision': 1, 'linked_sessions': [7],
+         'payload': {'items': [{'id': 'b', 'text': 'B'}]}},
+        {'id': 'proj', 'type': 'tasks', 'title': 'Other project', 'scope': 'project', 'session_id': None,
+         'project_path': '/p/other', 'status': 'active', 'edit_mode': 'agent', 'revision': 1,
+         'linked_sessions': [7], 'payload': {'items': [{'id': 'c', 'text': 'C'}]}},
+        # A server predating linked chats returns the raw column text.
+        {'id': 'raw', 'type': 'tasks', 'title': 'Raw column', 'scope': 'session', 'session_id': 7,
+         'status': 'active', 'edit_mode': 'agent', 'revision': 1, 'linked_sessions': '[]',
+         'payload': {'items': [{'id': 'd', 'text': 'D'}]}},
+    ]
+    fixture = '''<div id="chatWidgetsStrip" hidden></div>
+      <script src="/tasks.js"></script><script>
+      window.navs = [];
+      window.ctrl = CuttleTaskGizmos.create({getSessionId: () => 7, getProjectPath: () => '/p/mine',
+        navigate: (page) => window.navs.push(page)});
+      ctrl.refresh();</script>'''
+    with playwright.sync_playwright() as driver:
+        browser = launch_chromium(driver)
+        page = browser.new_page()
+        patches = []
+
+        def route(route):
+            path = urlparse(route.request.url).path
+            if path == '/fixture':
+                return route.fulfill(body=fixture, content_type='text/html')
+            if path == '/tasks.js':
+                return route.fulfill(body=SCRIPT.read_text(encoding="utf-8"), content_type='text/javascript')
+            if path == '/api/gizmos/tasks':
+                return route.fulfill(json={'success': True, 'gizmos': rows, 'revision': 1})
+            patches.append(path)
+            return route.abort()
+        page.route('**/*', route)
+        page.goto('http://tasks.test/fixture')
+        page.wait_for_selector('[data-widget-id="raw"]')
+        scope = lambda wid: page.locator(f'[data-widget-id="{wid}"] [data-widget-scope]').inner_text()
+        assert [scope('home'), scope('shared'), scope('proj')] == ['This chat', 'Linked', 'Linked']
+        page.locator('[data-widget-id="shared"] [data-widget-scope]').click()
+        page.locator('[data-widget-id="home"] [data-widget-manage]').click()
+        assert page.evaluate('window.navs') == ['/tasks_page.html?list=shared&tab=chats',
+                                                '/tasks_page.html?list=home']
+        assert patches == []
+        browser.close()

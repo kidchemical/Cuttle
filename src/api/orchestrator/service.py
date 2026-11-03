@@ -8,17 +8,20 @@ every fresh context, including after a harness switch.
 
 from __future__ import annotations
 
+import logging
 import shlex
 from typing import Any, Dict, List, Optional
 
 from api.orchestrator import store
 from api.orchestrator.model import (
     PlaybookError,
+    changed_sections,
     default_playbook,
     missing_profiles,
     normalize_playbook,
     render_brief,
     supervisor_argv,
+    supervisor_config,
     temporary_agents,
 )
 
@@ -26,6 +29,8 @@ FLAG_ID = "orchestrator"
 # Id of the built-in seed. The playbook ``/orchestrate`` uses without ``@id``
 # is the user's chosen default (``default_id``), which falls back to this.
 DEFAULT_ID = "default"
+
+log = logging.getLogger(__name__)
 
 
 class OrchestratorError(ValueError):
@@ -153,8 +158,49 @@ def save_playbook(user_id: int, raw: Any, *, db=None) -> Dict[str, Any]:
         )
     if temporary_agents(doc):
         _check_temporary_agents(doc)
+    before = _load(user_id, doc["id"])
     store.put_playbook(user_id, doc)
+    if before is not None:
+        try:
+            relay_edit(user_id, before, doc, db=db)
+        except Exception:  # the save stands; a missed relay is not a failed save
+            log.exception("orchestrator: relaying playbook %s edit failed", doc["id"])
     return get_playbook(user_id, doc["id"], db=db)
+
+
+def relay_edit(user_id: int, before: Dict[str, Any], after: Dict[str, Any], *, db=None) -> List[Dict[str, Any]]:
+    """Carry a playbook edit to the chats running it.
+
+    A bound orchestrator gets the new brief on its next turn by itself (the
+    Context Compiler's resume delta diffs the brief), so the gap is a turn
+    already running and the supervisor's schedule, which copied the playbook's
+    supervisor settings when it started. Each supervision schedule on a bound
+    chat takes the edited settings and gets one check-in naming the change, so
+    the supervisor can steer a live turn. Returns per-chat summaries.
+    """
+    changed = changed_sections(before, after)
+    if not changed:
+        return []
+    from api.chat_ops.service import resync_supervision
+
+    db = _db(db)
+    profiles = profile_map(user_id, db=db)
+    previous, current = supervisor_config(before, profiles), supervisor_config(after, profiles)
+    name = after.get("name") or after.get("id")
+    out = []
+    for row in store.list_bindings(user_id):
+        if row["playbook_id"] != after["id"]:
+            continue
+        handle = _handle(row["session_id"])
+        note = [
+            f"The user edited playbook **{name}** (`{after['id']}`), which {handle} runs: "
+            + ", ".join(changed) + ".",
+            f"{handle} gets the new brief by itself at its next turn; a turn already running keeps the old "
+            f"one. Full new brief: `python -m api.orchestrator brief {handle}`.",
+        ]
+        out += [{"session": handle, **r} for r in resync_supervision(row["session_id"], previous, current,
+                                                                      note_lines=note, db=db)]
+    return out
 
 
 def delete_playbook(user_id: int, playbook_id: str) -> bool:

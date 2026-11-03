@@ -12,7 +12,9 @@ normalizes documents and renders text:
 - ``normalize_playbook(raw)``  → canonical dict (raises ``PlaybookError``)
 - ``render_brief(playbook, profiles, ...)`` → markdown the orchestrator follows
 - ``model_tiers(playbook, profiles)`` → ``--model-tiers`` mapping for supervision
+- ``supervisor_config(playbook, profiles)`` → supervision settings (schedule payload keys)
 - ``supervisor_argv(playbook, target, profiles)`` → ``chat_cli supervise`` args
+- ``changed_sections(old, new)`` → labels of the sections an edit touched
 
 Schema version 2. Version 1 tiers (``profiles: [id, …]``) are read as
 members. Unknown keys are dropped; missing keys take defaults.
@@ -299,27 +301,63 @@ def model_tiers(
     }
 
 
+def supervisor_config(
+    playbook: Mapping[str, Any], profiles: Mapping[str, Mapping[str, Any]]
+) -> Dict[str, Any]:
+    """The supervision settings a playbook implies, keyed like a ``chat_ops`` schedule payload.
+
+    One source for both ``supervisor_argv`` (starting supervision) and the
+    resync that carries playbook edits into a schedule already running.
+    """
+    sup = playbook.get("supervisor") or DEFAULT_SUPERVISOR
+    return {
+        "every": int(sup.get("every_sec") or 900),
+        "agent": str(sup.get("agent") or ""),
+        "instructions": str(sup.get("instructions") or ""),
+        "required_branch": str(sup.get("require_branch") or ""),
+        "required_path": str(sup.get("require_path") or ""),
+        "forbidden_branches": [str(b) for b in sup.get("forbid_branches") or []],
+        "model_tiers": model_tiers(playbook, profiles),
+    }
+
+
+# Playbook sections, in the order a "playbook updated" notice names them.
+SECTIONS = (
+    ("tiers", "org chart"),
+    ("limits", "limits"),
+    ("supervisor", "supervisor settings"),
+    ("notes", "notes"),
+    ("name", "name"),
+    ("description", "description"),
+)
+
+
+def changed_sections(old: Mapping[str, Any], new: Mapping[str, Any]) -> List[str]:
+    """Human labels of the playbook sections that differ between two documents."""
+    return [label for key, label in SECTIONS if old.get(key) != new.get(key)]
+
+
 def supervisor_argv(
     playbook: Mapping[str, Any],
     target: str,
     profiles: Mapping[str, Mapping[str, Any]],
 ) -> List[str]:
     """Arguments after ``python -m api.chat_cli`` that start supervision of ``target``."""
-    sup = playbook.get("supervisor") or DEFAULT_SUPERVISOR
-    argv = ["supervise", target, "--every", str(int(sup.get("every_sec") or 900))]
+    cfg = supervisor_config(playbook, profiles)
+    argv = ["supervise", target, "--every", str(cfg["every"])]
     # No --agent unless the playbook pins one: check-ins then follow the
     # supervisor chat's own chip instead of spending a pinned harness's quota.
-    if sup.get("agent"):
-        argv += ["--agent", str(sup["agent"])]
-    if sup.get("instructions"):
-        argv += ["--instructions", str(sup["instructions"])]
-    if sup.get("require_branch"):
-        argv += ["--require-branch", str(sup["require_branch"])]
-    if sup.get("require_path"):
-        argv += ["--require-path", str(sup["require_path"])]
-    for branch in sup.get("forbid_branches") or []:
-        argv += ["--forbid-branch", str(branch)]
-    argv += ["--model-tiers", json.dumps(model_tiers(playbook, profiles), separators=(",", ":"))]
+    if cfg["agent"]:
+        argv += ["--agent", cfg["agent"]]
+    if cfg["instructions"]:
+        argv += ["--instructions", cfg["instructions"]]
+    if cfg["required_branch"]:
+        argv += ["--require-branch", cfg["required_branch"]]
+    if cfg["required_path"]:
+        argv += ["--require-path", cfg["required_path"]]
+    for branch in cfg["forbidden_branches"]:
+        argv += ["--forbid-branch", branch]
+    argv += ["--model-tiers", json.dumps(cfg["model_tiers"], separators=(",", ":"))]
     argv.append("--json")
     return argv
 

@@ -1,6 +1,6 @@
 """Authenticated chat-scoped Tasks transport; usage meters remain owner-only."""
 from flask import Blueprint, jsonify, request
-from api.gizmos import tasks
+from api.gizmos import tasks, tasks_manager
 from api.gizmos.service import GizmoError
 from api.http_authz import authenticated_required, current_user
 from api.gizmos.attribution import request_actor as _actor
@@ -31,6 +31,9 @@ def _no_store(response):
 @authenticated_required
 def list_tasks():
     uid = current_user()['id']
+    if request.args.get('all', '').strip().lower() in ('1', 'true', 'yes'):
+        # Tasks App: every list the user owns (active + archived) + chats.
+        return jsonify(success=True, **tasks_manager.listing(user_id=uid))
     sid = request.args.get('session_id')
     if not sid:
         raise GizmoError('session_id is required')
@@ -45,14 +48,18 @@ def create_tasks():
     row = tasks.create(gizmo_id=data.get('id'), title=data.get('title'), items=data.get('items'),
                        description=data.get('description', ''), scope=data.get('scope', 'session'),
                        edit_mode=data.get('edit_mode', 'agent'), session_id=data.get('session_id'),
-                       user_id=current_user()['id'], actor=_actor(data))
+                       user_id=current_user()['id'], actor=_actor(data),
+                       linked_sessions=data.get('linked_sessions'))
     return jsonify(success=True, gizmo=row), 201
 
 
-@tasks_bp.route('/<gizmo_id>', methods=['GET', 'PATCH'])
+@tasks_bp.route('/<gizmo_id>', methods=['GET', 'PATCH', 'DELETE'])
 @authenticated_required
 def task_gizmo(gizmo_id):
     uid = current_user()['id']
+    if request.method == 'DELETE':
+        tasks.delete(gizmo_id, user_id=uid, actor=_actor())
+        return jsonify(success=True, id=gizmo_id)
     if request.method == 'GET':
         row = tasks.get(gizmo_id, user_id=uid)
         tasks.record_interaction(gizmo_id, 'get', user_id=uid,
@@ -64,7 +71,21 @@ def task_gizmo(gizmo_id):
         item_ops = any(key in ops for key in ('set_done', 'set_undone', 'set_text', 'items', 'add', 'remove'))
         row = tasks.patch(gizmo_id, ops, user_id=uid, session_id=data.get('session_id'), actor=actor,
                           item_edit=item_ops and actor['source'] == 'ui')
+    if request.args.get('summary', '').strip().lower() in ('1', 'true', 'yes'):
+        row = tasks_manager.summary(gizmo_id, user_id=uid)
     return jsonify(success=True, gizmo=row)
+
+
+@tasks_bp.route('/<gizmo_id>/related', methods=['GET'])
+@authenticated_required
+def task_related(gizmo_id):
+    """Orchestration-family chats to suggest as links for this list."""
+    uid = current_user()['id']
+    row = tasks.get(gizmo_id, user_id=uid)
+    sid = request.args.get('session_id') or row.get('session_id') or next(iter(row.get('linked_sessions') or []), None)
+    if not sid:
+        return jsonify(success=True, chats=[])
+    return jsonify(success=True, chats=tasks_manager.related_chats(sid, user_id=uid))
 
 
 @tasks_bp.route('/<gizmo_id>/items/<item_id>', methods=['PATCH'])

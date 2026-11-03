@@ -49,11 +49,13 @@
         ['fira', 'Fira Code', "'Fira Code', ui-monospace, Menlo, Consolas, monospace"],
         ['courier', 'Courier', "'Courier New', Courier, monospace"]
     ];
-    var SIZE_SCALE = [85, 90, 100, 110, 125, 150].map(function (n) {
+    var SIZE_SCALE = [80, 90, 100, 110, 120, 130, 150].map(function (n) {
         return [String(n), n + '%', String(n / 100)];
     });
-    /* hint: what the row covers (settings tooltip). size:false = no size
-       (the interface already scales with app / browser zoom). */
+    /* hint: what the row covers (settings tooltip). Area sizes zoom their
+       area; the Interface size is a text size (font sizes only, layout
+       untouched) applied by js/shared/interface_text_scale.js, loaded on
+       demand. Every Size row offers the same 10% steps. */
     var TEXT_AREAS = [
         { area: 'messages', label: 'Messages', fonts: SANS_FONTS, size: true,
           hint: 'Message text plus everything in the transcript: names, timestamps, token usage, status lines, cards.' },
@@ -65,8 +67,8 @@
           hint: 'Agent, project, command, file and attachment chips. Use theme setting follows the area they sit in; a picked size is exact.' },
         { area: 'history', label: 'Chat history', fonts: SANS_FONTS, size: true,
           hint: 'The chat history sidebar: search, filters and the chat list.' },
-        { area: 'interface', label: 'Interface', fonts: SANS_FONTS, size: false,
-          hint: 'Everything else: headers, menus, dialogs, settings and other apps. Use Ctrl +/− (app or browser zoom) for its size.' }
+        { area: 'interface', label: 'Interface', fonts: SANS_FONTS, size: true,
+          hint: 'Font: everything not covered above (headers, menus, dialogs, settings, other apps). Size: the text size of the whole app — font sizes only, layout and icons stay put. The area sizes above apply on top of it.' }
     ];
     var TEXT_PREFS = [];
     TEXT_AREAS.forEach(function (a) {
@@ -78,7 +80,18 @@
     /* One-time move from the first Text & fonts layout (mixed px / % rows). */
     function migrateTextPrefs() {
         try {
-            if (localStorage.getItem('cuttlePrefTextV') === '2') return;
+            var v = localStorage.getItem('cuttlePrefTextV');
+            if (v === '2') {
+                /* v2 → v3: sizes moved to 10% steps. */
+                ['Messages', 'Composer', 'Code', 'Chips', 'History'].forEach(function (a) {
+                    var k = 'cuttlePrefSize' + a, raw = localStorage.getItem(k);
+                    if (raw === '85') localStorage.setItem(k, '90');
+                    else if (raw === '125') localStorage.setItem(k, '120');
+                });
+                localStorage.setItem('cuttlePrefTextV', '3');
+                return;
+            }
+            if (v === '3') return;
             var ui = localStorage.getItem('cuttlePrefFontUi');
             var chat = localStorage.getItem('cuttlePrefFontChat');
             if (ui && !localStorage.getItem('cuttlePrefFontInterface')) localStorage.setItem('cuttlePrefFontInterface', ui);
@@ -94,7 +107,7 @@
              'cuttlePrefSizeComposer', 'cuttlePrefScaleChips', 'cuttlePrefScaleHistory'].forEach(function (k) {
                 localStorage.removeItem(k);
             });
-            localStorage.setItem('cuttlePrefTextV', '2');
+            localStorage.setItem('cuttlePrefTextV', '3');
         } catch (_) {}
     }
     migrateTextPrefs();
@@ -105,6 +118,22 @@
             if (pref.options[i][0] === raw) return pref.options[i];
         }
         return null;
+    }
+
+    /* Interface size = text-only scale; its engine loads on demand. */
+    var textScaleLoading = false;
+    function applyInterfaceTextScale() {
+        var pref = null;
+        for (var i = 0; i < TEXT_PREFS.length; i++) if (TEXT_PREFS[i].id === 'size-interface') pref = TEXT_PREFS[i];
+        var opt = pref ? textPrefValue(pref) : null;
+        var factor = opt ? Number(opt[2]) : 1;
+        if (window.CuttleInterfaceTextScale) { window.CuttleInterfaceTextScale.apply(factor); return; }
+        if (factor === 1 || textScaleLoading) return;
+        textScaleLoading = true;
+        var s = document.createElement('script');
+        s.src = '/js/shared/interface_text_scale.js';
+        s.onload = function () { applyInterfaceTextScale(); };
+        (document.head || root).appendChild(s);
     }
 
     function applyTextPrefs() {
@@ -153,6 +182,7 @@
         { id: 'lavender', label: 'Lavender Dream', icon: '💜', base: 'light', group: 'Pastel' },
         { id: 'paper', label: 'Paper', icon: '📄', base: 'light', group: 'Minimal' },
         { id: 'graphite', label: 'Graphite', icon: '◼️', base: 'midnight', group: 'Minimal' },
+        { id: 'onyx', label: 'Onyx', icon: '🖤', base: 'midnight', group: 'Minimal' },
         { id: 'nord', label: 'Nordic', icon: '❄️', base: 'dark', group: 'Minimal' },
         { id: 'rgb', label: 'RGB', icon: '🌈', base: 'midnight', group: 'Loud' },
         { id: 'synthwave', label: 'Synthwave', icon: '🌆', base: 'dark', group: 'Loud' },
@@ -551,6 +581,7 @@
         root.classList.toggle('cuttle-flat-messages', read(CHAT_BUBBLES_KEY) === '0');
         root.setAttribute('data-activity-status', read(ACTIVITY_STATUS_KEY) === 'rise' ? 'rise' : 'sweep');
         applyTextPrefs();
+        applyInterfaceTextScale();
         applyChipPrefs();
         root.classList.add('cuttle-booted');
         root.style.setProperty('--cuttle-transition-ms', transitionMs() + 'ms');
@@ -859,8 +890,8 @@
                 return null;
             }
             return TEXT_AREAS.map(function (a) {
-                return { area: a.area, label: a.label, hint: a.hint,
-                         font: pick('font-' + a.area), size: a.size ? pick('size-' + a.area) : null };
+                var size = a.size ? pick('size-' + a.area) : null;
+                return { area: a.area, label: a.label, hint: a.hint, font: pick('font-' + a.area), size: size };
             });
         },
         /** [{id, key, label, enabled}] — chip visibility toggles. */
