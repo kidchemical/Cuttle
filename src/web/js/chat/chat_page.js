@@ -6285,9 +6285,8 @@
         loadProjectCommandsForPalette();
         loadHarnessAgentsForPalette();
         if (!opts.silent && proj) {
-            const pathBit = proj.path ? ` → \`${proj.path}\`` : '';
             // Stick in the transcript (default system toast fades after 3s and is not saved).
-            addSystemMessage(`📁 Project: ${proj.name}${pathBit}`, { persist: true });
+            addSystemMessage({ type: 'project', label: `Project: ${proj.name}`, detail: proj.path || '' }, { persist: true });
         }
     }
 
@@ -6319,9 +6318,9 @@
         reportProjectToShell(effectiveGitPath());
         if (uid) {
             const branch = checkout && checkout.branch ? checkout.branch : uid;
-            addSystemMessage(`\u{1F33F} Worktree: ${branch}`, { persist: true });
+            addSystemMessage({ type: 'worktree', label: `Worktree: ${branch}` }, { persist: true });
         } else {
-            addSystemMessage('\u{1F4C1} Local checkout', { persist: true });
+            addSystemMessage({ type: 'checkout', label: 'Local checkout' }, { persist: true });
         }
     }
 
@@ -6496,124 +6495,38 @@
             requestBody, resolveOutboundProject(), currentCheckoutUid);
     }
     
+    /** Add a timeline notice: `message` is a notice spec or legacy text (see chat_timeline_notice.js). */
     function addSystemMessage(message, opts = {}) {
-        const messagesContainer = document.getElementById('chatMessages');
-        if (!messagesContainer) return;
-        
-        // Only add if chat area is visible
-        if (document.getElementById('chatArea').style.display === 'none') {
-            return;
-        }
-
-        let messageDiv = null;
-        if (opts.kind) {
-            const existingList = messagesContainer.querySelectorAll(
-                `.message.system[data-kind="${CSS.escape(String(opts.kind))}"]`
-            );
-            const existing = existingList.length ? existingList[existingList.length - 1] : null;
-            // Update the latest matching notice when it still belongs to this turn
-            // (after the last user bubble). Otherwise insert a new one.
-            if (existing && opts.replace !== false) {
-                const users = messagesContainer.querySelectorAll('.message.user');
-                const lastUser = users.length ? users[users.length - 1] : null;
-                const stale = lastUser
-                    && (existing.compareDocumentPosition(lastUser) & Node.DOCUMENT_POSITION_FOLLOWING);
-                if (!stale) {
-                    const content = existing.querySelector('.system-message');
-                    if (content) content.textContent = message;
-                    existing.dataset.rawContent = String(message ?? '');
-                    if (!opts.skipScroll) transcriptNav.autoScrollChatToBottom();
-                    // Already durable — do not POST a duplicate row on text tweak.
-                    if (opts.persist && !existing.dataset.messageId) {
-                        durablePersistSystemMessage(existing, message, opts);
-                    }
-                    return existing;
-                }
-            }
-        }
-        
-        messageDiv = document.createElement('div');
-        messageDiv.className = 'message system';
-        if (opts.kind) messageDiv.dataset.kind = String(opts.kind);
-        messageDiv.dataset.rawContent = String(message ?? '');
-        if (opts.message_id != null && opts.message_id !== '') {
-            messageDiv.dataset.messageId = String(opts.message_id);
-        }
-        messageDiv.innerHTML = `
-            <div class="message-content system-message">${escapeHtml(message)}</div>
-        `;
-        
-        if (opts.prepend) {
-            const anchor = opts.insertBefore
-                || messagesContainer.querySelector('.message')
-                || messagesContainer.firstChild;
-            if (anchor) messagesContainer.insertBefore(messageDiv, anchor);
-            else messagesContainer.appendChild(messageDiv);
-        } else {
-            messagesContainer.appendChild(messageDiv);
-        }
-        if (!opts.skipScroll) transcriptNav.autoScrollChatToBottom();
-
-        // Sticky notices (e.g. Stopped generating) stay until the next send.
-        // ``persist`` also means durable: write to the auth chat log so refresh /
-        // other devices keep the same timeline.
-        if (opts.persist) {
-            if (!messageDiv.dataset.messageId) {
-                durablePersistSystemMessage(messageDiv, message, opts);
-            }
-            return messageDiv;
-        }
-        
-        // Auto-remove after 3 seconds
-        setTimeout(() => {
-            messageDiv.style.transition = 'opacity 0.3s';
-            messageDiv.style.opacity = '0';
-            setTimeout(() => messageDiv.remove(), 300);
-        }, 3000);
-        return messageDiv;
+        return timelineNotices().add(message, opts);
     }
 
-    /** Write a system notice into chat_messages so it survives refresh / devices. */
-    function durablePersistSystemMessage(el, message, opts) {
-        opts = opts || {};
-        if (!el || !isAuthMode() || session.current() == null) return;
-        if (el.dataset.persistInFlight === '1' || el.dataset.messageId) return;
-        const bare = toAuthDbSessionId(session.current());
-        if (!bare || !/^\d+$/.test(String(bare))) return;
-        el.dataset.persistInFlight = '1';
-        const body = {
-            role: 'system',
-            content: String(message ?? ''),
-        };
-        if (opts.kind) body.kind = String(opts.kind);
-        fetch(`/api/auth/sessions/${encodeURIComponent(bare)}/messages`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        })
-            .then((r) => r.json().catch(() => ({})))
-            .then((data) => {
-                if (data && data.success && data.message_id != null) {
-                    el.dataset.messageId = String(data.message_id);
-                    const mid = Number(data.message_id);
-                    if (Number.isFinite(mid) && mid > lastSeenServerMessageId) {
-                        lastSeenServerMessageId = mid;
-                    }
-                }
-            })
-            .catch((e) => console.warn('[Cuttle Chat] persist system notice failed:', e))
-            .finally(() => {
-                delete el.dataset.persistInFlight;
-            });
+    // Timeline notices (project / worktree / stop / model / compact rows) are
+    // owned by chat_timeline_notice.js; the page supplies scope as capabilities.
+    let timelineNoticesCtl = null;
+    function timelineNotices() {
+        if (!timelineNoticesCtl) timelineNoticesCtl = CuttleChatTimelineNotice.create({
+            doc: document, win: window, escapeHtml, fetch: (url, o) => fetch(url, o),
+            container: () => document.getElementById('chatMessages'),
+            isVisible: () => document.getElementById('chatArea').style.display !== 'none',
+            autoScroll: () => transcriptNav.autoScrollChatToBottom(),
+            persistTarget: () => {
+                if (!isAuthMode() || session.current() == null) return null;
+                const bare = toAuthDbSessionId(session.current());
+                return bare && /^\d+$/.test(String(bare)) ? String(bare) : null;
+            },
+            onPersisted: (mid) => {
+                if (Number.isFinite(mid) && mid > lastSeenServerMessageId) lastSeenServerMessageId = mid;
+            },
+        });
+        return timelineNoticesCtl;
     }
 
     function isCancelledAgentText(text) {
         return /^\s*\[CANCELLED\]/i.test(String(text || ''));
     }
 
-    function ensureGenerationStopNotice(text) {
-        addSystemMessage(text, { persist: true, kind: 'generation-stop' });
+    function ensureGenerationStopNotice(label) {
+        addSystemMessage({ type: 'stop', label }, { persist: true, kind: 'generation-stop' });
     }
 
     /**
@@ -6627,7 +6540,7 @@
         if (!isCancelledAgentText(text)) return false;
         const live = stopState.userStopped || generation.loading;
         if (opts.announce === true || (opts.announce !== false && live)) {
-            ensureGenerationStopNotice('⏹ Generation cancelled.');
+            ensureGenerationStopNotice('Generation cancelled.');
         }
         return true;
     }
@@ -9952,7 +9865,7 @@
         // Keep the stopped activity and durable notice immediately; cancellation
         // can take seconds, and its acknowledgment must not replace the notice.
         retainStoppedAgentBubble();
-        if (announce) ensureGenerationStopNotice('⏹ Stopped generating.');
+        if (announce) ensureGenerationStopNotice('Stopped generating.');
         try {
             if (activeRequestController) activeRequestController.abort();
         } catch (_) {}
@@ -11051,7 +10964,8 @@
                 );
                 if (already) return already;
             }
-            return addSystemMessage(String(content ?? ''), {
+            const saved = opts.timeline_notice ? { timeline_notice: opts.timeline_notice } : null;
+            return addSystemMessage(CuttleChatTimelineNotice.fromRow(content, opts.kind, saved), {
                 persist: true,
                 kind: opts.kind,
                 message_id: mid,
@@ -11450,6 +11364,7 @@
         getSessionId: () => session.current(),
         getProjectPath: () => (currentProject && currentProject.path) ? String(currentProject.path) : '',
         toast: (message, variant) => (window.showToast || function () {})(message, variant),
+        notice: { add: (spec, o) => addSystemMessage(spec, o), update: (el, spec, o) => timelineNotices().update(el, spec, o) },
     });
 
     // Transcript navigation: follow-latest scroll, nav rail + pins, jumps,

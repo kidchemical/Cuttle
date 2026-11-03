@@ -97,3 +97,57 @@ def test_supervising_card_opens_the_supervised_chat(browser, static_server):
         assert not errors
     finally:
         page.close()
+
+
+def test_timeline_notice_running_settles_into_saved_row(browser, static_server):
+    """Compact flow: running row spins, settles in place, persists to its own chat."""
+    page = browser.new_page(viewport={'width': 900, 'height': 700})
+    errors = []
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    posts = []
+
+    def on_post(route):
+        posts.append((route.request.url, json.loads(route.request.post_data or '{}')))
+        route.fulfill(content_type='application/json', body=json.dumps({'success': True, 'message_id': 77}))
+
+    page.route('**/api/auth/sessions/*/messages', on_post)
+    try:
+        page.goto(static_server + '/agent_feed.html')
+        page.set_content('<link rel="stylesheet" href="' + static_server + '/css/chat_page.css">'
+                         '<div id="chatMessages"><div class="message user">hi</div></div>')
+        page.add_script_tag(url=static_server + '/js/chat/chat_timeline_notice.js')
+        page.evaluate('''() => {
+            window.sid = '1947'; window.seen = 0;
+            window.tn = CuttleChatTimelineNotice.create({ doc: document, win: window,
+                escapeHtml: (s) => String(s).replace(/</g, '&lt;'), fetch: (u, o) => fetch(u, o),
+                container: () => document.getElementById('chatMessages'), isVisible: () => true,
+                autoScroll: () => {}, persistTarget: () => window.sid, onPersisted: (m) => { window.seen = m; } });
+            window.row = tn.add({ type: 'compact', state: 'running', label: 'Compacting Claude context…' },
+                { kind: 'context-compact', replace: false });
+        }''')
+        notice = page.locator('.message.system[data-notice-type="compact"] .timeline-notice')
+        expect(notice).to_have_class(re.compile('is-running'))
+        expect(notice.locator('.timeline-notice-spinner')).to_have_count(1)
+        expect(notice.locator('.timeline-notice-elapsed')).to_have_text(re.compile(r'^\ds$'), timeout=3000)
+        page.wait_for_timeout(3300)  # running rows never auto-fade
+        expect(notice).to_have_count(1)
+        assert posts == []  # running rows are never persisted
+        # The user switched chats while compaction ran: the row still saves to 1947.
+        page.evaluate('''() => { window.sid = '2000';
+            tn.update(row, { type: 'compact', label: 'Claude context compacted', detail: '82% → 14%' },
+                { persist: true, kind: 'context-compact' }); }''')
+        expect(notice).to_have_class(re.compile('is-done'))
+        expect(notice).to_have_text('🗜️ Claude context compacted · 82% → 14%'.replace(' · ', ' '))
+        page.wait_for_function('window.seen === 77')
+        url, body = posts[0]
+        assert url.endswith('/api/auth/sessions/1947/messages')
+        assert body['content'] == '🗜️ Claude context compacted · 82% → 14%'
+        assert body['kind'] == 'context-compact'
+        assert body['metadata']['timeline_notice']['detail'] == '82% → 14%'
+        # A detached row is not repainted or persisted into whatever chat is open now.
+        assert page.evaluate('''() => { const el = tn.add({ type: 'compact', state: 'running', label: 'x' });
+            el.remove(); return tn.update(el, { label: 'y' }, { persist: true }); }''') is None
+        assert len(posts) == 1
+        assert not errors
+    finally:
+        page.close()

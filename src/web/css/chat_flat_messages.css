@@ -1,0 +1,88 @@
+/* Flat chat messages (Settings → Appearance → "Message bubbles" off).
+ *
+ * ui_boot.js puts `cuttle-flat-messages` on <html> when localStorage
+ * `cuttleChatBubbles` is '0'. Messages then render as plain text on the
+ * page background (ChatGPT-like): no bubble fill, border, shadow or blur.
+ * Text uses each theme's --text-primary, which every theme already tunes
+ * for its page background. User rows lose the white-on-accent palette, so
+ * the user-only overrides from chat_page.css are reset to the neutral ones.
+ * !important is limited to the bubble paint, which theme rules (themes.css,
+ * video-background rules) set with higher specificity.
+ */
+
+:root.cuttle-flat-messages .message.user .message-content,
+:root.cuttle-flat-messages .message.assistant .message-content {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    color: var(--text-primary) !important;
+    border-radius: 0;
+}
+
+:root.cuttle-flat-messages .message.assistant .message-content {
+    padding-left: 0;
+    padding-right: 0;
+}
+
+/* Keep the user's text against the right edge, like a bubble would be. */
+:root.cuttle-flat-messages .message.user .message-content {
+    padding-left: 0;
+    padding-right: 0;
+}
+
+/* Wallpaper / video background: no bubble to sit on, so give the glyphs a
+   halo in the theme's own page color to keep them readable. */
+:root.cuttle-flat-messages body.has-video-background .message:not(.system) .message-content {
+    text-shadow:
+        0 0 2px var(--bg-primary),
+        0 0 6px var(--bg-primary),
+        0 0 12px color-mix(in srgb, var(--bg-primary) 70%, transparent);
+}
+
+/* ── User-row resets (chat_page.css styles these for a colored bubble) ── */
+
+:root.cuttle-flat-messages .message.user .message-content blockquote.message-blockquote,
+:root.cuttle-flat-messages .message.user .message-content blockquote {
+    border-left-color: var(--accent-color);
+    background: color-mix(in srgb, var(--accent-color) 7%, transparent);
+}
+
+:root.cuttle-flat-messages .message.user .message-content blockquote.message-blockquote--warning {
+    border-left-color: #e3a008;
+    background: rgba(227, 160, 8, 0.16);
+}
+
+:root.cuttle-flat-messages .message.user .message-content blockquote.message-blockquote--warning .message-callout-label {
+    color: #e3a008;
+}
+
+:root.cuttle-flat-messages .message.user .message-content .message-table-wrap {
+    border-color: var(--border-color);
+    background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+:root.cuttle-flat-messages .message.user .message-content table.message-table th,
+:root.cuttle-flat-messages .message.user .message-content table.message-table td {
+    border-bottom-color: var(--border-color);
+    border-right-color: var(--border-color);
+}
+
+:root.cuttle-flat-messages .message.user .message-content table.message-table thead th {
+    background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+    color: var(--text-primary);
+}
+
+:root.cuttle-flat-messages .message.user .message-content .message-hr {
+    background: color-mix(in srgb, var(--text-secondary, #b0b0c0) 55%, transparent);
+}
+
+:root.cuttle-flat-messages .message.user .message-content .md-link-chip {
+    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+    border-color: var(--border-color);
+}
+
+:root.cuttle-flat-messages .message.user .message-content a:not(.chat-handle-link):not(.git-commit-link):not(.md-link-chip) {
+    color: var(--accent-color);
+}

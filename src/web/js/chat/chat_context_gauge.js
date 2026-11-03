@@ -14,7 +14,10 @@
    never reads page scope.
 
    deps: { win, fetch, escapeHtml, normalizeUsage, getSlashCtx,
-           getSessionId, getProjectPath, toast }.
+           getSessionId, getProjectPath, toast, notice? }.
+   `notice` is the page's timeline-notice adder (chat_timeline_notice.js
+   `add`/`update`): Compact posts a running row that settles into a saved
+   "context compacted · 82% → 14%" notice, or an error row.
    Loaded before chat_page.js.
    ================================================================ */
 (function (root) {
@@ -199,6 +202,15 @@
         );
     }
 
+    /** "82% → 14%" when both readings are known, else the one we have. Pure. */
+    function compactDetail(beforePct, afterPct) {
+        const b = beforePct == null ? null : Math.round(Number(beforePct));
+        const a = afterPct == null ? null : Math.round(Number(afterPct));
+        if (b != null && a != null) return b + '% \u2192 ' + a + '%';
+        if (a != null) return 'now ' + a + '%';
+        return '';
+    }
+
     /**
      * One gauge controller per chat frame.
      * @param {{win: Window, fetch: Function, escapeHtml: Function,
@@ -216,6 +228,7 @@
         const getSessionId = deps.getSessionId;
         const getProjectPath = deps.getProjectPath;
         const toast = deps.toast || function () {};
+        const notice = deps.notice || null;
 
         let status = null;
         let fetchTimer = 0;
@@ -432,6 +445,21 @@
                 return;
             }
             busy = true;
+            const label = agent.charAt(0).toUpperCase() + agent.slice(1);
+            const beforePct = status && status.agent_id === agent && Number(status.used_tokens) > 0
+                ? Math.round(Number(status.percent) || 0) : null;
+            let row = null;
+            try {
+                row = notice ? notice.add(
+                    { type: 'compact', state: 'running', label: `Compacting ${label} context\u2026` },
+                    { kind: 'context-compact', replace: false }) : null;
+            } catch (_) { row = null; }
+            const settle = (spec, persist, toastVariant) => {
+                if (row && notice) {
+                    try { if (notice.update(row, spec, { persist, kind: 'context-compact' })) return; } catch (_) {}
+                }
+                try { toast(spec.label + (spec.detail ? ' \u00B7 ' + spec.detail : ''), toastVariant); } catch (_) {}
+            };
             GAUGE_BTN_IDS.forEach((id) => {
                 const b = frameDoc.getElementById(id);
                 if (b) b.classList.add('context-gauge--busy');
@@ -455,23 +483,25 @@
                 });
                 const data = await res.json().catch(() => ({}));
                 if (data && data.success) {
-                    try {
-                        toast(
-                            (agent.charAt(0).toUpperCase() + agent.slice(1)) + ' context compacted',
-                            'success'
-                        );
-                    } catch (_) {}
+                    const after = data.status && data.status.success && Number(data.status.used_tokens) > 0
+                        ? Math.round(Number(data.status.percent) || 0) : null;
+                    settle({
+                        type: 'compact',
+                        label: `${label} context compacted`,
+                        detail: compactDetail(beforePct, after),
+                    }, true, 'success');
                     if (data.status && data.status.success) {
                         paintFromStatus(data.status);
                     } else {
                         scheduleRefresh(400);
                     }
                 } else {
-                    const err = (data && data.error) || 'Compact failed';
-                    try { toast(err, 'error'); } catch (_) {}
+                    const err = (data && data.error) || 'unknown error';
+                    settle({ type: 'compact', state: 'error', label: `${label} compact failed`, detail: err }, false, 'error');
                 }
             } catch (e) {
-                try { toast(String(e && e.message || e), 'error'); } catch (_) {}
+                settle({ type: 'compact', state: 'error', label: `${label} compact failed`,
+                    detail: String(e && e.message || e) }, false, 'error');
             } finally {
                 busy = false;
                 GAUGE_BTN_IDS.forEach((id) => {
@@ -534,6 +564,7 @@
         gaugeDomPlan,
         computeUsageStatus,
         renderPopoverHtml,
+        compactDetail,
         create,
     };
 

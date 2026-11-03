@@ -8,7 +8,7 @@
  *
  * localStorage keys: theme, cuttleVideoBackgroundActive,
  * cuttleBackgroundEffectBlend, cuttleUiAnimations, cuttleUiTransitionMs,
- * cuttleVideoBackgroundList, cuttleVideoBackgroundEnabled
+ * cuttleVideoBackgroundList, cuttleVideoBackgroundEnabled, cuttleChatBubbles
  */
 (function () {
     'use strict';
@@ -20,6 +20,8 @@
     var BLEND_KEY = 'cuttleBackgroundEffectBlend';
     var ANIM_KEY = 'cuttleUiAnimations';
     var ANIM_MS_KEY = 'cuttleUiTransitionMs';
+    /* '0' = flat chat messages (no bubbles); css/chat_flat_messages.css. */
+    var CHAT_BUBBLES_KEY = 'cuttleChatBubbles';
 
     /* Every theme rides on one of the three base classes so page stylesheets
        that only know dark/midnight/light keep working; non-base themes add a
@@ -428,6 +430,7 @@
         applyTo(document.body);
         root.classList.toggle('in-shell', framed);
         root.classList.toggle('cuttle-anim', animationsEnabled());
+        root.classList.toggle('cuttle-flat-messages', read(CHAT_BUBBLES_KEY) === '0');
         root.classList.add('cuttle-booted');
         root.style.setProperty('--cuttle-transition-ms', transitionMs() + 'ms');
         if (state.video) write(VIDEO_ACTIVE_KEY, '1');

@@ -194,6 +194,17 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
+                        <strong>Message Bubbles</strong><button type="button" class="cuttle-info" data-tooltip="Show chat messages in bubbles. Turn off for plain text on the page background." aria-label="About Message Bubbles">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch active" id="chatBubblesToggle" onclick="toggleChatBubbles(event)">
+                            <input type="checkbox" id="chatBubblesEnabled" checked style="display: none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
                         <strong>Page Transitions</strong><button type="button" class="cuttle-info" data-tooltip="Fade gently when switching pages." aria-label="About Page Transitions">i</button>
                     </div>
                     <div class="setting-control">
@@ -939,6 +950,25 @@
             loadUiAnimationSettings();
             notifyUiAnimChange();
             (window.showToast || showNotification)(on ? 'Page transitions enabled' : 'Page transitions disabled', 'info');
+        }
+
+        const CHAT_BUBBLES_KEY = 'cuttleChatBubbles';
+
+        function toggleChatBubbles(event) {
+            if (event) event.preventDefault();
+            const on = localStorage.getItem(CHAT_BUBBLES_KEY) === '0';
+            localStorage.setItem(CHAT_BUBBLES_KEY, on ? '1' : '0');
+            loadChatBubbleSettings();
+            notifyUiAnimChange();
+            (window.showToast || showNotification)(on ? 'Message bubbles enabled' : 'Message bubbles disabled', 'info');
+        }
+
+        function loadChatBubbleSettings() {
+            const enabled = localStorage.getItem(CHAT_BUBBLES_KEY) !== '0';
+            const toggle = document.getElementById('chatBubblesToggle');
+            const checkbox = document.getElementById('chatBubblesEnabled');
+            if (toggle) toggle.classList.toggle('active', enabled);
+            if (checkbox) checkbox.checked = enabled;
         }
 
         function previewUiTransitionMs() {
@@ -2866,6 +2896,7 @@
             populateThemeSelector();
             updateThemeSelector();
             loadUiAnimationSettings();
+            loadChatBubbleSettings();
             
             // Update toggle visual state
             const toggle = document.getElementById('notificationsToggle');

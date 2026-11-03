@@ -3006,6 +3006,57 @@ body.has-video-background .chat-restore-loader {
     font-size: 0.9em;
 }
 
+/* Timeline notices (chat_timeline_notice.js): icon · label · detail, one look
+   for every "something happened" row. Running rows spin; error rows tint red. */
+.timeline-notice {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 4px 8px;
+    max-width: min(640px, 100%);
+    box-sizing: border-box;
+}
+.timeline-notice-icon { flex-shrink: 0; line-height: 1; }
+.timeline-notice-label { font-weight: 600; overflow-wrap: anywhere; }
+.timeline-notice-detail {
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+.timeline-notice-detail::before { content: '\00B7'; margin-right: 8px; opacity: 0.7; }
+.timeline-notice--code-detail .timeline-notice-detail {
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.92em;
+}
+.timeline-notice-elapsed {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    font-variant-numeric: tabular-nums;
+}
+.timeline-notice.is-running {
+    border-style: dashed;
+    border-color: color-mix(in srgb, var(--accent-color) 55%, var(--border-color));
+}
+.timeline-notice.is-error {
+    border-color: color-mix(in srgb, #f87171 55%, var(--border-color));
+    background: color-mix(in srgb, #f87171 8%, var(--bg-secondary)) !important;
+}
+.timeline-notice-spinner {
+    flex-shrink: 0;
+    width: 12px;
+    height: 12px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--accent-color) 25%, transparent);
+    border-top-color: var(--accent-color);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--accent-color) 45%, transparent);
+    animation: context-gauge-orbit 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+    .timeline-notice-spinner { animation: none; }
+}
+
 .message-avatar {
     width: 36px;
     height: 36px;
@@ -4520,9 +4571,32 @@ pre.has-code-copy:hover .code-copy-btn,
 .context-gauge-btn.context-gauge--hot .context-gauge-arc {
     stroke: #f87171;
 }
+/* Compacting: the ring becomes an accent sweep orbiting the track (same
+   motif as the typing orbit); the popover still opens to show progress. */
 .context-gauge-btn.context-gauge--busy {
-    opacity: 0.7;
-    pointer-events: none;
+    color: var(--accent-color, #667eea);
+}
+.context-gauge-btn.context-gauge--busy .context-gauge-svg {
+    animation: context-gauge-orbit 1.1s linear infinite;
+}
+.context-gauge-btn.context-gauge--busy .context-gauge-arc {
+    stroke: var(--accent-color, #667eea);
+    stroke-dasharray: 28 72;
+    filter: drop-shadow(0 0 2px color-mix(in srgb, var(--accent-color, #667eea) 70%, transparent));
+}
+.context-gauge-btn.context-gauge--busy .context-gauge-track {
+    animation: context-gauge-breathe 1.6s ease-in-out infinite;
+}
+@keyframes context-gauge-orbit {
+    from { transform: rotate(-90deg); }
+    to { transform: rotate(270deg); }
+}
+@keyframes context-gauge-breathe {
+    50% { stroke: color-mix(in srgb, var(--accent-color, #667eea) 38%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .context-gauge-btn.context-gauge--busy .context-gauge-svg,
+    .context-gauge-btn.context-gauge--busy .context-gauge-track { animation: none; }
 }
 .context-gauge-pct {
     display: none;
