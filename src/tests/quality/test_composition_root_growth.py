@@ -55,7 +55,9 @@ CEILINGS = {
     # 2026-11-01: 13,423 -> 13,095. Transcript export moved to chat_export.js;
     # the session menu items, header dropdown and terminal probe moved to
     # chat_session_menu.js (dead #terminalOpenBtn wiring dropped).
-    "src/web/js/chat/chat_page.js": 13095,
+    # 2026-11-02: 13,095 -> 13,096. One call site wiring composer image paste
+    # to the owner (CuttleChatAttachments.bindPasteUpload).
+    "src/web/js/chat/chat_page.js": 13096,
     # Phase 7 (2026-10-11): 8,280 -> 4,182. app_shell.js now composes the pane
     # lifecycle (shell_panes), Spaces UI (shell_spaces), rail/apps (shell_rail)
     # and Electron chrome/mobile/SSH (shell_electron, shell_mobile) owners.

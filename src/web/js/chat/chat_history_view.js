@@ -42,12 +42,46 @@
         return 2;
     }
 
+    /* A rebuild between pointerdown and pointerup detaches the pressed button
+       (sub-agent chevron, count badge, row), so the click never fires. While
+       the pointer is down inside the list, park the latest paint and apply it
+       right after the click (setTimeout runs after the pointerup → click task).
+       A press older than PRESS_HOLD_MS (drag, missed pointerup) stops holding. */
+    const PRESS_HOLD_MS = 1500;
+    const presses = new WeakMap();
+
+    function pressState(container) {
+        let st = presses.get(container);
+        if (st) return st;
+        st = { downAt: 0, pending: null };
+        presses.set(container, st);
+        const win = (container.ownerDocument && container.ownerDocument.defaultView) || null;
+        if (!win || typeof container.addEventListener !== 'function') return st;
+        container.addEventListener('pointerdown', () => { st.downAt = Date.now(); }, true);
+        const release = () => {
+            if (!st.downAt) return;
+            st.downAt = 0;
+            const next = st.pending;
+            st.pending = null;
+            if (next) win.setTimeout(() => paint(container, next.html, next.enhance), 0);
+        };
+        win.addEventListener('pointerup', release, true);
+        win.addEventListener('pointercancel', release, true);
+        return st;
+    }
+
     function paint(container, html, enhance) {
         // Compare source markup, since tooltips and live indicators modify DOM.
         if (rendered.get(container) === html) {
             if (enhance) enhance();
             return;
         }
+        const press = pressState(container);
+        if (press.downAt && Date.now() - press.downAt < PRESS_HOLD_MS) {
+            press.pending = { html, enhance };
+            return;
+        }
+        press.pending = null;
         preserveScroll(container, () => {
             container.innerHTML = html;
             rendered.set(container, html);
@@ -567,11 +601,18 @@
         return ids;
     }
 
+    /**
+     * Expanded when searching, when the user expanded it, or when it holds the
+     * current chat — unless the user explicitly collapsed it (an explicit
+     * collapse always wins; the panel clears it once when you navigate in).
+     */
     function isHistorySubagentGroupExpanded(parentId, nested, opts) {
         opts = opts || {};
         const pid = String(parentId || '');
         if (!pid) return false;
         if (opts.searchActive) return true;
+        const prefs = opts.prefs || {};
+        if (prefs[pid] === 'collapsed') return false;
         const current = opts.currentSessionId;
         if (current != null && current !== '') {
             const eq = (typeof opts.sessionIdsEqual === 'function')
@@ -583,7 +624,6 @@
                 if (eq(ancestors[i], pid)) return true;
             }
         }
-        const prefs = opts.prefs || {};
         return prefs[pid] === 'expanded';
     }
 
@@ -615,7 +655,8 @@
         return n === 1 ? 'sub-agent' : 'sub-agents';
     }
 
-    /** `supervised` of the `count` children are supervised chats, the rest sub-agents. */
+    /** `supervised` of the `count` children are supervised chats, the rest sub-agents.
+        `force` (group holds the current chat) is informational only. */
     function historySubagentToggleTitle(count, expanded, force, supervised) {
         const n = Math.max(0, Number(count) || 0);
         const sup = Math.min(n, Math.max(0, Number(supervised) || 0));
@@ -623,9 +664,7 @@
         const parts = [];
         if (subs || !sup) parts.push(subs ? (subs + ' ' + historySubagentNoun(subs)) : historySubagentNoun(0));
         if (sup) parts.push(sup + ' supervised ' + (sup === 1 ? 'chat' : 'chats'));
-        const amount = parts.join(' + ');
-        if (force) return amount + ' (open because the current chat is inside)';
-        return (expanded ? 'Hide ' : 'Show ') + amount;
+        return (expanded ? 'Hide ' : 'Show ') + parts.join(' + ');
     }
 
     /**
@@ -662,7 +701,7 @@
                     sessionIdsEqual: opts.sessionIdsEqual,
                 })
                 : false;
-            const force = !!(kids.length && opts.currentSessionId != null
+            const force = !!(kids.length && prefs[pid] !== 'collapsed' && opts.currentSessionId != null
                 && historySessionAncestorIds(opts.currentSessionId, nested, {
                     sessionIdsEqual: opts.sessionIdsEqual,
                 }).some((id) => {

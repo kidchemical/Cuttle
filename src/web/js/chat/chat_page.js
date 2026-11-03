@@ -1494,6 +1494,7 @@
                 }
             });
         }
+        CuttleChatAttachments.bindPasteUpload(['chatInput', 'welcomeChatInput'], uploadChatFiles);
     }
 
     /** Wand button state per composer: lets a second click undo the rewrite. */

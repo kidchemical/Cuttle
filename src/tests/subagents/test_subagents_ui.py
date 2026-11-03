@@ -119,6 +119,9 @@ assert.strictEqual(isHistorySubagentGroupExpanded('10', deep, { currentSessionId
 assert.strictEqual(isHistorySubagentGroupExpanded('10', deep, {}), false);
 assert.strictEqual(isHistorySubagentGroupExpanded('10', deep, { prefs: { '10': 'expanded' } }), true);
 assert.strictEqual(isHistorySubagentGroupExpanded('10', deep, { searchActive: true }), true);
+// An explicit collapse beats "holds the current chat"; search still shows all.
+assert.strictEqual(isHistorySubagentGroupExpanded('10', deep, { currentSessionId: 13, prefs: { '10': 'collapsed' } }), false);
+assert.strictEqual(isHistorySubagentGroupExpanded('10', deep, { currentSessionId: 13, prefs: { '10': 'collapsed' }, searchActive: true }), true);
 
 const many = nestHistoryEntries(
   Array.from({ length: 8 }, (_, i) => ({

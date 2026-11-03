@@ -101,8 +101,7 @@
                 starred: !!f.starred,
                 includeRename: has && o.includeRename !== false,
                 includeDelete: has && o.includeDelete !== false,
-                subagents: group && group.getAttribute('data-force-expanded') !== '1'
-                    ? { collapsed: group.classList.contains('is-collapsed') } : null,
+                subagents: group ? { collapsed: group.classList.contains('is-collapsed') } : null,
                 extraHtml: host.extraItems(sessionId, icons),
                 terminal: terminalAvailable,
                 archive: has && f.canArchive ? { archived: !!(o.archived || f.archived) } : null,
