@@ -328,6 +328,91 @@ def start_supervisor(target, *, user_id, agent, every=900, instructions='', requ
         raise
 
 
+# Schedule fields an outside source (an orchestrator playbook) may own.
+SYNCED_FIELDS = ('every', 'agent', 'instructions', 'required_branch', 'required_path',
+                 'forbidden_branches', 'model_tiers')
+_FIELD_LABELS = {'every': 'check-in interval', 'agent': 'check-in agent', 'instructions': 'instructions',
+                 'required_branch': 'required branch', 'required_path': 'required checkout',
+                 'forbidden_branches': 'forbidden branches', 'model_tiers': 'model guidance'}
+
+
+def _schedule_fields(cfg, project_path):
+    """``cfg`` in the stored shape ``supervise`` writes (resolved path, slash agent)."""
+    out = {k: cfg.get(k) for k in SYNCED_FIELDS if k in cfg}
+    if out.get('required_path'):
+        out['required_path'] = str(Path(out['required_path']).resolve())
+    if 'agent' in out:
+        try:
+            out['agent'] = _agent_slash(out['agent'], project_path)
+        except ValueError:
+            out.pop('agent')  # an unknown agent never replaces a working one
+    if 'every' in out and not 60 <= int(out['every'] or 0) <= 86400:
+        out.pop('every')
+    return out
+
+
+def resync_supervision(target, previous, current, *, note_lines=(), db=None):
+    """Carry an edit of the settings a supervision schedule came from into it.
+
+    ``previous``/``current`` are the source's settings before and after the edit
+    (``SYNCED_FIELDS`` keys). A field still holding the previous value follows
+    the edit; a field someone changed on the schedule itself is left alone and
+    reported. Each live schedule on ``target`` (paused included) then queues one
+    check-in telling its supervisor what changed, so it can relay the change into
+    a turn already running. Returns one summary per schedule.
+    """
+    from api.auth_db import get_auth_db
+    db = db or get_auth_db()
+    sid = session_id(target)
+    row = db.get_chat_session_by_id(sid)
+    if not row:
+        return []
+    project = row.get('project_path')
+    old, new = _schedule_fields(previous, project), _schedule_fields(current, project)
+    handle = f'CH-{sid:06d}'
+    out = []
+    for op in store.involving(sid):
+        if op['kind'] != 'supervise' or int(op['target']) != sid:
+            continue
+        cfg = op['payload']
+        updated, kept = {}, []
+        for key in SYNCED_FIELDS:
+            if key not in new or new[key] == old.get(key, cfg.get(key)):
+                continue
+            if cfg.get(key) == old.get(key):
+                updated[key] = new[key]
+            elif cfg.get(key) != new[key]:
+                kept.append(key)
+        if updated:
+            store.patch_payload(op['id'], **updated)
+        cfg = {**cfg, **updated}
+        lines = [(f"/{cfg['agent']} " if cfg.get('agent') else '') + f'**Supervision update for {handle}**', '']
+        lines += list(note_lines)
+        if updated:
+            lines += ['', 'Your schedule now uses the new ' + ', '.join(_FIELD_LABELS[k] for k in updated) + '.']
+            if 'instructions' in updated:
+                lines += ['', '**Your instructions:**', cfg['instructions'].strip()]
+            tiers = cfg.get('model_tiers') or {}
+            if 'model_tiers' in updated and tiers:
+                lines += ['', '**Model guidance:**'] + [f"- {k}: {', '.join(v)}" for k, v in tiers.items() if v]
+        if kept:
+            lines += ['', 'Kept your own ' + ', '.join(_FIELD_LABELS[k] for k in kept)
+                      + ' (set on this schedule, not by the source).']
+        lines += ['', f'Check `python -m api.chat_cli status {handle}`. If it is mid-turn on work the change '
+                  f'affects, steer it now with `python -m api.chat_cli send {handle} --text "…"`; otherwise '
+                  'it needs no message. End your turn when done.']
+        # One pending notice per schedule: a newer edit replaces an undelivered one.
+        for pending in store.listing(op['actor']):
+            if (pending['kind'] == 'checkin' and pending['state'] == 'pending'
+                    and pending['payload'].get('schedule_id') == op['id'] and pending['payload'].get('resync')):
+                store.cancel(pending['id'], op['actor'])
+        store.create('checkin', op['actor'], op['actor'],
+                     {'text': '\n'.join(lines), 'schedule_id': op['id'], 'resync': True})
+        out.append({'operation': op['id'], 'supervisor': f"CH-{int(op['actor']):06d}",
+                    'updated': sorted(updated), 'kept': kept})
+    return out
+
+
 def supervise_defaults(session, user_id, *, db=None):
     from api.auth_db import get_auth_db
     from api.worktrees.chat_binding import get_chat_binding

@@ -502,3 +502,40 @@ assert.equal(C.labelFor(chip, null, ''), 'Orchestrate');
     for dep in ("chat_chip_config.js", "agent_pin_picker.js", "chip_config_modal.css", "auth_modal.css"):
         assert dep in orch
     assert orch.index("orchestrator_model.js") < orch.index("agent_pin_picker.js") < orch.index("orchestrator_page.js")
+
+
+def test_playbook_edit_resyncs_running_supervision(tmp_path, orch, monkeypatch):
+    """An edit reaches the supervisor's schedule and queues it one relay check-in;
+    fields set on the schedule itself survive the edit."""
+    from api.chat_ops import service as chat_ops, store as ops_store
+
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    db, owner, other, sid, other_sid = _seed_db(tmp_path)
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    sup = db.create_chat_session(owner, "supervisor")
+    service.bind(sid, "default", "ship it", db=db)
+    pb = service.get_playbook(owner, "default", db=db)
+    cfg = model.supervisor_config(pb, service.profile_map(owner, db=db))
+    op = chat_ops.supervise(sid, sup, every=1200, instructions=cfg["instructions"],
+                            model_tiers=cfg["model_tiers"], db=db)["operation"]
+
+    edited = {**pb, "notes": "never touch prod",
+              "supervisor": {**pb["supervisor"], "instructions": "Hold it to the plan.",
+                             "every_sec": 600, "forbid_branches": ["main"]}}
+    service.save_playbook(owner, edited, db=db)
+    payload = ops_store.find(op["id"])["payload"]
+    assert payload["instructions"] == "Hold it to the plan."
+    assert payload["forbidden_branches"] == ["main"]
+    assert payload["every"] == 1200  # set on the schedule, not by the playbook
+    notices = [o for o in ops_store.listing(sup) if o["kind"] == "checkin"]
+    assert len(notices) == 1 and notices[0]["payload"]["resync"]
+    text = notices[0]["payload"]["text"]
+    assert "notes" in text and "supervisor settings" in text and "Hold it to the plan." in text
+    assert "Kept your own check-in interval" in text and f"chat_cli send CH-{sid:06d}" in text
+
+    # A second edit replaces the undelivered notice; a no-op save sends nothing.
+    service.save_playbook(owner, {**edited, "notes": "never touch prod or staging"}, db=db)
+    pending = [o for o in ops_store.listing(sup) if o["kind"] == "checkin" and o["state"] == "pending"]
+    assert len(pending) == 1 and "notes" in pending[0]["payload"]["text"]
+    service.save_playbook(owner, {**edited, "notes": "never touch prod or staging"}, db=db)
+    assert len([o for o in ops_store.listing(sup) if o["kind"] == "checkin" and o["state"] == "pending"]) == 1
