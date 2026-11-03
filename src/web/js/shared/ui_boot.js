@@ -863,6 +863,21 @@
                          font: pick('font-' + a.area), size: a.size ? pick('size-' + a.area) : null };
             });
         },
+        /** [{id, key, label, enabled}] — chip visibility toggles. */
+        chipPrefs: function () {
+            return CHIP_PREFS.map(function (p) {
+                return { id: p.id, key: p.key, label: p.label, enabled: read(p.key) !== '0' };
+            });
+        },
+        setChipPref: function (id, enabled) {
+            for (var i = 0; i < CHIP_PREFS.length; i++) {
+                if (CHIP_PREFS[i].id !== id) continue;
+                write(CHIP_PREFS[i].key, enabled ? '1' : '0');
+                applyChipPrefs();
+                return true;
+            }
+            return false;
+        },
         setTextPref: function (id, value) {
             for (var i = 0; i < TEXT_PREFS.length; i++) {
                 if (TEXT_PREFS[i].id !== id) continue;
