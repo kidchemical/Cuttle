@@ -97,6 +97,19 @@ def test_scan_attributes_marked_processes(marked_child):
     assert len(found) == 2  # the grandchild inherited the marker
 
 
+def test_shadow_instance_neither_sees_nor_ends_host_processes(marked_child, monkeypatch, tmp_path):
+    """A shadow dev child is sandboxed: reading other processes' environments
+    trips its file guard, and the live install's work is not its to end."""
+    monkeypatch.setenv("CUTTLE_SHADOW_DATA", str(tmp_path))
+    assert P.scan(max_age=0) == []
+    ctime = psutil.Process(marked_child.pid).create_time()
+    with pytest.raises(PermissionError, match="shadow"):
+        P.end_process(marked_child.pid, ctime)
+    assert marked_child.poll() is None
+    monkeypatch.delenv("CUTTLE_SHADOW_DATA")
+    assert any(r["pid"] == marked_child.pid for r in P.scan(max_age=0))
+
+
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="liveness probe shim reads /proc")
 def test_end_process_requires_identity_then_ends_the_tree(marked_child, monkeypatch):
     # psutil.wait_procs probes reaped grandchildren with kill(pid, 0); the

@@ -187,6 +187,12 @@ def _record(proc, env: Dict[str, str]) -> Dict[str, Any]:
 
 
 def _scan_now() -> List[Dict[str, Any]]:
+    from core.runtime_paths import is_shadow_instance
+
+    # A shadow dev child is sandboxed: host processes (and their environments)
+    # belong to the live install, so it attributes none of them.
+    if is_shadow_instance():
+        return []
     try:
         import psutil
     except ImportError:
@@ -264,7 +270,10 @@ def end_process(pid: Any, create_time: Any, *, grace: float = 5.0) -> Dict[str, 
     """
     import psutil
     from api.process_kill_safety import coerce_pid
+    from core.runtime_paths import is_shadow_instance
 
+    if is_shadow_instance():
+        raise PermissionError("a shadow instance does not end host processes")
     pid_i = coerce_pid(pid)
     if pid_i is None or pid_i <= 1:
         raise LookupError(f"not a process id: {pid}")

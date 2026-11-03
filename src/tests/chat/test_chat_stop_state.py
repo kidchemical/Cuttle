@@ -293,8 +293,8 @@ def test_stop_adapter_idle_and_live_effects():
     res = _run_adapter()
     idle = res["idle"]
     assert idle["flags"] == [True, True, True]
-    assert ["notice", "⏹ Stopped generating."] in idle["fx"]
-    assert idle["fx"].index(["bubble", "stopped"]) < idle["fx"].index(["notice", "⏹ Stopped generating."])
+    assert ["notice", "Stopped generating."] in idle["fx"]
+    assert idle["fx"].index(["bubble", "stopped"]) < idle["fx"].index(["notice", "Stopped generating."])
     assert ["cancel", False, []] in idle["fx"]
     live = res["live"]
     assert live["flags"] == [True, True, True]

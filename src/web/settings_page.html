@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Settings - Cuttle</title>
-    <link rel="stylesheet" href="/css/ui_boot.css?v=20261102prefs">
-    <script src="/js/shared/ui_boot.js?v=20261102prefs"></script>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20261103chips">
+    <script src="/js/shared/ui_boot.js?v=20261103chips"></script>
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20261028gpuBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261015glass">
@@ -312,6 +312,10 @@
                     </div>
                 </div>
 </details>
+            </div>
+            <div class="settings-group" id="chipPrefsGroup">
+                <h3 class="settings-title"><span class="emoji">🏷️</span> Chat chips <span class="settings-scope" data-scope="device" title="Stored in this browser only.">This device</span><button type="button" class="cuttle-info" data-tooltip="Show or hide the project and agent chips on messages and in the composer. Hidden composer chips still apply to what you send." aria-label="About Chat chips">i</button></h3>
+                <div id="chipPrefsRows"></div>
             </div>
             <div class="settings-group" id="textPrefsGroup">
                 <h3 class="settings-title"><span class="emoji">🔤</span> Text &amp; fonts <span class="settings-scope" data-scope="device" title="Stored in this browser only.">This device</span><button type="button" class="cuttle-info" data-tooltip="Fonts and sizes for chats, code, chips and the history list. &quot;Use theme setting&quot; keeps each theme's own type." aria-label="About Text &amp; fonts">i</button></h3>
@@ -923,6 +927,7 @@
     <script src="/js/settings/settings_voice_providers.js?v=20261028guide"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261001tabs"></script>
     <script src="/js/settings/settings_text_prefs.js?v=20261102prefs"></script>
+    <script src="/js/settings/settings_chip_prefs.js?v=20261103chips"></script>
     <script src="/js/settings/settings_page_accessibility.js?v=20261007"></script>
     <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
     <script>
@@ -992,6 +997,14 @@
                     toast: (msg) => (window.showToast || showNotification)(msg, 'info'),
                 });
                 window.cuttleTextPrefs.render();
+            }
+            if (window.CuttleSettingsChipPrefs && window.CuttleUiBoot) {
+                window.CuttleSettingsChipPrefs.create({
+                    boot: window.CuttleUiBoot,
+                    container: document.getElementById('chipPrefsRows'),
+                    notify: notifyUiAnimChange,
+                    toast: (msg) => (window.showToast || showNotification)(msg, 'info'),
+                }).render();
             }
             notifyUiAnimChange();
             (window.showToast || showNotification)(on ? 'Message bubbles enabled' : 'Message bubbles disabled', 'info');

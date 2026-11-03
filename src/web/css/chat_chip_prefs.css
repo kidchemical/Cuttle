@@ -1,0 +1,29 @@
+/* Chip visibility (Settings → Appearance → Chat chips).
+ *
+ * js/shared/ui_boot.js sets `data-hide-<id>` on <html> when a chip is turned
+ * off. Agent badges carry `data-agent-chip="1"` (chat_page.js renderers);
+ * project chips are `.slash-command-chip--project`. Hiding is visual only.
+ */
+
+/* Message bubbles (header badges beside the sender name). */
+:root[data-hide-bubble-project] .message .slash-command-chip--project {
+    display: none !important;
+}
+:root[data-hide-bubble-agent] .message .slash-command-chip--header[data-agent-chip] {
+    display: none !important;
+}
+
+/* Composer chip rows (welcome + chat inputs). */
+:root[data-hide-composer-project] .slash-chips-row > .slash-command-chip--project {
+    display: none !important;
+}
+:root[data-hide-composer-agent] .slash-chips-row > .slash-command-chip[data-agent-chip] {
+    display: none !important;
+}
+
+/* Collapse a composer row left with nothing visible in it. */
+:root[data-hide-composer-project] .slash-chips-row:not(:has(> :not(.slash-command-chip--project))),
+:root[data-hide-composer-agent] .slash-chips-row:not(:has(> :not([data-agent-chip]))),
+:root[data-hide-composer-project][data-hide-composer-agent] .slash-chips-row:not(:has(> :not(.slash-command-chip--project):not([data-agent-chip]))) {
+    display: none !important;
+}

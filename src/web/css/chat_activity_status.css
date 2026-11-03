@@ -6,9 +6,20 @@
  * line rises in and fades in; the old one rises away and fades out.
  */
 
+/* The moving lines stay inside the status line box. Without this the
+   in-flight transform spilled past the bubble's bottom edge and, since
+   .message-content is overflow-x:hidden (so overflow-y computes to auto),
+   flashed a scrollbar mid-transition. `overflow: clip` stops that without
+   making the line a scroll container; the mask feathers the clip edges into
+   the line-height's blank space so lines dissolve rather than cut off. */
 :root[data-activity-status="rise"] .typing-status,
 :root[data-activity-status="rise"].theme-glitch .typing-status {
+    --status-rise-travel: 0.55em;
     position: relative;
+    overflow: clip;
+    line-height: 1.7;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 86%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0, #000 14%, #000 86%, transparent 100%);
     font-style: normal;
     background: none;
     -webkit-background-clip: border-box;
@@ -20,7 +31,8 @@
 
 :root[data-activity-status="rise"] .typing-status > .status-motion-line {
     display: block;
-    animation: cuttle-status-rise-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    will-change: transform, opacity;
+    animation: cuttle-status-rise-in 720ms cubic-bezier(0.16, 1, 0.3, 1) 90ms both;
 }
 
 :root[data-activity-status="rise"] .typing-status.status-motion-a::before,
@@ -34,30 +46,32 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+    will-change: transform, opacity;
 }
 
 :root[data-activity-status="rise"] .typing-status.status-motion-a::before {
-    animation: cuttle-status-rise-out-a 320ms cubic-bezier(0.4, 0, 1, 1) both;
+    animation: cuttle-status-rise-out-a 560ms cubic-bezier(0.55, 0, 0.45, 1) both;
 }
 
 :root[data-activity-status="rise"] .typing-status.status-motion-b::before {
-    animation: cuttle-status-rise-out-b 320ms cubic-bezier(0.4, 0, 1, 1) both;
+    animation: cuttle-status-rise-out-b 560ms cubic-bezier(0.55, 0, 0.45, 1) both;
 }
 
 @keyframes cuttle-status-rise-in {
-    from { opacity: 0; transform: translateY(0.75em); }
-    to { opacity: 1; transform: none; }
+    from { opacity: 0; transform: translateY(var(--status-rise-travel)); filter: blur(2px); }
+    60% { filter: blur(0); }
+    to { opacity: 1; transform: none; filter: none; }
 }
 
 /* Two identical keyframes: alternating between them restarts the ghost. */
 @keyframes cuttle-status-rise-out-a {
-    from { opacity: 1; transform: none; }
-    to { opacity: 0; transform: translateY(-0.75em); }
+    from { opacity: 1; transform: none; filter: none; }
+    to { opacity: 0; transform: translateY(calc(0px - var(--status-rise-travel))); filter: blur(2px); }
 }
 
 @keyframes cuttle-status-rise-out-b {
-    from { opacity: 1; transform: none; }
-    to { opacity: 0; transform: translateY(-0.75em); }
+    from { opacity: 1; transform: none; filter: none; }
+    to { opacity: 0; transform: translateY(calc(0px - var(--status-rise-travel))); filter: blur(2px); }
 }
 
 /* Sub-agent fleet cards borrow the sweep; keep them plain in this style. */

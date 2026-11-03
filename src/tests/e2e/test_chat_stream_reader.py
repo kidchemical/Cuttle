@@ -687,7 +687,7 @@ def test_standalone_stop_after_timeout_cannot_revive(
 # The retained Stop activity is visible, but is not a persisted assistant row.
 # Exercise the production page, native AbortSignal, and public stream events.
 @pytest.mark.parametrize('query_ready', [False, True])
-def test_stopped_activity_preserves_query_without_consuming_message_ref(
+def test_stopped_activity_preserves_query_and_keeps_message_ref(
         browser, static_server, query_ready):
     world = StreamWorld()
     page, frame, errors = _open_stream(browser, static_server, world)
@@ -707,7 +707,10 @@ def test_stopped_activity_preserves_query_without_consuming_message_ref(
         assert stopped.locator('.slash-command-chip--header').count() > 0
         assert stopped.locator('.slash-command-chip--header:not(.slash-command-chip--error)').count() == 0
         assert stopped.locator('.typing-indicator').count() == 0
-        assert stopped.get_attribute('data-message-index') is None
+        # Stop persists an interrupted-agent-turn (assistant) row, so the
+        # stopped bubble keeps its transcript slot: seed user, stopped user,
+        # stopped turn.
+        assert stopped.get_attribute('data-message-index') == '3'
         link = stopped.locator('.message-query-log-link')
         assert link.get_attribute('href') == (
             '/query_log.html?id=stop-test' if query_ready else '/query_log.html')
@@ -716,8 +719,9 @@ def test_stopped_activity_preserves_query_without_consuming_message_ref(
         assert _assistant_count(frame) == 0
 
         # A real answer can have exactly the same text as the retained status.
-        # It must paint separately and keep its canonical CH-000042-4 index:
-        # seed user, stopped user, resend user, assistant (system not counted).
+        # It must paint separately and keep its canonical CH-000042-5 index:
+        # seed user, stopped user, stopped turn, resend user, assistant
+        # (system notices not counted).
         _send(frame, '/cursor answer normally')
         frame.locator('#typing-indicator').wait_for(state='visible')
         _push_text(frame, _session_frame() + _response_frame('Agent stopped.')
@@ -726,9 +730,9 @@ def test_stopped_activity_preserves_query_without_consuming_message_ref(
         reply.wait_for(state='visible')
         assert _assistant_count(frame) == 1
         assert reply.locator('.message-content').inner_text().strip() == 'Agent stopped.'
-        assert reply.get_attribute('data-message-index') == '4'
-        assert 'CH-000042-4' in reply.locator('.message-share-ref-btn').get_attribute('aria-label')
-        assert stopped.get_attribute('data-message-index') is None
+        assert reply.get_attribute('data-message-index') == '5'
+        assert 'CH-000042-5' in reply.locator('.message-share-ref-btn').get_attribute('aria-label')
+        assert stopped.get_attribute('data-message-index') == '3'
         assert stopped.count() == 1
         assert len(world.cancel_posts) == 1
         assert errors == []

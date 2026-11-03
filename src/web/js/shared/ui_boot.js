@@ -63,6 +63,25 @@
         { id: 'scale-history', key: 'cuttlePrefScaleHistory', label: 'Chat history list size', options: scaleOptions([85, 90, 100, 110, 125, 140]) }
     ];
 
+    /* Chip visibility (Settings → Appearance → Chat chips). On by default;
+       localStorage '0' hides it via `data-hide-<id>` on <html>
+       (css/chat_chip_prefs.css). Purely visual: a hidden composer chip
+       still applies its project / sticky agent to the next send. */
+    var CHIP_PREFS = [
+        { id: 'bubble-project', key: 'cuttleChipBubbleProject', label: 'Project chip in messages' },
+        { id: 'bubble-agent', key: 'cuttleChipBubbleAgent', label: 'Agent chip in messages' },
+        { id: 'composer-project', key: 'cuttleChipComposerProject', label: 'Project chip in composer' },
+        { id: 'composer-agent', key: 'cuttleChipComposerAgent', label: 'Agent chip in composer' }
+    ];
+
+    function applyChipPrefs() {
+        for (var i = 0; i < CHIP_PREFS.length; i++) {
+            var hidden = read(CHIP_PREFS[i].key) === '0';
+            if (hidden) root.setAttribute('data-hide-' + CHIP_PREFS[i].id, '');
+            else root.removeAttribute('data-hide-' + CHIP_PREFS[i].id);
+        }
+    }
+
     function textPrefValue(pref) {
         var raw = read(pref.key);
         for (var i = 0; i < pref.options.length; i++) {
@@ -495,6 +514,7 @@
         root.classList.toggle('cuttle-flat-messages', read(CHAT_BUBBLES_KEY) === '0');
         root.setAttribute('data-activity-status', read(ACTIVITY_STATUS_KEY) === 'rise' ? 'rise' : 'sweep');
         applyTextPrefs();
+        applyChipPrefs();
         root.classList.add('cuttle-booted');
         root.style.setProperty('--cuttle-transition-ms', transitionMs() + 'ms');
         if (state.video) write(VIDEO_ACTIVE_KEY, '1');
@@ -795,6 +815,21 @@
                     options: p.options.map(function (o) { return { value: o[0], label: o[1] }; })
                 };
             });
+        },
+        /** [{id, key, label, enabled}] — chip visibility toggles. */
+        chipPrefs: function () {
+            return CHIP_PREFS.map(function (p) {
+                return { id: p.id, key: p.key, label: p.label, enabled: read(p.key) !== '0' };
+            });
+        },
+        setChipPref: function (id, enabled) {
+            for (var i = 0; i < CHIP_PREFS.length; i++) {
+                if (CHIP_PREFS[i].id !== id) continue;
+                write(CHIP_PREFS[i].key, enabled ? '1' : '0');
+                applyChipPrefs();
+                return true;
+            }
+            return false;
         },
         setTextPref: function (id, value) {
             for (var i = 0; i < TEXT_PREFS.length; i++) {

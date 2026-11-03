@@ -4083,7 +4083,7 @@
         const command = ordered.filter((c) => !isAgentHeaderChip(c));
         return (
             projectHtml +
-            slashCommandChipsHeaderHtml(agent, failed) +
+            slashCommandChipsHeaderHtml(agent, failed, true) +
             slashCommandChipsHeaderHtml(command, failed)
         );
     }
@@ -4260,6 +4260,7 @@
                     starredClass +
                     noShortenClass +
                     segmentedClass +
+                    (isAgentHeaderChip(chip) ? '" data-agent-chip="1' : '') +
                     '" role="group" aria-label="' +
                     safeAria +
                     '"' +
@@ -5003,7 +5004,7 @@
         '<svg class="slash-chip-error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>';
 
     /** Compact chip(s) beside assistant name (reply to slash commands). */
-    function slashCommandChipHeaderHtml(label, metaPrefix, category, isError) {
+    function slashCommandChipHeaderHtml(label, metaPrefix, category, isError, isAgent) {
         const chip = {
             label: label,
             meta: metaPrefix,
@@ -5034,6 +5035,8 @@
             errClass +
             noShortenClass +
             segmentedClass +
+            // Marks the agent badge for Settings → chip visibility (CSS only).
+            (isAgent ? '" data-agent-chip="1' : '') +
             '" role="img" aria-label="' +
             aria +
             '"' +
@@ -5049,10 +5052,10 @@
         );
     }
 
-    function slashCommandChipsHeaderHtml(chipList, isError) {
+    function slashCommandChipsHeaderHtml(chipList, isError, isAgent) {
         if (!chipList || !chipList.length) return '';
         const failed = !!isError;
-        return chipList.map((c) => slashCommandChipHeaderHtml(c.label, c.meta, c.category, failed)).join('');
+        return chipList.map((c) => slashCommandChipHeaderHtml(c.label, c.meta, c.category, failed, isAgent)).join('');
     }
 
     function prettyCursorModelLabel(model) {

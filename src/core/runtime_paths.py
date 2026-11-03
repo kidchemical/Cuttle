@@ -460,6 +460,15 @@ def user_state_dir() -> Path:
     return Path.home() / ".local" / "state" / "cuttle"
 
 
+def is_shadow_instance() -> bool:
+    """True inside a shadow dev child (``CUTTLE_SHADOW_DATA`` from ``api.dev_instance``).
+
+    A shadow is a sandboxed copy of the app: it must not observe or act on the
+    live install's host state (other processes, live queues).
+    """
+    return bool((os.environ.get("CUTTLE_SHADOW_DATA") or "").strip())
+
+
 def instance_state_dir(project_root: Optional[Path] = None) -> Path:
     """Where this instance keeps mutable runtime files.
 
@@ -471,9 +480,8 @@ def instance_state_dir(project_root: Optional[Path] = None) -> Path:
     live daemon can bind the ports, so there is nothing to collide with).
     Pure (creates nothing); writers ensure the parent.
     """
-    shadow_data = (os.environ.get("CUTTLE_SHADOW_DATA") or "").strip()
-    if shadow_data:
-        return Path(shadow_data) / "state"
+    if is_shadow_instance():
+        return Path(os.environ["CUTTLE_SHADOW_DATA"].strip()) / "state"
     _ = project_root
     return user_state_dir()
 

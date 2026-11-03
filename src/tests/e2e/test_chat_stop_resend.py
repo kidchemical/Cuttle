@@ -233,7 +233,9 @@ def test_stop_resend_refresh_no_stale_duplicate(browser, static_server,
         assert stopped.locator('.slash-command-chip--project').count() > 0
         assert stopped.locator('.slash-command-chip--header:not(.slash-command-chip--error)').count() == 0
         assert stopped.locator('.message-query-log-link').get_attribute('aria-disabled') is None
-        assert stopped.get_attribute('data-message-index') is None
+        # Stop persists an interrupted-agent-turn (assistant) row, so the
+        # stopped bubble keeps its slot: seed user, first user, stopped turn.
+        assert stopped.get_attribute('data-message-index') == '3'
         assert frame.locator("#stopButton").is_visible() is False
         cancels = world.cancels()
         assert len(cancels) == 1
