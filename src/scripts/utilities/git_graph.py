@@ -119,6 +119,19 @@ def list_local_branches(cwd: str) -> List[Dict[str, Any]]:
     return out
 
 
+def _branches_containing(root: str, commit: str, cap: int = 20) -> List[str]:
+    """Full ``refs/heads/…`` names of local branches whose history has ``commit``."""
+    r = git_run(
+        ["for-each-ref", f"--contains={commit}", "--format=%(refname)", "refs/heads"],
+        root,
+        timeout=8.0,
+    )
+    if r.returncode != 0:
+        return []
+    refs = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
+    return refs[:cap]
+
+
 def collect_git_graph(
     cwd: str,
     *,
@@ -146,6 +159,9 @@ def collect_git_graph(
 
     branch_r = git_run(["branch", "--show-current"], root, timeout=8.0)
     current_branch = (branch_r.stdout or "").strip() or "HEAD"
+    head_r = git_run(["rev-parse", "--verify", "--quiet", "HEAD"], root, timeout=8.0)
+    head_hash = (head_r.stdout or "").strip() if head_r.returncode == 0 else ""
+    detached = bool(head_hash) and current_branch == "HEAD"
     branches = list_local_branches(root)
 
     want_branch = (branch or "").strip()
@@ -161,6 +177,12 @@ def collect_git_graph(
         args.append(want_branch)
     elif all_refs:
         args.append("--all")
+    elif detached:
+        # A detached HEAD's own history hides every newer commit, so the user
+        # could jump back but never forward again. Also walk the local
+        # branches that contain HEAD (where "forward" leads).
+        args.append("HEAD")
+        args.extend(_branches_containing(root, head_hash))
     # Date order (git default) stops after N commits; no full-history topo walk.
     args.extend(
         [
@@ -213,6 +235,8 @@ def collect_git_graph(
     return {
         "repo_root": root,
         "branch": current_branch,
+        "head": head_hash or None,
+        "detached": detached,
         "filter_branch": want_branch or None,
         "all_refs": bool(all_refs) and not want_branch,
         "limit": limit,

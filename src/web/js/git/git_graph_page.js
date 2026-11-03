@@ -5,6 +5,10 @@
     const STORAGE_PROJECT = 'cuttleGitGraphProject';
     const STORAGE_BRANCH = 'cuttleGitGraphBranch';
     const STORAGE_REPO_PREFIX = 'cuttleGitGraphRepo:';
+    /** Branch to offer "Back to …" for while HEAD is detached (per project/repo). */
+    const STORAGE_RETURN_PREFIX = 'cuttleGitGraphReturn:';
+    /** Max extra pages to fetch to keep the jumped-to commit on screen. */
+    const RESELECT_MAX_PAGES = 8;
     const ROW_H = 40;
     const LANE_W = 14;
     const GUTTER_PAD = 16;
@@ -35,6 +39,7 @@
         drawerClose: document.getElementById('gitGraphDrawerClose'),
         detailTitle: document.getElementById('gitGraphDetailTitle'),
         detailBody: document.getElementById('gitGraphDetailBody'),
+        headActions: document.getElementById('gitGraphHeadActions'),
         subtitle: document.getElementById('gitGraphSubtitle'),
         branches: document.getElementById('gitGraphBranches'),
         branchesList: document.getElementById('gitGraphBranchesList'),
@@ -61,6 +66,11 @@
     let hoveredBranch = null;
     /** HEAD branch from last graph load (for tip preference) */
     let graphHeadBranch = '';
+    /** Full HEAD hash and detached state from the last graph load. */
+    let graphHead = '';
+    let graphDetached = false;
+    let checkoutBusy = false;
+    let checkoutArmTimer = 0;
     let graphHasMore = false;
     /** Edges to unloaded parents extend to the list bottom (set per layout). */
     let edgesOpenEnded = false;
@@ -1108,6 +1118,7 @@
             const label = (els.repo.selectedOptions[0].textContent || '').trim();
             if (label) text = label + ' · ' + text;
         }
+        if (graphDetached && graphHead) text += ' · HEAD detached at ' + graphHead.slice(0, 7);
         els.subtitle.textContent = text;
     }
 
@@ -1127,7 +1138,8 @@
         return qs;
     }
 
-    async function loadGraph() {
+    async function loadGraph(opts) {
+        const keepScroll = !!(opts && opts.keepScroll);
         const path = currentProjectPath();
         if (!path) {
             setStatus('Select a project.', true);
@@ -1145,7 +1157,8 @@
         graphHasMore = false;
         graphMoreError = '';
 
-        setStatus('Loading graph…', false);
+        const prevScroll = (keepScroll && els.scroll) ? els.scroll.scrollTop : 0;
+        if (!keepScroll) setStatus('Loading graph…', false);
         const resp = await fetch('/api/git/graph?' + graphQueryParams(0).toString(), {
             credentials: 'include',
             signal: ac.signal,
@@ -1159,6 +1172,8 @@
         commits = Array.isArray(data.commits) ? data.commits : [];
         branches = Array.isArray(data.branches) ? data.branches : [];
         graphHeadBranch = data.branch || '';
+        graphHead = data.head || '';
+        graphDetached = !!data.detached;
         graphHasMore = !!data.has_more;
         renderBranches(branches, graphHeadBranch);
         updateCommitSubtitle();
@@ -1168,8 +1183,8 @@
             return;
         }
         setStatus('', false);
-        if (els.scroll) els.scroll.scrollTop = 0;
         layoutGraph(filteredCommits());
+        if (els.scroll) els.scroll.scrollTop = prevScroll;
         renderMoreFooter();
         scheduleLoadMoreCheck();
     }
@@ -1300,6 +1315,7 @@
         els.layout.classList.remove('drawer-closed');
         els.detailTitle.textContent = hash.slice(0, 7);
         els.detailBody.innerHTML = '<p class="git-graph-muted">Loading…</p>';
+        clearHeadActions();
 
         if (opts && opts.skipFetch) return;
 
@@ -1320,15 +1336,169 @@
             }
             if (selectedHash !== hash) return;
             if (commitViewer) commitViewer.renderDetail(data);
+            renderHeadActions(data);
         } catch (e) {
             els.detailBody.innerHTML = '<p class="git-graph-muted">' + esc(e.message || 'Error') + '</p>';
         }
+    }
+
+    // --- Move HEAD (jump between commits) ---------------------------------
+
+    function returnStorageKey() {
+        return STORAGE_RETURN_PREFIX + currentProjectPath() + '|' + (currentRepoRoot() || '');
+    }
+
+    function loadReturnBranch() {
+        try { return localStorage.getItem(returnStorageKey()) || ''; } catch (_) { return ''; }
+    }
+
+    function saveReturnBranch(name) {
+        try {
+            if (name) localStorage.setItem(returnStorageKey(), name);
+            else localStorage.removeItem(returnStorageKey());
+        } catch (_) {}
+    }
+
+    function localBranchNames() {
+        return new Set(branches.map((b) => b && b.name).filter(Boolean));
+    }
+
+    function checkoutButtonHtml(ref, label, title, primary) {
+        return '<button type="button" class="git-graph-btn git-graph-head-btn' + (primary ? ' is-primary' : ' ghost')
+            + '" data-checkout-ref="' + esc(ref) + '" title="' + esc(title) + '">'
+            + '<span class="git-graph-head-btn-label">' + esc(label) + '</span></button>';
+    }
+
+    function clearHeadActions() {
+        disarmCheckout();
+        if (!els.headActions) return;
+        els.headActions.innerHTML = '';
+        if (els.headActions.parentElement) els.headActions.parentElement.classList.remove('has-head-row');
+    }
+
+    /** HEAD chip + jump buttons in the drawer header (no extra body height). */
+    function renderHeadActions(d) {
+        if (!els.headActions) return;
+        clearHeadActions();
+        if (!d || !d.hash) return;
+        const isHead = !!graphHead && d.hash === graphHead;
+        const local = localBranchNames();
+        const tips = (d.refs || []).filter((r) => r !== 'HEAD' && local.has(r));
+        const back = graphDetached ? loadReturnBranch() : '';
+        const parts = [];
+        if (isHead) {
+            parts.push(graphDetached
+                ? '<span class="git-graph-head-chip is-detached" title="HEAD is detached at this commit">HEAD · detached</span>'
+                : '<span class="git-graph-head-chip" title="HEAD → ' + esc(graphHeadBranch) + '">HEAD</span>');
+        } else {
+            parts.push(checkoutButtonHtml(d.hash, 'Check out',
+                'Move HEAD to ' + d.hash.slice(0, 7) + ' (detached); the working tree becomes this commit', true));
+        }
+        tips.forEach((name) => {
+            if (!graphDetached && name === graphHeadBranch) return;
+            parts.push(checkoutButtonHtml(name, 'Switch to ' + name, 'Check out branch ' + name, false));
+        });
+        if (graphDetached && back && local.has(back) && !tips.includes(back)) {
+            parts.push(checkoutButtonHtml(back, 'Back to ' + back,
+                'Leave detached HEAD and return to ' + back, false));
+        }
+        els.headActions.innerHTML = parts.join('');
+        // Several buttons get their own header row instead of squeezing the hash.
+        const head = els.headActions.parentElement;
+        if (head) head.classList.toggle('has-head-row', parts.length > 1);
+    }
+
+    function disarmCheckout() {
+        if (checkoutArmTimer) clearTimeout(checkoutArmTimer);
+        checkoutArmTimer = 0;
+        if (!els.headActions) return;
+        els.headActions.querySelectorAll('[data-checkout-armed]').forEach((b) => {
+            b.removeAttribute('data-checkout-armed');
+            b.classList.remove('is-armed');
+            const lab = b.querySelector('.git-graph-head-btn-label');
+            if (lab && b.dataset.label) lab.textContent = b.dataset.label;
+        });
+    }
+
+    /** First click arms the button, the second within 4 s moves HEAD. */
+    function onCheckoutClick(e) {
+        const btn = e.target && e.target.closest ? e.target.closest('[data-checkout-ref]') : null;
+        if (!btn || checkoutBusy) return;
+        e.preventDefault();
+        if (!btn.hasAttribute('data-checkout-armed')) {
+            disarmCheckout();
+            const lab = btn.querySelector('.git-graph-head-btn-label');
+            btn.dataset.label = lab ? lab.textContent : '';
+            btn.setAttribute('data-checkout-armed', '1');
+            btn.classList.add('is-armed');
+            if (lab) lab.textContent = 'Confirm?';
+            checkoutArmTimer = setTimeout(disarmCheckout, 4000);
+            return;
+        }
+        disarmCheckout();
+        checkoutRef(btn.getAttribute('data-checkout-ref')).catch((err) => {
+            setStatus((err && err.message) || String(err), true);
+        });
+    }
+
+    async function checkoutRef(ref) {
+        if (!ref) return;
+        const toast = window.showToast || function () {};
+        const fromBranch = graphDetached ? '' : graphHeadBranch;
+        const keepHash = selectedHash;
+        const body = { ref: ref, path: currentProjectPath() };
+        const repoRoot = currentRepoRoot();
+        if (repoRoot) body.repo_root = repoRoot;
+        checkoutBusy = true;
+        if (els.headActions) els.headActions.classList.add('is-busy');
+        let data = null;
+        try {
+            const resp = await fetch('/api/git/checkout', {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            data = await resp.json().catch(() => null);
+        } finally {
+            checkoutBusy = false;
+            if (els.headActions) els.headActions.classList.remove('is-busy');
+        }
+        if (!data || !data.success) {
+            toast((data && data.error) || 'Checkout failed', 'error');
+            return;
+        }
+        if (data.detached) {
+            // Remember where we came from; keep it while hopping between commits.
+            if (fromBranch) saveReturnBranch(fromBranch);
+        } else {
+            saveReturnBranch('');
+        }
+        toast(data.message || 'HEAD moved', 'success');
+        await loadGraph({ keepScroll: true });
+        // Keep the commit the user was looking at on screen and in the drawer.
+        let pages = 0;
+        while (keepHash && !hashToRow.has(keepHash) && graphHasMore && pages < RESELECT_MAX_PAGES) {
+            pages += 1;
+            await loadMoreGraph();
+        }
+        const row = keepHash ? hashToRow.get(keepHash) : undefined;
+        if (row !== undefined && els.scroll) {
+            const top = row * ROW_H;
+            const view = els.scroll;
+            if (top < view.scrollTop || top + ROW_H > view.scrollTop + view.clientHeight) {
+                view.scrollTop = Math.max(0, top - view.clientHeight / 2);
+            }
+        }
+        if (keepHash) selectCommit(keepHash);
+        if (pendingChangesCtl) pendingChangesCtl.scheduleRefresh(80);
     }
 
     function closeDrawer() {
         els.drawer.hidden = true;
         els.layout.classList.add('drawer-closed');
         selectedHash = null;
+        clearHeadActions();
         if (els.detailTitle) els.detailTitle.textContent = 'Commit';
         if (els.detailBody) {
             els.detailBody.innerHTML = '<p class="git-graph-muted">Select a commit on the graph.</p>';
@@ -1516,6 +1686,7 @@
         });
     }
     els.drawerClose.addEventListener('click', closeDrawer);
+    if (els.headActions) els.headActions.addEventListener('click', onCheckoutClick);
     els.scroll.addEventListener('scroll', () => {
         maybeLoadMoreFromScroll();
         if (ignoreScrollPaint) {
