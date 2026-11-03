@@ -134,6 +134,10 @@ def test_linked_lists_say_linked_and_open_the_tasks_app():
         {'id': 'proj', 'type': 'tasks', 'title': 'Other project', 'scope': 'project', 'session_id': None,
          'project_path': '/p/other', 'status': 'active', 'edit_mode': 'agent', 'revision': 1,
          'linked_sessions': [7], 'payload': {'items': [{'id': 'c', 'text': 'C'}]}},
+        # A server predating linked chats returns the raw column text.
+        {'id': 'raw', 'type': 'tasks', 'title': 'Raw column', 'scope': 'session', 'session_id': 7,
+         'status': 'active', 'edit_mode': 'agent', 'revision': 1, 'linked_sessions': '[]',
+         'payload': {'items': [{'id': 'd', 'text': 'D'}]}},
     ]
     fixture = '''<div id="chatWidgetsStrip" hidden></div>
       <script src="/tasks.js"></script><script>
@@ -158,7 +162,7 @@ def test_linked_lists_say_linked_and_open_the_tasks_app():
             return route.abort()
         page.route('**/*', route)
         page.goto('http://tasks.test/fixture')
-        page.wait_for_selector('[data-widget-id="proj"]')
+        page.wait_for_selector('[data-widget-id="raw"]')
         scope = lambda wid: page.locator(f'[data-widget-id="{wid}"] [data-widget-scope]').inner_text()
         assert [scope('home'), scope('shared'), scope('proj')] == ['This chat', 'Linked', 'Linked']
         page.locator('[data-widget-id="shared"] [data-widget-scope]').click()

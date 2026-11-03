@@ -62,6 +62,50 @@ Two things fell out of the split:
 Deep link: `/settings_page.html?tab=agents`. Tests:
 `src/tests/settings/test_settings_page_tabs.py` (markup contract + node behavior).
 
+## Shipped: sidebar, click-in subpages, shared control skin (2026-11)
+
+**Sidebar.** The tab strip is a vertical sidebar (`.settings-sidebar` →
+`.settings-tabs`, `aria-orientation="vertical"`) grouped under
+`.settings-nav-label` headings: Workspace (General, Appearance, Voice),
+Agents & models (Agents, Providers, Experimental), System (Devices, Data,
+Account). Tab order = panel order (contract test). Icons are inline line SVGs
+(`.settings-icon`), never emoji; group titles and buttons carry no pictographs.
+
+**Phone index.** At ≤760px the sidebar is a full-width list you tap into.
+`CuttleSettingsTabs` sets `body[data-settings-view="index"|"panel"]`: a bare
+visit on a phone starts on the index, a `?tab=` deep link or a desktop visit
+starts on the panel, and `CuttleSettingsTabs.showIndex()` (the "Settings"
+breadcrumb) goes back. Only the phone media query reads the attribute.
+
+**Subpages.** Owner `src/web/js/settings/settings_subpages.js`
+(`CuttleSettingsSubpages`). A panel marks secondary groups with
+`data-subpage="<id>"` + `data-subpage-title` / `-desc` / `-icon`; the module
+collapses them behind link rows (`.settings-link-row`: icon, title, one-line
+description, chevron) and opens one at a time with a
+`Settings › Tab › Subpage` breadcrumb (`.settings-crumbs`). `?page=<id>`
+deep-links one (`?tab=agents&page=git`). It runs no loaders: subpages sit in
+their tab's panel, so the tab's lazy loader already filled them. Without the
+script the groups render inline. Current subpages: General → System prompt;
+Appearance → Wallpaper, Chat chips, Text & fonts; Agents → Git, Timeouts,
+Add your own agent, Routing & identity (replaces the old Advanced opener).
+Adding one is a markup edit (attributes on the group) plus an icon name from
+the module's `ICONS` map.
+
+**Shared control skin** (`css/page_controls.css`, every compact app page):
+pill buttons (primary = theme accent with its ink, default = soft fill,
+outline = `.btn-info` / `.btn-outline`, danger = tinted), borderless filled
+fields (`--field-radius`), pill toggle (`.toggle-switch`, 44×26, accent track +
+ink knob), rounded checkbox / ring radio via `:where()` so page rules still win.
+All colors are mixed from theme variables — no new palette. Settings cards,
+hairline rows and badges use `--settings-*` tokens in `settings_page.css`.
+Databases render as summary cards (label, big size, quota bar, caption) from
+`settings_storage.js`. Theme **Onyx** (Minimal group) is the near-black,
+off-white-accent palette the redesign was modelled on.
+
+Tests: `src/tests/e2e/test_settings_subpages.py` (rows, breadcrumbs, deep
+link, phone index), `test_settings_agent_providers_ui.py` (subpage markup,
+phone CSS contract).
+
 ## Shipped: Agents and Providers tabs (catalog-driven)
 
 **Two dead controls removed.** "Cheap completion model" wrote

@@ -75,7 +75,12 @@
         /** List shown here only because this chat is linked to it (not its home chat/project). */
         function isLinkedHere(w) {
             var sid = sessionParam();
-            if (!sid || (w.linked_sessions || []).map(String).indexOf(sid) === -1) return false;
+            var links = w.linked_sessions;
+            if (typeof links === 'string') {
+                // Older servers return the raw JSON column text.
+                try { links = JSON.parse(links); } catch (_) { links = []; }
+            }
+            if (!sid || !Array.isArray(links) || links.map(String).indexOf(sid) === -1) return false;
             if (w.scope === 'project') {
                 var norm = function (p) { return String(p || '').replace(/\\/g, '/').replace(/\/+$/, ''); };
                 return norm(getProjectPath()) !== norm(w.project_path);

@@ -213,13 +213,6 @@
         if (changed && window.matchMedia && window.matchMedia('(max-width: 760px)').matches) scrollTop();
     }
 
-    function onKeydown(event) {
-        if (event.key !== 'Escape' || !openId) return;
-        if (event.target && event.target.closest && event.target.closest('.cuttle-combo-popup, dialog')) return;
-        if (document.querySelector('.cuttle-combo.is-open')) return;
-        close(true);
-    }
-
     function init() {
         if (initialized) return;
         initialized = true;
@@ -230,7 +223,6 @@
         });
         pendingDeepLink = readUrlPage();
         document.addEventListener('cuttle:settings-tab', onTab);
-        document.addEventListener('keydown', onKeydown);
         // The tab shell may already have activated a tab before this ran.
         const tabs = tabsApi();
         const now = tabs && tabs.currentTab ? tabs.currentTab() : null;

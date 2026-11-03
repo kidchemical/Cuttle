@@ -137,7 +137,7 @@ def test_agent_card_and_provider_chip_classes_all_exist_in_css():
         "agent-card-head", "agent-card-name", "agent-card-slash",
         "agent-card-meta", "agent-card-hint", "agent-card-detail",
         "agent-card-chevron", "agent-icon", "provider-chip", "provider-status",
-        "provider-picker", "settings-advanced-summary",
+        "provider-picker",
     ):
         assert f".{cls}" in css, cls
 
@@ -162,12 +162,18 @@ def test_agent_icons_come_from_the_catalog_payload():
         assert f'"{agent_id}"' not in html, agent_id
 
 
-def test_agent_extras_live_in_a_collapsed_advanced_block():
-    """Git, drop-in folders, routing, and name sit behind one Advanced opener."""
+def test_agent_extras_live_in_click_in_subpages():
+    """Git, timeouts, drop-in folders, and routing/name each sit behind a
+    link row (settings_subpages.js) instead of one long Advanced opener."""
     html = _page()
-    assert 'id="agentAdvanced"' in html
-    assert "settings-advanced-summary" in html
-    assert "Advanced" in html
+    panel = html[html.index('id="panel-agents"'):html.index('id="panel-providers"')]
+    subpages = re.findall(r'data-subpage="([a-z-]+)"', panel)
+    assert subpages == ["git", "timeouts", "drop-ins", "routing"]
+    for sid in subpages:
+        tag = re.search(rf'<div[^>]*data-subpage="{sid}"[^>]*>', panel).group(0)
+        assert "data-subpage-title=" in tag and "data-subpage-desc=" in tag, sid
+    assert 'id="agentAdvanced"' not in html
+    assert "/js/settings/settings_subpages.js" in html
 
 
 def test_video_list_rows_no_longer_squash():
@@ -187,18 +193,21 @@ def test_video_list_rows_no_longer_squash():
     assert int(px.group(1)) >= 340
 
 
-def test_mobile_tab_strip_scrolls_instead_of_squeezing_labels():
-    """Same shrink trap as the playlist rows: without flex:0 0 auto a nowrap
-    strip truncates every label to 'Prov' and scrolls nothing."""
+def test_phone_sidebar_becomes_an_index_you_tap_into():
+    """Phones never squeeze nine labels into a strip: the sidebar is a full
+    list, and the index/panel view (body[data-settings-view]) shows one."""
     css = CSS.read_text(encoding="utf-8")
-    blocks = re.findall(r"@media \(max-width: 640px\)\s*\{(.*?)\n\}", css, re.S)
-    mobile = next((b for b in blocks if ".settings-tabs" in b), None)
-    assert mobile, "no mobile media query for the tab strip"
-    strip = re.search(r"\.settings-tabs\s*\{([^}]*)\}", mobile)
-    assert strip and "overflow-x: auto" in strip.group(1)
-    tab = re.search(r"\.settings-tab\s*\{([^}]*)\}", mobile)
-    assert tab, "no .settings-tab rule in the mobile query"
-    assert "flex: 0 0 auto" in tab.group(1)
+    blocks = re.findall(r"@media \(max-width: 760px\)\s*\{(.*?)\n\}", css, re.S)
+    phone = next((b for b in blocks if ".settings-layout" in b), None)
+    assert phone, "no phone media query for the settings layout"
+    layout = re.search(r"\.settings-layout\s*\{([^}]*)\}", phone)
+    assert layout and "minmax(0, 1fr)" in layout.group(1), "one column on phones"
+    assert re.search(
+        r'body\[data-settings-view="index"\] \.settings-main,\s*'
+        r'body\[data-settings-view="panel"\] \.settings-sidebar\s*\{[^}]*display:\s*none',
+        phone,
+    )
+    assert re.search(r"\.settings-tab-chevron\s*\{[^}]*display:\s*block", phone)
 
 
 # ── the two dead controls are gone ────────────────────────────────────────

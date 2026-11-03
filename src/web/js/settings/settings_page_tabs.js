@@ -11,7 +11,8 @@
  * hardcoded list, so adding a tab is a markup edit.
  *
  * Layout: the tab list is a vertical sidebar. Narrow screens show it as an
- * index you tap into; `body[data-settings-view]` (index|panel) carries that
+ * index you tap into (a bare visit on a phone starts there; a deep link or a
+ * desktop visit starts on the panel); `body[data-settings-view]` (index|panel) carries that
  * state and only the phone media query reads it. Every tab change fires
  * `cuttle:settings-tab` on document so the subpage owner
  * (settings_subpages.js) can reset its breadcrumb without importing this.
@@ -75,6 +76,13 @@
             else url.searchParams.delete('tab');
             window.history.replaceState(null, '', url.pathname + url.search + url.hash);
         } catch (_) {}
+    }
+
+    /** Phone layout (matches the settings_page.css index/panel query). */
+    function isNarrow() {
+        try {
+            return !!(window.matchMedia && window.matchMedia('(max-width: 760px)').matches);
+        } catch (_) { return false; }
     }
 
     function setView(view) {
@@ -215,7 +223,7 @@
         const linked = hasUrlTab();
         const initial = readInitialTab();
         setTab(initial, { persist: false, syncUrl: false, view: false });
-        setView(linked ? 'panel' : 'index');
+        setView(linked || !isNarrow() ? 'panel' : 'index');
         writeStored(initial);
         if (linked) syncUrl(initial);
     }

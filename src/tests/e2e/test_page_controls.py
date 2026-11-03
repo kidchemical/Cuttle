@@ -126,7 +126,7 @@ def test_apps_launcher_and_context_menu_fit_the_shell_panel(browser, static_serv
         context.close()
 
 
-@pytest.mark.parametrize('theme', ['dark', 'midnight', 'light', 'sakura', 'mint', 'lavender', 'paper', 'graphite', 'nord', 'rgb', 'synthwave', 'glitch', 'matrix'])
+@pytest.mark.parametrize('theme', ['dark', 'midnight', 'light', 'sakura', 'mint', 'lavender', 'paper', 'graphite', 'onyx', 'nord', 'rgb', 'synthwave', 'glitch', 'matrix'])
 @pytest.mark.parametrize('width', [320, 390, 1200])
 def test_settings_dropdowns_float_without_resizing_and_share_the_skin(browser, static_server, theme, width):
     page = open_settings(browser, static_server, ProviderWorld(), width=width)
