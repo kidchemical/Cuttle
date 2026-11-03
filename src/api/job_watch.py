@@ -8,7 +8,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import threading
+import time
+import uuid
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -146,6 +150,40 @@ def sanitize_grid(raw: Any) -> Optional[Dict[str, Any]]:
     return grid
 
 
+
+_WRITE_LOCK = threading.Lock()
+
+
+def _atomic_write_json(path: Path, data: Any) -> None:
+    """Write ``data`` to ``path`` atomically.
+
+    The temp name is unique per writer: a background wait's own thread and a
+    Stop/cancel can update the same status at once, and a shared
+    ``<name>.json.tmp`` let one writer rename the other's file away.
+    """
+    tmp = path.with_name(
+        f".{path.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex[:8]}.tmp"
+    )
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        # Same-process writers take turns; on Windows a replace racing another
+        # replace (or a reader holding the file) fails with PermissionError,
+        # so retry briefly for writers in other processes.
+        with _WRITE_LOCK:
+            for attempt in range(20):
+                try:
+                    tmp.replace(path)
+                    break
+                except PermissionError:
+                    if attempt == 19:
+                        raise
+                    time.sleep(0.005 * (attempt + 1))
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+
 def write_status(
     job_id: str,
     *,
@@ -192,9 +230,7 @@ def write_status(
             payload.pop("grid", None)
     path = status_path(sid)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    _atomic_write_json(path, payload)
     return path
 
 
@@ -290,9 +326,7 @@ def reconcile_status(
     if persist and job_id:
         path = status_path(job_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
+        _atomic_write_json(path, out)
     return out
 
 

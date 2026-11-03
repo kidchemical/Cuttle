@@ -2270,7 +2270,11 @@ function openGizmoPopout(id, title) {
             if (new URL(target).pathname !== '/gizmo_popout.html') event.preventDefault();
         } catch (_) { event.preventDefault(); }
     });
-    win.once('ready-to-show', () => { if (!win.isDestroyed()) win.showInactive(); });
+    // ready-to-show can fail to fire for a show:false window (seen on CI
+    // xvfb), leaving the popout hidden forever; did-finish-load backs it up.
+    const showOnce = () => { if (!win.isDestroyed() && !win.isVisible()) win.showInactive(); };
+    win.once('ready-to-show', showOnce);
+    win.webContents.once('did-finish-load', showOnce);
     // X11 WMs can drop the pre-map "above" hint; re-assert once mapped.
     win.once('show', () => { try { if (!win.isDestroyed()) win.setAlwaysOnTop(true, 'floating'); } catch (_) {} });
     win.on('move', () => saveGizmoPopoutBounds(id, win));

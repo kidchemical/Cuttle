@@ -271,3 +271,33 @@ def test_reconcile_keeps_live_posix_pid_running():
     assert pid_alive(os.getpid())
     data = {"state": "running", "label": "Build", "pid": os.getpid()}
     assert reconcile_status(data)["state"] == "running"
+
+
+def test_concurrent_status_writers_never_collide(tmp_path, monkeypatch):
+    """A background wait's thread and a Stop both write one status at once;
+    a shared ``.json.tmp`` let one rename the other's file away (CI flake in
+    test_card_stop_kills_the_detached_run)."""
+    import threading
+
+    import api.job_watch as jw
+
+    monkeypatch.setattr(jw, "output_dir", lambda: tmp_path)
+    errors = []
+    start = threading.Barrier(8)
+
+    def writer(n):
+        start.wait()
+        try:
+            for i in range(50):
+                write_status("race-job", state="running", percent=i, label=f"w{n}")
+        except Exception as exc:  # noqa: BLE001 - collect, assert below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert read_status("race-job")["state"] == "running"
+    assert [p.name for p in tmp_path.iterdir()] == ["race-job-status.json"]
