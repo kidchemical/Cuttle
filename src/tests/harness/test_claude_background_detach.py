@@ -60,6 +60,21 @@ def bg(tasks):
     out({"type": "system", "subtype": "background_tasks_changed", "tasks": tasks})
 q.get()
 out({"type": "system", "subtype": "init", "model": "fake"})
+if mode == "real_task":
+    # Like Claude Code's run_in_background Bash: own session, stdout on the task file.
+    import subprocess
+    path = os.environ["FAKE_TASK_OUT"]
+    fh = open(path, "w")
+    subprocess.Popen([sys.executable, "-c", "import os, time; print('rendered 13 frames', flush=True); "
+                      "time.sleep(float(os.environ['FAKE_TASK_SEC'])); print('blend saved', flush=True)"],
+                     stdout=fh, stderr=fh, stdin=subprocess.DEVNULL, start_new_session=True)
+    out({"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1",
+         "content": "Command running in background with ID: b7. Output is being written to: %s. "
+                    "You will be notified when it completes." % path}]}})
+    bg([{"task_id": "b7", "task_type": "local_bash", "description": "blender job"}])
+    result("started the blender job")
+    time.sleep(30)  # ignores EOF while its task runs
+    sys.exit(0)
 bg([{"task_id": "b1", "task_type": "local_bash", "description": "watch CI"}])
 result("started the watcher")
 if mode == "finishes":
@@ -326,7 +341,50 @@ def test_wait_cap_reaps_and_posts_the_abandoned_notice(tmp_path, monkeypatch):
     assert _until(lambda: len(saver.bodies) == 1)
     notice = saver.bodies[0]["response"]
     assert "Stopped waiting for background work" in notice and "- watch CI" in notice
+    # The fake task has no process of its own, so it really did end with the turn.
+    assert "This ended with the turn" in notice and "still running" not in notice
     assert steer.active_agent(6108) is None
+
+
+@posix_only
+def test_wait_cap_hands_running_work_off_and_the_chat_hears_when_it_ends(tmp_path, monkeypatch):
+    """CH-002006: the cap must spare the still-running task and tell the chat when it ends."""
+    from api.agent_harness import background_handoff as bh
+    from api.chat_ops import store
+
+    launched = []
+    monkeypatch.setattr(bh, "_spawn_watcher", lambda path, sid: launched.append((path, sid)))
+    monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "1")
+    monkeypatch.setenv("CLAUDE_BACKGROUND_EXIT_GRACE_SEC", "0.5")
+    monkeypatch.setenv("FAKE_TASK_OUT", str(tmp_path / "b7.output"))
+    monkeypatch.setenv("FAKE_TASK_SEC", "4")
+    res, wait, took = _start(tmp_path, monkeypatch, "real_task", 6111)
+    assert took < 10 and res["output"].startswith("started the blender job")
+    saver = _Saver()
+    bw.bind_saver(wait.job_id, saver, {})
+    assert _until(lambda: _status(wait).get("state") in ("done", "failed"), timeout=20)
+    status = _status(wait)
+    assert status["state"] == "done" and "still running" in status["label"]
+    assert _until(lambda: len(saver.bodies) == 1)
+    notice = saver.bodies[0]["response"]
+    assert "still running; this chat will be told when it finishes" in notice and "- blender job" in notice
+    assert "ended with this turn" not in notice
+
+    assert len(launched) == 1 and launched[0][1] == 6111
+    record_path = launched[0][0]
+    task = bh.json.loads(record_path.read_text())["tasks"][0]
+    assert task["task_id"] == "b7" and task["output_file"] == str(tmp_path / "b7.output")
+    assert bh.running(task), "the reap must spare the handed-off task"
+    assert bh.check(record_path) is False  # still running: nothing posted yet
+    assert not [o for o in store.listing(6111) if o["kind"] == "notice"]
+
+    assert _until(lambda: not bh.running(task), timeout=15)
+    assert bh.check(record_path) is True and not record_path.exists()
+    ops = [o for o in store.listing(6111) if o["kind"] == "notice"]
+    assert len(ops) == 1 and ops[0]["target"] == 6111 and ops[0]["state"] == "pending"
+    text = ops[0]["payload"]["text"]
+    assert "Background work from an earlier turn finished" in text
+    assert "`blender job` (task b7)" in text and "blend saved" in text and str(tmp_path / "b7.output") in text
 
 
 @posix_only

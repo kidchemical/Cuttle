@@ -628,13 +628,36 @@ def is_session_busy(session_id) -> bool:
     return has_live_process(session_id)
 
 
-def kill_pid_tree(pid) -> bool:
+def _spared_pids(keep) -> Set[int]:
+    """``keep`` pids plus their descendants: work handed off to outlive a kill."""
+    out: Set[int] = set()
+    for raw in keep or ():
+        try:
+            pid_i = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if pid_i <= 1:
+            continue
+        out.add(pid_i)
+        try:
+            import psutil
+
+            out.update(int(c.pid) for c in psutil.Process(pid_i).children(recursive=True))
+        except Exception:
+            pass
+    return out
+
+
+def kill_pid_tree(pid, keep=()) -> bool:
     """Kill ``pid`` and its children (``taskkill /T`` on Windows).
 
     Refuses PID 1, the current process, its parent/ancestors, and any PID that
     is not a descendant of this process (stale job-status PIDs after a reboot).
     If signaling the root is denied (EPERM), descendants are **not** swept —
     listing children of PID 1 is the whole machine.
+
+    ``keep`` pids (and their own descendants) are spared: background work a
+    turn handed off (``api.agent_harness.background_handoff``) outlives its CLI.
     """
     try:
         from api.process_kill_safety import coerce_pid, is_forbidden_kill_target, may_kill_pid
@@ -659,12 +682,14 @@ def kill_pid_tree(pid) -> bool:
             return False
     except Exception:
         pass
-    descendants = list_descendant_pids(pid_i)
+    spared = _spared_pids(keep)
+    descendants = [c for c in list_descendant_pids(pid_i) if int(c) not in spared]
     killed = False
     try:
         if os.name == "nt":
+            # /T would take the spared work down with the root.
             subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(pid_i)],
+                ["taskkill", "/F", "/PID", str(pid_i)] if spared else ["taskkill", "/F", "/T", "/PID", str(pid_i)],
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -693,7 +718,8 @@ def kill_pid_tree(pid) -> bool:
             try:
                 if os.name == "nt":
                     subprocess.run(
-                        ["taskkill", "/F", "/T", "/PID", str(child_i)],
+                        ["taskkill", "/F", "/PID", str(child_i)] if spared
+                        else ["taskkill", "/F", "/T", "/PID", str(child_i)],
                         capture_output=True,
                         text=True,
                         timeout=10,
@@ -709,12 +735,13 @@ def kill_pid_tree(pid) -> bool:
     return killed
 
 
-def kill_process_tree(proc) -> bool:
+def kill_process_tree(proc, keep=()) -> bool:
     """Kill a spawned CLI *and its children*.
 
     Agent CLIs spawn helpers (Codex starts `codex-code-mode-host`); killing only
     the parent leaves those running as orphans and holds the session writer lock
-    (CH-000513). Snapshot the tree first, then sweep any survivors.
+    (CH-000513). Snapshot the tree first, then sweep any survivors. ``keep``
+    pids and their descendants are spared (see ``kill_pid_tree``).
     """
     if proc is None:
         return False
@@ -728,7 +755,8 @@ def kill_process_tree(proc) -> bool:
     alive_before = _proc_alive(proc) or (bool(pid) and pid_alive(pid))
     if not alive_before and not pid:
         return False
-    killed = bool(pid) and kill_pid_tree(pid)
+    spared = _spared_pids(keep)
+    killed = bool(pid) and kill_pid_tree(pid, keep=spared)
     if not killed:
         try:
             proc.terminate()
@@ -749,8 +777,8 @@ def kill_process_tree(proc) -> bool:
     if pid:
         wait_pid_dead(pid, timeout=5.0)
         for child in list_descendant_pids(pid):
-            if pid_alive(child):
-                kill_pid_tree(child)
+            if int(child) not in spared and pid_alive(child):
+                kill_pid_tree(child, keep=spared)
     return killed
 
 

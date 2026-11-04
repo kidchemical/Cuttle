@@ -10,7 +10,10 @@ Cuttle harness agents (Cursor `agent -p`, etc.) are **one-shot** CLI runs per tu
   `run_in_background`, `Monitor`) are still running, Cuttle keeps the turn open
   (the chat shows "waiting on background task: …") and their completion
   notification continues the **same reply**. The wait is capped (default 50 min,
-  `CLAUDE_BACKGROUND_WAIT_SEC`; `0` disables); unfinished tasks end with the turn.
+  `CLAUDE_BACKGROUND_WAIT_SEC`; `0` disables). At the cap the turn stops waiting, but
+  background shells that are still running keep going: Cuttle tells the chat when each
+  one ends (a Cuttle notice turn with its output tail), so you pick the result up then.
+  In-CLI tasks with no process of their own (Claude `Task` agents) end with the turn.
   Do not start background work you do not intend to wait for (dev servers).
 - Do **not** launch Cursor/Codex **CLI background** subagents or defer with “I'll dig into…”.
 - Independent parallel work belongs in **Cuttle child chats**:

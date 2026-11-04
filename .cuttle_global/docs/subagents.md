@@ -74,6 +74,14 @@ another owner's batch. Crash/SIGKILL recovery (rows left active with no
 process at all) is explicitly deferred: inspect with `status`, terminally
 stop with `cancel`.
 
+**Parent stopped listening.** A `--wait` CLI notes the process that launched it
+(the parent's agent CLI). If that process is gone when the round ends (your
+turn hit its background-wait limit, timed out, or Flask restarted), the CLI queues
+a Cuttle notice turn on the parent chat with each child's handle, status and
+reply, and the parent continues from there. Running `spawn --wait` as a
+background command is therefore safe for long children: you are told when it
+finishes either way. While the launcher is still alive nothing extra is posted.
+
 `--route` asks the existing Cuttle router to pick `agent`+`model` for children
 that omitted them (or set `"route": true`).
 
