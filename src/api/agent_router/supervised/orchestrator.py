@@ -188,8 +188,34 @@ def update_canonical_response(task: SupervisedTask, content: Optional[str] = Non
         return False
 
 
+def _postprocess_terminal(task: SupervisedTask) -> None:
+    """Run response post-processing once on the final answer this task owns.
+
+    The ordinary turn pass skips supervised results (this orchestrator persists
+    the canonical bubble), so the terminal answer is processed here instead.
+    """
+    rec = task.delivery if isinstance(task.delivery, dict) else {}
+    if (rec.get("postprocessing") or not task.final_response
+            or task.phase == TaskPhase.CANCELLED.value):
+        return
+    from api.response_postprocessing import process_result
+
+    body = {"success": task.phase != TaskPhase.FAILED.value, "response": task.final_response}
+    process_result(body)
+    post = body.get("postprocessing")
+    if not isinstance(post, dict):
+        return
+    task.final_response = body["response"]
+    task.delivery = {**rec, "postprocessing": post}
+    save_task(task)
+
+
 def _deliver_terminal(task: SupervisedTask) -> None:
     """Persist terminal result then queue for client delivery (idempotent)."""
+    try:
+        _postprocess_terminal(task)
+    except Exception as e:
+        slog.supervised_log("postprocessing_failed", error=str(e)[:200], task_id=task.task_id)
     try:
         from api.agent_router.supervised.delivery import (
             deliver_terminal_to_parent,

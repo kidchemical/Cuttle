@@ -86,6 +86,9 @@
                 if (col && col.dataset.splitDiscarded === '1') return;
                 const r = rail.getBoundingClientRect();
                 if (!r.width || !r.height) return;
+                // A parked pane keeps its rail in layout (strip) but hides it;
+                // docking there would make the gizmos invisible.
+                if (root.getComputedStyle(rail).visibility === 'hidden') return;
                 if (!bestRect || r.left < bestRect.left - 1
                     || (Math.abs(r.left - bestRect.left) <= 1 && r.top < bestRect.top)) {
                     best = rail; bestRect = r;

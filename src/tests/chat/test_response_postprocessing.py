@@ -18,7 +18,6 @@ def settings(monkeypatch, tmp_path):
     monkeypatch.delenv('CUTTLE_EXPERIMENTAL', raising=False)
     private.set_setting('background_helpers', {'chain': [{'kind': 'api', 'target': 'fake'}], 'tasks': {}})
     monkeypatch.setattr(bg, 'generate', lambda *a, **k: pytest.fail('Unexpected executor call'))
-    monkeypatch.setattr(pp, 'MIN_APPEND_CHARS', 0)
     return private
 
 
@@ -42,18 +41,39 @@ def test_success_passes_config_and_preserves_original(settings, monkeypatch, mod
     assert len(seen) == 1  # same terminal body cannot be processed twice
 
 
-def test_append_skips_short_replies_but_replace_still_runs(settings, monkeypatch):
-    """A TL;DR of "ready" invents sentences the agent never wrote (CH-002000 setup turn)."""
-    monkeypatch.setattr(pp, 'MIN_APPEND_CHARS', 400)
-    body = {'success': True, 'response': 'ready'}
+@pytest.mark.parametrize('extra', [
+    {'response': 'ready'},  # short replies are processed too
+    {'success': False, 'response': 'The build failed: missing dep'},
+    {'response': 'Prose <cuttle_action_form>{"unclosed": true}'},
+    {'response': 'x' * (pp.MAX_RESPONSE_CHARS + 1)},
+])
+def test_short_failed_unpaired_and_long_replies_are_processed(settings, monkeypatch, extra):
+    seen = []
+    monkeypatch.setattr(bg, 'generate', lambda t, req, **kw: seen.append(req.user) or TextResult('Done'))
+    body = {'success': True, **extra}
+    original = body['response']
     pp.process_result(body)
-    assert body == {'success': True, 'response': 'ready',
-                    'postprocessing': {'status': 'skipped', 'reason': 'short'}}
-    monkeypatch.setattr(bg, 'generate', lambda *a, **kw: TextResult('Listo'))
-    settings.set_setting('response_postprocessing', {**cp.processor_preferences(), 'mode': 'replace'})
-    body = {'success': True, 'response': 'ready'}
+    assert body['postprocessing']['status'] == 'completed'
+    assert body['postprocessing']['original_response'] == original
+    assert len(seen[0]) <= pp.MAX_RESPONSE_CHARS + 60
+    if '<cuttle_action_form' in original:
+        # The stray card markup is never shown to the model and rides through verbatim.
+        assert seen == ['Prose']
+        assert body['response'].endswith('Done\n\n<cuttle_action_form>{"unclosed": true}')
+
+
+@pytest.mark.parametrize('mode', ['append', 'replace'])
+def test_leading_thinking_stays_first_and_is_not_processed(settings, monkeypatch, mode):
+    settings.set_setting('response_postprocessing', {**cp.processor_preferences(), 'mode': mode})
+    seen = []
+    monkeypatch.setattr(bg, 'generate', lambda t, req, **kw: seen.append(req.user) or TextResult('TLDR'))
+    body = {'success': True, 'response': '<think>\nThe real answer\n</think>\n\nClosing line'}
     pp.process_result(body)
-    assert body['response'] == 'Listo' and body['postprocessing']['status'] == 'completed'
+    assert seen == ['Closing line']
+    assert body['response'].startswith('<think>\nThe real answer\n</think>\n\n')
+    rest = body['response'].split('</think>\n\n', 1)[1]
+    assert rest == ('<cuttle_original_response>"Closing line"</cuttle_original_response>\n\nTLDR'
+                    if mode == 'append' else 'TLDR')
 
 
 @pytest.mark.parametrize('disable', ['flag', 'kill_switch', 'preference', 'no_executor'])
@@ -68,11 +88,9 @@ def test_disabled_never_executes(settings, monkeypatch, disable):
 
 
 @pytest.mark.parametrize('extra', [
-    {'success': False}, {'response': ''}, {'response': '[CANCELLED] stopped'},
+    {'response': ''}, {'response': '[CANCELLED] stopped'},
     {'ui': 'system'}, {'skip_history_persist': True}, {'coordinator_response_message_id': 8},
     {'response': '<cuttle_action_form>{}</cuttle_action_form>'},
-    {'response': 'Prose <cuttle_action_form>{"unclosed": true}'},
-    {'response': 'x' * (pp.MAX_RESPONSE_CHARS + 1)},
 ])
 def test_non_chat_and_interactive_outputs_never_execute(settings, extra):
     body = {'success': True, 'response': 'Original', **extra}

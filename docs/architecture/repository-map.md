@@ -297,11 +297,11 @@ final-response processor configuration. The harness kernel applies prompts to
 each normal execution (including resumes). `api.response_postprocessing` runs
 the opt-in `response_postprocessing` experimental pass via restricted
 `background_helpers` before claimed sync/stream persistence and delivery;
-`chat_coordinator` also applies it to unclaimed compatibility turns.
+`chat_coordinator` also applies it to unclaimed compatibility turns; the supervised orchestrator applies it to the terminal answer it persists.
 Its executor chain is stored in `response_postprocessing.chain`, independently
 of Background helpers preferences; the shared helper engine and picker provide
-API/CLI capabilities. `chat_messages.js` owns the append layout (original
-reply as the body, labelled processed text after) and copy text. `settings_chat_preferences.js` owns the General/Agents editors. Behavior and
+API/CLI capabilities. `api.agent_harness.reasoning_reply` (kernel) puts each chat turn's reasoning (all adapters' `TextActivityLog` thinking, nested sub-agents excluded) in the reply as one leading `<think>` block. `chat_messages.js` owns the append layout (original
+reply in a collapsed disclosure, labelled processed text after) and copy text. `settings_chat_preferences.js` owns the General/Agents editors. Behavior and
 settings contracts: [Chat prompts](../../.cuttle/docs/chat-prompts.md).
 
 **Direct model APIs:** `api.model_providers` owns validated provider manifests,

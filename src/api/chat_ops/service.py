@@ -112,7 +112,7 @@ _FORM = re.compile(r'<cuttle_action_form\b[^>]*>(.*?)</cuttle_action_form>', re.
 def readable_reply(content):
     """A stored reply as a person reads it: the agent's own answer (unwrapped from
     post-processing), no reasoning blocks, and question cards as one line."""
-    text = str(content or '')
+    text = _THINK.sub('', str(content or ''))
     wrapped = _WRAPPED.match(text)
     if wrapped:
         try:

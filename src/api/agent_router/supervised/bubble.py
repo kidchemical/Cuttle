@@ -314,6 +314,8 @@ def bubble_metadata(task: Any, *, extra: Optional[Dict[str, Any]] = None) -> Dic
     delivery = getattr(task, "delivery", None)
     if isinstance(delivery, dict) and delivery.get("terminal_event_id"):
         meta["supervised_delivery_event_id"] = delivery.get("terminal_event_id")
+    if isinstance(delivery, dict) and isinstance(delivery.get("postprocessing"), dict):
+        meta["postprocessing"] = delivery["postprocessing"]
     if extra:
         meta.update(extra)
     return meta

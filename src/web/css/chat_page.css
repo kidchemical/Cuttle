@@ -6033,9 +6033,21 @@ pre.has-code-copy:hover .code-copy-btn,
     display: none;
 }
 
+.response-original-block,
 .tool-block,
 .thinking-block {
     margin: 10px 0;
+}
+
+.response-original-block {
+    border-left: 3px solid var(--accent, #58a6ff);
+    padding: 8px 12px;
+    background: rgba(127, 127, 127, 0.08);
+    border-radius: 0 8px 8px 0;
+}
+
+.response-original-content {
+    margin-top: 8px;
 }
 
 .response-postprocessed-label {
@@ -6049,6 +6061,7 @@ pre.has-code-copy:hover .code-copy-btn,
     text-transform: uppercase;
 }
 
+.response-original-block > summary,
 .tool-block > summary,
 .thinking-block > summary {
     cursor: pointer;

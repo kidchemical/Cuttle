@@ -11,6 +11,7 @@ class ClaudeStream:
         self.activity = ActivityEmitter(status_queue, agent_label="Claude Code",
                                         record_text_previews=False, record_tool_previews=False)
         self.text = TextActivityLog("claude")
+        self.text.nested = lambda item: not str(item).startswith("root:")
         self.tools = ToolActivityLog("claude", self.activity)
         self.on_session = on_session
         self.session_id = None
@@ -18,11 +19,9 @@ class ClaudeStream:
         self.messages = {}
         self.blocks = {}
         self.last_root_message = None
-        # Root text segments each root ``result`` closed, in order. The CLI's
-        # ``result`` field carries only the last message's text, so a turn
-        # that writes, runs tools, then writes again needs these to be whole.
-        self.result_segments = []
-        self._closed_keys = 0
+        # Root thinking blocks written before each root ``result`` (cumulative
+        # counts), so every reply can carry the reasoning that led to it.
+        self.thinking_marks = []
 
     def _block(self, scope, message_id, index, block, *, complete=False, key=None):
         key = key or f"{scope}:{message_id}:{index}"
@@ -57,8 +56,7 @@ class ClaudeStream:
                 self.activity.emit("Claude Code compacted context", force=True)
         elif typ == "result" and scope == "root":
             self.result = obj
-            self.result_segments.append(self.pending_writing())
-            self._closed_keys = len(self._root_writing_keys())
+            self.thinking_marks.append(len(self.root_thinking()))
             if not any(kind == "writing" for kind, key in self.text.buffers):
                 self.text.save("writing", str(obj.get("result") or ""), "result")
         elif typ == "stream_event":
@@ -140,27 +138,32 @@ class ClaudeStream:
         return "\n".join(text for (kind, key), text in self.text.buffers.items()
                          if kind == "writing" and key.startswith(prefix)).strip()
 
+    def root_thinking(self):
+        """Every non-empty root-level thinking block this run, in order."""
+        return [text for (kind, key), text in self.text.buffers.items()
+                if kind == "thinking" and key.startswith("root:") and text.strip()]
+
+    def thinking_for_results(self, start=0, end=None):
+        """Thinking written after root result ``start - 1`` up to root result ``end - 1``.
+
+        ``end=None`` runs to the latest block (including a run with no result yet).
+        """
+        thoughts = self.root_thinking()
+        lo = self.thinking_marks[start - 1] if 0 < start <= len(self.thinking_marks) else 0
+        hi = len(thoughts) if end is None or end > len(self.thinking_marks) or end <= 0 else self.thinking_marks[end - 1]
+        return thoughts[lo:hi]
+
     def earlier_writing(self):
         """Every root-level text segment written this run, in order."""
         return [text for (kind, key), text in self.text.buffers.items()
                 if kind == "writing" and key.startswith("root:") and text]
 
-    def _root_writing_keys(self):
-        return [key for key in self.text.buffers if key[0] == "writing" and key[1].startswith("root:")]
 
-    def pending_writing(self):
-        """Root text segments written since the last root ``result``, in order."""
-        keys = self._root_writing_keys()[self._closed_keys:]
-        return [self.text.buffers[key] for key in keys if self.text.buffers[key].strip()]
+def with_thinking(thoughts, text):
+    """Shared ``<think>`` wrapping (``api.agent_harness.reasoning_reply``)."""
+    from api.agent_harness.reasoning_reply import with_thinking as wrap
 
-
-def join_segments(segments, final=""):
-    """Every text segment of a turn in order; ``final`` is added only if no segment carries it."""
-    body = "\n\n".join(s.strip() for s in segments or [] if s and s.strip())
-    final = (final or "").strip()
-    if final and final not in body:
-        body = (body + "\n\n" + final).strip()
-    return body
+    return wrap(thoughts, text)
 
 
 # Interactive Cuttle blocks (choice cards, confirms) render only from the final

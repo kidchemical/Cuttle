@@ -30,12 +30,19 @@ refreshes it without reloading; disabling preserves its saved preferences.
    These selections are stored independently; Background helpers never supplies
    a default chain. An empty post-processing chain skips the pass.
 
-Descriptions use the standard info tooltips. Append displays the agent's full
-reply as the bubble body, then the processed text under an **Added by
-post-processing** label; copy text carries both in that order. Append skips
-replies shorter than `MIN_APPEND_CHARS` (400) in `api.response_postprocessing`
-(metadata `skipped`/`short`), so a one-liner never gains words the agent did not
-write. The same layout survives chat reload. Replace displays only the
+Descriptions use the standard info tooltips. A reply's leading `<think>` blocks
+(every agent's reasoning rides in its chat reply this way: the kernel adds it via
+`api.agent_harness.reasoning_reply`; headless callers and sub-agent results get the answer alone)
+stay first, collapsed, and are not sent to the processor. Append then displays the agent's full
+reply in a collapsed **Original response** disclosure (expanding it renders the
+original Markdown), then the processed text under an **Added by
+post-processing** label; copy text carries both in that order. Every reply with
+prose is processed — short ones, failed turns, replies carrying cards (the cards
+ride through verbatim; unpaired card markup is kept as a verbatim tail) and
+supervised terminal answers (processed by the supervised orchestrator when it
+persists the canonical bubble). Prose past `MAX_RESPONSE_CHARS` is truncated for
+the model only. Skipped: card-only replies (`no_prose`), Stop/superseded turns
+and system notices (no reply is saved). The same layout survives chat reload. Replace displays only the
 processed reply.
 
 The pass runs after a successful final reply, before saving, notification and
