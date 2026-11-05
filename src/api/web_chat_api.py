@@ -1730,6 +1730,7 @@ def chat_live_status():
         'report_url': live.get('report_url'),
         'query_id': live.get('query_id'),
         'slash_command': live.get('slash_command'),
+        'followup': bool(live.get('followup')),
         # Busy lock OR live status — stream can die while the worker is still going.
         # Deliberately excludes supervised background work (separate field).
         # Cancelled (Stop) wins: refresh must not resurrect the spinner.
@@ -1805,6 +1806,7 @@ def chat_live_status_batch():
             'report_url': live.get('report_url'),
             'query_id': live.get('query_id'),
             'slash_command': live.get('slash_command'),
+            'followup': bool(live.get('followup')),
             'generating': generating,
             'cancelled': cancelled,
             'supervised_task': supervised,

@@ -767,8 +767,10 @@ class ClaudeCliTool:
                 sid = parsed.get("session_id") or stream.session_id or rid or None
                 _persist(sid)
                 errors = list(parsed.get("errors") or [])
-                # The turn (and its status queue) ends here; the run reports on its card.
-                stream.activity.status_queue = None
+                # The turn (and its status queue) ends here. While the run only
+                # waits it reports on its card; while it works (steer answer,
+                # task follow-up) its activity lines are the chat's live status.
+                stream.activity.status_queue = ctl.wait.status_sink()
                 from scripts.utilities.claude_stream import with_thinking
                 answer = with_thinking(stream.thinking_for_results(0, len(st["results"])),
                                        parsed.get("output") or "")
@@ -792,7 +794,7 @@ class ClaudeCliTool:
             ctl.wait.followup(with_thinking(thoughts, parsed.get("output") or ""), usage=parsed.get("usage"),
                               errors=parsed.get("errors"))
             if waits:
-                ctl.wait.progress(_waiting_label(st["bg"]))
+                ctl.wait.waiting(_waiting_label(st["bg"]))
 
         def _on_line(raw: bytes) -> None:
             stream.feed(raw)
@@ -808,14 +810,21 @@ class ClaudeCliTool:
                 return
             if not isinstance(obj, dict):
                 return
+            detached = ctl is not None and ctl.detached
+            if (detached and obj.get("type") in ("assistant", "stream_event")
+                    and not obj.get("parent_tool_use_id")):
+                # Model output while the run was only waiting: it is working
+                # again (a task of several finished, or an event order we did
+                # not anticipate) — show the typing bubble.
+                ctl.wait.working("Claude Code is following up…")
             echoed = _replay_text(obj)
             if echoed is not None:
                 pending = [t for t in st["sent"] if t not in st["echoed"]]
                 if echoed.strip() in (t.strip() for t in pending):
                     st["echoed"].append(next(t for t in pending if t.strip() == echoed.strip()))
                     stream.activity.emit(f"steer received: {' '.join(echoed.split())[:100]}", force=True)
-                    if ctl is not None and ctl.detached:
-                        ctl.wait.progress("Claude Code is answering your message…")
+                    if detached:
+                        ctl.wait.working("Claude Code is answering your message…", force=True)
             elif obj.get("type") == "system" and obj.get("subtype") == "background_tasks_changed":
                 tasks = obj.get("tasks")
                 before = len(st["bg"])
@@ -832,8 +841,8 @@ class ClaudeCliTool:
                         st["wait_timer"] = None
                     st["waiting"] = False
                     stream.activity.emit("background task finished — Claude Code is following up", force=True)
-                    if ctl is not None and ctl.detached:
-                        ctl.wait.progress("Background task finished — Claude Code is following up…")
+                    if detached:
+                        ctl.wait.working("Background task finished — Claude Code is following up…", force=True)
                 elif st["waiting"]:
                     stream.activity.emit(f"waiting on background task: {_task_label(st['bg'])}", force=True)
             elif obj.get("type") == "result" and not obj.get("parent_tool_use_id"):

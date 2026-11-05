@@ -1525,29 +1525,53 @@ body.is-electron .split-group.split-vertical > .split-group {
     .rail-expand-tab::before, .rail-expand-tab svg { transition: none; }
 }
 
-/* Resize handle between panes — always visible so splits are obvious */
+/* Resize handle between panes — a hairline in the nav rail's border colour
+   and thickness (1px var(--rail-border)), so splits read as part of the
+   chrome instead of a bar. A transparent ::before widens the grab area to
+   7px without taking layout space; the accent only shows on a deliberate
+   hover (short delay) or while dragging. Thickness must match
+   SPLIT_HANDLE_PX in app_shell.js. */
 .split-resize-handle {
-    width: 5px;
-    flex: 0 0 5px;
+    position: relative;
+    width: 1px;
+    flex: 0 0 1px;
     flex-shrink: 0;
     align-self: stretch;
-    background: var(--panel-border, #2a2a3e);
+    background: var(--rail-border, #1c2333);
     cursor: col-resize;
-    transition: background 0.15s ease;
-    z-index: 5;
+    transition: background 0.15s ease, box-shadow 0.15s ease;
+    /* Above the neighbour's .icon-rail (z-index 20): the hairline and its
+       grab zone sit on the rail edge and would otherwise lose the hit test. */
+    z-index: 21;
+}
+
+.split-resize-handle::before {
+    content: '';
+    position: absolute;
+    inset: 0 -3px;
 }
 
 .split-container.split-vertical > .split-resize-handle,
 .split-group.split-vertical > .split-resize-handle {
     width: auto;
-    height: 5px;
-    flex: 0 0 5px;
+    height: 1px;
+    flex: 0 0 1px;
     cursor: row-resize;
+}
+
+.split-container.split-vertical > .split-resize-handle::before,
+.split-group.split-vertical > .split-resize-handle::before {
+    inset: -3px 0;
 }
 
 .split-resize-handle:hover,
 .split-resize-handle.dragging {
     background: var(--accent, #4f8cff);
+    box-shadow: 0 0 0 1px var(--accent, #4f8cff);
+}
+
+.split-resize-handle:hover:not(.dragging) {
+    transition-delay: 0.12s;
 }
 
 /* Drag-release below SPLIT_COLLAPSE_PX parks the pane — preview it. */

@@ -2922,6 +2922,31 @@ body.has-video-background .chat-restore-loader {
     background: var(--text-tertiary);
 }
 
+/* Auto-hiding chat scrollbars (chat_scrollbar_autohide.js toggles
+   .is-scrolling while the scroller moves or the pointer is on its edge).
+   Track stays transparent; only the thumb appears. Both the standard
+   properties (Chromium 121+/Firefox — these win over ::-webkit-scrollbar
+   when set) and the WebKit pseudos are covered. */
+.scrollbar-autohide {
+    scrollbar-color: transparent transparent;
+    transition: scrollbar-color 0.25s ease;
+}
+.scrollbar-autohide.is-scrolling {
+    scrollbar-color: var(--border-color) transparent;
+}
+.scrollbar-autohide::-webkit-scrollbar-track {
+    background: transparent;
+}
+.scrollbar-autohide::-webkit-scrollbar-thumb {
+    background: transparent;
+}
+.scrollbar-autohide.is-scrolling::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+}
+.scrollbar-autohide.is-scrolling::-webkit-scrollbar-thumb:hover {
+    background: var(--text-tertiary);
+}
+
 /* Message Styles */
 .message {
     display: flex;

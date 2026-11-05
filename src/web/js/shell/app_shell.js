@@ -1924,7 +1924,7 @@ function setPaneCollapsed(colOrIdx, collapsed, opts) {
 
 
 /** Must match `.split-resize-handle` thickness in app_shell.css */
-const SPLIT_HANDLE_PX = 5;
+const SPLIT_HANDLE_PX = 1;
 
 /** Parse legacy drag-resize flex `0 0 Npx` → N, else null. */
 function parseSplitFlexPx(flex) {

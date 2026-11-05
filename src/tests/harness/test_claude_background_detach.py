@@ -27,15 +27,25 @@ posix_only = pytest.mark.skipif(os.name == "nt", reason="fake CLI script uses a 
 
 @pytest.fixture(autouse=True)
 def _clean_registries():
-    with steer._lock:
-        steer._active.clear()
-    with bw._lock:
-        bw._active.clear()
+    from api import chat_live_status as live
+
+    def _clear():
+        with steer._lock:
+            steer._active.clear()
+        with bw._lock:
+            bw._active.clear()
+        with live._LOCK:
+            live._STORE.clear()
+
+    _clear()
     yield
-    with steer._lock:
-        steer._active.clear()
-    with bw._lock:
-        bw._active.clear()
+    _clear()
+
+
+def _live(chat_id):
+    from api.chat_live_status import get_live_status
+
+    return get_live_status(str(chat_id))
 
 
 # Speaks just enough claude 2.1 stream-json: a first result while one
@@ -85,6 +95,8 @@ elif mode == "steer":
     m = q.get(timeout=15)
     if m is not None:
         out({"type": "user", "isReplay": True, "parent_tool_use_id": None, "message": m["message"]})
+        out({"type": "stream_event", "event": {"type": "message_start", "message": {"id": "m2"}}})
+        time.sleep(1.0)  # working on the answer: the chat shows the typing bubble
         result("saw: %s" % m["message"]["content"])
         time.sleep(0.3)
         bg([])
@@ -242,8 +254,61 @@ def test_message_sent_while_waiting_steers_into_the_live_run(tmp_path, monkeypat
     assert ran == [], "no second claude run may start while the detached run is live"
     assert steered_rows == [{"steered": True, "steered_agent": "claude"}]
     assert chat_delivery.is_busy(6103) is False
+    # While the run answers, every device sees a typing bubble: live status is
+    # active and flagged as a follow-up to the reply already in the transcript.
+    live = _live(6103)
+    assert live["active"] is True and live["followup"] is True
+    assert live["status"] == "Claude Code is answering your message…"
+    assert wait.phase == "working"
     assert _until(lambda: saver.texts() == ["saw: and PINEAPPLE", "CI is green"])
     assert _until(lambda: _status(wait).get("state") == "done")
+    # Both answers landed as bubbles; nothing is generating any more.
+    assert _live(6103)["active"] is False
+    assert not _live(6103).get("followup")
+    assert wait.phase == "waiting"
+
+
+def test_detached_run_phases_drive_live_status_and_the_card():
+    """Waiting → card label only; working → live status (typing bubble); follow-up clears it."""
+    from api.chat_live_status import set_live_status
+
+    wait = bw.BackgroundWait("6109", "claude")
+    wait.start(["render frames"], pid=None)
+    sink = wait.status_sink()
+    assert wait.phase == "waiting"
+    assert _status(wait)["label"] == "Waiting on: render frames"
+    # Heartbeats and tool lines while only the background task runs stay off the chat.
+    sink.put(("status", "Claude Code working… 30s (waiting on background task)"))
+    assert _live(6109)["active"] is False
+    # A finished task (or a steer) puts the run to work: the line shows, flagged follow-up.
+    wait.working("Background task finished — Claude Code is following up…")
+    live = _live(6109)
+    assert live["active"] is True and live["followup"] is True
+    assert live["status"] == "Background task finished — Claude Code is following up…"
+    sink.put(("status", "tool 1: Bash blender --background"))
+    assert _live(6109)["status"] == "tool 1: Bash blender --background"
+    # Idempotent while working; an explicit event replaces the line.
+    wait.working("ignored")
+    assert _live(6109)["status"] == "tool 1: Bash blender --background"
+    wait.working("Claude Code is answering your message…", force=True)
+    assert _live(6109)["status"] == "Claude Code is answering your message…"
+    # The answer is saved first, then live status clears (poll on idle finds the row).
+    saver = _Saver()
+    wait.bind(saver, {})
+    wait.followup("frames rendered")
+    assert saver.texts() == ["frames rendered"]
+    assert _live(6109)["active"] is False and wait.phase == "waiting"
+    # Back to waiting on the remaining task: card label, no live status.
+    wait.waiting("Waiting on: encode video")
+    assert _status(wait)["label"] == "Waiting on: encode video"
+    assert _live(6109)["active"] is False
+    # A newer real turn's status is never cleared by the detached run.
+    wait.working("tool 2: Read", force=True)
+    set_live_status("6109", "Cursor working…", turn=7)
+    wait.finish("done", "Background work finished")
+    assert _live(6109)["status"] == "Cursor working…" and _live(6109)["followup"] is False
+    assert _status(wait)["state"] == "done"
+    assert bw.detached_wait(6109) is None
 
 
 def test_stream_lane_steers_into_detached_wait_without_running(monkeypatch):

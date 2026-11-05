@@ -7992,9 +7992,12 @@
         // live-status is fetched in parallel with messages; a reply can already be
         // in history while that snapshot still says active. Prefer the transcript.
         const liveActiveRaw = remoteLiveStatusLooksActive(liveStatus);
-        const liveActive = liveActiveRaw
-            && !thisTurnHasAssistantReply(messages)
-            && !turnAlreadyShowsAssistantReply();
+        // A follow-up (detached run answering a steer / finishing background
+        // work) lands as a new bubble: the existing reply does not end it.
+        const liveActive = liveActiveRaw && (
+            CuttleChatActivity.liveStatusIsFollowup(liveStatus)
+            || (!thisTurnHasAssistantReply(messages) && !turnAlreadyShowsAssistantReply())
+        );
         const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
         const wasGeneratingUi = !!document.getElementById('typing-indicator-remote')
             || (session.current() != null
@@ -12366,6 +12369,7 @@
         storage: () => window.localStorage, inputId: 'chatInput', wrapSelector: '#chatComposerWrap',
         grow: 'up', storageKey: CuttleChatComposerResize.CHAT_STORAGE_KEY });
     function autoResizeTextarea() { chatComposerResize.fit(); }
+    CuttleChatScrollbarAutohide.create({ doc: document, win: window });
     
     // Utility Functions
     function escapeHtml(text) {

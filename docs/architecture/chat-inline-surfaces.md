@@ -7,7 +7,7 @@ do not hand-roll a fourth look.
 | Family | Use when | Owner | Saved? |
 |---|---|---|---|
 | **Timeline notice** | A fact happened: project / worktree / checkout changed, Stopped generating, model changed, context compacted. One line, centered. | `src/web/js/chat/chat_timeline_notice.js` (`CuttleChatTimelineNotice`), page call site `addSystemMessage(spec, opts)` | Yes, `role=system` row with readable `content` + `metadata.timeline_notice` |
-| **Live status card** | Work is still running for this chat with no turn generating: detached Claude waits, watch jobs, supervision schedules, leftover processes. Pinned last, updates in place, has actions (Open / Details / Stop). | `src/web/js/chat/chat_background_work.js` (`CuttleChatBackgroundWork`) | No, it is derived from live status |
+| **Live status card** | Work is still running for this chat with no turn generating: detached Claude waits, watch jobs, supervision schedules, leftover processes. Pinned last, updates in place, has actions (Open / Details / Stop). While a detached run is actually *working* (answering a steer, following up on a finished task) it publishes live status flagged `followup`, so the ordinary typing bubble takes over and the card hides until the run is only waiting again. | `src/web/js/chat/chat_background_work.js` (`CuttleChatBackgroundWork`) | No, it is derived from live status |
 | **Action card** | The agent asks, confirms, watches or reports inside its reply (`<cuttle_action_form>`). | `chat_action_forms.js` (pure) + `chat_action_cards.js` (effects); runbook `.cuttle_global/docs/action-forms.md` | Part of the assistant message |
 
 Sub-agent fleet cards (`chat_subagent_fleet.js`) and supervised activity rows
