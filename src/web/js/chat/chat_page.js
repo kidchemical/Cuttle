@@ -6967,15 +6967,9 @@
         }
     }
     
-    function autoResizeWelcomeTextarea() {
-        const textarea = document.getElementById('welcomeChatInput');
-        if (textarea) {
-            textarea.style.height = 'auto';
-            const next = Math.min(textarea.scrollHeight, 168);
-            textarea.style.height = next + 'px';
-            textarea.style.overflowY = textarea.scrollHeight > 168 ? 'auto' : 'hidden';
-        }
-    }
+    const welcomeComposerResize = CuttleChatComposerResize.create({ doc: document, win: window,
+        storage: () => window.localStorage, inputId: 'welcomeChatInput', wrapSelector: '.welcome-composer-wrap' });
+    function autoResizeWelcomeTextarea() { welcomeComposerResize.fit(); }
     
     // ── Deep-link restore (?chat=) ─────────────────────────────
     // chat_page.html raises data-chat-restoring and kicks off the transcript
@@ -12368,15 +12362,10 @@
         window.CuttleEmoticons.applyToTextarea(textarea);
     }
 
-    function autoResizeTextarea() {
-        const textarea = document.getElementById('chatInput');
-        if (textarea) {
-            textarea.style.height = 'auto';
-            const next = Math.min(textarea.scrollHeight, 168);
-            textarea.style.height = next + 'px';
-            textarea.style.overflowY = textarea.scrollHeight > 168 ? 'auto' : 'hidden';
-        }
-    }
+    const chatComposerResize = CuttleChatComposerResize.create({ doc: document, win: window,
+        storage: () => window.localStorage, inputId: 'chatInput', wrapSelector: '#chatComposerWrap',
+        grow: 'up', storageKey: CuttleChatComposerResize.CHAT_STORAGE_KEY });
+    function autoResizeTextarea() { chatComposerResize.fit(); }
     
     // Utility Functions
     function escapeHtml(text) {
@@ -12558,7 +12547,7 @@
                 saveComposerDraft(session.current() || 'new');
             });
             wireComposerEmoticons(chatInput);
-            chatInput.style.height = 'auto';
+            autoResizeTextarea();
             LOG('DOMContentLoaded: chat input keydown listener attached');
         } else {
             LOG_ERR('DOMContentLoaded: chatInput not found');

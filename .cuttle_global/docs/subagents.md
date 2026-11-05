@@ -127,7 +127,10 @@ become one card per child — name/avatar, harness · model · effort, outcome
 (`queued` / `running` / `done` / `failed` / `cancelled` / `lost` = host process
 died) and a one-line plain-text result (full text in the tooltip). Outcome comes
 from the child row, never inferred; history reload refreshes cards from it.
-Click opens the child chat.
+Click opens the child chat. A follow-up round (`python -m api.subagents message`)
+gets its own card on the parent's next saved reply, and the earlier bubble's
+card is frozen at the previous round's outcome (`frozen: true`, never
+re-hydrated).
 
 Running fleet cards show the harness's latest status (reading files, running
 commands/tests, writing, etc.) rather than a fixed "Working…". The child CLI

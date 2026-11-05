@@ -68,6 +68,7 @@ CHAT_OWNERS = (
     ("chat_background_work.js", "CuttleChatBackgroundWork", "CuttleChatBackgroundWork.create("),
     ("chat_timeline_notice.js", "CuttleChatTimelineNotice", "CuttleChatTimelineNotice.create("),
     ("chat_composer_lock.js", "CuttleChatComposerLock", "CuttleChatComposerLock.create("),
+    ("chat_composer_resize.js", "CuttleChatComposerResize", "CuttleChatComposerResize.create("),
     ("chat_export.js", "CuttleChatExport", "CuttleChatExport.create("),
     ("chat_session_menu.js", "CuttleChatSessionMenu", "CuttleChatSessionMenu.create("),
 )

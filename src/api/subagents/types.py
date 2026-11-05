@@ -127,6 +127,11 @@ class ChildRecord:
     live_status_at: str = ""
     live_turn_id: str = ""
     stop_requested_at: Optional[float] = None
+    # Fleet card rounds: the parent bubble showing this child's live card
+    # (None → the batch's attach bubble), and whether a follow-up round is
+    # waiting for the parent's next saved reply to mint its card.
+    card_message_id: Optional[int] = None
+    card_pending: bool = False
 
     def handle(self) -> str:
         return chat_handle(self.session_id)

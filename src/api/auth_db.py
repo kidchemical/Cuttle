@@ -296,6 +296,10 @@ class AuthDatabase:
             # child. Only the process running the child turn can kill its CLI
             # (api.subagents.stop_watch polls this column there).
             'ALTER TABLE subagent_children ADD COLUMN stop_requested_at REAL',
+            # Fleet card rounds (api.subagents.fleet): a follow-up round mints a
+            # new card on the parent's next reply and freezes the previous one.
+            'ALTER TABLE subagent_children ADD COLUMN card_message_id INTEGER',
+            'ALTER TABLE subagent_children ADD COLUMN card_pending INTEGER',
         ):
             try:
                 cursor.execute(col_sql)

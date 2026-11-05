@@ -30,6 +30,7 @@ from api.subagents.types import (
     TERMINAL_BATCH,
     TERMINAL_CHILD,
     BatchRecord,
+    ChildRecord,
     ChildSpec,
     chat_handle,
     normalize_collect,
@@ -568,6 +569,7 @@ def message_child(
         )
     if child.status == STATUS_CANCELLED:
         raise SubagentError("that sub-agent was cancelled")
+    _start_card_round(db, child)
     # This process runs the turn below, so record it as the owner now: a host
     # death between here and the turn start must not leave an ownerless
     # pending row nobody can reconcile.
@@ -713,9 +715,51 @@ def attach_batches_to_assistant_meta(
             launchers.append(pub)
         if batch.id and "subagent_batch_id" not in out:
             out["subagent_batch_id"] = batch.id
+    # Follow-up rounds sent to existing children since the last reply.
+    pending = store.pending_card_children(db, int(parent_session_id))
+    for child in pending:
+        pub = card(child)
+        key = str(pub.get("handle") or pub.get("session_id"))
+        if key in seen:
+            continue
+        seen.add(key)
+        launchers.append(pub)
+    if message_id is not None:
+        for child in pending:
+            store.set_card_round(db, child.id, message_id=int(message_id), pending=False)
     if launchers:
         out["subagents"] = launchers
     return out
+
+
+def _start_card_round(db, child: ChildRecord) -> None:
+    """A follow-up is a new round: freeze the old card, mint a new one later.
+
+    The bubble that showed the previous round keeps that round's outcome
+    (snapshot marked ``frozen``; history hydration leaves it alone), and the
+    parent's next saved reply gets a fresh live card for this round.
+    """
+    from api.subagents import fleet
+
+    if not fleet.fleet_enabled() or child.card_pending:
+        return
+    bubble = store.card_bubble_id(db, child)
+    if not bubble:
+        return  # never shown yet: the batch's first bubble will carry it
+    try:
+        row = db.get_message_by_id(bubble) or {}
+        meta = json.loads(row.get("metadata") or "{}") if isinstance(row.get("metadata"), str) else dict(row.get("metadata") or {})
+        cards = meta.get("subagents")
+        if isinstance(cards, list):
+            snap = dict(fleet.fleet_entry(child), frozen=True)
+            meta["subagents"] = [
+                snap if isinstance(e, dict) and str(e.get("id") or "") == child.id and not e.get("frozen") else e
+                for e in cards
+            ]
+            db.update_message_content(bubble, str(row.get("content") or ""), metadata=meta)
+    except Exception as exc:
+        print(f"[SUBAGENTS] freeze fleet card failed: {exc}", flush=True)
+    store.set_card_round(db, child.id, pending=True)
 
 
 def on_session_cancelled(session_id: Any) -> None:
@@ -799,7 +843,7 @@ def hydrate_parent_fleet(db, messages: List[Dict[str, Any]]) -> None:
         meta = dict(meta)
         meta["subagents"] = [
             fleet.fleet_entry(children[str(e.get("id"))])
-            if isinstance(e, dict) and children.get(str(e.get("id") or "")) else e
+            if isinstance(e, dict) and not e.get("frozen") and children.get(str(e.get("id") or "")) else e
             for e in meta["subagents"]
         ]
         msg["metadata"] = meta
