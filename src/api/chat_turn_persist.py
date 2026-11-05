@@ -232,7 +232,7 @@ def make_assistant_saver(
             try:
                 from api.agent_harness.background_wait import bind_saver
 
-                bind_saver(nonlocal_res['background_job'], on_save, nonlocal_res)
+                bind_saver(nonlocal_res['background_job'], save_follow_up, nonlocal_res)
             except Exception as _bw:
                 print(f"[CHAT] background wait bind failed: {_bw}", flush=True)
         try:
@@ -247,5 +247,18 @@ def make_assistant_saver(
             _achievements.on_turn_saved(chat_session_id, nonlocal_res)
         except Exception:
             pass
+
+    def save_follow_up(res):
+        # A detached run's later answer is a reply of its own: post-process it
+        # like the first one (which ran in the turn workflow) before saving.
+        if isinstance(res, dict):
+            try:
+                from api.chat_run_registry import is_run_cancelled
+                from api.response_postprocessing import process_result
+
+                process_result(res, cancelled=lambda: is_run_cancelled(chat_session_id))
+            except Exception as _pp:
+                print(f"[CHAT] follow-up post-processing failed: {_pp}", flush=True)
+        on_save(res)
 
     return on_save

@@ -48,6 +48,7 @@ DETACHABLE_AGENTS = ("claude",)
 _PER_BUBBLE = frozenset({
     "response", "output", "usage", "cost", "success", "type", "error", "steered",
     "background_job", "drift_warning", "meta_command", "undelivered_steers",
+    "postprocessing",
 })
 _FINISHED_TTL_SEC = 3600.0
 

@@ -231,6 +231,42 @@ def test_saver_binds_follow_ups_and_persists_each_as_its_own_row(tmp_path, monke
 
 
 @posix_only
+def test_follow_up_bubble_is_post_processed_on_its_own(tmp_path, monkeypatch):
+    """A follow-up runs post-processing on its own text; it never inherits the first reply's."""
+    from api import response_postprocessing
+    from api.chat_turn_persist import make_assistant_saver
+
+    rows, seen = [], []
+
+    def fake_process(result, **_kw):
+        seen.append(dict(result))
+        if not result.get("postprocessing"):
+            result["response"] = "TL;DR " + result["response"]
+            result["postprocessing"] = {"status": "completed", "original_response": "own"}
+
+    monkeypatch.setattr(response_postprocessing, "process_result", fake_process)
+
+    class _DB:
+        def add_message(self, sid, role, content, metadata=None):
+            rows.append((content, metadata))
+            return len(rows)
+
+    res, wait, _ = _start(tmp_path, monkeypatch, "finishes", 6120)
+    saver = make_assistant_saver(
+        chat_session_id=6120, db=_DB(), request_data={}, resolve_project=lambda _d: str(tmp_path),
+        assistant_meta_fn=lambda r: {}, project_merge_fn=lambda m, *a: m,
+        schedule_autoname=lambda *_a: None, project_root=tmp_path,
+    )
+    saver({"success": True, "response": res["output"], "type": "claude_command", "agent_id": "claude",
+           "background_job": res["background_job"],
+           "postprocessing": {"status": "completed", "original_response": "first"}})
+    assert _until(lambda: len(rows) == 2)
+    assert "postprocessing" not in seen[-1]
+    assert rows[1][0] == "TL;DR CI is green"
+    assert rows[1][1]["postprocessing"]["original_response"] == "own"
+
+
+@posix_only
 def test_message_sent_while_waiting_steers_into_the_live_run(tmp_path, monkeypatch):
     from api import chat_delivery
     from api.chat_coordinator import AgentSelection, AgentTurnIO, PreparedAgentTurn, submit_agent_turn

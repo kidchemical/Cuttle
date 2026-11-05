@@ -1878,6 +1878,12 @@ if (typeof document !== 'undefined') {
  * Options: { quiet: true } applies class/flex/state only (layout restore —
  * the caller owns redistribute + persist).
  */
+/** A layout with every pane parked shows only restore strips: open the first. */
+function ensureOpenSplitPane() {
+    const cols = getSplitColumns();
+    if (cols.length && cols.every(isPaneCollapsedEl)) setPaneCollapsed(cols[0], false, { quiet: true });
+}
+
 function setPaneCollapsed(colOrIdx, collapsed, opts) {
     const col = (typeof colOrIdx === 'number' || typeof colOrIdx === 'string')
         ? getColumnEl(parseInt(colOrIdx, 10))
@@ -2187,7 +2193,11 @@ function mountLayoutTree(node, parentEl, opts) {
         }
         if (col && node.flex) col.style.flex = node.flex;
         if (col) rail.restoreCollapsed(col, node);
-        if (col && node.collapsed) setPaneCollapsed(col, true, { quiet: true, restoreEdge: node.restoreEdge });
+        // Reused column 0 keeps the previous layout's parked state: sync it
+        // both ways or a parked pane leaks into the next space's layout.
+        if (col && (node.collapsed || isPaneCollapsedEl(col))) {
+            setPaneCollapsed(col, !!node.collapsed, { quiet: true, restoreEdge: node.restoreEdge });
+        }
         return;
     }
 
@@ -2320,6 +2330,7 @@ function restoreSplitLayout() {
             }
         };
         applyFlexWalk(layout.root, splitContainer);
+        ensureOpenSplitPane();
         // Parked panes change which dividers are restore affordances.
         rebuildSplitResizeHandles();
         // Drop empty nested groups that would show as blank blade-less regions.
@@ -2397,6 +2408,7 @@ function applyWorkspaceColumns(columns, orientation, root, opts = {}) {
         });
         getSplitColumns().forEach((c) => { delete c.dataset.layoutMounted; });
         remumberSplitColumns();
+        ensureOpenSplitPane();
         sanitizeSplitDom();
     } finally {
         _restoringLayout = false;
