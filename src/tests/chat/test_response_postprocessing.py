@@ -209,3 +209,23 @@ def test_stop_during_processing_cannot_save_or_notify(settings, monkeypatch, str
         workflow.run_agent_sync_turn(sid, delivery=delivery, persist_user=lambda: None,
             run=lambda: {'success': True, 'response': 'Original'}, after_run=saved.append)
     assert saved == []
+
+
+@pytest.mark.parametrize('trigger,text,runs', [
+    ({'unit': 'words', 'min': 3}, 'one two three', False),
+    ({'unit': 'words', 'min': 3}, 'one two three four', True),
+    ({'unit': 'chars', 'min': 5}, 'abcde', False),
+    ({'unit': 'chars', 'min': 5}, 'abcdef', True),
+    # Reasoning and cards do not count toward the trigger.
+    ({'unit': 'words', 'min': 2}, '<think>a b c d e</think>hi <cuttle_action_form>{"t": 1}</cuttle_action_form>', False),
+])
+def test_length_trigger_gates_the_pass(settings, monkeypatch, trigger, text, runs):
+    settings.set_setting('response_postprocessing', {**cp.processor_preferences(), 'trigger': trigger})
+    seen = []
+    monkeypatch.setattr(bg, 'generate', lambda t, req, **kw: seen.append(req.user) or TextResult('TLDR'))
+    body = {'success': True, 'response': text}
+    pp.process_result(body)
+    assert bool(seen) is runs
+    if not runs:
+        assert body['response'] == text
+        assert body['postprocessing'] == {'status': 'skipped', 'reason': 'below_trigger'}

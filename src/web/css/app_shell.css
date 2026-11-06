@@ -1662,56 +1662,18 @@ body.is-electron .split-group.split-vertical > .split-group {
     color: #fff;
 }
 
-/* Divider touching a parked pane: wider, clickable restore affordance with
-   a chevron pointing where the pane will grow (expansion direction). */
+/* Divider touching a parked pane: the same 1px hairline as an ordinary
+   divider. Clicking the parked strip restores the pane; this line keeps the
+   wider transparent grab zone so dragging it restores at a chosen width. */
 .split-resize-handle.pane-expand {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--panel-border, #2a2a3e);
     cursor: pointer;
 }
-.split-horizontal > .split-resize-handle.pane-expand,
-.split-container.split-horizontal > .split-resize-handle.pane-expand {
-    width: 11px;
-    flex-basis: 11px;
+.split-resize-handle.pane-expand::before {
+    inset: 0 -6px;
 }
-.split-vertical > .split-resize-handle.pane-expand,
-.split-container.split-vertical > .split-resize-handle.pane-expand {
-    height: 11px;
-    flex-basis: 11px;
-}
-.split-resize-handle.pane-expand::after {
-    content: '›';
-    font-size: 11px;
-    line-height: 1;
-    color: var(--panel-dim, #606070);
-}
-.split-resize-handle.pane-expand[data-expand-dir='right']::after {
-    content: '›';
-}
-.split-resize-handle.pane-expand[data-expand-dir='left']::after {
-    content: '‹';
-}
-.split-resize-handle.pane-expand[data-expand-dir='down']::after {
-    content: 'ˇ';
-}
-.split-resize-handle.pane-expand[data-expand-dir='up']::after {
-    content: 'ˆ';
-}
-.split-resize-handle.pane-expand[data-expand-dir='both']::after {
-    content: '‹›';
-    font-size: 9px;
-}
-.split-vertical > .split-resize-handle.pane-expand[data-expand-dir='both']::after,
-.split-container.split-vertical > .split-resize-handle.pane-expand[data-expand-dir='both']::after {
-    content: 'ˆˇ';
-}
-.split-resize-handle.pane-expand:hover {
-    background: var(--accent, #4f8cff);
-}
-.split-resize-handle.pane-expand:hover::after {
-    color: #fff;
+.split-vertical > .split-resize-handle.pane-expand::before,
+.split-container.split-vertical > .split-resize-handle.pane-expand::before {
+    inset: -6px 0;
 }
 
 /* Stacked panes use the same strip with a horizontal title. */

@@ -9,7 +9,7 @@ import logging
 import json
 import re
 
-from api.chat_preferences import processor_preferences
+from api.chat_preferences import processor_preferences, trigger_met
 
 _LOG = logging.getLogger(__name__)
 _CONTROL = re.compile(r'<\s*/?\s*cuttle_[\w-]+\b', re.I)
@@ -75,6 +75,10 @@ def _process_result(result, *, cancelled, status):
     prose = prose[lead.end():].strip() if lead else prose
     if not prose:
         result['postprocessing'] = {'status': 'skipped', 'reason': 'no_prose'}
+        return
+    # Length trigger (Settings): short replies below it are left untouched.
+    if not trigger_met(prefs['trigger'], prose):
+        result['postprocessing'] = {'status': 'skipped', 'reason': 'below_trigger'}
         return
     source = prose if len(prose) <= MAX_RESPONSE_CHARS else (
         prose[:MAX_RESPONSE_CHARS] + '\n\n[… response truncated for post-processing …]')

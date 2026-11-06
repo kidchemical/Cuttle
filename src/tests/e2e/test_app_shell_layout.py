@@ -749,11 +749,11 @@ def test_collapsed_pane_parks_to_strip_and_restores(browser, static_server):
         assert state["expandHandle"], state      # divider restore affordance
         assert 24 <= state["colWidth"] <= 32, state  # slim strip
         assert _saved_leaf_collapsed(page, "L1") is True
-        # Parked-left divider chevron points where the pane grows (right).
-        chevron = page.locator(
-            "#splitContainer > .split-resize-handle.pane-expand").evaluate(
-            "el => getComputedStyle(el, '::after').content")
-        assert chevron == '"›"', chevron
+        # Parked-left divider records where the pane grows (right).
+        grow = page.locator(
+            "#splitContainer > .split-resize-handle.pane-expand"
+        ).get_attribute("data-expand-dir")
+        assert grow == "right", grow
         # Park survives a full reload through the restore path.
         page.reload(wait_until="domcontentloaded")
         page.wait_for_function(

@@ -114,6 +114,22 @@
                     const option = el('option', text); option.value = value; mode.appendChild(option);
                 });
                 mode.value = data.preferences.mode; modeLabel.appendChild(mode);
+                const trigger = data.preferences.trigger || {unit: 'words', min: 0};
+                const triggerRow = el('div', '', 'postprocessing-trigger');
+                const triggerTitle = el('div', '', 'setting-label');
+                triggerTitle.append(el('strong', 'Trigger'), info('post-processing trigger',
+                    'Only process replies longer than this. Counts the reply prose (not reasoning or interactive cards). 0 processes every reply.'));
+                const triggerUnit = el('select', '', 'setting-input');
+                triggerUnit.setAttribute('aria-label', 'Post-processing trigger unit');
+                [['words', 'Word count'], ['chars', 'Character count']].forEach(([value, text]) => {
+                    const option = el('option', text); option.value = value; triggerUnit.appendChild(option);
+                });
+                triggerUnit.value = trigger.unit;
+                const triggerMin = el('input', '', 'setting-input');
+                triggerMin.type = 'number'; triggerMin.min = '0'; triggerMin.max = '1000000'; triggerMin.step = '1';
+                triggerMin.required = true; triggerMin.value = String(trigger.min);
+                triggerMin.setAttribute('aria-label', 'Post-processing trigger minimum');
+                triggerRow.append(triggerTitle, triggerUnit, el('span', 'greater than'), triggerMin);
                 const executor = el('div', '', 'postprocessing-executors');
                 const executorTitle = el('div', '', 'setting-label');
                 executorTitle.append(el('strong', 'Executor'), info('post-processing executor',
@@ -128,7 +144,7 @@
                     elements.backgroundInheritance, elements.backgroundStatus);
                 const button = el('button', 'Save post-processing', 'control-button'); button.type = 'submit';
                 const status = el('div', '', 'setting-description'); status.setAttribute('role', 'status');
-                form.append(activeRow, label, modeLabel, executor, button, status);
+                form.append(activeRow, label, modeLabel, triggerRow, executor, button, status);
                 container.appendChild(form);
                 const editor = root.CuttleBackgroundHelpers.create({document: doc, fetch, notify,
                     endpoint: '/api/settings/response-postprocessing', elements, standalone: true});
@@ -136,12 +152,15 @@
                 form.addEventListener('submit', async event => {
                     event.preventDefault();
                     let chain;
+                    const min = Number(triggerMin.value);
+                    if (!Number.isInteger(min) || min < 0) { status.textContent = 'Trigger must be a whole number, 0 or more.'; return; }
                     try { chain = editor.value().chain; }
                     catch (error) { status.textContent = error.message; return; }
-                    const controls = [button, active, prompt, mode, ...executor.querySelectorAll('input, select, button')];
+                    const controls = [button, active, prompt, mode, triggerUnit, triggerMin, ...executor.querySelectorAll('input, select, button')];
                     const disabled = controls.map(n => n.disabled); controls.forEach(n => { n.disabled = true; });
                     try {
-                        const saved = await request('/api/settings/response-postprocessing', {enabled: active.checked, prompt: prompt.value, mode: mode.value, chain});
+                        const saved = await request('/api/settings/response-postprocessing', {enabled: active.checked, prompt: prompt.value, mode: mode.value, chain,
+                            trigger: {unit: triggerUnit.value, min}});
                         if (!container.contains(form)) return;
                         if (saved.available !== true) { hide(); return; }
                         status.textContent = 'Post-processing saved for subsequent replies.';

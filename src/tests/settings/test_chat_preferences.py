@@ -118,3 +118,17 @@ def test_processor_model_discovery_is_owner_only_and_flag_gated(settings, monkey
     monkeypatch.setenv('CUTTLE_EXPERIMENTAL', '0')
     assert client.get(path, environ_base=LAN).status_code == 403
     assert len(calls) == 1
+
+
+def test_processor_trigger_defaults_saves_and_validates(settings):
+    assert cp.processor_preferences()['trigger'] == {'unit': 'words', 'min': 0}
+    base = {'enabled': True, 'prompt': 'TLDR', 'mode': 'append'}
+    cp.save_processor({**base, 'trigger': {'unit': 'chars', 'min': 400}})
+    assert cp.processor_preferences()['trigger'] == {'unit': 'chars', 'min': 400}
+    cp.save_processor(base)  # omitted trigger keeps the saved one
+    assert cp.processor_preferences()['trigger'] == {'unit': 'chars', 'min': 400}
+    for bad in [{'unit': 'lines', 'min': 1}, {'unit': 'words', 'min': -1},
+                {'unit': 'words', 'min': 1.5}, {'unit': 'words', 'min': True}, 'x']:
+        with pytest.raises(ValueError):
+            cp.save_processor({**base, 'trigger': bad})
+    assert cp.processor_preferences()['trigger'] == {'unit': 'chars', 'min': 400}

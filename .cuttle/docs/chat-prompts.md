@@ -29,6 +29,10 @@ refreshes it without reloading; disabling preserves its saved preferences.
    CLI, model, effort and optional fallback executors. Save post-processing.
    These selections are stored independently; Background helpers never supplies
    a default chain. An empty post-processing chain skips the pass.
+4. **Trigger** (same section): process only replies whose prose is longer than
+   N words or characters (`trigger: {unit: words|chars, min: N}`). Counted on
+   the prose sent to the processor (no `<think>` blocks or cards). `0` (default)
+   processes every reply; replies at or under it are skipped (`below_trigger`).
 
 Descriptions use the standard info tooltips. A reply's leading `<think>` blocks
 (every agent's reasoning rides in its chat reply this way: the kernel adds it via
@@ -37,7 +41,7 @@ stay first, collapsed, and are not sent to the processor. Append then displays t
 reply in a collapsed **Original response** disclosure (expanding it renders the
 original Markdown), then the processed text under an **Added by
 post-processing** label; copy text carries both in that order. Every reply with
-prose is processed — short ones, failed turns, replies carrying cards (the cards
+prose above the trigger is processed — failed turns, replies carrying cards (the cards
 ride through verbatim; unpaired card markup is kept as a verbatim tail) and
 supervised terminal answers (processed by the supervised orchestrator when it
 persists the canonical bubble). Prose past `MAX_RESPONSE_CHARS` is truncated for
@@ -69,7 +73,7 @@ Settings keys: `chat_prompts` and `response_postprocessing` (including its own
 `chain`). Legacy background task entries remain stored but never control this
 pass. Routes:
 `GET/POST /api/settings/chat-prompts` (partial global/agent patches),
-`GET/POST /api/settings/response-postprocessing` (enabled/prompt/mode/chain),
+`GET/POST /api/settings/response-postprocessing` (enabled/prompt/mode/chain/trigger),
 `GET /api/settings/response-postprocessing/<kind>/<target>/models` (owner-only,
 flag-gated shared executor discovery).
 Reads require authentication; writes require owner access.

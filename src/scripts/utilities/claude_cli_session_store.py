@@ -270,22 +270,29 @@ def claude_transcript_stats(claude_session_id: Optional[str]) -> Dict[str, int]:
     * ``context_tokens``: last assistant call's input + cache read + cache
       write — the real window occupancy. ``--output-format json`` only reports
       turn-aggregate usage, whose ``input_tokens`` excludes cached tokens.
+      When the newest row is a compact boundary (no model call since), it is
+      the boundary's ``postTokens`` instead — the pre-compact call is stale.
 
     Zeros when the transcript cannot be found.
     """
     out = {"compactions": 0, "context_tokens": 0}
     for path in _transcript_paths(claude_session_id):
         last_usage: Optional[bytes] = None
+        post_compact = 0
         try:
             with open(path, "rb") as f:
                 for line in f:
                     if _COMPACT_BOUNDARY in line:
                         out["compactions"] += 1
+                        last_usage = None
+                        post_compact = _post_compact_tokens(line)
                     elif b'"type":"assistant"' in line and b'"usage"' in line:
                         last_usage = line
         except OSError:
             continue
         if last_usage is None:
+            if post_compact > 0:
+                out["context_tokens"] = post_compact
             continue
         try:
             usage = (json.loads(last_usage).get("message") or {}).get("usage") or {}
@@ -302,6 +309,15 @@ def claude_transcript_stats(claude_session_id: Optional[str]) -> Dict[str, int]:
         if fill > 0:
             out["context_tokens"] = fill
     return out
+
+
+def _post_compact_tokens(line: bytes) -> int:
+    """``compactMetadata.postTokens`` of a compact boundary row (0 if absent)."""
+    try:
+        meta = json.loads(line).get("compactMetadata") or {}
+        return max(0, int(meta.get("postTokens") or 0))
+    except (ValueError, TypeError, AttributeError):
+        return 0
 
 
 def count_compact_boundaries(claude_session_id: Optional[str]) -> int:

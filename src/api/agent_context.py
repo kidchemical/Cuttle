@@ -744,7 +744,10 @@ def get_agent_context_status(
                 resume_id, _ = resolved
             snap = load_claude_context_snapshot(chat_session_id)
             if isinstance(snap, dict) and int(snap.get("context_tokens") or 0) > 0:
-                if token_source == "aggregated" or tokens <= 0:
+                post_compact = bool(snap.get("compacted")) and (
+                    not snap.get("session_id") or snap.get("session_id") == resume_id
+                )
+                if post_compact or token_source == "aggregated" or tokens <= 0:
                     tokens = int(snap["context_tokens"])
                     token_source = "snapshot"
                 win = int(snap.get("model_context_window") or 0)
@@ -1068,6 +1071,10 @@ def _compact_claude(cwd: str, resume_id: str, chat_session_id: Any = None) -> Di
     """Claude Code compact via ``claude -p --resume … "/compact"``."""
     import asyncio
 
+    from scripts.utilities.claude_cli_session_store import (
+        claude_transcript_stats,
+        save_claude_context_snapshot,
+    )
     from scripts.utilities.claude_cli_tool import ClaudeCliTool, claude_executable
 
     if not claude_executable():
@@ -1078,6 +1085,29 @@ def _compact_claude(cwd: str, resume_id: str, chat_session_id: Any = None) -> Di
             "error": "Claude Code CLI not found",
             "session_id": resume_id,
         }
+    # A live CLI (running turn or detached background wait) holds the whole
+    # conversation in memory: a second ``--resume`` writes a compact boundary
+    # it never reads, and its next call still sends the full window
+    # (CH-002006: compacted 877k → 13k on disk, live run kept 876k).
+    try:
+        from api.chat_run_registry import has_live_process
+
+        live = chat_session_id is not None and has_live_process(chat_session_id)
+    except Exception:
+        live = False
+    if live:
+        return {
+            "success": False,
+            "agent_id": "claude",
+            "method": "compact",
+            "error": (
+                "Claude Code is still running in this chat (a turn or a "
+                "background wait), and that live process keeps its full "
+                "context. Wait for it to finish or press Stop, then compact."
+            ),
+            "session_id": resume_id,
+        }
+    compacts_before = claude_transcript_stats(resume_id)["compactions"]
 
     async def _run() -> Dict[str, Any]:
         tool = ClaudeCliTool()
@@ -1103,7 +1133,12 @@ def _compact_claude(cwd: str, resume_id: str, chat_session_id: Any = None) -> Di
         }
     ok = bool(raw.get("success"))
     out = str(raw.get("output") or raw.get("error") or "").strip()
-    return {
+    stats = claude_transcript_stats(resume_id)
+    if ok and stats["compactions"] <= compacts_before:
+        ok = False
+        out = out or "Claude Code did not write a compact boundary."
+        out = f"Claude /compact made no change: {out}"
+    result = {
         "success": ok,
         "agent_id": "claude",
         "method": "compact",
@@ -1112,6 +1147,21 @@ def _compact_claude(cwd: str, resume_id: str, chat_session_id: Any = None) -> Di
         "session_id": resume_id,
         "usage": raw.get("usage") if isinstance(raw.get("usage"), dict) else None,
     }
+    used = int(stats.get("context_tokens") or 0)
+    if ok and used > 0:
+        # The last bubble still carries the pre-compact fill; this snapshot
+        # wins in the gauge until the next turn stamps a fresh one.
+        save_claude_context_snapshot(
+            chat_session_id,
+            {
+                "context_tokens": used,
+                "ts": time.time(),
+                "session_id": resume_id,
+                "compacted": True,
+            },
+        )
+        result["token_usage"] = {"context_tokens": used, "prompt_tokens": used}
+    return result
 
 
 def compact_agent_context(

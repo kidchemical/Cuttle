@@ -97,6 +97,10 @@ Estimated costs retain `cost_estimated` through the kernel and show `~$`.
 **Claude Code:** native `claude -p --output-format stream-json --verbose
 --include-partial-messages` against the project
 cwd (no sandbox mirror). Resume IDs live in `claude_cli_session_map.json`.
+Compact is refused while the chat still has a live Claude CLI (running turn or
+detached background wait): that process holds the full window in memory, so a
+second `--resume` would only compact the file. After a compact the gauge reads
+the boundary's `postTokens` (snapshot flagged `compacted`) until the next turn.
 
 Slash: `/cursor /compact` (also `/summarize`, `/compress`).
 
