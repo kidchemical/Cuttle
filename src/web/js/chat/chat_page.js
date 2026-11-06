@@ -6992,7 +6992,7 @@
     }
 
     /** Drop to the new-chat splash (also the give-up path for a slow restore). */
-    function showWelcomeSplash() {
+    function showWelcomeSplash(opts) {
         clearChatRestoreVeil();
         detachLocalGenerationForNavigation();
         const welcome = document.getElementById('welcomeScreen');
@@ -7011,7 +7011,7 @@
         if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
             window.CuttleAuth.setCurrentChatSession(null);
         }
-        syncChatUrl(null);
+        if (!(opts && opts.keepChatUrl)) syncChatUrl(null);
         applyStarredSlashChips();
         restoreWelcomeStickySlash();
         restoreComposerDraft('new', { force: true });
@@ -7352,6 +7352,7 @@
                 focusWelcomeComposer: focusWelcomeComposer,
                 takeChatTranscriptPrefetch: takeChatTranscriptPrefetch,
                 waitForAuthReady: waitForAuthReady,
+                isAuthenticated: isAuthMode,
                 firstTruthy: firstTruthy,
                 loadChatSession: loadChatSession,
                 showWelcomeSplash: showWelcomeSplash,

@@ -561,6 +561,15 @@ function applyShellHistoryState(page) { return paneController.applyShellHistoryS
  * Always returns true so the native shell never minimizes or opens setup.
  */
 window.__cuttleHandleBack = function () {
+    // Open media lightbox (mounted here by a chat frame, chat_media.js) → close it.
+    try {
+        const lb = document.getElementById('cuttle-shell-lightbox');
+        if (lb && !lb.hidden) {
+            try { window.__cuttleCloseLightbox(); } catch (_) {}
+            if (!lb.hidden) { lb.remove(); document.documentElement.classList.remove('cuttle-lightbox-open'); }
+            return true;
+        }
+    } catch (_) {}
     try {
         if (typeof isNotificationsPopoverOpen === 'function' && isNotificationsPopoverOpen()) {
             closeNotificationsPopover();
