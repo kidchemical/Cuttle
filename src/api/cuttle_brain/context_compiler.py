@@ -397,6 +397,19 @@ def _runtime_block(
     except Exception:
         pass
 
+    # Supervision schedules this chat runs or is under — a paused one is
+    # otherwise invisible from inside the chat (api.chat_ops.service).
+    try:
+        from api.chat_ops.service import supervision_digest
+        from api.cuttle_ui_capabilities import numeric_chat_session_id
+
+        sid = numeric_chat_session_id(chat_session_id)
+        digest = supervision_digest(sid) if sid is not None else ''
+        if digest:
+            parts += ["", digest]
+    except Exception:
+        pass
+
     # Orchestrator chats carry their playbook brief in every fresh context, so
     # an agent that joins after a harness switch still has it.
     from api.orchestrator.service import brief_block

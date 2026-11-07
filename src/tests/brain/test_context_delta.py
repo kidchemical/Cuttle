@@ -85,3 +85,30 @@ def test_clear_injected_snapshot(tmp_path):
 
     clear_injected_snapshot("9011", "cursor", path)
     assert delta_text("9011", "cursor", path) is None
+
+
+def test_pause_reaches_a_resumed_supervisor(tmp_path, monkeypatch):
+    """A supervision schedule paused mid-session must reach a resumed chat too:
+    otherwise the supervisor keeps assuming its check-ins are still coming."""
+    from api.cuttle_brain import context_delta as cd
+
+    digest = {"9030": "### Supervision schedules on this chat\n- active — you supervise CH-001821"}
+    monkeypatch.setattr(cd, "_supervision_digest", lambda sid: digest.get(str(sid), ""))
+    path = str(tmp_path)
+
+    ack_snapshot("9030", "codex", path)
+    assert delta_text("9030", "codex", path) is None
+
+    digest["9030"] = ("### Supervision schedules on this chat\n"
+                      "- **PAUSED since 2026-11-03 09:33 (3 d 0 h ago)** — you supervise CH-001821")
+    resumed = delta_text("9030", "codex", path)
+    assert resumed is not None
+    assert "Supervision changed" in resumed and "PAUSED since" in resumed
+
+    ack_snapshot("9030", "codex", path)
+    digest.pop("9030")
+    assert "Supervision ended" in delta_text("9030", "codex", path)
+
+    # A chat with no schedules never sees a supervision section.
+    ack_snapshot("9031", "codex", path)
+    assert delta_text("9031", "codex", path) is None

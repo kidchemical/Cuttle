@@ -218,6 +218,14 @@ If you kick a long job yourself: `python -m api.job_watch write --id <kebab> …
 Kick the job, emit the card, **stop** — do not poll in a wait loop.
 Stop kills the OS process tree in the status JSON (`pid`, `worker_pid`, `pids`; legacy `unity_pid`).
 
+`resume_message` is resumed by the **client** polling the status file: it needs a
+browser on that chat. For work detached on purpose (`systemd-run --user
+--unit=…`, a process meant to outlive Flask), register the resume host-side
+instead — `python -m api.job_watch watch-unit --unit <name> --resume "…"` prints
+the same card and the **daemon** resumes the chat when the unit (or `--pid`)
+exits, with its exit status, browser or not. See
+[headless-turns.md](headless-turns.md) → *Detached work*.
+
 ### Multi-bar progress (required for mesh / multi-worker jobs)
 
 When a watch card tracks **mesh workers** (blender shards, farm bake, 2+ devices),

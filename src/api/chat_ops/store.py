@@ -104,17 +104,72 @@ def cancel_sends_to(target):
     return rows
 
 
-def set_paused(oid, actor, paused):
-    """Pause or resume a schedule; a resumed schedule checks right away."""
+def set_paused(oid, actor, paused, *, until=None):
+    """Pause or resume a schedule; a resumed schedule checks right away.
+
+    ``until`` (epoch seconds) makes the pause timed: :func:`resume_expired`
+    brings it back by itself. A pause with no expiry is indefinite and only a
+    person (or an agent) can end it — which is how a supervision schedule once
+    sat forgotten for three days, so ``paused_at``/``paused_until`` are recorded
+    for the chips, the agent's own context and the stale-pause alert."""
     now = time.time()
     with connection() as conn:
         if paused:
-            conn.execute("UPDATE operations SET state='paused', updated=? WHERE id=? AND actor=? "
-                         "AND kind='supervise' AND state IN ('pending','dispatching')", (now, oid, actor))
+            # An already-paused schedule may be re-paused to change its expiry
+            # (extend a pause, or make a timed one indefinite and back).
+            changed = conn.execute(
+                "UPDATE operations SET state='paused', updated=? WHERE id=? AND actor=? "
+                "AND kind='supervise' AND state IN ('pending','dispatching','paused')",
+                (now, oid, actor)).rowcount
         else:
-            conn.execute("UPDATE operations SET state='pending', due=?, updated=? WHERE id=? AND actor=? "
-                         "AND kind='supervise' AND state='paused'", (now, now, oid, actor))
+            changed = conn.execute(
+                "UPDATE operations SET state='pending', due=?, updated=? WHERE id=? AND actor=? "
+                "AND kind='supervise' AND state='paused'", (now, now, oid, actor)).rowcount
+    if changed:
+        if paused:
+            _patch(oid, 'result', {'paused_at': get(oid, actor)['result'].get('paused_at') or now,
+                                   'paused_until': float(until) if until else None,
+                                   'paused_alerted': False})
+        else:
+            _patch(oid, 'result', {'paused_at': None, 'paused_until': None, 'paused_alerted': False})
     return get(oid, actor)
+
+
+def resume_expired(now=None):
+    """Resume every timed pause whose expiry has passed; the resumed rows.
+
+    Called by the outbox pump, so a timed pause auto-resumes and checks right
+    away even if nobody has the chat open."""
+    now = time.time() if now is None else now
+    resumed = []
+    with connection() as conn:
+        rows = [public(r) for r in conn.execute(
+            "SELECT * FROM operations WHERE kind='supervise' AND state='paused'")]
+    for row in rows:
+        until = (row.get('result') or {}).get('paused_until')
+        try:
+            due_at = float(until)
+        except (TypeError, ValueError):
+            continue
+        if due_at > now:
+            continue
+        # Due now in real time, whatever clock the caller compared against.
+        real = time.time()
+        with connection() as conn:
+            changed = conn.execute("UPDATE operations SET state='pending', due=?, updated=? "
+                                   "WHERE id=? AND state='paused'", (real, real, row['id'])).rowcount
+        if changed:
+            _patch(row['id'], 'result', {'paused_at': None, 'paused_until': None, 'paused_alerted': False})
+            record_check(row['id'], 'resumed', {'auto': True, 'paused_at': (row.get('result') or {}).get('paused_at')})
+            resumed.append(find(row['id']))
+    return resumed
+
+
+def paused_schedules():
+    """Every paused supervision schedule (for the stale-pause alert and context)."""
+    with connection() as conn:
+        return [public(r) for r in conn.execute(
+            "SELECT * FROM operations WHERE kind='supervise' AND state='paused'")]
 
 
 def due():

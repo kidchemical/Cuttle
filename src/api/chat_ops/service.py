@@ -434,11 +434,41 @@ def supervise_defaults(session, user_id, *, db=None):
             'worktree': bool(checkout), 'project_path': row.get('project_path') or ''}
 
 
-def set_paused(op_id, user_id, paused, *, db=None):
+# A pause with no stated end is how supervision gets forgotten: default to a
+# timed one, and keep the indefinite pause an explicit choice.
+DEFAULT_PAUSE_SEC = 4 * 3600
+MAX_PAUSE_SEC = 30 * 24 * 3600
+MIN_PAUSE_SEC = 60
+
+
+def pause_expiry(*, hours=None, until=None, indefinite=False, now=None):
+    """Epoch expiry for a pause request, or None for an explicit indefinite pause."""
+    now = time.time() if now is None else now
+    if indefinite:
+        return None
+    if until not in (None, ''):
+        try:
+            when = float(until)
+        except (TypeError, ValueError):
+            raise ValueError('until must be epoch seconds') from None
+    elif hours not in (None, ''):
+        try:
+            when = now + float(hours) * 3600
+        except (TypeError, ValueError):
+            raise ValueError('hours must be a number') from None
+    else:
+        when = now + DEFAULT_PAUSE_SEC
+    if not now + MIN_PAUSE_SEC <= when <= now + MAX_PAUSE_SEC:
+        raise ValueError('Pause must end between 1 minute and 30 days from now')
+    return when
+
+
+def set_paused(op_id, user_id, paused, *, hours=None, until=None, indefinite=False, db=None):
     op = owned_operation(op_id, user_id, db=db)
     if op['kind'] != 'supervise':
         raise ValueError('Only supervision schedules can be paused')
-    return store.set_paused(op['id'], op['actor'], paused)
+    expiry = pause_expiry(hours=hours, until=until, indefinite=indefinite) if paused else None
+    return store.set_paused(op['id'], op['actor'], paused, until=expiry)
 
 
 def cancel(op_id, user_id, *, db=None):
@@ -474,6 +504,69 @@ def overview(session, user_id, *, db=None):
             'supervised_by': supervised_by, 'queued': queued}
 
 
+def _ago(seconds):
+    seconds = max(0, int(seconds or 0))
+    if seconds < 3600:
+        return f'{seconds // 60} min'
+    if seconds < 86400:
+        return f'{seconds // 3600} h {(seconds % 3600) // 60} min'
+    return f'{seconds // 86400} d {(seconds % 86400) // 3600} h'
+
+
+def _clock(epoch):
+    from datetime import datetime
+    try:
+        return datetime.fromtimestamp(float(epoch)).strftime('%Y-%m-%d %H:%M')
+    except (TypeError, ValueError, OSError):
+        return ''
+
+
+def supervision_digest(session_id, *, now=None, operations=None):
+    """The chat's own supervision state as markdown for its context envelope.
+
+    A paused schedule is invisible from inside a chat: check-ins simply stop, so
+    both the supervisor and the supervised chat can work for days without anyone
+    noticing (incident 2026-11-03: one schedule paused from the UI stayed paused
+    for three days). Every turn of either chat now carries this block."""
+    now = time.time() if now is None else now
+    try:
+        sid = int(session_id)
+    except (TypeError, ValueError):
+        return ''
+    ops = store.involving(sid) if operations is None else operations
+    mine, over = [], []
+    for op in ops:
+        if op['kind'] != 'supervise':
+            continue
+        (mine if int(op['actor']) == sid else over).append(op)
+    if not mine and not over:
+        return ''
+    lines = []
+    for op in sorted(mine + over, key=lambda o: (o['state'] != 'paused', o['updated'])):
+        cfg, result = op['payload'], op['result'] or {}
+        own = int(op['actor']) == sid
+        who = (f"you supervise CH-{int(op['target']):06d}" if own
+               else f"CH-{int(op['actor']):06d} supervises this chat")
+        every = f"every {int(cfg.get('every') or 0) // 60} min" if cfg.get('every') else ''
+        if op['state'] == 'paused':
+            since = result.get('paused_at') or op['updated']
+            until = result.get('paused_until')
+            head = f"**PAUSED since {_clock(since)} ({_ago(now - float(since or now))} ago)** — {who}"
+            tail = (f"auto-resumes {_clock(until)}" if until
+                    else 'no auto-resume: nothing checks or wakes anyone until someone resumes it')
+            extra = (f"Resume with `python -m api.chat_cli resume-operation {op['id']} "
+                     f"--as CH-{int(op['actor']):06d}`." if own else
+                     f"Tell CH-{int(op['actor']):06d}, or resume it from the chip in the UI.")
+            lines.append(f"- {head} — {every}, {tail}. {extra}")
+        else:
+            state = 'checking now' if op['state'] == 'dispatching' else f"next check {_clock(op['due'])}"
+            lines.append(f"- active — {who}, {every}, {state}")
+    return ('### Supervision schedules on this chat\n'
+            'Cuttle owns these timers, not your turn. A PAUSED schedule means no check-ins and '
+            'no wake-ups for anyone — say so to the user instead of assuming supervision is running.\n'
+            + '\n'.join(lines))
+
+
 def mark_supervision(sessions):
     """Set ``supervisor_session_id`` (the chat supervising this row) and
     ``supervises_session_ids`` (chats this row supervises) on session-list rows,
@@ -501,6 +594,10 @@ def _schedule_view(op):
             'agent': cfg.get('agent') or '', 'required_branch': cfg.get('required_branch') or '',
             'forbidden_branches': cfg.get('forbidden_branches') or [], 'last_check': result.get('last_check'),
             'last_seen': seen, 'violations': seen.get('violations') or [],
+            # A paused schedule says since when and whether it comes back by itself,
+            # so "paused" can never read as "running" on a chip.
+            'paused_at': result.get('paused_at') or (op['updated'] if op['state'] == 'paused' else None),
+            'paused_until': result.get('paused_until'),
             'history': store.checks(op['id'], limit=20)}
 
 

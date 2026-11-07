@@ -30,3 +30,35 @@ Builds, uploads, model downloads, ComfyUI, etc.:
 2. Otherwise follow [action-forms.md](action-forms.md) (kick job + watch card, then **stop**).
 
 Short work (Q&A, quick edits, seconds-long commands) needs no watch card.
+
+### Detached work: unit + `watch-unit` (never the harness's own background watch)
+
+Work you deliberately put outside Flask's lifetime — a build chain started as
+`systemd-run --user --unit=<name> …` so a Flask restart cannot kill it — is **not**
+covered by your CLI's own background watch. Claude Code's background task ends
+with its CLI, and a watch card's `resume_message` only fires while a browser is
+polling the status file. An orchestrator lost four of these (idle 1 h, 1 h, 21 h,
+12 h) before this existed.
+
+Start the unit, then register the resume in the same turn:
+
+```bash
+systemd-run --user --unit=ep-build-linux --remain-after-exit   --working-directory="$PWD" -- ./build.sh          # detached: survives a Flask restart
+
+PYTHONPATH=src .venv/bin/python -m api.job_watch watch-unit   --unit ep-build-linux   --resume "The Linux build finished. Read its log, then continue P6."
+```
+
+- Prints the watch card — put it in your reply, then **end the turn**. The card shows
+  progress and can Stop the job; it deliberately has no client-side Continue, so the
+  chat is resumed exactly once, by the host.
+- The **daemon** polls `systemctl --user` (or `--pid N` for a bare process), writes
+  the terminal watch status, and queues your resume message on this chat through the
+  chat-ops outbox. It survives Flask restarts and needs no open browser.
+- Pass `--remain-after-exit` to `systemd-run` so the unit keeps its exit status;
+  without it the resume turn has to say "exit status not available".
+- `--chat CH-…` names the chat to resume (default `CUTTLE_CHAT_SESSION_ID`).
+- Register **after** the job is running: a watch on a dead unit is refused
+  (`--allow-inactive` overrides).
+- Inspect with `python -m api.job_watch units`; `poll-units` forces one pass.
+- Rule of thumb: if the work outlives your turn on purpose, it needs `watch-unit`.
+  Never finish a turn with "I'll check back later" for detached work.

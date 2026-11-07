@@ -12,6 +12,15 @@
 
     const SCHEMA_VERSION = 1;
     const INTERVALS = [300, 600, 900, 1800, 3600];
+    // Pausing asks how long. A timed pause auto-resumes on the host, so a
+    // forgotten pause cannot stop supervision for days (incident 2026-11-03);
+    // "Until I resume" stays available but is never the default.
+    const PAUSE_CHOICES = [
+        { id: '1h', label: '1 hour', hours: 1, primary: true },
+        { id: '4h', label: '4 hours', hours: 4 },
+        { id: 'tomorrow', label: 'Until tomorrow', tomorrow: true },
+        { id: 'indefinite', label: 'Until I resume', indefinite: true },
+    ];
     const DEFAULT_FORBIDDEN = 'main, master';
     const DEFAULT_INSTRUCTIONS = 'Keep this chat working through its Tasks list until every item is done. '
         + 'When it stalls, waits on a finished job, or stops after a failure, send it a concrete next step. '
@@ -35,6 +44,30 @@
         }
     }
 
+    /** Clock for today, date + clock for anything older. */
+    function fmtWhen(epochSeconds, now, opts) {
+        const n = Number(epochSeconds);
+        if (!Number.isFinite(n) || n <= 0) return '';
+        const clock = fmtClock(n, opts);
+        if (Math.abs(Number(now) - n) < 43200) return clock;
+        const d = new Date(n * 1000);
+        try {
+            return d.toLocaleDateString((opts && opts.locale) || undefined,
+                { month: 'short', day: 'numeric' }) + ' ' + clock;
+        } catch (_) {
+            return d.toISOString().slice(5, 10) + ' ' + clock;
+        }
+    }
+
+    /** "Paused since Nov 3 09:33 · resumes 13:33" / "" when the schedule runs. */
+    function pausedText(schedule, now, opts) {
+        if (!schedule || schedule.state !== 'paused') return '';
+        const since = fmtWhen(schedule.paused_at, now, opts);
+        const until = fmtWhen(schedule.paused_until, now, opts);
+        return 'Paused' + (since ? ' since ' + since : '')
+            + (until ? ' · resumes ' + until : ' · no auto-resume');
+    }
+
     /** "next 2:28", "checking…" when due, "paused". */
     function nextLabel(schedule, now, opts) {
         if (!schedule) return '';
@@ -47,20 +80,27 @@
     }
 
     function chipText(schedule, now, opts) {
+        if (schedule.state === 'paused') {
+            return 'Supervising ' + schedule.target + ' · ' + pausedText(schedule, now, opts);
+        }
         const parts = ['Supervising ' + schedule.target, 'every ' + fmtInterval(schedule.every)];
         const next = nextLabel(schedule, now, opts);
         if (next) parts.push(next);
         return parts.join(' · ');
     }
 
-    function badgeText(schedule) {
-        return 'Supervised by ' + schedule.supervisor;
+    function badgeText(schedule, now, opts) {
+        const base = 'Supervised by ' + schedule.supervisor;
+        const paused = pausedText(schedule, now, opts);
+        return paused ? base + ' · ' + paused : base;
     }
 
     const OUTCOME_TEXT = {
         woke: 'woke supervisor',
         violation: 'rule broken, woke supervisor',
         error: 'check failed',
+        resumed: 'timed pause expired, resumed',
+        paused_alert: 'paused too long, user notified',
     };
 
     /** One history line: "2:28 skipped, busy" / "2:43 woke supervisor (idle_with_work)". */
@@ -106,6 +146,7 @@
             id: s.id,
             paused: s.state === 'paused',
             text: chipText(s, now, opts),
+            pausedText: pausedText(s, now, opts),
             target: s.target,
             agent: s.agent || '',
             rules: rulesText(s),
@@ -117,7 +158,8 @@
         const badges = (data.supervised_by || []).map((s) => ({
             id: s.id,
             paused: s.state === 'paused',
-            text: badgeText(s),
+            text: badgeText(s, now, opts),
+            pausedText: pausedText(s, now, opts),
             supervisor: s.supervisor,
             next: nextLabel(s, now, opts),
             violations: s.violations || [],
@@ -202,8 +244,22 @@
         };
     }
 
+    /** POST body for one pause choice; unknown ids fall back to the timed default. */
+    function pauseBody(choiceId, nowMs) {
+        const c = PAUSE_CHOICES.filter((x) => x.id === choiceId)[0] || PAUSE_CHOICES[0];
+        if (c.indefinite) return { indefinite: true };
+        if (c.tomorrow) {
+            const d = new Date(Number(nowMs) || Date.now());
+            d.setDate(d.getDate() + 1);
+            d.setHours(9, 0, 0, 0);
+            return { until: Math.round(d.getTime() / 1000) };
+        }
+        return { hours: c.hours };
+    }
+
     const api = {
-        SCHEMA_VERSION, INTERVALS, fmtInterval, fmtClock, nextLabel, chipText, badgeText,
+        SCHEMA_VERSION, INTERVALS, PAUSE_CHOICES, fmtInterval, fmtClock, fmtWhen, nextLabel,
+        chipText, badgeText, pausedText, pauseBody,
         historyRow, view, isSupervised, supervisorOf, dialogDefaults, supervisePayload,
     };
     if (typeof module === 'object' && module.exports) module.exports = api;
