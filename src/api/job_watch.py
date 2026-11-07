@@ -554,6 +554,9 @@ def _systemctl(args: List[str]) -> tuple:
     return out.returncode, (out.stdout or "").strip()
 
 
+_FINISHED_SUB_STATES = frozenset({"exited", "dead", "failed"})
+
+
 def unit_state(unit: str) -> Dict[str, Any]:
     """One systemd user unit as Cuttle reads it.
 
@@ -589,7 +592,9 @@ def unit_state(unit: str) -> Dict[str, Any]:
         "result": props.get("Result") or "",
         "exit": _int(props.get("ExecMainStatus")),
         "pid": pid if pid > 0 else 0,
-        "running": active in _RUNNING_UNIT_STATES,
+        # A unit started with --remain-after-exit stays ActiveState=active after its process ends, with
+        # SubState=exited: that job is finished. (Every watched build used it, so no watch ever fired.)
+        "running": active in _RUNNING_UNIT_STATES and (props.get("SubState") or "") not in _FINISHED_SUB_STATES,
     }
 
 

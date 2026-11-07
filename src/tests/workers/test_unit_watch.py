@@ -173,6 +173,14 @@ def test_unit_state_reads_systemctl_properties(monkeypatch):
     assert jw.unit_state("x")["queried"] is False
 
 
+def test_remain_after_exit_unit_that_exited_is_finished(monkeypatch):
+    # systemd-run --remain-after-exit keeps ActiveState=active once the process ends; SubState says exited.
+    monkeypatch.setattr(jw, "_systemctl", lambda args: (0, "ActiveState=active\nSubState=exited\n"
+                                                           "Result=success\nExecMainStatus=0\nMainPID=0\n"))
+    state = jw.unit_state("x")
+    assert state["running"] is False and state["exit"] == 0 and state["sub_state"] == "exited"
+
+
 # ── exactly-once across pollers (Flask's chat-ops pump + the daemon) ─────────
 
 EXITED = {"queried": True, "running": False, "active_state": "inactive", "sub_state": "dead",
