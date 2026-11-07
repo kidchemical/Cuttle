@@ -1517,9 +1517,15 @@ body.is-electron .split-group.split-vertical > .split-group {
 .rail-expand-tab:focus-visible svg {
     opacity: 1;
 }
+/* Touch: no hover to grow it, so keep the same slim sliver as desktop (a bit
+   more opaque to stay findable); the button's transparent box stays the tap
+   target. */
 @media (hover: none) {
-    .rail-expand-tab::before { width: 26px; height: 40px; opacity: 1; }
-    .rail-expand-tab svg { opacity: 1; }
+    .rail-expand-tab::before { opacity: 0.8; }
+    .rail-expand-tab:hover::before,
+    .rail-expand-tab:focus-visible::before { width: 5px; height: 28px; opacity: 0.8; background: var(--rail-bg); }
+    .rail-expand-tab:hover svg,
+    .rail-expand-tab:focus-visible svg { opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
     .rail-expand-tab::before, .rail-expand-tab svg { transition: none; }

@@ -154,3 +154,6 @@ src/tests/results/
 src/tests/test-results/
 src/test-results/
 src/scripts/output/
+
+# Cuttle agent scratch
+/temp/

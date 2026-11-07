@@ -40,6 +40,13 @@ Spawn checks every child's harness/model/effort against that CLI's catalog
 before any chat is created. A rejection names the child and the bad pin: fix
 the spec or use the tier's next profile — never resend it unchanged.
 
+**Long-lived lanes fill up.** Before reusing a conversational child for its
+next task, check `subagents status --parent CH-… --context --json`; above ~75%
+run `python -m api.chat_cli compact CH-<child>` between its turns, or
+`--mode fresh` to restart it on a clean session (it keeps its chat, links and
+shared Tasks list; the briefing and recent transcript are re-sent). One-shot
+children need neither.
+
 ## Supervisor
 
 Supervision is started **from the supervisor chat** (`chat-history.md`). Get

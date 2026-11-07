@@ -70,8 +70,22 @@
      * Chat iframes should postMessage { type: 'cuttle-completion-chirp' } to the shell
      * and must NOT play locally — parent owns debounce + single playback.
      */
+    /**
+     * A live voice call (shell-owned runtime) speaks the result itself. The chirp
+     * would talk over it and, on Android, take audio focus from the native call.
+     */
+    function voiceCallActive() {
+        try {
+            const rt = window.cuttleVoiceRuntime;
+            return !!(rt && typeof rt.isActive === 'function' && rt.isActive());
+        } catch (_) {
+            return false;
+        }
+    }
+
     async function playCuttleCompletionChirp() {
         if (!isResponseChirpEnabled()) return;
+        if (voiceCallActive()) return;
 
         // Inside app_shell iframe → ask parent (has Electron bridge + toast host).
         // Do not consume the debounce slot here; parent is the single player.

@@ -123,6 +123,8 @@ _STATE_TEXT = {'busy': 'working', 'waiting_background': 'waiting on its own back
                'awaiting_input': 'waiting on a question card', 'error': 'stopped on an error',
                'cancelled': 'stopped (cancelled)'}
 CHECKIN_REPLY_CHARS = 2500
+# Window fill at which a check-in suggests compacting the target.
+CONTEXT_HIGH_PERCENT = 75
 
 
 def checkin_text(cfg, snap, violations, stalled_min=None):
@@ -153,6 +155,13 @@ def checkin_text(cfg, snap, violations, stalled_min=None):
     status = (snap.get('live') or {}).get('status')
     if status:
         lines.append(f'Live status: {status}')
+    ctx = snap.get('context') or {}
+    if ctx.get('supported') and (ctx.get('percent') or 0) >= CONTEXT_HIGH_PERCENT:
+        how = (f"`python -m api.chat_cli compact {handle}`" if ctx.get('compact_available')
+               else f"`python -m api.chat_cli compact {handle} --mode fresh`")
+        lines += ['', f"**Context {round(ctx['percent'])}% full** ({ctx['agent']}). Between its turns "
+                  f"(never while it works), compact with {how}; `--mode fresh` restarts the session "
+                  'with the Cuttle briefing and recent transcript instead.']
     for w in snap.get('warnings') or []:
         lines.append(f'Note: {w}')
     reply = (snap.get('latest_reply') or {})

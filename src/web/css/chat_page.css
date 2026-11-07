@@ -3487,6 +3487,12 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
     background: color-mix(in srgb, var(--accent-color) 15%, transparent);
 }
 
+/* Level ring while speaking (chat_tts.js sets --tts-level 0..1 from the audio). */
+.message-tts-btn.is-playing {
+    box-shadow: 0 0 0 calc(var(--tts-level, 0) * 6px) color-mix(in srgb, var(--accent-color) 35%, transparent);
+    transition: box-shadow 60ms linear;
+}
+
 .message-tts-btn.is-loading {
     opacity: 0.75;
     cursor: wait;

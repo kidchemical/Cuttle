@@ -10,6 +10,10 @@
     function supported() {
         return !!nativeBridge() || !!(root.RTCPeerConnection && root.navigator?.mediaDevices?.getUserMedia);
     }
+    function meter(stream) {
+        const Level = root.CuttleAudioLevel;
+        return Level && stream ? Level.createStreamMeter(root, stream) : null;
+    }
     function create(host) {
         let current = null, sequence = 0;
         const seen = new Set();
@@ -42,6 +46,7 @@
             if (s.native && s.bridge) s.bridge.liveVoiceStop();
             s.dc?.close(); s.pc?.close();
             if (s.audio) { s.audio.pause(); s.audio.srcObject = null; }
+            s.outMeter?.close(); s.inMeter?.close();
             if (s.nativeListener) root.removeEventListener('cuttle-live-voice', s.nativeListener);
         }
         function close() {
@@ -100,9 +105,10 @@
                     s.stream = await root.navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
                     if (mine !== sequence) { cleanup(s); return; }
                     s.audio = new root.Audio(); s.audio.autoplay = true;
+                    s.inMeter = meter(s.stream);
                     s.pc = new root.RTCPeerConnection();
                     s.stream.getTracks().forEach(track => s.pc.addTrack(track, s.stream));
-                    s.pc.ontrack = e => { s.audio.srcObject=e.streams[0]; s.audio.play().catch(() => host.onError('Audio playback blocked; tap to reconnect')); };
+                    s.pc.ontrack = e => { s.audio.srcObject=e.streams[0]; s.outMeter?.close(); s.outMeter=meter(e.streams[0]); s.audio.play().catch(() => host.onError('Audio playback blocked; tap to reconnect')); };
                     s.dc=s.pc.createDataChannel('oai-events');
                     s.dc.onmessage=e => { try { event(s,JSON.parse(e.data)); } catch (_) { host.onError('Invalid voice event'); } };
                     s.pc.onconnectionstatechange=() => { if (current===s && !s.closing && ['failed','disconnected'].includes(s.pc.connectionState)) void close(); };
@@ -139,7 +145,14 @@
             if(s.native)s.bridge.liveVoiceMute(!!on);
             else if(s.dc?.readyState==='open')s.dc.send(JSON.stringify({type:'session.input_audio.'+(on?'mute':'unmute')}));
         }
-        return {start,stop:close,mute,isOpen:()=>!!current};
+        /** Assistant (out) and microphone (in) RMS for the meters; null when unknown. */
+        function levels() {
+            const s=current;if(!s||s.closing)return null;
+            if(s.native){try{return typeof s.bridge?.voiceCallLevels==='function'?(root.CuttleAudioLevel?.parseNative(s.bridge.voiceCallLevels())||null):null;}catch(_){return null;}}
+            if(!s.outMeter&&!s.inMeter)return null;
+            return {out:s.outMeter?s.outMeter.level():0,in:s.inMeter?s.inMeter.level():0};
+        }
+        return {start,stop:close,mute,isOpen:()=>!!current,levels};
     }
     root.CuttleChatVoiceLive={create,supported};
     if(typeof module!=='undefined'&&module.exports)module.exports=root.CuttleChatVoiceLive;

@@ -254,6 +254,35 @@ def _attach_usage_to_web_response(out: Dict[str, Any], usage: Optional[Dict[str,
         out["cost"] = payload["cost"]
 
 
+def _silent_compaction(agent_id: str, sid: Optional[str], resume: Optional[str], result: Any) -> bool:
+    """Fallback for adapters that never report ``context_compacted``.
+
+    A resumed session whose window fill fell far below the previous turn's
+    was summarized by the CLI itself, so the Cuttle briefing may be gone.
+    Only the same native session counts: a new one already gets a full
+    briefing. Never raises; unknown fill reads as "not compacted".
+    """
+    if not resume or not sid:
+        return False
+    new_session = getattr(result, "session_id", None)
+    if new_session and str(new_session) != str(resume):
+        return False
+    try:
+        from api.agent_context import _usage_context_fill_tokens
+        from api.cuttle_brain.metrics import fill_dropped, last_context_fill
+
+        usage = result.usage if isinstance(getattr(result, "usage", None), dict) else {}
+        current, _src = _usage_context_fill_tokens(usage, agent_id=agent_id)
+        if not current:
+            return False
+        if fill_dropped(last_context_fill(sid, agent_id), current):
+            print(f"[kernel] {agent_id} context fill dropped: treating as compacted", flush=True)
+            return True
+    except Exception as exc:
+        print(f"[kernel] silent compaction check error: {exc}", flush=True)
+    return False
+
+
 def _record_context_metrics(
     agent_id: str,
     *,
@@ -1016,6 +1045,8 @@ def run_agent_web_command(
             and isinstance(result.meta, dict)
             and result.meta.get("context_compacted")
         )
+        if not compacted and not handled_by_meta and result.success:
+            compacted = _silent_compaction(manifest.id, sid, resume, result)
         if result.success and not handled_by_meta:
             # Settings/meta answers never reached the CLI: they must not move
             # this agent's seen cursor or claim the chat's last agent. The

@@ -185,13 +185,17 @@ def _cmd_status(args: argparse.Namespace) -> int:
     )
     if not payload.get("ok"):
         return _fail(payload, args.json)
+    if args.context:
+        _attach_context(payload, db)
     if args.json:
         _emit(payload, as_json=True, text="")
         return 0
     if payload.get("children") is not None:
         lines = [f"batch {payload.get('id')}  {payload.get('status')}"]
         for child in payload.get("children") or []:
-            lines.append(f"  {child.get('handle')}  {child.get('status')}  {child.get('label')}")
+            ctx = child.get("context") or {}
+            fill = f"  ctx {ctx['agent']} {ctx.get('percent')}%" if ctx.get("supported") else ""
+            lines.append(f"  {child.get('handle')}  {child.get('status')}  {child.get('label')}{fill}")
         _emit(payload, as_json=False, text="\n".join(lines))
         return 0
     lines = []
@@ -199,6 +203,23 @@ def _cmd_status(args: argparse.Namespace) -> int:
         lines.append(f"{batch.get('id')}  {batch.get('status')}  {len(batch.get('children') or [])} children")
     _emit(payload, as_json=False, text="\n".join(lines) or "(none)")
     return 0
+
+
+def _attach_context(payload: Dict[str, Any], db: Any) -> None:
+    """Add each child's agent window fill (``chat_ops`` view) in place.
+
+    Opt-in: it reads every child's CLI session store, which ``--wait`` loops
+    and plain status checks do not need."""
+    from api.chat_ops.service import context_fill
+
+    batches = [payload] if payload.get("children") is not None else list(payload.get("batches") or [])
+    for batch in batches:
+        for child in batch.get("children") or []:
+            row = db.get_chat_session_by_id(int(child.get("session_id") or 0))
+            try:
+                child["context"] = context_fill(db, row) if row else None
+            except Exception as exc:  # noqa: BLE001 — a status read never fails on one child
+                child["context"] = {"supported": False, "error": str(exc)}
 
 
 def _cmd_wait(args: argparse.Namespace) -> int:
@@ -397,6 +418,8 @@ def build_parser() -> argparse.ArgumentParser:
     st = sub.add_parser("status", parents=[common], help="Show a batch or all batches for a parent")
     st.add_argument("--batch", default=None)
     st.add_argument("--parent", default=None)
+    st.add_argument("--context", action="store_true",
+                    help="Include each child's agent context-window fill (see chat_cli compact)")
     st.set_defaults(func=_cmd_status)
 
     wt = sub.add_parser(

@@ -55,7 +55,7 @@ Limits come from (in order):
 GET  /api/agent-context?agent=cursor|muse|opencode|codex|antigravity|hermes|claude|deepseek&session=<id>&path=<cwd>
 GET  /api/agent-context?…&live=1   # Codex: force app-server occupancy refresh
 POST /api/agent-context/compact
-{"agent":"claude","session":"<id>","path":"<cwd>"}
+{"agent":"claude","session":"<id>","path":"<cwd>","mode":"native|fresh"}
 ```
 
 ## Compact paths
@@ -83,6 +83,36 @@ disjoint input/cache convention and stamps its last `step_end` occupancy.
 headless sessions that never wrote MSP snapshots may show 0% until the next
 turn that materializes a view.
 The current MSP view replaces older readings even when smaller after compaction.
+
+## Compaction and the Cuttle briefing
+
+The Context Compiler sends the full briefing once per native session, then
+change-deltas against an acknowledged receipt (`cuttle_brain.context_delta`).
+A compaction can summarize that briefing away, so every compaction drops the
+receipt and the next turn re-sends the full briefing:
+
+- manual Compact (gauge, `/cursor /compact`, `chat_cli compact`);
+- `context_compacted` reported by the adapter (Claude transcript boundaries,
+  Codex app-server);
+- fallback for CLIs that auto-compact silently (Cursor, OpenCode, Hermes,
+  Muse): on the **same** native session, a window fill at or below 60% of the
+  previous turn's (previous ≥ 20k tokens, `cuttle_brain.metrics.fill_dropped`)
+  counts as a compaction.
+
+The handoff seen-cursor is kept: the conversation lives in the native summary.
+
+**Managed (fresh) compact** — `POST /api/agent-context/compact` with
+`"mode": "fresh"` / `chat_cli compact CH-… --mode fresh`: no summary; the chat's
+native session is discarded (`clear_resume`), the receipt dropped and the
+agent's seen-cursor replaced by a `fresh` mark. The next turn starts a new
+session with the full briefing (rules, Tasks digest, orchestration brief) and
+the recent transcript plus earlier user messages under a "managed compact"
+notice. Same chat, handle, links and supervision. Works for any harness with
+resume (also Antigravity); refused while a CLI is live in the chat.
+
+**Agents compacting other chats** (sub-agents, supervised chats):
+`python -m api.chat_cli context|compact CH-…` (`chat-history.md`), fill in
+`subagents status --context` and in supervision snapshots/check-ins.
 
 ## Turn usage footers
 

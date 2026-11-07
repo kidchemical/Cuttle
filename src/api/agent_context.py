@@ -1278,3 +1278,68 @@ def compact_agent_context(
     except Exception:
         pass
     return result
+
+
+def fresh_compact_agent_context(
+    *,
+    chat_session_id: Any,
+    agent_id: str,
+    cwd: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Managed compact: discard the agent's native session for this chat.
+
+    Works for every harness that keeps a resumable session (also those with
+    no headless compact). Nothing is summarized here: the next turn starts a
+    new CLI session that receives the full Cuttle briefing (rules, Tasks,
+    orchestration brief) plus the recent transcript under a "fresh" handoff
+    notice, which already carries earlier user instructions. Refused while a
+    CLI still runs in the chat, since that live process would keep writing
+    the discarded session.
+    """
+    aid = normalize_agent_id(agent_id)
+    if not aid:
+        return {"success": False, "error": "Unsupported agent", "method": "fresh"}
+    if chat_session_id is None or not str(chat_session_id).strip():
+        return {"success": False, "agent_id": aid, "method": "fresh", "error": "Chat session required"}
+    sid = str(chat_session_id).strip()
+    if sid.startswith("db_session_"):
+        sid = sid[len("db_session_"):]
+    work = (cwd or "").strip() or os.getcwd()
+    from api.agent_harness.catalog import get_agent
+
+    pair = get_agent(aid, project_path=work)
+    if not pair:
+        return {"success": False, "agent_id": aid, "method": "fresh", "error": f"{aid} is not installed"}
+    manifest, adapter = pair
+    if not manifest.resume:
+        return {
+            "success": False, "agent_id": aid, "method": "fresh",
+            "error": f"{aid} keeps no session: it already gets the recent transcript every turn.",
+        }
+    try:
+        from api.chat_run_registry import has_live_process
+
+        live = has_live_process(sid)
+    except Exception:
+        live = False
+    if live:
+        return {
+            "success": False, "agent_id": aid, "method": "fresh",
+            "error": "An agent CLI is still running in this chat; wait for it or Stop it first.",
+        }
+    resume_id = _load_resume_id(aid, work, sid)
+    if not resume_id:
+        return {
+            "success": False, "agent_id": aid, "method": "fresh",
+            "error": f"No {aid} session to compact yet.",
+        }
+    adapter.clear_resume(work, sid)
+    from api.cuttle_brain.context_delta import clear_injected_snapshot
+    from api.cuttle_brain.handoff import mark_fresh_session
+
+    clear_injected_snapshot(sid, aid)
+    mark_fresh_session(sid, aid)
+    return {
+        "success": True, "agent_id": aid, "method": "fresh", "resume_id": resume_id,
+        "detail": "Next turn starts a new session with the full briefing and recent transcript.",
+    }

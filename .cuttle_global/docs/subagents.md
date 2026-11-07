@@ -94,6 +94,7 @@ long). `--tasks` pins a parent Tasks gizmo with one item per child.
 ```bash
 PYTHONPATH=src .venv/bin/python -m api.subagents status --parent CH-000535 --json
 PYTHONPATH=src .venv/bin/python -m api.subagents status --batch "<batch-id>" --json
+PYTHONPATH=src .venv/bin/python -m api.subagents status --parent CH-000535 --context --json
 PYTHONPATH=src .venv/bin/python -m api.subagents wait "<batch-id>" --json
 PYTHONPATH=src .venv/bin/python -m api.subagents message --session CH-000540 --text "follow up" --wait --json
 PYTHONPATH=src .venv/bin/python -m api.subagents cancel --batch "<batch-id>" --json
@@ -104,6 +105,12 @@ PYTHONPATH=src .venv/bin/python -m api.subagents profiles list --json
 ```
 
 `--session` / `--parent` accept `CH-000535` or a numeric id. Tests may pass `--db`.
+
+`status --context` adds each child's agent window fill (`context.percent`,
+`compact_available`). A conversational child you keep reusing that runs above
+~75% can be compacted between its turns with
+`python -m api.chat_cli compact CH-… [--mode fresh]` (see `chat-history.md`);
+never while it is working.
 
 ## Caps
 

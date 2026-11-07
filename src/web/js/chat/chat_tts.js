@@ -80,8 +80,31 @@
         let _chatTtsAudio = null;
         let _chatTtsActiveBtn = null;
 
+        /**
+         * Speaker-button meter: a ring scaled by the playing audio's level
+         * (CSS var --tts-level, 0..1). Runs until this audio stops being the
+         * active one; closes an owned element meter then.
+         */
+        function startButtonMeter(btn, meter, audio, owned) {
+            const Level = frameWin.CuttleAudioLevel;
+            if (!btn || !meter || !Level || typeof frameWin.requestAnimationFrame !== 'function') return;
+            let held = 0;
+            const tick = () => {
+                if (_chatTtsAudio !== audio || !btn.classList.contains('is-playing')) {
+                    btn.style.removeProperty('--tts-level');
+                    if (owned) meter.close();
+                    return;
+                }
+                held = Level.peakHold(held, meter.level() || 0);
+                btn.style.setProperty('--tts-level', Level.display(held).toFixed(3));
+                frameWin.requestAnimationFrame(tick);
+            };
+            frameWin.requestAnimationFrame(tick);
+        }
+
         function _resetTtsButton(btn) {
             if (!btn) return;
+            btn.style.removeProperty('--tts-level');
             btn.classList.remove('is-loading', 'is-playing');
             btn.innerHTML = TTS_PLAY_ICON;
             btn.title = 'Listen (summarize + speak)';
@@ -186,6 +209,9 @@
                 return;
             }
             stopChatTtsPlayback(btn);
+            // Inside the tap: wake the meter's audio context so playback after
+            // the TTS fetch can be metered (it is skipped while suspended).
+            try { frameWin.CuttleAudioLevel?.prime(frameWin); } catch (_) {}
 
             // Reuse cached audio for this bubble.
             const cachedUrl = messageEl._cuttleTtsUrl;
@@ -246,6 +272,8 @@
             const audio = new Audio(url);
             _chatTtsAudio = audio;
             _chatTtsActiveBtn = btn;
+            let elementMeter = null;
+            try { elementMeter = frameWin.CuttleAudioLevel?.createElementMeter(frameWin, audio, { requireRunning: true }) || null; } catch (_) {}
             btn.classList.remove('is-loading');
             btn.classList.add('is-playing');
             btn.disabled = false;
@@ -270,6 +298,7 @@
                     try { meta.onError(); } catch (_) {}
                 }
             };
+            startButtonMeter(btn, elementMeter, audio, true);
             audio.play().catch((err) => {
                 _resetTtsButton(btn);
                 _chatTtsActiveBtn = null;
@@ -387,6 +416,7 @@
                 btn.disabled = false;
                 btn.innerHTML = TTS_STOP_ICON;
                 btn.title = summarized ? 'Playing summary — click to stop' : 'Stop';
+                startButtonMeter(btn, { level: () => voicePlaybackLevel() || 0 }, audio, false);
             }
             return new Promise((resolve) => {
                 let settled = false;

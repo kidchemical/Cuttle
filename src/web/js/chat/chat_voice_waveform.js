@@ -21,7 +21,7 @@
     /** RMS (~0..0.5) to a 0..1 display level with a soft knee. */
     function mapLevel(rms) {
         const v = Math.max(0, Number(rms) || 0);
-        const scaled = v / 0.22;
+        const scaled = Math.min(1, v / 0.22); // clamp first: the knee folds back above 1
         return Math.max(0, Math.min(1, scaled * (2 - scaled) * 0.5 + scaled * 0.5));
     }
 

@@ -100,3 +100,34 @@ body.light-mode .shell-voice-mute[aria-pressed="true"] {
     .shell-voice-btn { transition: none; }
     .shell-voice-btn:active { transform: none; }
 }
+
+/* Live call level meter (shell_voice.js): the assistant's voice or yours. */
+.shell-voice-meter {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 32px;
+}
+
+.shell-voice-meter[hidden] {
+    display: none;
+}
+
+.shell-voice-meter span {
+    display: block;
+    width: 5px;
+    height: 100%;
+    border-radius: 3px;
+    background: var(--accent, #667eea);
+    transform: scaleY(0.12);
+    transform-origin: center;
+    transition: transform 60ms linear;
+}
+
+.shell-voice-meter[data-source="you"] span {
+    background: #2ea043;
+}
+
+.shell-voice-meter[data-source="muted"] span {
+    background: rgba(255, 255, 255, 0.25);
+}

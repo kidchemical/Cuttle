@@ -483,7 +483,7 @@ def cmd_hook(args: argparse.Namespace) -> int:
 
 
 _OPERATION_VERBS = ('operations', 'operation', 'cancel-operation', 'pause-operation', 'resume-operation')
-_CHAT_OP_VERBS = ('send', 'status', 'snapshot', 'stop', 'supervise') + _OPERATION_VERBS
+_CHAT_OP_VERBS = ('send', 'status', 'snapshot', 'stop', 'supervise', 'context', 'compact') + _OPERATION_VERBS
 
 
 def cmd_operation(args: argparse.Namespace) -> int:
@@ -517,6 +517,10 @@ def cmd_operation(args: argparse.Namespace) -> int:
             payload = service.snapshot(args.handle, usage_agents=args.usage, **kwargs)
         elif verb == 'stop':
             payload = service.stop(args.handle, **kwargs)
+        elif verb == 'context':
+            payload = service.agent_context(args.handle, agent=args.agent or None, **kwargs)
+        elif verb == 'compact':
+            payload = service.compact(args.handle, mode=args.mode, agent=args.agent or None, **kwargs)
         else:
             payload = service.supervise(args.handle, every=args.every, instructions=args.instructions,
                 required_branch=args.require_branch, required_path=args.require_path,
@@ -525,7 +529,7 @@ def cmd_operation(args: argparse.Namespace) -> int:
                 on_violation=args.on_violation, **kwargs)
     _emit_text_once(payload, as_json=args.json,
                     text_fn=lambda p: json.dumps(p, indent=2, ensure_ascii=False, default=str))
-    return 0
+    return 0 if payload.get('ok', True) else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -663,6 +667,8 @@ def build_parser() -> argparse.ArgumentParser:
         ('status', 'Busy, idle, awaiting input, error, and Tasks in one call'),
         ('snapshot', 'Status plus reply, worktree/branch, jobs, watches and optional plan usage'),
         ('stop', 'Stop the target chat through the ordinary cancellation path'),
+        ('context', "Context-window fill of the target chat's agent session"),
+        ('compact', "Compact the target chat's agent session between turns (native or fresh)"),
         ('supervise', 'Create durable recurring check-ins in the acting chat'),
         ('operations', 'List your delivery requests and supervision profiles'),
         ('operation', 'Inspect one delivery request or supervision profile'),
@@ -686,6 +692,12 @@ def build_parser() -> argparse.ArgumentParser:
             op.add_argument('--until', type=float, default=None, help='Auto-resume at this epoch time')
             op.add_argument('--indefinite', action='store_true',
                             help='Pause with no expiry — nothing resumes it but you')
+        if verb in ('context', 'compact'):
+            op.add_argument('--agent', default='', help="Harness id (default: the agent that last ran in the chat)")
+        if verb == 'compact':
+            op.add_argument('--mode', choices=('native', 'fresh'), default='native',
+                            help='native: the CLI summarizes its session; fresh: start a new session '
+                                 'with the full Cuttle briefing and recent transcript')
         if verb == 'snapshot':
             op.add_argument('--usage', action='append', default=[], help='Include plan usage for this agent (repeatable)')
         if verb == 'supervise':

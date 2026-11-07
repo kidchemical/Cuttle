@@ -68,13 +68,13 @@ def _entry(chat_session_id: Any) -> Dict[str, Any]:
     """
     key = _sid_key(chat_session_id)
     if not key:
-        return {"last_agent": None, "seen": {}, "projects": {}, "legacy": False}
+        return {"last_agent": None, "seen": {}, "projects": {}, "legacy": False, "fresh": []}
     with _lock:
         raw = _store().get(key)
     if isinstance(raw, str):
-        return {"last_agent": raw.strip() or None, "seen": {}, "projects": {}, "legacy": True}
+        return {"last_agent": raw.strip() or None, "seen": {}, "projects": {}, "legacy": True, "fresh": []}
     if not isinstance(raw, dict):
-        return {"last_agent": None, "seen": {}, "projects": {}, "legacy": False}
+        return {"last_agent": None, "seen": {}, "projects": {}, "legacy": False, "fresh": []}
     last = raw.get("last_agent")
     seen = raw.get("seen") if isinstance(raw.get("seen"), dict) else {}
     clean: Dict[str, int] = {}
@@ -94,6 +94,7 @@ def _entry(chat_session_id: Any) -> Dict[str, Any]:
         "seen": clean,
         "projects": projects,
         "legacy": False,
+        "fresh": [str(a) for a in raw.get("fresh") or [] if str(a).strip()],
     }
 
 
@@ -186,7 +187,34 @@ def record_last_agent(
             projects = {str(k): str(v) for k, v in raw["projects"].items() if v}
         if proj:
             projects[aid] = proj
-        return {"last_agent": aid, "seen": seen, "projects": projects}
+        out = {"last_agent": aid, "seen": seen, "projects": projects}
+        # The fresh session has now seen the transcript: back to cursor deltas.
+        fresh = [a for a in (raw.get("fresh") or []) if a != aid] if isinstance(raw, dict) else []
+        if fresh:
+            out["fresh"] = fresh
+        return out
+
+    with _lock:
+        _store().update(key, change)
+
+
+def mark_fresh_session(chat_session_id: Any, agent_id: str) -> None:
+    """``agent_id``'s native session for this chat was discarded on purpose
+    (managed compact): drop its seen cursor so the next turn carries the recent
+    transcript, under a "fresh" notice rather than a first-join one."""
+    key = _sid_key(chat_session_id)
+    aid = (agent_id or "").strip()
+    if not key or not aid:
+        return
+
+    def change(raw):
+        state = dict(raw) if isinstance(raw, dict) else (
+            {"last_agent": raw.strip()} if isinstance(raw, str) and raw.strip() else {})
+        seen = dict(state.get("seen") or {}) if isinstance(state.get("seen"), dict) else {}
+        seen.pop(aid, None)
+        state["seen"] = seen
+        state["fresh"] = sorted({*(state.get("fresh") or []), aid})
+        return state
 
     with _lock:
         _store().update(key, change)
@@ -214,7 +242,8 @@ class AgentHandoff:
     # resume covers turns before its cursor), "join" (first turn of this agent
     # in the chat: no native session here at all), "reset" (same agent,
     # project/workspace changed so the per-cwd resume is gone), or "history"
-    # (agent keeps no native session). Consumers use it to keep conversation
+    # (agent keeps no native session), or "fresh" (managed compact discarded
+    # its session; this transcript replaces it). Consumers use it to keep conversation
     # out of briefing-size metrics.
     mode: str = "switch"
 
@@ -459,6 +488,18 @@ def format_handoff_delta(
             "continuing — treat it as prior context, not a fresh request, and "
             "keep following the user's standing instructions in it."
         )
+    elif mode == "fresh":
+        lines = [
+            "## Conversation so far (Cuttle transcript)",
+            (
+                f"`{to_agent}`'s earlier session for this chat was closed to "
+                "free context (managed compact), so you start a new one. This "
+                "transcript is the conversation you are continuing — treat it "
+                "as prior context, not a fresh request, and keep following the "
+                "user's standing instructions in it. Task lists and any "
+                "orchestration brief are in the Cuttle context above."
+            ),
+        ]
     elif mode == "history":
         lines = [
             "## Conversation so far (Cuttle transcript)",
@@ -602,7 +643,9 @@ def build_handoff(
             return None
         if from_agent is not None and (not previous or previous == target):
             return None
-        if cursor is None and not state.get("legacy") and not has_native_session:
+        if cursor is None and target in state.get("fresh", ()):
+            mode = "fresh"
+        elif cursor is None and not state.get("legacy") and not has_native_session:
             mode = "join"
         messages = fetch_recent_transcript(chat_session_id, limit=limit)
         window_limited = True

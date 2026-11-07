@@ -178,8 +178,13 @@ def snapshot(target, actor=None, *, db=None, request=None, usage_agents=()):
             continue
     from api.gizmos.usage import snapshot as usage_snapshot
     usage = {agent: usage_snapshot(agent) for agent in usage_agents}
+    try:
+        fill = context_fill(db, row)
+    except Exception:
+        fill = None
+        warnings.append('Context fill unavailable')
     result.update(worktree=binding, execution_path=path, branch=branch,
-                  jobs=jobs, watches=watches, usage=usage, warnings=warnings)
+                  jobs=jobs, watches=watches, usage=usage, warnings=warnings, context=fill)
     return result
 
 
@@ -610,3 +615,72 @@ def stop(target, actor=None, *, db=None, request=None):
     out['cancelled_sends'] = [{'id': o['id'], 'from': f"CH-{o['actor']:06d}", 'text': o['payload'].get('text', '')[:200]}
                               for o in held]
     return out
+
+
+def chat_agent(db, row):
+    """Harness id (``claude``) the chat's turns run on, or ''.
+
+    The agent that last ran a turn here (Brain handoff record) wins; otherwise
+    the same pin a sent turn would get (``pin_to_chat_agent``)."""
+    from api.cuttle_brain.handoff import get_last_agent
+    last = (get_last_agent(str(row['id'])) or '').strip()
+    if last:
+        return last
+    pinned = pin_to_chat_agent(db, row, '_')
+    return pinned.split()[0].lstrip('/').lower() if pinned.startswith('/') else ''
+
+
+def context_fill(db, row, *, agent=None):
+    """Compact window-fill view of a chat's agent (None when it has no harness)."""
+    from api.agent_context import get_agent_context_status
+    aid = (agent or chat_agent(db, row) or '').strip().lower()
+    if not aid:
+        return None
+    path, _branch = checkout_state(row, db)
+    status = get_agent_context_status(chat_session_id=str(row['id']), agent_id=aid, cwd=path or None)
+    if not status.get('success'):
+        return {'agent': aid, 'supported': False, 'error': status.get('error')}
+    return {'agent': aid, 'supported': True, 'percent': status.get('percent'),
+            'used_tokens': status.get('used_tokens'), 'limit_tokens': status.get('limit_tokens'),
+            'compact_available': bool(status.get('compact_available')), 'hint': status.get('hint')}
+
+
+def agent_context(target, actor=None, *, agent=None, db=None):
+    db, actor, row = context(target, actor, db=db)
+    return {'schema_version': 1, 'ok': True, 'handle': f"CH-{row['id']:06d}",
+            'context': context_fill(db, row, agent=agent)}
+
+
+def compact(target, actor=None, *, mode='native', agent=None, db=None, request=None):
+    """Compact the target chat's agent session between turns.
+
+    ``native`` asks the CLI to summarize its own session; ``fresh`` discards it
+    so the next turn starts a new session with the full Cuttle briefing and
+    the recent transcript. Runs on the host (it owns the live-CLI check) and
+    is refused while the target is busy: a compact must never race a turn."""
+    if mode not in ('native', 'fresh'):
+        raise ValueError('mode must be native or fresh')
+    db, actor, row = context(target, actor, db=db)
+    sid, uid = int(row['id']), int(row['user_id'])
+    aid = (agent or chat_agent(db, row) or '').strip().lower()
+    if not aid:
+        raise ValueError('Target chat has not run a harness agent yet; pass --agent')
+    request = request or transport.request
+    live = request(uid, sid, 'GET', '/api/chat-live-status') or {}
+    if live.get('generating'):
+        return {'schema_version': 1, 'ok': False, 'handle': f'CH-{sid:06d}',
+                'error': 'Target chat is busy; compact between turns'}
+    path, _branch = checkout_state(row, db)
+    try:
+        result = request(uid, sid, 'POST', '/api/agent-context/compact',
+                         {'agent': aid, 'session': str(sid), 'mode': mode, 'path': path})
+    except RuntimeError as exc:
+        # The host's own refusal (no session yet, live CLI, unsupported agent).
+        return {'schema_version': 1, 'ok': False, 'handle': f'CH-{sid:06d}',
+                'agent': aid, 'mode': mode, 'error': str(exc)}
+    after = (result.get('status') or {}) if isinstance(result, dict) else {}
+    return {'schema_version': 1, 'ok': bool(result.get('success')), 'handle': f'CH-{sid:06d}',
+            'agent': aid, 'mode': mode, 'method': result.get('method'),
+            'detail': result.get('detail') or result.get('message'),
+            'error': result.get('error'),
+            'percent_after': after.get('percent') if after.get('success') else None}

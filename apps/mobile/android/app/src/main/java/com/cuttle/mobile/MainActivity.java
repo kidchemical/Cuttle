@@ -453,6 +453,7 @@ public class MainActivity extends BridgeActivity {
                 + "  realtimeVoiceStart:function(id){try{return CuttleShellNative.realtimeVoiceStart(id||'')}catch(e){return 'error:'+e}},"
                 + "  realtimeVoiceMute:function(muted){try{CuttleShellNative.realtimeVoiceMute(!!muted)}catch(e){}},"
                 + "  realtimeVoiceStop:function(){try{CuttleShellNative.realtimeVoiceStop()}catch(e){}},"
+                + "  voiceCallLevels:function(){try{return CuttleShellNative.voiceCallLevels()}catch(e){return ''}},"
                 + "  getSafeAreaInsets:function(){try{return JSON.parse(CuttleShellNative.getSafeAreaInsets())}catch(e){return null}}"
                 + "});"
                 + "try{"
@@ -1050,6 +1051,13 @@ public class MainActivity extends BridgeActivity {
 
         @JavascriptInterface
         public void realtimeVoiceMute(boolean muted) { realtimeVoice.mute(muted); }
+
+        /** Speaker/mic RMS of whichever native call runs, for the page meters ("" when none). */
+        @JavascriptInterface
+        public String voiceCallLevels() {
+            String levels = liveVoice.levels();
+            return levels.isEmpty() ? realtimeVoice.levels() : levels;
+        }
 
         @JavascriptInterface
         public void realtimeVoiceStop() {
