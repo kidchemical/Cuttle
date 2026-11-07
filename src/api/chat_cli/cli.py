@@ -500,7 +500,10 @@ def cmd_operation(args: argparse.Namespace) -> int:
             if verb == 'cancel-operation':
                 op = store.cancel(args.id, actor)
             elif verb in ('pause-operation', 'resume-operation'):
-                op = store.set_paused(args.id, actor, verb == 'pause-operation')
+                pausing = verb == 'pause-operation'
+                until = service.pause_expiry(hours=args.hours, until=args.until,
+                                             indefinite=args.indefinite) if pausing else None
+                op = store.set_paused(args.id, actor, pausing, until=until)
             else:
                 op = store.get(args.id, actor)
             payload = {'schema_version': 1, 'ok': True, 'operation': op}
@@ -645,7 +648,7 @@ def build_parser() -> argparse.ArgumentParser:
     search_p.set_defaults(func=cmd_search)
 
     for verb, help_text in (
-        ('install-hook', 'Install a git hook that refuses agent updates of protected branches'),
+        ('install-hook', 'Install (or upgrade) a git hook that refuses supervised-agent updates of protected branches'),
         ('uninstall-hook', "Remove Cuttle's protected-branch git hook"),
     ):
         hook_p = sub.add_parser(verb, parents=[common], help=help_text)
@@ -664,7 +667,7 @@ def build_parser() -> argparse.ArgumentParser:
         ('operations', 'List your delivery requests and supervision profiles'),
         ('operation', 'Inspect one delivery request or supervision profile'),
         ('cancel-operation', 'Cancel a pending delivery or recurring supervision profile'),
-        ('pause-operation', 'Pause a supervision schedule (no checks until resumed)'),
+        ('pause-operation', 'Pause a supervision schedule (timed by default: auto-resumes in 4 h)'),
         ('resume-operation', 'Resume a paused supervision schedule; checks right away'),
     ):
         op = sub.add_parser(verb, parents=[common], help=help_text)
@@ -676,6 +679,13 @@ def build_parser() -> argparse.ArgumentParser:
         if verb == 'send':
             op.add_argument('--text', required=True)
             op.add_argument('--mode', choices=('auto', 'queue'), default='auto')
+        if verb == 'pause-operation':
+            op.add_argument('--hours', type=float, default=None,
+                            help='Auto-resume after this many hours (default 4; the pause is timed '
+                                 'unless you pass --indefinite)')
+            op.add_argument('--until', type=float, default=None, help='Auto-resume at this epoch time')
+            op.add_argument('--indefinite', action='store_true',
+                            help='Pause with no expiry — nothing resumes it but you')
         if verb == 'snapshot':
             op.add_argument('--usage', action='append', default=[], help='Include plan usage for this agent (repeatable)')
         if verb == 'supervise':

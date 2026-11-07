@@ -2444,6 +2444,42 @@ body.has-video-background .chat-restore-loader {
     box-sizing: border-box;
 }
 
+/* Drag grip (chat_composer_resize.js): bottom-right corner makes the
+   new-chat composer taller; double-click resets to auto height. */
+.composer-resizable { position: relative; }
+.composer-resize-grip {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 14px;
+    height: 14px;
+    cursor: ns-resize;
+    touch-action: none;
+    opacity: 0.45;
+    border-bottom-right-radius: 14px;
+    background:
+        linear-gradient(135deg, transparent 0 55%, var(--text-secondary) 55% 62%, transparent 62% 72%,
+            var(--text-secondary) 72% 79%, transparent 79%);
+    transition: opacity var(--dur-base) var(--ease-out);
+}
+.composer-resizable:hover .composer-resize-grip,
+.composer-resizing .composer-resize-grip { opacity: 0.9; }
+.composer-resizing, .composer-resizing * { user-select: none; cursor: ns-resize; }
+/* In-chat composer: same grip mirrored into the top-right corner; drag up
+   to grow. Clipped to the outer triangle so it never takes Send's clicks. */
+.composer-resize-grip--up {
+    bottom: auto;
+    top: 3px;
+    border-bottom-right-radius: 0;
+    border-top-right-radius: 14px;
+    clip-path: polygon(0 0, 100% 0, 100% 100%);
+    background:
+        linear-gradient(45deg, transparent 0 55%, var(--text-secondary) 55% 62%, transparent 62% 72%,
+            var(--text-secondary) 72% 79%, transparent 79%);
+}
+.input-wrapper.is-composer-locked .composer-resize-grip { display: none; }
+@media (pointer: coarse) { .composer-resize-grip { display: none; } }
+
 /* Short desktop windows / split panes: keep micro chats usable. Mobile
    keyboard resizing must not toggle the welcome branding. */
 @media (max-height: 560px) {
@@ -2883,6 +2919,31 @@ body.has-video-background .chat-restore-loader {
 }
 
 .chat-messages::-webkit-scrollbar-thumb:hover {
+    background: var(--text-tertiary);
+}
+
+/* Auto-hiding chat scrollbars (chat_scrollbar_autohide.js toggles
+   .is-scrolling while the scroller moves or the pointer is on its edge).
+   Track stays transparent; only the thumb appears. Both the standard
+   properties (Chromium 121+/Firefox — these win over ::-webkit-scrollbar
+   when set) and the WebKit pseudos are covered. */
+.scrollbar-autohide {
+    scrollbar-color: transparent transparent;
+    transition: scrollbar-color 0.25s ease;
+}
+.scrollbar-autohide.is-scrolling {
+    scrollbar-color: var(--border-color) transparent;
+}
+.scrollbar-autohide::-webkit-scrollbar-track {
+    background: transparent;
+}
+.scrollbar-autohide::-webkit-scrollbar-thumb {
+    background: transparent;
+}
+.scrollbar-autohide.is-scrolling::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+}
+.scrollbar-autohide.is-scrolling::-webkit-scrollbar-thumb:hover {
     background: var(--text-tertiary);
 }
 
@@ -6048,18 +6109,12 @@ pre.has-code-copy:hover .code-copy-btn,
 
 .response-original-content {
     margin-top: 8px;
-    padding-left: 12px;
-    border-left: 2px solid color-mix(in srgb, var(--accent, #58a6ff) 48%, transparent);
-    font-style: italic;
-}
-
-.response-original-content pre,
-.response-original-content code {
-    font-style: normal;
 }
 
 .response-postprocessed-label {
-    margin: 12px 0 4px;
+    margin: 14px 0 4px;
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, var(--text-secondary, #888) 30%, transparent);
     color: var(--text-secondary);
     font-size: 0.72em;
     font-weight: 700;

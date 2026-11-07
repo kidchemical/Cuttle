@@ -464,11 +464,17 @@ def get_current_user():
                 'authenticated': False
             }), 401
         
-        return jsonify({
+        response = jsonify({
             'success': True,
             'authenticated': True,
             'user': _user_public(user),
         })
+        # The DB expiry slides while in use (verify_auth_session); slide the
+        # browser cookie with it, or the cookie's own 30-day max_age signs the
+        # desktop app out anyway. Only for cookie logins, never header tokens.
+        if (request.cookies.get('session_token') or '').strip() == session_token:
+            _set_session_cookie(response, session_token)
+        return response
         
     except Exception as e:
         print(f"Get current user error: {e}")

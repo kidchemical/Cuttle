@@ -86,12 +86,25 @@ def _require_wait(verb: str, args: argparse.Namespace) -> Optional[int]:
     )
 
 
+def _hand_back(listener: Any, batch: Any, verb: str, **kwargs: Any) -> None:
+    """Deliver the round to the parent chat when the agent that ran this CLI is gone."""
+    try:
+        from api.subagents.handback import hand_back
+
+        if hand_back(listener, batch, verb=verb, **kwargs):
+            sys.stderr.write("note: the launching agent is gone; result queued to the parent chat\n")
+    except Exception as exc:  # never fail the CLI over the courtesy notice
+        sys.stderr.write(f"warning: could not hand the result back to the parent chat: {exc}\n")
+
+
 def _cmd_spawn(args: argparse.Namespace) -> int:
+    from api.subagents.handback import capture_listener
     from api.subagents.service import SubagentError, cancel_batch, spawn
 
     denied = _require_wait("spawn", args)
     if denied is not None:
         return denied
+    listener = capture_listener()
     parent = _parse_session(args.parent)
     children: List[Any] = list(args.child or [])
     if args.children_json:
@@ -134,6 +147,7 @@ def _cmd_spawn(args: argparse.Namespace) -> int:
         except SubagentError as exc:
             return _fail({"ok": False, "error": str(exc)}, args.json, code=1)
         out = dict(cancelled)
+        _hand_back(listener, out.get("batch") or out, "spawn", timed_out=True)
         out["ok"] = False
         out["timed_out"] = True
         out["error"] = (
@@ -155,6 +169,7 @@ def _cmd_spawn(args: argparse.Namespace) -> int:
             f"  {child.get('handle')}  {child.get('label')}  "
             f"{child.get('agent')} {child.get('model') or ''}  {child.get('status')}"
         )
+    _hand_back(listener, payload, "spawn")
     _emit(payload, as_json=args.json, text="\n".join(lines))
     return 0
 
@@ -187,8 +202,10 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 
 def _cmd_wait(args: argparse.Namespace) -> int:
+    from api.subagents.handback import capture_listener
     from api.subagents.service import SubagentError, wait_batch
 
+    listener = capture_listener()
     db = _open_db(args.db)
     try:
         # Observation only: poll rows another owner may be advancing. Never
@@ -199,16 +216,20 @@ def _cmd_wait(args: argparse.Namespace) -> int:
         )
     except SubagentError as exc:
         return _fail({"ok": False, "error": str(exc)}, args.json)
+    if not payload.get("timed_out"):
+        _hand_back(listener, payload, "wait")
     _emit(payload, as_json=args.json, text=f"batch {payload.get('id')}  {payload.get('status')}")
     return 0
 
 
 def _cmd_message(args: argparse.Namespace) -> int:
+    from api.subagents.handback import capture_listener
     from api.subagents.service import SubagentError, message_child
 
     denied = _require_wait("message", args)
     if denied is not None:
         return denied
+    listener = capture_listener()
     sid = _parse_session(args.session)
     db = _open_db(args.db)
     try:
@@ -222,6 +243,7 @@ def _cmd_message(args: argparse.Namespace) -> int:
     except SubagentError as exc:
         return _fail({"ok": False, "error": str(exc)}, args.json)
     child = payload.get("child") or {}
+    _hand_back(listener, payload.get("batch"), "message", focus=child.get("handle"))
     _emit(
         payload,
         as_json=args.json,

@@ -59,7 +59,7 @@ class SettingsManager:
             "response_postprocessing": {
                 "enabled": False, "mode": "append",
                 "prompt": "Give me a concise TL;DR of the response.",
-                "chain": [],
+                "chain": [], "trigger": {"unit": "words", "min": 0},
             },
             "discovery": {
                 "mdns_enabled": False,

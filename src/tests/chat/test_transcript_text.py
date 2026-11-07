@@ -3,12 +3,17 @@
 from api.transcript_text import agent_visible_metadata, agent_visible_text
 
 
-def test_strips_original_wrapper_and_think_blocks():
+def test_unwraps_original_answer_and_strips_think_blocks():
     text = (
         '<cuttle_original_response>"<think>\\nplan\\n</think>\\n\\nraw"</cuttle_original_response>'
         "\n\n<thinking>more</thinking>Visible answer."
     )
-    assert agent_visible_text(text) == "Visible answer."
+    assert agent_visible_text(text) == "raw\n\nVisible answer."
+
+
+def test_malformed_original_wrapper_is_dropped():
+    text = "<cuttle_original_response>not json</cuttle_original_response>\n\nTail"
+    assert agent_visible_text(text) == "Tail"
 
 
 def test_unclosed_think_tag_keeps_text_without_framing():

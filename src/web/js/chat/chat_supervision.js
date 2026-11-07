@@ -23,6 +23,7 @@
         let timer = null;
         let popover = null;
         let seq = 0;
+        let pauseMenuFor = null;
 
         const slot = () => doc.getElementById(host.slotId || 'chatSupervisionSlot');
         const now = () => host.now() / 1000;
@@ -87,8 +88,9 @@
             'Supervision schedule — click for history and controls', 'chip')));
             v.badges.forEach((b) => parts.push(pill('is-supervised' + (b.paused ? ' is-paused' : '')
                 + (b.violations.length ? ' is-warn' : ''), b.id,
-            (b.violations.length ? '⚠ ' : '') + b.text + (b.paused ? ' (paused)' : ''),
-            b.violations.length ? b.violations.join('\n') : 'Click for supervisor details', 'badge')));
+            (b.violations.length ? '⚠ ' : '') + b.text,
+            b.violations.length ? b.violations.join('\n') : (b.pausedText || 'Click for supervisor details'),
+            'badge')));
             if (v.queued.length) {
                 parts.push(pill('is-queued', 'queued', v.queued.length + ' queued',
                     'Messages waiting for this chat to go idle', 'queued'));
@@ -109,13 +111,25 @@
                     + '</div>' : '') + '</li>').join('') + '</ol>';
         }
 
+        // Pausing asks for how long: a timed pause auto-resumes on the host, so
+        // supervision cannot stop silently for days. "Until I resume" is last.
+        function pauseMenuHtml(id) {
+            return '<div class="chat-supervision-pause-menu" role="group" aria-label="Pause for how long">'
+                + '<span class="chat-supervision-meta">Pause for how long?</span>'
+                + M.PAUSE_CHOICES.map((c) => '<button type="button"'
+                    + (c.primary ? ' class="is-primary"' : '') + ' data-sup-pause="' + esc(c.id)
+                    + '" data-sup-id="' + esc(id) + '">' + esc(c.label) + '</button>').join('')
+                + '</div>';
+        }
+
         function controls(id, paused, openHandle, openLabel) {
             return '<div class="chat-supervision-actions">'
                 + '<button type="button" data-sup-chat="' + esc(openHandle) + '">' + esc(openLabel) + '</button>'
-                + '<button type="button" data-sup-act="' + (paused ? 'resume' : 'pause') + '" data-sup-id="' + esc(id) + '">'
-                + (paused ? 'Resume' : 'Pause') + '</button>'
+                + '<button type="button" data-sup-act="' + (paused ? 'resume' : 'pause-menu') + '" data-sup-id="' + esc(id) + '">'
+                + (paused ? 'Resume now' : 'Pause…') + '</button>'
                 + '<button type="button" class="is-danger" data-sup-act="cancel" data-sup-id="' + esc(id) + '">Cancel</button>'
-                + '</div>';
+                + '</div>'
+                + (!paused && pauseMenuFor === id ? pauseMenuHtml(id) : '');
         }
 
         function popoverContent(kind, id, v) {
@@ -128,6 +142,8 @@
                     + (c.rules ? 'Rules: ' + esc(c.rules) + '. ' : '')
                     + (c.lastSeen ? 'Last seen: ' + esc(c.lastSeen) + (c.tasks ? ', ' + esc(c.tasks) : '') + '.' : '')
                     + '</div>'
+                    + (c.paused ? '<div class="chat-supervision-paused">⏸ ' + esc(c.pausedText)
+                        + ' — no check-ins and no wake-ups until it resumes.</div>' : '')
                     + (c.violations.length ? '<div class="chat-supervision-violation">⚠ '
                         + c.violations.map(esc).join('<br>⚠ ') + '</div>' : '')
                     + '<div class="chat-supervision-section">Check history</div>' + historyHtml(c.history)
@@ -137,7 +153,9 @@
                 const b = v.badges.find((x) => x.id === id);
                 if (!b) return '';
                 return '<div class="chat-supervision-title">' + esc(b.text) + '</div>'
-                    + '<div class="chat-supervision-meta">' + esc(b.paused ? 'Paused.' : (b.next ? 'Next check: '
+                    + (b.paused ? '<div class="chat-supervision-paused">⏸ ' + esc(b.pausedText)
+                        + ' — nothing checks this chat and nothing wakes its supervisor.</div>' : '')
+                    + '<div class="chat-supervision-meta">' + esc(b.paused ? '' : (b.next ? 'Next check: '
                         + b.next.replace(/^next /, '') + '.' : '')) + ' The supervisor is only woken when this chat'
                     + ' stops, errors, needs input, makes progress, or breaks a branch rule.</div>'
                     + (b.violations.length ? '<div class="chat-supervision-violation">⚠ '
@@ -175,18 +193,28 @@
 
         function closePopover() {
             if (popover) { popover.remove(); popover = null; }
+            pauseMenuFor = null;
         }
 
-        async function act(verb, id) {
+        async function act(verb, id, choice) {
+            if (verb === 'pause-menu') {
+                pauseMenuFor = pauseMenuFor === id ? null : id;
+                render();
+                return;
+            }
             if (verb === 'cancel' && !host.confirm('Cancel this ' + (id && overview && (overview.queued || [])
                 .some((q) => q.id === id) ? 'queued message' : 'supervision schedule') + '?')) return;
+            const body = verb === 'pause' ? M.pauseBody(choice, host.now()) : undefined;
             try {
-                await call('POST', '/api/chat-ops/operations/' + encodeURIComponent(id) + '/' + verb);
-                host.toast(verb === 'cancel' ? 'Cancelled' : verb === 'pause' ? 'Supervision paused'
+                await call('POST', '/api/chat-ops/operations/' + encodeURIComponent(id) + '/' + verb, body);
+                host.toast(verb === 'cancel' ? 'Cancelled' : verb === 'pause'
+                    ? (body && body.indefinite ? 'Supervision paused until you resume it'
+                        : 'Supervision paused; it resumes by itself')
                     : 'Supervision resumed; checking now', 'success');
             } catch (e) {
                 host.toast(String(e.message || e), 'error');
             }
+            pauseMenuFor = null;
             refresh();
         }
 
@@ -200,6 +228,11 @@
                 return;
             }
             if (popover && popover.contains(t)) {
+                const chosen = t.closest('[data-sup-pause]');
+                if (chosen) {
+                    act('pause', chosen.getAttribute('data-sup-id'), chosen.getAttribute('data-sup-pause'));
+                    return;
+                }
                 const a = t.closest('[data-sup-act]');
                 if (a) act(a.getAttribute('data-sup-act'), a.getAttribute('data-sup-id'));
                 const c = t.closest('[data-sup-chat]');

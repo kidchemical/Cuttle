@@ -410,6 +410,11 @@ def run_child_turn(
     if not text:
         text = store.latest_assistant_text(db, child.session_id)
 
+    # The child chat keeps its reasoning block; the result handed back to the
+    # parent agent carries only the answer (api.transcript_text).
+    from api.transcript_text import agent_visible_text
+
+    text = agent_visible_text(text)
     if result.get("cancelled") or str(text).startswith("[CANCELLED]"):
         store.update_child(
             db, child.id, status=STATUS_CANCELLED, result=text, finished=True

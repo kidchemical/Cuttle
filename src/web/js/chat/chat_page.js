@@ -6967,15 +6967,9 @@
         }
     }
     
-    function autoResizeWelcomeTextarea() {
-        const textarea = document.getElementById('welcomeChatInput');
-        if (textarea) {
-            textarea.style.height = 'auto';
-            const next = Math.min(textarea.scrollHeight, 168);
-            textarea.style.height = next + 'px';
-            textarea.style.overflowY = textarea.scrollHeight > 168 ? 'auto' : 'hidden';
-        }
-    }
+    const welcomeComposerResize = CuttleChatComposerResize.create({ doc: document, win: window,
+        storage: () => window.localStorage, inputId: 'welcomeChatInput', wrapSelector: '.welcome-composer-wrap' });
+    function autoResizeWelcomeTextarea() { welcomeComposerResize.fit(); }
     
     // ── Deep-link restore (?chat=) ─────────────────────────────
     // chat_page.html raises data-chat-restoring and kicks off the transcript
@@ -6998,7 +6992,7 @@
     }
 
     /** Drop to the new-chat splash (also the give-up path for a slow restore). */
-    function showWelcomeSplash() {
+    function showWelcomeSplash(opts) {
         clearChatRestoreVeil();
         detachLocalGenerationForNavigation();
         const welcome = document.getElementById('welcomeScreen');
@@ -7017,7 +7011,7 @@
         if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
             window.CuttleAuth.setCurrentChatSession(null);
         }
-        syncChatUrl(null);
+        if (!(opts && opts.keepChatUrl)) syncChatUrl(null);
         applyStarredSlashChips();
         restoreWelcomeStickySlash();
         restoreComposerDraft('new', { force: true });
@@ -7358,6 +7352,7 @@
                 focusWelcomeComposer: focusWelcomeComposer,
                 takeChatTranscriptPrefetch: takeChatTranscriptPrefetch,
                 waitForAuthReady: waitForAuthReady,
+                isAuthenticated: isAuthMode,
                 firstTruthy: firstTruthy,
                 loadChatSession: loadChatSession,
                 showWelcomeSplash: showWelcomeSplash,
@@ -7998,9 +7993,12 @@
         // live-status is fetched in parallel with messages; a reply can already be
         // in history while that snapshot still says active. Prefer the transcript.
         const liveActiveRaw = remoteLiveStatusLooksActive(liveStatus);
-        const liveActive = liveActiveRaw
-            && !thisTurnHasAssistantReply(messages)
-            && !turnAlreadyShowsAssistantReply();
+        // A follow-up (detached run answering a steer / finishing background
+        // work) lands as a new bubble: the existing reply does not end it.
+        const liveActive = liveActiveRaw && (
+            CuttleChatActivity.liveStatusIsFollowup(liveStatus)
+            || (!thisTurnHasAssistantReply(messages) && !turnAlreadyShowsAssistantReply())
+        );
         const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
         const wasGeneratingUi = !!document.getElementById('typing-indicator-remote')
             || (session.current() != null
@@ -12368,15 +12366,11 @@
         window.CuttleEmoticons.applyToTextarea(textarea);
     }
 
-    function autoResizeTextarea() {
-        const textarea = document.getElementById('chatInput');
-        if (textarea) {
-            textarea.style.height = 'auto';
-            const next = Math.min(textarea.scrollHeight, 168);
-            textarea.style.height = next + 'px';
-            textarea.style.overflowY = textarea.scrollHeight > 168 ? 'auto' : 'hidden';
-        }
-    }
+    const chatComposerResize = CuttleChatComposerResize.create({ doc: document, win: window,
+        storage: () => window.localStorage, inputId: 'chatInput', wrapSelector: '#chatComposerWrap',
+        grow: 'up', storageKey: CuttleChatComposerResize.CHAT_STORAGE_KEY });
+    function autoResizeTextarea() { chatComposerResize.fit(); }
+    CuttleChatScrollbarAutohide.create({ doc: document, win: window });
     
     // Utility Functions
     function escapeHtml(text) {
@@ -12558,7 +12552,7 @@
                 saveComposerDraft(session.current() || 'new');
             });
             wireComposerEmoticons(chatInput);
-            chatInput.style.height = 'auto';
+            autoResizeTextarea();
             LOG('DOMContentLoaded: chat input keydown listener attached');
         } else {
             LOG_ERR('DOMContentLoaded: chatInput not found');

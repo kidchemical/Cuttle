@@ -49,6 +49,8 @@ def _row_child(row: Any) -> ChildRecord:
         live_status_at=str(d.get("live_status_at") or ""),
         live_turn_id=str(d.get("live_turn_id") or ""),
         stop_requested_at=_float_or_none(d.get("stop_requested_at")),
+        card_message_id=d.get("card_message_id"),
+        card_pending=bool(d.get("card_pending")),
     )
 
 
@@ -527,8 +529,53 @@ def latest_assistant_text(db, session_id: int) -> str:
     return ""
 
 
+def pending_card_children(db, parent_session_id: int) -> List[ChildRecord]:
+    """Children of this parent whose follow-up round awaits a card on the next reply."""
+    conn = db._get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT c.* FROM subagent_children c JOIN subagent_batches b ON b.id = c.batch_id "
+            "WHERE b.parent_session_id = ? AND c.card_pending = 1 "
+            "ORDER BY c.sort_index ASC, c.session_id ASC",
+            (int(parent_session_id),),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [_row_child(r) for r in rows]
+
+
+def set_card_round(db, child_id: str, *, message_id: Optional[int] = None, pending: bool) -> None:
+    """Record a child's card bubble (when minted) or mark a new round pending."""
+    conn = db._get_connection()
+    try:
+        if message_id is not None:
+            conn.execute(
+                "UPDATE subagent_children SET card_message_id = ?, card_pending = ? WHERE id = ?",
+                (int(message_id), 1 if pending else 0, str(child_id)))
+        else:
+            conn.execute(
+                "UPDATE subagent_children SET card_pending = ? WHERE id = ?",
+                (1 if pending else 0, str(child_id)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def card_bubble_id(db, child: ChildRecord) -> Optional[int]:
+    """The parent bubble currently carrying this child's live card, if any."""
+    if child.card_message_id:
+        return int(child.card_message_id)
+    batch = get_batch(db, child.batch_id)
+    return int(batch.attach_message_id) if batch and batch.attach_message_id else None
+
+
 def bind_unattached_batches(db, parent_session_id: int, message_id: int) -> List[BatchRecord]:
-    """Attach running/recent batches to the first parent assistant bubble after spawn."""
+    """Attach running/recent batches to the first parent assistant bubble after spawn.
+
+    Also mints pending follow-up cards (see ``pending_card_children``) on it.
+    """
+    for child in pending_card_children(db, parent_session_id):
+        set_card_round(db, child.id, message_id=int(message_id), pending=False)
     bound: List[BatchRecord] = []
     for batch in list_batches_for_parent(db, parent_session_id):
         if batch.attach_message_id:

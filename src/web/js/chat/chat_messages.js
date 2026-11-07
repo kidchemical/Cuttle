@@ -295,17 +295,21 @@
 
     function splitPostprocessedResponse(text) {
         const source = String(text || '');
-        const match = /^<cuttle_original_response>([\s\S]*?)<\/cuttle_original_response>\s*/i.exec(source);
+        // Leading <think> blocks (the turn's reasoning) sit ahead of the wrapper.
+        const match = /^((?:\s*<think>[\s\S]*?<\/think>)*)\s*<cuttle_original_response>([\s\S]*?)<\/cuttle_original_response>\s*/i.exec(source);
         if (!match) return null;
         try {
-            const original = JSON.parse(match[1]);
-            return typeof original === 'string' ? {original, response: source.slice(match[0].length)} : null;
+            const original = JSON.parse(match[2]);
+            return typeof original === 'string'
+                ? {lead: match[1].trim(), original, response: source.slice(match[0].length)} : null;
         } catch (_) { return null; }
     }
 
+    /** The agent's own reply first, then whatever post-processing added. */
     function postprocessedBody(text) {
         const parsed = splitPostprocessedResponse(text);
-        return parsed ? parsed.response : text;
+        if (!parsed) return text;
+        return [parsed.original.trim(), parsed.response.trim()].filter(Boolean).join('\n\n');
     }
 
     /**
@@ -318,8 +322,10 @@
         const d = deps || {};
         let out = String(text || '');
         const thinkBlocks = [];
-        // Host-generated original reply disclosure. JSON framing keeps quoted
-        // markup inert; its contents use the ordinary escaped markdown renderer.
+        // Append-mode post-processing: the agent's reply sits in a collapsed
+        // "Original response" disclosure, then the processor's text follows under
+        // its own label. JSON framing keeps quoted markup inert; the original
+        // uses the escaped markdown renderer.
         const processed = splitPostprocessedResponse(out);
         if (processed) {
             const placeholder = '{{CUTTLE_THINK_' + thinkBlocks.length + '}}';
@@ -327,8 +333,8 @@
                 ? d.formatMessage(processed.original) : d.escapeHtmlInline(processed.original);
             thinkBlocks.push('<details class="response-original-block"><summary>Original response</summary>'
                 + '<div class="response-original-content">' + content + '</div></details>'
-                + '<div class="response-postprocessed-label">Post-processed response</div>');
-            out = placeholder + '\n\n' + processed.response;
+                + '<div class="response-postprocessed-label">Added by post-processing</div>');
+            out = (processed.lead ? processed.lead + '\n\n' : '') + placeholder + '\n\n' + processed.response;
         }
         const pushThinkBlock = (content) => {
             const placeholder = '{{CUTTLE_THINK_' + thinkBlocks.length + '}}';

@@ -74,6 +74,14 @@ another owner's batch. Crash/SIGKILL recovery (rows left active with no
 process at all) is explicitly deferred: inspect with `status`, terminally
 stop with `cancel`.
 
+**Parent stopped listening.** A `--wait` CLI notes the process that launched it
+(the parent's agent CLI). If that process is gone when the round ends (your
+turn hit its background-wait limit, timed out, or Flask restarted), the CLI queues
+a Cuttle notice turn on the parent chat with each child's handle, status and
+reply, and the parent continues from there. Running `spawn --wait` as a
+background command is therefore safe for long children: you are told when it
+finishes either way. While the launcher is still alive nothing extra is posted.
+
 `--route` asks the existing Cuttle router to pick `agent`+`model` for children
 that omitted them (or set `"route": true`).
 
@@ -119,7 +127,10 @@ become one card per child — name/avatar, harness · model · effort, outcome
 (`queued` / `running` / `done` / `failed` / `cancelled` / `lost` = host process
 died) and a one-line plain-text result (full text in the tooltip). Outcome comes
 from the child row, never inferred; history reload refreshes cards from it.
-Click opens the child chat.
+Click opens the child chat. A follow-up round (`python -m api.subagents message`)
+gets its own card on the parent's next saved reply, and the earlier bubble's
+card is frozen at the previous round's outcome (`frozen: true`, never
+re-hydrated).
 
 Running fleet cards show the harness's latest status (reading files, running
 commands/tests, writing, etc.) rather than a fixed "Working…". The child CLI

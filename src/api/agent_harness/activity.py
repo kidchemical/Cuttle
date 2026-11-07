@@ -186,6 +186,9 @@ class TextActivityLog:
         self.buffers: Dict[tuple, str] = {}
         self.current: Dict[str, str] = {}
         self.sequence = 0
+        # Optional ``item_id -> bool``: True for text from a nested sub-agent,
+        # which is recorded but never carried into the turn's own reply.
+        self.nested = None
 
     def key(self, kind: str, item_id: Any = None) -> tuple:
         return kind, str(item_id or self.current.get(kind) or "pending")
@@ -207,7 +210,8 @@ class TextActivityLog:
         key = self.key(kind, item_id)
         if text:
             self.buffers[key] = text
-        record_agent_text(kind, self.buffers.get(key, ""), f"{self.source_id}:{key[1]}")
+        record_agent_text(kind, self.buffers.get(key, ""), f"{self.source_id}:{key[1]}",
+                          nested=bool(self.nested and self.nested(key[1])))
 
     def flush(self) -> None:
         for kind, item_id in list(self.buffers):

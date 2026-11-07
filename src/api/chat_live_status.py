@@ -94,8 +94,15 @@ def set_live_status(
     is_cancelled: Optional[Callable[[Any], bool]] = None,
     turn: Optional[int] = None,
     slash_command: Optional[dict] = None,
+    followup: Optional[bool] = None,
 ) -> None:
-    """Publish (or refresh) live generation status for all devices watching this session."""
+    """Publish (or refresh) live generation status for all devices watching this session.
+
+    ``followup=True`` marks activity that continues an already-delivered reply
+    (a detached run answering a steer or finishing background work): the
+    answer lands as a *new* bubble, so clients must show it even though the
+    transcript's last turn already has an assistant reply.
+    """
     keys = live_status_keys(session_id)
     if not keys:
         return
@@ -125,6 +132,7 @@ def set_live_status(
             "query_id": query_id if query_id is not None else prev.get("query_id"),
             "turn": turn if turn is not None else previous_turn,
             "slash_command": slash_command if slash_command is not None else prev.get("slash_command"),
+            "followup": bool(followup if followup is not None else prev.get("followup")),
         }
         for k in keys:
             _STORE[k] = entry

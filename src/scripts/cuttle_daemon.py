@@ -990,6 +990,37 @@ def watch_flask_restart_requests():
         time.sleep(1.0)
 
 
+UNIT_WATCH_POLL_SEC = 15.0
+
+
+def watch_detached_units():
+    """Resume chats whose detached jobs have exited (``api.job_watch`` unit watches).
+
+    Agents start long work as its own process/unit on purpose (``systemd-run
+    --user --unit=…``) so a Flask restart cannot kill it. Nothing in Flask or in
+    the agent's own CLI outlives that job, so the daemon owns the poll: when the
+    unit (or pid) exits it writes the terminal watch status and queues the chat's
+    resume turn through the chat-ops outbox. Flask then delivers it when the chat
+    is idle — no open browser needed.
+    """
+    while daemon_running:
+        if _shutdown_done:
+            return
+        try:
+            from api.job_watch import poll_unit_watches
+
+            for done in poll_unit_watches():
+                if done.get("resolved"):
+                    print(f"[DAEMON] unit watch {done.get('id')} resolved "
+                          f"({done.get('state')}) → resumed chat {done.get('chat_session_id')}")
+        except Exception as e:
+            print(f"[DAEMON] unit watch poll: {e}")
+        for _ in range(int(UNIT_WATCH_POLL_SEC)):
+            if not daemon_running or _shutdown_done:
+                return
+            time.sleep(1.0)
+
+
 def run_device_workers_loop():
     """Local device worker: register + claim host mesh jobs (CUTTLE_WORKERS.md)."""
     try:
@@ -1373,6 +1404,10 @@ def run_daemon():
     # LAN device-worker mesh — host registers as a worker + claims local queue jobs
     device_workers_watcher = threading.Thread(target=run_device_workers_loop, daemon=True)
     device_workers_watcher.start()
+
+    # Detached jobs (systemd-run units / pids) → resume their chat when they exit
+    unit_watch_watcher = threading.Thread(target=watch_detached_units, daemon=True)
+    unit_watch_watcher.start()
 
     if _should_open_ui() and flask_ready:
         open_cuttle_ui()

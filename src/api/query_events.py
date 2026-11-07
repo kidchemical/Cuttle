@@ -109,8 +109,12 @@ def record_thinking(text: str, *, query_id: Optional[str] = None) -> None:
     add_event("thinking", query_id=query_id, text=text)
 
 
-def record_agent_text(kind: str, text: str, block_id: str) -> None:
-    """Store a harness text snapshot independently of its status-strip preview."""
+def record_agent_text(kind: str, text: str, block_id: str, *, nested: bool = False) -> None:
+    """Store a harness text snapshot independently of its status-strip preview.
+
+    ``agent_text`` marks full blocks (not status previews); ``nested`` marks a
+    sub-agent's text. ``api.agent_harness.reasoning_reply`` reads both.
+    """
     if kind not in ("thinking", "writing") or not text.strip():
         return
     tracker = _tracker()
@@ -127,7 +131,7 @@ def record_agent_text(kind: str, text: str, block_id: str) -> None:
             except Exception:
                 pass
             return
-    add_event(kind, text=text, block_id=block_id)
+    add_event(kind, text=text, block_id=block_id, agent_text=True, nested=nested)
 
 
 def record_agent_tool(block_id: str, summary: str, *, phase: str, args: Any = None,

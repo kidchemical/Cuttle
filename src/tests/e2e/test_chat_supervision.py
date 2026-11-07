@@ -36,8 +36,11 @@ const sched = {id: 's1', state: 'pending', supervisor: 'CH-000001', target: 'CH-
     {at: now - 1860, outcome: 'woke', detail: {state: 'idle_with_work', already_waiting: true}},
     {at: now - 2760, outcome: 'violation', detail: {state: 'busy', violations: ['on forbidden branch main']}},
   ]};
-const v = M.view({supervising: [sched], supervised_by: [Object.assign({}, sched, {state: 'paused'})],
+const paused = Object.assign({}, sched, {state: 'paused', paused_at: now - 3 * 86400});
+const v = M.view({supervising: [sched], supervised_by: [paused],
   queued: [{id: 'q1', from: 'CH-000001', text: 'next\n  step'}]}, now, {locale: 'en-US'});
+const timed = M.view({supervising: [Object.assign({}, paused, {paused_until: now + 3600})]},
+  now, {locale: 'en-US'});
 const bad = M.supervisePayload({target: 'CH-000002', agent: '', every: 7, instructions: ' ',
   requiredBranch: 'main', forbidden: 'main, master'});
 const good = M.supervisePayload(Object.assign(M.dialogDefaults({handle: 'CH-000002', branch: 'dev/x'}),
@@ -46,6 +49,9 @@ console.log(JSON.stringify({
   intervals: [300, 3600, 5400, 45].map(M.fmtInterval),
   chip: v.chips[0], badge: v.badges[0], queued: v.queued[0], warn: v.warn, empty: v.empty,
   emptyView: M.view({}, now), due: M.nextLabel(Object.assign({}, sched, {next_check: now - 1}), now),
+  pausedChip: timed.chips[0], pauseChoices: M.PAUSE_CHOICES.map((c) => c.id),
+  pauseBodies: ['1h', '4h', 'indefinite', 'nonsense'].map((id) => M.pauseBody(id, now * 1000)),
+  tomorrow: M.pauseBody('tomorrow', now * 1000),
   bad, good,
 }));
 """
@@ -72,8 +78,18 @@ def test_model_view_rows_and_payload():
         "woke supervisor (idle_with_work), previous check-in still pending",
         "rule broken, woke supervisor (busy)"]
     assert [h["tone"] for h in chip["history"]] == ["muted", "muted", "active", "warn"]
-    assert r["badge"]["text"] == "Supervised by CH-000001" and r["badge"]["paused"] is True
+    assert r["badge"]["paused"] is True
+    # A paused schedule says since when, right on the badge — never a dimmed chip alone.
+    assert r["badge"]["text"].startswith("Supervised by CH-000001 · Paused since ")
+    assert r["badge"]["text"].endswith(" · no auto-resume")
+    assert r["badge"]["pausedText"] == r["badge"]["text"].split(" · ", 1)[1]
     assert r["badge"]["next"] == "paused"
+    assert r["pausedChip"]["text"].startswith("Supervising CH-000002 · Paused since ")
+    assert " · resumes " in r["pausedChip"]["text"]
+    # Pausing offers timed options first and an indefinite one last.
+    assert r["pauseChoices"] == ["1h", "4h", "tomorrow", "indefinite"]
+    assert r["pauseBodies"] == [{"hours": 1}, {"hours": 4}, {"indefinite": True}, {"hours": 1}]
+    assert r["tomorrow"]["until"] > 1_800_000_000
     assert r["queued"]["preview"] == "next step"
     assert r["warn"] is True and r["empty"] is False and r["emptyView"]["empty"] is True
     assert r["due"] == "checking…"
@@ -121,6 +137,11 @@ class SupervisionWorld(CardWorld):
                 self.posts.append((path, json.loads(req.post_data or "{}")))
                 if path.endswith("/pause"):
                     self.overview["supervising"][0]["state"] = "paused"
+                    self.overview["supervising"][0]["paused_at"] = time.time() - 120
+                    body = json.loads(req.post_data or "{}")
+                    if body.get("hours"):
+                        self.overview["supervising"][0]["paused_until"] = (
+                            time.time() + float(body["hours"]) * 3600)
                 if path.endswith("/q1/cancel"):
                     self.overview["queued"] = []
                 if path == "/api/chat-ops/supervise":
@@ -169,9 +190,12 @@ def test_pills_hidden_until_flag_then_popover_pause_and_queue_cancel(browser, st
         expect(pop.locator(".chat-supervision-history li")).to_have_count(2)
         expect(pop.locator(".chat-supervision-history li").first).to_contain_text("skipped, busy")
         page.screenshot(path=os.environ.get("SUPERVISION_SHOT", "/tmp/supervision_popover.png"))
-        pop.locator("[data-sup-act=pause]").click()
+        pop.locator("[data-sup-act=pause-menu]").click()
+        expect(pop.locator(".chat-supervision-pause-menu")).to_contain_text("Pause for how long?")
+        pop.locator("[data-sup-pause='1h']").click()
         frame.locator("[data-sup-open=chip].is-paused").wait_for()
-        assert world.posts[-1][0] == "/api/chat-ops/operations/sup1/pause"
+        assert world.posts[-1] == ("/api/chat-ops/operations/sup1/pause", {"hours": 1})
+        expect(frame.locator("[data-sup-open=chip]")).to_contain_text("Paused since")
 
         badge.click()
         expect(frame.locator(".chat-supervision-popover")).to_contain_text("on forbidden branch main")

@@ -443,6 +443,110 @@ def _check_in(op, db, actor, sid, request):
                                         'guard_reported': found}, due=nxt)
 
 
+# A pause nobody remembers is the failure this guards: default 6 h, setting
+# ``supervision_paused_alert_hours`` (0 disables).
+PAUSED_ALERT_HOURS = 6
+PAUSED_ALERT_SCAN_SEC = 300
+_last_pause_scan = 0.0
+
+
+def paused_alert_hours():
+    try:
+        from managers.settings_manager import get_settings_manager
+
+        raw = get_settings_manager().get_setting('supervision_paused_alert_hours', PAUSED_ALERT_HOURS)
+    except Exception:
+        raw = PAUSED_ALERT_HOURS
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return float(PAUSED_ALERT_HOURS)
+
+
+def _target_idle_with_work(op, db=None):
+    """Whether the supervised chat is sitting on unfinished Tasks items.
+
+    Read straight from the stores (no chat HTTP call): the alert scan must cost
+    nothing when every schedule is healthy."""
+    from api.chat_live_status import get_live_status
+    from api.gizmos.tasks import list_tasks
+
+    sid = int(op['target'])
+    if get_live_status(sid).get('active'):
+        return False
+    if db is None:
+        from api.auth_db import get_auth_db
+
+        db = get_auth_db()
+    row = db.get_chat_session_by_id(sid)
+    if not row:
+        return False
+    tasks = list_tasks(user_id=int(row['user_id']), session_id=sid, db=db)
+
+    def open_items(items):
+        for item in items or []:
+            if not item.get('done'):
+                return True
+            if open_items(item.get('children') or []):
+                return True
+        return False
+
+    return any(open_items((t.get('payload') or {}).get('items') or []) for t in tasks)
+
+
+def stale_pause_alerts(*, now=None, notify=None, db=None):
+    """Raise one notification per indefinitely paused schedule left too long.
+
+    Only for a pause with no expiry (a timed one comes back by itself) whose
+    target is idle with open Tasks items — i.e. work that has silently stopped.
+    Raised once per pause; resuming or re-pausing re-arms it."""
+    now = time.time() if now is None else now
+    hours = paused_alert_hours()
+    if hours <= 0:
+        return []
+    if notify is None:
+        from api.ui_notify import notify_tray
+
+        notify = notify_tray
+    raised = []
+    for op in store.paused_schedules():
+        result = op.get('result') or {}
+        if result.get('paused_alerted') or result.get('paused_until'):
+            continue
+        since = float(result.get('paused_at') or op['updated'] or now)
+        if now - since < hours * 3600:
+            continue
+        try:
+            if not _target_idle_with_work(op, db=db):
+                continue
+        except Exception:
+            continue
+        waited = int((now - since) // 3600)
+        message = (f"Supervision of CH-{int(op['target']):06d} has been paused for {waited} h "
+                   f"(by CH-{int(op['actor']):06d}) and that chat is idle with open Tasks items. "
+                   'Resume it from the supervision chip, or cancel the schedule.')
+        try:
+            notify(message, variant='warning')
+        except Exception:
+            continue
+        store.patch_result(op['id'], paused_alerted=True)
+        store.record_check(op['id'], 'paused_alert', {'paused_hours': waited})
+        raised.append({'id': op['id'], 'target': int(op['target']), 'hours': waited})
+    return raised
+
+
+def _pause_maintenance():
+    """Auto-resume expired pauses and warn about forgotten ones."""
+    global _last_pause_scan
+    for op in store.resume_expired():
+        print(f"[CHAT OPS] timed pause expired: supervision {op['id'][:8]} resumed", flush=True)
+    now = time.time()
+    if now - _last_pause_scan < PAUSED_ALERT_SCAN_SEC:
+        return
+    _last_pause_scan = now
+    stale_pause_alerts(now=now)
+
+
 def _background_tick():
     # A long agent response must not delay unrelated chats or check-ins.
     for oid, thread in list(_active.items()):
@@ -470,6 +574,10 @@ def _background_tick():
 def _loop():
     store.recover_after_restart()
     while not _stop.wait(2):
+        try:
+            _pause_maintenance()
+        except Exception as exc:
+            print(f'[CHAT OPS] pause maintenance failed: {type(exc).__name__}', flush=True)
         try:
             _background_tick()
         except Exception as exc:

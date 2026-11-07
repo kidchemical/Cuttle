@@ -482,8 +482,19 @@
     }
 
     /** A delayed status snapshot from a turn whose reply already painted. */
+    /**
+     * Live status that continues an already-delivered reply: a detached run
+     * answering a steer or following up on finished background work. Its
+     * answer arrives as a new bubble, so "this turn already has a reply"
+     * must not hide the typing bubble.
+     */
+    function liveStatusIsFollowup(live) {
+        return !!(live && live.followup && (live.active || live.generating) && !live.cancelled);
+    }
+
     function liveStatusPredatesReply(live, reply) {
         if (!live || !reply || reply.controlRequestId) return false;
+        if (liveStatusIsFollowup(live)) return false;
         if (live.query_id && reply.queryId) {
             return String(live.query_id) === String(reply.queryId);
         }
@@ -639,6 +650,7 @@
         combineFollowupBatch,
         liveStatusLooksActive,
         liveStatusPredatesReply,
+        liveStatusIsFollowup,
         activityClassToKind,
         collectFrameSnapshot,
     };

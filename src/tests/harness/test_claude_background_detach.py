@@ -27,15 +27,25 @@ posix_only = pytest.mark.skipif(os.name == "nt", reason="fake CLI script uses a 
 
 @pytest.fixture(autouse=True)
 def _clean_registries():
-    with steer._lock:
-        steer._active.clear()
-    with bw._lock:
-        bw._active.clear()
+    from api import chat_live_status as live
+
+    def _clear():
+        with steer._lock:
+            steer._active.clear()
+        with bw._lock:
+            bw._active.clear()
+        with live._LOCK:
+            live._STORE.clear()
+
+    _clear()
     yield
-    with steer._lock:
-        steer._active.clear()
-    with bw._lock:
-        bw._active.clear()
+    _clear()
+
+
+def _live(chat_id):
+    from api.chat_live_status import get_live_status
+
+    return get_live_status(str(chat_id))
 
 
 # Speaks just enough claude 2.1 stream-json: a first result while one
@@ -60,6 +70,21 @@ def bg(tasks):
     out({"type": "system", "subtype": "background_tasks_changed", "tasks": tasks})
 q.get()
 out({"type": "system", "subtype": "init", "model": "fake"})
+if mode == "real_task":
+    # Like Claude Code's run_in_background Bash: own session, stdout on the task file.
+    import subprocess
+    path = os.environ["FAKE_TASK_OUT"]
+    fh = open(path, "w")
+    subprocess.Popen([sys.executable, "-c", "import os, time; print('rendered 13 frames', flush=True); "
+                      "time.sleep(float(os.environ['FAKE_TASK_SEC'])); print('blend saved', flush=True)"],
+                     stdout=fh, stderr=fh, stdin=subprocess.DEVNULL, start_new_session=True)
+    out({"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1",
+         "content": "Command running in background with ID: b7. Output is being written to: %s. "
+                    "You will be notified when it completes." % path}]}})
+    bg([{"task_id": "b7", "task_type": "local_bash", "description": "blender job"}])
+    result("started the blender job")
+    time.sleep(30)  # ignores EOF while its task runs
+    sys.exit(0)
 bg([{"task_id": "b1", "task_type": "local_bash", "description": "watch CI"}])
 result("started the watcher")
 if mode == "finishes":
@@ -70,6 +95,8 @@ elif mode == "steer":
     m = q.get(timeout=15)
     if m is not None:
         out({"type": "user", "isReplay": True, "parent_tool_use_id": None, "message": m["message"]})
+        out({"type": "stream_event", "event": {"type": "message_start", "message": {"id": "m2"}}})
+        time.sleep(1.0)  # working on the answer: the chat shows the typing bubble
         result("saw: %s" % m["message"]["content"])
         time.sleep(0.3)
         bg([])
@@ -204,6 +231,42 @@ def test_saver_binds_follow_ups_and_persists_each_as_its_own_row(tmp_path, monke
 
 
 @posix_only
+def test_follow_up_bubble_is_post_processed_on_its_own(tmp_path, monkeypatch):
+    """A follow-up runs post-processing on its own text; it never inherits the first reply's."""
+    from api import response_postprocessing
+    from api.chat_turn_persist import make_assistant_saver
+
+    rows, seen = [], []
+
+    def fake_process(result, **_kw):
+        seen.append(dict(result))
+        if not result.get("postprocessing"):
+            result["response"] = "TL;DR " + result["response"]
+            result["postprocessing"] = {"status": "completed", "original_response": "own"}
+
+    monkeypatch.setattr(response_postprocessing, "process_result", fake_process)
+
+    class _DB:
+        def add_message(self, sid, role, content, metadata=None):
+            rows.append((content, metadata))
+            return len(rows)
+
+    res, wait, _ = _start(tmp_path, monkeypatch, "finishes", 6120)
+    saver = make_assistant_saver(
+        chat_session_id=6120, db=_DB(), request_data={}, resolve_project=lambda _d: str(tmp_path),
+        assistant_meta_fn=lambda r: {}, project_merge_fn=lambda m, *a: m,
+        schedule_autoname=lambda *_a: None, project_root=tmp_path,
+    )
+    saver({"success": True, "response": res["output"], "type": "claude_command", "agent_id": "claude",
+           "background_job": res["background_job"],
+           "postprocessing": {"status": "completed", "original_response": "first"}})
+    assert _until(lambda: len(rows) == 2)
+    assert "postprocessing" not in seen[-1]
+    assert rows[1][0] == "TL;DR CI is green"
+    assert rows[1][1]["postprocessing"]["original_response"] == "own"
+
+
+@posix_only
 def test_message_sent_while_waiting_steers_into_the_live_run(tmp_path, monkeypatch):
     from api import chat_delivery
     from api.chat_coordinator import AgentSelection, AgentTurnIO, PreparedAgentTurn, submit_agent_turn
@@ -227,8 +290,61 @@ def test_message_sent_while_waiting_steers_into_the_live_run(tmp_path, monkeypat
     assert ran == [], "no second claude run may start while the detached run is live"
     assert steered_rows == [{"steered": True, "steered_agent": "claude"}]
     assert chat_delivery.is_busy(6103) is False
+    # While the run answers, every device sees a typing bubble: live status is
+    # active and flagged as a follow-up to the reply already in the transcript.
+    live = _live(6103)
+    assert live["active"] is True and live["followup"] is True
+    assert live["status"] == "Claude Code is answering your message…"
+    assert wait.phase == "working"
     assert _until(lambda: saver.texts() == ["saw: and PINEAPPLE", "CI is green"])
     assert _until(lambda: _status(wait).get("state") == "done")
+    # Both answers landed as bubbles; nothing is generating any more.
+    assert _live(6103)["active"] is False
+    assert not _live(6103).get("followup")
+    assert wait.phase == "waiting"
+
+
+def test_detached_run_phases_drive_live_status_and_the_card():
+    """Waiting → card label only; working → live status (typing bubble); follow-up clears it."""
+    from api.chat_live_status import set_live_status
+
+    wait = bw.BackgroundWait("6109", "claude")
+    wait.start(["render frames"], pid=None)
+    sink = wait.status_sink()
+    assert wait.phase == "waiting"
+    assert _status(wait)["label"] == "Waiting on: render frames"
+    # Heartbeats and tool lines while only the background task runs stay off the chat.
+    sink.put(("status", "Claude Code working… 30s (waiting on background task)"))
+    assert _live(6109)["active"] is False
+    # A finished task (or a steer) puts the run to work: the line shows, flagged follow-up.
+    wait.working("Background task finished — Claude Code is following up…")
+    live = _live(6109)
+    assert live["active"] is True and live["followup"] is True
+    assert live["status"] == "Background task finished — Claude Code is following up…"
+    sink.put(("status", "tool 1: Bash blender --background"))
+    assert _live(6109)["status"] == "tool 1: Bash blender --background"
+    # Idempotent while working; an explicit event replaces the line.
+    wait.working("ignored")
+    assert _live(6109)["status"] == "tool 1: Bash blender --background"
+    wait.working("Claude Code is answering your message…", force=True)
+    assert _live(6109)["status"] == "Claude Code is answering your message…"
+    # The answer is saved first, then live status clears (poll on idle finds the row).
+    saver = _Saver()
+    wait.bind(saver, {})
+    wait.followup("frames rendered")
+    assert saver.texts() == ["frames rendered"]
+    assert _live(6109)["active"] is False and wait.phase == "waiting"
+    # Back to waiting on the remaining task: card label, no live status.
+    wait.waiting("Waiting on: encode video")
+    assert _status(wait)["label"] == "Waiting on: encode video"
+    assert _live(6109)["active"] is False
+    # A newer real turn's status is never cleared by the detached run.
+    wait.working("tool 2: Read", force=True)
+    set_live_status("6109", "Cursor working…", turn=7)
+    wait.finish("done", "Background work finished")
+    assert _live(6109)["status"] == "Cursor working…" and _live(6109)["followup"] is False
+    assert _status(wait)["state"] == "done"
+    assert bw.detached_wait(6109) is None
 
 
 def test_stream_lane_steers_into_detached_wait_without_running(monkeypatch):
@@ -326,7 +442,50 @@ def test_wait_cap_reaps_and_posts_the_abandoned_notice(tmp_path, monkeypatch):
     assert _until(lambda: len(saver.bodies) == 1)
     notice = saver.bodies[0]["response"]
     assert "Stopped waiting for background work" in notice and "- watch CI" in notice
+    # The fake task has no process of its own, so it really did end with the turn.
+    assert "This ended with the turn" in notice and "still running" not in notice
     assert steer.active_agent(6108) is None
+
+
+@posix_only
+def test_wait_cap_hands_running_work_off_and_the_chat_hears_when_it_ends(tmp_path, monkeypatch):
+    """CH-002006: the cap must spare the still-running task and tell the chat when it ends."""
+    from api.agent_harness import background_handoff as bh
+    from api.chat_ops import store
+
+    launched = []
+    monkeypatch.setattr(bh, "_spawn_watcher", lambda path, sid: launched.append((path, sid)))
+    monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "1")
+    monkeypatch.setenv("CLAUDE_BACKGROUND_EXIT_GRACE_SEC", "0.5")
+    monkeypatch.setenv("FAKE_TASK_OUT", str(tmp_path / "b7.output"))
+    monkeypatch.setenv("FAKE_TASK_SEC", "4")
+    res, wait, took = _start(tmp_path, monkeypatch, "real_task", 6111)
+    assert took < 10 and res["output"].startswith("started the blender job")
+    saver = _Saver()
+    bw.bind_saver(wait.job_id, saver, {})
+    assert _until(lambda: _status(wait).get("state") in ("done", "failed"), timeout=20)
+    status = _status(wait)
+    assert status["state"] == "done" and "still running" in status["label"]
+    assert _until(lambda: len(saver.bodies) == 1)
+    notice = saver.bodies[0]["response"]
+    assert "still running; this chat will be told when it finishes" in notice and "- blender job" in notice
+    assert "ended with this turn" not in notice
+
+    assert len(launched) == 1 and launched[0][1] == 6111
+    record_path = launched[0][0]
+    task = bh.json.loads(record_path.read_text())["tasks"][0]
+    assert task["task_id"] == "b7" and task["output_file"] == str(tmp_path / "b7.output")
+    assert bh.running(task), "the reap must spare the handed-off task"
+    assert bh.check(record_path) is False  # still running: nothing posted yet
+    assert not [o for o in store.listing(6111) if o["kind"] == "notice"]
+
+    assert _until(lambda: not bh.running(task), timeout=15)
+    assert bh.check(record_path) is True and not record_path.exists()
+    ops = [o for o in store.listing(6111) if o["kind"] == "notice"]
+    assert len(ops) == 1 and ops[0]["target"] == 6111 and ops[0]["state"] == "pending"
+    text = ops[0]["payload"]["text"]
+    assert "Background work from an earlier turn finished" in text
+    assert "`blender job` (task b7)" in text and "blend saved" in text and str(tmp_path / "b7.output") in text
 
 
 @posix_only

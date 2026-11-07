@@ -74,5 +74,8 @@ def operation_control(op_id: str, verb: str):
     if verb == "cancel":
         return _call(lambda: {"operation": service.cancel(op_id, _uid())})
     if verb in ("pause", "resume"):
-        return _call(lambda: {"operation": service.set_paused(op_id, _uid(), verb == "pause")})
+        data = request.get_json(silent=True) or {}
+        return _call(lambda: {"operation": service.set_paused(
+            op_id, _uid(), verb == "pause", hours=data.get("hours"), until=data.get("until"),
+            indefinite=bool(data.get("indefinite")))})
     return jsonify({"success": False, "error": "Unknown action"}), 404

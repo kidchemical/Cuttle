@@ -210,7 +210,7 @@ with its page as transport/DOM composition. Runbook:
 | CLI wrappers | `src/scripts/utilities/*_cli_tool.py` |
 | Muse follow-up receipts | `src/api/agent_harness/steer_delivery.py` — turn-local acceptance/echo reconciliation; `muse_serve_turn.py` owns MSP transport, late-send rejection and receipt event recognition. Unconfirmed input gets a visible resend notice, never an automatic rerun. Tests: `test_muse_steer_delivery.py`. |
 | Live work tree / agent-owned processes | `src/api/jobs/processes.py` attributes OS processes by the run marker in their environment (`CUTTLE_CHAT_SESSION_ID`, stamped by `core.agent_cli_env`), so re-parented `nohup`/`setsid` work stays owned (flagged detached); pure `build_forest` + identity-checked `end_process`. `src/api/jobs/work_tree.py` is a read model over the live owners (agent_events runs, background waits, chat-bound watch jobs, chat_ops schedules, mesh, sub-agent links) — it stores and kills nothing. Consumers: Agent Feed Running now (`js/agent_events/feed_work*.js`), live-status `background` via `api.chat_live_extras` → `chat_background_work.js`, sessions list `background`. Tests: `src/tests/jobs/test_processes.py`, `test_work_tree.py`, `agent_events/test_feed_work_js.py`, `e2e/test_chat_background_work.py`. |
-| Detached background waits | `src/api/agent_harness/background_wait.py` — a Claude Code turn whose CLI still lists background tasks ends with its reply + a `job_watch` card while the run continues detached; later answers persist as new bubbles through the first bubble's saver (`chat_turn_persist` binds it), and `chat_coordinator` steers harness sends into the live run. Tests: `test_claude_background_detach.py`. |
+| Detached background waits | `src/api/agent_harness/background_wait.py` — a Claude Code turn whose CLI still lists background tasks ends with its reply + a `job_watch` card while the run continues detached; later answers persist as new bubbles through the first bubble's saver (`chat_turn_persist` binds it), and `chat_coordinator` steers harness sends into the live run. Two phases: *waiting* (idle chat, card) and *working* (the adapter's activity lines flow through `status_sink()` into `chat_live_status` flagged `followup`; `working()`/`waiting()` switch), so the typing bubble shows a steer answer or task follow-up being produced even though the last turn already has a reply (`CuttleChatActivity.liveStatusIsFollowup`). Tests: `test_claude_background_detach.py`. |
 | Codex thread writer ownership | `src/api/agent_harness/codex_thread_ownership.py` — process-local leases shared by app-server turns, exec/resume, context probes, and compaction; `test_codex_thread_ownership.py` + `test_codex_ownership_handoff.py`; process teardown stays in `scripts.utilities.agent_process` |
 | Project commands/actions | `{project}/.cuttle/` + global `.cuttle_global/` |
 | Brain / context compile | `src/api/cuttle_brain/` |
@@ -297,11 +297,11 @@ final-response processor configuration. The harness kernel applies prompts to
 each normal execution (including resumes). `api.response_postprocessing` runs
 the opt-in `response_postprocessing` experimental pass via restricted
 `background_helpers` before claimed sync/stream persistence and delivery;
-`chat_coordinator` also applies it to unclaimed compatibility turns.
+`chat_coordinator` also applies it to unclaimed compatibility turns; the supervised orchestrator applies it to the terminal answer it persists.
 Its executor chain is stored in `response_postprocessing.chain`, independently
 of Background helpers preferences; the shared helper engine and picker provide
-API/CLI capabilities. `chat_messages.js` owns the collapsed original-reply
-disclosure and processed copy text. `settings_chat_preferences.js` owns the General/Agents editors. Behavior and
+API/CLI capabilities. `api.agent_harness.reasoning_reply` (kernel) puts each chat turn's reasoning (all adapters' `TextActivityLog` thinking, nested sub-agents excluded) in the reply as one leading `<think>` block. `chat_messages.js` owns the append layout (original
+reply in a collapsed disclosure, labelled processed text after) and copy text. `settings_chat_preferences.js` owns the General/Agents editors. Behavior and
 settings contracts: [Chat prompts](../../.cuttle/docs/chat-prompts.md).
 
 **Direct model APIs:** `api.model_providers` owns validated provider manifests,

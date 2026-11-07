@@ -34,6 +34,12 @@ _CHAT_HANDLE_RE = re.compile(r'^(?:ch[-\s]?)?0*(\d+)$', re.IGNORECASE)
 # Database path
 DB_PATH = data_db_dir() / 'cuttle_auth.db'
 
+# Account logins last 30 days and slide forward while in use: a token past
+# the halfway mark is renewed on its next verified request.
+AUTH_SESSION_LIFETIME_HOURS = 720
+AUTH_SESSION_RENEW_BELOW_DAYS = 15
+AUTH_SESSION_RENEWABLE_MIN_DAYS = 7
+
 class AuthDatabase:
     """Manages user authentication and chat session data"""
     
@@ -296,6 +302,10 @@ class AuthDatabase:
             # child. Only the process running the child turn can kill its CLI
             # (api.subagents.stop_watch polls this column there).
             'ALTER TABLE subagent_children ADD COLUMN stop_requested_at REAL',
+            # Fleet card rounds (api.subagents.fleet): a follow-up round mints a
+            # new card on the parent's next reply and freezes the previous one.
+            'ALTER TABLE subagent_children ADD COLUMN card_message_id INTEGER',
+            'ALTER TABLE subagent_children ADD COLUMN card_pending INTEGER',
         ):
             try:
                 cursor.execute(col_sql)
@@ -784,7 +794,7 @@ class AuthDatabase:
     
     # ==================== Auth Session Management ====================
     
-    def create_auth_session(self, user_id: int, expires_hours: int = 720) -> str:
+    def create_auth_session(self, user_id: int, expires_hours: int = AUTH_SESSION_LIFETIME_HOURS) -> str:
         """Create auth session and return token (default 30 days)"""
         session_token = secrets.token_urlsafe(32)
         # SQLite CURRENT_TIMESTAMP is UTC, even when the host runs in PDT/etc.
@@ -821,12 +831,23 @@ class AuthDatabase:
         row = cursor.fetchone()
         
         if row:
-            # Update last activity
+            # Update last activity, and slide a long-lived login forward once it
+            # is in the back half of its life. The expiry used to be fixed at
+            # login + 30 days, so a desktop app in constant use was signed out
+            # mid-session on day 30. Short-lived tokens (fixture QA, < 7 days
+            # by design) are never extended.
+            renewed = (datetime.now(timezone.utc).replace(tzinfo=None)
+                       + timedelta(hours=AUTH_SESSION_LIFETIME_HOURS))
             cursor.execute('''
-                UPDATE auth_sessions 
-                SET last_activity = CURRENT_TIMESTAMP 
+                UPDATE auth_sessions
+                SET last_activity = CURRENT_TIMESTAMP,
+                    expires_at = CASE
+                        WHEN julianday(expires_at) - julianday(created_at) >= ?
+                         AND julianday(expires_at) - julianday('now') < ?
+                        THEN ? ELSE expires_at END
                 WHERE session_token = ?
-            ''', (session_token,))
+            ''', (AUTH_SESSION_RENEWABLE_MIN_DAYS, AUTH_SESSION_RENEW_BELOW_DAYS,
+                  renewed.isoformat(' '), session_token))
             conn.commit()
         
         conn.close()

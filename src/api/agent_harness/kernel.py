@@ -34,6 +34,14 @@ def _looks_like_stale_session_writer(result: Optional[AgentResult]) -> bool:
     return any(m in blob for m in _STALE_SESSION_WRITER_MARKERS)
 
 
+def _with_thinking(thoughts: list, text: str) -> str:
+    if not thoughts:
+        return text
+    from api.agent_harness.reasoning_reply import with_thinking
+
+    return with_thinking(thoughts, text)
+
+
 def _put_status(status_queue: Any, message: str) -> None:
     if status_queue is None:
         return
@@ -904,11 +912,19 @@ def run_agent_web_command(
                     print(f"[agent_events] snapshot start unavailable: {exc}", flush=True)
             except Exception:
                 edit_baseline = None
+            try:
+                from api.chat_ops.git_hook import supervised_reason
+                supervised = supervised_reason(sid)
+            except Exception as exc:
+                print(f"[agent_harness] supervision lookup failed for CH-{sid}: {exc}", flush=True)
+                supervised = ''
+
             def _run_execute(prompt_text: str, resume_id: Optional[str]) -> AgentResult:
                 from core.agent_cli_env import agent_operation_context
 
                 with agent_operation_context(session_id=sid, agent_id=manifest.id,
-                                             model=model, run_id=query_id, project_path=cwd):
+                                             model=model, run_id=query_id, project_path=cwd,
+                                             supervised=supervised):
                     return asyncio.run(
                         adapter.execute(
                             prompt_text,
@@ -1132,6 +1148,18 @@ def run_agent_web_command(
             "agent_id": manifest.id,
         }
 
+        # Every agent's reasoning rides in its reply, collapsed (reasoning_reply).
+        thoughts: list = []
+        try:
+            from api.agent_harness.reasoning_reply import turn_thinking
+
+            # Chat turns only: headless callers (rage investigator, …) parse
+            # the reply text and must get the answer alone.
+            if chat_session_id and tracker and tracker.query_id == query_id:
+                thoughts = turn_thinking(tracker)
+        except Exception:
+            thoughts = []
+
         if result.success:
             if tracker and tracker.query_id == query_id and tracker.execution_data:
                 tracker.add_tool_call(
@@ -1148,7 +1176,7 @@ def run_agent_web_command(
             finish_query_tracking(success=True)
             out = {
                 "success": True,
-                "response": result.output or "Done.",
+                "response": _with_thinking(thoughts, result.output or "Done."),
                 "session_id": chat_session_id,
                 "type": type_ok,
                 "query_id": query_id,

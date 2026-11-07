@@ -708,10 +708,11 @@ html.git-graph-root *::-webkit-scrollbar-corner {
 .git-graph-ref.is-head {
     background: rgba(251, 191, 36, 0.18);
     color: #fcd34d;
-    border-color: rgba(251, 191, 36, 0.5);
+    border-color: rgba(251, 191, 36, 0.75);
+    font-weight: 750;
 }
 
-/* Checked-out branch: HEAD folds into the branch chip as a dot. */
+/* A distinct marker makes the current commit easy to spot. */
 .git-graph-ref.is-head::before {
     content: '';
     width: 6px;
@@ -840,7 +841,7 @@ html.git-graph-root *::-webkit-scrollbar-corner {
 
 .git-graph-detail-kv {
     display: grid;
-    grid-template-columns: 72px 1fr;
+    grid-template-columns: 72px minmax(0, 1fr);
     gap: 4px 8px;
     margin-bottom: 12px;
     font-size: 12px;
@@ -975,5 +976,118 @@ html.git-graph-root *::-webkit-scrollbar-corner {
         font-size: 12px;
         /* Keep a sliver of title so chips stay readable; title yields first. */
         min-width: 2.5rem;
+    }
+}
+
+/* Commit drawer header: hash | HEAD chip + jump buttons | Close.
+   A grid keeps Close pinned top-right; the middle cell wraps its own buttons
+   so a thin drawer (mobile bottom sheet) grows by a row, never orphans Close. */
+.git-graph-drawer-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 8px;
+}
+
+.git-graph-drawer-head.has-head-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "title close" "actions actions";
+    row-gap: 8px;
+}
+
+.git-graph-drawer-head.has-head-row h2 { grid-area: title; }
+.git-graph-drawer-head.has-head-row > .git-graph-btn { grid-area: close; }
+.git-graph-drawer-head.has-head-row .git-graph-head-actions {
+    grid-area: actions;
+    justify-content: flex-start;
+}
+
+.git-graph-drawer-head h2 {
+    min-width: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: 0.02em;
+}
+
+.git-graph-head-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    min-width: 0;
+}
+
+/* Base + compact-shell skin (page_controls.css loads after this file). */
+.git-graph-drawer-head .git-graph-head-btn,
+body.compact-shell-page .git-graph-drawer .git-graph-drawer-head .git-graph-head-btn {
+    max-width: 100%;
+    min-height: 30px;
+    padding: 4px 12px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.git-graph-drawer-head .git-graph-head-btn.is-primary,
+body.compact-shell-page .git-graph-drawer .git-graph-drawer-head .git-graph-head-btn.is-primary {
+    background: var(--accent-color, #3b82f6);
+    border-color: transparent;
+    color: var(--text-inverse, #fff);
+    font-weight: 600;
+}
+
+.git-graph-drawer-head .git-graph-head-btn.is-primary:hover,
+body.compact-shell-page .git-graph-drawer .git-graph-drawer-head .git-graph-head-btn.is-primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent-color, #3b82f6) 86%, var(--text-primary, #fff));
+    color: var(--text-inverse, #fff);
+}
+
+.git-graph-drawer-head .git-graph-head-btn.is-armed,
+body.compact-shell-page .git-graph-drawer .git-graph-drawer-head .git-graph-head-btn.is-armed,
+body.compact-shell-page .git-graph-drawer .git-graph-drawer-head .git-graph-head-btn.is-armed:hover:not(:disabled) {
+    background: #f59e0b;
+    border-color: transparent;
+    color: #111827;
+    font-weight: 600;
+}
+
+.git-graph-head-btn-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.git-graph-head-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    color: var(--accent-color, #38bdf8);
+    background: color-mix(in srgb, var(--accent-color, #38bdf8) 14%, transparent);
+}
+
+.git-graph-head-chip.is-detached {
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.14);
+}
+
+.git-graph-head-actions.is-busy {
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+@media (max-width: 520px) {
+    .git-graph-drawer-head {
+        padding: 8px 10px;
+    }
+    .git-graph-drawer-head .git-graph-btn,
+    body.compact-shell-page .git-graph-drawer .git-graph-drawer-head .git-graph-btn {
+        min-height: 30px;
+        padding: 4px 12px;
+        font-size: 12px;
     }
 }

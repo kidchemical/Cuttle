@@ -115,14 +115,16 @@ def test_park_and_restore_leave_no_preview_crumbs():
     assert "will-collapse" in collapse
 
 
-def test_chevron_points_where_the_pane_grows():
+def test_expand_divider_knows_where_the_pane_grows():
     js = SHELL_JS.read_text(encoding="utf-8")
     # Parked-left grows rightward; parked-right grows leftward.
     assert "verticalHandles ? 'down' : 'right'" in js
     assert "verticalHandles ? 'up' : 'left'" in js
+    # No chevron/tab: the divider is a plain hairline (the strip is the click
+    # target) that keeps a wider transparent grab zone for drag-to-restore.
     css = SHELL_CSS.read_text(encoding="utf-8")
-    assert "data-expand-dir='right']::after" in css
-    assert "data-expand-dir='left']::after" in css
+    assert ".split-resize-handle.pane-expand::after" not in css
+    assert ".split-resize-handle.pane-expand::before" in css
 
 
 def test_vertical_stacks_park_to_a_restore_bar():
@@ -144,8 +146,6 @@ def test_vertical_stacks_park_to_a_restore_bar():
     assert "writing-mode: vertical-rl" in css
     # The bar reads as the blade: same background as the rail toolbar.
     assert "background: var(--rail-bg" in css
-    assert "data-expand-dir='down']::after" in css
-    assert "data-expand-dir='up']::after" in css
 
 
 def test_collapsed_flag_persists_across_reload():

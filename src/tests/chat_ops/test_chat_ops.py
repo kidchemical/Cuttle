@@ -751,3 +751,143 @@ def test_stop_cancels_sends_queued_for_the_target(chats):
     assert store.due() == []
     assert all(o["state"] == "cancelled" for o in store.listing(sup) if o["kind"] == "send")
     assert ("POST", "/api/chat-cancel", target, None) in host.calls
+
+
+# --- a paused schedule cannot be silently forgotten ---------------------------
+
+
+def test_pause_is_timed_by_default_and_auto_resumes(chats):
+    db, owner, sup, _target, _foreign = chats
+    sched = _schedule(chats)
+    paused = service.set_paused(sched["id"], owner, True, db=db)
+    assert paused["state"] == "paused"
+    assert paused["result"]["paused_at"] <= time.time()
+    # Default: 4 h, not indefinite — the pause ends by itself.
+    assert time.time() + service.DEFAULT_PAUSE_SEC - 5 < paused["result"]["paused_until"]
+    assert store.resume_expired() == []  # not yet due
+    assert store.resume_expired(now=paused["result"]["paused_until"] + 1)[0]["state"] == "pending"
+    back = store.get(sched["id"], sup)
+    assert back["state"] == "pending" and back["due"] <= time.time() + 1
+    assert back["result"]["paused_until"] is None
+    assert store.checks(sched["id"])[0]["outcome"] == "resumed"
+
+
+def test_pause_durations_and_explicit_indefinite(chats):
+    db, owner, _sup, _target, _foreign = chats
+    sched = _schedule(chats)
+    hour = service.set_paused(sched["id"], owner, True, hours=1, db=db)["result"]["paused_until"]
+    assert 3500 < hour - time.time() < 3700
+    when = time.time() + 7200
+    assert service.set_paused(sched["id"], owner, True, until=when, db=db)["result"]["paused_until"] == when
+    forever = service.set_paused(sched["id"], owner, True, indefinite=True, db=db)
+    assert forever["result"]["paused_until"] is None
+    assert store.resume_expired(now=time.time() + 10 * 86400) == []  # nothing resumes it
+    with pytest.raises(ValueError, match="1 minute and 30 days"):
+        service.set_paused(sched["id"], owner, True, hours=0.001, db=db)
+    with pytest.raises(ValueError, match="1 minute and 30 days"):
+        service.set_paused(sched["id"], owner, True, hours=24 * 40, db=db)
+    with pytest.raises(ValueError, match="epoch seconds"):
+        service.set_paused(sched["id"], owner, True, until="soon", db=db)
+
+
+def test_paused_schedule_view_says_since_when(chats):
+    db, owner, sup, _target, _foreign = chats
+    sched = _schedule(chats)
+    service.set_paused(sched["id"], owner, True, hours=1, db=db)
+    view = service.overview(_ch(sup), owner, db=db)["supervising"][0]
+    assert view["state"] == "paused" and view["paused_at"] <= time.time()
+    assert view["paused_until"] > time.time()
+    service.set_paused(sched["id"], owner, True, indefinite=True, db=db)
+    view = service.overview(_ch(sup), owner, db=db)["supervising"][0]
+    assert view["paused_until"] is None and view["paused_at"]
+
+
+def test_supervision_digest_tells_both_chats_about_a_pause(chats):
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    assert f"active — you supervise {_ch(target)}" in service.supervision_digest(sup)
+    assert f"{_ch(sup)} supervises this chat" in service.supervision_digest(target)
+    assert service.supervision_digest(999) == ""
+    service.set_paused(sched["id"], owner, True, indefinite=True, db=db)
+    mine = service.supervision_digest(sup)
+    assert "**PAUSED since" in mine and "no auto-resume" in mine
+    assert f"resume-operation {sched['id']}" in mine
+    theirs = service.supervision_digest(target)
+    assert "**PAUSED since" in theirs and f"{_ch(sup)} supervises this chat" in theirs
+    service.set_paused(sched["id"], owner, True, hours=2, db=db)
+    assert "auto-resumes" in service.supervision_digest(sup)
+
+
+def test_context_envelope_carries_the_pause(chats, monkeypatch):
+    db, owner, sup, _target, _foreign = chats
+    sched = _schedule(chats)
+    service.set_paused(sched["id"], owner, True, indefinite=True, db=db)
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    from api.cuttle_brain import context_compiler
+
+    block = context_compiler._runtime_block(inventory={}, chat_session_id=_ch(sup))
+    assert "Supervision schedules on this chat" in block
+    assert "**PAUSED since" in block
+
+
+def test_a_forgotten_pause_notifies_once(chats, monkeypatch):
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    service.set_paused(sched["id"], owner, True, indefinite=True, db=db)
+    toasts = []
+    monkeypatch.setattr(worker, "_target_idle_with_work", lambda op, db=None: True)
+    kwargs = {"notify": lambda msg, variant="info": toasts.append((msg, variant)), "db": db}
+
+    assert worker.stale_pause_alerts(**kwargs) == []  # paused minutes ago, not hours
+    late = time.time() + 7 * 3600
+    assert worker.stale_pause_alerts(now=late, **kwargs)[0]["target"] == target
+    assert "paused for 7 h" in toasts[0][0] and toasts[0][1] == "warning"
+    assert worker.stale_pause_alerts(now=late, **kwargs) == []  # once per pause
+    assert store.checks(sched["id"])[0]["outcome"] == "paused_alert"
+
+    # A timed pause is never alerted: it comes back by itself.
+    service.set_paused(sched["id"], owner, False, db=db)
+    service.set_paused(sched["id"], owner, True, hours=4, db=db)
+    assert worker.stale_pause_alerts(now=late, **kwargs) == []
+    # Nor is one whose target has nothing left open.
+    service.set_paused(sched["id"], owner, True, indefinite=True, db=db)
+    monkeypatch.setattr(worker, "_target_idle_with_work", lambda op, db=None: False)
+    assert worker.stale_pause_alerts(now=late, **kwargs) == []
+    monkeypatch.setattr(worker, "paused_alert_hours", lambda: 0)
+    monkeypatch.setattr(worker, "_target_idle_with_work", lambda op, db=None: True)
+    assert worker.stale_pause_alerts(now=late, **kwargs) == []  # setting 0 disables
+
+
+def test_idle_with_open_tasks_is_what_makes_a_pause_stale(chats):
+    db, owner, _sup, target, _foreign = chats
+    sched = _schedule(chats)
+    op = store.get(sched["id"], chats[2])
+    from api.gizmos import tasks as tasks_gizmo
+
+    assert worker._target_idle_with_work(op, db=db) is False
+    tasks_gizmo.create(gizmo_id="plan", user_id=owner, session_id=target, title="Plan",
+                       items=[{"id": "a", "text": "ship it"}], db=db)
+    assert worker._target_idle_with_work(op, db=db) is True
+
+
+def test_route_and_cli_pause_durations(client, chats, monkeypatch):
+    _flag(monkeypatch, True)
+    from api.chat_cli.cli import main
+    db, _owner, sup, _target, _foreign = chats
+    sched = _schedule(chats)
+    body = client.post(f"/api/chat-ops/operations/{sched['id']}/pause", json={"hours": 1}).get_json()
+    assert 3500 < body["operation"]["result"]["paused_until"] - time.time() < 3700
+    body = client.post(f"/api/chat-ops/operations/{sched['id']}/pause",
+                       json={"indefinite": True}).get_json()
+    assert body["operation"]["result"]["paused_until"] is None
+    bad = client.post(f"/api/chat-ops/operations/{sched['id']}/pause", json={"hours": 999})
+    assert bad.status_code == 400
+    client.post(f"/api/chat-ops/operations/{sched['id']}/resume")
+
+    db_path = str(db.db_path)
+    assert main(["pause-operation", sched["id"], "--hours", "2", "--db", db_path,
+                 "--as", _ch(sup), "--json"]) == 0
+    assert store.get(sched["id"], sup)["result"]["paused_until"] > time.time() + 7000
+    assert main(["pause-operation", sched["id"], "--indefinite", "--db", db_path,
+                 "--as", _ch(sup), "--json"]) == 0
+    assert store.get(sched["id"], sup)["result"]["paused_until"] is None

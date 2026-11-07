@@ -73,11 +73,40 @@ def processor_preferences():
     raw = _settings().get_setting('response_postprocessing') or {}
     return {'enabled': bool(raw.get('enabled', False)),
             'prompt': raw.get('prompt', 'Give me a concise TL;DR of the response.'),
-            'mode': raw.get('mode', 'append'), 'chain': raw.get('chain') or []}
+            'mode': raw.get('mode', 'append'), 'chain': raw.get('chain') or [],
+            'trigger': _trigger(raw.get('trigger'))}
+
+
+TRIGGER_UNITS = ('words', 'chars')
+_DEFAULT_TRIGGER = {'unit': 'words', 'min': 0}
+
+
+def _trigger(value):
+    """Saved trigger, or the always-run default for older/invalid settings."""
+    try:
+        return _clean_trigger(value) if value is not None else dict(_DEFAULT_TRIGGER)
+    except ValueError:
+        return dict(_DEFAULT_TRIGGER)
+
+
+def _clean_trigger(value):
+    """Process only replies whose prose is longer than ``min`` words/characters."""
+    if not isinstance(value, dict) or set(value) - {'unit', 'min'} or value.get('unit') not in TRIGGER_UNITS:
+        raise ValueError('Trigger needs unit words or chars and a minimum')
+    limit = value.get('min', 0)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 0 <= limit <= 1_000_000:
+        raise ValueError('Trigger minimum must be a whole number from 0 to 1000000')
+    return {'unit': value['unit'], 'min': limit}
+
+
+def trigger_met(trigger, prose):
+    """True when ``prose`` is longer than the trigger (min 0 = every reply)."""
+    size = len(prose.split()) if trigger['unit'] == 'words' else len(prose)
+    return size > trigger['min']
 
 
 def save_processor(raw):
-    if not isinstance(raw, dict) or set(raw) - {'enabled', 'prompt', 'mode', 'chain'} or not {'enabled', 'prompt', 'mode'} <= set(raw):
+    if not isinstance(raw, dict) or set(raw) - {'enabled', 'prompt', 'mode', 'chain', 'trigger'} or not {'enabled', 'prompt', 'mode'} <= set(raw):
         raise ValueError('Expected enabled, prompt, mode and executor chain')
     if not isinstance(raw['enabled'], bool) or raw['mode'] not in ('append', 'replace'):
         raise ValueError('Invalid enabled value or output mode')
@@ -86,4 +115,6 @@ def save_processor(raw):
         raise ValueError('Enter post-processing instructions')
     from api.background_helpers import validate
     chain = validate({'chain': raw.get('chain', [])})['chain']
-    return _settings().set_setting('response_postprocessing', {**raw, 'prompt': prompt, 'chain': chain})
+    trigger = _clean_trigger(raw['trigger']) if 'trigger' in raw else processor_preferences()['trigger']
+    return _settings().set_setting('response_postprocessing',
+                                   {**raw, 'prompt': prompt, 'chain': chain, 'trigger': trigger})

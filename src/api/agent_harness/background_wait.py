@@ -15,6 +15,13 @@ file, the standard watch/progress card), and the CLI keeps running detached:
 * ``steer_detached`` lets ``/api/chat`` (``api.chat_coordinator``) put the next
   message into the still-open run through ``api.agent_harness.steer`` instead of
   starting a second ``claude --resume`` on the same session.
+* the run has two phases. **Waiting** (nothing but a background task runs):
+  the chat is idle and the live-status card shows the task. **Working** (the
+  CLI answers a steer or follows up on a finished task): the CLI's activity
+  lines go to ``api.chat_live_status`` flagged ``followup`` (``status_sink`` is
+  the adapter's status queue after the hand-off; ``working`` / ``waiting``
+  switch phases), so every device shows the ordinary typing bubble with the
+  live status line until the answer lands as its own bubble.
 
 The CLI process stays registered in ``api.chat_run_registry`` (Stop / chat
 deletion kill it) and the job id is bound to the chat so ``/api/chat-cancel``
@@ -41,6 +48,7 @@ DETACHABLE_AGENTS = ("claude",)
 _PER_BUBBLE = frozenset({
     "response", "output", "usage", "cost", "success", "type", "error", "steered",
     "background_job", "drift_warning", "meta_command", "undelivered_steers",
+    "postprocessing",
 })
 _FINISHED_TTL_SEC = 3600.0
 
@@ -102,6 +110,7 @@ class BackgroundWait:
         self._sink: Optional[Callable[[Dict[str, Any]], None]] = None
         self._base: Dict[str, Any] = {}
         self._pending: List[Dict[str, Any]] = []
+        self._phase = "waiting"  # waiting (idle chat, card) | working (typing bubble)
 
     # -- CLI side ---------------------------------------------------------
 
@@ -133,9 +142,51 @@ class BackgroundWait:
         if self.running:
             self._write("running", label)
 
+    # -- phases: what the open chat shows ----------------------------------
+
+    @property
+    def phase(self) -> str:
+        return self._phase
+
+    def working(self, label: str, *, force: bool = False) -> None:
+        """The CLI is producing an answer: publish live status (typing bubble).
+
+        Idempotent while already working unless ``force`` (an explicit event
+        such as a steer echo replaces the current line).
+        """
+        if not self.running:
+            return
+        if self._phase == "working" and not force:
+            return
+        self._phase = "working"
+        self._publish(label)
+
+    def waiting(self, label: str) -> None:
+        """Only background tasks run: clear live status, show ``label`` on the card."""
+        self._phase = "waiting"
+        self._clear_live()
+        self.progress(label)
+
+    def status_sink(self) -> "_StatusSink":
+        """A status-queue stand-in for the adapter's activity emitter after the hand-off."""
+        return _StatusSink(self)
+
     def followup(self, text: str, *, usage: Optional[Dict[str, Any]] = None,
                  errors: Optional[List[str]] = None) -> None:
-        """Persist one later CLI answer as its own assistant bubble."""
+        """Persist one later CLI answer as its own assistant bubble.
+
+        The working phase ends here: the bubble is saved first, then live
+        status clears, so a client that polls on the idle transition finds
+        the new row.
+        """
+        try:
+            self._persist_followup(text, usage=usage, errors=errors)
+        finally:
+            self._phase = "waiting"
+            self._clear_live()
+
+    def _persist_followup(self, text: str, *, usage: Optional[Dict[str, Any]],
+                          errors: Optional[List[str]]) -> None:
         body_text = (text or "").strip() or (errors[0] if errors else "")
         if not body_text:
             return
@@ -191,6 +242,8 @@ class BackgroundWait:
             self._write(state, label, final=True)
             if notice:
                 self.followup(notice)
+        self._phase = "waiting"
+        self._clear_live()
         try:
             from api.chat_run_registry import clear_session_jobs
 
@@ -212,6 +265,30 @@ class BackgroundWait:
         self._maybe_drop()
 
     # -- internals --------------------------------------------------------
+
+    def _publish(self, message: str) -> None:
+        """One live-status line for the working phase (flagged ``followup``)."""
+        text = (message or "").strip()
+        if not text or not self.running or self._phase != "working":
+            return
+        try:
+            from api.chat_live_status import set_live_status
+            from api.chat_run_registry import is_run_cancelled
+
+            set_live_status(self.chat_session_id, text, active=True, followup=True,
+                            is_cancelled=is_run_cancelled)
+        except Exception as exc:
+            print(f"[background_wait] live status publish failed for {self.job_id}: {exc}", flush=True)
+
+    def _clear_live(self) -> None:
+        """Clear live status, but only a follow-up entry (never a newer turn's)."""
+        try:
+            from api.chat_live_status import clear_live_status, get_live_status
+
+            if get_live_status(self.chat_session_id).get("followup"):
+                clear_live_status(self.chat_session_id)
+        except Exception as exc:
+            print(f"[background_wait] live status clear failed for {self.job_id}: {exc}", flush=True)
 
     def _write(self, state: str, label: str, *, final: bool = False) -> None:
         extra: Dict[str, Any] = {
@@ -254,6 +331,23 @@ class BackgroundWait:
             with _lock:
                 if _active.get(self.job_id) is self:
                     del _active[self.job_id]
+
+
+class _StatusSink:
+    """Status-queue protocol (``put(("status", text))``) over a wait's live status.
+
+    Lines arriving while the wait is merely waiting (heartbeats, the wait-cap
+    notice) are dropped: there is no answer in progress to show them under.
+    """
+
+    def __init__(self, wait: BackgroundWait):
+        self._wait = wait
+
+    def put(self, item: Any) -> None:
+        if isinstance(item, (tuple, list)) and len(item) >= 2 and item[0] == "status":
+            self._wait._publish(str(item[1] or ""))
+
+    put_preview = put
 
 
 def _deliver(saver: Callable[[Dict[str, Any]], None], base: Dict[str, Any], body: Dict[str, Any]) -> None:
@@ -322,11 +416,16 @@ def detached_wait(chat_session_id: Any, agent_id: Optional[str] = None) -> Optio
 
 def steer_detached(chat_session_id: Any, agent_id: Optional[str], text: str) -> Optional[Dict[str, Any]]:
     """Steer ``text`` into this chat's detached run; None when there is none or it refused."""
-    if not agent_id or detached_wait(chat_session_id, agent_id) is None:
+    wait = detached_wait(chat_session_id, agent_id) if agent_id else None
+    if wait is None:
         return None
     from api.agent_harness import steer
 
     if steer.active_agent(chat_session_id) != agent_id:
         return None
     info = steer.steer(chat_session_id, text)
-    return info if info.get("steered") else None
+    if not info.get("steered"):
+        return None
+    # The answer is on its way: show the typing bubble now, not at the echo.
+    wait.working(f"{wait.label} is answering your message…", force=True)
+    return info

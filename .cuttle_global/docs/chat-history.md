@@ -29,9 +29,10 @@ reads no longer import bcrypt at module load.
 
 Put flags **after** the verb (`get … --json`, not `--json get …`).
 
-`get` / `session` / `search` hide other agents' `<think>` narration and
-post-processing originals (they trip provider reasoning-extraction safeguards
-for the agent reading them). Read through `chat_cli`, not raw SQL; `--raw`
+`get` / `session` / `search` hide other agents' `<think>` narration (it trips
+provider reasoning-extraction safeguards for the agent reading it); a
+post-processed reply is shown as the agent's own answer followed by the
+processed text. Read through `chat_cli`, not raw SQL; `--raw`
 shows stored text unchanged, but only for debugging storage, never to bring
 context into your own turn.
 
@@ -79,7 +80,7 @@ PYTHONPATH=src .venv/bin/python -m api.chat_cli cancel-operation <id> --json
 | `supervise … --require-branch / --require-path / --forbid-branch` | Guard rules, checked on every interval **and** whenever the target or one of its sub-agent children finishes a tool call or rebinds its worktree. A new violation wakes you within seconds, even mid-turn. A commit landing on a forbidden branch from any checkout of the repo is reported once (the new tip becomes the baseline); wrong branch/checkout repeats each interval until fixed |
 | `supervise … --agent ID` | Prefix each check-in with `/<agent>` so that harness runs it (validated against the agent catalog) |
 | `operations` / `operation <id>` / `cancel-operation <id>` | Inspect or cancel your queued sends and supervision schedules |
-| `pause-operation <id>` / `resume-operation <id>` | Pause a schedule; resume checks right away |
+| `pause-operation <id>` / `resume-operation <id>` | Pause a schedule; resume checks right away. **A pause is timed:** no flag = 4 h, `--hours N` / `--until <epoch>` set your own; the host resumes it and checks immediately. `--indefinite` pauses with no expiry — nothing but a resume brings it back, so only use it when you mean to turn supervision off. Paused schedules are listed in both chats' context envelope ("Supervision schedules on this chat") with since-when, and an indefinite pause left over `supervision_paused_alert_hours` (default 6) while the target is idle with open Tasks items raises one UI/tray warning |
 
 Send states: `pending` → `delivered` (host started the turn) / `done` /
 `failed`. If the connection drops mid-send (for example, Flask restarts), the

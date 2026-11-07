@@ -41,6 +41,41 @@ def test_success_passes_config_and_preserves_original(settings, monkeypatch, mod
     assert len(seen) == 1  # same terminal body cannot be processed twice
 
 
+@pytest.mark.parametrize('extra', [
+    {'response': 'ready'},  # short replies are processed too
+    {'success': False, 'response': 'The build failed: missing dep'},
+    {'response': 'Prose <cuttle_action_form>{"unclosed": true}'},
+    {'response': 'x' * (pp.MAX_RESPONSE_CHARS + 1)},
+])
+def test_short_failed_unpaired_and_long_replies_are_processed(settings, monkeypatch, extra):
+    seen = []
+    monkeypatch.setattr(bg, 'generate', lambda t, req, **kw: seen.append(req.user) or TextResult('Done'))
+    body = {'success': True, **extra}
+    original = body['response']
+    pp.process_result(body)
+    assert body['postprocessing']['status'] == 'completed'
+    assert body['postprocessing']['original_response'] == original
+    assert len(seen[0]) <= pp.MAX_RESPONSE_CHARS + 60
+    if '<cuttle_action_form' in original:
+        # The stray card markup is never shown to the model and rides through verbatim.
+        assert seen == ['Prose']
+        assert body['response'].endswith('Done\n\n<cuttle_action_form>{"unclosed": true}')
+
+
+@pytest.mark.parametrize('mode', ['append', 'replace'])
+def test_leading_thinking_stays_first_and_is_not_processed(settings, monkeypatch, mode):
+    settings.set_setting('response_postprocessing', {**cp.processor_preferences(), 'mode': mode})
+    seen = []
+    monkeypatch.setattr(bg, 'generate', lambda t, req, **kw: seen.append(req.user) or TextResult('TLDR'))
+    body = {'success': True, 'response': '<think>\nThe real answer\n</think>\n\nClosing line'}
+    pp.process_result(body)
+    assert seen == ['Closing line']
+    assert body['response'].startswith('<think>\nThe real answer\n</think>\n\n')
+    rest = body['response'].split('</think>\n\n', 1)[1]
+    assert rest == ('<cuttle_original_response>"Closing line"</cuttle_original_response>\n\nTLDR'
+                    if mode == 'append' else 'TLDR')
+
+
 @pytest.mark.parametrize('disable', ['flag', 'kill_switch', 'preference', 'no_executor'])
 def test_disabled_never_executes(settings, monkeypatch, disable):
     if disable == 'flag': settings.set_setting('experimental_flags', {})
@@ -53,11 +88,9 @@ def test_disabled_never_executes(settings, monkeypatch, disable):
 
 
 @pytest.mark.parametrize('extra', [
-    {'success': False}, {'response': ''}, {'response': '[CANCELLED] stopped'},
+    {'response': ''}, {'response': '[CANCELLED] stopped'},
     {'ui': 'system'}, {'skip_history_persist': True}, {'coordinator_response_message_id': 8},
     {'response': '<cuttle_action_form>{}</cuttle_action_form>'},
-    {'response': 'Prose <cuttle_action_form>{"unclosed": true}'},
-    {'response': 'x' * (pp.MAX_RESPONSE_CHARS + 1)},
 ])
 def test_non_chat_and_interactive_outputs_never_execute(settings, extra):
     body = {'success': True, 'response': 'Original', **extra}
@@ -176,3 +209,23 @@ def test_stop_during_processing_cannot_save_or_notify(settings, monkeypatch, str
         workflow.run_agent_sync_turn(sid, delivery=delivery, persist_user=lambda: None,
             run=lambda: {'success': True, 'response': 'Original'}, after_run=saved.append)
     assert saved == []
+
+
+@pytest.mark.parametrize('trigger,text,runs', [
+    ({'unit': 'words', 'min': 3}, 'one two three', False),
+    ({'unit': 'words', 'min': 3}, 'one two three four', True),
+    ({'unit': 'chars', 'min': 5}, 'abcde', False),
+    ({'unit': 'chars', 'min': 5}, 'abcdef', True),
+    # Reasoning and cards do not count toward the trigger.
+    ({'unit': 'words', 'min': 2}, '<think>a b c d e</think>hi <cuttle_action_form>{"t": 1}</cuttle_action_form>', False),
+])
+def test_length_trigger_gates_the_pass(settings, monkeypatch, trigger, text, runs):
+    settings.set_setting('response_postprocessing', {**cp.processor_preferences(), 'trigger': trigger})
+    seen = []
+    monkeypatch.setattr(bg, 'generate', lambda t, req, **kw: seen.append(req.user) or TextResult('TLDR'))
+    body = {'success': True, 'response': text}
+    pp.process_result(body)
+    assert bool(seen) is runs
+    if not runs:
+        assert body['response'] == text
+        assert body['postprocessing'] == {'status': 'skipped', 'reason': 'below_trigger'}
