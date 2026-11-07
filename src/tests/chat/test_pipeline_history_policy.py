@@ -171,6 +171,15 @@ def test_pipeline_rows_carry_captured_project_metadata(
         return real_add(session_id, role, content, metadata=metadata)
 
     monkeypatch.setattr(db, "add_message", _recording_add)
+    real_update = db.update_message_content
+
+    def _recording_update(message_id, content, metadata=None):
+        # The reply lands in the turn's own row (api.chat_turn_row), opened
+        # in the request thread at turn start: the save is this update.
+        saves.append(threading.get_ident())
+        return real_update(message_id, content, metadata=metadata)
+
+    monkeypatch.setattr(db, "update_message_content", _recording_update)
 
     factory_idents = []
     real_factory = _wca._make_auth_assistant_saver

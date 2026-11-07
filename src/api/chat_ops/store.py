@@ -73,6 +73,33 @@ def involving(session_id, *, states=('pending', 'dispatching', 'verifying', 'pau
             'ORDER BY updated DESC LIMIT 100', (session_id, session_id, *states))]
 
 
+def notice_for_job(target, job_id):
+    """Whether a resume notice for detached job ``job_id`` was queued on ``target``.
+
+    Lets a unit-watch poller that died mid-fire be recovered without a second resume."""
+    if not job_id:
+        return False
+    with connection() as conn:
+        rows = conn.execute("SELECT payload FROM operations WHERE kind='notice' AND target=?",
+                            (int(target),)).fetchall()
+    for row in rows:
+        try:
+            if json.loads(row['payload']).get('job_id') == job_id:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def pull_due(oid, at):
+    """Bring a pending schedule's next check forward to ``at`` (never later).
+
+    True when it moved; a paused, cancelled or already-checking schedule is left alone."""
+    with connection() as conn:
+        return bool(conn.execute("UPDATE operations SET due=? WHERE id=? AND kind='supervise' "
+                                 "AND state='pending' AND due>?", (float(at), oid, float(at))).rowcount)
+
+
 def recent(limit=200):
     with connection() as conn:
         return [public(r) for r in conn.execute(

@@ -135,9 +135,43 @@ become one card per child — name/avatar, harness · model · effort, outcome
 died) and a one-line plain-text result (full text in the tooltip). Outcome comes
 from the child row, never inferred; history reload refreshes cards from it.
 Click opens the child chat. A follow-up round (`python -m api.subagents message`)
-gets its own card on the parent's next saved reply, and the earlier bubble's
-card is frozen at the previous round's outcome (`frozen: true`, never
-re-hydrated).
+gets its own card on the bubble of the turn that sent it (same rules as below),
+and the earlier bubble's card is frozen at the previous round's outcome
+(`frozen: true`, never re-hydrated).
+
+Cards show **the moment `spawn` creates the batch** and attach to the **turn that
+launched it**, the same for every agent (Claude Code, Codex, Cursor, OpenCode, …).
+Every agent turn Cuttle runs exports its identity to the agent's process:
+`CUTTLE_TURN_ID` (the turn's query id), plus `CUTTLE_TURN_MESSAGE` (the user
+bubble that started it, `CH-<chat>-<N>`) and `CUTTLE_TURN_MESSAGE_ID` where there
+is one. `spawn` and `message` record that turn on the batch / follow-up round, and
+every assistant row records the turn it belongs to (`metadata.turn_id`, stamped
+on every write path). So:
+
+- the card is live on that turn's in-progress bubble as soon as `spawn` runs (and
+  in the pinned background card), and stays on the reply that turn saves,
+  matched by turn id;
+- a reply from a different turn never takes another turn's card;
+- nothing depends on timing or on which agent ran the turn.
+
+If that turn's reply was already saved when `spawn` ran (an agent still working in
+the background after its reply), the card goes on the first reply of that turn
+saved after the spawn, never back onto the earlier one.
+
+While the children work, the parent's pinned **background card** (the one that
+shows "Waiting in background") lists them as fleet-style rows: avatar, name,
+live status line and outcome, each opening its child chat. It also folds in the
+agent's own background task that runs the `api.subagents` command. Supervised
+chats stay as "Open CH-…" buttons under "Supervising".
+
+A follow-up to a child — `subagents message` or `chat_cli send CH-<child>` —
+starts a new card round the same way, bound to the turn that sent it, and the
+round ends when the child's turn ends.
+
+A manual run from a plain terminal has no turn env: pass `--anchor CH-<chat>-<N>`
+(spawn and message) to pin the cards to that parent bubble, else they go on the
+parent's latest bubble. If the parent has no bubble at all yet, the background
+card shows them until one exists.
 
 Running fleet cards show the harness's latest status (reading files, running
 commands/tests, writing, etc.) rather than a fixed "Working…". The child CLI

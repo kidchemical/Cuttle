@@ -171,3 +171,195 @@ def test_unit_state_reads_systemctl_properties(monkeypatch):
                      "result": "success", "exit": 0, "pid": 99, "running": True}
     monkeypatch.setattr(jw, "_systemctl", lambda args: (None, ""))
     assert jw.unit_state("x")["queried"] is False
+
+
+# ── exactly-once across pollers (Flask's chat-ops pump + the daemon) ─────────
+
+EXITED = {"queried": True, "running": False, "active_state": "inactive", "sub_state": "dead",
+          "result": "success", "exit": 0, "pid": 0}
+
+
+def _notices(sid=1821):
+    from api.chat_ops import store
+
+    return [o for o in store.listing(sid) if o["kind"] == "notice"]
+
+
+def _concurrently(n, fn):
+    import threading
+
+    out, errors = [], []
+
+    def run():
+        try:
+            out.append(fn())
+        except Exception as exc:  # surfaced below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    assert not errors, errors
+    return out
+
+
+def test_two_concurrent_pollers_resume_the_chat_exactly_once(monkeypatch):
+    import time as _time
+
+    _unit(monkeypatch, **RUNNING)
+    info = _register(resume_message="Continue.")
+
+    def slow_exit(unit):  # keeps the first pass inside the lock while the second arrives
+        _time.sleep(0.3)
+        return dict(EXITED)
+
+    monkeypatch.setattr(jw, "unit_state", slow_exit)
+    results = _concurrently(2, jw.poll_unit_watches)
+    assert sorted(len(r) for r in results) == [0, 1]  # one pass fired, the other found the lock held
+    assert len(_notices()) == 1
+    assert jw.unit_watch_records() == []
+    assert jw.read_status(info["id"])["state"] == "done"
+    assert jw.poll_unit_watches() == [] and len(_notices()) == 1
+
+
+def test_the_claim_alone_keeps_it_exactly_once_without_the_lock(monkeypatch):
+    """Where flock is unavailable (or both passes got in), the rename claim decides."""
+    import threading
+
+    class NoLock:
+        acquired = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+    monkeypatch.setattr(jw, "_PollLock", NoLock)
+    _unit(monkeypatch, **RUNNING)
+    _register()
+    both_checking = threading.Barrier(3)
+
+    def exited_together(unit):  # both passes have read the record before either fires
+        both_checking.wait(10)
+        return dict(EXITED)
+
+    monkeypatch.setattr(jw, "unit_state", exited_together)
+    results = _concurrently(3, jw.poll_unit_watches)
+    assert sorted(len(r) for r in results) == [0, 0, 1]
+    assert len(_notices()) == 1 and jw.unit_watch_records() == []
+
+
+def test_a_poll_from_another_process_skips_while_the_lock_is_held(monkeypatch, tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    _unit(monkeypatch, **RUNNING)
+    _register()
+    src = Path(jw.__file__).resolve().parents[1]
+    env = {**os.environ, "PYTHONPATH": str(src), "CUTTLE_HOME": os.environ["CUTTLE_HOME"]}
+    with jw._PollLock() as lock:
+        assert lock.acquired
+        proc = subprocess.run([sys.executable, "-m", "api.job_watch", "poll-units"], capture_output=True,
+                              text=True, timeout=60, env=env, cwd=str(src))
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout.strip().splitlines()[-1]) == {"resolved": []}
+    assert len(jw.unit_watch_records()) == 1 and _notices() == []
+
+
+def test_a_failed_resume_queue_puts_the_record_back_for_the_next_pass(monkeypatch):
+    _unit(monkeypatch, **RUNNING)
+    info = _register()
+    _unit(monkeypatch, **EXITED)
+    real = jw._post_unit_resume
+    monkeypatch.setattr(jw, "_post_unit_resume", lambda r, o: (_ for _ in ()).throw(OSError("db locked")))
+    out = jw.poll_unit_watches()
+    assert out[0]["resolved"] is False
+    [record] = jw.unit_watch_records()
+    assert record["id"] == info["id"] and "claimed_by" not in record
+    monkeypatch.setattr(jw, "_post_unit_resume", real)
+    assert jw.poll_unit_watches()[0]["resolved"] is True
+    assert len(_notices()) == 1
+
+
+def _strand_claim(monkeypatch, *, queued):
+    """A poller died after claiming: optionally after it had queued the resume."""
+    _unit(monkeypatch, **RUNNING)
+    info = _register()
+    [record] = jw.unit_watch_records()
+    claimed = jw._claim_record(record)
+    data = json.loads(claimed.read_text())
+    data.update(claimed_by=999999, claimed_ts=jw.time.time() - jw.UNIT_WATCH_CLAIM_STALE_SEC - 5)
+    claimed.write_text(json.dumps(data))
+    if queued:
+        jw._post_unit_resume(record, {"state": "done", "exit": 0})
+    monkeypatch.setattr(jw, "pid_alive", lambda pid: False)
+    return info, claimed
+
+
+def test_a_stranded_claim_is_retried_when_its_resume_never_queued(monkeypatch):
+    info, claimed = _strand_claim(monkeypatch, queued=False)
+    assert jw.unit_watch_records() == []  # claimed: not pending
+    _unit(monkeypatch, **EXITED)
+    out = jw.poll_unit_watches()
+    assert [o["id"] for o in out] == [info["id"]] and out[0]["resolved"]
+    assert not claimed.exists() and len(_notices()) == 1
+
+
+def test_a_stranded_claim_whose_resume_was_queued_never_fires_again(monkeypatch):
+    info, claimed = _strand_claim(monkeypatch, queued=True)
+    _unit(monkeypatch, **EXITED)
+    assert jw.poll_unit_watches() == []
+    assert not claimed.exists() and jw.unit_watch_records() == []
+    assert len(_notices()) == 1
+
+
+def test_a_fresh_claim_by_a_live_poller_is_left_alone(monkeypatch):
+    _unit(monkeypatch, **RUNNING)
+    _register()
+    [record] = jw.unit_watch_records()
+    claimed = jw._claim_record(record)  # this (live) process, just now
+    _unit(monkeypatch, **EXITED)
+    assert jw.poll_unit_watches() == []
+    assert claimed.exists() and _notices() == []
+
+
+def test_records_filter_by_chat(monkeypatch):
+    _unit(monkeypatch, **RUNNING)
+    _register()
+    _register(unit="other", chat_session_id="CH-000007")
+    assert [r["unit"] for r in jw.unit_watch_records("1821")] == ["ep-build-linux"]
+    assert [r["unit"] for r in jw.unit_watch_records("db_session_7")] == ["other"]
+    assert jw.unit_watch_records(42) == []
+
+
+def test_flask_chat_ops_pump_polls_unit_watches_throttled(monkeypatch):
+    from api.chat_ops import worker
+
+    calls = []
+    monkeypatch.setattr(jw, "poll_unit_watches", lambda: calls.append(1) or [])
+    monkeypatch.setattr(worker, "_last_unit_poll", 0.0)
+    monkeypatch.setattr(worker, "_unit_poll_thread", None)
+    assert worker._unit_watch_tick(now=1000.0) is True
+    worker._unit_poll_thread.join(5)
+    assert worker._unit_watch_tick(now=1000.0 + worker.UNIT_WATCH_POLL_SEC - 1) is False
+    assert worker._unit_watch_tick(now=1000.0 + worker.UNIT_WATCH_POLL_SEC) is True
+    worker._unit_poll_thread.join(5)
+    assert len(calls) == 2
+
+
+def test_flask_pump_resumes_a_finished_unit_watch(monkeypatch):
+    from api.chat_ops import worker
+
+    _unit(monkeypatch, **RUNNING)
+    _register()
+    _unit(monkeypatch, **EXITED)
+    monkeypatch.setattr(worker, "_last_unit_poll", 0.0)
+    monkeypatch.setattr(worker, "_unit_poll_thread", None)
+    assert worker._unit_watch_tick(now=5000.0)
+    worker._unit_poll_thread.join(10)
+    assert len(_notices()) == 1 and jw.unit_watch_records() == []

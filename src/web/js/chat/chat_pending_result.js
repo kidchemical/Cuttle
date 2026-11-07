@@ -77,7 +77,10 @@
             };
         }
         if (ev.type === 'query_started') {
-            return { kind: 'query', reportUrl: ev.report_url, queryId: ev.query_id || '' };
+            // message_id: the turn's assistant row, open since the turn started
+            // (api.chat_turn_row) — the live bubble's id from its first frame.
+            return { kind: 'query', reportUrl: ev.report_url, queryId: ev.query_id || '',
+                messageId: ev.message_id != null ? ev.message_id : null };
         }
         if (ev.type === 'response') return { kind: 'response' };
         return { kind: 'ignore' };
@@ -115,6 +118,7 @@
                 paintBadge: !!(canPaint && ctx.slashCommand),
                 reportUrl: ev.reportUrl || null,
                 queryId: ev.queryId || '',
+                messageId: ev.messageId != null ? ev.messageId : null,
                 paintLink: !!(canPaint && ev.reportUrl),
             };
         }
@@ -138,6 +142,7 @@
             type: finalResult.response_type,
             query_id: finalResult.query_id,
             report_url: finalResult.report_url,
+            message_id: finalResult.message_id,
             cursor_run: finalResult.cursor_run || null,
             usage: finalResult.usage || null,
             busy: !!finalResult.busy,
@@ -456,6 +461,9 @@
     function classifyServerMessage(msg, snap, fns) {
         if (!msg || msg.id == null) return { decision: 'skip-invalid' };
         const mid = Number(msg.id);
+        // The running turn's own row (api.chat_turn_row): empty until the reply
+        // lands. Its id belongs to the live bubble; never paint it as a reply.
+        if (msg.in_progress) return { decision: 'live-row' };
         if (fns.hasDomId(mid)) return { decision: 'update-in-place' };
         const interrupted = interruptedQueryId(msg);
         if (interrupted) {

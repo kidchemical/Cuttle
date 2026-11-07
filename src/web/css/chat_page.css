@@ -1598,6 +1598,57 @@ body.history-hide-commands .chat-history .history-agent-chip.is-command-chip { d
     50% { opacity: 1; transform: scale(1.15); }
 }
 
+/* Idle chat whose agents still own background work — detached waits, watch
+   jobs, unit watches, owned processes, a running sub-agent (kind `background`,
+   chat_activity.js). A real spinning wheel, as legible as the status dots: the
+   dots' footprint, a full-strength 2px accent arc with one gap. It stays apart
+   from `running` by shape and speed — hollow and slow, never faint. */
+.history-background-icon,
+.chat-session-background-icon {
+    position: absolute;
+    left: 4px;
+    top: 50%;
+    margin-top: -6px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--accent-color, #667eea);
+    /* One gap turns the ring into a wheel; `running` keeps a full ring. */
+    border-right-color: transparent;
+    border-radius: 50%;
+    box-shadow: 0 0 6px color-mix(in srgb, var(--accent-color, #667eea) 50%, transparent);
+    animation: history-background-spin 2.6s linear infinite;
+}
+
+/* In the chat title the status indicators share a flex row (see
+   `.chat-session-title .history-running-icon`), so restore normal flow. */
+.chat-session-background-icon {
+    position: relative;
+    inset: auto;
+    margin: 0;
+    pointer-events: none;
+}
+
+.chat-session-background-icon[hidden] { display: none !important; }
+
+@keyframes history-background-spin {
+    to { transform: rotate(360deg); }
+}
+
+html.cuttle-bg-paused .history-background-icon,
+html.cuttle-bg-paused .chat-session-background-icon {
+    animation-play-state: paused !important;
+}
+
+/* Reduced motion: parked, not dimmed — the same full-strength wheel. */
+@media (prefers-reduced-motion: reduce) {
+    .history-background-icon,
+    .chat-session-background-icon {
+        animation: none !important;
+    }
+}
+
 .history-unread-icon,
 .chat-session-unread-icon {
     flex-shrink: 0;
@@ -8116,16 +8167,36 @@ html.cuttle-bg-paused .chat-restore-spinner {
     animation: chat-bg-breathe 2.4s ease-in-out infinite;
 }
 .chat-bg-work.is-scheduled .chat-bg-ring { animation: none; border-style: dashed; box-shadow: none; }
-.chat-bg-body { flex: 1; min-width: 0; display: grid; gap: 2px; }
+/* The body keeps a readable width; when the buttons don't fit beside it they wrap onto their own row
+   (narrow screens), instead of squeezing the text column to nothing under them. */
+.chat-bg-work { flex-wrap: wrap; row-gap: 8px; }
+.chat-bg-body { flex: 1 1 200px; min-width: 0; display: grid; gap: 2px; }
 .chat-bg-title { font-weight: 650; display: flex; gap: 8px; align-items: baseline; }
 .chat-bg-elapsed, .chat-bg-meta, .chat-bg-pct { color: var(--text-secondary); font-size: 0.86em; font-weight: 400; font-variant-numeric: tabular-nums; }
 .chat-bg-label, .chat-bg-meta, .chat-bg-watch-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-bg-label { color: var(--text-secondary); }
-.chat-bg-watch { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.chat-bg-watch { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
 .chat-bg-watch-label { flex: 1; min-width: 0; }
-.chat-bg-bar { width: 110px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--text-secondary) 20%, transparent); overflow: hidden; flex-shrink: 0; }
+.chat-bg-watch-unit, .chat-bg-watch-state, .chat-bg-watch-elapsed { color: var(--text-secondary); font-size: 0.86em; font-variant-numeric: tabular-nums; flex-shrink: 0; white-space: nowrap; }
+/* A long unit name ellipsizes instead of widening the row past the card (phones). */
+.chat-bg-watch-unit { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chat-bg-watch-unit::before, .chat-bg-watch-state::before, .chat-bg-watch-elapsed::before { content: '· '; }
+/* Sub-agent children (fleet-style rows): avatar, name, live status, outcome. Rows open the child. */
+.chat-bg-agents { display: grid; gap: 4px; margin-top: 4px; min-width: 0; }
+.chat-bg-agent { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; padding: 4px 6px; border: 1px solid color-mix(in srgb, var(--text-secondary) 22%, transparent); border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.chat-bg-agent:hover, .chat-bg-agent:focus-visible { border-color: var(--accent-color, #667eea); }
+.chat-bg-agent-avatar { flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 0.8em; font-weight: 650; background: color-mix(in srgb, var(--accent-color, #667eea) 18%, transparent); }
+.chat-bg-agent.is-running .chat-bg-agent-avatar, .chat-bg-agent.is-queued .chat-bg-agent-avatar { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #667eea) 70%, transparent); animation: chat-bg-breathe 2.4s ease-in-out infinite; }
+.chat-bg-agent-text { flex: 1 1 auto; min-width: 0; display: grid; }
+.chat-bg-agent-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-bg-agent-status { color: var(--text-secondary); font-size: 0.86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-bg-agent-outcome { flex-shrink: 0; font-size: 0.8em; color: var(--text-secondary); white-space: nowrap; }
+.chat-bg-agent.is-done .chat-bg-agent-outcome { color: var(--success-color, #2e9d5b); }
+.chat-bg-agent.is-failed .chat-bg-agent-outcome, .chat-bg-agent.is-lost .chat-bg-agent-outcome { color: var(--error-color, #d9534f); }
+.chat-bg-supervising { font-size: 0.8em; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+.chat-bg-bar { flex: 0 1 110px; width: 110px; min-width: 36px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--text-secondary) 20%, transparent); overflow: hidden; }
 .chat-bg-fill { display: block; height: 100%; background: var(--accent-color, #667eea); }
-.chat-bg-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.chat-bg-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; flex-shrink: 0; max-width: 100%; margin-left: auto; }
 .chat-bg-details { font-size: 0.86em; color: var(--accent-color, #667eea); text-decoration: none; }
 .chat-bg-work.is-clickable { cursor: pointer; }
 .chat-bg-work.is-clickable:hover { opacity: 1; border-color: var(--accent-color, #667eea); }
@@ -8161,4 +8232,7 @@ html.cuttle-bg-paused .chat-restore-spinner {
 }
 @media (max-width: 600px) {
     .chat-bg-work { width: calc(100% - 16px); }
+    /* Phones: the buttons always get their own row under the text, aligned with it (past the ring). */
+    .chat-bg-actions { flex-basis: 100%; justify-content: flex-start; padding-left: 26px; }
+    .chat-bg-title { flex-wrap: wrap; }
 }

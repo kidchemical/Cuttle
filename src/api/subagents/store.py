@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from api.subagents.types import (
@@ -51,6 +50,7 @@ def _row_child(row: Any) -> ChildRecord:
         stop_requested_at=_float_or_none(d.get("stop_requested_at")),
         card_message_id=d.get("card_message_id"),
         card_pending=bool(d.get("card_pending")),
+        card_turn_id=str(d.get("card_turn_id") or ""),
     )
 
 
@@ -59,6 +59,12 @@ def _float_or_none(value: Any) -> Optional[float]:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+# Batches spawned under turn-anchored cards (api.chat_turn_id) carry this in
+# their metadata. Older batches keep their old rule, so the unattached batches
+# already in a chat's history never resurface in its pinned background card.
+CARDS_BY_TURN = 2
 
 
 def _load_children(db, batch_id: str) -> List[ChildRecord]:
@@ -81,12 +87,14 @@ def _row_batch(db, row: Any) -> BatchRecord:
     d = dict(row)
     bid = str(d.get("id") or "")
     meta = d.get("metadata")
+    parsed: Dict[str, Any] = {}
     if isinstance(meta, str) and meta:
         try:
-            json.loads(meta)
+            parsed = json.loads(meta) or {}
         except Exception:
-            pass
+            parsed = {}
     return BatchRecord(
+        cards_by_turn=bool(isinstance(parsed, dict) and parsed.get("cards") == CARDS_BY_TURN),
         id=bid,
         parent_session_id=int(d["parent_session_id"]),
         user_id=int(d["user_id"]),
@@ -99,6 +107,7 @@ def _row_batch(db, row: Any) -> BatchRecord:
         created_at=str(d.get("created_at") or ""),
         finished_at=str(d.get("finished_at") or ""),
         children=_load_children(db, bid) if bid else [],
+        turn_id=str(d.get("turn_id") or ""),
     )
 
 
@@ -116,6 +125,7 @@ def insert_batch(
     watch_id: str = "",
     widget_id: str = "",
     metadata: Optional[Dict[str, Any]] = None,
+    turn_id: str = "",
 ) -> BatchRecord:
     bid = new_id()
     conn = db._get_connection()
@@ -124,9 +134,9 @@ def insert_batch(
         """
         INSERT INTO subagent_batches (
             id, parent_session_id, user_id, collect, lifetime, status,
-            watch_id, widget_id, metadata
+            watch_id, widget_id, metadata, turn_id
         )
-        VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)
         """,
         (
             bid,
@@ -137,6 +147,7 @@ def insert_batch(
             watch_id or None,
             widget_id or None,
             json.dumps(metadata) if metadata else None,
+            turn_id or None,
         ),
     )
     conn.commit()
@@ -235,43 +246,16 @@ def list_running_for_parent(db, parent_session_id: int) -> List[BatchRecord]:
     ]
 
 
-# Terminal batches that never bound a parent bubble stay paintable only through
-# the parent turn's synthesis window. Without this bound a CLI-spawned batch (no
-# parent bubble will ever bind) or a dead-owner run paints orbs/cards on every
-# later turn forever.
-_TERMINAL_UNATTACHED_GRACE_SEC = 900
-
-
-def _batch_age_sec(batch: BatchRecord) -> float:
-    return _age_sec(batch.finished_at or batch.created_at)
-
-
-def _round_age_sec(batch: BatchRecord) -> float:
-    """Age of the batch's latest round: its newest child finish, else the batch."""
-    ends = [c.finished_at for c in batch.children if c.finished_at]
-    return _age_sec(max(ends)) if ends else _batch_age_sec(batch)
-
-
-def _age_sec(raw: Optional[str]) -> float:
-    raw = (raw or "").strip()
-    if not raw:
-        return 0.0
-    try:
-        when = datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return 0.0
-    return max(0.0, (datetime.now(timezone.utc) - when).total_seconds())
-
-
 def list_live_for_parent(db, parent_session_id: int) -> List[BatchRecord]:
-    """Batches that should paint extra orbs on the parent typing indicator.
+    """Batches whose cards show live in the parent chat right now.
 
-    Batches with a child still working always. A batch whose children are all
-    finished (terminal, an idle conversational batch, or one left open when its
-    child died) stays only briefly if it never bound a parent bubble (the parent
-    turn's synthesis window), so orbs last through synthesis instead of vanishing
-    the moment children complete — but a stale or CLI-spawned batch (nothing will
-    ever bind it) drops after the grace rather than painting every later turn.
+    A batch with a child still working, always. A finished one while the turn
+    it belongs to is still running (bound to that turn's in-progress row,
+    api.chat_turn_row): its cards stay on that live bubble until the reply saves
+    them. A finished one bound nowhere (the parent has no bubble to carry it)
+    stays in the pinned background card — the page never puts it on another turn's bubble.
+    No timing window and no harness assumptions; a finished batch bound to a
+    saved bubble shows from history (``service.leave_cards_on_last_bubble``).
     """
     out: List[BatchRecord] = []
     for batch in list_batches_for_parent(db, parent_session_id):
@@ -279,9 +263,22 @@ def list_live_for_parent(db, parent_session_id: int) -> List[BatchRecord]:
             not batch.children or any(c.status not in TERMINAL_CHILD for c in batch.children))
         if working:
             out.append(batch)
-        elif not batch.attach_message_id and _round_age_sec(batch) < _TERMINAL_UNATTACHED_GRACE_SEC:
+        elif batch.attach_message_id and _row_in_progress(db, batch.attach_message_id):
+            out.append(batch)
+        elif not batch.attach_message_id and batch.cards_by_turn:
             out.append(batch)
     return out
+
+
+def _row_in_progress(db, message_id) -> bool:
+    getter = getattr(db, "get_message_by_id", None)
+    if not callable(getter):
+        return False
+    try:
+        row = getter(int(message_id)) or {}
+    except Exception:
+        return False
+    return '"in_progress": true' in str(row.get("metadata") or "")
 
 
 def get_child(db, child_id: str) -> Optional[ChildRecord]:
@@ -490,6 +487,26 @@ def _pid_alive(pid: Any) -> bool:
     return True
 
 
+EXTERNAL_ROUND = "external"
+
+
+def begin_external_round(db, child_id: str) -> None:
+    """A round driven outside ``run_child_turn`` (``chat_cli send`` to the child):
+    the child works now, its turn runs in Flask like any chat turn (no CLI host
+    to own it, so ``owner_pid`` is cleared), and its end is read from the turn
+    (``service.on_child_turns_ended``)."""
+    conn = db._get_connection()
+    try:
+        conn.execute(
+            "UPDATE subagent_children SET status = ?, result = '', error = '', owner_pid = NULL, "
+            "started_at = CURRENT_TIMESTAMP, finished_at = NULL, live_status = NULL, "
+            "live_status_at = NULL, query_id = NULL, live_turn_id = ? WHERE id = ?",
+            (STATUS_RUNNING, EXTERNAL_ROUND, str(child_id)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def reconcile_orphan_children(db) -> List[str]:
     """Fail non-terminal children whose owning process is gone.
 
@@ -544,8 +561,12 @@ def pending_card_children(db, parent_session_id: int) -> List[ChildRecord]:
     return [_row_child(r) for r in rows]
 
 
-def set_card_round(db, child_id: str, *, message_id: Optional[int] = None, pending: bool) -> None:
-    """Record a child's card bubble (when minted) or mark a new round pending."""
+def set_card_round(db, child_id: str, *, message_id: Optional[int] = None, pending: bool,
+                   turn_id: Optional[str] = None) -> None:
+    """Record a child's card bubble (when minted) or mark a new round pending.
+
+    ``turn_id`` names the parent turn a new round was sent in (its card binds
+    to that turn's row); None leaves it unchanged."""
     conn = db._get_connection()
     try:
         if message_id is not None:
@@ -556,6 +577,9 @@ def set_card_round(db, child_id: str, *, message_id: Optional[int] = None, pendi
             conn.execute(
                 "UPDATE subagent_children SET card_pending = ? WHERE id = ?",
                 (1 if pending else 0, str(child_id)))
+        if turn_id is not None:
+            conn.execute("UPDATE subagent_children SET card_turn_id = ? WHERE id = ?",
+                         (turn_id or None, str(child_id)))
         conn.commit()
     finally:
         conn.close()
@@ -569,17 +593,25 @@ def card_bubble_id(db, child: ChildRecord) -> Optional[int]:
     return int(batch.attach_message_id) if batch and batch.attach_message_id else None
 
 
-def bind_unattached_batches(db, parent_session_id: int, message_id: int) -> List[BatchRecord]:
-    """Attach running/recent batches to the first parent assistant bubble after spawn.
+def bind_unattached_batches(db, parent_session_id: int, message_id: int,
+                            turn_id: str = "") -> List[BatchRecord]:
+    """Attach the unbound batches (and pending rounds) of turn ``turn_id`` to its row.
 
-    Also mints pending follow-up cards (see ``pending_card_children``) on it.
+    Matched by turn id only: a reply never takes another turn's cards, and a
+    manual run's cards (no turn) were bound at spawn (anchor / latest bubble).
     """
+    if not turn_id:
+        return []  # a reply only ever carries its own turn's cards
     for child in pending_card_children(db, parent_session_id):
+        if child.card_turn_id != turn_id:
+            continue
         set_card_round(db, child.id, message_id=int(message_id), pending=False)
     bound: List[BatchRecord] = []
     for batch in list_batches_for_parent(db, parent_session_id):
         if batch.attach_message_id:
             continue
+        if batch.turn_id != turn_id:
+            continue  # another turn's batch (or a manual run's): never this reply's
         update_batch(db, batch.id, attach_message_id=int(message_id))
         batch.attach_message_id = int(message_id)
         bound.append(batch)

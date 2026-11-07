@@ -997,11 +997,12 @@ def watch_detached_units():
     """Resume chats whose detached jobs have exited (``api.job_watch`` unit watches).
 
     Agents start long work as its own process/unit on purpose (``systemd-run
-    --user --unit=…``) so a Flask restart cannot kill it. Nothing in Flask or in
-    the agent's own CLI outlives that job, so the daemon owns the poll: when the
-    unit (or pid) exits it writes the terminal watch status and queues the chat's
-    resume turn through the chat-ops outbox. Flask then delivers it when the chat
-    is idle — no open browser needed.
+    --user --unit=…``) so a Flask restart cannot kill it. When the unit (or pid)
+    exits the poll writes the terminal watch status and queues the chat's resume
+    turn through the chat-ops outbox; Flask delivers it when the chat is idle —
+    no open browser needed. Flask's chat-ops pump runs the same poll; this
+    thread covers the time Flask is down. ``poll_unit_watches`` is exactly-once
+    across both processes (flock + per-record claim).
     """
     while daemon_running:
         if _shutdown_done:

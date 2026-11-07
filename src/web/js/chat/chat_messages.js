@@ -458,14 +458,17 @@
             const valueMatch = String(attrs).match(/\bvalue\s*=\s*["']([^"']+)["']/i);
             const id = d.escapeHtmlInline(idMatch ? idMatch[1] : ('p_' + progressBlocks.length));
             const label = d.escapeHtmlInline(labelMatch ? labelMatch[1] : 'Progress');
-            const value = d.clamp(valueMatch ? valueMatch[1] : 0, 0, 100);
+            // No value attribute = not measured: an indeterminate bar, no "0%".
+            const measured = !!(valueMatch && String(valueMatch[1]).trim() !== '');
+            const value = measured ? d.clamp(valueMatch[1], 0, 100) : 0;
             const placeholder = '{{CUTTLE_PROGRESS_' + progressBlocks.length + '}}';
             progressBlocks.push(
                 '<div class="ui-card" data-progress-id="' + id + '">'
                 + '<div class="ui-title">' + label + '</div>'
                 + '<div class="progress-row">'
-                + '<div class="progress-track"><div class="progress-bar" style="width:' + value + '%"></div></div>'
-                + '<div class="progress-value">' + value + '%</div>'
+                + '<div class="progress-track"' + (measured ? '' : ' data-progress="indeterminate"') + '>'
+                + '<div class="progress-bar" style="width:' + value + '%"></div></div>'
+                + (measured ? '<div class="progress-value">' + value + '%</div>' : '')
                 + '</div></div>'
             );
             return placeholder;

@@ -173,9 +173,17 @@ def is_turn_cancelled(session_id) -> bool:
 
 
 def end(session_id, turn: Optional[int] = None) -> None:
+    """Release the chat's busy slot (token-guarded).
+
+    Every lane (stream, sync, pipeline) ends a turn here, after its reply is
+    saved, so this is where ``turn_end`` is published (``api.session_events``):
+    supervision wakes early when the chat stopped on a question, an error or
+    open work. Published only by the call that actually released the slot, so
+    the belt-and-suspenders second ``end`` of a turn is silent."""
     keys = _session_keys(session_id)
     if not keys:
         return
+    released = False
     with _lock:
         for k in keys:
             entry = _busy.get(k)
@@ -184,6 +192,14 @@ def end(session_id, turn: Optional[int] = None) -> None:
             if turn is not None and entry.get("turn") not in (None, int(turn)):
                 continue  # lock belongs to a newer turn
             _busy.pop(k, None)
+            released = True
+    if released:
+        try:
+            from api.session_events import publish
+
+            publish("turn_end", _bare_session_id(str(session_id)))
+        except Exception:
+            pass
     try:
         from api.flask_restart import maybe_fire_when_idle
 

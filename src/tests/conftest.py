@@ -513,3 +513,18 @@ def pytest_collection_modifyitems(config, items):
             continue
         if name in _WINDOWS_ONLY_TEST_FILES:
             item.add_marker(skip_win)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_turn_rows():
+    """Open turn rows (api.chat_turn_row) are process-wide; each test starts clean."""
+    try:
+        from api import chat_turn_row
+        chat_turn_row.reset_for_tests()
+    except Exception:
+        pass
+    yield
+    try:
+        chat_turn_row.reset_for_tests()
+    except Exception:
+        pass

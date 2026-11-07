@@ -42,6 +42,30 @@ const out = {
   planProcs: B.plan({ process_count: 2, detached_count: 2, waits: [], watches: [], schedules: [] }),
   planSched: B.plan({ label: 'x', process_count: 0, waits: [], watches: [], schedules: [{ label: 'Supervise' }] }),
   planNone: [B.plan(null), B.plan({ process_count: 0, waits: [], watches: [], schedules: [] })],
+  // determinate vs indeterminate (shared CuttleProgress model)
+  progress: (() => { const P = require(process.env.WEB + '/shared/progress_model.js'); return {
+    unknown: P.measure({ percent: null, state: 'running', started_at: 100 }, 400),
+    measured: P.measure({ percent: 42.4, state: 'running' }),
+    zero: P.measure({ percent: 0, state: 'running' }),
+    unitZero: P.measure({ percent: 0, state: 'running', measured: false }),
+    counts: P.measure({ done: 3, total: 12, state: 'running' }),
+    doneNoPct: P.measure({ state: 'done' }),
+    failedNoPct: P.measure({ state: 'failed' }),
+    attrs: [P.trackAttr(P.measure({ state: 'running' })), P.trackAttr(P.measure({ percent: 5 })),
+            P.trackAttr(P.measure({ state: 'failed' }))],
+  }; })(),
+  feedLines: W.ownerLines({ watches: [
+    { job_id: 'a', label: 'Unknown', percent: null, started_at: 1 },
+    { job_id: 'b', label: 'Measured', percent: 40 },
+    { job_id: 'c', label: 'Unit', kind: 'unit', percent: 0 }] }).map((l) => [l.text, l.percent, l.indeterminate]),
+  planNullPct: B.plan({ process_count: 0, waits: [], schedules: [],
+    watches: [{ job_id: 'w', label: 'Upload', percent: null, started_at: 500 }] }).watches[0],
+  planUnit: B.plan({ label: 'Running: ch1821-rig-build', process_count: 0, waits: [], schedules: [],
+    watches: [{ job_id: 'unit-x', kind: 'unit', label: 'Running: ch1821-rig-build', unit: 'ch1821-rig-build',
+      sub_state: 'running', percent: null, started_at: 1000 }] }),
+  planUnitAndJob: B.plan({ label: 'Build', process_count: 0, waits: [], schedules: [],
+    watches: [{ job_id: 'b', label: 'Build', percent: 10 },
+              { job_id: 'u', kind: 'unit', label: 'Bake', unit: 'bake', sub_state: 'exited', started_at: 2000 }] }),
 };
 process.stdout.write(JSON.stringify(out));
 """
@@ -77,3 +101,28 @@ def test_models():
     assert r["planProcs"]["title"] == "Detached processes running" and r["planProcs"]["stop"] == "processes"
     assert r["planSched"]["working"] is False and r["planSched"]["stop"] is None
     assert r["planNone"] == [None, None]
+    # The shared progress model decides determinate vs indeterminate for every bar.
+    pr = r["progress"]
+    assert pr["unknown"] == {"determinate": False, "percent": None, "label": "5m", "animate": True, "elapsedSec": 300}
+    assert pr["measured"]["determinate"] and pr["measured"]["percent"] == 42 and pr["measured"]["label"] == "42%"
+    assert pr["zero"]["determinate"] and pr["zero"]["label"] == "0%"  # a measured 0 is real
+    assert not pr["unitZero"]["determinate"] and pr["unitZero"]["animate"]  # legacy 0 from a non-measuring source
+    assert pr["counts"]["percent"] == 25 and pr["counts"]["label"] == "25%"
+    assert pr["doneNoPct"]["percent"] == 100
+    assert not pr["failedNoPct"]["determinate"] and not pr["failedNoPct"]["animate"]  # ended: no stripe
+    assert pr["attrs"] == [' data-progress="indeterminate"', "", ' data-progress="unknown"']
+    assert r["feedLines"] == [["Unknown", None, True], ["Measured", 40, False], ["Unit", None, True]]
+    assert r["planNullPct"]["percent"] is None and r["planNullPct"]["indeterminate"] is True
+    assert r["planNullPct"]["started"] == 500
+    # A detached unit watch: "Running: ch1821-rig-build · running · 14m", no chat Stop (its card stops it).
+    u = r["planUnit"]
+    assert u["title"] == "Detached job running" and u["working"] is True and u["stop"] is None
+    assert u["label"] == "" and u["started"] == 1000
+    # A unit only knows running/exited: indeterminate bar + elapsed, never "0%".
+    assert u["watches"] == [{"label": "Running: ch1821-rig-build", "percent": None, "indeterminate": True,
+                             "unit": "ch1821-rig-build", "subState": "running", "started": 1000}]
+    both = r["planUnitAndJob"]
+    assert both["title"] == "Job running" and both["stop"] == "chat" and both["label"] == "Build"
+    assert both["watches"][1] == {"label": "Bake", "percent": None, "indeterminate": True, "unit": "bake",
+                                  "subState": "exited", "started": 2000}
+    assert both["watches"][0]["percent"] == 10 and both["watches"][0]["indeterminate"] is False

@@ -98,6 +98,20 @@
             try { return !!host.sessionShowsHistorySpinner(sid); } catch (_) { return false; }
         }
 
+        // Live background work for a session: the sessions-list `background`
+        // flag (api.jobs.work_tree), or a page-supplied override.
+        function sessionHasBackgroundWork(sid) {
+            if (sid == null || sid === '') return false;
+            if (typeof host.sessionHasBackgroundWork === 'function') {
+                try { return !!host.sessionHasBackgroundWork(sid); } catch (_) { return false; }
+            }
+            if (typeof host.sessionObjFor !== 'function') return false;
+            try {
+                const obj = host.sessionObjFor(sid);
+                return !!(obj && obj.background);
+            } catch (_) { return false; }
+        }
+
         function historyUnreadIconHTML(isError) {
             const err = !!isError;
             return `<span class="history-unread-icon${err ? ' is-error' : ''}" title="${err ? 'Unread error' : 'Unread'}" aria-label="${err ? 'Unread error' : 'Unread'}"></span>`;
@@ -115,8 +129,15 @@
             return `<span class="history-running-icon" title="Generating…" aria-label="Generating"></span>`;
         }
 
+        // Idle chat, agents still working (waits, watches, processes, running
+        // sub-agents): the running spinner's quieter twin (outlined, slower).
+        function historyBackgroundIconHTML() {
+            return `<span class="history-background-icon" title="Working in the background" aria-label="Working in the background"></span>`;
+        }
+
         function historyAttentionIconHTML(kind) {
             if (kind === 'running') return historyRunningIconHTML();
+            if (kind === 'background') return historyBackgroundIconHTML();
             if (kind === 'input') return '<span class="history-input-icon" title="Awaiting your input" aria-label="Awaiting your input"></span>';
             if (kind === 'error') return historyUnreadIconHTML(true);
             if (kind === 'unread') return historyUnreadIconHTML(false);
@@ -277,18 +298,30 @@
             const unreadIcon = doc.getElementById('chatSessionUnreadIcon');
             const queuedIcon = doc.getElementById('chatSessionQueuedIcon');
             const pausedIcon = doc.getElementById('chatSessionPausedIcon');
+            const backgroundIcon = doc.getElementById('chatSessionBackgroundIcon');
             const wrap = doc.getElementById('chatSessionTitle');
-            if (!unreadIcon && !queuedIcon && !pausedIcon) return;
+            if (!unreadIcon && !queuedIcon && !pausedIcon && !backgroundIcon) return;
             const current = typeof host.currentSessionId === 'function' ? host.currentSessionId() : null;
             const prefsFor = typeof host.attentionPrefsFor === 'function' ? host.attentionPrefsFor : () => null;
             const titleVisible = !!(wrap && !wrap.hidden);
             const showInput = !!(titleVisible && current != null && (prefsFor(current) || {}).awaitingInput);
             const inputIcon = doc.getElementById('chatSessionInputIcon');
             if (inputIcon) inputIcon.hidden = !showInput;
-            const showUnread = !!(titleVisible && !showInput
+            const unreadActive = !!(titleVisible && !showInput
                 && typeof host.attentionActive === 'function' && host.attentionActive());
-            const showUnreadError = !!(showUnread
+            const showUnreadError = !!(unreadActive
                 && typeof host.attentionIsError === 'function' && host.attentionIsError());
+            // Idle chat whose agents still work: ranked under input/error and
+            // over unread/queued, and never beside the live-run spinner.
+            const showBackground = !!(
+                titleVisible
+                && !showInput
+                && !showUnreadError
+                && current != null
+                && !sessionIsRunning(current)
+                && sessionHasBackgroundWork(current)
+            );
+            const showUnread = unreadActive && !showBackground;
             // Queue dots only when unread is not already showing (green/red wins).
             // Amber = active (unpaused) queue; yellow = paused (see CH-000439-14 legend).
             const hasActive = typeof host.hasActiveFollowup === 'function' ? host.hasActiveFollowup : () => false;
@@ -297,6 +330,7 @@
                 titleVisible
                 && !showInput
                 && !showUnread
+                && !showBackground
                 && current != null
                 && hasActive(current)
             );
@@ -304,6 +338,7 @@
                 titleVisible
                 && !showInput
                 && !showUnread
+                && !showBackground
                 && !showQueued
                 && current != null
                 && hasPaused(current)
@@ -316,11 +351,13 @@
             }
             if (queuedIcon) queuedIcon.hidden = !showQueued;
             if (pausedIcon) pausedIcon.hidden = !showPaused;
+            if (backgroundIcon) backgroundIcon.hidden = !showBackground;
             if (wrap) {
                 wrap.classList.toggle('has-unread', showUnread);
                 wrap.classList.toggle('has-unread-error', showUnreadError);
                 wrap.classList.toggle('has-queued', showQueued);
                 wrap.classList.toggle('has-paused-queue', showPaused);
+                wrap.classList.toggle('has-background', showBackground);
             }
         }
 
@@ -329,11 +366,13 @@
             const wanted = kind === 'running' ? 'history-running-icon'
                 : kind === 'input' ? 'history-input-icon'
                 : (kind === 'unread' || kind === 'error') ? 'history-unread-icon'
+                : kind === 'background' ? 'history-background-icon'
                 : kind === 'queued' ? 'history-queued-icon'
                 : kind === 'paused' ? 'history-paused-icon'
                 : '';
             const selector = ':scope > .history-running-icon, :scope > .history-unread-icon,'
                 + ' :scope > .history-queued-icon, :scope > .history-paused-icon,'
+                + ' :scope > .history-background-icon,'
                 + ' :scope > .history-input-icon';
             const current = item.querySelector(selector);
             if (current && wanted && current.classList.contains(wanted)) {
@@ -366,6 +405,7 @@
                     item.classList.toggle('has-queued', attention === 'queued');
                     item.classList.toggle('has-paused-queue', attention === 'paused');
                     item.classList.toggle('has-input', attention === 'input');
+                    item.classList.toggle('has-background', attention === 'background');
                     syncHistoryLeftStatusIcon(item, statusKind);
                     // Older markup parked the spinner in the meta line; clear it here.
                     const metaSpinner = item.querySelector('.history-item-meta .history-running-icon');
@@ -386,7 +426,8 @@
         return {
             get, accept, mark, flush,
             historyUnreadIconHTML, historyQueuedIconHTML, historyPausedIconHTML,
-            historyRunningIconHTML, historyAttentionIconHTML,
+            historyRunningIconHTML, historyBackgroundIconHTML, historyAttentionIconHTML,
+            sessionHasBackgroundWork,
             historyOpenPaneCount, historyOpenPaneBadgeHTML, syncHistoryOpenPaneIndicators,
             syncHistoryLeftStatusIcon,
             syncHistoryUnreadIndicators, syncHistoryProjectAttentionIndicators,

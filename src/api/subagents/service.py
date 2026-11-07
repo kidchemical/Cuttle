@@ -125,6 +125,164 @@ def _reconcile(db, batch: Optional[BatchRecord] = None) -> None:
             pass
 
 
+def find_turn_row(db, parent_session_id: int, turn_id: str) -> Optional[Dict[str, Any]]:
+    """The parent's assistant row of turn ``turn_id`` (its live row first, else the newest)."""
+    if not turn_id:
+        return None
+    try:
+        conn = db._get_connection()
+    except Exception:
+        return None
+    try:
+        rows = conn.execute(
+            "SELECT id, content, metadata FROM chat_messages WHERE chat_session_id = ? AND role = 'assistant' "
+            "AND json_valid(metadata) AND json_extract(metadata, '$.turn_id') = ? ORDER BY id DESC",
+            (int(parent_session_id), str(turn_id))).fetchall()
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    found = [dict(r) for r in rows]
+    for row in found:
+        try:
+            row["metadata"] = json.loads(row["metadata"]) if row.get("metadata") else {}
+        except ValueError:
+            row["metadata"] = {}
+    live = [r for r in found if r["metadata"].get("in_progress")]
+    return (live or found or [None])[0]
+
+
+def _write_cards(db, message_id: int, children: List[ChildRecord], *, batch_id: str = "") -> None:
+    """Merge these children's cards into a saved row's metadata (once each)."""
+    from api.subagents import fleet
+
+    row = db.get_message_by_id(int(message_id)) or {}
+    meta = row.get("metadata")
+    meta = json.loads(meta) if isinstance(meta, str) and meta else dict(meta or {})
+    if meta.get("in_progress"):
+        return  # the reply will carry them when it lands (attach_batches_to_assistant_meta)
+    cards = [c for c in (meta.get("subagents") or []) if isinstance(c, dict)]
+    live_ids = {str(c.get("id") or "") for c in cards if not c.get("frozen")}
+    card = fleet.fleet_entry if fleet.fleet_enabled() else (lambda ch: public_launcher(ch.public()))
+    added = False
+    for child in children:
+        if child.id not in live_ids:
+            cards.append(card(child))
+            added = True
+    if not added:
+        return
+    meta["subagents"] = cards
+    if batch_id:
+        meta.setdefault("subagent_batch_id", batch_id)
+    db.update_message_content(int(message_id), str(row.get("content") or ""), metadata=meta)
+
+
+def _latest_parent_bubble(db, parent_session_id: int) -> Optional[int]:
+    try:
+        recent = db.get_messages(int(parent_session_id), limit=40)  # saved rows only
+    except Exception:
+        return None
+    last = next((m for m in reversed(recent or []) if m.get("role") == "assistant"), None)
+    return int(last["id"]) if last else None
+
+
+def _card_target(db, parent_session_id: int, *, turn_id: str = "",
+                 anchor_message_id: Optional[int] = None) -> Optional[int]:
+    """The parent bubble new cards belong on, harness-agnostic:
+
+    the explicit anchor; else the in-progress bubble of the turn that launched
+    them (it exists from turn start) — when that turn has no bubble in
+    progress (its reply was saved before the spawn), None: the first reply of
+    that turn saved after the spawn binds them (``bind_turn_cards``), never a
+    reply saved before it; else — a manual run with no turn — the parent's
+    latest bubble."""
+    if anchor_message_id:
+        return int(anchor_message_id)
+    if turn_id:
+        row = find_turn_row(db, int(parent_session_id), turn_id)
+        return int(row["id"]) if row and row["metadata"].get("in_progress") else None
+    return _latest_parent_bubble(db, int(parent_session_id))
+
+
+def bind_new_batch(db, batch: BatchRecord, *, anchor_message_id: Optional[int] = None) -> Optional[int]:
+    """At spawn: bind to the bubble of the turn that launched it (``_card_target``).
+
+    The turn's row exists from turn start (api.chat_turn_row), so this is
+    normally immediate and the cards ride that live bubble. With no row for
+    the turn yet, the batch stays unbound (pinned background card); the first assistant
+    row saved with that turn id binds it (``bind_turn_cards``)."""
+    if batch.attach_message_id:
+        return None
+    mid = _card_target(db, int(batch.parent_session_id), turn_id=batch.turn_id,
+                       anchor_message_id=anchor_message_id)
+    if not mid:
+        return None
+    store.update_batch(db, batch.id, attach_message_id=mid)
+    batch.attach_message_id = mid
+    try:
+        _write_cards(db, mid, _refresh(db, batch.id).children, batch_id=batch.id)
+    except Exception as exc:
+        print(f"[SUBAGENTS] spawn card binding to row {mid} failed: {exc}", flush=True)
+    return mid
+
+
+def bind_turn_cards(db, parent_session_id: int, message_id: int, turn_id: str) -> List[str]:
+    """An assistant row of turn ``turn_id`` was saved: bind that turn's waiting cards to it.
+
+    Called by ``AuthDatabase`` on every assistant write, whichever path saved
+    it. Returns the bound batch / child ids."""
+    if not turn_id:
+        return []
+    bound: List[str] = []
+    for batch in store.list_batches_for_parent(db, int(parent_session_id)):
+        if batch.attach_message_id == int(message_id):
+            # Bound already (at spawn, to this turn's row): whichever path just
+            # rewrote the row, its cards stay on it — except a child whose
+            # current round's card lives on a later bubble (its card here is frozen).
+            mine = [c for c in batch.children if not c.card_pending
+                    and (not c.card_message_id or int(c.card_message_id) == int(message_id))]
+            _write_cards(db, int(message_id), mine, batch_id=batch.id)
+            continue
+        if batch.attach_message_id or batch.turn_id != turn_id:
+            continue
+        store.update_batch(db, batch.id, attach_message_id=int(message_id))
+        _write_cards(db, int(message_id), batch.children, batch_id=batch.id)
+        bound.append(batch.id)
+    rounds = [c for c in store.pending_card_children(db, int(parent_session_id)) if c.card_turn_id == turn_id]
+    for child in rounds:
+        store.set_card_round(db, child.id, message_id=int(message_id), pending=False)
+    if rounds:
+        _write_cards(db, int(message_id), [store.get_child(db, c.id) or c for c in rounds])
+        bound += [c.id for c in rounds]
+    return bound
+
+
+def leave_cards_on_last_bubble(db, batch: BatchRecord) -> Optional[int]:
+    """A batch that ended with no parent reply to carry it stays on the last one.
+
+    The parent never saved another reply to carry it (a manual run with no
+    turn or anchor, or its turn died before a row existed): the
+    live cards would vanish with the batch. Bind it to the parent's newest
+    saved assistant bubble and write the cards there, so history keeps them."""
+    if batch.attach_message_id:
+        return None
+    try:
+        recent = db.get_messages(int(batch.parent_session_id), limit=40)
+    except Exception:
+        return None
+    last = next((m for m in reversed(recent or []) if m.get("role") == "assistant"), None)
+    if not last:
+        return None
+    mid = int(last["id"])
+    store.update_batch(db, batch.id, attach_message_id=mid)
+    batch.attach_message_id = mid
+    try:
+        _write_cards(db, mid, _refresh(db, batch.id).children, batch_id=batch.id)
+    except Exception as exc:
+        print(f"[SUBAGENTS] leaving cards on CH bubble {mid} failed: {exc}", flush=True)
+    return mid
+
+
 def _finalize_if_complete(db, batch: BatchRecord) -> BatchRecord:
     batch = _refresh(db, batch.id)
     if batch.status in TERMINAL_BATCH:
@@ -139,7 +297,7 @@ def _finalize_if_complete(db, batch: BatchRecord) -> BatchRecord:
                 if c.id != winner.id and c.status not in TERMINAL_CHILD:
                     _cancel_child(db, c.session_id)
             store.update_batch(db, batch.id, status=STATUS_DONE, finished=True)
-            return _refresh(db, batch.id)
+            return _ended(db, batch.id)
         if all(c.status in TERMINAL_CHILD for c in kids):
             failed = all(c.status != STATUS_DONE for c in kids)
             store.update_batch(
@@ -148,7 +306,7 @@ def _finalize_if_complete(db, batch: BatchRecord) -> BatchRecord:
                 status=STATUS_FAILED if failed else STATUS_DONE,
                 finished=True,
             )
-            return _refresh(db, batch.id)
+            return _ended(db, batch.id)
         return batch
     if all(c.status in TERMINAL_CHILD for c in kids):
         failed = any(c.status == STATUS_FAILED for c in kids) and not any(
@@ -157,10 +315,24 @@ def _finalize_if_complete(db, batch: BatchRecord) -> BatchRecord:
         cancelled = all(c.status == STATUS_CANCELLED for c in kids)
         status = STATUS_CANCELLED if cancelled else (STATUS_FAILED if failed else STATUS_DONE)
         if batch.lifetime == LIFETIME_CONVERSATIONAL and status == STATUS_DONE:
-            # One round finished; keep the batch open for follow-ups.
+            # One round finished; keep the batch open for follow-ups. Cards no
+            # running turn carries stay on the parent's last bubble.
+            try:
+                leave_cards_on_last_bubble(db, batch)
+            except Exception as exc:
+                print(f"[SUBAGENTS] round-end card binding failed: {exc}", flush=True)
             return batch
         store.update_batch(db, batch.id, status=status, finished=True)
-        return _refresh(db, batch.id)
+        return _ended(db, batch.id)
+    return batch
+
+
+def _ended(db, batch_id: str) -> BatchRecord:
+    batch = _refresh(db, batch_id)
+    try:
+        leave_cards_on_last_bubble(db, batch)
+    except Exception as exc:
+        print(f"[SUBAGENTS] end-of-batch card binding failed: {exc}", flush=True)
     return batch
 
 
@@ -248,9 +420,22 @@ def spawn(
     tasks: bool = False,
     runner: Optional[TurnRunner] = None,
     db=None,
+    turn_id: Optional[str] = None,
+    anchor_message_id: Optional[int] = None,
 ) -> Dict[str, Any]:
+    """Start a batch of child chats.
+
+    ``turn_id`` is the parent turn spawning it (default: the calling turn,
+    ``CUTTLE_TURN_ID``; api.chat_turn_id) — its cards bind to that turn's row.
+    ``anchor_message_id`` pins them to one parent bubble instead (manual CLI
+    runs with no turn: ``--anchor CH-…-N``)."""
     db = _open_db(db)
     parent = _parent_row(db, int(parent_session_id))
+    from api.chat_turn_id import for_spawn, origin
+
+    calling = origin(int(parent_session_id))
+    turn_id = "" if anchor_message_id else for_spawn(int(parent_session_id), turn_id)
+    turn_from = calling if turn_id and turn_id == calling.get("turn_id") else {}
     user_id = int(parent["user_id"])
     depth = db.session_nesting_depth(int(parent_session_id))
     if depth >= MAX_DEPTH:
@@ -313,7 +498,11 @@ def spawn(
         lifetime=lifetime_n,
         watch_id=watch_id,
         widget_id=widget_id,
-        metadata={"route": bool(route)},
+        metadata={"route": bool(route), "cards": store.CARDS_BY_TURN,
+                  # Which parent message started the turn that launched this batch.
+                  "turn_message_id": turn_from.get("message_id"),
+                  "turn_message": turn_from.get("message") or None},
+        turn_id=turn_id,
     )
     # Re-key watch/widget to the real batch id when we generated from a stub.
     if watch_id:
@@ -355,6 +544,10 @@ def spawn(
         created.append({"spec": spec, "child": child})
 
     batch = _refresh(db, batch.id)
+    # Bind to the row of the turn that spawned it (it exists from turn start,
+    # api.chat_turn_row) or the manual anchor: the cards ride that bubble now.
+    # Nothing to bind to yet → the pinned background card until a row of that turn is saved.
+    bind_new_batch(db, batch, anchor_message_id=anchor_message_id)
     extras.ensure_parent_tasks(db, batch)
     extras.write_watch(batch)
 
@@ -558,7 +751,11 @@ def message_child(
     timeout: float = DEFAULT_TIMEOUT_SEC,
     runner: Optional[TurnRunner] = None,
     db=None,
+    turn_id: Optional[str] = None,
+    anchor_message_id: Optional[int] = None,
 ) -> Dict[str, Any]:
+    """Send a follow-up round to a child; its new card binds to the parent turn
+    that sent it (``turn_id``, default ``CUTTLE_TURN_ID``) or ``anchor_message_id``."""
     db = _open_db(db)
     child = store.get_child_by_session(db, int(session_id))
     if not child:
@@ -569,7 +766,12 @@ def message_child(
         )
     if child.status == STATUS_CANCELLED:
         raise SubagentError("that sub-agent was cancelled")
-    _start_card_round(db, child)
+    from api.chat_turn_id import for_spawn
+
+    owner_batch = store.get_batch(db, child.batch_id)
+    round_turn = "" if anchor_message_id else for_spawn(
+        owner_batch.parent_session_id if owner_batch else None, turn_id)
+    _start_card_round(db, child, turn_id=round_turn, anchor_message_id=anchor_message_id)
     # This process runs the turn below, so record it as the owner now: a host
     # death between here and the turn start must not leave an ownerless
     # pending row nobody can reconcile.
@@ -688,18 +890,31 @@ def attach_batches_to_assistant_meta(
     *,
     message_id: Optional[int] = None,
     db=None,
+    turn_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Merge launcher payloads onto the parent assistant bubble metadata."""
+    """Merge launcher payloads onto the parent assistant bubble metadata.
+
+    Cards belong to the row of the turn they were started in (``turn_id``,
+    default: the row's own, api.chat_turn_id): another turn's waiting batch is
+    never pulled onto this reply, and a manual run's (no turn) was bound at spawn."""
+    from api.chat_turn_id import ambient, turn_id_of
+
     db = _open_db(db)
     out = dict(meta or {})
+    turn_id = turn_id or turn_id_of(out) or ambient(parent_session_id)
     bound = []
     if message_id is not None:
-        bound = store.bind_unattached_batches(db, int(parent_session_id), int(message_id))
+        bound = store.bind_unattached_batches(db, int(parent_session_id), int(message_id), turn_id)
+        # Batches bound to this bubble already (at spawn, to the running turn's
+        # row: api.chat_turn_row) carry their cards into the saved reply too.
+        ids = {b.id for b in bound}
+        bound += [b for b in store.list_batches_for_parent(db, int(parent_session_id))
+                  if b.attach_message_id == int(message_id) and b.id not in ids]
     else:
         bound = [
             b
             for b in store.list_batches_for_parent(db, int(parent_session_id))
-            if not b.attach_message_id
+            if not b.attach_message_id and turn_id and b.turn_id == turn_id
         ]
         # Don't persist attach without an id; still expose launchers this turn.
     launchers: List[Dict[str, Any]] = list(out.get("subagents") or [])
@@ -715,8 +930,10 @@ def attach_batches_to_assistant_meta(
             launchers.append(pub)
         if batch.id and "subagent_batch_id" not in out:
             out["subagent_batch_id"] = batch.id
-    # Follow-up rounds sent to existing children since the last reply.
-    pending = store.pending_card_children(db, int(parent_session_id))
+    # Follow-up rounds sent to existing children since the last reply (this
+    # turn's, or with no turn of their own).
+    pending = [c for c in store.pending_card_children(db, int(parent_session_id))
+               if turn_id and c.card_turn_id == turn_id]
     for child in pending:
         pub = card(child)
         key = str(pub.get("handle") or pub.get("session_id"))
@@ -732,7 +949,67 @@ def attach_batches_to_assistant_meta(
     return out
 
 
-def _start_card_round(db, child: ChildRecord) -> None:
+def note_external_round(session_id: int, *, turn_id: Optional[str] = None, db=None) -> bool:
+    """A follow-up reached a sub-agent child without ``subagents message``
+    (``chat_cli send``): give it a card round on the parent like ``message``
+    does — bound to the turn that sent it — and show the child working.
+
+    False when ``session_id`` is not a live sub-agent child."""
+    db = _open_db(db)
+    child = store.get_child_by_session(db, int(session_id))
+    if not child or child.status == STATUS_CANCELLED:
+        return False
+    batch = store.get_batch(db, child.batch_id)
+    if not batch:
+        return False
+    if child.status in (STATUS_PENDING, STATUS_RUNNING):
+        return True  # already working: this message joins that round
+    from api.chat_turn_id import for_spawn
+
+    _start_card_round(db, child, turn_id=for_spawn(batch.parent_session_id, turn_id))
+    store.begin_external_round(db, child.id)
+    if batch.status in TERMINAL_BATCH:
+        store.update_batch(db, batch.id, status=STATUS_RUNNING)
+    return True
+
+
+def on_child_turns_ended(session_ids, *, db=None) -> List[str]:
+    """Close external rounds (``note_external_round``) whose child turn just ended.
+
+    Called with the chats whose turn ended (``turn_end``); the round's outcome
+    is the child's newest reply. Rounds run by ``run_child_turn`` record their
+    own end and are left alone."""
+    ids = [int(s) for s in session_ids or () if str(s).isdigit()]
+    if not ids:
+        return []
+    db = _open_db(db)
+    closed: List[str] = []
+    for sid in ids:
+        child = store.get_child_by_session(db, sid)
+        if not child or child.status != STATUS_RUNNING or child.live_turn_id != store.EXTERNAL_ROUND:
+            continue
+        try:
+            from api import chat_delivery
+
+            if chat_delivery.is_busy(sid):
+                continue  # a newer turn of the child is already running
+        except Exception:
+            pass
+        text = store.latest_assistant_text(db, sid)
+        from api.chat_attention import is_error
+
+        failed = not text.strip() or is_error(text, {})
+        store.update_child(db, child.id, status=STATUS_FAILED if failed else STATUS_DONE,
+                           result=text, error="No reply" if not text.strip() else "", finished=True)
+        batch = store.get_batch(db, child.batch_id)
+        if batch:
+            _finalize_if_complete(db, batch)
+        closed.append(child.id)
+    return closed
+
+
+def _start_card_round(db, child: ChildRecord, *, turn_id: str = "",
+                      anchor_message_id: Optional[int] = None) -> None:
     """A follow-up is a new round: freeze the old card, mint a new one later.
 
     The bubble that showed the previous round keeps that round's outcome
@@ -746,6 +1023,14 @@ def _start_card_round(db, child: ChildRecord) -> None:
     bubble = store.card_bubble_id(db, child)
     if not bubble:
         return  # never shown yet: the batch's first bubble will carry it
+    batch = _refresh(db, child.batch_id)
+    target = _card_target(db, int(batch.parent_session_id), turn_id=turn_id,
+                          anchor_message_id=anchor_message_id)
+    if target and int(target) == int(bubble):
+        return  # same bubble: its card simply goes on (history keeps it current)
+    # Mark the new round first: the freeze below rewrites the old bubble, and
+    # that write must already see the live card belonging elsewhere.
+    store.set_card_round(db, child.id, pending=True, turn_id=turn_id)
     try:
         row = db.get_message_by_id(bubble) or {}
         meta = json.loads(row.get("metadata") or "{}") if isinstance(row.get("metadata"), str) else dict(row.get("metadata") or {})
@@ -759,7 +1044,14 @@ def _start_card_round(db, child: ChildRecord) -> None:
             db.update_message_content(bubble, str(row.get("content") or ""), metadata=meta)
     except Exception as exc:
         print(f"[SUBAGENTS] freeze fleet card failed: {exc}", flush=True)
-    store.set_card_round(db, child.id, pending=True)
+    # The round's card belongs to the turn that sent it (or the anchor / the
+    # latest bubble for a manual run): bind now when that bubble exists.
+    if target:
+        store.set_card_round(db, child.id, message_id=target, pending=False)
+        try:
+            _write_cards(db, target, [store.get_child(db, child.id) or child])
+        except Exception as exc:
+            print(f"[SUBAGENTS] round card binding to row {target} failed: {exc}", flush=True)
 
 
 def on_session_cancelled(session_id: Any) -> None:
@@ -792,7 +1084,18 @@ def public_parent_subagents(session_id: Any, *, db=None) -> List[Dict[str, Any]]
         launchers: List[Dict[str, Any]] = []
         for batch in live:
             for child in batch.children:
-                launchers.append(card(child))
+                entry = dict(card(child))
+                # Which parent bubble owns this card (the running turn's row
+                # from spawn, or a saved reply): the page shows it there, on
+                # the live bubble, or in the pinned background card — once, never twice.
+                # A new follow-up round is unbound until the next reply.
+                bound = None if child.card_pending else (
+                    child.card_message_id or batch.attach_message_id)
+                entry["bound_message_id"] = int(bound) if bound else None
+                # The turn this card belongs to (api.chat_turn_id): the page
+                # shows it on the live bubble of that turn.
+                entry["turn_id"] = (child.card_turn_id if child.card_pending else batch.turn_id) or None
+                launchers.append(entry)
         return launchers
     except Exception:
         return []
@@ -872,6 +1175,14 @@ def child_live_status(session_id: Any, *, db=None) -> Optional[Dict[str, Any]]:
     report_url = (
         f"/query_log.html?id={child.query_id}" if child.query_id else None
     )
+    # The child turn's reply row (api.chat_turn_row): the child pane's live bubble id.
+    message_id = None
+    if generating:
+        try:
+            rows = db.in_progress_messages(int(sid)) or []
+            message_id = int(rows[-1]["id"]) if rows else None
+        except Exception:
+            message_id = None
     return {
         "generating": generating,
         "status": (child.live_status if child.status == STATUS_RUNNING and child.live_status
@@ -881,4 +1192,5 @@ def child_live_status(session_id: Any, *, db=None) -> Optional[Dict[str, Any]]:
         # sub-agent is still working, not only after its reply is persisted.
         "query_id": child.query_id or None,
         "report_url": report_url,
+        "message_id": message_id,
     }

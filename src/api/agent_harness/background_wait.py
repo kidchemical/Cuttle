@@ -48,7 +48,7 @@ DETACHABLE_AGENTS = ("claude",)
 _PER_BUBBLE = frozenset({
     "response", "output", "usage", "cost", "success", "type", "error", "steered",
     "background_job", "drift_warning", "meta_command", "undelivered_steers",
-    "postprocessing",
+    "postprocessing", "message_id", "turn_row_slot",
 })
 _FINISHED_TTL_SEC = 3600.0
 
@@ -111,6 +111,8 @@ class BackgroundWait:
         self._base: Dict[str, Any] = {}
         self._pending: List[Dict[str, Any]] = []
         self._phase = "waiting"  # waiting (idle chat, card) | working (typing bubble)
+        # The answer's row while working (api.chat_turn_row, slot per job).
+        self._row: Optional[Dict[str, Any]] = None
 
     # -- CLI side ---------------------------------------------------------
 
@@ -159,6 +161,7 @@ class BackgroundWait:
         if self._phase == "working" and not force:
             return
         self._phase = "working"
+        self._open_row()
         self._publish(label)
 
     def waiting(self, label: str) -> None:
@@ -183,6 +186,7 @@ class BackgroundWait:
             self._persist_followup(text, usage=usage, errors=errors)
         finally:
             self._phase = "waiting"
+            self._close_row()
             self._clear_live()
 
     def _persist_followup(self, text: str, *, usage: Optional[Dict[str, Any]],
@@ -196,6 +200,9 @@ class BackgroundWait:
             "type": f"{self.agent_id}_error" if errors else f"{self.agent_id}_command",
             "background_followup": self.job_id,
         }
+        if self._row:
+            # The bubble the working phase showed: the answer lands in its row.
+            body["turn_row_slot"] = self._row_slot
         clean_usage = {k: v for k, v in (usage or {}).items()
                        if k in ("prompt_tokens", "completion_tokens", "total_tokens", "context_tokens",
                                 "cache_read_tokens", "cache_write_tokens", "cost") and v is not None}
@@ -243,6 +250,7 @@ class BackgroundWait:
             if notice:
                 self.followup(notice)
         self._phase = "waiting"
+        self._close_row(status="cancelled" if stopped else "skipped")
         self._clear_live()
         try:
             from api.chat_run_registry import clear_session_jobs
@@ -266,6 +274,42 @@ class BackgroundWait:
 
     # -- internals --------------------------------------------------------
 
+    @property
+    def _row_slot(self) -> str:
+        return f"bg:{self.job_id}"
+
+    def _open_row(self) -> None:
+        """Give the working phase's typing bubble its row + inspector from its first frame.
+
+        Under the first reply's query id when known (the detached CLI is still
+        that run); its own otherwise."""
+        if self._row:
+            return
+        try:
+            from api.auth_db import get_auth_db
+            from api.chat_turn_row import open_row
+
+            with self._lock:
+                qid = str((self._base or {}).get("query_id") or "") or None
+            self._row = open_row(get_auth_db(), self.chat_session_id, slot=self._row_slot, query_id=qid,
+                                 label=f"{self.label} follow-up")
+        except Exception as exc:
+            print(f"[background_wait] follow-up row open failed for {self.job_id}: {exc}", flush=True)
+            self._row = None
+
+    def _close_row(self, status: str = "skipped") -> None:
+        """End the working phase's row if no answer landed in it (no-op once saved)."""
+        if not self._row:
+            return
+        self._row = None
+        try:
+            from api.auth_db import get_auth_db
+            from api.chat_turn_row import close
+
+            close(get_auth_db(), self.chat_session_id, status=status, slot=self._row_slot)
+        except Exception as exc:
+            print(f"[background_wait] follow-up row close failed for {self.job_id}: {exc}", flush=True)
+
     def _publish(self, message: str) -> None:
         """One live-status line for the working phase (flagged ``followup``)."""
         text = (message or "").strip()
@@ -275,8 +319,10 @@ class BackgroundWait:
             from api.chat_live_status import set_live_status
             from api.chat_run_registry import is_run_cancelled
 
+            row = self._row or {}
             set_live_status(self.chat_session_id, text, active=True, followup=True,
-                            is_cancelled=is_run_cancelled)
+                            is_cancelled=is_run_cancelled, query_id=row.get("query_id"),
+                            report_url=row.get("report_url"), message_id=row.get("message_id"))
         except Exception as exc:
             print(f"[background_wait] live status publish failed for {self.job_id}: {exc}", flush=True)
 
@@ -304,7 +350,8 @@ class BackgroundWait:
         try:
             from api.job_watch import write_status
 
-            write_status(self.job_id, state=state, percent=100 if state == "done" else 0,
+            # A background wait never measures progress: running = indeterminate.
+            write_status(self.job_id, state=state, percent=100 if state == "done" else None,
                          label=label, extra=extra)
         except Exception as exc:
             print(f"[background_wait] status write failed for {self.job_id}: {exc}", flush=True)

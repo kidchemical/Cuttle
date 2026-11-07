@@ -186,3 +186,25 @@ button.cuttle-info:focus-visible {
     background: color-mix(in srgb, currentColor 10%, transparent);
 }
 button.cuttle-info:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+
+/* Indeterminate progress (shared; js/shared/progress_model.js decides): a bar
+   whose source has not measured anything shows a sliding stripe instead of a
+   dead "0%" fill. Any track: data-progress="indeterminate" on the track, its
+   first child is the fill. "unknown" = not measured and not running: empty. */
+[data-progress="indeterminate"] { position: relative; overflow: hidden; }
+[data-progress="indeterminate"] > :first-child {
+    position: absolute; top: 0; bottom: 0; left: 0;
+    width: 38% !important; border-radius: inherit;
+    animation: cuttle-progress-slide 1.6s ease-in-out infinite;
+}
+@keyframes cuttle-progress-slide {
+    from { transform: translateX(-105%); }
+    to { transform: translateX(265%); }
+}
+@media (prefers-reduced-motion: reduce) {
+    [data-progress="indeterminate"] > :first-child {
+        animation: none; transform: none; width: 100% !important; opacity: 0.55;
+        background-image: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.35) 0 6px, transparent 6px 12px);
+    }
+}
+[data-progress="unknown"] > :first-child { width: 0 !important; }

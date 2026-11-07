@@ -593,6 +593,10 @@
 
     // Cross-device auth chat sync (poll + focus). LocalStorage chats need no sync.
     let lastSeenServerMessageId = 0;
+    /** This chat's running turn row id (api.chat_turn_row), from query_started / live status. */
+    let currentTurnRowId = null;
+    /** Query ids already toasted as "Running…" (the turn row and the harness share one id). */
+    const toastedQueryIds = new Set();
     /** Lazy transcript window — newest page first; scroll-up loads older pages. */
     const CHAT_HISTORY_PAGE_SIZE = 10;
     let chatHistoryHasMore = false;
@@ -7115,6 +7119,9 @@
             }
         }
         if (live.report_url) updateTypingIndicatorQueryLink(live.report_url);
+        if ((live.message_id != null || live.query_id) && liveStatusLooksActive(live)) {
+            stampLiveBubbleTurnRow(live.message_id, live.report_url, live.query_id);
+        }
 
         const stillGoing = liveStatusLooksActive(live);
         if (isLoadingThisSession() && turnAlreadyShowsAssistantReply() && !activeEventSource) {
@@ -8608,6 +8615,11 @@
                     }
                 );
                 switch (syncDecision.decision) {
+                    case 'live-row':
+                        // The running turn's row: its id + inspector go to the
+                        // live bubble (reload mid-turn, another device).
+                        stampLiveBubbleTurnRow(mid, msg.report_url, msg.query_id);
+                        continue;
                     case 'claim-interrupted':
                         stampAssistantElFromServer(stoppedQueryBubble(syncDecision.queryId), msg);
                         continue;
@@ -10134,8 +10146,15 @@
                                         rememberTurnBadge([], { active: true, slash_command: ev.slash_command });
                                         refreshTypingIndicatorHeaderBadges();
                                     }
+                                    if (streamPlan.messageId != null || streamPlan.queryId) {
+                                        stampLiveBubbleTurnRow(streamPlan.messageId, streamPlan.reportUrl, streamPlan.queryId);
+                                    }
                                     if (streamPlan.paintLink) {
                                         updateTypingIndicatorQueryLink(streamPlan.reportUrl);
+                                    }
+                                    const toastKey = streamPlan.queryId || streamPlan.reportUrl;
+                                    if (streamPlan.paintLink && !toastedQueryIds.has(toastKey)) {
+                                        toastedQueryIds.add(toastKey);
                                         (window.showToast || function() {})('Running…', 'info', {
                                             linkUrl: streamPlan.queryId
                                                 ? ('/query_log.html?id=' + encodeURIComponent(streamPlan.queryId))
@@ -10549,6 +10568,7 @@
                             const assistantTs = Date.now();
                             const el = activity.addMessage(data.response, 'assistant', {
                                 report_url: data.report_url,
+                                message_id: data.message_id || undefined,
                                 timestamp: assistantTs,
                                 slash_command: assistantSlash || undefined,
                                 slash_command_failed: assistantFailed,
@@ -10570,6 +10590,7 @@
                             const assistantTs = Date.now();
                             const elOpts = {
                                 report_url: data.report_url,
+                                message_id: data.message_id || undefined,
                                 timestamp: assistantTs,
                                 slash_command: assistantSlash || undefined,
                                 slash_command_failed: assistantFailed,
@@ -10596,6 +10617,7 @@
                     const assistantTs = Date.now();
                     activity.addMessage(data.response, 'assistant', {
                         report_url: data.report_url,
+                                message_id: data.message_id || undefined,
                         timestamp: assistantTs,
                         slash_command: assistantSlash || undefined,
                         slash_command_failed: assistantFailed,
@@ -10608,6 +10630,7 @@
                         stampAssistantElFromServer(existing, {
                             content: data.response,
                             report_url: data.report_url,
+                                message_id: data.message_id || undefined,
                             routing_badge: data.routing_badge || undefined,
                             usage: normalizeUsagePayload(data.usage) || undefined,
                         });
@@ -10618,6 +10641,7 @@
                 saveChatSession(data.response, 'assistant', {
                     query_id: data.query_id,
                     report_url: data.report_url,
+                                message_id: data.message_id || undefined,
                     slash_command: assistantSlash || undefined,
                     slash_command_failed: assistantFailed,
                     routing_badge: data.routing_badge || undefined,
@@ -10655,6 +10679,7 @@
                     if (!turnAlreadyShowsAssistantReply(errBody)) {
                         activity.addMessage(errBody, 'assistant', {
                             report_url: data.report_url,
+                                message_id: data.message_id || undefined,
                             timestamp: Date.now(),
                             slash_command: assistantSlash || undefined,
                             slash_command_failed: assistantFailed,
@@ -11766,6 +11791,29 @@
         if (link && reportUrl) {
             applyQueryLogTarget(link, reportUrl);
         }
+    }
+
+    /**
+     * Hand the live bubble (local or remote) its turn row (api.chat_turn_row):
+     * the assistant row id that exists from turn start, plus its inspector link.
+     * Kept as data-turn-message-id (not data-message-id) so history sync never
+     * mistakes the placeholder for a saved reply; the final reply bubble is
+     * painted with the same id as its data-message-id.
+     */
+    function stampLiveBubbleTurnRow(messageId, reportUrl, queryId) {
+        const mid = messageId == null || messageId === '' ? '' : String(messageId);
+        // The turn id (= the turn's query id) is the anchor sub-agent cards bind
+        // by (api.chat_turn_id): known even where no early row exists.
+        const tid = String(queryId || queryIdFromReportUrl(reportUrl) || '');
+        if (!mid && !tid) return;
+        document.querySelectorAll('#typing-indicator, #typing-indicator-remote').forEach((el) => {
+            if (mid) el.dataset.turnMessageId = mid;
+            if (tid) el.dataset.turnId = tid;
+            const link = el.querySelector('.message-query-log-link');
+            if (link && reportUrl) applyQueryLogTarget(link, reportUrl);
+        });
+        if (mid) currentTurnRowId = mid;
+        try { subagentLaunchers.paintLive(); } catch (_) {}
     }
     
     /** Finalize the live placeholder before Stop tears down its transports. */

@@ -671,13 +671,13 @@ def build_batch_watch_bars(
             "success": False,
             "error": "no jobs in batch",
             "state": "running",
-            "percent": 0,
+            "percent": None,  # no shards yet: nothing measured (indeterminate bar)
             "label": f"{label_prefix} — waiting for shards",
             "bars": [
                 {
                     "id": "overall",
                     "label": "Overall",
-                    "percent": 0,
+                    "percent": None,
                     "kind": "primary",
                     "detail": "0/0",
                 }
@@ -899,7 +899,7 @@ def write_batch_watch(
     path = write_status(
         wid,
         state=state,
-        percent=int(built.get("percent") or 0),
+        percent=built.get("percent"),  # None while no shard has reported
         label=str(built.get("label") or ""),
         bars=built.get("bars"),
         extra={

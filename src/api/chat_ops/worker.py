@@ -580,6 +580,41 @@ def _background_tick():
         thread.start()
 
 
+# Detached-job (unit) watches: polled here as well as by the daemon. Flask
+# restarts far more often than the daemon, so new poller code reaches it first,
+# and a daemon started before the poller existed never fired a watch at all.
+# ``poll_unit_watches`` is exactly-once across both (flock + record claim).
+UNIT_WATCH_POLL_SEC = 15.0
+_last_unit_poll = 0.0
+_unit_poll_thread = None
+
+
+def _poll_units():
+    from api.job_watch import poll_unit_watches
+    try:
+        for done in poll_unit_watches():
+            if done.get('resolved'):
+                print(f"[CHAT OPS] unit watch {done.get('id')} resolved ({done.get('state')}) "
+                      f"-> resume queued on chat {done.get('chat_session_id')}", flush=True)
+    except Exception as exc:
+        print(f'[CHAT OPS] unit watch poll failed: {type(exc).__name__}: {exc}', flush=True)
+
+
+def _unit_watch_tick(now=None):
+    """Start one unit-watch pass every ``UNIT_WATCH_POLL_SEC`` on its own thread
+    (``systemctl`` calls must not hold up outbox delivery). Returns whether one started."""
+    global _last_unit_poll, _unit_poll_thread
+    now = time.time() if now is None else now
+    if now - _last_unit_poll < UNIT_WATCH_POLL_SEC:
+        return False
+    if _unit_poll_thread is not None and _unit_poll_thread.is_alive():
+        return False
+    _last_unit_poll = now
+    _unit_poll_thread = threading.Thread(target=_poll_units, name='cuttle-unit-watch', daemon=True)
+    _unit_poll_thread.start()
+    return True
+
+
 def _loop():
     store.recover_after_restart()
     while not _stop.wait(2):
@@ -587,6 +622,10 @@ def _loop():
             _pause_maintenance()
         except Exception as exc:
             print(f'[CHAT OPS] pause maintenance failed: {type(exc).__name__}', flush=True)
+        try:
+            _unit_watch_tick()
+        except Exception as exc:
+            print(f'[CHAT OPS] unit watch tick failed: {type(exc).__name__}', flush=True)
         try:
             _background_tick()
         except Exception as exc:

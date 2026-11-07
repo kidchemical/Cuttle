@@ -97,6 +97,25 @@ def _hand_back(listener: Any, batch: Any, verb: str, **kwargs: Any) -> None:
         sys.stderr.write(f"warning: could not hand the result back to the parent chat: {exc}\n")
 
 
+def _anchor_message_id(db, raw: Optional[str], parent_session_id: Optional[int]) -> Optional[int]:
+    """``--anchor CH-…-N`` → that parent bubble's row id (manual runs with no turn).
+
+    Raises ValueError when the handle is not a bubble of the parent chat."""
+    if not raw:
+        return None
+    from api.cuttle_ui_capabilities import parse_chat_handle
+
+    parsed = parse_chat_handle(str(raw).strip()) or {}
+    if parsed.get("message_index") is None:
+        raise ValueError("--anchor takes a bubble handle CH-<chat>-<N>")
+    if parent_session_id is not None and int(parsed["session_id"]) != int(parent_session_id):
+        raise ValueError(f"--anchor {raw} is not a bubble of the parent chat CH-{int(parent_session_id):06d}")
+    row = db.get_message_by_share_index(int(parsed["session_id"]), int(parsed["message_index"]))
+    if not row or row.get("role") != "assistant":
+        raise ValueError(f"--anchor {raw} is not an assistant bubble")
+    return int(row["id"])
+
+
 def _cmd_spawn(args: argparse.Namespace) -> int:
     from api.subagents.handback import capture_listener
     from api.subagents.service import SubagentError, cancel_batch, spawn
@@ -120,8 +139,13 @@ def _cmd_spawn(args: argparse.Namespace) -> int:
         )
     db = _open_db(args.db)
     try:
+        anchor = _anchor_message_id(db, getattr(args, "anchor", None), int(parent))
+    except ValueError as exc:
+        return _fail({"ok": False, "error": str(exc)}, args.json)
+    try:
         payload = spawn(
             parent_session_id=int(parent),
+            anchor_message_id=anchor,
             children=children,
             collect=args.collect,
             lifetime=args.lifetime,
@@ -254,9 +278,14 @@ def _cmd_message(args: argparse.Namespace) -> int:
     sid = _parse_session(args.session)
     db = _open_db(args.db)
     try:
+        anchor = _anchor_message_id(db, getattr(args, "anchor", None), None)
+    except ValueError as exc:
+        return _fail({"ok": False, "error": str(exc)}, args.json)
+    try:
         payload = message_child(
             int(sid),
             args.text,
+            anchor_message_id=anchor,
             wait=bool(args.wait),
             timeout=float(args.timeout),
             db=db,
@@ -413,6 +442,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--route", action="store_true", help="Ask the Cuttle router to pick each child's harness")
     sp.add_argument("--watch", action="store_true", help="Write a job_watch status JSON with per-child bars")
     sp.add_argument("--tasks", action="store_true", help="Create a Tasks gizmo on the parent chat")
+    sp.add_argument("--anchor", default=None, help="Manual runs only: bind the cards to this parent bubble (CH-<chat>-<N>). Inside a turn the cards bind to that turn (CUTTLE_TURN_ID) without it")
     sp.set_defaults(func=_cmd_spawn)
 
     st = sub.add_parser("status", parents=[common], help="Show a batch or all batches for a parent")
@@ -434,6 +464,7 @@ def build_parser() -> argparse.ArgumentParser:
     msg = sub.add_parser("message", parents=[common], help="Send a follow-up into a child chat")
     msg.add_argument("--session", required=True)
     msg.add_argument("--text", required=True)
+    msg.add_argument("--anchor", default=None, help="Manual runs only: bind the cards to this parent bubble (CH-<chat>-<N>). Inside a turn the cards bind to that turn (CUTTLE_TURN_ID) without it")
     msg.add_argument(
         "--wait",
         action="store_true",

@@ -129,14 +129,21 @@
             li.dataset.kind = line.kind;
             const icons = { run: '▶', wait: '⏳', watch: '▤', schedule: '↻' };
             li.append(node('span', 'work-line-icon', icons[line.kind] || '·'), node('span', 'work-line-text', line.text));
-            if (line.kind === 'watch' && line.percent != null) {
+            if (line.kind === 'watch' && (line.percent != null || line.indeterminate)) {
                 const bar = node('span', 'work-line-bar');
                 const fill = node('span', 'work-line-fill');
-                fill.style.width = line.percent + '%';
                 bar.append(fill);
                 bar.setAttribute('role', 'progressbar');
-                bar.setAttribute('aria-valuenow', String(line.percent));
-                li.append(bar, node('span', 'work-line-pct', line.percent + '%'));
+                if (line.indeterminate) {
+                    // Nothing measured: animated stripe (shared CSS), no "0%".
+                    bar.setAttribute('data-progress', 'indeterminate');
+                    bar.setAttribute('aria-valuetext', 'In progress');
+                    li.append(bar);
+                } else {
+                    fill.style.width = line.percent + '%';
+                    bar.setAttribute('aria-valuenow', String(line.percent));
+                    li.append(bar, node('span', 'work-line-pct', line.percent + '%'));
+                }
             }
             if (line.kind === 'run' && line.query_id) {
                 const a = node('a', 'work-line-link', 'query log');

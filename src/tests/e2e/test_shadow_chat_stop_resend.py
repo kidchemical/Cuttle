@@ -270,11 +270,18 @@ def _state(origin, nonce):
     return _control(origin, nonce, {}, method="GET")
 
 
+STOPPED_CARD = "<stopped card>"
+
+
 def _history_rows(origin, token, sid):
+    """Saved rows as (role, content). A running turn's own row (api.chat_turn_row,
+    ``in_progress``) is skipped; a stopped turn's row is its timestamped card."""
     status, body = _api(
         origin, token, "GET", f"/api/auth/sessions/{sid}/messages")
     assert status == 200 and body.get("success") is True, body
-    return [(m["role"], m["content"]) for m in body["messages"]]
+    return [(m["role"], STOPPED_CARD if str(m["content"]).startswith(
+                "**Agent stopped before completion.**") else m["content"])
+            for m in body["messages"] if not m.get("in_progress")]
 
 
 def _history_full(origin, token, sid):
@@ -475,12 +482,19 @@ def test_shadow_stop_resend_no_stale(shadow, browser, viewport):
             try:
                 return _history_rows(origin, token, sid) == [
                     ("user", f"/cursor {FIRST}"),
+                    ("assistant", STOPPED_CARD),
                     ("system", "⏹ Stopped generating."),
                 ]
             except Exception:
                 return False
 
         _pump_until(page, _stop_persisted, 20000, "stop system row stored")
+        # The stopped turn's own row became its card: the page keeps ONE
+        # stopped bubble (claimed by query id), never a second copy.
+        _pump_until(page, lambda: page.locator(
+            '#chatMessages [data-stopped="true"][data-message-id]').count() == 1,
+            20000, "stopped bubble stamped with its row id")
+        assert page.locator('#chatMessages [data-stopped="true"]').count() == 1
         stop_rows = [m for m in _history_full(origin, token, sid)
                      if m["role"] == "system"]
         assert len(stop_rows) == 1, stop_rows
@@ -534,6 +548,7 @@ def test_shadow_stop_resend_no_stale(shadow, browser, viewport):
             try:
                 return _history_rows(origin, token, sid) == [
                     ("user", f"/cursor {FIRST}"),
+                    ("assistant", STOPPED_CARD),
                     ("system", "⏹ Stopped generating."),
                     ("user", f"/cursor {SECOND}"),
                 ]
@@ -560,6 +575,7 @@ def test_shadow_stop_resend_no_stale(shadow, browser, viewport):
             20000, "reload rows")
         assert _history_rows(origin, token, sid) == [
             ("user", f"/cursor {FIRST}"),
+            ("assistant", STOPPED_CARD),
             ("system", "⏹ Stopped generating."),
             ("user", f"/cursor {SECOND}"),
             ("assistant", SECOND_REPLY),

@@ -25,16 +25,22 @@ def operation_actor(*, source="cli", session_id=None, agent_id=None, user_id=Non
 
 @contextmanager
 def agent_operation_context(*, session_id, agent_id, model=None, run_id=None, project_path=None,
-                            supervised=None):
+                            supervised=None, turn_id=None, turn_message_id=None, turn_message=None):
     """Per-execution attribution, never mutate the Flask process environment.
 
     ``supervised`` is a non-empty reason when the turn runs unattended for the
     user (sub-agent, supervised chat); git's protected-branch hook keys on it.
+    ``turn_id`` (default ``run_id``) is the chat turn this run belongs to —
+    ``CUTTLE_TURN_ID``, the anchor sub-agent cards bind by (api.chat_turn_id);
+    ``turn_message_id`` / ``turn_message`` name the user bubble that started it
+    (row id and ``CH-…-N``), when there is one. Same for every harness.
     """
     values = {
         "CUTTLE_CHAT_SESSION_ID": session_id, "CUTTLE_AGENT_ID": agent_id,
         "CUTTLE_AGENT_MODEL": model, "CUTTLE_AGENT_RUN_ID": run_id,
         "CUTTLE_AGENT_PROJECT_PATH": project_path, "CUTTLE_SUPERVISED": supervised,
+        "CUTTLE_TURN_ID": turn_id or run_id,
+        "CUTTLE_TURN_MESSAGE_ID": turn_message_id, "CUTTLE_TURN_MESSAGE": turn_message,
     }
     token = _operation_context.set({k: str(v) if v is not None else "" for k, v in values.items()})
     try:

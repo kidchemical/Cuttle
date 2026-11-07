@@ -42,6 +42,9 @@ def test_list_and_stats(client, monkeypatch):
     monkeypatch.setattr(ledger, "mesh_store", lambda: mesh)
     monkeypatch.setattr(service, "_agent_events_store", lambda: runs)
     monkeypatch.setattr(service, "_mesh_store", lambda: mesh)
+    # Chat ops are a third job source read from the shared test DB; earlier suites (sub-agent sends) leave rows
+    # there, so pin it empty: this test is about runs + mesh only.
+    monkeypatch.setattr(ledger, "chat_op_jobs", lambda limit=200: [])
     runs.rows = [run_row("q1", status="ok")]
     mesh.jobs = [mesh_row("m1", status="running")]
 

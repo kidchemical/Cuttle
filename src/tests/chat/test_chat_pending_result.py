@@ -253,6 +253,13 @@ const cls = (msg, snap, fns) => PR.classifyServerMessage(msg, snap, fns).decisio
 const clsFull = (msg, snap, fns) => PR.classifyServerMessage(msg, snap, fns);
 out.clsInvalid = [cls(null, {}, mkFns({})), cls({}, {}, mkFns({}))];
 out.clsUpdate = cls({ id: 5, role: 'user' }, {}, mkFns({ domIds: [5] }));
+// The running turn's row (api.chat_turn_row): its id goes to the live bubble,
+// never painted as an (empty) reply — even while loading or with a DOM id.
+out.clsLiveRow = [
+  cls({ id: 9, role: 'assistant', content: '', in_progress: true }, {}, mkFns({})),
+  cls({ id: 9, role: 'assistant', content: '', in_progress: true }, {}, mkFns({ loading: true, anyUnmarked: true })),
+  cls({ id: 9, role: 'assistant', content: '', in_progress: true }, {}, mkFns({ domIds: [9] })),
+];
 out.clsClaimExact = clsFull({ id: 6, role: 'assistant', content: 'c',
   metadata: { control_request_id: 'k1' } }, {},
   mkFns({ claims: { 'k1|assistant': 1 } }));
@@ -305,6 +312,8 @@ out.evSession = PR.classifyStreamEvent({ type: 'session', session_id: 'CH-1' });
 out.evBusy = PR.classifyStreamEvent({ type: 'busy', session_id: 's1' });
 out.evQuery = PR.classifyStreamEvent({ type: 'query_started',
   report_url: 'http://r', query_id: 'q1' });
+out.evQueryRow = PR.classifyStreamEvent({ type: 'query_started',
+  report_url: 'http://r', query_id: 'q1', message_id: 41 });
 out.evResponse = PR.classifyStreamEvent({ type: 'response', response: 'x' });
 out.evUnknown = PR.classifyStreamEvent({ type: 'progress', pct: 3 });
 out.evNull = PR.classifyStreamEvent(null);
@@ -479,6 +488,8 @@ out.planQueryGated = planEv({ type: 'query_started', report_url: 'u', query_id: 
   { canPaint: false, slashCommand: true });
 out.planQueryNoSlash = planEv({ type: 'query_started', report_url: 'u', query_id: 'q' },
   { canPaint: true, slashCommand: false });
+out.planQueryRow = planEv({ type: 'query_started', report_url: 'u', query_id: 'q', message_id: 41 },
+  { canPaint: true, slashCommand: false });
 out.planResponse = planEv({ type: 'response', response: 'x' }, { canPaint: false });
 out.planIgnore = planEv({ type: 'progress', pct: 3 }, { canPaint: true });
 out.planNull = PR.planStreamEvent(null, null, null);
@@ -573,6 +584,7 @@ def test_sync_classification():
     res = _run()
     assert res["clsInvalid"] == ["skip-invalid", "skip-invalid"]
     assert res["clsUpdate"] == "update-in-place"
+    assert res["clsLiveRow"] == ["live-row", "live-row", "live-row"]
     assert res["clsClaimExact"] == {"decision": "claim-control", "matched": "exact", "crid": "k1"}
     assert res["clsClaimRole"] == {"decision": "claim-control", "matched": "role", "crid": "k2"}
     assert res["clsClaimMiss"] == "append"
@@ -624,7 +636,9 @@ def test_stream_event_classification():
     assert res["evBusy"]["result"]["busy"] is True
     assert res["evBusy"]["result"]["session_id"] == "s1"
     assert "Still working" in res["evBusy"]["result"]["response"]
-    assert res["evQuery"] == {"kind": "query", "reportUrl": "http://r", "queryId": "q1"}
+    assert res["evQuery"] == {"kind": "query", "reportUrl": "http://r", "queryId": "q1", "messageId": None}
+    # The turn's row (api.chat_turn_row) rides query_started: the live bubble's id.
+    assert res["evQueryRow"]["messageId"] == 41
     assert res["evResponse"] == {"kind": "response"}
     assert res["evUnknown"] == {"kind": "ignore"}
     assert res["evNull"] == {"kind": "ignore"}
@@ -725,16 +739,17 @@ def test_stream_event_effect_plan():
     # the query link is gated on canPaint AND a report URL.
     assert res["planQuery"] == {
         "progress": True, "paintBadge": True, "reportUrl": "u",
-        "queryId": "q", "paintLink": True,
+        "queryId": "q", "messageId": None, "paintLink": True,
     }
     assert res["planQueryGated"] == {
         "progress": True, "paintBadge": False, "reportUrl": "u",
-        "queryId": "q", "paintLink": False,
+        "queryId": "q", "messageId": None, "paintLink": False,
     }
     assert res["planQueryNoSlash"] == {
         "progress": True, "paintBadge": False, "reportUrl": "u",
-        "queryId": "q", "paintLink": True,
+        "queryId": "q", "messageId": None, "paintLink": True,
     }
+    assert res["planQueryRow"]["messageId"] == 41 and res["planQueryRow"]["paintLink"] is True
     # ORACLE: a response selects the raw frame as final (unaffected by paint
     # gating); unknown/null kinds plan nothing.
     assert res["planResponse"] == {

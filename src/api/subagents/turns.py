@@ -249,7 +249,10 @@ def _persist_assistant(
         cursor_run = result.get("cursor_run")
         if isinstance(cursor_run, dict) and cursor_run:
             meta["cursor_run"] = cursor_run
-    db.add_message(int(session_id), "assistant", text, metadata=meta)
+    from api.chat_turn_row import finalize
+
+    if finalize(db, int(session_id), text, meta) is None:  # no open turn row
+        db.add_message(int(session_id), "assistant", text, metadata=meta)
 
 
 def _cancelled(db, child_id: str) -> bool:
@@ -324,6 +327,21 @@ def run_child_turn(
             pass
         return {"success": False, "cancelled": True, "response": ""}
 
+    # The child's reply row + inspector from its first frame (api.chat_turn_row):
+    # the child pane's live bubble gets its id and query-log link at once, and
+    # the kernel tracks this run under the same query id.
+    from api import chat_turn_row
+
+    row = chat_turn_row.open_row(db, child.session_id, turn=turn, user_input=user_text,
+                                 label=f"Sub-agent {child.label or child.id}")
+    if row:
+        sink.put(("query_started", {"query_id": row["query_id"], "report_url": row["report_url"],
+                                    "message_id": row["message_id"]}))
+
+    def _close_row(status):
+        if row:
+            chat_turn_row.close(db, child.session_id, status=status, turn=turn)
+
     model_id = resolve_child_model_id(spec.agent, spec.model, spec.effort)
     exec_kw = None
     effort = str(spec.effort or "").strip()
@@ -372,6 +390,7 @@ def run_child_turn(
             pass
 
     if _cancelled(db, child.id):
+        _close_row("cancelled")
         return {"success": False, "cancelled": True, "response": ""}
 
     if not isinstance(result, dict):
@@ -407,6 +426,8 @@ def run_child_turn(
             _persist_assistant(db, child.session_id, result, child=child, spec=spec)
         except Exception:
             pass
+    _close_row("cancelled" if result.get("cancelled") or text.startswith("[CANCELLED]")
+               else "failed" if not text else "skipped")
     if not text:
         text = store.latest_assistant_text(db, child.session_id)
 

@@ -95,6 +95,7 @@ def set_live_status(
     turn: Optional[int] = None,
     slash_command: Optional[dict] = None,
     followup: Optional[bool] = None,
+    message_id: Optional[int] = None,
 ) -> None:
     """Publish (or refresh) live generation status for all devices watching this session.
 
@@ -133,6 +134,8 @@ def set_live_status(
             "turn": turn if turn is not None else previous_turn,
             "slash_command": slash_command if slash_command is not None else prev.get("slash_command"),
             "followup": bool(followup if followup is not None else prev.get("followup")),
+            # The turn's assistant row (api.chat_turn_row): the live bubble's id.
+            "message_id": message_id if message_id is not None else prev.get("message_id"),
         }
         for k in keys:
             _STORE[k] = entry

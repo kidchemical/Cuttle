@@ -427,3 +427,42 @@ def test_progress_grid_is_job_agnostic(browser, static_server):
         assert not errors
     finally:
         page.close()
+
+
+CARD_WATCH_UNMEASURED = (
+    "<cuttle_action_form>"
+    '{"mode":"choice","title":"Upload",'
+    '"watch":{"id":"up","url":"/output/up.json",'
+    '"snapshot":{"state":"running","label":"Uploading",'
+    '"bars":[{"id":"all","label":"Overall"},{"label":"w1","percent":10}]}},'
+    '"options":[{"id":"a","label":"A","action":"__watch_resume__"}]}'
+    "</cuttle_action_form>"
+)
+
+
+def test_watch_and_progress_blocks_are_indeterminate_without_data(browser, static_server):
+    """The real chat page: an unmeasured bar slides (no "0%"), a measured one fills."""
+    world = CardWorld([CARD_WATCH_UNMEASURED,
+                       'Indexing:\n\n<progress id="idx" label="Indexing"/>\n\n<progress id="cp" label="Copy" value="30"/>'])
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        card = _send_and_wait_card(frame, "show watch")
+        overall, worker = card.locator(".progress-bar-item").nth(0), card.locator(".progress-bar-item").nth(1)
+        assert overall.locator('.progress-track[data-progress="indeterminate"]').count() == 1
+        assert overall.locator(".progress-value").count() == 0  # no dead "0%"
+        assert overall.locator(".progress-bar").evaluate("el => getComputedStyle(el).animationName") \
+            == "cuttle-progress-slide"
+        assert worker.locator("[data-progress]").count() == 0
+        assert worker.locator(".progress-value").inner_text() == "10%"
+
+        frame.locator("#chatInput").fill("show progress")
+        frame.locator("#sendButton").click()
+        blocks = frame.locator('[data-progress-id]')
+        blocks.nth(1).wait_for(state="visible")
+        unknown = frame.locator('[data-progress-id="idx"]')
+        assert unknown.locator('.progress-track[data-progress="indeterminate"]').count() == 1
+        assert unknown.locator(".progress-value").count() == 0
+        assert frame.locator('[data-progress-id="cp"] .progress-value').inner_text() == "30%"
+        assert not errors
+    finally:
+        page.close()

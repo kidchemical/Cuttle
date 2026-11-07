@@ -148,7 +148,24 @@ def test_watch_snapshot_from_status_terminal_is_starting():
             "started_at": "2026-08-19T16:07:00-07:00",
         }
     )
-    assert snap == {"state": "running", "percent": 0, "label": "Starting…"}
+    # A new run has measured nothing yet: unknown (indeterminate bar), never "0%".
+    assert snap == {"state": "running", "percent": None, "label": "Starting…"}
+
+
+def test_unmeasured_progress_is_null_not_zero(tmp_path, monkeypatch):
+    from api import job_watch as jw
+
+    monkeypatch.setattr(jw, "output_dir", lambda: tmp_path)
+    jw.write_status("job-a", state="running", label="Working")
+    assert jw.read_status("job-a")["percent"] is None
+    jw.write_status("job-b", state="running", percent=0, label="0 of 10")
+    assert jw.read_status("job-b")["percent"] == 0  # a measured 0 stays a number
+    jw.write_status("job-c", state="running", bars=[{"id": "overall", "label": "Overall"},
+                                                    {"id": "w1", "label": "Worker", "percent": 40}])
+    bars = jw.read_status("job-c")["bars"]
+    assert [b["percent"] for b in bars] == [None, 40]
+    assert jw.main(["write", "--id", "job-d", "--state", "running", "--label", "x"]) == 0
+    assert jw.read_status("job-d")["percent"] is None
 
 
 def test_watch_form_spec_stamps_status_run(tmp_path, monkeypatch):

@@ -241,6 +241,10 @@
             const errorClass = attention === 'error' ? ' has-unread-error' : '';
             const queuedClass = attention === 'queued' ? ' has-queued' : '';
             const pausedClass = attention === 'paused' ? ' has-paused-queue' : '';
+            // Idle chat whose agents still own background work: the kind comes
+            // from the sessions-list `background` flag (chat_activity.js) and
+            // paints the slower outlined spinner in the status slot.
+            const backgroundClass = attention === 'background' ? ' has-background' : '';
             const starred = !!Number(s.starred);
             const starredClass = starred ? ' is-starred' : '';
             const statusKind = running ? 'running' : attention;
@@ -326,7 +330,7 @@
             const contentBadge = isContentMatch
                 ? `<span class="history-kind-badge history-match-badge" title="Matched in message body">In messages</span>`
                 : '';
-            return `<div class="chat-history-item${active}${runningClass}${unreadClass}${errorClass}${queuedClass}${pausedClass}${starredClass}${openClass}${subagentClass}${supervisedClass}${hasSubagentsClass}" data-session-id="${sid}" data-parent-session-id="${escapeHtml(parentId)}" data-supervisor-session-id="${escapeHtml(supervisorId)}" data-search-match="${isContentMatch ? 'content' : 'title'}" data-chat-title="${escapeHtml(title).replace(/"/g, '&quot;')}" onclick="window.chatPageLoadSession('${sid}')">
+            return `<div class="chat-history-item${active}${runningClass}${unreadClass}${errorClass}${queuedClass}${pausedClass}${backgroundClass}${starredClass}${openClass}${subagentClass}${supervisedClass}${hasSubagentsClass}" data-session-id="${sid}" data-parent-session-id="${escapeHtml(parentId)}" data-supervisor-session-id="${escapeHtml(supervisorId)}" data-search-match="${isContentMatch ? 'content' : 'title'}" data-chat-title="${escapeHtml(title).replace(/"/g, '&quot;')}" onclick="window.chatPageLoadSession('${sid}')">
             ${ctx.historyAttentionIconHTML(statusKind)}
             <div class="history-item-body">
                 ${historyItemMetaHTML([subToggle, subCountBadge, projectChip, orchestratorBadge, supervisorBadge, supervisedBadge, parts.chipsHtml, discordBadge, subagentBadge, contentBadge, badge, starredIcon])}
@@ -377,8 +381,9 @@
             const errorClass = attention === 'error' ? ' has-unread-error' : '';
             const queuedClass = attention === 'queued' ? ' has-queued' : '';
             const pausedClass = attention === 'paused' ? ' has-paused-queue' : '';
+            const backgroundClass = attention === 'background' ? ' has-background' : '';
             return `
-            <div class="chat-history-item ${isActive ? 'active' : ''}${running ? ' is-running' : ''}${unreadClass}${errorClass}${queuedClass}${pausedClass}${starred ? ' is-starred' : ''}${openClass}" 
+            <div class="chat-history-item ${isActive ? 'active' : ''}${running ? ' is-running' : ''}${unreadClass}${errorClass}${queuedClass}${pausedClass}${backgroundClass}${starred ? ' is-starred' : ''}${openClass}" 
                  data-session-id="${session.id}"
                  data-search-match="${isContentMatch ? 'content' : 'title'}"
                  data-chat-title="${escapeHtml(String(session.title || '')).replace(/"/g, '&quot;')}"

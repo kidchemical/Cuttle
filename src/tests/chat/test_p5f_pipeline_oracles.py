@@ -293,7 +293,8 @@ def test_oracle_pipeline_stream_cancelled_row_divergence(
 
 
 def test_oracle_pipeline_stream_cancel_discards(authed_db, monkeypatch):
-    """Stop mid-run: user row stays, late result saves/parks nothing."""
+    """Stop mid-run: user row stays, the late result saves/parks nothing; the
+    turn's own row (open since turn start) becomes the stopped card."""
     client, db, uid = authed_db
     sid = db.create_chat_session(uid)
     import api.agent_router.integration as integration
@@ -314,7 +315,10 @@ def test_oracle_pipeline_stream_cancel_discards(authed_db, monkeypatch):
     assert _event_types(text)[-1] == "done"  # consumer still sees termination
     assert _announced_sid(text) == sid
     rows = db.get_messages(sid)
-    assert [m["role"] for m in rows] == ["user"]  # late reply discarded
+    assert [m["role"] for m in rows] == ["user", "assistant"]
+    assert rows[1]["content"].startswith("**Agent stopped before completion.**")
+    assert "late-reply" not in rows[1]["content"]  # late reply discarded
+    assert rows[1]["metadata"]["query_id"] and not rows[1]["metadata"].get("in_progress")
     assert chat_delivery.try_begin(sid) is True  # free + sticky cleared
     chat_delivery.end(sid)
 

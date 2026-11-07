@@ -40,6 +40,21 @@ def _latest(db, sid):
     return next((r for r in reversed(rows) if r.get('role') == 'assistant'), None)
 
 
+def _unit_waits(sid):
+    """Pending detached-job watches on the chat, shaped like background waits.
+
+    Read from the records only (no ``systemctl``): a record exists until the
+    poller resumes the chat, which is exactly "it wakes by itself"."""
+    try:
+        from api.job_watch import unit_watch_records
+        records = unit_watch_records(sid)
+    except Exception:
+        return []
+    return [{'job_id': r.get('id'), 'label': r.get('label') or '', 'unit': r.get('unit') or '',
+             'pid': int(r.get('pid') or 0), 'started_ts': r.get('created_ts'), 'kind': 'unit_watch',
+             'chat_session_id': str(sid)} for r in records]
+
+
 def status(target, actor=None, *, db=None, request=None):
     from api.chat_attention import is_error
     from api.gizmos.tasks import list_tasks
@@ -87,10 +102,11 @@ def status(target, actor=None, *, db=None, request=None):
         state = 'error'
     else:
         from api.agent_harness.background_wait import running_on_disk
-        waits = running_on_disk(sid)
+        waits = running_on_disk(sid) + _unit_waits(sid)
         if waits:
             # The turn ended but its CLI is still waiting on background work and
-            # will post a follow-up bubble by itself (agent_harness.background_wait).
+            # will post a follow-up bubble by itself (agent_harness.background_wait),
+            # or a detached-job watch will resume it when the job exits (job_watch).
             state = 'waiting_background'
             live = {**live, 'background_wait': waits}
         elif any(t['done'] < t['total'] for t in progress):
@@ -197,6 +213,13 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
         raise ValueError('Send to a different chat to avoid self-steering loops')
     if mode not in ('auto', 'queue'):
         raise ValueError('mode must be auto or queue')
+    try:
+        # A follow-up to a sub-agent child gets its card round on the parent,
+        # exactly like `subagents message` (bound to the sending turn).
+        from api.subagents.service import note_external_round
+        note_external_round(int(row['id']), db=db)
+    except Exception as exc:
+        print(f"[CHAT OPS] sub-agent card round for CH-{int(row['id']):06d} failed: {exc}", flush=True)
     request = request or transport.request
     if mode == 'auto':
         live = request(row['user_id'], row['id'], 'GET', '/api/chat-live-status')

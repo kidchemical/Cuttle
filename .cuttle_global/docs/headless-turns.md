@@ -51,9 +51,16 @@ PYTHONPATH=src .venv/bin/python -m api.job_watch watch-unit   --unit ep-build-li
 - Prints the watch card — put it in your reply, then **end the turn**. The card shows
   progress and can Stop the job; it deliberately has no client-side Continue, so the
   chat is resumed exactly once, by the host.
-- The **daemon** polls `systemctl --user` (or `--pid N` for a bare process), writes
-  the terminal watch status, and queues your resume message on this chat through the
-  chat-ops outbox. It survives Flask restarts and needs no open browser.
+- Cuttle polls `systemctl --user` (or `--pid N` for a bare process) every 15 s — from
+  Flask's chat-ops pump **and** from the daemon, so whichever is running catches the
+  exit — writes the terminal watch status, and queues your resume message on this chat
+  through the chat-ops outbox, **exactly once** (a pass runs under a lock and claims
+  the record before it fires). It survives Flask restarts and needs no open browser.
+- While it runs, the chat shows it in its background card (*Detached job running* —
+  `Running: <unit> · <SubState> · <elapsed>`), and `chat_cli status` lists it under
+  `live.background.watches` (`kind: "unit"`) and reports the chat as
+  `waiting_background`, so supervision does not nudge it. The row clears when the
+  watch fires or its record is removed.
 - Pass `--remain-after-exit` to `systemd-run` so the unit keeps its exit status;
   without it the resume turn has to say "exit status not available".
 - `--chat CH-…` names the chat to resume (default `CUTTLE_CHAT_SESSION_ID`).

@@ -132,6 +132,8 @@ class ChildRecord:
     # waiting for the parent's next saved reply to mint its card.
     card_message_id: Optional[int] = None
     card_pending: bool = False
+    # The parent turn a follow-up round was sent in (api.chat_turn_id).
+    card_turn_id: str = ""
 
     def handle(self) -> str:
         return chat_handle(self.session_id)
@@ -173,6 +175,11 @@ class BatchRecord:
     created_at: str = ""
     finished_at: str = ""
     children: List[ChildRecord] = field(default_factory=list)
+    # The parent turn the batch was spawned in (api.chat_turn_id): its cards
+    # bind to the assistant row of that turn.
+    turn_id: str = ""
+    # Spawned under turn-anchored cards (store.CARDS_BY_TURN in its metadata).
+    cards_by_turn: bool = False
 
     def public(self) -> Dict[str, Any]:
         return {
@@ -184,5 +191,6 @@ class BatchRecord:
             "status": self.status,
             "watch_id": self.watch_id or None,
             "widget_id": self.widget_id or None,
+            "turn_id": self.turn_id or None,
             "children": [c.public() for c in self.children],
         }

@@ -178,8 +178,23 @@
     }
 
     /**
+     * True when the chat is idle but its agents still own live background work:
+     * detached waits, watch jobs, detached-unit watches, owned processes or a
+     * running sub-agent child. The server resolves all of that into the session
+     * row's `background` flag (api.jobs.work_tree.mark_background); `background`
+     * may also be passed explicitly.
+     */
+    function sessionHasBackgroundWork(parts) {
+        const p = parts || {};
+        if (p.background != null) return !!p.background;
+        return !!(p.sessionObj && p.sessionObj.background);
+    }
+
+    /**
      * Attention kind for history dots (priority high → low):
-     * input (blue) > error (red) > unread (green) > queued/active (amber) > paused (yellow).
+     * input (blue) > error (red) > background (spinner) > unread (green)
+     * > queued/active (amber) > paused (yellow).
+     * A live run ('running') outranks all of these and is decided by the caller.
      * `queue` is the already-resolved follow-up item array for the session.
      */
     function sessionHistoryAttentionKind(parts) {
@@ -187,6 +202,7 @@
         const queue = Array.isArray(p.queue) ? p.queue : [];
         if (p.prefs && p.prefs.awaitingInput) return 'input';
         if (sessionHasUnreadError(p)) return 'error';
+        if (sessionHasBackgroundWork(p)) return 'background';
         if (sessionHasUnread(p)) return 'unread';
         if (queueHasActive(queue)) return 'queued';
         if (queueHasPaused(queue)) return 'paused';
@@ -630,6 +646,7 @@
         lastAssistantMessageFromSessionObj,
         assistantReplyLooksLikeError,
         sessionHasUnreadError,
+        sessionHasBackgroundWork,
         sessionHistoryAttentionKind,
         queueHasActive,
         queueHasPaused,

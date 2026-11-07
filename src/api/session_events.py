@@ -1,7 +1,8 @@
 """In-process notices that something happened in a chat (observer hooks).
 
 Owners publish where the thing happens (``publish('tool', sid)`` when a harness
-tool call finishes, ``publish('worktree_bound', sid)`` on a worktree bind);
+tool call finishes, ``publish('worktree_bound', sid)`` on a worktree bind,
+``publish('turn_end', sid)`` when ``api.chat_delivery.end`` releases a turn);
 consumers ``subscribe`` once. Publishers never learn who listens, so this module
 imports nothing from Cuttle and owned layers can publish without new edges.
 

@@ -182,7 +182,12 @@ Use a watch card proactively for a long-running OS job when a status producer
 can report its actual progress, even if the user did not request a bar. For
 multi-step agent work, use a Tasks gizmo (`gizmos.md`); a watch card is not a
 substitute for tracking the agent's steps. Short commands need no watch card.
-Do not invent percentages when progress is unknown.
+Do not invent percentages when progress is unknown: leave `percent` out (or `null`;
+`python -m api.job_watch write` without `--percent`). The card then shows an animated
+indeterminate bar with the elapsed time instead of a dead "0%". A real measured `0`
+("0 of 10") stays a 0% bar. The same rule applies to every progress bar in the UI
+(watch cards and worker bars, the chat's background card, Agent Feed, `<progress>`
+blocks without a `value`).
 
 `__watch_resume__`, `__watch_park__`, `__watch_cancel__` are **only** for jobs with a
 `watch` block (status JSON + progress). Using them on a Q&A form shows a **progress bar**
@@ -222,8 +227,9 @@ Stop kills the OS process tree in the status JSON (`pid`, `worker_pid`, `pids`; 
 browser on that chat. For work detached on purpose (`systemd-run --user
 --unit=…`, a process meant to outlive Flask), register the resume host-side
 instead — `python -m api.job_watch watch-unit --unit <name> --resume "…"` prints
-the same card and the **daemon** resumes the chat when the unit (or `--pid`)
-exits, with its exit status, browser or not. See
+the same card and the **host** (Flask's chat-ops pump and the daemon, exactly
+once between them) resumes the chat when the unit (or `--pid`) exits, with its
+exit status, browser or not. See
 [headless-turns.md](headless-turns.md) → *Detached work*.
 
 ### Multi-bar progress (required for mesh / multi-worker jobs)

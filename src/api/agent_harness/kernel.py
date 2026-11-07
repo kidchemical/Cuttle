@@ -717,7 +717,33 @@ def run_agent_web_command(
 
         user_ctx = {"web_ui": True, "slash_command": slash, "chat_session_id": sid}
         _put_status(status_queue, f"Starting {label}…")
-        query_id = start_query_tracking(f"{slash} {prompt}", user_ctx)
+        # A chat turn opened its row + inspector under a query id already
+        # (api.chat_turn_row): track this run under that id so the live
+        # bubble's inspector link is this run's log from the first frame.
+        reserved = None
+        try:
+            from api.chat_turn_row import claim_query_id
+
+            reserved = claim_query_id(chat_session_id)
+        except Exception:
+            reserved = None
+        if reserved:
+            from api.query_tracker import start_query_tracking_with_id
+
+            query_id = start_query_tracking_with_id(reserved, f"{slash} {prompt}", user_ctx)
+        else:
+            query_id = start_query_tracking(f"{slash} {prompt}", user_ctx)
+        # The chat turn this run belongs to (a router retry is a second run in
+        # the same turn): exported to the CLI as CUTTLE_TURN_ID.
+        turn_id, turn_message_id, turn_message = query_id, None, None
+        try:
+            from api.chat_turn_row import current as _current_turn_row
+
+            _turn = _current_turn_row(chat_session_id) or {}
+            turn_id = _turn.get('query_id') or query_id
+            turn_message_id, turn_message = _turn.get('user_message_id'), _turn.get('user_message')
+        except Exception:
+            pass
         qid_token = bind_query_id(query_id)
         if status_queue is not None:
             status_queue = QueryStatusTee(status_queue)
@@ -953,7 +979,8 @@ def run_agent_web_command(
 
                 with agent_operation_context(session_id=sid, agent_id=manifest.id,
                                              model=model, run_id=query_id, project_path=cwd,
-                                             supervised=supervised):
+                                             supervised=supervised, turn_id=turn_id,
+                                             turn_message_id=turn_message_id, turn_message=turn_message):
                     return asyncio.run(
                         adapter.execute(
                             prompt_text,

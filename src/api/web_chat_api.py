@@ -679,12 +679,11 @@ def _public_live_generating(session_id, live=None):
             live_active = True
             # A sub-agent turn runs in the CLI process, so its query log never
             # touches this process's live-status store. Carry the id the child
-            # row captured at query_started, else the child pane's query-log
-            # button stays inert for the whole turn.
-            if not live.get('report_url') and overlay.get('report_url'):
-                live['report_url'] = overlay['report_url']
-            if not live.get('query_id') and overlay.get('query_id'):
-                live['query_id'] = overlay['query_id']
+            # row captured at query_started (and its reply row), else the child
+            # pane's query-log button stays inert for the whole turn.
+            for key in ('report_url', 'query_id', 'message_id'):
+                if not live.get(key) and overlay.get(key):
+                    live[key] = overlay[key]
     except Exception:
         pass
     return generating, live_active, False, live or {}
@@ -1729,6 +1728,7 @@ def chat_live_status():
         'updated_at': live.get('updated_at'),
         'report_url': live.get('report_url'),
         'query_id': live.get('query_id'),
+        'message_id': live.get('message_id'),  # the turn's row (api.chat_turn_row)
         'slash_command': live.get('slash_command'),
         'followup': bool(live.get('followup')),
         # Busy lock OR live status — stream can die while the worker is still going.
@@ -1805,6 +1805,7 @@ def chat_live_status_batch():
             'updated_at': live.get('updated_at'),
             'report_url': live.get('report_url'),
             'query_id': live.get('query_id'),
+            'message_id': live.get('message_id'),
             'slash_command': live.get('slash_command'),
             'followup': bool(live.get('followup')),
             'generating': generating,
@@ -3230,9 +3231,9 @@ def _frame_stream_lifecycle_event(kind, payload, session_id_for_status):
         ]
     if kind == 'query_started':
         _pq = payload or {}
-        return [
-            f"data: {json.dumps({'type': 'query_started', 'query_id': _pq.get('query_id'), 'report_url': _pq.get('report_url'), 'slash_command': _pq.get('slash_command')}, ensure_ascii=False)}\n\n"
-        ]
+        _qs = {'type': 'query_started', 'query_id': _pq.get('query_id'), 'report_url': _pq.get('report_url'), 'slash_command': _pq.get('slash_command'),
+               **({'message_id': _pq['message_id']} if _pq.get('message_id') is not None else {})}  # turn row (api.chat_turn_row)
+        return [f"data: {json.dumps(_qs, ensure_ascii=False)}\n\n"]
     if kind == 'done':
         result = payload or {}
         resp = {'type': 'response', 'success': result.get('success', False), 'response': result.get('response', ''), 'session_id': session_id_for_status if session_id_for_status is not None else result.get('session_id'), 'response_type': result.get('type', 'unknown')}
@@ -3243,6 +3244,7 @@ def _frame_stream_lifecycle_event(kind, payload, session_id_for_status):
         if result.get('cursor_run'):
             resp['cursor_run'] = result['cursor_run']
         for _passthrough in (
+            'message_id',
             'routing_badge',
             'agent_id',
             'agent_model',

@@ -26,6 +26,7 @@ node_only = pytest.mark.skipif(
 )
 
 HARNESS = """
+require(process.env.PROGRESS_JS);
 const A = require(process.env.MOD_JS);
 const out = {};
 // cancel / side-effect model
@@ -88,6 +89,13 @@ out.barsSingle = A.normalizeWatchBars({ percent: 150, label: 'L' });
 out.barsMulti = A.normalizeWatchBars({ percent: 10, label: 'L', bars: [
   { id: 'a', percent: 50 }, { label: 'B', percent: 200, kind: 'weird' },
   { detail: 'x'.repeat(200) }] });
+// determinate vs indeterminate bars (shared CuttleProgress model)
+const esc = (x) => String(x);
+out.htmlUnknown = A.renderWatchBarsHtml(A.normalizeWatchBars({ state: 'running', label: 'Build' }), esc);
+out.htmlMeasured = A.renderWatchBarsHtml(A.normalizeWatchBars({ state: 'running', percent: 40 }), esc);
+out.htmlZero = A.renderWatchBarsHtml(A.normalizeWatchBars({ state: 'running', percent: 0 }), esc);
+out.htmlMixed = A.renderWatchBarsHtml(A.normalizeWatchBars({ state: 'running', bars: [
+  { id: 'overall', percent: 60 }, { id: 'w1' }] }), esc);
 // restart progress presentation
 out.labelWaiting = A.restartProgressLabel({ state: 'waiting_for_idle' }, {});
 out.labelWaitingN = A.restartProgressLabel({ state: 'waiting_for_idle' }, { active_count: 2 });
@@ -117,7 +125,8 @@ def _run():
     proc = subprocess.run(
         ["node", "-e", HARNESS],
         capture_output=True, text=True, encoding="utf-8", timeout=30,
-        env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS)},
+        env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS),
+             "PROGRESS_JS": str(MOD_JS.parents[1] / "shared" / "progress_model.js")},
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -191,15 +200,30 @@ def test_elapsed_and_bars():
     assert res["elapsedDone"] == "3m 12s"
     assert res["elapsedDoneSec"] == "1m 30s"
     assert res["elapsedEmpty"] == ""
+    # No percent = not measured: null, never a default 0 (the bar animates instead).
     assert res["barsEmpty"] == [{"id": "overall", "label": "Overall",
-                                 "percent": 0, "kind": "primary"}]
+                                 "percent": None, "kind": "primary", "state": ""}]
     assert res["barsSingle"] == [{"id": "overall", "label": "L",
-                                  "percent": 100, "kind": "primary"}]
+                                  "percent": 100, "kind": "primary", "state": ""}]
     multi = res["barsMulti"]
     assert [b["kind"] for b in multi] == ["primary", "worker", "worker"]
     assert multi[0]["percent"] == 50 and multi[1]["percent"] == 100
     assert multi[0]["id"] == "a" and multi[1]["label"] == "B"
     assert len(multi[2]["detail"]) == 160
+    assert multi[2]["percent"] is None  # a worker bar with no percent: unknown
+
+
+@node_only
+def test_watch_bars_are_indeterminate_without_measured_progress():
+    res = _run()
+    unknown = res["htmlUnknown"]
+    assert 'data-progress="indeterminate"' in unknown and "%</span>" not in unknown
+    measured = res["htmlMeasured"]
+    assert 'data-progress' not in measured and ">40%</span>" in measured and "width:40%" in measured
+    zero = res["htmlZero"]  # a measured 0 ("0 of 10") stays a real 0%
+    assert 'data-progress' not in zero and ">0%</span>" in zero
+    mixed = res["htmlMixed"]
+    assert mixed.count('data-progress="indeterminate"') == 1 and ">60%</span>" in mixed
 
 
 @node_only

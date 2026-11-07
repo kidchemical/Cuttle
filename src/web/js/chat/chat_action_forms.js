@@ -148,12 +148,23 @@
         return '';
     }
 
+    function _progress() { return root.CuttleProgress || globalThis.CuttleProgress; }
+
+    /** Percent as measured, or null when the source measured nothing (never a default 0). */
+    function measuredPercent(v) {
+        const n = _progress() ? _progress().num(v) : (v == null || v === '' ? null : Number(v));
+        return n == null || !Number.isFinite(n) ? null : Math.max(0, Math.min(100, n));
+    }
+
     function normalizeWatchBars(data) {
-        const pct = Math.max(0, Math.min(100, Number(data && data.percent != null ? data.percent : 0)));
-        const label = String((data && (data.label || data.file)) || '');
-        const raw = (data && Array.isArray(data.bars)) ? data.bars : null;
+        const d = data || {};
+        const pct = measuredPercent(d.percent);
+        const label = String((d.label || d.file) || '');
+        const state = String(d.state || '').toLowerCase();
+        const raw = Array.isArray(d.bars) ? d.bars : null;
         if (!raw || !raw.length) {
-            return [{ id: 'overall', label: label || 'Overall', percent: pct, kind: 'primary' }];
+            return [{ id: 'overall', label: label || 'Overall', percent: pct, kind: 'primary', state,
+                      measured: d.measured }];
         }
         return raw.slice(0, 12).map((b, i) => {
             const kind = String((b && b.kind) || (i === 0 ? 'primary' : 'worker')).toLowerCase();
@@ -163,9 +174,10 @@
             return {
                 id: String((b && (b.id || b.label)) || ('bar' + i)).slice(0, 64),
                 label: String((b && b.label) || b.id || ('Bar ' + (i + 1))).slice(0, 120),
-                percent: Math.max(0, Math.min(100, Number(b && b.percent != null ? b.percent : 0))),
+                percent: measuredPercent(b && b.percent),
                 kind: safeKind,
                 detail: String((b && b.detail) || '').slice(0, 160),
+                state: String((b && b.state) || state),
             };
         });
     }
@@ -323,20 +335,27 @@
 
     /** Bar stack HTML from normalized bars (moved from the page, plan C1). */
     function renderWatchBarsHtml(bars, esc, workerColours) {
+        const P = _progress();
         return (bars || []).map((b) => {
             const kind = esc(b.kind || 'secondary');
-            const pct = Math.max(0, Math.min(100, Number(b.percent || 0)));
+            // Measured → fill + "42%"; not measured → indeterminate stripe, no
+            // label (the card's meta line carries the elapsed time).
+            const m = P ? P.measure({ percent: b.percent, state: b.state, measured: b.measured })
+                : { determinate: b.percent != null, percent: b.percent, animate: true };
             const lab = esc(b.label || '');
             const detail = b.detail ? `<span class="progress-bar-detail">${esc(b.detail)}</span>` : '';
+            const value = m.determinate ? `<span class="progress-value">${m.percent}%</span>` : '';
+            const attr = P ? P.trackAttr(m) : (m.determinate ? '' : ' data-progress="indeterminate"');
+            const width = m.determinate ? m.percent : 0;
             return (
                 `<div class="progress-bar-item progress-bar-item--${kind}" data-bar-id="${esc(b.id || '')}">`
                 + `<div class="progress-bar-head">`
                 + `<span class="progress-bar-name">${lab}</span>`
                 + detail
-                + `<span class="progress-value">${pct}%</span>`
+                + value
                 + `</div>`
                 + `<div class="progress-row">`
-                + `<div class="progress-track"><div class="progress-bar" style="width:${pct}%;${workerColours && b.kind === 'worker' ? 'background:' + watchGroupColour(b.id) : ''}"></div></div>`
+                + `<div class="progress-track"${attr}><div class="progress-bar" style="width:${width}%;${workerColours && b.kind === 'worker' ? 'background:' + watchGroupColour(b.id) : ''}"></div></div>`
                 + `</div>`
                 + `</div>`
             );
@@ -423,9 +442,8 @@
         // of clickable Graceful/Force on every refresh).
         const pendingRestartSync = !alreadyLocked && specLooksLikeFlaskRestart(spec, formId);
         const controlsDisabled = alreadyLocked || pendingRestartSync;
-        const watchPct = watchSnap && watchSnap.percent != null
-            ? Math.max(0, Math.min(100, Number(watchSnap.percent)))
-            : 8;
+        // No status yet: nothing measured (indeterminate), not a made-up percent.
+        const watchPct = watchSnap ? measuredPercent(watchSnap.percent) : null;
         const watchLabel = watchSnap
             ? String(watchSnap.label || '')
             : 'Checking download status…';
@@ -434,7 +452,7 @@
         const restartProgressHtml = restartIdFromSpec && alreadyLocked
             ? renderRestartProgressHtml(restartPending ? 18 : 100, spec && spec.toast, esc)
             : '';
-        const watchBars = normalizeWatchBars(watchSnap || { percent: watchPct, label: watchLabel });
+        const watchBars = normalizeWatchBars(watchSnap || { percent: watchPct, label: watchLabel, state: 'running' });
         const watchHtml = watchSpec
             ? (`<div class="cuttle-action-form-progress" data-watch-progress="1">`
                 + `<div class="cuttle-action-form-progress-bars" data-watch-bars>${renderWatchBarsHtml(watchBars, esc, watchSnap && watchSnap.grid)}</div>`

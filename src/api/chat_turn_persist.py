@@ -202,25 +202,41 @@ def make_assistant_saver(
             nonlocal_res.get('cursor_run') if isinstance(nonlocal_res.get('cursor_run'), dict) else None,
         )
         try:
+            from api.chat_turn_row import current as current_turn_row
             from api.subagents.service import attach_batches_to_assistant_meta
 
+            # The turn's own row may already carry batches (bound at spawn).
+            open_row = current_turn_row(chat_session_id, str(nonlocal_res.get('turn_row_slot') or ''))
             asst_meta = attach_batches_to_assistant_meta(
-                chat_session_id, asst_meta or {}
+                chat_session_id, asst_meta or {},
+                message_id=(open_row or {}).get('message_id'),
             ) or asst_meta
         except Exception as _sa:
             print(f"[CHAT] subagent attach meta failed: {_sa}", flush=True)
         try:
-            mid = db.add_message(
-                chat_session_id,
-                'assistant',
-                nonlocal_res.get('response', '') or '',
-                metadata=asst_meta or None,
-            )
+            # The turn's own row (api.chat_turn_row) has been visible since the
+            # turn started: the reply lands in it. A background follow-up (its
+            # row slot is the detached job) or a store without turn rows inserts.
+            from api.chat_turn_row import finalize as finalize_turn_row
+
+            slot = str(nonlocal_res.get('turn_row_slot') or '')
+            mid = finalize_turn_row(db, chat_session_id, nonlocal_res.get('response', '') or '',
+                                    asst_meta or {}, slot=slot)
+            if mid is None:
+                mid = db.add_message(
+                    chat_session_id,
+                    'assistant',
+                    nonlocal_res.get('response', '') or '',
+                    metadata=asst_meta or None,
+                )
+            if mid and isinstance(res, dict):
+                res['message_id'] = int(mid)
             try:
+                from api.chat_turn_id import turn_id_of
                 from api.subagents.store import bind_unattached_batches
 
                 if mid:
-                    bind_unattached_batches(db, chat_session_id, int(mid))
+                    bind_unattached_batches(db, chat_session_id, int(mid), turn_id_of(asst_meta))
             except Exception as _sb:
                 print(f"[CHAT] subagent bind failed: {_sb}", flush=True)
         except Exception as e:

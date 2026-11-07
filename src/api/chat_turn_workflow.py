@@ -51,6 +51,60 @@ def release_sync_turn(delivery: Any, session_id: Any, token: Any) -> None:
         pass
 
 
+def open_turn_row(session_id: Any, token: Any) -> Optional[Dict[str, Any]]:
+    """The turn's assistant row + query id from its first frame (api.chat_turn_row).
+
+    ``{message_id, query_id, report_url}`` or None (no stored chat, or a store
+    that cannot update rows in place — then the reply is inserted at save)."""
+    if session_id is None:
+        return None
+    try:
+        from api.auth_db import get_auth_db
+        from api.chat_turn_row import open_row
+
+        return open_row(get_auth_db(), session_id, turn=token)
+    except Exception as exc:
+        print(f"[CHAT] turn row open failed for {session_id}: {exc}", flush=True)
+        return None
+
+
+def close_turn_row(session_id: Any, token: Any, result: Any, *, superseded: bool = False) -> None:
+    """End the turn's row when its reply was not saved into it. No-op once finalized.
+
+    Stop/supersede → the stopped card; an empty failure → the failed card; a
+    status line / ``ui == system`` answer → nothing (row dropped when newest);
+    a supervised canonical row standing in → row dropped."""
+    if session_id is None:
+        return
+    try:
+        from api.auth_db import get_auth_db
+        from api import chat_turn_row
+
+        entry = chat_turn_row.current(session_id)
+        if not entry or entry.get('turn') not in (None, token):
+            return
+        res = result if isinstance(result, dict) else {}
+        if superseded:
+            status = 'cancelled'
+        elif res.get('skip_history_persist') or res.get('coordinator_response_message_id'):
+            status = 'drop'
+        elif not res.get('success') and not str(res.get('response') or '').strip():
+            status = 'failed'
+        else:
+            status = 'skipped'
+        chat_turn_row.close(get_auth_db(), session_id, status=status, turn=token)
+    except Exception as exc:
+        print(f"[CHAT] turn row close failed for {session_id}: {exc}", flush=True)
+
+
+def turn_row_event(row: Optional[Dict[str, Any]]) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """The ``query_started`` event that hands the live bubble its row and inspector."""
+    if not row:
+        return None
+    return ("query_started", {"query_id": row["query_id"], "report_url": row["report_url"],
+                              "message_id": row["message_id"]})
+
+
 def is_turn_superseded(delivery: Any, session_id: Any, token: Any) -> bool:
     """True when the turn was replaced (Stop → re-send) or cancelled."""
     return bool(
@@ -92,18 +146,25 @@ def run_agent_sync_turn(
     token = begin_sync_turn(delivery, session_id)
     if token is None and session_id is not None:
         return busy_response_body(session_id), 409
+    body = None
+    superseded = False
     try:
         persist_user()
+        row = open_turn_row(session_id, token)
         body = run()
         if isinstance(body, dict):
             from api.response_postprocessing import process_result
             process_result(body, cancelled=lambda: is_turn_superseded(delivery, session_id, token))
-        if isinstance(body, dict) and not is_turn_superseded(
-            delivery, session_id, token
-        ):
+        superseded = is_turn_superseded(delivery, session_id, token)
+        if isinstance(body, dict) and not superseded:
             after_run(body)
+        if isinstance(body, dict) and row:
+            body.setdefault('message_id', row['message_id'])
+            body.setdefault('query_id', row['query_id'])
+            body.setdefault('report_url', row['report_url'])
         return body, 200
     finally:
+        close_turn_row(session_id, token, body, superseded=superseded)
         release_sync_turn(delivery, session_id, token)
 
 
@@ -124,14 +185,19 @@ def run_pipeline_sync_turn(
     token = begin_sync_turn(delivery, session_id)
     if token is None and session_id is not None:
         return busy_response_body(session_id), 409
+    res = None
+    superseded = False
     try:
         persist_user()
+        open_turn_row(session_id, token)
         res = run()
+        superseded = is_turn_superseded(delivery, session_id, token)
         if isinstance(res, dict) and result_kept_for_history(res):
-            if not is_turn_superseded(delivery, session_id, token):
+            if not superseded:
                 res = save_assistant(res) or res
         return build_body(res), 200
     finally:
+        close_turn_row(session_id, token, res, superseded=superseded)
         release_sync_turn(delivery, session_id, token)
 
 
@@ -208,6 +274,7 @@ def finalize_stream_result(
             delivery.store_result(session_id, result)
         except Exception:
             pass
+    close_turn_row(session_id, token, result, superseded=superseded)
     try:
         delivery.end(session_id, turn=token)
     except Exception:
@@ -367,6 +434,7 @@ def run_agent_stream_turn(
                 session_id, query_id=query.get("query_id"),
                 report_url=query.get("report_url"),
                 slash_command=query.get("slash_command"),
+                message_id=query.get("message_id"),
                 turn=token,
                 is_cancelled=lambda sid: is_turn_superseded(delivery, sid, token),
             )
@@ -433,9 +501,16 @@ def run_agent_stream_turn(
         # marker preserves event order; live status belongs to this worker.
         events.publish("status", "Connecting...")
         yield ("connecting", None)
+        # The turn's row + inspector exist from here (api.chat_turn_row); the
+        # live bubble gets their ids before any harness reports in.
+        row_event = turn_row_event(open_turn_row(session_id, token))
+        if row_event:
+            events.publish(*row_event)
         _thread = _threads.Thread(target=_worker, daemon=True)
         _thread.start()
         worker_started = True
+        if row_event:
+            yield row_event
         while True:
             kind, payload = events.get()
             if kind != "done" and is_turn_superseded(delivery, session_id, token):
@@ -460,6 +535,7 @@ def run_agent_stream_turn(
         # The worker owns finalization; an unstarted worker has no owner.
         if not worker_started:
             events.finish()
+            close_turn_row(session_id, token, None, superseded=True)
             release_sync_turn(delivery, session_id, token)
         elif terminal_received:
             release_sync_turn(delivery, session_id, token)
