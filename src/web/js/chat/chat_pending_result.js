@@ -439,7 +439,10 @@
     }
 
     function agentTranscript(messages) {
-        return Array.isArray(messages) ? messages.filter((msg) => !parseControlRequestId(msg) && !interruptedQueryId(msg)) : messages;
+        // A running turn's empty row (api.chat_turn_row, ``in_progress``) is not
+        // a reply: counting it made every live turn read as finished.
+        return Array.isArray(messages) ? messages.filter((msg) => !parseControlRequestId(msg)
+            && !interruptedQueryId(msg) && !(msg && msg.in_progress)) : messages;
     }
 
     /**

@@ -7694,6 +7694,11 @@
 
     function appendServerMessageToUI(msg, opts = {}) {
         if (!msg || msg.id == null) return;
+        // The running turn's empty row belongs to the live bubble, never a reply.
+        if (msg.in_progress) {
+            stampLiveBubbleTurnRow(msg.id, msg.report_url, msg.query_id);
+            return;
+        }
         const cancelOpts = Object.assign({ announce: false }, opts);
         if (msg.role === 'assistant' && consumeCancelledAgentReply(msg.content, cancelOpts)) {
             const mid = Number(msg.id);

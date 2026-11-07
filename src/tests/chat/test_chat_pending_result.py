@@ -49,6 +49,11 @@ const norm = (s) => String(s || '').trim().toLowerCase();
   messages.push({ role: 'assistant', content: 'actual result' });
   out.controlReady = PR.findRecoverableAssistant(messages, 'original task', fns).content;
 }
+// A running turn's empty in_progress row is not its reply (CH-002006 flicker).
+out.liveRowTranscript = PR.agentTranscript([
+  { role: 'user', content: 'go' },
+  { role: 'assistant', content: '', in_progress: true },
+]);
 // ---------- waiter deps ----------
 const mkWaitDeps = (o) => {
   const log = { consume: [], status: [], links: [], debug: [], history: 0 };
@@ -992,3 +997,10 @@ def test_recovery_controller_orchestration():
     assert res["restartFirst"]["completion_message"] == "done!"
     assert res["restartCalls"] == 1
     assert "sync" in res["restartLog"] and "clear" in res["restartLog"]
+
+
+@node_only
+def test_agent_transcript_drops_live_turn_row():
+    # Counting the empty live row made every running turn look finished:
+    # the typing bubble hid and reappeared on each live-status poll.
+    assert _run()["liveRowTranscript"] == [{"role": "user", "content": "go"}]
