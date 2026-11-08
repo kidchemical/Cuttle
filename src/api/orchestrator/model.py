@@ -274,6 +274,32 @@ def tier_of(playbook: Mapping[str, Any], *, profile_id: str = "", agent: str = "
     return None
 
 
+def find_tier(playbook: Mapping[str, Any], name: str) -> Optional[Dict[str, Any]]:
+    """A tier by id, label or role (case-insensitive; first match in ladder order)."""
+    key = str(name or "").strip().lower()
+    if not key:
+        return None
+    tiers = list(playbook.get("tiers") or [])
+    for field in ("id", "label", "role"):
+        for tier in tiers:
+            if str(tier.get(field) or "").strip().lower() == key:
+                return dict(tier)
+    return None
+
+
+STATE_RANK = {"ok": 0, "unknown": 0, "low": 1, "blocked": 2}
+
+
+def pick_member(states: List[str]) -> Optional[int]:
+    """Index of the member to run, given each switched-on member's account state in
+    tier order: the first that is ok/unknown, else the first low one; None when
+    every one is blocked. Declared order breaks ties — it is the user's preference."""
+    ranked = sorted(range(len(states)), key=lambda i: (STATE_RANK.get(states[i], 0), i))
+    if not ranked or states[ranked[0]] == "blocked":
+        return None
+    return ranked[0]
+
+
 def referenced_profiles(playbook: Mapping[str, Any]) -> List[str]:
     out: List[str] = []
     for tier in playbook.get("tiers") or []:

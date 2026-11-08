@@ -129,16 +129,17 @@ def test_supervision_editor_fits_and_uses_shared_controls(browser, static_server
         body = form.locator('.chat-supervision-dialog-body')
         form.get_by_role('button', name='Model', exact=True).click()
         expect(menu).to_be_visible()
-        body.evaluate('el => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event("scroll")); }')
-        trigger_gone = page.evaluate('''() => {
-            const b = document.querySelector('.chat-supervision-dialog-body').getBoundingClientRect();
-            const t = [...document.querySelectorAll('.chat-supervision-dialog .cuttle-combo-trigger')]
-                .find(el => el.getAttribute('aria-label') === 'Model' || el.textContent.includes('Model')) ;
-            const r = (t || document.querySelector('.chat-supervision-dialog .cuttle-combo-trigger')).getBoundingClientRect();
-            return (r.top + r.bottom) / 2 < b.top;
-        }''')
-        if trigger_gone:
-            expect(menu).to_have_count(0)
+        model = form.get_by_role('button', name='Model', exact=True)
+        # Scroll just past the body's top edge: the trigger is still on screen
+        # (so the viewport check alone would keep the menu open) but clipped.
+        moved = body.evaluate("""(el, t) => {
+            const b = el.getBoundingClientRect(), r = t.getBoundingClientRect();
+            el.scrollTop += r.bottom - b.top + 4;
+            const after = t.getBoundingClientRect();
+            return {clipped: after.bottom < b.top, onScreen: after.bottom > 0};
+        }""", model.element_handle())
+        assert moved == {'clipped': True, 'onScreen': True}, moved
+        expect(menu).to_have_count(0)
         body.evaluate('el => { el.scrollTop = 0; }')
         form.locator('.chat-supervision-advanced summary').click()
         expect(form.locator('[name=worker]')).to_have_value('cursor auto')

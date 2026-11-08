@@ -456,6 +456,32 @@
             if (y <= HOTZONE_PX) return;
             scheduleHideTitlebar();
         });
+
+        // A captured drag (the rail pane grip captures to <body> so it can be
+        // carried onto a space tab) never fires pointerenter on the hotzone or
+        // pointerleave on the titlebar. Track it by coordinates instead.
+        window.addEventListener('pointermove', (e) => {
+            if (!document.body.classList.contains('fullscreen')) return;
+            if (!e.buttons) return;
+            const target = e.target;
+            // Uncaptured moves over the strip/bar take the normal path above.
+            if (target === hotzone || (target instanceof Node && titlebar.contains(target))) return;
+            const y = e.clientY;
+            if (titlebar.classList.contains('is-revealed')) {
+                cancelPendingReveal();
+                if (y <= titlebar.getBoundingClientRect().bottom) {
+                    cancelHide();
+                } else if (!hideTimer) {
+                    scheduleHideTitlebar();
+                }
+                return;
+            }
+            if (y <= HOTZONE_PX) {
+                if (!revealTimer) revealTimer = setTimeout(revealTitlebar, REVEAL_DELAY_MS);
+            } else {
+                cancelPendingReveal();
+            }
+        }, true);
     }
 
     function wireElectronChatFind(api) {
