@@ -443,6 +443,57 @@ def test_idle_target_wakes_supervisor_once_until_it_changes(chats, monkeypatch):
     assert len(_tick(chats, sched, _snap("idle_with_work", reply_id=2), monkeypatch)) == 2
 
 
+def _answer(chats, checkin, query_id, content, **meta):
+    db, _owner, sup, _target, _foreign = chats
+    store.finish(checkin["id"], "delivered", {"query_id": query_id})
+    db.add_message(sup, "assistant", content, {"query_id": query_id, **meta})
+
+
+def test_failed_check_in_wakes_the_supervisor_again(chats, monkeypatch):
+    sched = _schedule(chats)
+    first = _tick(chats, sched, _snap("error"), monkeypatch)
+    _answer(chats, first[0], "q1", "codex_error: connection reset", slash_command_failed=True)
+    again = _tick(chats, sched, _snap("error"), monkeypatch)
+    assert len(again) == 2  # the unchanged picture was never really seen
+    _answer(chats, again[0], "q2", "Sent the worker a resume.")
+    assert len(_tick(chats, sched, _snap("error"), monkeypatch)) == 2  # answered: quiet again
+
+
+def test_check_in_still_running_is_not_a_failure(chats, monkeypatch):
+    sched = _schedule(chats)
+    first = _tick(chats, sched, _snap("error"), monkeypatch)
+    _answer(chats, first[0], "q1", "", in_progress=True)
+    assert len(_tick(chats, sched, _snap("error"), monkeypatch)) == 1
+
+
+def test_supervisor_out_of_usage_waits_for_the_reset(chats, monkeypatch):
+    from datetime import datetime
+    sched = _schedule(chats)
+    clock = [datetime(2026, 11, 8, 0, 30).timestamp()]
+    monkeypatch.setattr(worker.time, "time", lambda: clock[0])
+    monkeypatch.setattr(worker, "_git_head", lambda path: "abc")
+    first = _tick(chats, sched, _snap("error"), monkeypatch)
+    _answer(chats, first[0], "q1", "You've hit your usage limit. Upgrade to Pro or try again at 4:46 AM.",
+            slash_command_failed=True)
+    reset = datetime(2026, 11, 8, 4, 46).timestamp()
+    clock[0] += 900
+    assert len(_tick(chats, sched, _snap("error"), monkeypatch)) == 1
+    op = store.get(sched["id"], chats[2])
+    assert op["result"]["skipped"] == "supervisor_quota" and op["due"] <= reset
+    clock[0] = reset + 1
+    assert len(_tick(chats, sched, _snap("error"), monkeypatch)) == 2
+
+
+def test_reset_at_reads_a_time_of_day_as_the_next_one():
+    from datetime import datetime
+    from api.agent_router import quota
+    now = datetime(2026, 11, 8, 0, 30).timestamp()
+    assert quota.reset_at("try again at 4:46 AM.", now) == datetime(2026, 11, 8, 4, 46).timestamp()
+    assert quota.reset_at("try again at 12:10 AM", now) == datetime(2026, 11, 9, 0, 10).timestamp()
+    assert quota.reset_at("try again at Oct 5th, 2026 12:55 AM", now) is None  # past
+    assert quota.reset_at("no reset here", now) is None
+
+
 def test_branch_violation_wakes_supervisor_and_keeps_schedule(chats, monkeypatch):
     sched = _schedule(chats, required_branch="dev/multiplayer", forbidden_branches=["dev/core"])
     checkins = _tick(chats, sched, _snap("busy", branch="dev/core"), monkeypatch)

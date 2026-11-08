@@ -99,8 +99,15 @@ def parse_checkpoints(raw: Any) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+_SHELL_WRAP = re.compile(r"""^\s*(?:\S*/)?(?:ba|z|da)?sh\s+-\w*c\w*\s+(['"])(.*)\1\s*$""", re.S)
+
+
 def is_test_command(command: str) -> bool:
-    text = _QUOTED.sub("''", str(command or ''))
+    text = str(command or '')
+    wrapped = _SHELL_WRAP.match(text)
+    if wrapped:  # Codex runs everything as `/bin/bash -lc '<command>'`
+        text = wrapped.group(2)
+    text = _QUOTED.sub("''", text)
     for part in re.split(r'&&|\|\||[;|\n]', text):
         part = _WRAPPERS.sub('', part.strip())
         if TEST_COMMAND.search(part):

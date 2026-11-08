@@ -28,6 +28,8 @@ STALL_SEC = 45 * 60
 # this factor, so a legitimately long wait does not wake the supervisor every
 # 45 minutes (each wake is a full supervisor turn).
 STALL_BACKOFF_MAX = 4
+# A supervisor out of usage with no reset time in its error retries after this.
+SUPERVISOR_QUOTA_RETRY_SEC = 3600
 
 
 def _uncertain(op, reason):
@@ -294,6 +296,38 @@ def _violations(op, branch, path, *, db=None, commands=()):
     return found + moved, moved
 
 
+def _checkin_failure(db, actor, schedule_id, now):
+    """The newest delivered check-in of this schedule, when the supervisor never
+    answered it (its turn failed, e.g. out of usage): ``{'retry_at': epoch|None}``.
+    None when it was answered, is still running, or there is none. The schedule
+    marks a picture as seen when it queues the wake, so without this a failed
+    wake leaves an unchanged target unsupervised for good."""
+    latest = next((o for o in store.listing(actor) if o['kind'] == 'checkin'
+                   and o['payload'].get('schedule_id') == schedule_id
+                   and o['state'] in ('delivered', 'done', 'failed')), None)
+    if latest is None:
+        return None
+    if latest['state'] == 'failed' and not (latest.get('result') or {}).get('query_id'):
+        return {'retry_at': None}
+    query_id = (latest.get('result') or {}).get('query_id')
+    if db is None or not query_id:
+        return None
+    reply = db.assistant_message_by_query(actor, query_id)
+    meta = (reply or {}).get('metadata') or {}
+    if not reply or meta.get('in_progress'):
+        return None
+    from api.chat_attention import is_error
+    content = reply.get('content') or ''
+    if not is_error(content, meta):
+        return None
+    from api.agent_router import policy, quota
+    if not policy.is_quota_failure(content):
+        return {'retry_at': None}
+    # A "try again at 4:46 AM" is read from when the wake failed, not from now.
+    failed_at = float(latest.get('updated') or now)
+    return {'retry_at': quota.reset_at(content, failed_at) or failed_at + SUPERVISOR_QUOTA_RETRY_SEC}
+
+
 def _active_checkins(actor, schedule_id):
     return [o for o in store.listing(actor) if o['kind'] == 'checkin'
             and o['payload'].get('schedule_id') == schedule_id and o['state'] in ('pending', 'dispatching')]
@@ -459,9 +493,20 @@ def _check_in(op, db, actor, sid, request):
         tracking['stalled_since'] = previous.get('stalled_since') or progress_at
     elif streak == 0:
         tracking['stalled_since'] = None
-    # A working target or an unchanged picture costs no supervisor tokens.
+    failure = _checkin_failure(db, actor, op['id'], now) if previous.get('last_checkin') else None
+    hold = (failure or {}).get('retry_at')
+    if hold and hold > now and not new:
+        # The supervisor is out of usage: no wake until it resets, then one at once.
+        store.record_check(op['id'], 'skipped', {**seen, 'reason': 'supervisor_quota', 'retry_at': hold})
+        store.finish(op['id'], 'pending', {**previous, **tracking, 'last_check': time.time(), 'last_seen': seen,
+                                            'skipped': 'supervisor_quota', 'retry_at': hold,
+                                            'guard_reported': found}, due=min(nxt, max(hold, now + 60)))
+        return
+    # A working target or an unchanged picture costs no supervisor tokens;
+    # a picture whose wake the supervisor never answered is not "seen".
     if not violations and not briefing and not stalled and (
-            snap['state'] in ('busy', 'waiting_background') or signature == previous.get('signature')):
+            snap['state'] in ('busy', 'waiting_background')
+            or (signature == previous.get('signature') and not failure)):
         reason = snap['state'] if snap['state'] in ('busy', 'waiting_background') else 'unchanged'
         store.record_check(op['id'], 'skipped', {**seen, 'reason': reason})
         store.finish(op['id'], 'pending', {**previous, **tracking, 'last_check': time.time(),
@@ -469,7 +514,7 @@ def _check_in(op, db, actor, sid, request):
         return
     active = _active_checkins(actor, op['id'])
     store.record_check(op['id'], 'violation' if violations else 'stalled' if stalled else 'woke',
-                       {**seen, 'already_waiting': bool(active)})
+                       {**seen, 'already_waiting': bool(active), **({'retry': True} if failure else {})})
     # A moved forbidden branch is reported once, so it never waits behind a queued check-in.
     if not active or moved:
         text = checkin_text(cfg, snap, violations, stalled_min=seen.get('stalled_min'))

@@ -157,7 +157,13 @@ def record_agent_tool(block_id: str, summary: str, *, phase: str, args: Any = No
         sid = ((getattr(tracker, "execution_data", None) or {}).get("user_context") or {}).get("chat_session_id")
         if sid:
             from api.session_events import publish
-            command = args.get("command") if isinstance(args, dict) else None
+            command = None
+            if isinstance(args, dict):
+                # Cursor nests the tool's own arguments: {"name": "shell", "args": {"command": …}}.
+                inner = args.get("args") if isinstance(args.get("args"), dict) else {}
+                command = args.get("command") or args.get("cmd") or inner.get("command")
+                if isinstance(command, list):
+                    command = " ".join(str(c) for c in command)
             publish("tool", sid, failed=failed, command=str(command or summary or "")[:2000])
     for event in reversed((getattr(tracker, "execution_data", None) or {}).get("events", [])):
         if event.get("kind") == "tool" and event.get("block_id") == block_id:

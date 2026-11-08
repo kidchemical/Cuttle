@@ -662,3 +662,44 @@ assert.deepEqual(M.submitPlan(edit, {playbookId: 'default', goal: 'ship v2'}),
     assert 'id="chatOrchestrationSlot"' in page
     assert (page.index("/js/chat/chat_orchestration_model.js") < page.index("/js/chat/chat_orchestration.js")
             < page.index("/js/chat/chat_page.js"))
+
+
+def test_playbook_checkpoints_default_validate_and_reach_the_supervise_command(tmp_path, orch, monkeypatch):
+    db, owner, other, sid, other_sid = _seed_db(tmp_path)
+    pb = service.get_playbook(owner, "default", db=db)
+    assert pb["supervisor"]["checkpoints"] == {"milestone": {"do": ["wake"]}, "repeat_failures": {"n": 3, "do": ["wake"]}}
+    assert model.normalize_playbook({**pb, "supervisor": {**pb["supervisor"], "checkpoints": {}}})["supervisor"]["checkpoints"] == {}
+    with pytest.raises(model.PlaybookError, match="checkpoints"):
+        model.normalize_playbook({**pb, "supervisor": {**pb["supervisor"], "checkpoints": ["tests"]}})
+    with pytest.raises(service.OrchestratorError, match="unknown checkpoint"):
+        service.save_playbook(owner, {**pb, "supervisor": {**pb["supervisor"], "checkpoints": {"vibes": {}}}}, db=db)
+    saved = service.save_playbook(owner, {**pb, "supervisor": {**pb["supervisor"], "checkpoints": {
+        "tests": {"when": "fail", "do": ["supervisor:expert-claude"]}}}}, db=db)
+    assert saved["supervisor"]["checkpoints"] == {"tests": {"when": "fail", "do": ["supervisor:expert-claude"]}}
+    argv = model.supervisor_argv(saved, "CH-000009", service.profile_map(owner, db=db))
+    assert json.loads(argv[argv.index("--checkpoints") + 1]) == saved["supervisor"]["checkpoints"]
+
+
+def test_playbook_checkpoint_edit_reaches_running_schedule_and_dialog_defaults(tmp_path, orch, monkeypatch):
+    from api.chat_ops import service as chat_ops, store as ops_store
+
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    db, owner, other, sid, other_sid = _seed_db(tmp_path)
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    sup = db.create_chat_session(owner, "supervisor")
+    service.bind(sid, "default", "ship it", db=db)
+    pb = service.get_playbook(owner, "default", db=db)
+    cfg = model.supervisor_config(pb, service.profile_map(owner, db=db))
+    op = chat_ops.supervise(sid, sup, instructions=cfg["instructions"], model_tiers=cfg["model_tiers"],
+                            checkpoints=cfg["checkpoints"], db=db)["operation"]
+    ops_store.patch_result(op["id"], paths_base="abc", failure_counts={"x": 2})
+    defaults = chat_ops.supervise_defaults(sid, owner, db=db)["playbook"]
+    assert defaults["id"] == "default" and defaults["checkpoints"] == cfg["checkpoints"]
+    assert chat_ops.supervise_defaults(other_sid, other, db=db)["playbook"] is None
+
+    service.save_playbook(owner, {**pb, "supervisor": {**pb["supervisor"], "checkpoints": {"tests": {}}}}, db=db)
+    after = ops_store.find(op["id"])
+    assert after["payload"]["checkpoints"] == {"tests": {"when": "pass", "do": ["wake"]}}
+    assert "paths_base" not in after["result"] and "failure_counts" not in after["result"]
+    notice = [o for o in ops_store.listing(sup) if o["kind"] == "checkin"][-1]["payload"]["text"]
+    assert "wake checkpoints" in notice

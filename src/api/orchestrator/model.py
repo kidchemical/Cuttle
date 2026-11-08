@@ -59,7 +59,11 @@ DEFAULT_SUPERVISOR: Dict[str, Any] = {
     "require_branch": "",
     "require_path": "",
     "forbid_branches": [],
+    # Event wakes (chat_ops checkpoints). Shape is checked here; the host
+    # validates entries on save (``service.save_playbook``).
+    "checkpoints": {"milestone": {"do": ["wake"]}, "repeat_failures": {"n": 3, "do": ["wake"]}},
 }
+MAX_CHECKPOINTS = 10
 
 
 class PlaybookError(ValueError):
@@ -173,6 +177,12 @@ def normalize_playbook(raw: Any) -> Dict[str, Any]:
         if not _BRANCH_RE.match(b):
             raise PlaybookError(f"supervisor.forbid_branches: {b!r} is not a valid branch name")
     sup["forbid_branches"] = forbid[:20]
+    if "checkpoints" in sup_raw:
+        points = sup_raw.get("checkpoints") or {}
+        if not isinstance(points, Mapping) or len(points) > MAX_CHECKPOINTS or not all(
+                isinstance(k, str) and isinstance(v, Mapping) for k, v in points.items()):
+            raise PlaybookError("supervisor.checkpoints must map checkpoint ids to settings objects")
+        sup["checkpoints"] = json.loads(json.dumps(points))
 
     return {
         "schema": SCHEMA_VERSION,
@@ -338,6 +348,7 @@ def supervisor_config(
         "required_path": str(sup.get("require_path") or ""),
         "forbidden_branches": [str(b) for b in sup.get("forbid_branches") or []],
         "model_tiers": model_tiers(playbook, profiles),
+        "checkpoints": dict(sup.get("checkpoints") or {}),
     }
 
 
@@ -378,6 +389,8 @@ def supervisor_argv(
     for branch in cfg["forbidden_branches"]:
         argv += ["--forbid-branch", branch]
     argv += ["--model-tiers", json.dumps(cfg["model_tiers"], separators=(",", ":"))]
+    if cfg["checkpoints"]:
+        argv += ["--checkpoints", json.dumps(cfg["checkpoints"], separators=(",", ":"))]
     argv.append("--json")
     return argv
 

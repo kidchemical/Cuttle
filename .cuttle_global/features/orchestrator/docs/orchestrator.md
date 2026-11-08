@@ -78,6 +78,14 @@ PYTHONPATH=src .venv/bin/python -m api.orchestrator supervise-command CH-<orches
 Run the returned `command` from the supervisor chat. It omits `--agent` unless
 the playbook pins one, so check-ins follow that chat's own agent.
 
+**Event wakes.** A playbook's supervisor settings carry `checkpoints` (Apps →
+Orchestrator → Supervisor: Tasks milestones, test runs, repeated failures,
+watched paths, each with its own response — wake, stop the chat, or a reviewer
+profile). They ride the supervise command, the ☰ **Supervise this chat…**
+dialog on an orchestrating chat starts from the playbook's supervisor defaults
+(checkpoints included), and a playbook edit carries changed checkpoints into
+running schedules. Default: milestones + repeated failures (3).
+
 ## Playbook edits while it runs
 
 A bound orchestrator gets the edited brief at its **next turn** (resume delta

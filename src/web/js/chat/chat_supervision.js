@@ -307,7 +307,9 @@
                 + '<h3>' + (editing ? 'Edit supervision of ' : 'Supervise ') + esc(d.target) + '</h3>'
                 + (editing ? '<p class="chat-supervision-meta">Changes apply to the running schedule (a paused one stays'
                     + ' paused). The supervisor gets one check-in saying what changed.</p>'
-                    : '<p class="chat-supervision-meta">Creates a supervisor chat. The host checks ' + esc(d.target)
+                    : (d.playbookName ? '<p class="chat-supervision-meta">Defaults from playbook <strong>' + esc(d.playbookName)
+                        + '</strong>, which this chat runs.</p>' : '')
+                    + '<p class="chat-supervision-meta">Creates a supervisor chat. The host checks ' + esc(d.target)
                 + ' on the interval and wakes the supervisor only when this chat stops, errors, needs input,'
                 + ' makes progress, or breaks a branch rule.</p>') + '</header><div class="chat-supervision-dialog-body"><div class="chat-supervision-fields">'
                 + '<label>Supervisor agent<select name="agent">' + list.map((a) => '<option value="' + esc(a.id) + '"'

@@ -481,3 +481,14 @@ body.compact-shell-page .orch-page input.orch-target { width: 150px; height: 30p
 @media (prefers-reduced-motion: reduce) {
     .orch-tab, .orch-savebar, .orch-avp { animation: none; }
 }
+
+/* Supervisor → event wakes (checkpoints) */
+.orch-checkpoints { border: 1px solid var(--border-color); border-radius: 10px; padding: 8px 12px 10px; margin: 0; }
+.orch-checkpoint { padding: 6px 0; }
+.orch-checkpoint + .orch-checkpoint { border-top: 1px solid var(--border-color); }
+.orch-form label.orch-checkpoint-head { flex-direction: row; align-items: center; gap: 8px; font-weight: 500; }
+.orch-checkpoint-opts { display: flex; gap: 8px; margin: 6px 0 0 24px; }
+.orch-checkpoint-opts[hidden] { display: none; }
+.orch-checkpoint-opts select, .orch-checkpoint-opts input { flex: 1 1 0; min-width: 0; }
+.orch-checkpoint-opts input[type=number] { flex: 0 0 72px; }
+.orch-error { color: #ff7a7a; }

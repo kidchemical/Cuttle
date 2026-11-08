@@ -273,6 +273,23 @@
             })),
             checkpoints: checkpointFields(null),
         };
+        const pb = d.playbook;
+        if (!schedule && pb) {
+            // An orchestrating chat starts from its playbook's supervisor defaults.
+            const tiers = pb.model_tiers || {};
+            return Object.assign(base, {
+                playbookName: String(pb.name || pb.id || ''),
+                agent: String(pb.agent || ''),
+                every: Number(pb.every) || base.every,
+                instructions: pb.instructions || base.instructions,
+                requiredBranch: pb.required_branch || base.requiredBranch,
+                requiredPath: pb.required_path || base.requiredPath,
+                forbidden: (pb.forbidden_branches || []).length ? pb.forbidden_branches.join(', ') : base.forbidden,
+                worker: (tiers.worker || []).join(', '),
+                expert: (tiers.expert || []).join(', '),
+                checkpoints: checkpointFields(pb.checkpoints || {}),
+            });
+        }
         if (!schedule) return base;
         const s = schedule;
         const tiers = s.model_tiers || {};

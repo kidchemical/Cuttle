@@ -61,6 +61,9 @@ console.log(JSON.stringify({
   edit: M.dialogDefaults({handle: 'CH-000002', tasks: [{id: 'own', selected: true}, {id: 'proj'}]},
     {id: 's9', agent: 'codex', model: 'b', effort: 'x', every: 600, instructions: 'mine',
      forbidden_branches: ['main', 'prod'], model_tiers: {worker: ['cursor auto']}, task_ids: ['proj']}),
+  pbDefaults: M.dialogDefaults({handle: 'CH-000002', playbook: {id: 'pb', name: 'Strict', every: 600, agent: 'codex',
+    instructions: 'Be strict', forbidden_branches: ['main'], model_tiers: {worker: ['cursor auto']},
+    checkpoints: {tests: {when: 'fail', do: ['supervisor:rev']}}}}),
   found: M.scheduleById({supervising: [{id: 'a'}], supervised_by: [{id: 'b', target: 'CH-000002'}]}, 'b'),
 }));
 """
@@ -107,6 +110,12 @@ def test_model_view_rows_and_payload():
     assert e["forbidden"] == "main, prod" and e["worker"] == "cursor auto" and e["instructions"] == "mine"
     assert [(t["id"], t["selected"]) for t in e["tasks"]] == [("own", False), ("proj", True)]
     assert r["found"]["target"] == "CH-000002"
+    pb = r["pbDefaults"]
+    assert pb["playbookName"] == "Strict" and pb["every"] == 600 and pb["agent"] == "codex"
+    assert pb["forbidden"] == "main" and pb["worker"] == "cursor auto" and pb["instructions"] == "Be strict"
+    assert {k: v["on"] for k, v in pb["checkpoints"].items()} == {
+        "milestone": False, "tests": True, "repeat_failures": False, "watched_paths": False}
+    assert pb["checkpoints"]["tests"]["do"] == "supervisor:rev" and pb["checkpoints"]["tests"]["when"] == "fail"
     assert r["pauseBodies"] == [{"hours": 1}, {"hours": 4}, {"indefinite": True}, {"hours": 1}]
     assert r["tomorrow"]["until"] > 1_800_000_000
     assert r["queued"]["preview"] == "next step"

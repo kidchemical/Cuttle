@@ -152,6 +152,12 @@ def save_playbook(user_id: int, raw: Any, *, db=None) -> Dict[str, Any]:
         doc = normalize_playbook(raw)
     except PlaybookError as exc:
         raise OrchestratorError(str(exc)) from None
+    from api.chat_ops.checkpoints import parse_checkpoints
+    try:
+        # Same validation (and normalized form) as a schedule's own checkpoints.
+        doc["supervisor"]["checkpoints"] = parse_checkpoints(doc["supervisor"].get("checkpoints") or {})
+    except ValueError as exc:
+        raise OrchestratorError(f"supervisor.checkpoints: {exc}") from None
     missing = missing_profiles(doc, profile_map(user_id, db=db))
     if missing:
         raise OrchestratorError(

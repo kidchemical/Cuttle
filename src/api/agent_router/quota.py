@@ -32,27 +32,40 @@ _RESET_AT = re.compile(
     r"try again (?:at|after)\s+([A-Z][a-z]{2,8}\.? \d{1,2}(?:st|nd|rd|th)?,? \d{4},? \d{1,2}:\d{2}\s*[AP]M)",
     re.I,
 )
+# "try again at 4:46 AM": a time of day only (Codex), the next one from now.
+_RESET_TIME = re.compile(r"try again (?:at|after)\s+(\d{1,2}:\d{2}\s*[AP]M)\b", re.I)
 
 
-def _parse_reset(text: str, now: float) -> Optional[float]:
+def reset_at(text: str, now: Optional[float] = None) -> Optional[float]:
+    """When a usage-limit message says the account is usable again (epoch), or None."""
+    now = time.time() if now is None else now
     m = _RESET_AT.search(text or "")
+    if m:
+        raw = re.sub(r"(\d)(st|nd|rd|th)", r"\1", m.group(1)).replace(",", "").replace(".", "")
+        for fmt in ("%b %d %Y %I:%M %p", "%B %d %Y %I:%M %p"):
+            try:
+                ts = datetime.strptime(raw, fmt).timestamp()
+            except ValueError:
+                continue
+            if ts > now:
+                return min(ts, now + MAX_COOLDOWN_S)
+        return None
+    m = _RESET_TIME.search(text or "")
     if not m:
         return None
-    raw = re.sub(r"(\d)(st|nd|rd|th)", r"\1", m.group(1)).replace(",", "").replace(".", "")
-    for fmt in ("%b %d %Y %I:%M %p", "%B %d %Y %I:%M %p"):
-        try:
-            ts = datetime.strptime(raw, fmt).timestamp()
-        except ValueError:
-            continue
-        if ts > now:
-            return min(ts, now + MAX_COOLDOWN_S)
-    return None
+    try:
+        clock = datetime.strptime(re.sub(r"\s+", "", m.group(1)).upper(), "%I:%M%p")
+    except ValueError:
+        return None
+    base = datetime.fromtimestamp(now).replace(hour=clock.hour, minute=clock.minute, second=0, microsecond=0)
+    ts = base.timestamp()
+    return ts if ts > now else ts + 24 * 3600
 
 
 def mark_exhausted(target: ExecutionTarget, text: str = "", *, now: Optional[float] = None) -> None:
     """Record that ``target``'s account is out of usage."""
     now = time.time() if now is None else now
-    until = _parse_reset(text, now) or (now + DEFAULT_COOLDOWN_S)
+    until = reset_at(text, now) or (now + DEFAULT_COOLDOWN_S)
     scope = "all" if is_auto_target(target) else "premium"
     reason = (text or "").strip().splitlines()
     reason_line = next((ln for ln in reason if "usage" in ln.lower() or "limit" in ln.lower()), "")

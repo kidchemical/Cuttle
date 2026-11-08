@@ -460,7 +460,7 @@ def start_supervisor(target, *, user_id, agent, every=900, instructions='', requ
 
 # Schedule fields an outside source (an orchestrator playbook) may own.
 SYNCED_FIELDS = ('every', 'agent', 'instructions', 'required_branch', 'required_path',
-                 'forbidden_branches', 'model_tiers')
+                 'forbidden_branches', 'model_tiers', 'checkpoints')
 _FIELD_LABELS = {'every': 'check-in interval', 'agent': 'check-in agent', 'instructions': 'instructions',
                  'required_branch': 'required branch', 'required_path': 'required checkout',
                  'forbidden_branches': 'forbidden branches', 'model_tiers': 'model guidance',
@@ -517,6 +517,8 @@ def resync_supervision(target, previous, current, *, note_lines=(), db=None):
                 kept.append(key)
         if updated:
             store.patch_payload(op['id'], **updated)
+            if 'checkpoints' in updated:
+                store.drop_result_keys(op['id'], 'paths_base', 'paths_reported', 'failure_counts')
             from api.orchestration_telemetry import record
             record.supervision_schedule('edit', store.find(op['id']), fields=sorted(updated), source='playbook')
         _queue_update_notice(op, {**cfg, **updated}, updated, kept, note_lines, handle)
@@ -675,7 +677,25 @@ def supervise_defaults(session, user_id, *, db=None):
             pass
     return {'handle': f'CH-{sid:06d}', 'branch': branch, 'execution_path': path,
             'worktree': bool(checkout), 'project_path': row.get('project_path') or '',
-            'tasks': task_candidates(db, int(user_id), sid, row.get('project_path') or '')}
+            'tasks': task_candidates(db, int(user_id), sid, row.get('project_path') or ''),
+            'playbook': _playbook_supervisor(sid, db)}
+
+
+def _playbook_supervisor(sid, db):
+    """The supervisor defaults of the playbook ``sid`` runs (None when it is not
+    orchestrating): the "Supervise this chat…" dialog starts from them."""
+    try:
+        from api.orchestrator import service as orch, store as orch_store
+        from api.orchestrator.model import supervisor_config
+        binding = orch_store.binding(int(sid)) if orch.enabled() else None
+        if not binding:
+            return None
+        owner = int(db.get_chat_session_by_id(int(sid))['user_id'])
+        doc = orch.get_playbook(owner, binding['playbook_id'], db=db)
+        return {'id': doc['id'], 'name': doc.get('name') or doc['id'],
+                **supervisor_config(doc, orch.profile_map(owner, db=db))}
+    except Exception:
+        return None
 
 
 # A pause with no stated end is how supervision gets forgotten: default to a

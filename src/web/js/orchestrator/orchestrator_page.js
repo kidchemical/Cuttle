@@ -212,6 +212,44 @@
         sup.require_path.value = s.require_path || '';
         sup.instructions.value = s.instructions || '';
         renderForbid();
+        renderCheckpoints();
+    }
+
+    // Event wakes: same vocabulary and validation as the "Supervise this chat…" dialog.
+    const SM = window.CuttleChatSupervisionModel;
+    function renderCheckpoints() {
+        const fields = SM.checkpointFields(state.draft.supervisor.checkpoints || {});
+        const reviewers = state.profiles.filter((p) => p && p.id && p.agent && p.agent !== 'none');
+        const opts = (cur) => [['wake', 'Wake the supervisor'], ['stop,wake', 'Stop the chat, wake the supervisor']]
+            .concat(reviewers.map((p) => ['supervisor:' + p.id, 'Send to reviewer: ' + (p.name || p.id)]))
+            .concat([[cur, cur]]).filter((o, i, all) => o[0] && all.findIndex((x) => x[0] === o[0]) === i)
+            .map(([v, l]) => `<option value="${M.esc(v)}"${v === cur ? ' selected' : ''}>${M.esc(l)}</option>`).join('');
+        $('orchCheckpointRows').innerHTML = SM.CHECKPOINTS.map((c) => {
+            const f = fields[c.id];
+            const param = c.id === 'tests'
+                ? `<select data-cp-when aria-label="Which test runs">${[['pass', 'that passes'], ['fail', 'that fails'], ['any', 'either way']]
+                    .map(([v, l]) => `<option value="${v}"${v === f.when ? ' selected' : ''}>${l}</option>`).join('')}</select>`
+                : c.id === 'repeat_failures'
+                    ? `<input data-cp-n type="number" min="2" max="20" value="${M.esc(f.n)}" aria-label="Times in a row">`
+                    : c.id === 'watched_paths'
+                        ? `<input data-cp-regex value="${M.esc(f.regex || '')}" placeholder="^(api|schema)/ or \\.sql$" aria-label="Path pattern" spellcheck="false">` : '';
+            return `<div class="orch-checkpoint" data-cp="${c.id}"><label class="orch-checkpoint-head"><input type="checkbox" data-cp-on${f.on ? ' checked' : ''}> ${M.esc(c.label)}</label>
+                <div class="orch-checkpoint-opts"${f.on ? '' : ' hidden'}>${param}<select data-cp-do aria-label="What happens">${opts(f.do)}</select></div></div>`;
+        }).join('');
+    }
+
+    function readCheckpoints() {
+        const fields = {};
+        $('orchCheckpointRows').querySelectorAll('[data-cp]').forEach((row) => {
+            const q = (sel) => row.querySelector(sel);
+            fields[row.dataset.cp] = { on: q('[data-cp-on]').checked, do: q('[data-cp-do]').value,
+                when: q('[data-cp-when]') && q('[data-cp-when]').value, n: q('[data-cp-n]') && q('[data-cp-n]').value,
+                regex: q('[data-cp-regex]') && q('[data-cp-regex]').value };
+            q('.orch-checkpoint-opts').hidden = !fields[row.dataset.cp].on;
+        });
+        const out = SM.checkpointsBody(fields);
+        $('orchCheckpointErrors').textContent = out.errors.join(' ');
+        state.draft.supervisor.checkpoints = out.body;
     }
 
     // ── Editor shell ────────────────────────────────────────────────────
@@ -461,6 +499,7 @@
         s.require_branch = sup.require_branch.value.trim();
         s.require_path = sup.require_path.value.trim();
         s.instructions = sup.instructions.value.trim();
+        readCheckpoints();
         changed();
     }
     sup.addEventListener('input', readSupervisor);

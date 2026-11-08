@@ -170,6 +170,14 @@ def test_orchestrator_app_edits_ladder_and_previews_supervise(page_ctx, static_s
     page.fill('#orchForbid input', 'dev/core')
     page.keyboard.press('Enter')
     assert page.locator('#orchForbid .orch-tag-chip').count() == 2
+    # Event wakes: switch two on; options show only for switched-on rows.
+    tests_row = page.locator('[data-cp="tests"]')
+    assert tests_row.locator('.orch-checkpoint-opts').is_hidden()
+    tests_row.locator('[data-cp-on]').check()
+    _set_select(page, '[data-cp="tests"] [data-cp-when]', 'fail')
+    page.locator('[data-cp="watched_paths"] [data-cp-on]').check()
+    page.fill('[data-cp="watched_paths"] [data-cp-regex]', '^api/')
+    page.locator('[data-cp="watched_paths"] [data-cp-regex]').dispatch_event('change')
     page.click('#orchSave')
     page.wait_for_function("document.getElementById('orchSaveState').textContent === 'All changes saved'")
     put = [c for c in api.calls if c[0] == 'PUT'][-1]
@@ -177,6 +185,8 @@ def test_orchestrator_app_edits_ladder_and_previews_supervise(page_ctx, static_s
     assert [t['role'] for t in put[2]['tiers']] == ['worker', 'escalation', 'expert']
     assert put[2]['limits']['solo_minutes'] == 39
     assert put[2]['supervisor']['forbid_branches'] == ['master', 'dev/core']
+    assert put[2]['supervisor']['checkpoints'] == {'tests': {'do': ['wake'], 'when': 'fail'},
+                                                   'watched_paths': {'do': ['stop', 'wake'], 'regex': '^api/'}}
     assert 'seed' not in put[2] and 'missing_profiles' not in put[2]
     page.click('[data-target="CH-001548"]')
     page.wait_for_function("document.getElementById('orchSupervise').textContent.includes('CH-001548')")

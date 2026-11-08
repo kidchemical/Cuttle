@@ -1932,6 +1932,26 @@ class AuthDatabase:
         finally:
             conn.close()
 
+    def assistant_message_by_query(self, chat_session_id: int, query_id: str) -> Optional[Dict[str, Any]]:
+        """The newest assistant row carrying ``query_id`` (metadata decoded), or None."""
+        conn = self._get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM chat_messages WHERE chat_session_id=? AND role='assistant' "
+                "AND json_valid(metadata) AND json_extract(metadata, '$.query_id')=? ORDER BY id DESC LIMIT 1",
+                (int(chat_session_id), str(query_id)),
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return None
+        out = dict(row)
+        try:
+            out['metadata'] = json.loads(out.get('metadata') or '{}')
+        except (TypeError, ValueError):
+            out['metadata'] = {}
+        return out
+
     def add_message_once(self, chat_session_id: int, content: str, *,
                          delivery_key: str, metadata: Optional[Dict] = None) -> Optional[int]:
         """Atomically persist a server completion, including cross-process retries.

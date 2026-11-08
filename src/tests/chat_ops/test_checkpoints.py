@@ -141,3 +141,52 @@ def test_checkpoints_are_editable_and_reset_their_baseline(chats):
     assert service.overview(f"CH-{sup:06d}", owner, db=db)["supervising"][0]["checkpoints"] == payload["checkpoints"]
     with pytest.raises(ValueError, match="unknown checkpoint"):
         service.update_supervision(op["id"], owner, {"checkpoints": {"bogus": {}}}, db=db)
+
+
+# --- failure + command signals the checkpoints read ------------------------
+
+
+@pytest.mark.parametrize("command, hit", [
+    ("/bin/bash -lc 'cd x && .venv/bin/python -m pytest src -q'", True),  # Codex wraps every command
+    ('/bin/bash -lc "go test ./..."', True),
+    ("bash -lc 'git commit -m \"pytest\"'", False),
+])
+def test_wrapped_shell_commands(command, hit):
+    assert cp.is_test_command(command) is hit
+
+
+def test_tool_event_carries_nested_and_list_commands(monkeypatch):
+    """Cursor nests {"name": "shell", "args": {"command": …}}; some harnesses send argv lists."""
+    from api import query_events
+
+    class Tracker:
+        query_id = "q1"
+        execution_data = {"user_context": {"chat_session_id": "7"}, "events": []}
+
+        def persist_event(self, kind, payload):
+            pass
+
+    monkeypatch.setattr(query_events, "_tracker", lambda query_id=None: Tracker())
+    seen = []
+    off = session_events.subscribe(lambda kind, sid, detail: seen.append(detail) if kind == "tool" else None)
+    try:
+        query_events.record_agent_tool("t1", "shell … tail -8", phase="completed", failed=True,
+                                       args={"name": "shell", "args": {"command": "pytest -q | tail -8"}})
+        query_events.record_agent_tool("t2", "exec", phase="completed", args={"command": ["go", "test", "./..."]})
+    finally:
+        off()
+    assert [d["command"] for d in seen] == ["pytest -q | tail -8", "go test ./..."]
+    assert seen[0]["failed"] is True
+
+
+@pytest.mark.parametrize("state, failed", [
+    ({"status": "completed", "metadata": {"exit": 2}}, True),   # non-zero exit: still "completed" in OpenCode
+    ({"status": "completed", "metadata": {"exit": 0}}, False),
+    ({"status": "completed", "metadata": {}}, False),           # non-shell tools carry no exit
+    ({"status": "error"}, True),
+    ({"status": "running", "metadata": {"exit": 1}}, False),
+])
+def test_opencode_nonzero_exit_counts_as_failed(state, failed):
+    from api.agent_harness.agents.opencode.adapter import _opencode_tool_failed
+
+    assert _opencode_tool_failed(state) is failed
