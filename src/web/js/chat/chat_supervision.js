@@ -66,11 +66,15 @@
             }, POLL_MS) : null;
         }
 
-        function pill(cls, id, label, title, kind) {
+        // `dot`: a status mark before the label (green ping = active, amber bars = paused).
+        function pill(cls, id, label, title, kind, dot) {
             return '<button type="button" class="chat-supervision-pill ' + cls + '" data-sup-open="' + esc(kind)
                 + '" data-sup-id="' + esc(id) + '" title="' + esc(title) + '" aria-haspopup="dialog">'
-                + esc(label) + '</button>';
+                + (dot ? '<span class="chat-supervision-dot" aria-hidden="true"></span>' : '')
+                + '<span class="chat-supervision-pill-text">' + esc(label) + '</span></button>';
         }
+
+        function stateClass(paused) { return paused ? ' is-paused' : ' is-active'; }
 
         function render() {
             const el = slot();
@@ -83,14 +87,13 @@
                 return;
             }
             const parts = [];
-            v.chips.forEach((c) => parts.push(pill('is-supervisor' + (c.paused ? ' is-paused' : '')
+            v.chips.forEach((c) => parts.push(pill('is-supervisor' + stateClass(c.paused)
                 + (c.violations.length ? ' is-warn' : ''), c.id, (c.violations.length ? '⚠ ' : '') + c.text,
-            'Supervision schedule — click for history and controls', 'chip')));
-            v.badges.forEach((b) => parts.push(pill('is-supervised' + (b.paused ? ' is-paused' : '')
+            c.title + ' — click for details and controls', 'chip', true)));
+            v.badges.forEach((b) => parts.push(pill('is-supervised' + stateClass(b.paused)
                 + (b.violations.length ? ' is-warn' : ''), b.id,
             (b.violations.length ? '⚠ ' : '') + b.text,
-            b.violations.length ? b.violations.join('\n') : (b.pausedText || 'Click for supervisor details'),
-            'badge')));
+            b.violations.length ? b.violations.join('\n') : b.title + ' — click for details', 'badge', true)));
             if (v.queued.length) {
                 parts.push(pill('is-queued', 'queued', v.queued.length + ' queued',
                     'Messages waiting for this chat to go idle', 'queued'));
@@ -133,34 +136,45 @@
                 + (!paused && pauseMenuFor === id ? pauseMenuHtml(id) : '');
         }
 
+        // Header (who + state), one status line (when), facts (how): each said once.
+        function headHtml(title, paused, info) {
+            return '<div class="chat-supervision-head">'
+                + '<span class="chat-supervision-dot' + stateClass(paused) + '" aria-hidden="true"></span>'
+                + '<span class="chat-supervision-title">' + esc(title) + '</span>'
+                + (info ? '<button type="button" class="cuttle-info" data-tooltip="' + esc(info)
+                    + '" aria-label="About supervision">i</button>' : '')
+                + '<span class="chat-supervision-state' + stateClass(paused) + '">' + (paused ? 'Paused' : 'Active') + '</span>'
+                + '</div>';
+        }
+
+        function detailsHtml(d, paused) {
+            return '<div class="chat-supervision-status' + stateClass(paused) + '">' + esc(d.status)
+                + (d.hint ? '<span class="chat-supervision-hint">' + esc(d.hint) + '</span>' : '') + '</div>'
+                + (d.facts.length ? '<dl class="chat-supervision-facts">' + d.facts.map((f) => '<dt>' + esc(f.label)
+                    + '</dt><dd>' + esc(f.value) + '</dd>').join('') + '</dl>' : '');
+        }
+
+        function violationsHtml(list) {
+            return list.length ? '<div class="chat-supervision-violation">⚠ ' + list.map(esc).join('<br>⚠ ') + '</div>' : '';
+        }
+
+        const WAKE_INFO = 'Each check looks at the chat without spending a turn. The supervisor is only woken when '
+            + 'the chat stops, errors, needs input, makes progress, stalls or breaks a branch rule.';
+
         function popoverContent(kind, id, v) {
             if (kind === 'chip') {
                 const c = v.chips.find((x) => x.id === id);
                 if (!c) return '';
-                return '<div class="chat-supervision-title">' + esc(c.text) + '</div>'
-                    + '<div class="chat-supervision-meta">'
-                    + (c.agent ? 'Check-ins run on /' + esc(c.agent) + '. ' : '')
-                    + (c.rules ? 'Rules: ' + esc(c.rules) + '. ' : '')
-                    + (c.lastSeen ? 'Last seen: ' + esc(c.lastSeen) + (c.tasks ? ', ' + esc(c.tasks) : '') + '.' : '')
-                    + '</div>'
-                    + (c.paused ? '<div class="chat-supervision-paused">⏸ ' + esc(c.pausedText)
-                        + ' — no check-ins and no wake-ups until it resumes.</div>' : '')
-                    + (c.violations.length ? '<div class="chat-supervision-violation">⚠ '
-                        + c.violations.map(esc).join('<br>⚠ ') + '</div>' : '')
-                    + '<div class="chat-supervision-section">Check history</div>' + historyHtml(c.history)
+                return headHtml(c.title, c.paused, WAKE_INFO) + detailsHtml(c.details, c.paused)
+                    + violationsHtml(c.violations)
+                    + '<div class="chat-supervision-section">Recent checks</div>' + historyHtml(c.history)
                     + controls(c.id, c.paused, c.target, 'Open ' + c.target);
             }
             if (kind === 'badge') {
                 const b = v.badges.find((x) => x.id === id);
                 if (!b) return '';
-                return '<div class="chat-supervision-title">' + esc(b.text) + '</div>'
-                    + (b.paused ? '<div class="chat-supervision-paused">⏸ ' + esc(b.pausedText)
-                        + ' — nothing checks this chat and nothing wakes its supervisor.</div>' : '')
-                    + '<div class="chat-supervision-meta">' + esc(b.paused ? '' : (b.next ? 'Next check: '
-                        + b.next.replace(/^next /, '') + '.' : '')) + ' The supervisor is only woken when this chat'
-                    + ' stops, errors, needs input, makes progress, or breaks a branch rule.</div>'
-                    + (b.violations.length ? '<div class="chat-supervision-violation">⚠ '
-                        + b.violations.map(esc).join('<br>⚠ ') + '</div>' : '')
+                return headHtml(b.title, b.paused, WAKE_INFO) + detailsHtml(b.details, b.paused)
+                    + violationsHtml(b.violations)
                     + controls(b.id, b.paused, b.supervisor, 'Open ' + b.supervisor);
             }
             if (kind === 'queued') {

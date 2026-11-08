@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 import json
 from urllib.parse import urlparse
 
@@ -20,7 +22,13 @@ class OrchestrationWorld(CardWorld):
     def bind(self, pid, goal):
         self.binding = {"success": True, "session": "CH-000042", "bound": True, "playbook_id": pid,
                         "playbook_name": {"fast": "Fast", "default": "Default"}[pid], "goal": goal,
-                        "playbook_missing": False, "bound_at": 1}
+                        "playbook_missing": False, "bound_at": 1, "agents": [
+                            {"handle": "CH-000050", "name": "Scout", "avatar": "🔭", "agent": "codex",
+                             "model": "terra", "effort": "low", "status": "running"},
+                            {"handle": "CH-000051", "name": "Builder", "avatar": "", "agent": "cursor",
+                             "status": "done"},
+                            {"handle": "CH-000052", "name": "Judge", "avatar": "⚖️", "agent": "claude",
+                             "status": "failed"}]}
 
     def handle(self, route):
         req = route.request
@@ -114,6 +122,15 @@ def test_chip_popover_edits_and_stops_without_an_agent_turn(browser, static_serv
         chip.click()
         pop = frame.locator(".chat-supervision-popover")
         expect(pop).to_contain_text("ship the slice")
+        # Agents as chips (running first, each opens its chat); the brief tip sits behind (i).
+        agents = pop.locator(".chat-orch-agent")
+        expect(agents).to_have_count(3)
+        expect(agents.first).to_have_class(re.compile(r"\bis-running\b"))
+        assert (agents.first.get_attribute("title") or agents.first.get_attribute("data-tooltip")) == "CH-000050 — codex · terra · low — Running"
+        expect(pop.locator(".chat-supervision-section").nth(1)).to_have_text("Agents · 3, 1 running")
+        expect(pop.locator(".cuttle-info[data-tooltip*='next turn']")).to_have_count(1)
+        expect(pop).not_to_contain_text("a turn already running keeps the old brief")
+        page.screenshot(path=os.environ.get("ORCH_POPOVER_SHOT", "/tmp/orch_popover.png"))
         pop.locator("[data-orch-act=edit]").click()
         form = frame.locator(".chat-supervision-dialog")
         expect(form.locator("[name=playbookId]")).to_have_value("fast")

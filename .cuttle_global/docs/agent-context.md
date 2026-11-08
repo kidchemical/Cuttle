@@ -114,6 +114,39 @@ resume (also Antigravity); refused while a CLI is live in the chat.
 `python -m api.chat_cli context|compact CH-…` (`chat-history.md`), fill in
 `subagents status --context` and in supervision snapshots/check-ins.
 
+## Auto-compaction (experimental flag `auto_compact`)
+
+Cuttle compacts an agent's session **between turns**, before its CLI would
+compact mid-task near the window edge. Owner: `src/api/auto_compact/`.
+
+- **When:** after a turn ends and a quiet period passes (default 20 s; a
+  message sent meanwhile just starts the next turn), if the fill is at or over
+  the threshold **or** the token cap, whichever comes first. Defaults:
+  ordinary chats 70% / 300k, agent-driven chats 60% / 250k.
+- **Agent-driven ("managed") chats:** supervised targets, supervisor chats,
+  sub-agent children, orchestrator-bound chats. Sub-agent children compact
+  just before their next turn (`api.subagents.turns` preflight), because their
+  turns can run in the parent's CLI process where Flask sees no turn end.
+- **Tasks milestone:** an item of the chat's own Tasks list checked off since
+  its last turn lowers the threshold for that turn end (default 40% / 150k).
+- **Never:** mid-turn, while a CLI still runs in the chat (Claude background
+  wait: retried every minute), right after a compact with no new turn, or on
+  an unreliable reading (billing aggregate / no usage yet).
+- **How:** `auto` uses the CLI's own compact; when the next turn still reads
+  over the threshold it starts a fresh session instead. CLIs without a
+  headless compact (Antigravity) are left to manage themselves unless the mode
+  is `fresh`. Failures back off (1, 2, 4, 8 turns) and stop after 4 in a row
+  until a setting changes. Each compact holds the chat busy with a live
+  status and leaves a `compact` timeline notice.
+- **Settings:** Settings → Agents → Auto-compaction (`/api/settings/auto-compact`,
+  key `auto_compact`). Per chat: the composer gauge popover (Default / On /
+  Off, threshold, milestones), stored in the Cuttle home. Supervision
+  check-ins tell the supervisor the target is covered.
+- **CLI:** `python -m api.auto_compact status CH-…` (policy + dry-run
+  decision), `set CH-… --enabled on|off|inherit --percent N|inherit
+  --milestone on|off|inherit`, `history CH-…`, `settings [--set JSON]`.
+  `CUTTLE_AUTO_COMPACT=0` stops the Flask trigger.
+
 ## Turn usage footers
 
 Footers label total input and its cached portion as “cached (included)”. Muse

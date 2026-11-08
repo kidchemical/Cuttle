@@ -4792,6 +4792,54 @@ pre.has-code-copy:hover .code-copy-btn,
 .context-gauge-popover-close:hover {
     color: var(--text-primary, #e2e8f0);
 }
+/* Per-chat Auto-compact section (chat_auto_compact.js). */
+.context-gauge-auto-compact-slot {
+    margin: 0 0 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+.context-gauge-auto-compact-slot[hidden] {
+    display: none !important;
+}
+.context-gauge-auto-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 6px;
+}
+.context-gauge-auto-row label {
+    color: var(--text-secondary, #94a3b8);
+    font-size: 11.5px;
+}
+.context-gauge-auto-row label:first-child {
+    min-width: 76px;
+}
+.context-gauge-auto-row select,
+.context-gauge-auto-row input {
+    background: rgba(15, 23, 42, 0.55);
+    color: var(--text-primary, #e2e8f0);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 6px;
+    font-size: 12px;
+    padding: 3px 6px;
+}
+.context-gauge-auto-pct {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: var(--text-secondary, #94a3b8);
+}
+.context-gauge-auto-pct input {
+    width: 4.2em;
+}
+.context-gauge-auto-note {
+    margin: 0 0 4px;
+    color: var(--text-secondary, #94a3b8);
+    font-size: 11px;
+}
+.context-gauge-auto-note--warn {
+    color: #fbbf24;
+}
 
 .textarea-with-slash-menu {
     position: relative;
@@ -8160,17 +8208,52 @@ html.cuttle-bg-paused .chat-restore-spinner {
     color: var(--text-primary);
     font-size: 0.86em;
 }
-.chat-bg-work.is-scheduled { border-style: dotted; opacity: 0.85; }
+/* Status mark: one family of shapes, colour + motion say the state.
+   working     accent dot sending out two staggered pings (work running now)
+   supervising green dot with one slow ping (a schedule is watching)
+   paused      amber pause glyph, no motion (nothing checks until resumed)
+   idle        still hollow ring (only finished results left) */
+.chat-bg-work { --bg-mark: var(--accent-color, #667eea); }
+.chat-bg-work[data-state="supervising"] { --bg-mark: #3fbf7f; border-color: color-mix(in srgb, #3fbf7f 50%, var(--border-color)); background: color-mix(in srgb, #3fbf7f 6%, transparent); }
+.chat-bg-work[data-state="paused"] { --bg-mark: #e0a63a; border-color: color-mix(in srgb, #e0a63a 55%, var(--border-color)); background: color-mix(in srgb, #e0a63a 7%, transparent); }
+.chat-bg-work[data-state="idle"] { --bg-mark: var(--text-secondary); border-style: dotted; }
 .chat-bg-ring {
+    position: relative;
     flex-shrink: 0;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    border: 2px solid var(--accent-color, #667eea);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--accent-color, #667eea) 60%, transparent);
-    animation: chat-bg-breathe 2.4s ease-in-out infinite;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
-.chat-bg-work.is-scheduled .chat-bg-ring { animation: none; border-style: dashed; box-shadow: none; }
+.chat-bg-ring-core {
+    position: relative;
+    z-index: 1;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--bg-mark);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--bg-mark) 70%, transparent);
+}
+.chat-bg-ring::before,
+.chat-bg-ring::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 1.5px solid var(--bg-mark);
+    opacity: 0;
+}
+.chat-bg-work[data-state="working"] .chat-bg-ring::before { animation: chat-bg-ping 1.8s cubic-bezier(0.2, 0.6, 0.35, 1) infinite; }
+.chat-bg-work[data-state="working"] .chat-bg-ring::after { animation: chat-bg-ping 1.8s cubic-bezier(0.2, 0.6, 0.35, 1) 0.9s infinite; }
+.chat-bg-work[data-state="supervising"] .chat-bg-ring::before { animation: chat-bg-ping 3.2s ease-out infinite; }
+.chat-bg-work[data-state="supervising"] .chat-bg-ring-core { animation: chat-bg-heartbeat 3.2s ease-in-out infinite; }
+/* Pause glyph: two bars, still. */
+.chat-bg-work[data-state="paused"] .chat-bg-ring-core { width: 10px; height: 10px; border-radius: 0; box-shadow: none;
+    background: linear-gradient(90deg, var(--bg-mark) 0 35%, transparent 35% 65%, var(--bg-mark) 65% 100%); }
+.chat-bg-work[data-state="idle"] .chat-bg-ring-core { background: transparent; border: 1.5px solid var(--bg-mark); box-shadow: none; }
+@keyframes chat-bg-ping { 0% { transform: scale(0.5); opacity: 0.85; } 100% { transform: scale(2.1); opacity: 0; } }
+@keyframes chat-bg-heartbeat { 0%, 100% { transform: scale(1); } 8% { transform: scale(1.25); } 16% { transform: scale(1); } }
 /* The body keeps a readable width; when the buttons don't fit beside it they wrap onto their own row
    (narrow screens), instead of squeezing the text column to nothing under them. */
 .chat-bg-work { flex-wrap: wrap; row-gap: 8px; }
@@ -8255,7 +8338,8 @@ html.cuttle-bg-paused .chat-restore-spinner {
 @keyframes chat-bg-step-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
     .chat-bg-step.is-running .chat-bg-step-icon { animation: none; border-style: dashed; }
-    .chat-bg-ring, .history-kind-badge.history-bg-badge { animation: none; }
+    .chat-bg-ring, .chat-bg-ring::before, .chat-bg-ring::after, .chat-bg-ring-core,
+    .history-kind-badge.history-bg-badge { animation: none !important; }
 }
 @media (max-width: 600px) {
     .chat-bg-work { width: calc(100% - 16px); }

@@ -162,7 +162,13 @@ def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, chang
     if status:
         lines.append(f'Live status: {status}')
     ctx = snap.get('context') or {}
-    if ctx.get('supported') and (ctx.get('percent') or 0) >= CONTEXT_HIGH_PERCENT:
+    auto = ctx.get('auto_compact') or {}
+    if ctx.get('supported') and auto.get('enabled') and (ctx.get('percent') or 0) >= CONTEXT_HIGH_PERCENT:
+        cap = f" or {auto['max_tokens'] // 1000}k tokens" if auto.get('max_tokens') else ''
+        lines += ['', f"**Context {round(ctx['percent'])}% full** ({ctx['agent']}). Cuttle auto-compacts it "
+                  f"between turns at {auto['percent']}%{cap}" + (' and earlier at Tasks milestones' if auto.get('milestone') else '')
+                  + '; do not compact it yourself unless it is stuck.']
+    elif ctx.get('supported') and (ctx.get('percent') or 0) >= CONTEXT_HIGH_PERCENT:
         how = (f"`python -m api.chat_cli compact {handle}`" if ctx.get('compact_available')
                else f"`python -m api.chat_cli compact {handle} --mode fresh`")
         lines += ['', f"**Context {round(ctx['percent'])}% full** ({ctx['agent']}). Between its turns "

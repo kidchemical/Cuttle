@@ -3,6 +3,9 @@ from flask import Blueprint, jsonify, request
 from api.http_authz import authenticated_required, owner_required, require_session_actor
 
 agent_harness_bp = Blueprint("agent_harness_api", __name__)
+# Per-chat auto-compact policy rides next to /api/agent-context (api.auto_compact).
+from api.auto_compact.routes import auto_compact_bp  # noqa: E402
+agent_harness_bp.register_blueprint(auto_compact_bp)
 _resolve_path = lambda data: ""
 
 def configure_context_routes(resolve_path, require_actor):

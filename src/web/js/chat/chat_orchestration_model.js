@@ -21,7 +21,32 @@
             goal: String(b.goal || ''),
             missing: !!b.playbook_missing,
             boundAt: Number(b.bound_at) || 0,
+            agents: agentChips(b.agents),
         };
+    }
+
+    const STATUS = { pending: 'Queued', running: 'Running', done: 'Done', failed: 'Failed',
+        cancelled: 'Cancelled', closed: 'Closed' };
+
+    /** The orchestrator's sub-agents as chips: initial or emoji avatar, name, status. */
+    function agentChips(list) {
+        return (Array.isArray(list) ? list : []).filter((a) => a && /^CH-\d+$/.test(String(a.handle || '')))
+            .map((a) => {
+                const name = String(a.name || a.handle);
+                const avatar = String(a.avatar || '').trim();
+                const status = STATUS[a.status] ? a.status : 'done';
+                return {
+                    handle: String(a.handle),
+                    name,
+                    mark: avatar && avatar.toLowerCase() !== 'cuttle' && [...avatar].length <= 2 ? avatar
+                        : (name.replace(/[^\p{L}\p{N}]/gu, '')[0] || '?').toUpperCase(),
+                    status,
+                    statusLabel: STATUS[status],
+                    live: status === 'running' || status === 'pending',
+                    tip: [String(a.handle), [a.agent, a.model, a.effort].filter(Boolean).join(' · '), STATUS[status]]
+                        .filter(Boolean).join(' — '),
+                };
+            });
     }
 
     /** Dialog fields: editing a bound chat keeps its playbook and goal; a new one uses the default. */
@@ -64,7 +89,7 @@
         return { ok: true, kind: Object.keys(body).length ? 'put' : 'none', body };
     }
 
-    const api = { chip, dialogDefaults, submitPlan };
+    const api = { chip, agentChips, dialogDefaults, submitPlan };
     if (typeof module === 'object' && module.exports) module.exports = api;
     root.CuttleChatOrchestrationModel = api;
 })(typeof window !== 'undefined' ? window : globalThis);

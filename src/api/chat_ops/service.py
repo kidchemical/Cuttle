@@ -957,9 +957,27 @@ def context_fill(db, row, *, agent=None):
     status = get_agent_context_status(chat_session_id=str(row['id']), agent_id=aid, cwd=path or None)
     if not status.get('success'):
         return {'agent': aid, 'supported': False, 'error': status.get('error')}
-    return {'agent': aid, 'supported': True, 'percent': status.get('percent'),
-            'used_tokens': status.get('used_tokens'), 'limit_tokens': status.get('limit_tokens'),
-            'compact_available': bool(status.get('compact_available')), 'hint': status.get('hint')}
+    out = {'agent': aid, 'supported': True, 'percent': status.get('percent'),
+           'used_tokens': status.get('used_tokens'), 'limit_tokens': status.get('limit_tokens'),
+           'compact_available': bool(status.get('compact_available')), 'hint': status.get('hint')}
+    auto = _auto_compact_view(row['id'], db)
+    if auto:
+        out['auto_compact'] = auto
+    return out
+
+
+def _auto_compact_view(sid, db):
+    """The chat's auto-compact policy when the feature is on (else None)."""
+    try:
+        from api.auto_compact.service import chat_policy
+        view = chat_policy(sid, db=db)
+    except Exception:
+        return None
+    if not view.get('available'):
+        return None
+    p = view['policy']
+    return {'enabled': p['enabled'], 'percent': p['percent'], 'max_tokens': p['max_tokens'],
+            'milestone': p['milestone'], 'scope': p['scope']}
 
 
 def agent_context(target, actor=None, *, agent=None, db=None):

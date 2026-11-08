@@ -797,3 +797,25 @@ def test_playbook_checkpoint_edit_reaches_running_schedule_and_dialog_defaults(t
     assert "paths_base" not in after["result"] and "failure_counts" not in after["result"]
     notice = "\n".join(chat_ops.changes_section(after["payload"], f"CH-{sid:06d}"))
     assert "wake checkpoints" in notice
+
+
+def test_binding_lists_the_orchestrators_agents_running_first(tmp_path, orch, monkeypatch):
+    """The header chip's popover shows the chat's sub-agents: one row per child
+    chat, running ones first, newest batches before older ones."""
+    from types import SimpleNamespace as NS
+
+    db, owner, other, sid, other_sid = _seed_db(tmp_path)
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    service.bind(sid, "default", "ship it", db=db)
+
+    def child(session, name, status, idx=0):
+        return NS(session_id=session, display_name=name, label=name, avatar="", agent="codex", model="m",
+                  effort="low", status=status, profile_id="", finished_at="", sort_index=idx)
+
+    newest = NS(children=[child(61, "Judge", "done", 0), child(62, "Scout", "running", 1)])
+    older = NS(children=[child(61, "Judge", "failed"), child(60, "Builder", "done")])
+    monkeypatch.setattr("api.subagents.store.list_batches_for_parent", lambda _db, parent: [newest, older])
+    agents = service.get_binding(sid, db=db)["agents"]
+    assert [(a["handle"], a["status"]) for a in agents] == [
+        ("CH-000062", "running"), ("CH-000061", "done"), ("CH-000060", "done")]
+    assert agents[0]["name"] == "Scout" and agents[0]["agent"] == "codex"

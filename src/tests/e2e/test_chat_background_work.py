@@ -1,4 +1,5 @@
 """Chat background-work bubble (chat_background_work.js), isolated in a browser."""
+import os
 import json
 import re
 
@@ -94,6 +95,8 @@ def test_loose_process_count_is_shown_once(browser, static_server):
         # A useful description survives; only the generated count is redundant.
         page.evaluate('() => bw.sync({background:{label:"Building the laptop player",process_count:1}}, "7")')
         expect(page.locator('.chat-bg-label')).to_have_text('Building the laptop player')
+        # Running processes are "working": the busy mark, not a supervision or idle one.
+        expect(page.locator('#chat-background-work')).to_have_attribute('data-state', 'working')
     finally:
         page.close()
 
@@ -122,6 +125,11 @@ def test_supervising_card_opens_the_supervised_chat(browser, static_server):
         expect(card.locator('.chat-bg-meta')).to_have_text('Every 15 min')
         expect(card.locator('.chat-bg-supervising')).to_have_count(0)
         expect(card).to_have_class(re.compile(r'\bis-clickable\b'))
+        # Active supervision is alive (green ping), not a dimmed still ring.
+        expect(card).to_have_attribute('data-state', 'supervising')
+        assert card.locator('.chat-bg-ring').evaluate(
+            "e => getComputedStyle(e, '::before').animationName") == 'chat-bg-ping'
+        card.screenshot(path=os.environ.get('BG_CARD_SHOT_SUPERVISING', '/tmp/bg_supervising.png'))
         card.locator('.chat-bg-open').click()
         card.locator('.chat-bg-meta').click()
         assert page.evaluate('() => window.opened') == ['1821', '1821']
@@ -130,6 +138,10 @@ def test_supervising_card_opens_the_supervised_chat(browser, static_server):
         paused['background']['label'] = 'Supervise CH-001821 · every 15m · last seen waiting_background'
         page.evaluate('live => bw.sync(live, "1822")', paused)
         expect(card.locator('.chat-bg-title')).to_have_text('Supervision paused')
+        expect(card).to_have_attribute('data-state', 'paused')
+        assert card.locator('.chat-bg-ring').evaluate(
+            "e => getComputedStyle(e, '::before').animationName") == 'none'
+        card.screenshot(path=os.environ.get('BG_CARD_SHOT_PAUSED', '/tmp/bg_paused.png'))
         expect(card.locator('.chat-bg-meta')).to_have_text('No check-ins until resumed.')
         expect(card.locator('.chat-bg-label')).to_have_count(0)
         expect(card.locator('.chat-bg-supervising')).to_have_count(0)

@@ -64,14 +64,36 @@
             if (popover) popover.innerHTML = popoverHtml(c);
         }
 
+        // Kept out of the panel body: a hover tip, like the settings pages' (i) buttons.
+        const BRIEF_INFO = 'A changed playbook or goal reaches the agent at its next turn; a turn already '
+            + 'running keeps the old brief. Supervision on this chat follows a playbook switch.';
+
+        function agentsHtml(agents) {
+            if (!agents.length) return '<div class="chat-supervision-empty">No sub-agents yet.</div>';
+            const live = agents.filter((a) => a.live).length;
+            return '<div class="chat-orch-agents" role="list">' + agents.map((a) => '<button type="button"'
+                + ' class="chat-orch-agent is-' + esc(a.status) + '" role="listitem" data-orch-chat="' + esc(a.handle)
+                + '" title="' + esc(a.tip) + '"><span class="chat-orch-agent-mark" aria-hidden="true">' + esc(a.mark)
+                + '</span><span class="chat-orch-agent-name">' + esc(a.name) + '</span>'
+                + '<span class="chat-orch-agent-status" aria-label="' + esc(a.statusLabel) + '"></span></button>').join('')
+                + '</div>' + (live ? '' : '<div class="chat-supervision-hint">None running right now.</div>');
+        }
+
         function popoverHtml(c) {
-            return '<div class="chat-supervision-title">' + esc(c.text) + '</div>'
+            const live = c.agents.filter((a) => a.live).length;
+            return '<div class="chat-supervision-head">'
+                + '<span class="chat-orch-mark" aria-hidden="true"></span>'
+                + '<span class="chat-supervision-title">' + esc(c.playbookName) + '</span>'
+                + '<button type="button" class="cuttle-info" data-tooltip="' + esc(BRIEF_INFO)
+                + '" aria-label="About playbook changes">i</button>'
+                + '<span class="chat-supervision-state is-orchestrating">Orchestrating</span></div>'
                 + (c.missing ? '<div class="chat-supervision-violation">⚠ Playbook “' + esc(c.playbookId)
                     + '” no longer exists; pick another with Edit….</div>' : '')
                 + '<div class="chat-supervision-section">Goal</div>'
-                + '<div class="chat-supervision-meta">' + esc(c.goal || '(none)') + '</div>'
-                + '<div class="chat-supervision-meta">A changed playbook or goal reaches the agent at its next turn;'
-                + ' a turn already running keeps the old brief. Supervision on this chat follows a playbook switch.</div>'
+                + '<div class="chat-orch-goal">' + esc(c.goal || 'No goal set.') + '</div>'
+                + '<div class="chat-supervision-section">Agents' + (c.agents.length ? ' · ' + c.agents.length
+                    + (live ? ', ' + live + ' running' : '') : '') + '</div>'
+                + agentsHtml(c.agents)
                 + '<div class="chat-supervision-actions">'
                 + '<button type="button" data-orch-act="edit">Edit…</button>'
                 + '<button type="button" data-orch-act="playbooks">Open playbooks</button>'
@@ -126,6 +148,11 @@
             if (popover && popover.contains(t)) {
                 const a = t.closest('[data-orch-act]');
                 if (a) act(a.getAttribute('data-orch-act'));
+                const chat = t.closest('[data-orch-chat]');
+                if (chat && host.openChat) {
+                    closePopover();
+                    host.openChat(chat.getAttribute('data-orch-chat').replace(/^CH-0*/, ''));
+                }
                 return;
             }
             closePopover();

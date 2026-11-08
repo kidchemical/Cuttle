@@ -275,7 +275,36 @@ def get_binding(session: Any, *, user_id: Optional[int] = None, db=None) -> Dict
         name, missing = row["playbook_id"], True
     return {"session": _handle(sid), "bound": True, "playbook_id": row["playbook_id"],
             "playbook_name": name, "playbook_missing": missing, "goal": row["goal"],
-            "bound_at": row["bound_at"]}
+            "bound_at": row["bound_at"], "agents": team(sid, db=db)}
+
+
+TEAM_LIMIT = 12
+
+
+def team(session_id: int, *, db=None, limit: int = TEAM_LIMIT) -> List[Dict[str, Any]]:
+    """The orchestrator's sub-agent children, newest first and running ones on top,
+    one row per child chat: what the header chip's popover shows as agent chips."""
+    try:
+        from api.subagents import store as sub_store
+
+        batches = sub_store.list_batches_for_parent(_db(db), int(session_id))
+    except Exception:
+        return []
+    out, seen = [], set()
+    for batch in batches:
+        for child in sorted(batch.children, key=lambda c: c.sort_index):
+            if child.session_id in seen:
+                continue
+            seen.add(child.session_id)
+            out.append({"handle": _handle(child.session_id), "name": child.display_name or child.label,
+                        "avatar": child.avatar, "agent": child.agent, "model": child.model,
+                        "effort": child.effort, "status": child.status,
+                        "profile": child.profile_id, "finished_at": child.finished_at})
+        if len(out) >= limit * 2:
+            break
+    live = ("pending", "running")
+    out.sort(key=lambda r: r["status"] not in live)  # stable: newest-first within each group
+    return out[:limit]
 
 
 def rebind(session: Any, user_id: int, *, playbook_id: Optional[str] = None, goal: Optional[str] = None,

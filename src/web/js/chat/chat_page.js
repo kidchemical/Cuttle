@@ -455,7 +455,7 @@
         doc: document, fetch: (u, o) => fetch(u, o), escapeHtml: escapeHtmlInline, enabledFlags: fetchEnabledExperimentalFlags,
         sendMessage: (text) => sendMessage({ text }), closeMenus: () => closeAllSessionMenus(), confirm: (m) => window.confirm(m),
         navigate: (page) => (window.parent !== window ? window.parent.postMessage({ type: 'cuttle-navigate', page }, '*') : window.location.assign(page)),
-        toast: (m, k) => (window.showToast || function () {})(m, k), viewportWidth: () => window.innerWidth,
+        toast: (m, k) => (window.showToast || function () {})(m, k), viewportWidth: () => window.innerWidth, openChat: (sid) => loadChatSession(sid),
         setInterval: (f, ms) => window.setInterval(f, ms), clearInterval: (t) => window.clearInterval(t),
     });
 
@@ -11410,6 +11410,7 @@
         getProjectPath: () => (currentProject && currentProject.path) ? String(currentProject.path) : '',
         toast: (message, variant) => (window.showToast || function () {})(message, variant),
         notice: { add: (spec, o) => addSystemMessage(spec, o), update: (el, spec, o) => timelineNotices().update(el, spec, o) },
+        autoCompact: window.CuttleChatAutoCompact,
     });
 
     // Transcript navigation: follow-latest scroll, nav rail + pins, jumps,

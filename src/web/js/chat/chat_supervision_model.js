@@ -79,20 +79,76 @@
         return clock ? 'next ' + clock : '';
     }
 
+    // Header chips stay short; the popover carries the detail (who, since when, rules).
+    function shortState(schedule, now, opts) {
+        if (schedule.state === 'paused') return 'Paused';
+        return nextLabel(schedule, now, opts) || 'Active';
+    }
+
     function chipText(schedule, now, opts) {
-        if (schedule.state === 'paused') {
-            return 'Supervising ' + schedule.target + ' · ' + pausedText(schedule, now, opts);
-        }
-        const parts = ['Supervising ' + schedule.target, 'every ' + fmtInterval(schedule.every)];
-        const next = nextLabel(schedule, now, opts);
-        if (next) parts.push(next);
-        return parts.join(' · ');
+        return 'Supervising · ' + shortState(schedule, now, opts);
     }
 
     function badgeText(schedule, now, opts) {
-        const base = 'Supervised by ' + schedule.supervisor;
-        const paused = pausedText(schedule, now, opts);
-        return paused ? base + ' · ' + paused : base;
+        return 'Supervised · ' + shortState(schedule, now, opts);
+    }
+
+    // Target states as people read them (api.chat_ops.service.status).
+    const STATE_TEXT = {
+        busy: 'working', idle: 'idle', idle_with_work: 'idle with open tasks',
+        waiting_background: 'waiting on background work', awaiting_input: 'waiting for input',
+        error: 'stopped on an error', cancelled: 'stopped',
+    };
+    function stateText(state) {
+        const k = String(state || '');
+        return STATE_TEXT[k] || k.replace(/_/g, ' ');
+    }
+
+    /** "Tasks milestones, repeated failures (3×)" from a schedule's checkpoints. */
+    function wakesText(checkpoints) {
+        const c = checkpoints || {};
+        const bits = [];
+        if (c.milestone) bits.push('Tasks milestones');
+        if (c.tests) bits.push(c.tests.when === 'fail' ? 'failed test runs' : c.tests.when === 'any' ? 'test runs' : 'passing test runs');
+        if (c.repeat_failures) bits.push('repeated failures (' + (c.repeat_failures.n || 3) + '×)');
+        if (c.watched_paths) bits.push('watched files');
+        return bits.join(', ');
+    }
+
+    function pinText(s) {
+        if (!s.agent) return 'this chat’s agent';
+        return ['/' + s.agent, s.model, s.effort].filter(Boolean).join(' · ');
+    }
+
+    /**
+     * The popover's status line and facts, without repeating each other:
+     * the header says who, the status line says when, the facts say how.
+     */
+    function details(s, now, opts, side) {
+        const paused = s.state === 'paused';
+        const since = fmtWhen(s.paused_at, now, opts);
+        const until = fmtWhen(s.paused_until, now, opts);
+        const next = nextLabel(s, now, opts);
+        const status = paused
+            ? (since ? 'Since ' + since : 'Paused') + (until ? ' · resumes ' + until : ' · until you resume it')
+            : (next === 'checking…' ? 'Checking now' : (next ? 'Next check ' + next.replace(/^next /, '') : 'Active'))
+                + ' · every ' + fmtInterval(s.every);
+        const hint = paused
+            ? (side === 'badge' ? 'Nothing checks this chat or wakes its supervisor until then.'
+                : 'No check-ins or wake-ups until then.')
+            : '';
+        const facts = [];
+        if (side === 'chip') facts.push({ label: 'Check-ins', value: pinText(s) });
+        const wakes = wakesText(s.checkpoints);
+        if (wakes) facts.push({ label: 'Also wakes on', value: wakes });
+        const rules = rulesText(s);
+        if (rules) facts.push({ label: 'Branch rules', value: rules });
+        const seen = s.last_seen || {};
+        if (side === 'chip' && seen.state) {
+            const tasks = tasksSummary(seen);
+            facts.push({ label: 'Last seen', value: stateText(seen.state) + (tasks ? ' · ' + tasks : '') });
+        }
+        return { status, hint, facts };
     }
 
     const OUTCOME_TEXT = {
@@ -112,10 +168,10 @@
                 : d.reason === 'waiting_background' ? 'waiting on background work' : 'no change');
         } else if (check.outcome === 'stalled') {
             text = 'no progress' + (d.stalled_min ? ' for ' + d.stalled_min + ' min' : '') + ', woke supervisor';
-            if (d.state) text += ' (' + d.state + ')';
+            if (d.state) text += ' (' + stateText(d.state) + ')';
         } else {
             text = OUTCOME_TEXT[check.outcome] || String(check.outcome || 'checked');
-            if (check.outcome !== 'error' && d.state) text += ' (' + d.state + ')';
+            if (check.outcome !== 'error' && d.state) text += ' (' + stateText(d.state) + ')';
             if (d.already_waiting) text += ', previous check-in still pending';
         }
         return {
@@ -154,6 +210,8 @@
             tasks: tasksSummary(s.last_seen),
             violations: s.violations || [],
             history: (s.history || []).map((c) => historyRow(c, opts)),
+            title: 'Supervising ' + s.target,
+            details: details(s, now, opts, 'chip'),
         }));
         const badges = (data.supervised_by || []).map((s) => ({
             id: s.id,
@@ -163,6 +221,8 @@
             supervisor: s.supervisor,
             next: nextLabel(s, now, opts),
             violations: s.violations || [],
+            title: 'Supervised by ' + s.supervisor,
+            details: details(s, now, opts, 'badge'),
         }));
         const queued = (data.queued || []).map((q) => ({
             id: q.id,
@@ -413,7 +473,7 @@
     }
 
     const api = {
-        chatOpBadge,
+        chatOpBadge, stateText, wakesText,
         SCHEMA_VERSION, INTERVALS, PAUSE_CHOICES, fmtInterval, fmtClock, fmtWhen, nextLabel,
         chipText, badgeText, pausedText, pauseBody,
         historyRow, view, isSupervised, supervisorOf, dialogDefaults, supervisePayload, pinChoices, scheduleById,

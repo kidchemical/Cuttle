@@ -178,3 +178,13 @@ def test_compact_route_dispatches_mode(monkeypatch):
     assert post({}).get_json()["method"] == "native"
     assert post({"mode": "fresh"}).get_json()["method"] == "fresh"
     assert post({"mode": "bogus"}).status_code == 400
+
+
+def test_checkin_defers_to_auto_compact_when_it_covers_the_target():
+    snap = {**_snap("idle"), "context": {"agent": "claude", "supported": True, "percent": 81,
+                                          "compact_available": True,
+                                          "auto_compact": {"enabled": True, "percent": 60, "max_tokens": 250_000,
+                                                           "milestone": True, "scope": "managed"}}}
+    text = worker.checkin_text(_cfg(), snap, [])
+    assert "Context 81% full" in text and "Cuttle auto-compacts it between turns at 60% or 250k tokens" in text
+    assert "earlier at Tasks milestones" in text and "chat_cli compact" not in text

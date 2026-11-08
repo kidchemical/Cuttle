@@ -161,7 +161,11 @@
         const starts = waits.map((w) => epoch(w.started_at)).concat([epoch(bg.started_at)])
             .concat(units.map((w) => epoch(w.started_at))).filter((t) => t != null);
         const subagentWaitsOnly = allWaits.length && !waits.length;
+        // What the status mark shows: something running now, a schedule
+        // watching on its own, a paused schedule, or nothing live (results only).
+        const state = working ? 'working' : schedules.length ? (schedulesPaused ? 'paused' : 'supervising') : 'idle';
         return {
+            state,
             title: waits.length ? 'Waiting in background' : bound.length ? 'Job running'
                 : units.length ? 'Background job running'
                 : agents.length ? (agentsLive ? 'Sub-agents working' : 'Sub-agents')
@@ -325,8 +329,13 @@
                 if (text != null) n.textContent = text;
                 return n;
             };
+            // Status mark (CSS draws it per data-state): a pinging dot while work
+            // runs, a slower green ping while supervision watches, an amber pause
+            // glyph when paused, a still ring when nothing is live.
             const ring = mk('span', 'chat-bg-ring');
             ring.setAttribute('aria-hidden', 'true');
+            ring.append(mk('span', 'chat-bg-ring-core'));
+            node.setAttribute('data-state', p.state);
             const body = mk('div', 'chat-bg-body');
             const title = mk('div', 'chat-bg-title', p.title);
             if (p.started != null) title.append(mk('span', 'chat-bg-elapsed', elapsed(Date.now() / 1000 - p.started)));

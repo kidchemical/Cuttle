@@ -106,10 +106,10 @@ body.light-mode .chat-supervision-paused { color: #8a5200; }
     align-items: center;
 }
 .chat-supervision-pause-menu .chat-supervision-meta { margin: 0; flex: 1 0 100%; }
-.chat-supervision-popover .is-primary { background: var(--accent-color, #667eea); border-color: transparent; color: #fff; }
+.chat-supervision-popover button.is-primary:not(.cuttle-info) { background: var(--accent-color, #667eea); border-color: transparent; color: #fff; }
 
 .chat-supervision-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
-.chat-supervision-popover button,
+.chat-supervision-popover button:not(.cuttle-info),
 .chat-supervision-dialog .chat-supervision-actions button {
     font: inherit;
     font-size: 12px;
@@ -120,9 +120,9 @@ body.light-mode .chat-supervision-paused { color: #8a5200; }
     color: inherit;
     cursor: pointer;
 }
-.chat-supervision-popover button:hover,
+.chat-supervision-popover button:not(.cuttle-info):hover,
 .chat-supervision-dialog .chat-supervision-actions button:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
-.chat-supervision-popover .is-danger,
+.chat-supervision-popover button.is-danger:not(.cuttle-info),
 .chat-supervision-dialog .is-danger { color: #ff7a7a; }
 .chat-supervision-queue .is-danger { padding: 1px 6px; margin-left: 4px; }
 .chat-supervision-dialog .is-primary { background: var(--accent-color, #667eea); border-color: transparent; color: #fff; }
@@ -194,6 +194,123 @@ body.light-mode .chat-supervision-paused { color: #8a5200; }
 @media (pointer: coarse) {
     .chat-supervision-dialog :is(input:not([type=checkbox]), textarea) { font-size: 16px; }
 }
+
+/* Status dot: green ping while a schedule is active, amber pause bars when paused.
+   Same marks as the background card (chat_page.css .chat-bg-ring). */
+.chat-supervision-pill { display: inline-flex; align-items: center; gap: 6px; }
+.chat-supervision-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chat-supervision-pill.is-supervisor.is-active,
+.chat-supervision-pill.is-supervised.is-active { border-color: color-mix(in srgb, #3fbf7f 60%, transparent); }
+.chat-supervision-pill.is-active:not(.is-warn) { color: #7fe0ad; }
+body.light-mode .chat-supervision-pill.is-active:not(.is-warn) { color: #1d7a4b; }
+.chat-supervision-dot {
+    --sup-mark: #3fbf7f;
+    position: relative;
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--sup-mark);
+}
+.chat-supervision-dot::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 1.5px solid var(--sup-mark);
+    opacity: 0;
+    animation: chat-supervision-ping 3.2s ease-out infinite;
+}
+.is-paused > .chat-supervision-dot,
+.chat-supervision-dot.is-paused {
+    --sup-mark: #e0a63a;
+    border-radius: 0;
+    width: 8px;
+    height: 9px;
+    background: linear-gradient(90deg, var(--sup-mark) 0 35%, transparent 35% 65%, var(--sup-mark) 65% 100%);
+}
+.is-paused > .chat-supervision-dot::after,
+.chat-supervision-dot.is-paused::after { display: none; }
+.is-warn > .chat-supervision-dot { --sup-mark: #ffb44d; }
+@keyframes chat-supervision-ping { 0% { transform: scale(0.6); opacity: 0.9; } 100% { transform: scale(2.4); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .chat-supervision-dot::after { animation: none; } }
+
+/* Popover: header (who + state), one status line (when), facts (how). */
+.chat-supervision-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.chat-supervision-head .chat-supervision-title { margin: 0; flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.chat-supervision-head .cuttle-info { flex: 0 0 auto; }
+.chat-supervision-state {
+    margin-left: auto;
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 650;
+    padding: 1px 8px;
+    border-radius: 999px;
+    letter-spacing: 0.02em;
+}
+.chat-supervision-state.is-active { color: #7fe0ad; background: rgba(63, 191, 127, 0.14); border: 1px solid rgba(63, 191, 127, 0.45); }
+.chat-supervision-state.is-paused { color: #ffd27a; background: rgba(255, 170, 40, 0.14); border: 1px solid rgba(255, 190, 80, 0.45); }
+body.light-mode .chat-supervision-state.is-active { color: #1d7a4b; }
+body.light-mode .chat-supervision-state.is-paused { color: #8a5200; }
+.chat-supervision-status {
+    padding: 7px 10px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    font-weight: 600;
+    border-left: 3px solid #3fbf7f;
+    background: rgba(63, 191, 127, 0.08);
+}
+.chat-supervision-status.is-paused { border-left-color: #e0a63a; background: rgba(255, 170, 40, 0.1); }
+.chat-supervision-hint { display: block; font-weight: 400; color: var(--text-secondary, #9aa3b2); margin-top: 2px; }
+.chat-supervision-facts {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 4px 12px;
+    margin: 10px 0 0;
+    font-size: 12px;
+}
+.chat-supervision-facts dt { color: var(--text-secondary, #9aa3b2); }
+.chat-supervision-facts dd { margin: 0; overflow-wrap: anywhere; }
+
+/* Orchestration popover (chat_orchestration.js): playbook header, goal, agent chips. */
+.chat-orch-mark { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 2px; transform: rotate(45deg); background: #3fb8a0; }
+.chat-supervision-state.is-orchestrating { color: #7fdcc8; background: rgba(63, 184, 160, 0.14); border: 1px solid rgba(63, 184, 160, 0.45); }
+body.light-mode .chat-supervision-state.is-orchestrating { color: #17725f; }
+.chat-orch-goal { font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 7.5em; overflow: auto; }
+.chat-orch-agents { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-supervision-popover .chat-orch-agent {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 2px 9px 2px 2px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    font-size: 12px;
+}
+.chat-orch-agent-mark {
+    flex: 0 0 20px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 650;
+    background: color-mix(in srgb, #3fb8a0 20%, transparent);
+}
+.chat-orch-agent-name { min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-orch-agent-status { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--text-secondary, #9aa3b2); }
+.chat-orch-agent.is-running .chat-orch-agent-status,
+.chat-orch-agent.is-pending .chat-orch-agent-status { background: #3fbf7f; animation: chat-supervision-blink 1.6s ease-in-out infinite; }
+.chat-orch-agent.is-running { border-color: color-mix(in srgb, #3fbf7f 55%, transparent); }
+.chat-orch-agent.is-done .chat-orch-agent-status { background: color-mix(in srgb, #3fbf7f 60%, transparent); }
+.chat-orch-agent.is-failed .chat-orch-agent-status { background: #ff7a7a; }
+.chat-orch-agent.is-cancelled, .chat-orch-agent.is-closed { opacity: 0.7; }
+@keyframes chat-supervision-blink { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .chat-orch-agent-status { animation: none !important; } }
+.chat-supervision-popover > .chat-supervision-hint { margin-top: 6px; font-size: 12px; }
 
 /* A row Cuttle sent into the chat (supervision check-in, relayed send, notice):
    the header badge names it, and the bubble drops the user's accent fill so it

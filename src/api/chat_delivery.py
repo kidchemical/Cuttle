@@ -172,14 +172,15 @@ def is_turn_cancelled(session_id) -> bool:
         return any(k in _cancel_sticky for k in keys)
 
 
-def end(session_id, turn: Optional[int] = None) -> None:
+def end(session_id, turn: Optional[int] = None, *, publish: bool = True) -> None:
     """Release the chat's busy slot (token-guarded).
 
     Every lane (stream, sync, pipeline) ends a turn here, after its reply is
     saved, so this is where ``turn_end`` is published (``api.session_events``):
     supervision wakes early when the chat stopped on a question, an error or
     open work. Published only by the call that actually released the slot, so
-    the belt-and-suspenders second ``end`` of a turn is silent."""
+    the belt-and-suspenders second ``end`` of a turn is silent. A holder that
+    ran no turn (an auto-compact, ``api.auto_compact``) passes ``publish=False``."""
     keys = _session_keys(session_id)
     if not keys:
         return
@@ -193,11 +194,11 @@ def end(session_id, turn: Optional[int] = None) -> None:
                 continue  # lock belongs to a newer turn
             _busy.pop(k, None)
             released = True
-    if released:
+    if released and publish:
         try:
-            from api.session_events import publish
+            from api.session_events import publish as publish_event
 
-            publish("turn_end", _bare_session_id(str(session_id)))
+            publish_event("turn_end", _bare_session_id(str(session_id)))
         except Exception:
             pass
     try:

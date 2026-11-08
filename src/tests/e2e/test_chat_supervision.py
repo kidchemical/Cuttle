@@ -65,6 +65,7 @@ console.log(JSON.stringify({
     instructions: 'Be strict', forbidden_branches: ['main'], model_tiers: {worker: ['cursor auto']},
     checkpoints: {tests: {when: 'fail', do: ['supervisor:rev']}}}}),
   found: M.scheduleById({supervising: [{id: 'a'}], supervised_by: [{id: 'b', target: 'CH-000002'}]}, 'b'),
+  wakes: M.wakesText({milestone: {do: ['wake']}, repeat_failures: {n: 4}}),
   opBadges: [
     {origin: 'chat_ops', chat_op_kind: 'checkin', parent_label: 'Supervision check-in'},
     {origin: 'chat_ops', parent_label: 'Supervision check-in'},
@@ -94,21 +95,29 @@ def test_model_view_rows_and_payload():
         ("checkin", "Supervision check-in"), ("checkin", "Supervision check-in"),
         ("send", "Sent by CH-000007"), ("notice", "Background work finished"), None, None]
     chip = r["chip"]
-    assert chip["text"].startswith("Supervising CH-000002 · every 15m · next ")
+    # Header chips stay short; who / since when / rules live in the popover, each said once.
+    assert chip["text"].startswith("Supervising · next ")
+    assert chip["title"] == "Supervising CH-000002"
+    d = chip["details"]
+    assert d["status"].startswith("Next check ") and d["status"].endswith(" · every 15m") and d["hint"] == ""
+    assert d["facts"] == [{"label": "Check-ins", "value": "/cursor"},
+                          {"label": "Branch rules", "value": "stay on dev/x · never main"},
+                          {"label": "Last seen", "value": "working · 2/5 tasks done"}]
     assert chip["rules"] == "stay on dev/x · never main" and chip["tasks"] == "2/5 tasks done"
     assert [h["text"] for h in chip["history"]] == [
         "skipped, busy", "skipped, no change",
-        "woke supervisor (idle_with_work), previous check-in still pending",
-        "rule broken, woke supervisor (busy)"]
+        "woke supervisor (idle with open tasks), previous check-in still pending",
+        "rule broken, woke supervisor (working)"]
     assert [h["tone"] for h in chip["history"]] == ["muted", "muted", "active", "warn"]
     assert r["badge"]["paused"] is True
-    # A paused schedule says since when, right on the badge — never a dimmed chip alone.
-    assert r["badge"]["text"].startswith("Supervised by CH-000001 · Paused since ")
-    assert r["badge"]["text"].endswith(" · no auto-resume")
-    assert r["badge"]["pausedText"] == r["badge"]["text"].split(" · ", 1)[1]
+    assert r["badge"]["text"] == "Supervised · Paused" and r["badge"]["title"] == "Supervised by CH-000001"
+    b = r["badge"]["details"]
+    assert b["status"].startswith("Since ") and b["status"].endswith(" · until you resume it")
+    assert b["hint"].startswith("Nothing checks this chat")
     assert r["badge"]["next"] == "paused"
-    assert r["pausedChip"]["text"].startswith("Supervising CH-000002 · Paused since ")
-    assert " · resumes " in r["pausedChip"]["text"]
+    assert r["pausedChip"]["text"] == "Supervising · Paused"
+    assert " · resumes " in r["pausedChip"]["details"]["status"]
+    assert r["wakes"] == "Tasks milestones, repeated failures (4×)"
     # Pausing offers timed options first and an indefinite one last.
     assert r["pauseChoices"] == ["1h", "4h", "tomorrow", "indefinite"]
     assert r["pins"] == {"models": [{"id": "a", "label": "a"}, {"id": "b", "label": "B"}], "efforts": ["x", "y"]}
@@ -218,9 +227,10 @@ def test_pills_hidden_until_flag_then_popover_pause_and_queue_cancel(browser, st
 
         _toggle_flag(frame, world, True)
         chip = slot.locator("[data-sup-open=chip]")
-        expect(chip).to_contain_text("Supervising CH-001548 · every 15m · next ")
+        expect(chip).to_contain_text("Supervising · next ")
+        assert "is-active" in chip.get_attribute("class")
         badge = slot.locator("[data-sup-open=badge]")
-        expect(badge).to_contain_text("Supervised by CH-001581")
+        expect(badge).to_contain_text("Supervised · ")
         assert "is-warn" in badge.get_attribute("class")
         expect(slot.locator("[data-sup-open=queued]")).to_contain_text("1 queued")
 
@@ -228,13 +238,21 @@ def test_pills_hidden_until_flag_then_popover_pause_and_queue_cancel(browser, st
         pop = frame.locator(".chat-supervision-popover")
         expect(pop.locator(".chat-supervision-history li")).to_have_count(2)
         expect(pop.locator(".chat-supervision-history li").first).to_contain_text("skipped, busy")
+        expect(pop.locator(".chat-supervision-head")).to_contain_text("Supervising CH-001548")
+        expect(pop.locator(".chat-supervision-state")).to_have_text("Active")
+        expect(pop.locator(".chat-supervision-status")).to_contain_text("every 15m")
+        expect(pop.locator(".chat-supervision-head .cuttle-info[data-tooltip]")).to_have_count(1)
         page.screenshot(path=os.environ.get("SUPERVISION_SHOT", "/tmp/supervision_popover.png"))
         pop.locator("[data-sup-act=pause-menu]").click()
         expect(pop.locator(".chat-supervision-pause-menu")).to_contain_text("Pause for how long?")
         pop.locator("[data-sup-pause='1h']").click()
         frame.locator("[data-sup-open=chip].is-paused").wait_for()
         assert world.posts[-1] == ("/api/chat-ops/operations/sup1/pause", {"hours": 1})
-        expect(frame.locator("[data-sup-open=chip]")).to_contain_text("Paused since")
+        expect(frame.locator("[data-sup-open=chip]")).to_have_text("Supervising · Paused")
+        paused = frame.locator(".chat-supervision-popover")  # still open: the pause re-rendered it
+        expect(paused.locator(".chat-supervision-state")).to_have_text("Paused")
+        expect(paused.locator(".chat-supervision-status")).to_contain_text("No check-ins or wake-ups until then.")
+        page.screenshot(path=os.environ.get("SUPERVISION_PAUSED_SHOT", "/tmp/supervision_paused.png"))
 
         badge.click()
         expect(frame.locator(".chat-supervision-popover")).to_contain_text("on forbidden branch main")

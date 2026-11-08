@@ -347,6 +347,16 @@ def run_child_turn(
             pass
         return {"success": False, "cancelled": True, "response": ""}
 
+    # Auto-compact the child's session before this turn when its policy says so
+    # (api.auto_compact). Here, not after the last turn ended: this process may
+    # be the parent's CLI, where no Flask turn-end listener runs. Never raises.
+    try:
+        from api.auto_compact.service import preflight
+
+        preflight(child.session_id, agent=str(spec.agent or ""), cwd=project_path, db=db)
+    except Exception:
+        pass
+
     # The child's reply row + inspector from its first frame (api.chat_turn_row):
     # the child pane's live bubble gets its id and query-log link at once, and
     # the kernel tracks this run under the same query id.
