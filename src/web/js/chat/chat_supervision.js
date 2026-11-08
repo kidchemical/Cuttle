@@ -278,40 +278,49 @@
             const list = ((agents && agents.agents) || []).filter((a) => a && a.id && a.sticky !== false);
             const wrap = doc.createElement('div');
             wrap.className = 'chat-supervision-dialog-backdrop';
-            wrap.innerHTML = '<form class="chat-supervision-dialog" role="dialog" aria-label="'
+            wrap.innerHTML = '<form class="auth-modal chat-supervision-dialog" role="dialog" aria-modal="true" aria-label="'
                 + (editing ? 'Edit supervision' : 'Supervise this chat') + '">'
+                + '<header class="chat-supervision-dialog-header"><button type="button" class="auth-modal-close" data-sup-dismiss aria-label="Close">×</button>'
                 + '<h3>' + (editing ? 'Edit supervision of ' : 'Supervise ') + esc(d.target) + '</h3>'
                 + (editing ? '<p class="chat-supervision-meta">Changes apply to the running schedule (a paused one stays'
                     + ' paused). The supervisor gets one check-in saying what changed.</p>'
                     : '<p class="chat-supervision-meta">Creates a supervisor chat. The host checks ' + esc(d.target)
                 + ' on the interval and wakes the supervisor only when this chat stops, errors, needs input,'
-                + ' makes progress, or breaks a branch rule.</p>')
+                + ' makes progress, or breaks a branch rule.</p>') + '</header><div class="chat-supervision-dialog-body"><div class="chat-supervision-fields">'
                 + '<label>Supervisor agent<select name="agent">' + list.map((a) => '<option value="' + esc(a.id) + '"'
                     + (a.id === (d.agent || 'cursor') ? ' selected' : '') + '>' + esc(a.label || a.id) + '</option>').join('')
                 + '</select></label>'
                 + '<label>Model<select name="model"></select></label>'
                 + '<label>Effort<select name="effort"></select></label>'
                 + '<label>Check every<select name="every">' + M.INTERVALS.map((s) => '<option value="' + s + '"'
-                    + (s === d.every ? ' selected' : '') + '>' + M.fmtInterval(s) + '</option>').join('') + '</select></label>'
+                    + (s === d.every ? ' selected' : '') + '>' + M.fmtInterval(s) + '</option>').join('') + '</select></label></div>'
                 + (d.tasks.length ? '<fieldset class="chat-supervision-tasks"><legend>Tasks lists to follow</legend>'
-                    + d.tasks.map((t) => '<label class="chat-supervision-task"><input type="checkbox" name="taskIds" value="'
-                        + esc(t.id) + '"' + (t.selected ? ' checked' : '') + '> ' + esc(t.title)
-                        + ' <span class="chat-supervision-meta">' + t.done + '/' + t.total
-                        + (t.scope === 'project' ? ' · project list' : '') + '</span></label>').join('')
+                    + d.tasks.map((t) => '<label class="chat-supervision-task"><span>' + esc(t.title)
+                        + ' <small>' + t.done + '/' + t.total
+                        + (t.scope === 'project' ? ' · project list' : '') + '</small></span>'
+                        + '<input type="checkbox" role="switch" name="taskIds" value="'
+                        + esc(t.id) + '"' + (t.selected ? ' checked' : '') + '></label>').join('')
                     + '<p class="chat-supervision-meta">Lists this chat creates later are followed too.</p></fieldset>' : '')
                 + '<label>Instructions<textarea name="instructions" rows="4">' + esc(d.instructions) + '</textarea></label>'
+                + '<details class="chat-supervision-advanced"><summary>Branch rules and model guidance</summary>'
                 + '<label>Must stay on branch<input name="requiredBranch" value="' + esc(d.requiredBranch)
                 + '" placeholder="any"></label>'
                 + '<label>Never touch branches<input name="forbidden" value="' + esc(d.forbidden) + '"></label>'
-                + '<label>Worker models (optional)<input name="worker" placeholder="e.g. cursor auto, codex terra medium"></label>'
-                + '<label>Expert models (optional)<input name="expert" placeholder="e.g. claude opus"></label>'
-                + '<div class="chat-supervision-errors" role="alert"></div>'
+                + '<label>Worker models (optional)<input name="worker" value="' + esc(d.worker) + '" placeholder="e.g. cursor auto, codex terra medium"></label>'
+                + '<label>Expert models (optional)<input name="expert" value="' + esc(d.expert) + '" placeholder="e.g. claude opus"></label></details></div>'
+                + '<footer class="chat-supervision-dialog-footer"><div class="chat-supervision-errors" role="alert"></div>'
                 + '<div class="chat-supervision-actions"><button type="button" data-sup-dismiss>Cancel</button>'
                 + '<button type="submit" class="is-primary">' + (editing ? 'Save changes' : 'Start supervising')
-                + '</button></div></form>';
+                + '</button></div></footer></form>';
+            const returnFocus = doc.activeElement;
             doc.body.appendChild(wrap);
             const form = wrap.querySelector('form');
-            const close = () => wrap.remove();
+            const combos = [];
+            const close = () => {
+                combos.forEach((c) => c.destroy());
+                wrap.remove();
+                if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
+            };
             const rowFor = (id) => list.find((a) => a.id === id) || null;
             const fillSelect = (sel, items, keep) => {
                 sel.innerHTML = '<option value="">CLI default</option>' + items.map((it) => '<option value="'
@@ -331,6 +340,24 @@
             form.model.addEventListener('change', fillEffort);
             fillPins();
             if (d.effort && form.agent.value === d.agent) { form.effort.value = d.effort; }
+            form.querySelectorAll('select').forEach((select) => {
+                select.classList.add('chip-config-select');
+                if (root.CuttleSearchableSelect) combos.push(root.CuttleSearchableSelect.enhance(select, {
+                    label: select.closest('label').firstChild.textContent,
+                    floating: true, searchable: select.name === 'agent' || select.name === 'model',
+                }));
+            });
+            wrap.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Escape' && !wrap.querySelector('.cuttle-combo.is-open')) {
+                    ev.preventDefault(); ev.stopPropagation(); close();
+                }
+                if (ev.key !== 'Tab') return;
+                const focusable = Array.from(form.querySelectorAll('button, input, textarea, select, summary'))
+                    .filter((el) => !el.disabled && el.getClientRects().length);
+                const first = focusable[0], last = focusable[focusable.length - 1];
+                if (ev.shiftKey && doc.activeElement === first) { ev.preventDefault(); last.focus(); }
+                else if (!ev.shiftKey && doc.activeElement === last) { ev.preventDefault(); first.focus(); }
+            });
             wrap.addEventListener('click', (ev) => {
                 if (ev.target === wrap || (ev.target.closest && ev.target.closest('[data-sup-dismiss]'))) close();
             });
@@ -363,7 +390,7 @@
                     submit.disabled = false;
                 }
             });
-            const first = form.querySelector('select');
+            const first = form.querySelector('.cuttle-combo-trigger') || form.querySelector('select');
             if (first) first.focus();
         }
 

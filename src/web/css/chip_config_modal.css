@@ -31,7 +31,7 @@
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: #a0aec0;
+    color: var(--popup-muted);
 }
 
 .chip-config-select {
@@ -39,9 +39,9 @@
     box-sizing: border-box;
     padding: 11px 34px 11px 12px;
     border-radius: 10px;
-    background-color: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    color: #e2e8f0;
+    background-color: var(--popup-field);
+    border: 1px solid var(--popup-border);
+    color: var(--popup-text);
     font-size: 14px;
     font-family: inherit;
     cursor: pointer;
@@ -54,8 +54,8 @@
 
 .chip-config-select:focus {
     outline: none;
-    border-color: rgba(139, 92, 246, 0.6);
-    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+    border-color: var(--popup-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--popup-accent) 25%, transparent);
 }
 
 .chip-config-select:disabled {
@@ -64,8 +64,8 @@
 }
 
 .chip-config-select option {
-    background: #1e1e2e;
-    color: #e2e8f0;
+    background: var(--popup-bg);
+    color: var(--popup-text);
 }
 
 .chip-config-field .cuttle-combo {
@@ -84,7 +84,7 @@
     align-items: center;
     gap: 8px;
     font-size: 13px;
-    color: #cbd5e0;
+    color: var(--popup-text);
     cursor: pointer;
 }
 
@@ -95,7 +95,7 @@
 .orch-chip-summary {
     margin: 0;
     font-size: 12px;
-    color: #a0aec0;
+    color: var(--popup-muted);
 }
 
 .orch-chip-summary:empty {
@@ -107,7 +107,7 @@
     padding: 0;
     border: 0;
     background: none;
-    color: #a78bfa;
+    color: var(--popup-accent);
     font-size: 13px;
     cursor: pointer;
 }

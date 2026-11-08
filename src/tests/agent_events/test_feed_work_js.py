@@ -101,9 +101,9 @@ def test_models():
 
     p = r["plan"]
     assert p["title"] == "Waiting in background" and p["label"] == "Waiting on: fg12"
-    assert p["meta"] == ["3 processes (1 detached)", "Supervise CH-1 · every 15m"]
+    assert p["meta"] == ["3 processes (1 detached)", "Supervise CH-1 · Every 15 min"]
     assert p["stop"] == "chat" and p["started"] == 50 and p["feed"] is True and p["working"] is True
-    assert r["planProcs"]["title"] == "Detached processes running" and r["planProcs"]["stop"] == "processes"
+    assert r["planProcs"]["title"] == "2 detached processes running" and r["planProcs"]["stop"] == "processes"
     assert r["planSched"]["working"] is False and r["planSched"]["stop"] is None
     assert r["planNone"] == [None, None]
     # The shared progress model decides determinate vs indeterminate for every bar.

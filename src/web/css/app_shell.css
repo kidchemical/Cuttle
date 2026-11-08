@@ -3173,7 +3173,7 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
     width: calc(100vw - 32px);
     max-width: 600px;
     max-height: min(760px, calc(100vh - 48px));
-    max-height: min(760px, calc(100dvh - 48px));
+    max-height: min(760px, 100%);
     overflow: hidden;
     padding: 30px 28px 24px;
 }
@@ -3184,7 +3184,7 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
 }
 
 .cuttle-whats-new-icon {
-    color: #c4b5fd;
+    color: var(--popup-accent);
 }
 
 .cuttle-whats-new-modal .auth-modal-title {
@@ -3196,9 +3196,9 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
     text-transform: none;
     letter-spacing: 0.02em;
     font-variant-numeric: tabular-nums;
-    background: rgba(139, 92, 246, 0.16);
-    border-color: rgba(139, 92, 246, 0.42);
-    color: #e9d5ff;
+    background: color-mix(in srgb, var(--popup-accent) 16%, transparent);
+    border-color: color-mix(in srgb, var(--popup-accent) 42%, transparent);
+    color: var(--popup-accent);
 }
 
 .cuttle-whats-new-version:empty {
@@ -3212,10 +3212,10 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: 16px 18px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--popup-border);
     border-radius: 12px;
-    background: rgba(0, 0, 0, 0.22);
-    color: #cbd5e1;
+    background: var(--popup-field);
+    color: var(--popup-text);
     font-size: 0.875rem;
     line-height: 1.6;
     text-align: left;
@@ -3227,7 +3227,7 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
 }
 
 .cuttle-whats-new-notes:focus-visible {
-    border-color: rgba(167, 139, 250, 0.6);
+    border-color: color-mix(in srgb, var(--popup-accent) 60%, transparent);
 }
 
 .cuttle-whats-new-notes.is-plain {
@@ -3287,7 +3287,7 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
 .cuttle-whats-new-notes h5,
 .cuttle-whats-new-notes h6 {
     margin: 22px 0 10px;
-    color: #f1f5f9;
+    color: var(--popup-text);
     font-weight: 600;
     line-height: 1.3;
 }
@@ -3302,8 +3302,8 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
    groups, like the eyebrow labels elsewhere in Cuttle. */
 .cuttle-whats-new-notes h2 {
     padding-bottom: 6px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    color: #c4b5fd;
+    border-bottom: 1px solid var(--popup-border);
+    color: var(--popup-accent);
     font-size: 0.74rem;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -3322,55 +3322,55 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
 }
 
 .cuttle-whats-new-notes li::marker {
-    color: #a78bfa;
+    color: var(--popup-accent);
 }
 
 .cuttle-whats-new-notes strong {
-    color: #f1f5f9;
+    color: var(--popup-text);
     font-weight: 600;
 }
 
 .cuttle-whats-new-notes code {
     padding: 1px 5px;
     border-radius: 5px;
-    background: rgba(139, 92, 246, 0.14);
-    color: #e9d5ff;
+    background: color-mix(in srgb, var(--popup-accent) 14%, transparent);
+    color: var(--popup-accent);
     font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Consolas, monospace;
     font-size: 0.8em;
     overflow-wrap: anywhere;
 }
 
 .cuttle-whats-new-notes a {
-    color: #c4b5fd;
+    color: var(--popup-accent);
     text-decoration: underline;
-    text-decoration-color: rgba(196, 181, 253, 0.45);
+    text-decoration-color: color-mix(in srgb, var(--popup-accent) 45%, transparent);
     text-underline-offset: 2px;
 }
 
 .cuttle-whats-new-notes a:hover,
 .cuttle-whats-new-notes a:focus-visible {
-    color: #e9d5ff;
+    color: var(--popup-accent);
     text-decoration-color: currentColor;
 }
 
 .cuttle-whats-new-notes hr {
     margin: 18px 0;
     border: 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    border-top: 1px solid var(--popup-border);
 }
 
 .cuttle-whats-new-notes blockquote {
     margin: 0 0 12px;
     padding: 8px 12px;
-    border-left: 3px solid rgba(139, 92, 246, 0.6);
+    border-left: 3px solid color-mix(in srgb, var(--popup-accent) 60%, transparent);
     border-radius: 0 8px 8px 0;
-    background: rgba(139, 92, 246, 0.08);
+    background: color-mix(in srgb, var(--popup-accent) 8%, transparent);
 }
 
 .cuttle-whats-new-notes .message-callout-label {
     display: block;
     margin-bottom: 2px;
-    color: #fde68a;
+    color: var(--popup-accent);
     font-size: 0.72rem;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -3380,7 +3380,7 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
 .cuttle-whats-new-notes .message-table-wrap {
     margin: 0 0 14px;
     overflow-x: auto;
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    border: 1px solid var(--popup-border);
     border-radius: 10px;
 }
 
@@ -3396,12 +3396,12 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
     padding: 8px 12px;
     text-align: left;
     vertical-align: top;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid var(--popup-border);
 }
 
 .cuttle-whats-new-notes thead th {
-    background: rgba(139, 92, 246, 0.12);
-    color: #e2e8f0;
+    background: color-mix(in srgb, var(--popup-accent) 12%, transparent);
+    color: var(--popup-text);
     font-weight: 600;
     white-space: nowrap;
 }

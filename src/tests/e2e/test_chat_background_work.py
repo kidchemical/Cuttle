@@ -74,6 +74,30 @@ SCHEDULED = {'success': True, 'generating': False, 'active': False, 'background'
                    'status': 'running', 'target': 'CH-001821'}]}}
 
 
+def test_loose_process_count_is_shown_once(browser, static_server):
+    page = browser.new_page()
+    try:
+        page.goto(static_server + '/agent_feed.html')
+        page.set_content('<div id="chatMessages"></div>')
+        page.add_script_tag(url=static_server + '/js/chat/chat_background_work.js')
+        page.evaluate("""() => { window.bw = CuttleChatBackgroundWork.create({win:window,
+            currentSession:()=> '7', sessionIdsEqual:(a,b)=>a===b, isBusy:()=>false}); }""")
+        for n, d, title in [(1, 1, '1 detached process running'), (2, 2, '2 detached processes running'),
+                            (3, 1, '3 processes running (1 detached)'), (1, 0, '1 process running')]:
+            page.evaluate('bg => bw.sync({background:bg}, "7")', {
+                'label': f'{n} {"process" if n == 1 else "processes"} still running' + (f' ({d} detached)' if d else ''),
+                'process_count': n, 'detached_count': d, 'started_at': None})
+            card = page.locator('#chat-background-work')
+            expect(card.locator('.chat-bg-title')).to_have_text(title)
+            expect(card.locator('.chat-bg-label')).to_have_count(0)
+            expect(card.locator('.chat-bg-meta')).to_have_count(0)
+        # A useful description survives; only the generated count is redundant.
+        page.evaluate('() => bw.sync({background:{label:"Building the laptop player",process_count:1}}, "7")')
+        expect(page.locator('.chat-bg-label')).to_have_text('Building the laptop player')
+    finally:
+        page.close()
+
+
 def test_supervising_card_opens_the_supervised_chat(browser, static_server):
     page = browser.new_page(viewport={'width': 900, 'height': 700})
     errors = []
@@ -94,10 +118,25 @@ def test_supervising_card_opens_the_supervised_chat(browser, static_server):
         page.evaluate('live => bw.sync(live, "1822")', SCHEDULED)
         card = page.locator('#chat-background-work')
         expect(card.locator('.chat-bg-title')).to_contain_text('Supervising')
+        expect(card.locator('.chat-bg-label')).to_have_count(0)
+        expect(card.locator('.chat-bg-meta')).to_have_text('Every 15 min')
+        expect(card.locator('.chat-bg-supervising')).to_have_count(0)
         expect(card).to_have_class(re.compile(r'\bis-clickable\b'))
         card.locator('.chat-bg-open').click()
         card.locator('.chat-bg-meta').click()
         assert page.evaluate('() => window.opened') == ['1821', '1821']
+        paused = json.loads(json.dumps(SCHEDULED))
+        paused['background']['schedules'][0].update(status='paused', detail='every 15m · last seen waiting_background')
+        paused['background']['label'] = 'Supervise CH-001821 · every 15m · last seen waiting_background'
+        page.evaluate('live => bw.sync(live, "1822")', paused)
+        expect(card.locator('.chat-bg-title')).to_have_text('Supervision paused')
+        expect(card.locator('.chat-bg-meta')).to_have_text('No check-ins until resumed.')
+        expect(card.locator('.chat-bg-label')).to_have_count(0)
+        expect(card.locator('.chat-bg-supervising')).to_have_count(0)
+        expect(card.locator('.chat-bg-open')).to_have_text('Open CH-001821')
+        paused['background']['schedules'][0]['status'] = 'running'
+        page.evaluate('live => bw.sync(live, "1822")', paused)
+        expect(card.locator('.chat-bg-meta')).to_have_text('Every 15 min · Last checked: waiting for background work')
         assert not errors
     finally:
         page.close()
@@ -334,7 +373,7 @@ def test_pinned_card_shows_subagents_as_fleet_rows(browser, static_server):
         expect(rows.nth(1).locator('.chat-bg-agent-outcome')).to_have_text('Done')
         assert card.locator('.chat-bg-label').count() == 0      # the spawn command wait is folded in
         assert card.locator('.chat-bg-open').all_inner_texts() == ['Open CH-001821']  # supervision only
-        expect(card.locator('.chat-bg-supervising')).to_have_text('Supervising')
+        expect(card.locator('.chat-bg-supervising')).to_have_count(0)
         assert card.locator('.chat-bg-stop').count() == 1       # the background wait still stops
         fits = card.evaluate("""el => { const c = el.getBoundingClientRect();
             return [...el.querySelectorAll('.chat-bg-agent, .chat-bg-actions')].every((r) => {

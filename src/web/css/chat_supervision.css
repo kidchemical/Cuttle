@@ -19,26 +19,26 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font: 550 12px/1.5 inherit;
-    color: #c9ced6;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.16);
+    color: var(--popup-text);
+    background: var(--popup-field);
+    border: 1px solid var(--popup-border);
     border-radius: 12px;
     padding: 1px 8px;
     cursor: pointer;
     pointer-events: auto;
 }
 
-.chat-supervision-pill:hover { background: rgba(255, 255, 255, 0.16); }
+.chat-supervision-pill:hover { background: var(--popup-hover); }
 .chat-supervision-pill:focus-visible { outline: 2px solid var(--accent-color, #667eea); outline-offset: 2px; }
 .chat-supervision-pill.is-supervisor { border-color: color-mix(in srgb, var(--accent-color, #667eea) 60%, transparent); }
 .chat-supervision-pill.is-paused { opacity: 0.7; border-style: dashed; }
 .chat-supervision-pill.is-warn { color: #ffd27a; border-color: rgba(255, 190, 80, 0.6); background: rgba(255, 170, 40, 0.14); }
-.chat-supervision-pill.is-queued { color: #b8c7ff; }
+.chat-supervision-pill.is-queued { color: var(--popup-accent); }
 
 body.light-mode .chat-supervision-pill {
-    color: #3a4150;
-    background: rgba(0, 0, 0, 0.05);
-    border-color: rgba(0, 0, 0, 0.14);
+    color: var(--popup-text);
+    background: var(--popup-field);
+    border-color: var(--popup-border);
 }
 body.light-mode .chat-supervision-pill.is-warn { color: #8a5200; background: rgba(255, 170, 40, 0.16); }
 
@@ -51,8 +51,8 @@ body.light-mode .chat-supervision-pill.is-warn { color: #8a5200; background: rgb
     padding: 12px;
     border: 1px solid var(--border-color);
     border-radius: 10px;
-    background: var(--bg-secondary);
-    color: var(--text-primary);
+    background: var(--popup-bg);
+    color: var(--popup-text);
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
     font: 13px/1.45 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
@@ -108,7 +108,7 @@ body.light-mode .chat-supervision-paused { color: #8a5200; }
 
 .chat-supervision-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
 .chat-supervision-popover button,
-.chat-supervision-dialog button {
+.chat-supervision-dialog .chat-supervision-actions button {
     font: inherit;
     font-size: 12px;
     padding: 4px 10px;
@@ -119,56 +119,69 @@ body.light-mode .chat-supervision-paused { color: #8a5200; }
     cursor: pointer;
 }
 .chat-supervision-popover button:hover,
-.chat-supervision-dialog button:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+.chat-supervision-dialog .chat-supervision-actions button:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
 .chat-supervision-popover .is-danger,
 .chat-supervision-dialog .is-danger { color: #ff7a7a; }
 .chat-supervision-queue .is-danger { padding: 1px 6px; margin-left: 4px; }
 .chat-supervision-dialog .is-primary { background: var(--accent-color, #667eea); border-color: transparent; color: #fff; }
-.chat-supervision-dialog button:disabled { opacity: 0.6; cursor: default; }
+.chat-supervision-dialog .chat-supervision-actions button:disabled { opacity: 0.6; cursor: default; }
 
 .chat-supervision-dialog-backdrop {
     position: fixed;
     inset: 0 0 var(--shell-voice-strip-h, 0px) 0;
-    z-index: 1000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(0, 0, 0, 0.45);
+    max-height: calc(100dvh - var(--shell-voice-strip-h, 0px));
+    box-sizing: border-box;
+    padding: calc(12px + var(--cuttle-safe-top, 0px)) calc(12px + var(--cuttle-safe-right, 0px)) calc(12px + var(--cuttle-safe-bottom, 0px)) calc(12px + var(--cuttle-safe-left, 0px));
+    z-index: 1000003;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(5px);
 }
 
-.chat-supervision-dialog {
-    width: min(480px, calc(100vw - 24px));
-    max-height: calc(100% - 24px);
-    overflow: auto;
-    padding: 16px;
-    border-radius: 12px;
-    border: 1px solid var(--border-color);
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
-    font: 13px/1.45 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+.chat-supervision-dialog.auth-modal {
+    display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+    box-sizing: border-box; width: 100%; max-width: 600px;
+    max-height: min(780px, 100%); min-height: 0; margin: 0;
+    overflow: hidden; padding: 0; border-radius: var(--radius-xl, 20px);
+    background: var(--popup-bg); color: var(--popup-text); border: 1px solid var(--popup-border);
+    box-shadow: var(--shadow-3); font: 14px/1.5 var(--font-sans);
 }
-.chat-supervision-dialog h3 { margin: 0 0 6px; font-size: 15px; }
-.chat-supervision-dialog label { display: block; margin-top: 10px; font-size: 12px; color: var(--text-secondary, #9aa3b2); }
+.chat-supervision-dialog-header { padding: 24px 52px 16px 24px; }
+.chat-supervision-dialog h3 { margin: 0 0 8px; font-size: 18px; overflow-wrap: anywhere; }
+.chat-supervision-dialog .chat-supervision-meta { color: var(--popup-muted); margin: 0; }
+.chat-supervision-dialog-body { min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 24px 20px; }
+.chat-supervision-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.chat-supervision-dialog label { display: block; margin-top: 16px; font-size: 13px; color: var(--popup-muted); min-width: 0; }
+.chat-supervision-fields > label { margin-top: 0; }
 .chat-supervision-dialog label[hidden] { display: none; }
-.chat-supervision-tasks { margin: 10px 0 0; padding: 6px 10px 8px; border: 1px solid var(--border-color, #2a2f3a); border-radius: 8px; }
-.chat-supervision-tasks legend { font-size: 12px; color: var(--text-secondary, #9aa3b2); padding: 0 4px; }
-.chat-supervision-dialog label.chat-supervision-task { display: flex; gap: 6px; align-items: baseline; margin-top: 4px; color: inherit; }
-.chat-supervision-dialog .chat-supervision-task input { width: auto; margin: 0; }
-.chat-supervision-dialog select,
-.chat-supervision-dialog input,
-.chat-supervision-dialog textarea {
-    display: block;
-    width: 100%;
-    box-sizing: border-box;
-    margin-top: 4px;
-    padding: 6px 8px;
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
-    background: var(--bg-primary, transparent);
-    color: var(--text-primary);
-    font: inherit;
+.chat-supervision-tasks { min-width: 0; margin: 20px 0 0; padding: 10px 12px; border: 1px solid var(--popup-border); border-radius: var(--radius-md, 10px); }
+.chat-supervision-tasks legend { font-size: 13px; color: var(--popup-muted); padding: 0 4px; }
+.chat-supervision-dialog label.chat-supervision-task { display: flex; gap: 12px; justify-content: space-between; align-items: center; margin: 0; padding: 8px 0; color: var(--popup-text); cursor: pointer; }
+.chat-supervision-task > span { min-width: 0; overflow-wrap: anywhere; }
+.chat-supervision-task small { display: block; color: var(--popup-muted); }
+.chat-supervision-dialog :is(select, input:not([type=checkbox]), textarea) {
+    width: 100%; box-sizing: border-box; margin-top: 6px; padding: 10px 12px;
+    border-radius: var(--radius-md, 10px); border: 1px solid var(--popup-border);
+    background-color: var(--popup-field); color: var(--popup-text); font: inherit;
 }
-.chat-supervision-dialog select { color-scheme: dark; }
-body.light-mode .chat-supervision-dialog select { color-scheme: light; }
-.chat-supervision-errors { color: #ff7a7a; font-size: 12px; min-height: 1em; margin-top: 8px; }
+.chat-supervision-dialog textarea { display: block; resize: vertical; min-height: 96px; }
+.chat-supervision-dialog :is(input, textarea):focus-visible { outline: 2px solid var(--popup-accent); outline-offset: 2px; }
+.chat-supervision-dialog .cuttle-combo { margin-top: 6px; }
+.chat-supervision-dialog .cuttle-combo-trigger { min-height: 44px; }
+.chat-supervision-advanced { margin-top: 20px; }
+.chat-supervision-advanced summary { color: var(--popup-muted); cursor: pointer; padding: 8px 0; }
+.chat-supervision-dialog-footer { padding: 12px 24px 20px; border-top: 1px solid var(--popup-border); }
+.chat-supervision-dialog .chat-supervision-actions { justify-content: flex-end; margin-top: 0; gap: 10px; }
+.chat-supervision-dialog .chat-supervision-actions button { min-height: 44px; padding: 10px 18px; border-radius: var(--radius-pill, 999px); font-size: 14px; }
+.chat-supervision-dialog .chat-supervision-actions .is-primary { background: var(--popup-accent); border-color: transparent; color: var(--popup-on-accent); }
+.chat-supervision-dialog .chat-supervision-actions .is-primary:hover { background: var(--popup-accent); filter: brightness(0.95); }
+.chat-supervision-errors { color: var(--error-color, #e5484d); font-size: 13px; margin-bottom: 8px; }
+.chat-supervision-errors:empty { display: none; }
+@media (max-width: 480px) {
+    .chat-supervision-fields { grid-template-columns: minmax(0, 1fr); }
+    .chat-supervision-dialog-header { padding: 20px 48px 16px 20px; }
+    .chat-supervision-dialog-body { padding: 0 20px 16px; }
+    .chat-supervision-dialog-footer { padding: 12px 20px 16px; }
+}
+@media (pointer: coarse) {
+    .chat-supervision-dialog :is(input:not([type=checkbox]), textarea) { font-size: 16px; }
+}

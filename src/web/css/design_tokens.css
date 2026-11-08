@@ -60,6 +60,19 @@ body.light-mode {
     --edge-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
+/* Shared overlay palette. Resolve on both scopes: the shell uses --panel-*
+   while framed pages use --bg-*; base themes can be applied on either. */
+:root, body {
+    --popup-bg: var(--bg-secondary, var(--panel-bg, #16213e));
+    --popup-text: var(--text-primary, var(--panel-text, #e2e8f0));
+    --popup-muted: color-mix(in srgb, var(--popup-text) 72%, var(--popup-bg));
+    --popup-border: color-mix(in srgb, var(--popup-text) 24%, var(--popup-bg));
+    --popup-accent: var(--accent-color, var(--accent, #667eea));
+    --popup-on-accent: var(--text-inverse, #fff);
+    --popup-field: color-mix(in srgb, var(--popup-text) 6%, var(--popup-bg));
+    --popup-hover: color-mix(in srgb, var(--popup-accent) 14%, var(--popup-bg));
+}
+
 /* ── Shared keyframes ─────────────────────────────────────────── */
 @keyframes cuttle-rise-in {
     from { opacity: 0; transform: translateY(8px); }

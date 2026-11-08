@@ -53,6 +53,18 @@
     // its child rows say more than the command line does.
     const SUBAGENT_CMD = /\bapi\.subagents\b|\bsubagents\s+(spawn|message|wait)\b/;
 
+    function scheduleSummary(s, standalone, single) {
+        const states = { waiting_background: 'waiting for background work', idle_with_work: 'idle with open tasks',
+            busy: 'working', idle: 'idle', awaiting_input: 'waiting for input', error: 'stopped on an error' };
+        const detail = s.status === 'paused' ? 'No check-ins until resumed.' : String(s.detail || '')
+            .replace(/every (\d+)m\b/, 'Every $1 min')
+            .replace(/last seen (\w+)/, (_, state) => 'Last checked: ' + (states[state] || state.replace(/_/g, ' ')));
+        if (standalone && single) return detail;
+        const label = s.status === 'paused' ? 'Supervision paused for ' + handle(s.target)
+            : s.label || 'Supervising ' + handle(s.target);
+        return [label, detail].filter(Boolean).join(' · ');
+    }
+
     const STEP_LABELS = { pending: 'Pending', running: 'In progress', done: 'Done', failed: 'Failed',
         skipped: 'Skipped', cancelled: 'Cancelled', unknown: 'No result reported' };
 
@@ -120,10 +132,23 @@
         if (!waits.length && !watches.length && !recent.length && !schedules.length && !n && !agents.length) return null;
         const agentsLive = agents.some((a) => a.outcome === 'running' || a.outcome === 'queued');
         const working = !!(waits.length || watches.length || n || agentsLive);
+        const scheduleOnly = !working && !agents.length && !recent.length;
+        const schedulesPaused = schedules.length > 0 && schedules.every((s) => s.status === 'paused');
+        const processHeadline = n && !waits.length && !watches.length && !agents.length;
+        const processTitle = plural(n, d === n ? 'detached process' : 'process',
+            d === n ? 'detached processes' : 'processes') + ' running'
+            + (d && d !== n ? ' (' + d + ' detached)' : '');
+        // The backend's fallback label is the same count already in the title
+        // or metadata. Preserve descriptive labels, suppress this fallback.
+        const fallbackProcessLabel = /^\d+ process(?:es)? still running(?: \(\d+ detached\))?$/.test(bg.label || '');
         const meta = [];
-        if (n) meta.push(plural(n, 'process', 'processes') + (d ? ' (' + d + ' detached)' : ''));
+        if (n && !processHeadline) meta.push(plural(n, 'process', 'processes') + (d ? ' (' + d + ' detached)' : ''));
         if (waits.length > 1) meta.push(plural(waits.length, 'wait', 'waits'));
-        schedules.forEach((s) => meta.push([s.label, s.detail].filter(Boolean).join(' · ')));
+        schedules.forEach((s) => {
+            const text = scheduleSummary(s, scheduleOnly, schedules.length === 1);
+            if (text) meta.push(text);
+        });
+        const fallbackScheduleLabel = schedules.some((s) => bg.label === [s.label, s.detail].filter(Boolean).join(' · '));
         const targets = [];
         schedules.forEach((s) => {
             const t = handle(s && s.target);
@@ -140,9 +165,10 @@
             title: waits.length ? 'Waiting in background' : bound.length ? 'Job running'
                 : units.length ? 'Background job running'
                 : agents.length ? (agentsLive ? 'Sub-agents working' : 'Sub-agents')
-                : n ? (d ? 'Detached processes running' : 'Processes still running')
-                : recent.length ? 'Background job results' : 'Supervising',
-            label: (units.length && !bound.length && !waits.length) || subagentWaitsOnly ? '' : (bg.label || ''),
+                : n ? processTitle
+                : recent.length ? 'Background job results' : schedulesPaused ? 'Supervision paused' : 'Supervising',
+            label: (units.length && !bound.length && !waits.length) || subagentWaitsOnly
+                || fallbackProcessLabel || fallbackScheduleLabel || scheduleOnly ? '' : (bg.label || ''),
             agents,
             meta,
             watches: watches.map((w) => {
@@ -419,7 +445,6 @@
             }
             if (p.meta.length) body.append(mk('div', 'chat-bg-meta', p.meta.join(' · ')));
             const actions = mk('div', 'chat-bg-actions');
-            if (p.targets.length) actions.append(mk('span', 'chat-bg-supervising', 'Supervising'));
             p.targets.forEach((t) => {
                 const b = mk('button', 'chat-bg-open', 'Open ' + t);
                 b.type = 'button';

@@ -29,6 +29,7 @@ def _shell_modal_markup() -> str:
 
 
 FIXTURE = """<!doctype html><html><head>
+<link rel="stylesheet" href="/css/ui_boot.css">
 <link rel="stylesheet" href="/css/app_shell.css">
 <link rel="stylesheet" href="/css/auth_modal.css">
 </head><body>
