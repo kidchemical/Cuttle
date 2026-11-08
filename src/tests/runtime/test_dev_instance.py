@@ -857,6 +857,24 @@ def test_discard_snapshot_removes_only_shadow_roots(tiny_repo, tmp_path):
     assert outsider.is_dir() and (tiny_repo / "temp").is_dir()
 
 
+def test_symlinked_temp_dir_is_supported(tiny_repo, tmp_path):
+    """``temp`` may be a symlink to a large-data disk: prepare, validate and discard."""
+    target = tmp_path / "temp-target"
+    target.mkdir()
+    try:
+        (tiny_repo / "temp").rmdir()
+        (tiny_repo / "temp").symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    seed = prepare_snapshot(tiny_repo, f"sym-{uuid.uuid4().hex[:8]}")
+    root = Path(seed["root"])
+    assert (target / "shadows").is_dir()
+    assert root.parent.parent.name == "temp"
+    assert di._is_shadow_root(root) is True
+    assert di.discard_snapshot(seed) is True
+    assert not (target / "shadows" / root.name).exists()
+
+
 def test_prune_keeps_fresh_and_live_snapshots(tiny_repo):
     import json
     import os

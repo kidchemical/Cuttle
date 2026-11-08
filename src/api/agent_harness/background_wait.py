@@ -113,6 +113,8 @@ class BackgroundWait:
         self._phase = "waiting"  # waiting (idle chat, card) | working (typing bubble)
         # The answer's row while working (api.chat_turn_row, slot per job).
         self._row: Optional[Dict[str, Any]] = None
+        # Run-log events before the first reply's query id is known (bind).
+        self._log_pending: List[Dict[str, Any]] = []
 
     # -- CLI side ---------------------------------------------------------
 
@@ -125,6 +127,7 @@ class BackgroundWait:
         self._write("running", waiting_label(tasks))
         with self._lock:
             self._state = "running"
+        self.log("status", f"Reply saved; {self.label} keeps running in the background. {waiting_label(tasks)}")
         _purge_finished()
         with _lock:
             _active[self.job_id] = self
@@ -194,6 +197,7 @@ class BackgroundWait:
         body_text = (text or "").strip() or (errors[0] if errors else "")
         if not body_text:
             return
+        self.log("writing", body_text)
         body: Dict[str, Any] = {
             "success": True,
             "response": body_text,
@@ -243,6 +247,8 @@ class BackgroundWait:
             stopped = is_run_cancelled(self.chat_session_id)
         except Exception:
             pass
+        self.log("status", "Background run stopped" if (stopped or card_stopped)
+                 else f"Background run ended: {label}")
         if stopped and not card_stopped:
             self._write("failed", "Stopped", final=True)
         elif not card_stopped:
@@ -267,10 +273,31 @@ class BackgroundWait:
             self._sink = saver
             self._base = {k: v for k, v in (base or {}).items() if k not in _PER_BUBBLE}
             pending, self._pending = self._pending, []
+            logs, self._log_pending = self._log_pending, []
             base_copy = self._base
+        for event in logs:
+            _log_event(base_copy.get("query_id"), event)
         for body in pending:
             _deliver(saver, base_copy, body)
         self._maybe_drop()
+
+    def log(self, kind: str, text: str) -> None:
+        """Append one event to the first reply's run log (Agent Feed / inspector).
+
+        That run is marked finished at the first reply; without these the
+        background phase (steers, later answers, its end) never shows there.
+        """
+        text = (text or "").strip()
+        if not text:
+            return
+        event = {"kind": kind, "t": time.time(), "block_id": secrets.token_hex(16),
+                 "text": text[:20000], "summary": text[:200]}
+        with self._lock:
+            qid = str((self._base or {}).get("query_id") or "")
+            if not qid:
+                self._log_pending.append(event)
+                return
+        _log_event(qid, event)
 
     # -- internals --------------------------------------------------------
 
@@ -397,6 +424,17 @@ class _StatusSink:
     put_preview = put
 
 
+def _log_event(query_id: Any, event: Dict[str, Any]) -> None:
+    if not query_id:
+        return
+    try:
+        from api.agent_events.writer import record
+
+        record("event", str(query_id), event)
+    except Exception as exc:
+        print(f"[background_wait] run log append failed: {exc}", flush=True)
+
+
 def _deliver(saver: Callable[[Dict[str, Any]], None], base: Dict[str, Any], body: Dict[str, Any]) -> None:
     try:
         saver({**base, **body})
@@ -478,6 +516,10 @@ def steer_detached(chat_session_id: Any, agent_id: Optional[str], text: str) -> 
         base_turn = str((wait._base or {}).get("query_id") or "")
     if base_turn:
         info["turn_id"] = base_turn
+    # Sent while the chat looked idle (only background tasks running): to the
+    # user this is a new message, not a reply to the old turn's bubble.
+    info["background_idle"] = wait.phase == "waiting"
+    wait.log("status", f"Message steered in: {(text or '').strip()[:500]}")
     # The answer is on its way: show the typing bubble now, not at the echo.
     wait.working(f"{wait.label} is answering your message…", force=True)
     return info

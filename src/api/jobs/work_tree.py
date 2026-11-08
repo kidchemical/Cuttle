@@ -433,7 +433,8 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
     watches = [w for w in e["watches"] if w.get("job_id") not in recent_ids]
     return {
         "label": _first_label(e),
-        "waits": [{"job_id": w.get("job_id"), "label": w.get("label"), "started_at": w.get("started_at")}
+        "waits": [{"job_id": w.get("job_id"), "label": w.get("label"), "started_at": w.get("started_at"),
+                   "agent": w.get("agent") or ""}
                   for w in e["waits"]],
         "watches": [{k: w[k] for k in ("job_id", "label", "percent", "started_at", "kind", "unit", "sub_state",
                                        "activity", "state", "resume_chat", "handoff", "resume_note", "origin_query_id") if k in w}

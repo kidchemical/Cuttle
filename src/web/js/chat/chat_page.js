@@ -11040,6 +11040,7 @@
         }
         if (role === 'user' && opts.steered) {
             messageDiv.classList.add('is-steered');
+            if (opts.steer_idle) messageDiv.dataset.steerIdle = '1'; // new message, not a thread reply
         }
         if (
             role === 'assistant'

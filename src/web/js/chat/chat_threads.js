@@ -144,6 +144,7 @@
             return {
                 role: el.classList.contains('user') ? 'user' : (el.classList.contains('assistant') ? 'assistant' : ''),
                 steered: el.classList.contains('is-steered'),
+                steerIdle: el.dataset.steerIdle === '1',
                 turnId: String(el.dataset.turnId || el.dataset.queryId || ''),
                 messageId: mid != null && mid !== '' ? Number(mid) : null,
                 live: LIVE_IDS.has(el.id),
@@ -158,7 +159,7 @@
             delete el.dataset.threadKey;
             const wrap = el.querySelector(':scope > .message-content-wrapper');
             if (!wrap) return;
-            wrap.querySelectorAll(':scope > .chat-thread-bar, :scope > .chat-thread-subagents')
+            wrap.querySelectorAll(':scope > .chat-thread-bar, :scope > .chat-thread-subagents, :scope > .chat-thread-tail')
                 .forEach((n) => n.remove());
         }
 
@@ -228,6 +229,33 @@
                     + (text ? '<div class="chat-thread-subagent-text">' + esc(text) + '</div>' : '')
                     + '</div></div>';
             }).join('');
+        }
+
+        /**
+         * "Hide replies" at the end of an open thread, so a long thread can be
+         * closed without scrolling back up to its root's bar.
+         */
+        function mountTail(el, thread, want) {
+            const wrap = el.querySelector(':scope > .message-content-wrapper');
+            if (!wrap) return;
+            let tail = wrap.querySelector(':scope > .chat-thread-tail');
+            if (!want) {
+                if (tail) tail.remove();
+                return;
+            }
+            if (!tail) {
+                tail = h.doc.createElement('div');
+                tail.className = 'chat-thread-tail';
+                tail.setAttribute('data-chat-find-skip', '');
+            }
+            if (tail.parentNode !== wrap || tail.nextElementSibling) wrap.appendChild(tail);
+            const html = '<button type="button" class="chat-thread-toggle chat-thread-toggle--tail" aria-expanded="true"'
+                + ' data-thread-key="' + esc(thread.key) + '" aria-label="Hide replies">'
+                + CHEVRON + '<span class="chat-thread-label">Hide replies</span></button>';
+            if (tail.__cuttleThreadHtml !== html) {
+                tail.innerHTML = html;
+                tail.__cuttleThreadHtml = html;
+            }
         }
 
         function mountBar(rootEl, thread, open, unreadCount, preview) {
@@ -459,6 +487,7 @@
                 wasLive.set(thread.key, rootLive);
 
                 rootEl.classList.remove(...REPLY_CLASSES);
+                mountTail(rootEl, thread, false);
                 rootEl.classList.add('thread-root');
                 rootEl.classList.toggle('thread-open', open && thread.replies.length > 0);
                 rootEl.dataset.threadKey = thread.key;
@@ -466,7 +495,11 @@
                 thread.replies.forEach((r, n) => {
                     const el = rows[r.index];
                     const wrap = el.querySelector(':scope > .message-content-wrapper');
-                    if (wrap) wrap.querySelectorAll(':scope > .chat-thread-bar, :scope > .chat-thread-subagents').forEach((x) => x.remove());
+                    if (wrap) {
+                        wrap.querySelectorAll(':scope > .chat-thread-bar, :scope > .chat-thread-subagents')
+                            .forEach((x) => x.remove());
+                    }
+                    mountTail(el, thread, open && n === thread.replies.length - 1 && thread.replies.length > 1);
                     el.classList.remove('thread-root', 'thread-open');
                     el.classList.add('thread-reply');
                     el.classList.toggle('thread-reply--steer', r.kind === 'steer');
@@ -530,8 +563,8 @@
             const key = btn.getAttribute('data-thread-key') || '';
             if (!key) return;
             ensureSession();
-            const bar = btn.closest('.chat-thread-bar');
-            const isOpen = !!(bar && bar.classList.contains('is-open'));
+            const isOpen = btn.getAttribute('aria-expanded') === 'true';
+            const fromTail = btn.classList.contains('chat-thread-toggle--tail');
             if (isOpen) {
                 openNow.delete(key);
                 store.open[key] = false;
@@ -543,6 +576,10 @@
             reconcile();
             const again = h.container && h.container()
                 && h.container().querySelector('.chat-thread-toggle[data-thread-key="' + cssEscape(key) + '"]');
+            if (again && fromTail && again.scrollIntoView) {
+                // Closed from the end: bring the root's bar back into view.
+                try { again.scrollIntoView({ block: 'nearest' }); } catch (_) {}
+            }
             if (again && again.focus) {
                 try { again.focus({ preventScroll: true }); } catch (_) {}
             }

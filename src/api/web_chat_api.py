@@ -1656,8 +1656,7 @@ def chat_steer():
         if err:
             return err
 
-    from api.agent_harness.steer import steer as steer_live_turn
-    from api.chat_coordinator import steered_user_meta
+    from api.chat_coordinator import steer_chat as steer_live_turn, steered_user_meta
 
     info = steer_live_turn(db_sid if db_sid is not None else sid, message)
     if info.get('steered') and db_sid is not None:

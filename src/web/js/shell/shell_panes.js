@@ -132,6 +132,9 @@
             const ms = uiAnimationsEnabled() ? uiTransitionMs() : 0;
             frame.classList.remove('shell-frame-pending');
             frame.style.transition = ms > 0 ? `opacity ${ms}ms ease` : 'none';
+            // A space switch hides the outgoing frame with visibility:hidden;
+            // a reused frame must clear that here or it stays invisible after reveal.
+            frame.style.visibility = '';
             window.requestAnimationFrame(() => { frame.style.opacity = '1'; frame.style.pointerEvents = ''; });
             setPageLoaderVisible(mainEl, false);
             (oldFrames || []).forEach((old) => {

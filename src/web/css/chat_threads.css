@@ -128,6 +128,16 @@
     transform: rotate(90deg);
 }
 
+/* "Hide replies" under the last reply of an open thread. */
+.chat-thread-tail {
+    display: flex;
+    margin-top: 2px;
+}
+
+.chat-thread-toggle--tail .chat-thread-chevron {
+    transform: rotate(-90deg);
+}
+
 .chat-thread-detail {
     color: var(--text-secondary, #888);
     font-weight: 400;
@@ -302,7 +312,8 @@
     }
 
     .message:not(.system) .chat-thread-bar,
-    .message:not(.system) .chat-thread-subagents {
+    .message:not(.system) .chat-thread-subagents,
+    .message:not(.system) .chat-thread-tail {
         order: 10;
         flex: 1 1 100%;
     }

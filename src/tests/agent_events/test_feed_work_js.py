@@ -42,6 +42,8 @@ const out = {
   sigChanges: W.signature(tree) !== W.signature({ ...tree, owners: [{ ...owner, detached_count: 2 }] }),
   plan: B.plan({ label: 'Waiting on: fg12', process_count: 3, detached_count: 1, feed: true, started_at: 100,
     waits: [{ job_id: 'j', started_at: 50 }], watches: [], schedules: [{ label: 'Supervise CH-1', detail: 'every 15m' }] }),
+  planAgent: B.plan({ label: 'Waiting on: sleep', waits: [{ job_id: 'claude-bg-1-x', label: 'Waiting on: sleep',
+    started_at: 100, agent: 'claude' }], watches: [], schedules: [] }),
   planProcs: B.plan({ process_count: 2, detached_count: 2, waits: [], watches: [], schedules: [] }),
   planSched: B.plan({ label: 'x', process_count: 0, waits: [], watches: [], schedules: [{ label: 'Supervise' }] }),
   planNone: [B.plan(null), B.plan({ process_count: 0, waits: [], watches: [], schedules: [] })],
@@ -103,6 +105,9 @@ def test_models():
     assert p["title"] == "Waiting in background" and p["label"] == "Waiting on: fg12"
     assert p["meta"] == ["3 processes (1 detached)", "Supervise CH-1 · Every 15 min"]
     assert p["stop"] == "chat" and p["started"] == 50 and p["feed"] is True and p["working"] is True
+    # A detached agent run is named, and the card says where a message goes.
+    assert r["planAgent"]["title"] == "Claude Code still running"
+    assert r["planAgent"]["meta"] == ["Messages you send now go to this run"]
     assert r["planProcs"]["title"] == "2 detached processes running" and r["planProcs"]["stop"] == "processes"
     assert r["planSched"]["working"] is False and r["planSched"]["stop"] is None
     assert r["planNone"] == [None, None]

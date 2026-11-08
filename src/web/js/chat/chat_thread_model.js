@@ -10,7 +10,7 @@
    result; rows are never reordered, so CH-…-N numbering is unchanged.
 
    Record (one per transcript row, in transcript order):
-     { role: 'user'|'assistant', steered, turnId, messageId, live,
+     { role: 'user'|'assistant', steered, steerIdle, turnId, messageId, live,
        subagents: [{ handle, label, displayName, avatar, outcome,
                      summary, detail, finishedAt }], ts }
    Rules:
@@ -21,6 +21,10 @@
      without one (older history, or the optimistic bubble just sent)
      joins the current turn's root if that root is already above it.
      Otherwise it stays a plain row.
+   - An idle steer (``steerIdle``: sent into a detached background run
+     while the chat looked idle) is a plain row that starts a new turn:
+     the run's later rows with that turn id open a fresh thread below it
+     instead of joining the old bubble's.
    - Finished sub-agent children (fleet cards on any member row) are
      sub-agent replies; running ones only count as `working`.
    - A thread with no replies is not a thread (no bar).
@@ -41,9 +45,10 @@
         return String(s.handle || s.sessionId || s.label || '');
     }
 
-    function newThread(rec, index) {
+    function newThread(rec, index, segment) {
+        const base = threadKeyFor(rec, index);
         return {
-            key: threadKeyFor(rec, index),
+            key: segment ? base + '#' + segment : base,
             turnId: rec.turnId || '',
             root: index,
             replies: [],
@@ -91,12 +96,19 @@
         const list = Array.isArray(records) ? records : [];
         const threads = [];
         const byTurn = new Map();
+        // Idle steers seen per turn id: each one starts a new segment (thread).
+        const segments = new Map();
         const memberOf = new Array(list.length).fill(-1);
         let turnRoot = -1;
         list.forEach((rec, i) => {
             if (!rec) return;
-            if (rec.role === 'user' && !rec.steered) {
+            if (rec.role === 'user' && (!rec.steered || rec.steerIdle)) {
                 turnRoot = -1;
+                const tid = rec.steered ? (rec.turnId || '') : '';
+                if (tid) {
+                    byTurn.delete(tid);
+                    segments.set(tid, (segments.get(tid) || 0) + 1);
+                }
                 return;
             }
             if (rec.role === 'assistant') {
@@ -108,7 +120,7 @@
                     memberOf[i] = existing;
                     return;
                 }
-                const t = newThread(rec, i);
+                const t = newThread(rec, i, tid ? segments.get(tid) || 0 : 0);
                 threads.push(t);
                 const ti = threads.length - 1;
                 if (tid) byTurn.set(tid, ti);

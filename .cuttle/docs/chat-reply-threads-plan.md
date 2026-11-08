@@ -27,6 +27,17 @@ The phases below are the original plan; **As built** records where it changed.
   overrides it with the detached run's first-reply query id;
   `chat_coordinator.steered_user_meta` writes `{steered, steered_agent, turn_id}`
   for both `/api/chat-steer` and background steers.
+- **Idle steers start a new thread** (2026-11-08, CH-002171): a message sent
+  while a detached Claude run only waits on background tasks (the chat looks
+  idle) is still delivered into that CLI, but `steer_detached` reports
+  `background_idle` and the row is stamped `steer_idle`. The model treats it
+  like a normal user row: the run's later rows with that turn id open a fresh
+  thread (`t:<turn>#<n>`) below it instead of piling onto the first reply's.
+  `/api/chat-steer` goes through `chat_coordinator.steer_chat`, so it reaches
+  the detached run too (typing bubble + turn id), not just `steer.steer`.
+- **Hide replies at the end**: an open thread with 2+ replies has a second
+  "Hide replies" toggle under its last reply (`.chat-thread-tail`); closing
+  from there scrolls the root's bar back into view.
 - **Open state**: your open/close is saved per chat (localStorage, capped); a
   live thread (or one you just steered into) opens by itself; nothing closes a
   thread except you. The open state carries across the live bubble → saved

@@ -49,6 +49,13 @@ out.live = shape(M.group([u({}), a({ live: true }), u({ steered: true })]));
 // Detached follow-up typing bubble with the first reply's turn id is a live reply.
 out.liveFollowup = shape(M.group([u({}), a({ turnId: 'T1', messageId: 11 }), u({ steered: true, turnId: 'T1' }),
   a({ turnId: 'T1', live: true })]));
+// Idle steers into a detached run: plain rows; the run's later rows start a new thread.
+out.idleSteer = shape(M.group([
+  u({}), a({ turnId: 'T1', messageId: 11 }),
+  u({ steered: true, steerIdle: true, turnId: 'T1', messageId: 12 }), a({ turnId: 'T1', messageId: 13 }),
+  u({ steered: true, turnId: 'T1', messageId: 14 }), a({ turnId: 'T1', messageId: 15 }),
+  u({ steered: true, steerIdle: true, turnId: 'T1', messageId: 16 }), a({ turnId: 'T1', messageId: 17 }),
+]));
 // Sub-agents: finished children are replies, running ones only "working".
 out.subagents = shape(M.group([u({}), a({ turnId: 'T1', messageId: 11, subagents: [
   { handle: 'CH-000201', label: 'Scout', outcome: 'done', finishedAt: '2026-11-08T10:00:00Z', summary: 'found it' },
@@ -124,3 +131,15 @@ def test_preview_is_one_quiet_line(out):
     assert out["preview"][0] == "also check the token refresh"
     assert out["preview"][1] == "Done: tests pass"
     assert len(out["preview"][2]) == 20 and out["preview"][2].endswith("…")
+
+
+@node_only
+def test_idle_steer_starts_a_new_thread_instead_of_joining_the_old_turn(out):
+    g = out["idleSteer"]
+    # Rows 0..2 and 6..7 stand alone; 3 (answer to the idle steer) roots a new
+    # thread that the working-phase steer (4) and its answer (5) join.
+    assert g["memberOf"] == [-1, -1, -1, 0, 0, 0, -1, -1]
+    assert len(g["threads"]) == 1
+    t = g["threads"][0]
+    assert t["root"] == 3 and t["key"] == "t:T1#1"
+    assert [r["index"] for r in t["replies"]] == [4, 5]

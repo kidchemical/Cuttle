@@ -288,7 +288,7 @@ def test_message_sent_while_waiting_steers_into_the_live_run(tmp_path, monkeypat
     )
     assert out.body["steered"] is True and out.body["no_reply"] is True
     assert ran == [], "no second claude run may start while the detached run is live"
-    assert steered_rows == [{"steered": True, "steered_agent": "claude"}]
+    assert steered_rows == [{"steered": True, "steered_agent": "claude", "steer_idle": True}]
     assert chat_delivery.is_busy(6103) is False
     # While the run answers, every device sees a typing bubble: live status is
     # active and flagged as a follow-up to the reply already in the transcript.
@@ -373,7 +373,9 @@ def test_stream_lane_steers_into_detached_wait_without_running(monkeypatch):
         selection=AgentSelection(kind="harness", agent_id="claude", prompt="status?"),
     ))
     assert events[0][0] == "shortcut" and events[0][1]["no_reply"] is True
-    assert sent == ["status?"] and rows == [{"steered": True, "steered_agent": "claude"}]
+    # Sent while the chat looked idle: shown as a new message, not a thread reply.
+    assert sent == ["status?"] and rows == [{"steered": True, "steered_agent": "claude", "steer_idle": True}]
+    assert events[0][1]["steer_idle"] is True
     steer.unregister(6104, token)
     wait.finish("done", "Background work finished")
 
@@ -399,10 +401,50 @@ def test_steer_into_detached_wait_threads_under_the_first_reply(monkeypatch):
             PreparedAgentTurn(message="/claude status?", session_id=6105), io=io, delivery=chat_delivery,
             selection=AgentSelection(kind="harness", agent_id="claude", prompt="status?"),
         ))
+        assert rows == [{"steered": True, "steered_agent": "claude", "turn_id": "q-first-reply",
+                         "steer_idle": True}]
+        # A second message while the run is answering the first is a real steer (threads).
+        rows.clear()
+        list(submit_agent_stream_turn(
+            PreparedAgentTurn(message="/claude and logs?", session_id=6105), io=io, delivery=chat_delivery,
+            selection=AgentSelection(kind="harness", agent_id="claude", prompt="and logs?"),
+        ))
         assert rows == [{"steered": True, "steered_agent": "claude", "turn_id": "q-first-reply"}]
     finally:
         steer.unregister(6105, token)
         wait.finish("done", "Background work finished")
+
+
+def test_chat_steer_route_steers_into_the_detached_run():
+    """/api/chat-steer goes through the detached run too: typing bubble + its turn id."""
+    from api.chat_coordinator import steer_chat
+
+    wait = bw.BackgroundWait("6106", "claude")
+    wait.start(["watch CI"], pid=None)
+    bw.bind_saver(wait.job_id, _Saver(), {"agent_id": "claude", "query_id": "q-first"})
+    sent = []
+    token = steer.register(6106, "claude", lambda t: (sent.append(t), _done_future())[1])
+    try:
+        info = steer_chat(6106, "status?")
+        assert info["steered"] is True and info["turn_id"] == "q-first" and info["background_idle"] is True
+        assert sent == ["status?"] and wait.phase == "working" and _live(6106)["followup"] is True
+    finally:
+        steer.unregister(6106, token)
+        wait.finish("done", "Background work finished")
+
+
+def test_background_phase_is_appended_to_the_first_reply_run_log(monkeypatch):
+    logged = []
+    monkeypatch.setattr(bw, "_log_event", lambda qid, ev: logged.append((qid, ev["kind"], ev["text"])))
+    wait = bw.BackgroundWait("6107", "claude")
+    wait.start(["render frames"], pid=None)
+    assert logged == []  # held until the first reply's query id is known
+    wait.bind(_Saver(), {"query_id": "q-run"})
+    wait.followup("frames rendered")
+    wait.finish("done", "Background work finished")
+    assert [(q, k) for q, k, _ in logged] == [("q-run", "status"), ("q-run", "writing"), ("q-run", "status")]
+    assert "Waiting on: render frames" in logged[0][2]
+    assert logged[1][2] == "frames rendered" and logged[2][2] == "Background run ended: Background work finished"
 
 
 def _done_future():

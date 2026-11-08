@@ -115,6 +115,7 @@
             supervised_phase: meta.supervised_phase || undefined,
             supervised_terminal: !!meta.supervised_terminal,
             steered: !!meta.steered,
+            steer_idle: !!meta.steer_idle,
             steered_agent: meta.steered_agent || m.steered_agent || undefined,
             supervised_delivery_event_id: meta.supervised_delivery_event_id || undefined,
             parent_user_message_id: meta.parent_user_message_id || undefined,

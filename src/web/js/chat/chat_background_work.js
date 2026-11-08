@@ -36,6 +36,8 @@
         return Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm';
     }
 
+    const AGENT_LABEL = { claude: 'Claude Code', codex: 'Codex', muse: 'Muse Code' };
+
     function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
 
     function progressModel() {
@@ -144,6 +146,10 @@
         const meta = [];
         if (n && !processHeadline) meta.push(plural(n, 'process', 'processes') + (d ? ' (' + d + ' detached)' : ''));
         if (waits.length > 1) meta.push(plural(waits.length, 'wait', 'waits'));
+        // A detached agent run (its CLI still open on background tasks): the
+        // chat looks idle, but a message sent now goes into that run.
+        const runAgent = waits.map((w) => AGENT_LABEL[String((w && w.agent) || '').toLowerCase()]).find(Boolean) || '';
+        if (runAgent) meta.push('Messages you send now go to this run');
         schedules.forEach((s) => {
             const text = scheduleSummary(s, scheduleOnly, schedules.length === 1);
             if (text) meta.push(text);
@@ -166,7 +172,7 @@
         const state = working ? 'working' : schedules.length ? (schedulesPaused ? 'paused' : 'supervising') : 'idle';
         return {
             state,
-            title: waits.length ? 'Waiting in background' : bound.length ? 'Job running'
+            title: runAgent ? runAgent + ' still running' : waits.length ? 'Waiting in background' : bound.length ? 'Job running'
                 : units.length ? 'Background job running'
                 : agents.length ? (agentsLive ? 'Sub-agents working' : 'Sub-agents')
                 : n ? processTitle

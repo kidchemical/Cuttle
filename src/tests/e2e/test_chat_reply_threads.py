@@ -14,6 +14,7 @@ window.row = (role, text, o = {}) => {
   if (o.id) el.id = o.id;
   if (o.mid != null) el.dataset.messageId = String(o.mid);
   if (o.turn) el.dataset.turnId = o.turn;
+  if (o.idle) el.dataset.steerIdle = '1';
   el.innerHTML = '<div class="message-avatar"></div><div class="message-content-wrapper">'
     + '<div class="message-header-row"><span class="message-sender">' + (o.sender || (role === 'user' ? 'You' : 'Claude Code'))
     + '</span><span class="message-timestamp" data-ts="' + (o.ts || Date.now()) + '"></span></div>'
@@ -274,3 +275,41 @@ def test_thread_forming_around_rows_on_screen_opens(browser, static_server):
         assert not errors
     finally:
         page.close()
+
+
+def test_hide_replies_at_the_end_of_an_open_thread_closes_it(browser, static_server):
+    page, errors = _page(browser, static_server)
+    try:
+        _history(page)
+        page.locator('.message[data-message-id="11"] .chat-thread-toggle').click()
+        tail = page.locator('.message[data-message-id="14"] .chat-thread-tail .chat-thread-toggle')
+        expect(tail).to_be_visible()
+        assert page.locator('.chat-thread-tail').count() == 1  # only under the last reply
+        tail.click()
+        for mid in ('12', '13', '14'):
+            expect(page.locator(f'.message[data-message-id="{mid}"]')).to_be_hidden()
+        expect(page.locator('.message[data-message-id="11"] .chat-thread-label')).to_have_text('3 replies')
+        assert page.locator('.chat-thread-tail').count() == 0
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_idle_steer_into_a_detached_run_is_a_new_message_not_a_reply(browser, static_server):
+    page, errors = _page(browser, static_server)
+    try:
+        page.evaluate('''() => {
+            add(row('user', 'Why the window?', { mid: 20 }));
+            add(row('assistant', 'Fixed; still waiting on the bench.', { mid: 21, turn: 'T5' }));
+            add(row('user', '/claude keep going', { mid: 22, steered: true, idle: true, turn: 'T5' }));
+            add(row('assistant', 'On it.', { mid: 23, turn: 'T5' }));
+            window.boot();
+        }''')
+        for mid in ('21', '22', '23'):
+            expect(page.locator(f'.message[data-message-id="{mid}"]')).to_be_visible()
+        assert page.locator('.chat-thread-bar').count() == 0
+        assert 'thread-reply' not in (page.locator('.message[data-message-id="22"]').get_attribute('class') or '')
+        assert not errors
+    finally:
+        page.close()
+
