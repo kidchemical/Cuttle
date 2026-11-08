@@ -11129,6 +11129,8 @@
                 : [];
             headerChip = messageHeaderBadgesHtml(chips, false, project);
             if (opts.steered) headerChip += steerBadgeHtml(opts.steered_agent);
+            const opBadge = parentSpeaker && window.CuttleChatSupervisionModel ? window.CuttleChatSupervisionModel.chatOpBadge(opts) : null;
+            if (opBadge) { headerChip += slashCommandChipHeaderHtml(opBadge.label, opBadge.title, 'command', false); messageDiv.dataset.chatOp = opBadge.kind; }
             if (chips.length) suppressInlineSlashChips = true;
         } else {
             headerChip = messageHeaderBadgesHtml([], false, project);

@@ -446,9 +446,12 @@ def render_brief(
     lines += [
         "",
         f"Delegate only through real child chats: `{spawn_cli} spawn --parent <this chat> --wait --json "
-        "--child '{\"title\":…,\"profile\":\"<id>\",\"message\":…}'`. Never use your own CLI's built-in "
-        "subagent/task tool. The profile pins harness, model and effort; do not restate them on the child. "
-        "A temporary agent has no saved profile: its cell shows the exact `profile` object to send.",
+        "--child '{\"title\":…,\"tier\":\"<tier id>\",\"message\":…}'`. Never use your own CLI's built-in "
+        "subagent/task tool. Spawn by `tier`: Cuttle runs the tier's first agent whose account has budget "
+        "left, skipping out-of-usage ones in the order below (the spawn's `tier_picks` says who ran and "
+        "who was skipped). Use `\"profile\":\"<id>\"` instead only to pick one agent on purpose (a "
+        "parallel lane on a different agent); the profile pins harness, model and effort, so never restate "
+        "them. A temporary agent has no saved profile: its cell shows the exact `profile` object to send.",
         "",
         "### Org chart (in escalation order)",
         "",
@@ -463,14 +466,14 @@ def render_brief(
             for m in tier["members"]
         )
         use_for = (tier.get("use_for") or "").replace("|", "\\|").replace("\n", " ")
-        lines.append(f"| {tier['label']} | {tier['role']} | {cells} | {use_for} |")
+        lines.append(f"| {tier['label']} (`{tier['id']}`) | {tier['role']} | {cells} | {use_for} |")
     lines += [
         "",
         "### Rules",
         "",
         f"1. **Default down.** Every task starts at the {worker['label']} tier unless it is planning or "
-        "review that needs expert judgment. Use the first agent in a tier; the others are alternates "
-        "(parallel lane, or when the first is out of usage).",
+        "review that needs expert judgment. A tier's agents are in preference order; a `tier` spawn "
+        "takes the first one with budget, the rest are alternates (parallel lanes).",
         f"2. **Escalate on evidence, one tier at a time.** Retry a failed child task "
         f"{limits['child_retries']}× on the same tier with a sharper brief, then move to the next tier. "
         "Say why in one line when you escalate.",
@@ -478,7 +481,9 @@ def render_brief(
         f"{limits['solo_minutes']} minutes on one problem in your own turn, delegate it to the worker "
         "tier with what you tried, then escalate if that child fails.",
         "4. **Never resend an identical failing spawn.** A setup error (\"was not started\", unsupported "
-        "model/effort, missing CLI, quota) means fix the spec or switch to the tier's next agent. After "
+        "model/effort, missing CLI) means fix the spec or switch to the tier's next agent. \"Out of budget\" "
+        "or \"every agent in the … tier is out of budget\" comes back before any chat exists: follow its "
+        "hint (spawn by tier, or escalate one tier) — it is not a task failure. After "
         f"{limits['setup_retries']} setup failures on one task, report it instead of looping.",
         "5. **Experts plan and review; they do not grind.** Send them the plan, the diff, or a specific "
         "question. For high-stakes plans or merges, ask every expert agent (`--collect all`) and reconcile.",

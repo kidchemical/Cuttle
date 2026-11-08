@@ -31,6 +31,13 @@ The phases below are the original plan; **As built** records where it changed.
   live thread (or one you just steered into) opens by itself; nothing closes a
   thread except you. The open state carries across the live bubble → saved
   reply swap (new key inherits from the rows it shares).
+- **Reload mid-turn**: the in-progress turn row is not in history, so the
+  working bubble is appended below steers already saved into its turn. Once
+  live status stamps its turn row (`data-turn-message-id`) the controller puts
+  it back above them (it is not a CH-…-N record, so nothing renumbers).
+- **Rows on screen never vanish**: a thread that forms around rows you already
+  saw (its root arriving later, a reload mid-turn) opens instead of hiding them,
+  unless you closed that thread yourself.
 - **Answer reveal**: when the live bubble turns into the answer above an open
   thread and the replies pushed it mostly out of view (< 40 % visible) while
   you were following the bottom, the answer's start scrolls into view.

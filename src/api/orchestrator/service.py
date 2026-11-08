@@ -16,14 +16,19 @@ from typing import Any, Dict, List, Optional
 from api.orchestrator import store
 from api.orchestrator.model import (
     PlaybookError,
+    active_members,
     changed_sections,
     default_playbook,
+    find_tier,
     missing_profiles,
     normalize_playbook,
+    pick_member,
     render_brief,
+    spawn_profile,
     supervisor_argv,
     supervisor_config,
     temporary_agents,
+    tier_of,
 )
 
 FLAG_ID = "orchestrator"
@@ -206,7 +211,8 @@ def relay_edit(user_id: int, before: Dict[str, Any], after: Dict[str, Any], *, d
             f"one. Full new brief: `python -m api.orchestrator brief {handle}`.",
         ]
         out += [{"session": handle, **r} for r in resync_supervision(row["session_id"], previous, current,
-                                                                      note_lines=note, db=db)]
+                                                                      note_lines=note, source=f"playbook {name}",
+                                                                      db=db)]
     return out
 
 
@@ -314,7 +320,8 @@ def rebind(session: Any, user_id: int, *, playbook_id: Optional[str] = None, goa
                 f"{handle} gets the new brief by itself at its next turn; a turn already running keeps the old "
                 f"one. Full new brief: `python -m api.orchestrator brief {handle}`."]
         resynced = resync_supervision(sid, supervisor_config(old_doc, profiles) if old_doc else {},
-                                      supervisor_config(doc, profiles), note_lines=note, db=db)
+                                      supervisor_config(doc, profiles), note_lines=note,
+                                      source=f"playbook {doc.get('name') or doc['id']}", db=db)
     return {**get_binding(sid, db=db), "changed": changed, "supervision": resynced}
 
 
@@ -379,6 +386,116 @@ def brief(session: Any = None, *, playbook_id: str = "", user_id: Optional[int] 
         "supervisor_argv": argv,
         "supervisor_command": "python -m api.chat_cli " + " ".join(shlex.quote(a) for a in argv),
     }
+
+
+# ── Budget-aware tier picks (sub-agent spawns) ─────────────────────────────
+
+
+def _bound_playbook(session_id: int, db) -> Optional[Dict[str, Any]]:
+    """The playbook bound to this chat or its nearest bound ancestor (a child of an
+    orchestrator spawning its own children still follows the orchestrator's ladder)."""
+    sid, seen = int(session_id), set()
+    while sid and sid not in seen and len(seen) < 8:
+        seen.add(sid)
+        row = store.binding(sid)
+        sess = db.get_chat_session_by_id(sid) or {}
+        if row and sess:
+            try:
+                return get_playbook(int(sess["user_id"]), row["playbook_id"], db=db) | {"_owner": int(sess["user_id"])}
+            except OrchestratorError:
+                return None
+        sid = int(sess.get("parent_session_id") or 0)
+    return None
+
+
+def _member_name(member: Dict[str, Any], profiles: Dict[str, Dict[str, Any]]) -> str:
+    if not member.get("profile"):
+        return str(member.get("name") or member.get("agent") or "temporary agent")
+    p = profiles.get(member["profile"])
+    return str((p or {}).get("name") or member["profile"])
+
+
+def _member_harness(member: Dict[str, Any], profiles: Dict[str, Dict[str, Any]]) -> str:
+    from api.subagents.profiles import normalize_harness
+
+    src = member if not member.get("profile") else profiles.get(member["profile"]) or {}
+    return normalize_harness(src.get("agent"))
+
+
+def member_states(members: List[Dict[str, Any]], profiles: Dict[str, Dict[str, Any]], *,
+                  accounts: Any) -> List[tuple]:
+    """(state, why) per member — see ``api.agent_router.availability``. A profile on
+    "any harness" (or a missing one) reads ``unknown`` and keeps its place."""
+    from api.agent_router.availability import target_state
+    from api.agent_router.types import ExecutionTarget
+
+    out = []
+    for m in members:
+        agent = _member_harness(m, profiles)
+        if agent in ("", "none"):
+            out.append(("unknown", ""))
+            continue
+        src = m if not m.get("profile") else profiles.get(m["profile"]) or {}
+        out.append(target_state(ExecutionTarget(agent, str(src.get("model") or "")),
+                                accounts=accounts, verbose=True))
+    return out
+
+
+def pick_tier_member(session: Any, tier_name: str, *, db=None, accounts: Any = None) -> Dict[str, Any]:
+    """The tier member a spawn should run: the first switched-on one whose account
+    can run (out-of-budget ones skipped, nearly-spent ones behind healthy ones when
+    router budget awareness is on). Raises OrchestratorError — before any child
+    chat exists — when the chat has no playbook, the tier is unknown, or every
+    member is blocked."""
+    db = _db(db)
+    sid = parse_session(session)
+    doc = _bound_playbook(sid, db)
+    if not doc:
+        raise OrchestratorError(
+            f"{_handle(sid)} is not bound to an orchestrator playbook; spawn with a profile instead of a tier")
+    tier = find_tier(doc, tier_name)
+    if not tier:
+        names = ", ".join(str(t.get("id")) for t in doc.get("tiers") or [])
+        raise OrchestratorError(f"playbook {doc.get('id')!r} has no tier {tier_name!r} (tiers: {names})")
+    label = str(tier.get("label") or tier.get("id"))
+    members = active_members(tier)
+    if not members:
+        raise OrchestratorError(f"every agent in the {label} tier is switched off")
+    profiles = profile_map(doc["_owner"], db=db)
+    if accounts is None:
+        from api.agent_router.budget import cached_snapshot
+
+        accounts = cached_snapshot()
+    states = member_states(members, profiles, accounts=accounts)
+    idx = pick_member([st for st, _ in states])
+    if idx is None:
+        detail = "; ".join(f"{_member_name(m, profiles)}: {why or 'blocked'}" for m, (_, why) in zip(members, states))
+        raise OrchestratorError(
+            f"every agent in the {label} tier is out of budget ({detail}). "
+            "No chat was created; escalate to the next tier or wait for a reset.")
+    member = members[idx]
+    return {
+        "tier": str(tier.get("id")), "tier_label": label,
+        "profile": spawn_profile(member), "name": _member_name(member, profiles),
+        "pinned": _member_harness(member, profiles) not in ("", "none"),
+        "skipped": [{"name": _member_name(m, profiles), "state": st, "why": why}
+                    for m, (st, why) in zip(members[:idx], states[:idx])],
+    }
+
+
+def runnable_alternative(session: Any, *, profile_id: str = "", agent: str = "", model: str = "",
+                         effort: str = "", db=None, accounts: Any = None) -> Optional[Dict[str, Any]]:
+    """For a blocked child spawned by name: its tier and the member a tier spawn would
+    run instead (None when the chat has no playbook or the agent is in no tier)."""
+    try:
+        db = _db(db)
+        doc = _bound_playbook(parse_session(session), db)
+        hit = doc and tier_of(doc, profile_id=profile_id, agent=agent, model=model, effort=effort)
+        if not hit:
+            return None
+        return pick_tier_member(session, hit["tier"], db=db, accounts=accounts)
+    except OrchestratorError:
+        return None
 
 
 def _chat_title(sess: Dict[str, Any]) -> str:

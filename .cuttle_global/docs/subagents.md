@@ -25,7 +25,14 @@ PYTHONPATH=src .venv/bin/python -m api.subagents spawn --parent CH-000535 --wait
 
 `--child` is repeatable JSON. Keys: `title`, `message` (required), `agent`
 (harness id: `cursor`, `codex`, `muse`, …), `model`, `effort`, `route` (bool),
-`profile` (catalog id or inline `{name,avatar,agent}`), `avatar`.
+`profile` (catalog id or inline `{name,avatar,agent}`), `avatar`, `tier`
+(orchestrator chats: a playbook tier; Cuttle runs its first agent with budget
+left — `features/orchestrator/docs/orchestrator.md`).
+
+A pinned child whose account is out of usage (a recent quota failure, or the
+cached `/usage` plan windows at their limit) is refused before any chat is
+created; a child that fails on quota marks its account for later spawns and
+routed turns.
 
 `model` must be an id the named harness's own CLI accepts — pass it exactly as
 that harness spells it (some qualify with a provider prefix, some are bare); do

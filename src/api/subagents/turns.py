@@ -260,6 +260,26 @@ def _cancelled(db, child_id: str) -> bool:
     return bool(row and row.status == STATUS_CANCELLED)
 
 
+def _note_account_usage(spec: ChildSpec, result: Dict[str, Any]) -> None:
+    """Tell the router's cooldown memory (shared with Flask, api.agent_router.quota)
+    when a child ran out of usage or succeeded, so the next spawn and the next
+    routed turn skip or retry that account the same way. Never raises."""
+    try:
+        from api.agent_router import quota
+        from api.agent_router.policy import FailureKind, classify_failure, is_quota_failure
+        from api.agent_router.types import ExecutionTarget
+
+        target = ExecutionTarget(str(spec.agent or ""), str(spec.model or ""))
+        kind, _reason = classify_failure(result, response_text=str(result.get("response") or ""))
+        blob = f"{result.get('response') or ''}\n{result.get('error') or ''}"
+        if kind == FailureKind.TRANSPORT.value and is_quota_failure(blob):
+            quota.mark_exhausted(target, blob)
+        elif kind == FailureKind.NONE.value:
+            quota.note_success(target)
+    except Exception:
+        pass
+
+
 def run_child_turn(
     db,
     child: ChildRecord,
@@ -395,6 +415,7 @@ def run_child_turn(
 
     if not isinstance(result, dict):
         result = {"success": True, "response": str(result)}
+    _note_account_usage(spec, result)
 
     # The kernel reports query_id on the returned body; fall back to the sink
     # for turns whose reply text came from somewhere other than that result.

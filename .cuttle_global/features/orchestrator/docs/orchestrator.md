@@ -46,13 +46,31 @@ it too. Treat it as standing instructions.
 
 ## Delegating
 
-Spawn with the profile id; the profile pins harness, model and effort. A
-temporary agent's brief cell shows the inline `profile` object to send instead:
+Spawn by **tier** (its id from the brief's org chart; a label or role also
+works). Cuttle picks the tier's first switched-on agent whose account can run,
+in the order set on the Orchestrator page:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m api.subagents spawn --parent CH-… --wait --json \
-  --child "{\"title\":\"…\",\"profile\":\"grunt\",\"message\":\"…\"}"
+  --child "{\"title\":\"…\",\"tier\":\"worker\",\"message\":\"…\"}"
 ```
+
+- **Out of budget is skipped.** An agent is skipped when its account recently
+  failed with "out of usage" (until the reset that error named) or the cached
+  plan usage (the `/usage` windows) shows it at its limit. Nearly-spent
+  accounts drop behind healthy ones only when router budget awareness is on
+  (`agent_router.budget.enabled`). Accounts with no usage API keep their place.
+- The result's `tier_picks` names who ran and who was skipped, and why.
+- Every agent blocked → the spawn fails before any chat exists, listing each
+  account; escalate a tier or wait for the reset.
+- A child that fails on quota marks its account, so the next spawn and the
+  next routed turn skip it. The marks and the usage snapshot are shared with
+  Flask through `<home>/cache/router_quota.json` / `router_budget.json`.
+
+Spawn by `profile` (id, or a temporary agent's inline object from its brief
+cell) only to pick one agent on purpose, e.g. a parallel lane on a different
+agent. A named agent that is out of budget is refused before any chat is
+created, with the tier's runnable alternative in the error.
 
 Spawn checks every child's harness/model/effort against that CLI's catalog
 before any chat is created. A rejection names the child and the bad pin: fix
@@ -92,10 +110,16 @@ A bound orchestrator gets the edited brief at its **next turn** (resume delta
 "Orchestrator playbook updated"); a turn already running keeps the old one.
 Saving the playbook also updates each supervision schedule on a bound chat:
 fields still matching the old playbook (interval, instructions, guards, model
-guidance) take the new values, fields set on the schedule itself are kept, and
-the supervisor gets one **Supervision update** check-in naming the change. On
-that check-in, steer the orchestrator only if its live turn is doing work the
-edit affects; otherwise end the turn.
+guidance, wake checkpoints; a field never set counts as matching an empty one)
+take the new values, fields set on the schedule itself are kept, and the
+edit costs no turn of its own: the supervisor chat shows a timeline notice
+("Supervision of CH-… changed"), and the change is folded into the next
+check-in as **Settings changed since your last check-in** (a live schedule
+checks within ~20 s, even while the orchestrator is mid-turn; a paused one
+waits until it resumes). An edit that moves none of the schedule's settings is
+passed on only while the orchestrator is mid-turn, with no notice. On that
+check-in, steer the orchestrator only if its live turn is doing work the edit
+affects; otherwise carry on with the check-in.
 
 ## Editing
 

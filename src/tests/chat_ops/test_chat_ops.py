@@ -404,6 +404,39 @@ def test_busy_target_costs_no_supervisor_turn(chats, monkeypatch):
     assert store.get(sched["id"], chats[2])["state"] == "pending"
 
 
+def test_settings_change_is_told_once_in_the_next_check_in_even_mid_turn(chats, monkeypatch):
+    """A pending settings edit wakes the supervisor once (a busy target too: that is
+    when it may need steering); the check-in carries it and the record clears."""
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    service.update_supervision(sched["id"], owner, {"instructions": "new rules"}, db=db)
+    assert store.find(sched["id"])["due"] <= __import__("time").time() + service.CHANGE_WAKE_SEC + 1
+    checkins = _tick(chats, sched, _snap("busy"), monkeypatch)
+    assert len(checkins) == 1
+    text = checkins[0]["payload"]["text"]
+    assert "Settings changed since your last check-in** (by you)" in text and "new rules" in text
+    assert "pending_changes" not in store.find(sched["id"])["payload"]
+    store.finish(checkins[0]["id"], "done", {})
+    assert len(_tick(chats, sched, _snap("busy"), monkeypatch)) == 1  # nothing new: no second wake
+
+
+def test_edit_landing_mid_check_survives_the_clear(chats):
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    first = store.merge_pending_changes(sched["id"], updated=["every"], kept=[], notes=[], source="you", at=1)
+    store.merge_pending_changes(sched["id"], updated=["instructions"], kept=[], notes=[], source="you", at=2)
+    assert store.clear_pending_changes(sched["id"], first["rev"]) is False
+    assert store.find(sched["id"])["payload"]["pending_changes"]["updated"] == ["every", "instructions"]
+
+
+def test_chat_op_rows_name_their_kind(chats):
+    from api.chat_metadata import chat_op_metadata
+    db, owner, sup, target, _foreign = chats
+    op = store.create("checkin", sup, sup, {"text": "x"})
+    meta = chat_op_metadata({"chat_op_id": op["id"]}, sup)
+    assert meta["chat_op_kind"] == "checkin" and meta["parent_label"] == "Supervision check-in"
+
+
 def test_busy_target_without_progress_wakes_supervisor(chats, monkeypatch):
     sched = _schedule(chats)
     clock = [1000.0]
@@ -679,12 +712,22 @@ def test_update_supervision_edits_in_place_and_tells_the_supervisor(chats, monke
     assert out["operation"]["state"] == "paused"  # editing never resumes
     assert pinned == [(sup, "codex", "terra", "high")]
     assert db.get_composer_selection(sup, owner)["stickyChips"][0]["category"] == "codex"
-    notice = [o for o in store.listing(sup) if o["kind"] == "checkin"][-1]["payload"]["text"]
-    assert notice.startswith(f"/codex **Supervision update for {_ch(target)}**")
-    assert "You (the user) edited this schedule." in notice and "new rules" in notice
-    # A second edit replaces the undelivered notice instead of stacking.
+    # An edit never spends a supervisor turn of its own: the user gets a timeline
+    # notice, and the change waits on the schedule for its next check-in.
+    assert [o for o in store.listing(sup) if o["kind"] == "checkin"] == []
+    notices = [m for m in db.get_messages(sup) if m["role"] == "system"]
+    assert len(notices) == 1
+    meta = notices[0]["metadata"]
+    meta = json.loads(meta) if isinstance(meta, str) else meta
+    assert meta["timeline_notice"]["type"] == "supervision" and meta["kind"] == "supervision-change"
+    assert "instructions" in meta["timeline_notice"]["detail"] and "by you" in meta["timeline_notice"]["detail"]
     service.update_supervision(op["id"], owner, {"every": 600}, db=db)
-    assert len([o for o in store.listing(sup) if o["kind"] == "checkin" and o["state"] == "pending"]) == 1
+    pending = store.find(op["id"])["payload"]["pending_changes"]
+    assert pending["rev"] == 2 and pending["sources"] == ["you"]
+    assert pending["updated"] == ["agent", "effort", "every", "forbidden_branches", "instructions", "model",
+                                  "task_ids"]
+    section = "\n".join(service.changes_section(store.find(op["id"])["payload"], _ch(target)))
+    assert "Settings changed since your last check-in** (by you)" in section and "instructions" in section
     with pytest.raises(ValueError, match="unknown model"):
         service.update_supervision(op["id"], owner, {"model": "nope"}, db=db)
     with pytest.raises(ValueError, match="also in the forbidden"):

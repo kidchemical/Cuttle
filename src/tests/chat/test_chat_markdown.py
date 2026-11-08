@@ -76,6 +76,8 @@ out.blocks = {
   fakeChip: blocks('{{CUTTLE_FAKE_9}}'),
   linkInPara: blocks('para {{CUTTLE_LINK_3}} end'),
   mixedList: blocks('1. one\\n2. two\\n- mix\\n3. three'),
+  orderedSplit: blocks('1. first\\n\\nCH-1\\n\\n2. second'),
+  orderedGaps: blocks('3. c\\n7. g'),
   headAfterList: blocks('- item\\n# head after list'),
   fenceLiteral: blocks('```not fence```'),
 };
@@ -140,9 +142,14 @@ def test_block_loop_structures():
     assert b["header"] == '<h1 class="message-header">Title <em>b</em></h1>'
     assert b["headerNoSpace"] == "<p>#H no space</p>"
     assert b["list"] == "<ul><li>a</li><li>b</li></ul>"
-    assert b["ordered"] == "<ol><li>one</li><li>two</li></ol>"
+    assert b["ordered"] == '<ol><li value="1">one</li><li value="2">two</li></ol>'
+    # The author's numbers survive a paragraph between items and gaps.
+    assert b["orderedSplit"] == (
+        '<ol><li value="1">first</li></ol><p>CH-1</p><br>'
+        '<ol><li value="2">second</li></ol>')
+    assert b["orderedGaps"] == '<ol><li value="3">c</li><li value="7">g</li></ol>'
     assert b["listThenPara"] == "<ul><li>a</li></ul><p>text</p>"
-    assert b["mixedList"].count("<li>") == 4
+    assert b["mixedList"].count("<li") == 4
     assert b["headAfterList"] == (
         "<ul><li>item</li></ul>"
         '<h1 class="message-header">head after list</h1>')

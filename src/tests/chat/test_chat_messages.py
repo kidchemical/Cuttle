@@ -716,7 +716,7 @@ def test_format_message_pipeline_interleaves_all_stages():
     assert '<h2 class="message-header">' in second
     assert "<strong>bold</strong>" in second and "<em>em</em>" in second
     assert "<code>code</code>" in second
-    assert second.count("<li>") == 4 and "<ul>" in second and "<ol>" in second
+    assert second.count("<li") == 4 and "<ul>" in second and "<ol>" in second
     assert '<div class="message-table-wrap">' in second
     assert 'style="text-align:right"' in second
     assert "<td>extra</td>" in second

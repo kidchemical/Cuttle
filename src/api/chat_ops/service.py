@@ -483,7 +483,7 @@ def _schedule_fields(cfg, project_path):
     return out
 
 
-def resync_supervision(target, previous, current, *, note_lines=(), db=None):
+def resync_supervision(target, previous, current, *, note_lines=(), source='the playbook', db=None):
     """Carry an edit of the settings a supervision schedule came from into it.
 
     ``previous``/``current`` are the source's settings before and after the edit
@@ -509,11 +509,14 @@ def resync_supervision(target, previous, current, *, note_lines=(), db=None):
         cfg = op['payload']
         updated, kept = {}, []
         for key in SYNCED_FIELDS:
-            if key not in new or new[key] == old.get(key, cfg.get(key)):
+            if key not in new:
                 continue
-            if cfg.get(key) == old.get(key):
+            was = old.get(key, cfg.get(key))
+            if _same_setting(new[key], was):
+                continue
+            if _same_setting(cfg.get(key), was):
                 updated[key] = new[key]
-            elif cfg.get(key) != new[key]:
+            elif not _same_setting(cfg.get(key), new[key]):
                 kept.append(key)
         if updated:
             store.patch_payload(op['id'], **updated)
@@ -521,36 +524,86 @@ def resync_supervision(target, previous, current, *, note_lines=(), db=None):
                 store.drop_result_keys(op['id'], 'paths_base', 'paths_reported', 'failure_counts')
             from api.orchestration_telemetry import record
             record.supervision_schedule('edit', store.find(op['id']), fields=sorted(updated), source='playbook')
-        _queue_update_notice(op, {**cfg, **updated}, updated, kept, note_lines, handle)
+        # Nothing of this schedule changed: the target reads the new brief at its
+        # next turn by itself, so only a turn already running is worth a wake.
+        notice = 'none'
+        if updated or (op['state'] != 'paused' and _target_busy(row)):
+            notice = record_schedule_change(op, updated, kept, note_lines, source=source, db=db)
         out.append({'operation': op['id'], 'supervisor': f"CH-{int(op['actor']):06d}",
-                    'updated': sorted(updated), 'kept': kept})
+                    'updated': sorted(updated), 'kept': kept, 'notice': notice})
     return out
 
 
-def _queue_update_notice(op, cfg, updated, kept, note_lines, handle):
-    """One "Supervision update" check-in telling the supervisor what changed."""
-    lines = [(f"/{cfg['agent']} " if cfg.get('agent') else '') + f'**Supervision update for {handle}**', '']
-    lines += list(note_lines)
+def _same_setting(a, b):
+    """Equal settings; every blank (None, '', {}, []) is the same "not set"."""
+    return a == b or (not a and not b and not isinstance(a, (int, float)) and not isinstance(b, (int, float)))
+
+
+def _target_busy(row):
+    """Whether the target is mid-turn; an unreadable status counts as busy."""
+    try:
+        live = transport.request(int(row['user_id']), int(row['id']), 'GET', '/api/chat-live-status')
+        return bool(live.get('generating'))
+    except Exception:
+        return True
+
+
+def record_schedule_change(op, updated, kept, note_lines, *, source, db=None):
+    """Record an edit of a schedule's settings without spending a turn on it.
+
+    The user sees one timeline notice in the supervisor chat (a fact, not a
+    message). The supervisor reads the change in its next check-in
+    (``changes_section``): the pending record is folded into it, and a live
+    schedule checks within ``CHANGE_WAKE_SEC`` so the change reaches it soon; a
+    paused one keeps the record until it resumes. ``source``: who edited ("you",
+    "playbook Default"). Returns ``'pending'`` or ``'held'`` (paused)."""
+    now = time.time()
+    store.merge_pending_changes(op['id'], updated=sorted(updated), kept=list(kept),
+                                notes=[n for n in note_lines if n], source=source, at=now)
     if updated:
-        lines += ['', 'Your schedule now uses the new ' + ', '.join(_FIELD_LABELS[k] for k in updated) + '.']
-        if 'instructions' in updated:
-            lines += ['', '**Your instructions:**', cfg['instructions'].strip()]
-        tiers = cfg.get('model_tiers') or {}
-        if 'model_tiers' in updated and tiers:
-            lines += ['', '**Model guidance:**'] + [f"- {k}: {', '.join(v)}" for k, v in tiers.items() if v]
+        _timeline_notice(op, updated, source, db=db)
+    if op['state'] == 'paused':
+        return 'held'
+    store.pull_due(op['id'], now + CHANGE_WAKE_SEC)
+    return 'pending'
+
+
+# A burst of saves (edit, fix a typo, save again) reaches the supervisor once.
+CHANGE_WAKE_SEC = 20
+
+
+def _timeline_notice(op, updated, source, *, db=None):
+    from api.auth_db import get_auth_db
+    db = db or get_auth_db()
+    fields = ', '.join(_FIELD_LABELS.get(k, k) for k in sorted(updated))
+    label = f"Supervision of CH-{int(op['target']):06d} changed"
+    detail = f'{fields} · by {source}'
+    try:
+        db.add_message(int(op['actor']), 'system', f'{label} · {detail}', metadata={
+            'kind': 'supervision-change', 'schedule_id': op['id'],
+            'timeline_notice': {'type': 'supervision', 'label': label, 'detail': detail, 'state': 'done'}})
+    except Exception:
+        pass  # the record still reaches the supervisor; the notice is only the user's view
+
+
+def changes_section(cfg, handle):
+    """Check-in lines naming the schedule edits since the last check-in ([] when none)."""
+    pending = cfg.get('pending_changes') or {}
+    updated, kept, notes = pending.get('updated') or [], pending.get('kept') or [], pending.get('notes') or []
+    if not (updated or notes):
+        return []
+    by = ', '.join(pending.get('sources') or []) or 'the user'
+    lines = ['', f'**Settings changed since your last check-in** (by {by}):']
+    lines += [f'- {n}' for n in notes]
+    if updated:
+        lines.append('- Your schedule now uses the new ' + ', '.join(_FIELD_LABELS.get(k, k) for k in updated)
+                     + ' (below).')
     if kept:
-        lines += ['', 'Kept your own ' + ', '.join(_FIELD_LABELS[k] for k in kept)
-                  + ' (set on this schedule, not by the source).']
-    lines += ['', f'Check `python -m api.chat_cli status {handle}`. If it is mid-turn on work the change '
-              f'affects, steer it now with `python -m api.chat_cli send {handle} --text "…"`; otherwise '
-              'it needs no message. End your turn when done.']
-    # One pending notice per schedule: a newer edit replaces an undelivered one.
-    for pending in store.listing(op['actor']):
-        if (pending['kind'] == 'checkin' and pending['state'] == 'pending'
-                and pending['payload'].get('schedule_id') == op['id'] and pending['payload'].get('resync')):
-            store.cancel(pending['id'], op['actor'])
-    store.create('checkin', op['actor'], op['actor'],
-                 {'text': '\n'.join(lines), 'schedule_id': op['id'], 'resync': True})
+        lines.append('- Kept your own ' + ', '.join(_FIELD_LABELS.get(k, k) for k in kept)
+                     + ' (set on this schedule, not by the source).')
+    lines.append(f'- If {handle} is mid-turn on work the change affects, steer it now; otherwise it needs '
+                 'no message about the change.')
+    return lines
 
 
 EDITABLE_FIELDS = ('every', 'agent', 'model', 'effort', 'instructions', 'required_branch', 'required_path',
@@ -653,8 +706,7 @@ def update_supervision(op_id, user_id, changes, *, db=None):
         # A shorter interval takes effect now; a longer one from the next check.
         last = (op.get('result') or {}).get('last_check') or time.time()
         store.pull_due(op['id'], last + updated['every'])
-    _queue_update_notice(op, {**cfg, **patch}, updated, [], ['You (the user) edited this schedule.'],
-                         f"CH-{int(op['target']):06d}")
+    record_schedule_change(store.find(op['id']), updated, [], [], source='you', db=db)
     return {'operation': store.find(op['id']), 'updated': sorted(updated)}
 
 

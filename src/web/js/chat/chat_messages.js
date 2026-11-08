@@ -109,6 +109,7 @@
             parent_handle: meta.parent_handle || m.parent_handle || undefined,
             parent_label: meta.parent_label || m.parent_label || undefined,
             origin: meta.origin || m.origin || undefined,
+            chat_op_kind: meta.chat_op_kind || undefined,
             control_request_id: meta.control_request_id || m.control_request_id || undefined,
             supervised_task_id: meta.supervised_task_id || undefined,
             supervised_phase: meta.supervised_phase || undefined,

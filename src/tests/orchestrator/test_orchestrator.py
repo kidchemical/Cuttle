@@ -526,20 +526,11 @@ assert.equal(C.labelFor(chip, null, ''), 'Orchestrate');
 
 
 def test_playbook_edit_resyncs_running_supervision(tmp_path, orch, monkeypatch):
-    """An edit reaches the supervisor's schedule and queues it one relay check-in;
-    fields set on the schedule itself survive the edit."""
+    """An edit reaches the supervisor's schedule and waits there for its next
+    check-in (no turn of its own); fields set on the schedule itself survive."""
     from api.chat_ops import service as chat_ops, store as ops_store
 
-    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
-    db, owner, other, sid, other_sid = _seed_db(tmp_path)
-    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
-    sup = db.create_chat_session(owner, "supervisor")
-    service.bind(sid, "default", "ship it", db=db)
-    pb = service.get_playbook(owner, "default", db=db)
-    cfg = model.supervisor_config(pb, service.profile_map(owner, db=db))
-    op = chat_ops.supervise(sid, sup, every=1200, instructions=cfg["instructions"],
-                            model_tiers=cfg["model_tiers"], db=db)["operation"]
-
+    db, owner, sup, op, pb = _supervised(tmp_path, monkeypatch, busy=False, every=1200)
     edited = {**pb, "notes": "never touch prod",
               "supervisor": {**pb["supervisor"], "instructions": "Hold it to the plan.",
                              "every_sec": 600, "forbid_branches": ["main"]}}
@@ -548,18 +539,100 @@ def test_playbook_edit_resyncs_running_supervision(tmp_path, orch, monkeypatch):
     assert payload["instructions"] == "Hold it to the plan."
     assert payload["forbidden_branches"] == ["main"]
     assert payload["every"] == 1200  # set on the schedule, not by the playbook
-    notices = [o for o in ops_store.listing(sup) if o["kind"] == "checkin"]
-    assert len(notices) == 1 and notices[0]["payload"]["resync"]
-    text = notices[0]["payload"]["text"]
-    assert "notes" in text and "supervisor settings" in text and "Hold it to the plan." in text
-    assert "Kept your own check-in interval" in text and f"chat_cli send CH-{sid:06d}" in text
+    assert _checkins(sup) == []
+    section = "\n".join(chat_ops.changes_section(payload, f"CH-{op['target']:06d}"))
+    assert "by playbook Default org chart" in section
+    assert "notes" in section and "supervisor settings" in section
+    assert "Kept your own check-in interval" in section
+    assert len(_notices(db, sup)) == 1
 
-    # A second edit replaces the undelivered notice; a no-op save sends nothing.
+    # A second edit merges into the same record; a no-op save changes nothing.
     service.save_playbook(owner, {**edited, "notes": "never touch prod or staging"}, db=db)
-    pending = [o for o in ops_store.listing(sup) if o["kind"] == "checkin" and o["state"] == "pending"]
-    assert len(pending) == 1 and "notes" in pending[0]["payload"]["text"]
+    rev = ops_store.find(op["id"])["payload"]["pending_changes"]["rev"]
     service.save_playbook(owner, {**edited, "notes": "never touch prod or staging"}, db=db)
-    assert len([o for o in ops_store.listing(sup) if o["kind"] == "checkin" and o["state"] == "pending"]) == 1
+    assert ops_store.find(op["id"])["payload"]["pending_changes"]["rev"] == rev
+    assert _checkins(sup) == [] and len(_notices(db, sup)) == 1
+
+
+def _supervised(tmp_path, monkeypatch, *, busy=False, **sup_kw):
+    from api.chat_ops import service as chat_ops
+
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    db, owner, other, sid, other_sid = _seed_db(tmp_path)
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    monkeypatch.setattr(chat_ops, "_target_busy", lambda row: busy)
+    sup = db.create_chat_session(owner, "supervisor")
+    service.bind(sid, "default", "ship it", db=db)
+    pb = service.get_playbook(owner, "default", db=db)
+    cfg = model.supervisor_config(pb, service.profile_map(owner, db=db))
+    op = chat_ops.supervise(sid, sup, instructions=cfg["instructions"], model_tiers=cfg["model_tiers"],
+                            db=db, **sup_kw)["operation"]
+    return db, owner, sup, op, pb
+
+
+def _checkins(sup):
+    from api.chat_ops import store as ops_store
+    return [o for o in ops_store.listing(sup) if o["kind"] == "checkin" and o["state"] != "cancelled"]
+
+
+def _notices(db, sup):
+    return [m for m in db.get_messages(sup) if m["role"] == "system"]
+
+
+def test_playbook_edit_that_changes_nothing_on_the_schedule_is_relayed_only_mid_turn(tmp_path, orch, monkeypatch):
+    """The target reads the new brief by itself at its next turn: an edit that moves
+    none of the schedule's settings reaches the supervisor only when a turn is
+    already running, and never shows the user a notice."""
+    from api.chat_ops import store as ops_store
+
+    db, owner, sup, op, pb = _supervised(tmp_path, monkeypatch, busy=False)
+    service.save_playbook(owner, {**pb, "notes": "new notes"}, db=db)
+    assert "pending_changes" not in ops_store.find(op["id"])["payload"]
+    monkeypatch.setattr("api.chat_ops.service._target_busy", lambda row: True)
+    service.save_playbook(owner, {**pb, "notes": "newer notes"}, db=db)
+    pending = ops_store.find(op["id"])["payload"]["pending_changes"]
+    assert pending["updated"] == [] and any("notes" in n for n in pending["notes"])
+    assert _checkins(sup) == [] and _notices(db, sup) == []
+
+
+def test_paused_schedule_keeps_playbook_edits_until_it_resumes(tmp_path, orch, monkeypatch):
+    """A paused supervisor is never woken: settings still move, the user sees one
+    notice per edit, and the record waits for the first check after resume."""
+    from api.chat_ops import service as chat_ops, store as ops_store
+
+    db, owner, sup, op, pb = _supervised(tmp_path, monkeypatch, busy=True)
+    chat_ops.set_paused(op["id"], owner, True, indefinite=True, db=db)
+    service.save_playbook(owner, {**pb, "notes": "org chart moved"}, db=db)
+    assert "pending_changes" not in ops_store.find(op["id"])["payload"]  # paused + nothing moved
+
+    first = {**pb, "supervisor": {**pb["supervisor"], "instructions": "Hold it to the plan."}}
+    service.save_playbook(owner, first, db=db)
+    service.save_playbook(owner, {**first, "supervisor": {**first["supervisor"], "forbid_branches": ["main"]}},
+                          db=db)
+    after = ops_store.find(op["id"])
+    assert after["state"] == "paused" and _checkins(sup) == []
+    assert after["payload"]["instructions"] == "Hold it to the plan."
+    assert after["payload"]["pending_changes"]["updated"] == ["forbidden_branches", "instructions"]
+    assert len(_notices(db, sup)) == 2
+    chat_ops.set_paused(op["id"], owner, False, db=db)
+    assert _checkins(sup) == []  # resume itself sends nothing; its check does
+    assert ops_store.find(op["id"])["payload"]["pending_changes"]["rev"] == 2
+
+
+def test_playbook_checkpoints_reach_a_schedule_that_never_stored_any(tmp_path, orch, monkeypatch):
+    """A schedule with no checkpoints key follows a playbook that had none ({}):
+    adding checkpoints to the playbook applies them instead of reading as 'kept'."""
+    from api.chat_ops import store as ops_store
+
+    db, owner, sup, op, pb = _supervised(tmp_path, monkeypatch)
+    bare = service.save_playbook(owner, {**pb, "supervisor": {**pb["supervisor"], "checkpoints": {}}}, db=db)
+    assert "checkpoints" not in ops_store.find(op["id"])["payload"]
+    points = {"milestone": {"do": ["wake"]}, "repeat_failures": {"n": 3, "do": ["wake"]}}
+    service.save_playbook(owner, {**bare, "supervisor": {**bare["supervisor"], "checkpoints": points}}, db=db)
+    payload = ops_store.find(op["id"])["payload"]
+    assert set(payload["checkpoints"]) == {"milestone", "repeat_failures"}
+    assert "checkpoints" in payload["pending_changes"]["updated"]
+    assert "checkpoints" not in payload["pending_changes"]["kept"]
 
 
 # ── host-owned binding: switch, history, typed command, routes ─────────────
@@ -590,8 +663,8 @@ def test_rebind_switches_playbook_keeps_goal_and_resyncs_supervision(tmp_path, o
     assert out["playbook_id"] == "strict" and out["goal"] == "ship it" and out["changed"] == ["playbook"]
     payload = ops_store.find(op["id"])["payload"]
     assert payload["instructions"] == "Be strict." and payload["forbidden_branches"] == ["main"]
-    notice = [o for o in ops_store.listing(sup) if o["kind"] == "checkin"][-1]["payload"]["text"]
-    assert "switched" in notice and "`strict`" in notice
+    notice = "\n".join(chat_ops.changes_section(payload, f"CH-{sid:06d}"))
+    assert "switched" in notice and "`strict`" in notice and "by playbook Strict" in notice
     assert "Strict" in service.brief_block(sid)
 
     assert service.rebind(sid, owner, goal="ship it", db=db)["changed"] == []  # no-op
@@ -722,5 +795,5 @@ def test_playbook_checkpoint_edit_reaches_running_schedule_and_dialog_defaults(t
     after = ops_store.find(op["id"])
     assert after["payload"]["checkpoints"] == {"tests": {"when": "pass", "do": ["wake"]}}
     assert "paths_base" not in after["result"] and "failure_counts" not in after["result"]
-    notice = [o for o in ops_store.listing(sup) if o["kind"] == "checkin"][-1]["payload"]["text"]
+    notice = "\n".join(chat_ops.changes_section(after["payload"], f"CH-{sid:06d}"))
     assert "wake checkpoints" in notice

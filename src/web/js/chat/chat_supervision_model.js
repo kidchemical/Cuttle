@@ -392,7 +392,28 @@
         return { hours: c.hours };
     }
 
+    // A row Cuttle sent into this chat (chat_ops outbox), not something the
+    // user typed: a supervision check-in, a relayed send, or a Cuttle notice.
+    const CHAT_OP_KINDS = {
+        checkin: { label: 'Supervision check-in', title: 'Sent by Cuttle on the supervision schedule, not typed by you' },
+        send: { label: '', title: 'Sent into this chat by another chat, not typed by you' },
+        notice: { label: '', title: 'Sent by Cuttle when background work finished, not typed by you' },
+    };
+
+    /** {kind, label, title} for a chat_ops row's header badge, or null. */
+    function chatOpBadge(opts) {
+        if (!opts || String(opts.origin || '') !== 'chat_ops') return null;
+        const text = String(opts.parent_label || '').trim();
+        let kind = String(opts.chat_op_kind || '');
+        if (!Object.prototype.hasOwnProperty.call(CHAT_OP_KINDS, kind)) {
+            kind = /^Supervision check-in/i.test(text) ? 'checkin' : (/^Sent by /i.test(text) ? 'send' : 'notice');
+        }
+        const spec = CHAT_OP_KINDS[kind];
+        return { kind, label: spec.label || text || 'Cuttle', title: spec.title };
+    }
+
     const api = {
+        chatOpBadge,
         SCHEMA_VERSION, INTERVALS, PAUSE_CHOICES, fmtInterval, fmtClock, fmtWhen, nextLabel,
         chipText, badgeText, pausedText, pauseBody,
         historyRow, view, isSupervised, supervisorOf, dialogDefaults, supervisePayload, pinChoices, scheduleById,

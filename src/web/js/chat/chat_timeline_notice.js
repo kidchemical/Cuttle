@@ -36,6 +36,7 @@
         model: { icon: '⚡' },
         stop: { icon: '⏹' },
         compact: { icon: '\u{1F5DC}️' },
+        supervision: { icon: '\u{1F441}️' }, // a supervision schedule's settings changed
         notice: { icon: '' },
     };
     const KIND_TYPES = {

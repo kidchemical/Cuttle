@@ -70,6 +70,7 @@
         const openNow = new Set(); // threads open in this view
         const seenNow = new Map(); // key → Set(unread keys seen this view)
         const elKey = new WeakMap(); // row → thread key it was in last
+        const shown = new WeakSet(); // rows you have seen on screen in this view
         const wasLive = new Map(); // thread key → its root was live last pass
 
         function storageGet(key) {
@@ -301,6 +302,12 @@
                 return true;
             }
             if (openNow.has(key)) return store.open[key] !== false;
+            // Rows you already see on screen never vanish into a thread that
+            // forms around them (a reply's root arriving later, a reload mid-turn).
+            if (store.open[key] !== false && memberEls.slice(1).some((el) => shown.has(el))) {
+                openNow.add(key);
+                return true;
+            }
             if (store.open[key] !== undefined) {
                 if (store.open[key]) openNow.add(key);
                 return !!store.open[key];
@@ -394,7 +401,33 @@
             }
         }
 
+        /**
+         * The working bubble belongs where its turn row is (`data-turn-message-id`,
+         * stamped from live status), not last: after a reload it is appended below
+         * steers already saved into its turn. It is not a CH-…-N record, so moving
+         * it never renumbers the transcript.
+         */
+        function placeLiveBubbles(box) {
+            LIVE_IDS.forEach((id) => {
+                const el = h.doc.getElementById(id);
+                if (!el || el.parentElement !== box) return;
+                const mid = Number(el.dataset.turnMessageId);
+                if (!el.dataset.turnMessageId || !Number.isFinite(mid)) return;
+                let anchor = null;
+                for (const row of box.children) {
+                    if (row === el || !row.classList || !row.classList.contains('message') || LIVE_IDS.has(row.id)) continue;
+                    const rid = row.dataset.messageId;
+                    if (rid != null && rid !== '' && Number(rid) > mid) {
+                        anchor = row;
+                        break;
+                    }
+                }
+                if (anchor && el.nextElementSibling !== anchor) box.insertBefore(el, anchor);
+            });
+        }
+
         function apply(box) {
+            if (enabled) placeLiveBubbles(box);
             const rows = rowsOf(box);
             if (!enabled || !model()) {
                 rows.forEach(clearRow);
@@ -445,6 +478,9 @@
                 });
                 const preview = (!open && (unreadCount || thread.live)) ? previewFor(thread, rows) : '';
                 mountBar(rootEl, thread, open, unreadCount, preview);
+            });
+            rows.forEach((el) => {
+                if (!el.classList.contains('thread-reply-hidden')) shown.add(el);
             });
             if (Number.isFinite(maxId) && store && !(Number(store.w) >= maxId)) {
                 store.w = maxId;

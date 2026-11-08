@@ -65,6 +65,13 @@ console.log(JSON.stringify({
     instructions: 'Be strict', forbidden_branches: ['main'], model_tiers: {worker: ['cursor auto']},
     checkpoints: {tests: {when: 'fail', do: ['supervisor:rev']}}}}),
   found: M.scheduleById({supervising: [{id: 'a'}], supervised_by: [{id: 'b', target: 'CH-000002'}]}, 'b'),
+  opBadges: [
+    {origin: 'chat_ops', chat_op_kind: 'checkin', parent_label: 'Supervision check-in'},
+    {origin: 'chat_ops', parent_label: 'Supervision check-in'},
+    {origin: 'chat_ops', chat_op_kind: 'send', parent_label: 'Sent by CH-000007'},
+    {origin: 'chat_ops', parent_label: 'Background work finished'},
+    {origin: 'subagent', parent_label: 'Parent chat'}, null,
+  ].map((o) => M.chatOpBadge(o)),
 }));
 """
 
@@ -82,6 +89,10 @@ def _model():
 def test_model_view_rows_and_payload():
     r = _model()
     assert r["intervals"] == ["5m", "1h", "90m", "45s"]
+    # Rows Cuttle sent (not the user) name their kind; older rows read it from the label.
+    assert [b and (b["kind"], b["label"]) for b in r["opBadges"]] == [
+        ("checkin", "Supervision check-in"), ("checkin", "Supervision check-in"),
+        ("send", "Sent by CH-000007"), ("notice", "Background work finished"), None, None]
     chip = r["chip"]
     assert chip["text"].startswith("Supervising CH-000002 · every 15m · next ")
     assert chip["rules"] == "stay on dev/x · never main" and chip["tasks"] == "2/5 tasks done"
@@ -336,6 +347,16 @@ def test_host_started_checkin_paints_promptly_as_cuttle(browser, static_server):
         expect(bubble).to_have_count(1, timeout=3000)
         expect(bubble).to_contain_text("Cuttle")
         expect(bubble).to_contain_text("Scheduled supervision check-in")
+        # Distinct from a typed message: kind attribute, header badge, no accent fill.
+        expect(bubble).to_have_attribute("data-chat-op", "checkin")
+        expect(bubble.locator(".message-header-row")).to_contain_text("Supervision check-in")
+        fill = bubble.locator(".message-content").evaluate("e => getComputedStyle(e).borderTopStyle")
+        assert fill == "dashed"
+        image = bubble.locator(".message-content").evaluate("e => getComputedStyle(e).backgroundImage")
+        assert image == "none"  # not the user's accent gradient
+        # Its parent is this same chat, so no launcher pill repeats the label.
+        expect(bubble.locator(".subagent-launchers, .subagent-launcher")).to_have_count(0)
+        page.wait_for_timeout(800)
         expect(frame.locator("#typing-indicator-remote")).to_be_visible(timeout=3000)
         page.screenshot(path=os.environ.get("SUPERVISION_CHECKIN_SHOT", "/tmp/supervision_checkin.png"))
         assert not errors

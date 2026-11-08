@@ -403,6 +403,9 @@ def _waiting_label(tasks: List[Dict[str, Any]]) -> str:
     return waiting_label([_task_label([t]) for t in tasks])
 
 
+# A steer written as an answer finished but never read by the CLI: EOF after this.
+_UNREAD_STEER_GRACE_SEC = 20.0
+
 def _unread_steers(st: Dict[str, Any]) -> List[str]:
     unread = list(st["echoed"])
     out: List[str] = []
@@ -695,6 +698,9 @@ class ClaudeCliTool:
             if st["wait_timer"] is not None:
                 st["wait_timer"].cancel()
                 st["wait_timer"] = None
+            if st.get("steer_timer") is not None:
+                st["steer_timer"].cancel()
+                st["steer_timer"] = None
             if st["token"] is not None:
                 steer_registry.unregister(chat_session_id, st["token"])
                 st["token"] = None
@@ -704,6 +710,11 @@ class ClaudeCliTool:
                     proc.stdin.close()
                 except Exception:
                     pass
+
+        def _close_if_unread() -> None:
+            st["steer_timer"] = None
+            if len(st["sent"]) > len(st["echoed"]) and not st["waiting"]:
+                _close_input()
 
         def _steer_send(text: str) -> "concurrent.futures.Future":
             out: "concurrent.futures.Future" = concurrent.futures.Future()
@@ -862,6 +873,14 @@ class ClaudeCliTool:
                     st["waiting"] = True
                     st["wait_timer"] = loop.call_later(bg_wait, _give_up_waiting)
                     stream.activity.emit(f"waiting on background task: {_task_label(st['bg'])}", force=True)
+                elif len(st["sent"]) > len(st["echoed"]):
+                    # A steer that reached stdin just as this answer finished starts
+                    # an extra turn: stay steerable through it, so a steer sent while
+                    # it works is not refused (and queued) — close at its result.
+                    # A CLI that never reads the steer gets EOF after a short grace.
+                    if st.get("steer_timer") is not None:
+                        st["steer_timer"].cancel()
+                    st["steer_timer"] = loop.call_later(_UNREAD_STEER_GRACE_SEC, _close_if_unread)
                 else:
                     # EOF lets the CLI exit once queued steers are answered.
                     _close_input()

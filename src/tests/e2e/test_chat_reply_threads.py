@@ -217,3 +217,60 @@ def test_finished_subagents_are_replies_under_the_parent_turn(browser, static_se
         assert not errors
     finally:
         page.close()
+
+
+def test_reload_mid_turn_keeps_the_steer_threaded_and_visible(browser, static_server):
+    """Reloaded while the turn runs: the saved steer comes back as a row and the
+    working bubble is appended below it. The bubble moves back above its steer
+    (its turn row id is older), the thread is live and open, and it stays open
+    when the answer replaces the bubble — the steer never disappears."""
+    page, errors = _page(browser, static_server)
+    try:
+        page.evaluate('''() => {
+            add(row('user', 'ok im going to try it now', { mid: 40 }));
+            add(row('user', '/claude test steering', { mid: 42, steered: true, turn: 'T9' }));
+            boot();
+        }''')
+        steer = page.locator('.message[data-message-id="42"]')
+        expect(steer).to_be_visible()
+        order = '''() => Array.from(box().children).map((el) => el.id || el.dataset.messageId)'''
+        # The remote working bubble appears last, then live status stamps its turn row.
+        page.evaluate('''() => {
+            const live = add(row('assistant', '<div class="typing-status">Running tests…</div>', { id: 'typing-indicator-remote' }));
+            live.dataset.turnMessageId = '41';
+            live.dataset.turnId = 'T9';
+        }''')
+        assert page.evaluate(order) == ['40', 'typing-indicator-remote', '42']
+        expect(steer).to_be_visible()
+        bar = page.locator('#typing-indicator-remote .chat-thread-bar')
+        expect(bar.locator('.chat-thread-label')).to_have_text('Hide replies')
+        # The answer replaces the working bubble: still open, steer still shown.
+        page.evaluate('''() => document.getElementById('typing-indicator-remote')
+            .replaceWith(row('assistant', 'Steering works.', { mid: 41, turn: 'T9' }))''')
+        expect(page.locator('.message[data-message-id="41"] .chat-thread-label')).to_have_text('Hide replies')
+        expect(steer).to_be_visible()
+        assert page.evaluate(order) == ['40', '41', '42']
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_thread_forming_around_rows_on_screen_opens(browser, static_server):
+    """A steer shown as a plain row (its root not on screen yet) never vanishes
+    when the root arrives and the thread forms."""
+    page, errors = _page(browser, static_server)
+    try:
+        page.evaluate('''() => {
+            add(row('user', 'Fix it', { mid: 50 }));
+            add(row('user', '/codex also the docs', { mid: 52, steered: true, turn: 'T8' }));
+            boot();
+        }''')
+        steer = page.locator('.message[data-message-id="52"]')
+        expect(steer).to_be_visible()
+        page.evaluate('''() => box().insertBefore(row('assistant', 'Done.', { mid: 51, turn: 'T8' }),
+            document.querySelector('.message[data-message-id="52"]'))''')
+        expect(page.locator('.message[data-message-id="51"] .chat-thread-label')).to_have_text('Hide replies')
+        expect(steer).to_be_visible()
+        assert not errors
+    finally:
+        page.close()

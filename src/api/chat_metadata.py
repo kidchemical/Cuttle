@@ -48,7 +48,7 @@ def chat_op_metadata(request_data, session_id=None) -> dict:
         meta.update({
             'origin': 'chat_ops', 'speaker': 'Cuttle', 'speaker_kind': 'parent', 'avatar': 'cuttle',
             'parent_session_id': int(op['actor']), 'parent_handle': handle,
-            'parent_label': label,
+            'parent_label': label, 'chat_op_kind': op['kind'],
         })
     return meta
 

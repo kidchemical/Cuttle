@@ -194,3 +194,20 @@ body.light-mode .chat-supervision-paused { color: #8a5200; }
 @media (pointer: coarse) {
     .chat-supervision-dialog :is(input:not([type=checkbox]), textarea) { font-size: 16px; }
 }
+
+/* A row Cuttle sent into the chat (supervision check-in, relayed send, notice):
+   the header badge names it, and the bubble drops the user's accent fill so it
+   never reads as something the user typed. `!important` because every theme
+   (custom, RGB, flat, video background) restyles the user bubble with a more
+   specific selector, and this must hold under all of them. */
+.message.user[data-chat-op] .message-content {
+    background: color-mix(in srgb, var(--accent-color) 9%, var(--message-assistant-bg)) !important;
+    color: inherit !important;
+    border: 1px dashed color-mix(in srgb, var(--accent-color) 55%, transparent) !important;
+    box-shadow: none !important;
+}
+
+.message.user[data-chat-op] .message-content blockquote {
+    border-left-color: color-mix(in srgb, var(--accent-color) 60%, transparent);
+    background: color-mix(in srgb, var(--accent-color) 6%, transparent);
+}

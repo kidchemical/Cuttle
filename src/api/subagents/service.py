@@ -407,6 +407,74 @@ def _preflight_pins(specs: List[ChildSpec]) -> None:
             )
 
 
+def _resolve_tiers(specs: List[ChildSpec], parent_session_id: int, db) -> List[Dict[str, Any]]:
+    """Turn ``"tier"`` children into the tier member that can run (budget-aware).
+
+    Mutates ``specs`` in place; returns one budget note per tier child for the
+    spawn payload. Errors before any chat exists."""
+    from dataclasses import replace
+
+    from api.orchestrator.service import OrchestratorError, pick_tier_member
+
+    notes: List[Dict[str, Any]] = []
+    accounts = None
+    for i, spec in enumerate(specs):
+        if not spec.tier:
+            continue
+        if accounts is None:
+            from api.agent_router.budget import cached_snapshot
+
+            accounts = cached_snapshot()
+        try:
+            pick = pick_tier_member(parent_session_id, spec.tier, db=db, accounts=accounts)
+        except OrchestratorError as exc:
+            raise SubagentError(f"child {i + 1} ({spec.title or spec.tier}): {exc}") from None
+        prof = pick["profile"]
+        if isinstance(prof, str):
+            specs[i] = replace(spec, profile_id=prof)
+        else:  # temporary agent: the inline pin, as the brief would have sent it
+            specs[i] = replace(
+                spec, agent=prof.get("agent") or spec.agent, model=prof.get("model") or "",
+                effort=prof.get("effort") or "", agent_explicit=True, model_explicit=True,
+                effort_explicit=True, ephemeral_profile=True,
+                display_name=spec.display_name or str(prof.get("name") or ""),
+                title=spec.title or str(prof.get("name") or ""))
+        notes.append({"child": i + 1, "tier": pick["tier"], "picked": pick["name"], "skipped": pick["skipped"],
+                      "_pinned": bool(pick.get("pinned"))})
+    return notes
+
+
+def _preflight_budget(specs: List[ChildSpec], parent_session_id: int, db, *, tier_checked: set) -> None:
+    """Refuse a pinned child whose account is out of usage, before any row exists.
+
+    Uses what Cuttle already knows (recent out-of-usage failures, and the cached
+    plan-usage snapshot) — no vendor call here. Tier children were already picked
+    budget-aware. Inside an orchestrator chat the error names the tier's runnable
+    agent, so the next spawn goes there instead of failing on the same account."""
+    from api.agent_router.availability import target_state
+    from api.agent_router.budget import snapshot
+    from api.agent_router.types import ExecutionTarget
+
+    accounts = None
+    for index, spec in enumerate(specs, start=1):
+        if spec.route or index - 1 in tier_checked:
+            continue
+        if accounts is None:
+            accounts = snapshot()
+        state, why = target_state(ExecutionTarget(spec.agent, spec.model), accounts=accounts, verbose=True)
+        if state != "blocked":
+            continue
+        from api.orchestrator.service import runnable_alternative
+
+        alt = runnable_alternative(parent_session_id, profile_id=spec.profile_id, agent=spec.agent,
+                                   model=spec.model, effort=spec.effort, db=db, accounts=accounts)
+        hint = (f'the {alt["tier_label"]} tier can run {alt["name"]} — spawn with "tier": "{alt["tier"]}".'
+                if alt else "choose another agent or wait for the reset.")
+        raise SubagentError(
+            f"child {index} ({spec.title}): {spec.agent}{' ' + spec.model if spec.model else ''} "
+            f"is out of budget ({why}). No chat was created; {hint}")
+
+
 def spawn(
     *,
     parent_session_id: int,
@@ -447,7 +515,15 @@ def spawn(
         raise SubagentError("spawn requires at least one child")
     if len(specs) > MAX_CHILDREN:
         raise SubagentError(f"at most {MAX_CHILDREN} sub-agents per batch")
+    budget_notes = _resolve_tiers(specs, int(parent_session_id), db)
     specs = [apply_profile(s, db=db, user_id=user_id) for s in specs]
+    from dataclasses import replace as _replace
+
+    for note in budget_notes:
+        # The tier pick chose this harness for its budget: per-CLI child defaults must not swap it.
+        if note.pop("_pinned"):
+            i = note["child"] - 1
+            specs[i] = _replace(specs[i], agent_explicit=True, model_explicit=True, effort_explicit=True)
     # Apply per-CLI child defaults only to fields the child did not choose.
     # "native" means no Cuttle-imposed subagent preference.
     try:
@@ -474,6 +550,8 @@ def spawn(
     except Exception:
         pass
     _preflight_pins(specs)
+    _preflight_budget(specs, int(parent_session_id), db,
+                      tier_checked={n["child"] - 1 for n in budget_notes})
     collect_n = normalize_collect(collect)
     lifetime_n = normalize_lifetime(lifetime)
     project_path = str(parent.get("project_path") or "")
@@ -581,6 +659,8 @@ def spawn(
     payload = batch.public()
     payload["ok"] = True
     payload["timed_out"] = timed_out
+    if budget_notes:
+        payload["tier_picks"] = budget_notes
     return payload
 
 

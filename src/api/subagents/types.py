@@ -86,6 +86,9 @@ class ChildSpec:
     agent_explicit: bool = False
     model_explicit: bool = False
     effort_explicit: bool = False
+    # Orchestrator tier to pick from ("worker", a tier label or id); resolved to a
+    # member with budget left before any chat exists (api.orchestrator.service).
+    tier: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {

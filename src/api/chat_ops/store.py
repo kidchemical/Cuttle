@@ -209,6 +209,46 @@ def resume_expired(now=None):
     return resumed
 
 
+def merge_pending_changes(oid, *, updated, kept, notes, source, at):
+    """Add a settings edit to the schedule's ``pending_changes`` (payload), the
+    record its next check-in folds in. Edits merge; ``rev`` grows on each."""
+    with connection() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute('SELECT payload FROM operations WHERE id=?', (oid,)).fetchone()
+        if not row:
+            return None
+        payload = json.loads(row[0])
+        old = payload.get('pending_changes') or {}
+        merged_updated = sorted(set(old.get('updated') or []) | set(updated))
+        merged = {
+            'rev': int(old.get('rev') or 0) + 1,
+            'updated': merged_updated,
+            'kept': [k for k in dict.fromkeys([*(old.get('kept') or []), *kept]) if k not in merged_updated],
+            'notes': list(dict.fromkeys([*(old.get('notes') or []), *notes])),
+            'sources': list(dict.fromkeys([*(old.get('sources') or []), source])),
+            'since': old.get('since') or at,
+        }
+        payload['pending_changes'] = merged
+        conn.execute('UPDATE operations SET payload=? WHERE id=?', (json.dumps(payload), oid))
+        return merged
+
+
+def clear_pending_changes(oid, rev):
+    """Drop ``pending_changes`` once a check-in carried them; an edit that landed
+    after the check read them (newer ``rev``) stays for the next one."""
+    with connection() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute('SELECT payload FROM operations WHERE id=?', (oid,)).fetchone()
+        if not row:
+            return False
+        payload = json.loads(row[0])
+        if int((payload.get('pending_changes') or {}).get('rev') or 0) != int(rev or 0):
+            return False
+        payload.pop('pending_changes', None)
+        conn.execute('UPDATE operations SET payload=? WHERE id=?', (json.dumps(payload), oid))
+        return True
+
+
 def paused_schedules():
     """Every paused supervision schedule (for the stale-pause alert and context)."""
     with connection() as conn:

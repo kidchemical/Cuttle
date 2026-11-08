@@ -129,7 +129,7 @@ CHECKIN_REPLY_CHARS = 2500
 CONTEXT_HIGH_PERCENT = 75
 
 
-def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None):
+def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, changes=None):
     """The check-in turn as markdown: it renders as a readable Cuttle bubble in the
     supervisor chat and reads as a brief to the agent. Full data: `status --json`."""
     handle = snap['handle']
@@ -141,6 +141,7 @@ def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None):
     if any(where):
         joined = ' · '.join(w for w in where if w)
         lines.append(joined[0].upper() + joined[1:])
+    lines += list(changes or [])
     if stalled_min and snap['state'] == 'waiting_background':
         lines += ['', f'**No progress for {stalled_min} min:** its turn ended and it is waiting on background '
                   'work, but no new reply, commit, Tasks change or sub-agent reply since. Check that the job '
@@ -477,6 +478,9 @@ def _check_in(op, db, actor, sid, request):
             'tasks': [{'title': t['title'], 'done': t['done'], 'total': t['total']} for t in snap['tasks']]}
     # The first check of a UI-started schedule always briefs the new supervisor.
     briefing = bool(cfg.get('brief_on_start')) and not previous.get('last_checkin')
+    # A settings edit (user or playbook) is told once, in this check-in, even
+    # mid-turn: that is when the supervisor may need to steer.
+    changes = service.changes_section(cfg, snap['handle'])
     now = time.time()
     progress = _progress(snap, db)
     progress_at = previous.get('progress_at') or now
@@ -504,7 +508,7 @@ def _check_in(op, db, actor, sid, request):
         return
     # A working target or an unchanged picture costs no supervisor tokens;
     # a picture whose wake the supervisor never answered is not "seen".
-    if not violations and not briefing and not stalled and (
+    if not violations and not briefing and not stalled and not changes and (
             snap['state'] in ('busy', 'waiting_background')
             or (signature == previous.get('signature') and not failure)):
         reason = snap['state'] if snap['state'] in ('busy', 'waiting_background') else 'unchanged'
@@ -517,8 +521,10 @@ def _check_in(op, db, actor, sid, request):
                        {**seen, 'already_waiting': bool(active), **({'retry': True} if failure else {})})
     # A moved forbidden branch is reported once, so it never waits behind a queued check-in.
     if not active or moved:
-        text = checkin_text(cfg, snap, violations, stalled_min=seen.get('stalled_min'))
+        text = checkin_text(cfg, snap, violations, stalled_min=seen.get('stalled_min'), changes=changes)
         store.create('checkin', actor, actor, {'text': text, 'schedule_id': op['id']})
+        if changes:
+            store.clear_pending_changes(op['id'], (cfg.get('pending_changes') or {}).get('rev'))
     store.finish(op['id'], 'pending', {**tracking, 'signature': signature, 'last_check': time.time(),
                                         'last_checkin': time.time(), 'last_seen': seen,
                                         'guard_reported': found}, due=nxt)
