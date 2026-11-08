@@ -197,9 +197,13 @@
     }
 
     /** Dialog prefill from /api/chat-ops/sessions/<id>/defaults. */
-    function dialogDefaults(defaults) {
+    /**
+     * Dialog fields. ``schedule`` (an overview schedule row) switches it to
+     * editing that schedule: its stored settings win over the chat's defaults.
+     */
+    function dialogDefaults(defaults, schedule) {
         const d = defaults || {};
-        return {
+        const base = {
             target: d.handle || '',
             every: 900,
             instructions: DEFAULT_INSTRUCTIONS,
@@ -208,7 +212,56 @@
             forbidden: DEFAULT_FORBIDDEN,
             worker: '',
             expert: '',
+            // Tasks lists the supervisor follows: the chat's own preselected, project lists optional.
+            tasks: (Array.isArray(d.tasks) ? d.tasks : []).filter((t) => t && t.id).map((t) => ({
+                id: String(t.id), title: String(t.title || t.id), done: Number(t.done) || 0,
+                total: Number(t.total) || 0, scope: t.scope || 'session', selected: !!t.selected,
+            })),
         };
+        if (!schedule) return base;
+        const s = schedule;
+        const tiers = s.model_tiers || {};
+        const picked = Array.isArray(s.task_ids) ? s.task_ids.map(String) : null;
+        return Object.assign(base, {
+            editId: s.id,
+            agent: String(s.agent || ''),
+            model: String(s.model || ''),
+            effort: String(s.effort || ''),
+            every: Number(s.every) || base.every,
+            instructions: s.instructions || base.instructions,
+            requiredBranch: s.required_branch || '',
+            requiredPath: s.required_path || '',
+            forbidden: (s.forbidden_branches || []).join(', '),
+            worker: (tiers.worker || []).join(', '),
+            expert: (tiers.expert || []).join(', '),
+            tasks: base.tasks.map((t) => Object.assign({}, t, { selected: picked ? picked.indexOf(t.id) >= 0 : t.selected })),
+        });
+    }
+
+    /** Raw schedule row (supervising or supervised_by) for an id, from an overview. */
+    function scheduleById(overview, id) {
+        const o = overview || {};
+        return [].concat(o.supervising || [], o.supervised_by || []).find((s) => s && s.id === id) || null;
+    }
+
+    /**
+     * Model + effort choices for one /api/agents catalog row (same rule as the
+     * composer and agent profiles): [] when the harness takes no such pin.
+     */
+    function pinChoices(row, model) {
+        if (!row) return { models: [], efforts: [] };
+        const models = row.supports_model_pin === false ? [] : (row.models || []).map((m) => {
+            if (m == null) return null;
+            if (typeof m !== 'object') return { id: String(m), label: String(m) };
+            const id = m.id || m.modelId || m.value;
+            return id ? { id: String(id), label: String(m.label || id) } : null;
+        }).filter(Boolean);
+        let efforts = [];
+        if (row.supports_effort !== false) {
+            const perModel = row.model_efforts || {};
+            efforts = (model && Object.prototype.hasOwnProperty.call(perModel, model) ? perModel[model] : row.efforts) || [];
+        }
+        return { models, efforts: efforts.map(String) };
     }
 
     /** Validate dialog fields and build the POST /api/chat-ops/supervise body. */
@@ -234,12 +287,18 @@
                 schema_version: SCHEMA_VERSION,
                 target: f.target,
                 agent: f.agent,
+                model: String(f.model || '').trim(),
+                effort: String(f.effort || '').trim(),
                 every,
                 instructions: String(f.instructions || '').trim(),
                 required_branch: String(f.requiredBranch || '').trim(),
                 required_path: String(f.requiredPath || '').trim(),
                 forbidden_branches: forbidden,
                 model_tiers: tiers,
+                // Only an offered list makes this an explicit pick; none offered = follow whatever appears.
+                ...(Array.isArray(f.tasks) && f.tasks.length
+                    ? { task_ids: (f.taskIds || []).map(String).filter((id) => f.tasks.some((t) => t.id === id)) }
+                    : {}),
             },
         };
     }
@@ -260,7 +319,7 @@
     const api = {
         SCHEMA_VERSION, INTERVALS, PAUSE_CHOICES, fmtInterval, fmtClock, fmtWhen, nextLabel,
         chipText, badgeText, pausedText, pauseBody,
-        historyRow, view, isSupervised, supervisorOf, dialogDefaults, supervisePayload,
+        historyRow, view, isSupervised, supervisorOf, dialogDefaults, supervisePayload, pinChoices, scheduleById,
     };
     if (typeof module === 'object' && module.exports) module.exports = api;
     root.CuttleChatSupervisionModel = api;

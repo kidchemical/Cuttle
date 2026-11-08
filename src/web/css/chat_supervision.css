@@ -150,6 +150,11 @@ body.light-mode .chat-supervision-paused { color: #8a5200; }
 }
 .chat-supervision-dialog h3 { margin: 0 0 6px; font-size: 15px; }
 .chat-supervision-dialog label { display: block; margin-top: 10px; font-size: 12px; color: var(--text-secondary, #9aa3b2); }
+.chat-supervision-dialog label[hidden] { display: none; }
+.chat-supervision-tasks { margin: 10px 0 0; padding: 6px 10px 8px; border: 1px solid var(--border-color, #2a2f3a); border-radius: 8px; }
+.chat-supervision-tasks legend { font-size: 12px; color: var(--text-secondary, #9aa3b2); padding: 0 4px; }
+.chat-supervision-dialog label.chat-supervision-task { display: flex; gap: 6px; align-items: baseline; margin-top: 4px; color: inherit; }
+.chat-supervision-dialog .chat-supervision-task input { width: auto; margin: 0; }
 .chat-supervision-dialog select,
 .chat-supervision-dialog input,
 .chat-supervision-dialog textarea {

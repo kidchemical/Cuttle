@@ -482,7 +482,8 @@ def cmd_hook(args: argparse.Namespace) -> int:
     return 0 if payload['ok'] else 1
 
 
-_OPERATION_VERBS = ('operations', 'operation', 'cancel-operation', 'pause-operation', 'resume-operation')
+_OPERATION_VERBS = ('operations', 'operation', 'cancel-operation', 'pause-operation', 'resume-operation',
+                    'edit-operation')
 _CHAT_OP_VERBS = ('send', 'status', 'snapshot', 'stop', 'supervise', 'context', 'compact') + _OPERATION_VERBS
 
 
@@ -493,11 +494,26 @@ def cmd_operation(args: argparse.Namespace) -> int:
     if verb in _OPERATION_VERBS:
         actor = service.session_id(args.as_chat or __import__('os').environ.get('CUTTLE_CHAT_SESSION_ID'))
         # Validate the acting chat before exposing its operation records.
-        service.context(actor, actor, db=db)
+        _db, _actor, acting = service.context(actor, actor, db=db)
         if verb == 'operations':
             payload = {'schema_version': 1, 'ok': True, 'operations': store.listing(actor)}
         else:
-            if verb == 'cancel-operation':
+            if verb == 'edit-operation':
+                if not store.get(args.id, actor):
+                    raise SystemExit(f'Operation {args.id} not found for this chat')
+                changes = {k: v for k, v in {
+                    'every': args.every, 'agent': args.agent, 'model': args.model, 'effort': args.effort,
+                    'instructions': args.instructions, 'required_branch': args.require_branch,
+                    'required_path': args.require_path, 'forbidden_branches': args.forbid_branch,
+                    'model_tiers': json.loads(args.model_tiers) if args.model_tiers is not None else None,
+                }.items() if v is not None}
+                if args.tasks is not None:
+                    changes['task_ids'] = [t for t in args.tasks.split(',') if t.strip()]
+                if args.all_tasks:
+                    changes['task_ids'] = None
+                result = service.update_supervision(args.id, int(acting['user_id']), changes, db=db)
+                op, payload_extra = result['operation'], {'updated': result['updated']}
+            elif verb == 'cancel-operation':
                 op = store.cancel(args.id, actor)
             elif verb in ('pause-operation', 'resume-operation'):
                 pausing = verb == 'pause-operation'
@@ -506,7 +522,8 @@ def cmd_operation(args: argparse.Namespace) -> int:
                 op = store.set_paused(args.id, actor, pausing, until=until)
             else:
                 op = store.get(args.id, actor)
-            payload = {'schema_version': 1, 'ok': True, 'operation': op}
+            payload = {'schema_version': 1, 'ok': True, 'operation': op,
+                       **(payload_extra if verb == 'edit-operation' else {})}
     else:
         kwargs = {'actor': args.as_chat, 'db': db}
         if verb == 'send':
@@ -675,6 +692,8 @@ def build_parser() -> argparse.ArgumentParser:
         ('cancel-operation', 'Cancel a pending delivery or recurring supervision profile'),
         ('pause-operation', 'Pause a supervision schedule (timed by default: auto-resumes in 4 h)'),
         ('resume-operation', 'Resume a paused supervision schedule; checks right away'),
+        ('edit-operation', 'Change a supervision schedule in place (only the flags you pass); '
+                           'the supervisor gets one update check-in'),
     ):
         op = sub.add_parser(verb, parents=[common], help=help_text)
         op.add_argument('--as', dest='as_chat', help='Acting chat (default CUTTLE_CHAT_SESSION_ID); same owner required')
@@ -700,6 +719,20 @@ def build_parser() -> argparse.ArgumentParser:
                                  'with the full Cuttle briefing and recent transcript')
         if verb == 'snapshot':
             op.add_argument('--usage', action='append', default=[], help='Include plan usage for this agent (repeatable)')
+        if verb == 'edit-operation':
+            op.add_argument('--every', type=int, default=None, help='Seconds between checks, minimum 60')
+            op.add_argument('--agent', default=None, help='Supervisor harness (re-pins the supervisor chat)')
+            op.add_argument('--model', default=None, help="Supervisor model ('' = CLI default)")
+            op.add_argument('--effort', default=None, help="Supervisor effort ('' = CLI default)")
+            op.add_argument('--instructions', default=None)
+            op.add_argument('--require-branch', default=None)
+            op.add_argument('--require-path', default=None)
+            op.add_argument('--forbid-branch', action='append', default=None,
+                            help='Replaces the forbidden list (repeatable)')
+            op.add_argument('--model-tiers', default=None, help='JSON object with worker/expert model guidance')
+            op.add_argument('--tasks', default=None,
+                            help="Comma-separated Tasks ids to follow ('' = none); lists the chat makes later still count")
+            op.add_argument('--all-tasks', action='store_true', help='Follow every Tasks list the chat sees')
         if verb == 'supervise':
             op.add_argument('--every', type=int, default=900, help='Seconds between checks, minimum 60')
             op.add_argument('--instructions', required=True)

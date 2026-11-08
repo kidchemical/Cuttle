@@ -125,6 +125,7 @@
         function controls(id, paused, openHandle, openLabel) {
             return '<div class="chat-supervision-actions">'
                 + '<button type="button" data-sup-chat="' + esc(openHandle) + '">' + esc(openLabel) + '</button>'
+                + '<button type="button" data-sup-act="edit" data-sup-id="' + esc(id) + '">Edit…</button>'
                 + '<button type="button" data-sup-act="' + (paused ? 'resume' : 'pause-menu') + '" data-sup-id="' + esc(id) + '">'
                 + (paused ? 'Resume now' : 'Pause…') + '</button>'
                 + '<button type="button" class="is-danger" data-sup-act="cancel" data-sup-id="' + esc(id) + '">Cancel</button>'
@@ -197,6 +198,12 @@
         }
 
         async function act(verb, id, choice) {
+            if (verb === 'edit') {
+                const sched = M.scheduleById(overview, id);
+                closePopover();
+                if (sched) openDialog(String(sched.target).replace(/^CH-0*/, ''), sched);
+                return;
+            }
             if (verb === 'pause-menu') {
                 pauseMenuFor = pauseMenuFor === id ? null : id;
                 render();
@@ -252,7 +259,7 @@
                 + '<span class="chat-chrome-menu-item-label">Supervise this chat…</span></button>';
         }
 
-        async function openDialog(sessionId) {
+        async function openDialog(sessionId, schedule) {
             const sid = numericSession(sessionId);
             if (!enabled || !sid) return;
             let defaults;
@@ -266,20 +273,32 @@
                 host.toast(String(e.message || e), 'error');
                 return;
             }
-            const d = M.dialogDefaults(defaults);
+            const d = M.dialogDefaults(defaults, schedule);
+            const editing = !!d.editId;
             const list = ((agents && agents.agents) || []).filter((a) => a && a.id && a.sticky !== false);
             const wrap = doc.createElement('div');
             wrap.className = 'chat-supervision-dialog-backdrop';
-            wrap.innerHTML = '<form class="chat-supervision-dialog" role="dialog" aria-label="Supervise this chat">'
-                + '<h3>Supervise ' + esc(d.target) + '</h3>'
-                + '<p class="chat-supervision-meta">Creates a supervisor chat. The host checks ' + esc(d.target)
+            wrap.innerHTML = '<form class="chat-supervision-dialog" role="dialog" aria-label="'
+                + (editing ? 'Edit supervision' : 'Supervise this chat') + '">'
+                + '<h3>' + (editing ? 'Edit supervision of ' : 'Supervise ') + esc(d.target) + '</h3>'
+                + (editing ? '<p class="chat-supervision-meta">Changes apply to the running schedule (a paused one stays'
+                    + ' paused). The supervisor gets one check-in saying what changed.</p>'
+                    : '<p class="chat-supervision-meta">Creates a supervisor chat. The host checks ' + esc(d.target)
                 + ' on the interval and wakes the supervisor only when this chat stops, errors, needs input,'
-                + ' makes progress, or breaks a branch rule.</p>'
+                + ' makes progress, or breaks a branch rule.</p>')
                 + '<label>Supervisor agent<select name="agent">' + list.map((a) => '<option value="' + esc(a.id) + '"'
-                    + (a.id === 'cursor' ? ' selected' : '') + '>' + esc(a.label || a.id) + '</option>').join('')
+                    + (a.id === (d.agent || 'cursor') ? ' selected' : '') + '>' + esc(a.label || a.id) + '</option>').join('')
                 + '</select></label>'
+                + '<label>Model<select name="model"></select></label>'
+                + '<label>Effort<select name="effort"></select></label>'
                 + '<label>Check every<select name="every">' + M.INTERVALS.map((s) => '<option value="' + s + '"'
                     + (s === d.every ? ' selected' : '') + '>' + M.fmtInterval(s) + '</option>').join('') + '</select></label>'
+                + (d.tasks.length ? '<fieldset class="chat-supervision-tasks"><legend>Tasks lists to follow</legend>'
+                    + d.tasks.map((t) => '<label class="chat-supervision-task"><input type="checkbox" name="taskIds" value="'
+                        + esc(t.id) + '"' + (t.selected ? ' checked' : '') + '> ' + esc(t.title)
+                        + ' <span class="chat-supervision-meta">' + t.done + '/' + t.total
+                        + (t.scope === 'project' ? ' · project list' : '') + '</span></label>').join('')
+                    + '<p class="chat-supervision-meta">Lists this chat creates later are followed too.</p></fieldset>' : '')
                 + '<label>Instructions<textarea name="instructions" rows="4">' + esc(d.instructions) + '</textarea></label>'
                 + '<label>Must stay on branch<input name="requiredBranch" value="' + esc(d.requiredBranch)
                 + '" placeholder="any"></label>'
@@ -288,10 +307,30 @@
                 + '<label>Expert models (optional)<input name="expert" placeholder="e.g. claude opus"></label>'
                 + '<div class="chat-supervision-errors" role="alert"></div>'
                 + '<div class="chat-supervision-actions"><button type="button" data-sup-dismiss>Cancel</button>'
-                + '<button type="submit" class="is-primary">Start supervising</button></div></form>';
+                + '<button type="submit" class="is-primary">' + (editing ? 'Save changes' : 'Start supervising')
+                + '</button></div></form>';
             doc.body.appendChild(wrap);
             const form = wrap.querySelector('form');
             const close = () => wrap.remove();
+            const rowFor = (id) => list.find((a) => a.id === id) || null;
+            const fillSelect = (sel, items, keep) => {
+                sel.innerHTML = '<option value="">CLI default</option>' + items.map((it) => '<option value="'
+                    + esc(it.id) + '"' + (it.id === keep ? ' selected' : '') + '>' + esc(it.label) + '</option>').join('');
+                sel.closest('label').hidden = !items.length;
+            };
+            const fillEffort = () => {
+                const choices = M.pinChoices(rowFor(form.agent.value), form.model.value);
+                fillSelect(form.effort, choices.efforts.map((e) => ({ id: e, label: e })), form.effort.value);
+            };
+            const fillPins = () => {
+                const row = rowFor(form.agent.value);
+                fillSelect(form.model, M.pinChoices(row, '').models, form.agent.value === d.agent ? d.model : '');
+                fillEffort();
+            };
+            form.agent.addEventListener('change', fillPins);
+            form.model.addEventListener('change', fillEffort);
+            fillPins();
+            if (d.effort && form.agent.value === d.agent) { form.effort.value = d.effort; }
             wrap.addEventListener('click', (ev) => {
                 if (ev.target === wrap || (ev.target.closest && ev.target.closest('[data-sup-dismiss]'))) close();
             });
@@ -299,18 +338,25 @@
                 ev.preventDefault();
                 const fd = new root.FormData(form);
                 const payload = M.supervisePayload(Object.assign({}, d, {
-                    agent: fd.get('agent'), every: Number(fd.get('every')), instructions: fd.get('instructions'),
+                    agent: fd.get('agent'), model: fd.get('model'), effort: fd.get('effort'), every: Number(fd.get('every')), instructions: fd.get('instructions'),
                     requiredBranch: fd.get('requiredBranch'), forbidden: fd.get('forbidden'),
-                    worker: fd.get('worker'), expert: fd.get('expert'),
+                    worker: fd.get('worker'), expert: fd.get('expert'), taskIds: fd.getAll('taskIds'),
                 }));
                 const errBox = form.querySelector('.chat-supervision-errors');
                 if (!payload.ok) { errBox.textContent = payload.errors.join(' '); return; }
                 const submit = form.querySelector('[type=submit]');
                 submit.disabled = true;
                 try {
-                    const res = await call('POST', '/api/chat-ops/supervise', payload.body);
-                    close();
-                    host.toast('Supervisor started: CH-' + String(res.operation.actor).padStart(6, '0'), 'success');
+                    if (editing) {
+                        const res = await call('POST', '/api/chat-ops/operations/' + encodeURIComponent(d.editId)
+                            + '/edit', payload.body);
+                        close();
+                        host.toast((res.updated || []).length ? 'Supervision updated' : 'No changes', 'success');
+                    } else {
+                        const res = await call('POST', '/api/chat-ops/supervise', payload.body);
+                        close();
+                        host.toast('Supervisor started: CH-' + String(res.operation.actor).padStart(6, '0'), 'success');
+                    }
                     refresh();
                 } catch (e) {
                     errBox.textContent = String(e.message || e);

@@ -53,6 +53,15 @@ console.log(JSON.stringify({
   pauseBodies: ['1h', '4h', 'indefinite', 'nonsense'].map((id) => M.pauseBody(id, now * 1000)),
   tomorrow: M.pauseBody('tomorrow', now * 1000),
   bad, good,
+  pins: M.pinChoices({models: ['a', {id: 'b', label: 'B'}], efforts: ['low'], model_efforts: {b: ['x', 'y']}}, 'b'),
+  noPins: M.pinChoices({supports_model_pin: false, supports_effort: false, models: ['a'], efforts: ['low']}, ''),
+  picked: M.supervisePayload(Object.assign(M.dialogDefaults({handle: 'CH-000002',
+    tasks: [{id: 'own', title: 'Own', selected: true}, {id: 'proj', scope: 'project'}]}),
+    {agent: 'codex', model: 'b', effort: 'x', taskIds: ['proj', 'ghost']})).body,
+  edit: M.dialogDefaults({handle: 'CH-000002', tasks: [{id: 'own', selected: true}, {id: 'proj'}]},
+    {id: 's9', agent: 'codex', model: 'b', effort: 'x', every: 600, instructions: 'mine',
+     forbidden_branches: ['main', 'prod'], model_tiers: {worker: ['cursor auto']}, task_ids: ['proj']}),
+  found: M.scheduleById({supervising: [{id: 'a'}], supervised_by: [{id: 'b', target: 'CH-000002'}]}, 'b'),
 }));
 """
 
@@ -88,6 +97,16 @@ def test_model_view_rows_and_payload():
     assert " · resumes " in r["pausedChip"]["text"]
     # Pausing offers timed options first and an indefinite one last.
     assert r["pauseChoices"] == ["1h", "4h", "tomorrow", "indefinite"]
+    assert r["pins"] == {"models": [{"id": "a", "label": "a"}, {"id": "b", "label": "B"}], "efforts": ["x", "y"]}
+    assert r["noPins"] == {"models": [], "efforts": []}
+    assert r["picked"]["model"] == "b" and r["picked"]["effort"] == "x"
+    assert r["picked"]["task_ids"] == ["proj"]  # unknown ids dropped
+    assert "task_ids" not in r["good"]["body"]  # no lists offered: follow whatever appears
+    e = r["edit"]
+    assert e["editId"] == "s9" and e["agent"] == "codex" and e["model"] == "b" and e["every"] == 600
+    assert e["forbidden"] == "main, prod" and e["worker"] == "cursor auto" and e["instructions"] == "mine"
+    assert [(t["id"], t["selected"]) for t in e["tasks"]] == [("own", False), ("proj", True)]
+    assert r["found"]["target"] == "CH-000002"
     assert r["pauseBodies"] == [{"hours": 1}, {"hours": 4}, {"indefinite": True}, {"hours": 1}]
     assert r["tomorrow"]["until"] > 1_800_000_000
     assert r["queued"]["preview"] == "next step"

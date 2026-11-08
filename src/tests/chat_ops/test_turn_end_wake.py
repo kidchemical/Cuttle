@@ -54,7 +54,7 @@ def _schedule(chats, target=None):
 def _state(monkeypatch, state):
     seen = []
 
-    def fake(target, actor=None, *, db=None, request=None):
+    def fake(target, actor=None, *, db=None, request=None, task_pick=None):
         seen.append(int(target))
         return {"state": state}
 

@@ -63,9 +63,18 @@ def start_supervision():
             required_branch=str(data.get("required_branch") or ""),
             required_path=str(data.get("required_path") or ""),
             forbidden_branches=[str(b) for b in forbidden], model_tiers=tiers,
+            model=str(data.get("model") or ""), effort=str(data.get("effort") or ""),
+            task_ids=data.get("task_ids") if isinstance(data.get("task_ids"), list) else None,
         )
 
     return _call(run)
+
+
+@chat_ops_bp.post("/operations/<op_id>/edit")
+@authenticated_required
+def edit_supervision(op_id: str):
+    data = request.get_json(silent=True) or {}
+    return _call(service.update_supervision, op_id, _uid(), data)
 
 
 @chat_ops_bp.post("/operations/<op_id>/<verb>")

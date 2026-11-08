@@ -554,6 +554,110 @@ def test_start_supervisor_creates_a_briefed_chat_in_the_target_project(chats):
         service.start_supervisor(_ch(foreign), user_id=owner, agent="cursor", instructions="x", db=db)
 
 
+def test_start_supervisor_pins_model_effort_and_seeds_the_composer_chip(chats, monkeypatch):
+    db, owner, _sup, target, _foreign = chats
+    pinned = []
+    monkeypatch.setattr("api.agent_harness.agent_models.check_agent_pin",
+                        lambda a, m="", e="", **k: None if m == "terra" else f"unknown model {m}")
+    monkeypatch.setattr("api.subagents.identity.pin_child_session",
+                        lambda sid, spec, project_path="": pinned.append((sid, spec.agent, spec.model, spec.effort)))
+    out = service.start_supervisor(_ch(target), user_id=owner, agent="codex", model="terra", effort="high",
+                                   instructions="watch", db=db)
+    sup = out["operation"]["actor"]
+    assert pinned == [(sup, "codex", "terra", "high")]
+    chips = db.get_composer_selection(sup, owner)["stickyChips"]
+    assert chips[0]["prefix"].strip() == "/codex" and chips[0]["category"] == "codex"
+    with pytest.raises(ValueError, match="unknown model"):
+        service.start_supervisor(_ch(target), user_id=owner, agent="codex", model="nope", instructions="x", db=db)
+    with pytest.raises(ValueError, match="Pick an agent"):
+        service.start_supervisor(_ch(target), user_id=owner, agent="", instructions="x", db=db)
+
+
+def _list(db, owner, wid, *, sid=None, scope="session", project="", done=False):
+    db.upsert_chat_widget(widget_id=wid, user_id=owner, wtype="tasks", title=wid, scope=scope,
+                          session_id=sid, project_path=project,
+                          payload={"items": [{"id": "1", "text": "a", "done": done, "children": []}]})
+
+
+def test_supervision_follows_only_the_picked_tasks_lists(chats):
+    db, owner, sup, target, _foreign = chats
+    db.set_session_project(target, owner, project_id=7, project_name="Game", project_path="/games/x")
+    _list(db, owner, "own", sid=target)
+    _list(db, owner, "shared", scope="project", project="/games/x")
+    db.set_session_project(sup, owner, project_id=7, project_name="Game", project_path="/games/x")
+    _list(db, owner, "elsewhere", sid=sup, done=True)
+    cands = service.supervise_defaults(_ch(target), owner, db=db)["tasks"]
+    assert [(t["id"], t["selected"]) for t in cands][0] == ("own", True)
+    assert {t["id"]: t["selected"] for t in cands} == {"own": True, "shared": False, "elsewhere": False}
+    # Default: every visible list (own + project-scoped).
+    assert {t["id"] for t in service.status(_ch(target), _ch(sup), db=db, request=FakeHost())["tasks"]} == {"own", "shared"}
+    op = service.supervise(_ch(target), _ch(sup), instructions="w", task_ids=["elsewhere"], db=db)["operation"]
+    pick = service.task_pick(op["payload"])
+    out = service.status(_ch(target), _ch(sup), db=db, request=FakeHost(), task_pick=pick)
+    assert [t["id"] for t in out["tasks"]] == ["elsewhere"] and out["state"] == "idle"
+    # A list the target creates after the pick is still followed; project lists are not.
+    _list(db, owner, "later", sid=target)
+    _list(db, owner, "later-project", scope="project", project="/games/x")
+    out = service.status(_ch(target), _ch(sup), db=db, request=FakeHost(), task_pick=pick)
+    assert {t["id"] for t in out["tasks"]} == {"elsewhere", "later"} and out["state"] == "idle_with_work"
+    empty = service.supervise(_ch(target), _ch(sup), instructions="w", task_ids=[], db=db)["operation"]
+    # An explicit empty pick follows no list (all current ones were offered).
+    assert service.status(_ch(target), _ch(sup), db=db, request=FakeHost(),
+                          task_pick=service.task_pick(empty["payload"]))["tasks"] == []
+
+
+def test_update_supervision_edits_in_place_and_tells_the_supervisor(chats, monkeypatch):
+    db, owner, sup, target, _foreign = chats
+    pinned = []
+    monkeypatch.setattr("api.agent_harness.agent_models.check_agent_pin",
+                        lambda a, m="", e="", **k: None if m in ("", "terra") else f"unknown model {m}")
+    monkeypatch.setattr("api.subagents.identity.pin_child_session",
+                        lambda sid, spec, project_path="": pinned.append((sid, spec.agent, spec.model, spec.effort)))
+    op = service.supervise(_ch(target), _ch(sup), instructions="watch", agent="cursor", every=900, db=db)["operation"]
+    service.set_paused(op["id"], owner, True, indefinite=True, db=db)
+    # Unchanged fields (blank model on an older schedule included) are not edits.
+    assert service.update_supervision(op["id"], owner, {"every": 900, "model": "", "instructions": "watch"},
+                                      db=db)["updated"] == []
+    out = service.update_supervision(op["id"], owner, {
+        "every": 300, "agent": "codex", "model": "terra", "effort": "high", "instructions": "new rules",
+        "forbidden_branches": "main, prod", "task_ids": ["plan"]}, db=db)
+    assert out["updated"] == ["agent", "effort", "every", "forbidden_branches", "instructions", "model", "task_ids"]
+    cfg = out["operation"]["payload"]
+    assert cfg["agent"] == "codex" and cfg["model"] == "terra" and cfg["every"] == 300
+    assert cfg["forbidden_branches"] == ["main", "prod"] and cfg["task_ids"] == ["plan"]
+    assert out["operation"]["state"] == "paused"  # editing never resumes
+    assert pinned == [(sup, "codex", "terra", "high")]
+    assert db.get_composer_selection(sup, owner)["stickyChips"][0]["category"] == "codex"
+    notice = [o for o in store.listing(sup) if o["kind"] == "checkin"][-1]["payload"]["text"]
+    assert notice.startswith(f"/codex **Supervision update for {_ch(target)}**")
+    assert "You (the user) edited this schedule." in notice and "new rules" in notice
+    # A second edit replaces the undelivered notice instead of stacking.
+    service.update_supervision(op["id"], owner, {"every": 600}, db=db)
+    assert len([o for o in store.listing(sup) if o["kind"] == "checkin" and o["state"] == "pending"]) == 1
+    with pytest.raises(ValueError, match="unknown model"):
+        service.update_supervision(op["id"], owner, {"model": "nope"}, db=db)
+    with pytest.raises(ValueError, match="also in the forbidden"):
+        service.update_supervision(op["id"], owner, {"required_branch": "prod"}, db=db)
+    with pytest.raises(ValueError, match="interval"):
+        service.update_supervision(op["id"], owner, {"every": 5}, db=db)
+    service.cancel(op["id"], owner, db=db)
+    with pytest.raises(ValueError, match="live supervision"):
+        service.update_supervision(op["id"], owner, {"every": 600}, db=db)
+
+
+def test_edit_route_and_cli(client, chats, monkeypatch, capsys):
+    db, owner, sup, target, _foreign = chats
+    _flag(monkeypatch, True)
+    op = service.supervise(_ch(target), _ch(sup), instructions="watch", db=db)["operation"]
+    res = client.post(f"/api/chat-ops/operations/{op['id']}/edit", json={"every": 1200})
+    assert res.get_json()["success"] and res.get_json()["updated"] == ["every"]
+    from api.chat_cli.cli import build_parser
+    args = build_parser().parse_args(["edit-operation", op["id"], "--as", _ch(sup), "--tasks", "a,b", "--json"])
+    monkeypatch.setattr("api.chat_cli.cli._open_db", lambda _p: db)
+    assert args.func(args) == 0
+    assert json.loads(capsys.readouterr().out)["operation"]["payload"]["task_ids"] == ["a", "b"]
+
+
 def test_mark_supervision_links_history_rows(chats, monkeypatch):
     db, owner, sup, target, _foreign = chats
     sched = _schedule(chats)

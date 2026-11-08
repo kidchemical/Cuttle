@@ -147,7 +147,8 @@ def wake_on_turn_end(session_ids, *, db=None, request=None, now=None):
         if last is not None and now - last < EARLY_WAKE_DEBOUNCE_SEC:
             continue
         try:
-            state = service.status(op['target'], op['actor'], db=db, request=request)['state']
+            state = service.status(op['target'], op['actor'], db=db, request=request,
+                                   task_pick=service.task_pick(op.get('payload')))['state']
         except Exception:
             log.exception('turn-end state read failed for schedule %s', op['id'])
             continue

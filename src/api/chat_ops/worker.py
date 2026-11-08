@@ -384,7 +384,8 @@ def guard_check(op, db=None, request=None, *, trigger='', commands=()):
         return False
     if sorted(violations) == sorted(reported):
         return False  # already raised; the interval check repeats it
-    snap = service.snapshot(row['id'], actor, db=db, request=request or transport.request)
+    snap = service.snapshot(row['id'], actor, db=db, request=request or transport.request,
+                            task_pick=service.task_pick(cfg))
     store.record_check(op['id'], 'violation', {'state': snap['state'], 'branch': snap['branch'],
                                                'violations': violations, 'trigger': trigger})
     if _respond(op, db, actor, row, snap, [v for v in violations if v not in reported]):
@@ -396,7 +397,7 @@ def guard_check(op, db=None, request=None, *, trigger='', commands=()):
 def _check_in(op, db, actor, sid, request):
     """Wake the supervisor only when the target needs attention or changed."""
     cfg = op['payload']
-    snap = service.snapshot(sid, actor, db=db, request=request)
+    snap = service.snapshot(sid, actor, db=db, request=request, task_pick=service.task_pick(cfg))
     found, moved = _violations(op, snap['branch'], snap['execution_path'], db=db)
     previous = op.get('result') or {}
     new = [v for v in found if v not in (previous.get('guard_reported') or [])]
@@ -478,8 +479,6 @@ def _target_idle_with_work(op, db=None):
     Read straight from the stores (no chat HTTP call): the alert scan must cost
     nothing when every schedule is healthy."""
     from api.chat_live_status import get_live_status
-    from api.gizmos.tasks import list_tasks
-
     sid = int(op['target'])
     if get_live_status(sid).get('active'):
         return False
@@ -490,7 +489,7 @@ def _target_idle_with_work(op, db=None):
     row = db.get_chat_session_by_id(sid)
     if not row:
         return False
-    tasks = list_tasks(user_id=int(row['user_id']), session_id=sid, db=db)
+    tasks = service.supervised_tasks(db, int(row['user_id']), sid, *(service.task_pick(op.get('payload')) or (None, None)))
 
     def open_items(items):
         for item in items or []:
