@@ -377,9 +377,12 @@
                     floating: true, searchable: select.name === 'agent' || select.name === 'model',
                 }));
             });
+            // Capture phase: a closed dropdown's trigger stops Escape from bubbling, so the
+            // dialog must see it first. An open dropdown keeps Escape for itself.
             wrap.addEventListener('keydown', (ev) => {
                 if (ev.key === 'Escape' && !wrap.querySelector('.cuttle-combo.is-open')) {
                     ev.preventDefault(); ev.stopPropagation(); close();
+                    return;
                 }
                 if (ev.key !== 'Tab') return;
                 const focusable = Array.from(form.querySelectorAll('button, input, textarea, select, summary'))
@@ -387,7 +390,7 @@
                 const first = focusable[0], last = focusable[focusable.length - 1];
                 if (ev.shiftKey && doc.activeElement === first) { ev.preventDefault(); last.focus(); }
                 else if (!ev.shiftKey && doc.activeElement === last) { ev.preventDefault(); first.focus(); }
-            });
+            }, true);
             wrap.addEventListener('click', (ev) => {
                 if (ev.target === wrap || (ev.target.closest && ev.target.closest('[data-sup-dismiss]'))) close();
             });

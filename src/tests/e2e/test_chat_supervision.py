@@ -341,3 +341,20 @@ def test_host_started_checkin_paints_promptly_as_cuttle(browser, static_server):
         assert not errors
     finally:
         page.close()
+
+
+def test_dialog_closes_on_escape_right_after_it_opens(browser, static_server):
+    from playwright.sync_api import expect
+    world = SupervisionWorld(flag=True)
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        frame.locator("#chatChromeMenuBtn").click()
+        frame.locator("[data-sup-start]").click()
+        form = frame.locator(".chat-supervision-dialog")
+        expect(form).to_be_visible()
+        page.keyboard.press("Escape")  # focus starts on a dropdown trigger, which must not swallow it
+        expect(form).to_have_count(0)
+        assert world.posts == []
+        assert not errors
+    finally:
+        page.close()

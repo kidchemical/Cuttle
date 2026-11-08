@@ -63,15 +63,41 @@ def test_menu_dialog_starts_orchestration_with_a_typed_turn(browser, static_serv
         frame.locator("[data-orch-start]").click()
         form = frame.locator(".chat-supervision-dialog")
         expect(form).to_be_visible()
+        # Same shell as the supervision dialog: auth-modal, close button, scrolling body + footer,
+        # searchable playbook dropdown.
+        assert "auth-modal" in form.get_attribute("class")
+        expect(form.locator(".chat-supervision-dialog-header .auth-modal-close")).to_be_visible()
+        expect(form.locator(".chat-supervision-dialog-body")).to_be_visible()
+        expect(form.locator(".chat-supervision-dialog-footer [type=submit]")).to_be_visible()
+        expect(form.get_by_role("button", name="Playbook", exact=True)).to_be_visible()
         expect(form.locator("[name=playbookId]")).to_have_value("default")
         form.locator("[type=submit]").click()
         expect(form.locator(".chat-supervision-errors")).to_contain_text("Give the orchestrator a goal.")
-        form.locator("[name=playbookId]").select_option("fast")
+        form.get_by_role("button", name="Playbook", exact=True).click()
+        frame.get_by_role("option", name="Fast", exact=True).click()
         form.locator("[name=goal]").fill("ship the slice")
         form.locator("[type=submit]").click()
         expect(form).to_have_count(0)
         expect(slot.locator("[data-orch-open]")).to_contain_text("Orchestrating · Fast")
         assert ("chat", "/orchestrate @fast ship the slice") in world.calls
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_dialog_closes_on_escape_and_returns_focus(browser, static_server):
+    from playwright.sync_api import expect
+    world = OrchestrationWorld(bound=True)
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        chip = frame.locator("#chatOrchestrationSlot [data-orch-open]")
+        chip.click()
+        frame.locator("[data-orch-act=edit]").click()
+        form = frame.locator(".chat-supervision-dialog")
+        expect(form).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(form).to_have_count(0)
+        assert not [c for c in world.calls if c[0] == "PUT"]  # cancelling changes nothing
         assert not errors
     finally:
         page.close()
@@ -92,7 +118,8 @@ def test_chip_popover_edits_and_stops_without_an_agent_turn(browser, static_serv
         form = frame.locator(".chat-supervision-dialog")
         expect(form.locator("[name=playbookId]")).to_have_value("fast")
         expect(form.locator("[name=goal]")).to_have_value("ship the slice")
-        form.locator("[name=playbookId]").select_option("default")
+        form.get_by_role("button", name="Playbook", exact=True).click()
+        frame.get_by_role("option", name="Default (default)", exact=True).click()
         form.locator("[type=submit]").click()
         expect(form).to_have_count(0)
         expect(chip).to_contain_text("Orchestrating · Default")

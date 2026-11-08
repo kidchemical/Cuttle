@@ -154,6 +154,7 @@ body.light-mode .chat-supervision-paused { color: #8a5200; }
 .chat-supervision-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .chat-supervision-dialog label { display: block; margin-top: 16px; font-size: 13px; color: var(--popup-muted); min-width: 0; }
 .chat-supervision-fields > label { margin-top: 0; }
+.chat-supervision-fields > .is-wide { grid-column: 1 / -1; }
 .chat-supervision-dialog label[hidden] { display: none; }
 .chat-supervision-tasks { min-width: 0; margin: 20px 0 0; padding: 10px 12px; border: 1px solid var(--popup-border); border-radius: var(--radius-md, 10px); }
 .chat-supervision-tasks legend { font-size: 13px; color: var(--popup-muted); padding: 0 4px; }

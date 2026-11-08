@@ -158,25 +158,57 @@
                 return;
             }
             const d = M.dialogDefaults(current, playbooks);
+            const title = (d.editing ? 'Orchestration of ' : 'Orchestrate ') + 'CH-' + sid.padStart(6, '0');
+            const returnFocus = doc.activeElement;
             const wrap = doc.createElement('div');
             wrap.className = 'chat-supervision-dialog-backdrop';
-            wrap.innerHTML = '<form class="chat-supervision-dialog" role="dialog" aria-label="Orchestrate this chat">'
-                + '<h3>' + (d.editing ? 'Orchestration of CH-' : 'Orchestrate CH-') + esc(sid.padStart(6, '0')) + '</h3>'
+            // Same shell as the supervision dialog (auth-modal + header/body/footer), so both match.
+            wrap.innerHTML = '<form class="auth-modal chat-supervision-dialog" role="dialog" aria-modal="true" aria-label="'
+                + esc(title) + '">'
+                + '<header class="chat-supervision-dialog-header"><button type="button" class="auth-modal-close" data-orch-dismiss'
+                + ' aria-label="Close">×</button><h3>' + esc(title) + '</h3>'
                 + '<p class="chat-supervision-meta">' + (d.editing
                     ? 'Switch the playbook or edit the goal. The agent gets the new brief at its next turn; supervision on this chat follows a playbook switch.'
-                    : 'Binds this chat to a playbook and sends the goal as the first turn, on this chat’s agent.') + '</p>'
+                    : 'Binds this chat to a playbook and sends the goal as the first turn, on this chat’s agent.') + '</p></header>'
+                + '<div class="chat-supervision-dialog-body"><div class="chat-supervision-fields">'
                 + '<label>Playbook<select name="playbookId">' + d.playbooks.map((p) => '<option value="' + esc(p.id) + '"'
                     + (p.id === d.playbookId ? ' selected' : '') + '>' + esc(p.label) + (p.problem ? ' — ' + esc(p.problem) : '')
                     + '</option>').join('') + '</select></label>'
-                + '<label>Goal<textarea name="goal" rows="4" placeholder="What should the orchestrator get done?">'
-                    + esc(d.goal) + '</textarea></label>'
-                + '<div class="chat-supervision-errors" role="alert"></div>'
+                + '<label class="is-wide">Goal<textarea name="goal" rows="4" placeholder="What should the orchestrator get done?">'
+                    + esc(d.goal) + '</textarea></label></div></div>'
+                + '<footer class="chat-supervision-dialog-footer"><div class="chat-supervision-errors" role="alert"></div>'
                 + '<div class="chat-supervision-actions"><button type="button" data-orch-dismiss>Cancel</button>'
                 + '<button type="submit" class="is-primary">' + (d.editing ? 'Save changes' : 'Start orchestrating')
-                + '</button></div></form>';
+                + '</button></div></footer></form>';
             doc.body.appendChild(wrap);
             const form = wrap.querySelector('form');
-            const close = () => wrap.remove();
+            const combos = [];
+            const close = () => {
+                combos.forEach((c) => { try { c.destroy(); } catch (_) {} });
+                wrap.remove();
+                if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
+            };
+            form.querySelectorAll('select').forEach((select) => {
+                select.classList.add('chip-config-select');
+                if (root.CuttleSearchableSelect) combos.push(root.CuttleSearchableSelect.enhance(select, {
+                    label: (select.closest('label') && select.closest('label').firstChild.textContent) || 'Playbook',
+                    floating: true, searchable: select.name === 'playbookId',
+                }));
+            });
+            // Capture phase: a closed dropdown's trigger stops Escape from bubbling, so the
+            // dialog must see it first. An open dropdown keeps Escape for itself.
+            wrap.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Escape' && !wrap.querySelector('.cuttle-combo.is-open')) {
+                    ev.preventDefault(); ev.stopPropagation(); close();
+                    return;
+                }
+                if (ev.key !== 'Tab') return;
+                const focusable = Array.from(form.querySelectorAll('button, input, textarea, select, summary'))
+                    .filter((el) => !el.disabled && el.getClientRects().length);
+                const first = focusable[0], last = focusable[focusable.length - 1];
+                if (ev.shiftKey && doc.activeElement === first) { ev.preventDefault(); last.focus(); }
+                else if (!ev.shiftKey && doc.activeElement === last) { ev.preventDefault(); first.focus(); }
+            }, true);
             wrap.addEventListener('click', (ev) => {
                 if (ev.target === wrap || (ev.target.closest && ev.target.closest('[data-orch-dismiss]'))) close();
             });
@@ -205,7 +237,7 @@
                     submit.disabled = false;
                 }
             });
-            const first = form.querySelector('select');
+            const first = form.querySelector('.cuttle-combo-trigger') || form.querySelector('select');
             if (first) first.focus();
         }
 
