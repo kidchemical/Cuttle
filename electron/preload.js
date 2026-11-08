@@ -90,6 +90,8 @@ contextBridge.exposeInMainWorld('electron', {
     /** Gizmo pop-outs: always-on-top desktop windows, one per gizmo id. */
     gizmos: {
         syncPopouts: (list) => ipcRenderer.invoke('gizmo-popouts-sync', Array.isArray(list) ? list : []),
+        /** Pop-out page only: grow this window so its content fits (never shrinks). */
+        fitPopout: (width, height) => ipcRenderer.invoke('gizmo-popout-fit', Number(width) || 0, Number(height) || 0),
         onPopoutClosed: (callback) => {
             const handler = (_event, id) => callback(String(id || ''));
             ipcRenderer.on('gizmo-popout-closed', handler);

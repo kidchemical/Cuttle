@@ -36,6 +36,10 @@ _TRANSPORT_PATTERNS = [
         r"spend limit",
         r"hit your usage limit",
         r"out of usage",
+        # Claude Code subscription limits ("You've hit your session limit · resets 3pm").
+        r"you['’]ve hit your\b[^\n]*\blimit",
+        r"you['’]ve reached your\b[^\n]*\blimit",
+        r"out of usage credits",
         r"ActionRequiredError",
     )
 ]
@@ -51,6 +55,10 @@ _QUOTA_PATTERNS = [
         r"usage.?limit",
         r"out of usage",
         r"spend limit",
+        # Claude Code subscription limits ("You've hit your session limit · resets 3pm").
+        r"you['’]ve hit your\b[^\n]*\blimit",
+        r"you['’]ve reached your\b[^\n]*\blimit",
+        r"out of usage credits",
         r"ActionRequiredError",
         r"\b402\b",
     )

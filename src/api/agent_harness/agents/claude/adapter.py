@@ -347,6 +347,50 @@ class Adapter:
         from .helper import generate
         return generate(request)
 
+    async def _run_with_api_fallback(self, run, prompt: str, resume: Optional[str], status_queue: Any):
+        """Subscription first; on a usage-limit failure rerun once on API credit.
+
+        Returns ``(raw, billed_api, note)``. While the subscription is known to
+        be out (until the reset its error named) turns go straight to the key.
+        """
+        from api.agent_harness.agents.claude import api_fallback
+        from scripts.utilities.claude_cli_tool import _status_put
+
+        def _key_env() -> dict:
+            return {"ANTHROPIC_API_KEY": api_fallback.api_key()}
+
+        if api_fallback.exhausted_until() and not api_fallback.available():
+            _status_put(status_queue, "Claude subscription is out — running on Claude API credit…")
+            return await run(prompt, resume, _key_env()), True, ""
+
+        raw = await run(prompt, resume)
+        fail_text = f"{raw.get('error') or ''}\n{raw.get('output') or ''}"
+        if (raw.get("success") or raw.get("cancelled") or raw.get("timed_out")
+                or not api_fallback.is_subscription_limit(fail_text)):
+            if raw.get("success") and api_fallback.exhausted_until():
+                api_fallback.clear_exhausted()
+            return raw, False, ""
+
+        api_fallback.mark_exhausted(fail_text)
+        why = api_fallback.available()
+        if why == "over_budget":
+            return raw, False, (f"_Claude API fallback paused: the ${api_fallback.budget_usd():,.0f} "
+                                "monthly budget is spent._")
+        if why == "no_key":
+            return raw, False, "_Claude API fallback is on but no Anthropic key is set in Settings → Providers._"
+        if why:
+            return raw, False, ""
+
+        _status_put(status_queue, "Subscription limit reached — continuing on Claude API credit…")
+        if int((raw.get("usage") or {}).get("completion_tokens") or 0) == 0:
+            # Rejected before any work: the same turn again, from the same transcript.
+            return await run(prompt, resume, _key_env()), True, ""
+        # Cut off mid-turn: the partial work is in the resumed transcript.
+        sid = str(raw.get("claude_session_id") or resume or "").strip() or None
+        cont = ("Your previous attempt at this turn was cut off by a usage limit. Continue the "
+                "task from where you left off; do not redo steps that already finished.")
+        return await run(cont if sid else prompt, sid, _key_env()), True, ""
+
     async def execute(
         self,
         prompt: str,
@@ -438,16 +482,22 @@ class Adapter:
         from api.agent_harness.steer import steer_enabled
 
         steerable = steer_enabled("claude")
-        # Background tasks pending at the first result: reply now, follow up later.
-        background = (
-            BackgroundWait(chat_session_id, "claude")
-            if steerable and chat_session_id and detach_enabled("claude") else None
-        )
         tool = ClaudeCliTool(model=mid, reasoning_effort=effort)
-        raw = await tool.execute_prompt(
-            prompt, cwd=cwd, resume=resume, status_queue=status_queue,
-            chat_session_id=chat_session_id, timeout=timeout, cancel_event=cancel_event,
-            steerable=steerable, background=background,
+
+        async def _run(text: str, rid: Optional[str], extra_env: Optional[dict] = None) -> dict:
+            # Background tasks pending at the first result: reply now, follow up later.
+            background = (
+                BackgroundWait(chat_session_id, "claude")
+                if steerable and chat_session_id and detach_enabled("claude") else None
+            )
+            return await tool.execute_prompt(
+                text, cwd=cwd, resume=rid, status_queue=status_queue,
+                chat_session_id=chat_session_id, timeout=timeout, cancel_event=cancel_event,
+                steerable=steerable, background=background, extra_env=extra_env,
+            )
+
+        raw, billed_api, fallback_note = await self._run_with_api_fallback(
+            _run, prompt, resume, status_queue,
         )
 
         ok = bool(raw.get("success"))
@@ -530,6 +580,18 @@ class Adapter:
             display = "Done."
         if not ok and not display:
             display = str(err or "")
+        if billed_api:
+            from api.agent_harness.agents.claude import api_fallback
+
+            cost = usage.get("cost")
+            api_fallback.record_spend(cost, chat_session_id=chat_session_id, model=mid or "")
+            spent = api_fallback.month_spend()["usd"]
+            until = api_fallback.exhausted_until()
+            meta["billing"] = {"source": "anthropic_api", "cost_usd": cost, "month_usd": spent,
+                               "budget_usd": api_fallback.budget_usd(), "subscription_resets_at": until}
+            fallback_note = api_fallback.footer(cost, spent, api_fallback.budget_usd(), until)
+        if fallback_note and not raw.get("detached"):
+            display = f"{display}\n\n{fallback_note}".strip()
         return AgentResult(
             success=ok,
             output=display,

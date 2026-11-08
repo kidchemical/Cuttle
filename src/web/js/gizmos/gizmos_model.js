@@ -56,7 +56,8 @@
     function pickWindow(data, config) {
         const windows = (data && Array.isArray(data.windows) ? data.windows : []).filter(Boolean);
         if (!windows.length) return null;
-        const want = config && config.window && config.window !== 'tightest' ? config.window : '';
+        const want = config && config.window && config.window !== 'tightest' ? config.window
+            : String((data && data.primary_window) || '');
         if (want) {
             const hit = windows.find(w => w.id === want);
             if (hit) return hit;
@@ -67,7 +68,10 @@
     /** Shared fetch key: gizmos showing the same source share one request. */
     function dataKey(gizmo) {
         if (!gizmo) return '';
-        if (gizmo.type === 'usage_meter') return 'usage:' + String((gizmo.config || {}).agent || '');
+        if (gizmo.type === 'usage_meter') {
+            const cfg = gizmo.config || {};
+            return 'usage:' + String(cfg.agent || '') + (cfg.api_credit ? '+api_credit' : '');
+        }
         return 'gizmo:' + gizmo.id;
     }
 
@@ -95,6 +99,7 @@
             const left = clampPct(w.remaining_percent);
             return {
                 id: w.id, label: w.label, remaining: left, used: 100 - left,
+                valueText: w.value_text ? String(w.value_text) : '',
                 pct: show === 'used' ? 100 - left : left,
                 resetText: w.reset_at ? relative(w.reset_at, nowMs) : '',
                 resetAbs: absolute(w.reset_at),
@@ -200,7 +205,7 @@
             '<div class="gizmo-row tone-' + r.tone + (r.active ? ' is-active' : '') + '">'
             + '<span class="gizmo-row-label">' + escape(r.label) + '</span>'
             + bar(r.pct, 'gizmo-bar--row')
-            + '<span class="gizmo-row-value">' + Math.round(r.pct) + '%</span>'
+            + '<span class="gizmo-row-value">' + (r.valueText ? escape(r.valueText) : Math.round(r.pct) + '%') + '</span>'
             + '<span class="gizmo-row-reset" title="' + escape(r.resetAbs) + '">'
             + escape(r.resetText ? 'resets ' + r.resetText : '') + '</span></div>').join('') + '</div>';
     }
@@ -262,6 +267,7 @@
         if (extras.resets_available) notes.push(extras.resets_available + ' saved reset' + (extras.resets_available === 1 ? '' : 's'));
         if (extras.credits) notes.push('Credits: ' + extras.credits);
         if (extras.note) notes.push(extras.note);
+        if (extras.api_credit) notes.push('API credit: ' + extras.api_credit);
         const status = model.state === 'blocked'
             ? '<div class="gizmo-detail-status tone-blocked">Blocked' + (model.unblockAt
                 ? ' · unblocks ' + escape(relative(model.unblockAt, nowMs)) + ' (' + escape(absolute(model.unblockAt)) + ')' : '') + '</div>'

@@ -8,6 +8,9 @@ import uuid
 from core.runtime_paths import runtime_cache_path
 
 _lock = threading.RLock()
+# Login key -> epoch before which a rate-limited endpoint is not asked again.
+_backoff_until = {}
+_MAX_BACKOFF_S = 3600
 
 
 def snapshot(credentials_path, oauth, fetch):
@@ -29,7 +32,14 @@ def snapshot(credentials_path, oauth, fetch):
         now = time.time()
         if cached and 0 <= now - cached["updated_at"] < 60:
             return cached
+        backoff_key = path or identity or ""
+        wait_until = _backoff_until.get(backoff_key, 0)
+        if now < wait_until:
+            error = "Claude usage API is rate-limiting requests (HTTP 429); showing the last reading and retrying shortly."
+            return {**cached, "stale": True, "error": error} if cached else {"success": False, "error": error}
         result = fetch()
+        if result.get("retry_after"):
+            _backoff_until[backoff_key] = now + min(float(result["retry_after"]), _MAX_BACKOFF_S)
         if not result.get("success"):
             if cached:
                 return {**cached, "stale": True, "error": result.get("error")}

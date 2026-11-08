@@ -180,7 +180,7 @@ def normalize_claude(data: Dict[str, Any], now: float) -> Dict[str, Any]:
     extras: Dict[str, Any] = {}
     if extra.get("is_enabled"):
         extras["credits"] = "Extra usage on" + (" (limit reached)" if extra.get("spend_limit_reached") else "")
-    return {"plan": data.get("plan_type") or "", "windows": windows,
+    return {"plan": str(data.get("plan_type") or "").title(), "windows": windows,
             "blocked": blocked, "extras": extras, "stale": bool(data.get("stale")),
             "error": data.get("error"), "updated_at": data.get("updated_at")}
 

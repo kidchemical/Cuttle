@@ -63,7 +63,8 @@ def _store_id(db: Any) -> str:
     return str(getattr(db, 'db_path', '') or id(db))
 
 
-def _take(key: Optional[str], db: Any, *, pop: bool, turn: Any = None) -> Optional[Dict[str, Any]]:
+def _take(key: Optional[str], db: Any, *, pop: bool, turn: Any = None,
+          claim: bool = False) -> Optional[Dict[str, Any]]:
     """The open entry for ``key`` in ``db`` (removed when ``pop``); drops one from another store."""
     if key is None:
         return None
@@ -76,9 +77,27 @@ def _take(key: Optional[str], db: Any, *, pop: bool, turn: Any = None) -> Option
             return None
         if turn is not None and entry.get('turn') not in (None, turn):
             return None
+        if claim:
+            if entry.get('settling'):
+                return None  # another finalize/close is writing this row
+            entry['settling'] = True
         if pop:
             _open.pop(key, None)
         return dict(entry)
+
+
+def _release(entry: Dict[str, Any]) -> None:
+    """Forget ``entry`` once its row is written (a newer turn's entry stays).
+
+    ``finalize`` / ``close`` keep the row live (``_open``) until the reply or
+    card is committed: a history read's ``heal_orphans`` that ran in between
+    would otherwise see an in-progress row with no turn behind it and stamp the
+    interrupted card over the reply it is about to lose the race to."""
+    with _lock:
+        current_entry = _open.get(entry.get('key'))
+        if current_entry and current_entry.get('message_id') == entry.get('message_id') \
+                and current_entry.get('store') == entry.get('store'):
+            _open.pop(entry['key'], None)
 
 
 def _supports(db: Any) -> bool:
@@ -199,7 +218,7 @@ def open_row(db: Any, session_id: Any, *, turn: Any = None, user_input: str = ''
     with _lock:
         stale = _open.pop(key, None)
         _open[key] = entry
-    if stale and stale.get('store') == entry['store']:
+    if stale and stale.get('store') == entry['store'] and not stale.get('settling'):
         _settle(db, stale, status='interrupted')  # a previous turn never closed
     if not existing_run:
         _open_query_record(qid, entry['session_id'], user_input, label)
@@ -269,9 +288,16 @@ def claim_query_id(session_id: Any) -> Optional[str]:
 def finalize(db: Any, session_id: Any, content: str, metadata: Optional[dict], *,
              slot: str = '') -> Optional[int]:
     """Write the saved reply into the open row; its id, or None when none is open."""
-    entry = _take(_key(session_id, slot), db, pop=True)
+    entry = _take(_key(session_id, slot), db, pop=False, claim=True)
     if not entry:
         return None
+    try:
+        return _finalize(db, entry, content, metadata)
+    finally:
+        _release(entry)
+
+
+def _finalize(db: Any, entry: Dict[str, Any], content: str, metadata: Optional[dict]) -> Optional[int]:
     meta = dict(metadata or {})
     meta.pop(IN_PROGRESS, None)
     meta.setdefault('query_id', entry['query_id'])
@@ -301,9 +327,12 @@ def close(db: Any, session_id: Any, *, status: str = 'cancelled', slot: str = ''
     status line, a ``ui == system`` answer, a supervised row standing in) leaves
     no card. ``turn`` (when given) must match the row's turn, so a stale worker
     never closes a newer turn's row."""
-    entry = _take(_key(session_id, slot), db, pop=True, turn=turn)
+    entry = _take(_key(session_id, slot), db, pop=False, turn=turn, claim=True)
     if entry:
-        _settle(db, entry, status=status)
+        try:
+            _settle(db, entry, status=status)
+        finally:
+            _release(entry)
 
 
 def _settle(db: Any, entry: Dict[str, Any], *, status: str) -> None:

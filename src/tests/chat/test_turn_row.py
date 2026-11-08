@@ -309,6 +309,40 @@ def test_orphan_row_from_a_dead_turn_heals_on_history_read(authed):
     assert db.in_progress_messages(sid) == []
 
 
+def test_history_read_during_the_reply_save_never_stamps_the_interrupted_card(authed, monkeypatch):
+    """A poll landing between finalize's start and its commit healed the live row.
+
+    finalize used to drop the turn from the open set before writing; a history
+    read in that gap saw an in-progress row with no turn behind it, built the
+    interrupted card and committed it after the reply (the reply was lost)."""
+    from api import chat_turn_row
+    from api.auth_db import AuthDatabase
+
+    client, db, owner = authed
+    sid = db.create_chat_session(owner)
+    db.add_message(sid, "user", "/claude work", metadata=None)
+    row = chat_turn_row.open_row(db, sid, turn=1)
+    real_update = AuthDatabase.update_message_content
+    healed = {}
+
+    def update_with_poll(self, message_id, content, metadata=None):
+        if content == "the real reply" and "polled" not in healed:
+            healed["polled"] = True  # a history read arrives mid-save
+            healed["rows"] = chat_turn_row.heal_orphans(db, sid)
+        return real_update(self, message_id, content, metadata=metadata)
+
+    monkeypatch.setattr(AuthDatabase, "update_message_content", update_with_poll)
+    mid = chat_turn_row.finalize(db, sid, "the real reply", {"query_id": row["query_id"]})
+    assert mid == row["message_id"] and healed["rows"] == []
+    client.get(f"/api/auth/sessions/{sid}/messages")  # a later read settles nothing
+    [asst] = _assistants(db, sid)
+    assert asst["content"] == "the real reply"
+    assert chat_turn_row.current(sid) is None
+    # A close racing the same turn after the save is a no-op.
+    chat_turn_row.close(db, sid, status="cancelled", turn=1)
+    assert _assistants(db, sid)[0]["content"] == "the real reply"
+
+
 def test_skipped_turn_drops_its_row_only_when_newest(authed):
     from api import chat_turn_row
 

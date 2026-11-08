@@ -584,6 +584,7 @@ class ClaudeCliTool:
         cancel_event: Any = None,
         steerable: bool = False,
         background: Any = None,
+        extra_env: Optional[Dict[str, str]] = None,
         _ctl: Optional[_Detach] = None,
     ) -> Dict[str, Any]:
         if background is not None and steerable and _ctl is None:
@@ -592,7 +593,7 @@ class ClaudeCliTool:
                 prompt, cwd=cwd, resume=resume, status_queue=status_queue,
                 chat_session_id=chat_session_id, timeout=timeout,
                 permission_mode=permission_mode, cancel_event=cancel_event,
-                steerable=True, background=background, _ctl=ctl,
+                steerable=True, background=background, extra_env=extra_env, _ctl=ctl,
             ))
         ctl = _ctl
         if not (prompt or "").strip():
@@ -653,6 +654,10 @@ class ClaudeCliTool:
 
         _status_put(status_queue, "Calling Claude Code…")
         env = agent_cli_env()
+        if extra_env:
+            # Explicit per-run additions (the API-credit fallback's key); the
+            # host scrub above still drops everything the caller did not name.
+            env.update(extra_env)
         from scripts.utilities.claude_stream import ClaudeStream
 
         def _persist(sid: Optional[str]) -> None:

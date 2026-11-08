@@ -3723,6 +3723,10 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
 
 .message-content ol {
     list-style-type: decimal;
+    /* Outside markers ("10. ") sit in this padding and .message-content clips
+       overflow: size it in ch (digits are ~1ch) so monospace themes and
+       two-digit numbers never lose their leading digit. */
+    padding-left: max(24px, calc(4ch + 0.25em));
 }
 
 .message-content li {

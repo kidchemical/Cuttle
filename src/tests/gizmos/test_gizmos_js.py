@@ -93,6 +93,17 @@ out.railText = M.renderGizmoHtml(orG, noPct, 'rail', now).includes('gizmo-ring-v
 out.readoutDetail = M.renderDetailHtml(orG, noPct, now).includes('$74.25');
 out.orBlocked = M.meterModel(orG, {...orData, blocked: true, unblock_at: null,
   readout: {...orData.readout, value: '$0.00', pct: 0}}, now).state;
+const clG = {id: 'cl', type: 'usage_meter', title: 'Claude', config: {agent: 'claude', window: 'tightest', show: 'remaining', api_credit: true},
+  placement: {dock: 'rail', order: 0}};
+const clData = {label: 'Claude Code', plan: 'Pro', blocked: false, primary_window: 'api_credit', updated_at: 1_800_000_000,
+  extras: {api_credit: '$12.00 of $200 this month'},
+  windows: [{id: 'weekly', label: 'Weekly', used_percent: 100, remaining_percent: 0, reset_at: 1_800_000_000 + 3600},
+            {id: 'api_credit', label: 'API credit', used_percent: 6, remaining_percent: 94, reset_at: 1_800_000_000 + 86400, value_text: '$188.00 left'}]};
+out.apiCredit = {key: M.dataKey(clG), plainKey: M.dataKey({...clG, config: {agent: 'claude'}}),
+  picked: M.pickWindow(clData, clG.config).id,
+  pinned: M.pickWindow(clData, {...clG.config, window: 'weekly'}).id,
+  rowText: M.renderGizmoHtml(clG, clData, 'card', now).includes('$188.00 left'),
+  detail: M.renderDetailHtml(clG, clData, now).includes('API credit: $12.00 of $200')};
 console.log(JSON.stringify(out));
 """
 
@@ -579,3 +590,24 @@ def test_gizmos_app_creates_without_an_agent(tmp_path):
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         assert not errors
         browser.close()
+
+
+def test_claude_meter_api_credit_row(harness):
+    a = harness["apiCredit"]
+    assert a["key"] == "usage:claude+api_credit" and a["plainKey"] == "usage:claude"
+    assert a["picked"] == "api_credit" and a["pinned"] == "weekly"
+    assert a["rowText"] and a["detail"]
+
+
+def test_popover_and_popout_grow_with_interface_text_size():
+    # Interface text size scales font sizes only: a px popover width stayed put
+    # while the text grew, and the Remove button scrolled out sideways.
+    css = (WEB / "css" / "gizmos.css").read_text(encoding="utf-8")
+    assert "width: 25em;" in css and "width: 300px;" not in css
+    assert ".shell-gizmo-popover-actions { display: flex; flex-wrap: wrap;" in css
+    # The pop-out window clips overflow, so the page asks the host to grow it.
+    main = (REPO / "electron" / "main.js").read_text(encoding="utf-8")
+    preload = (REPO / "electron" / "preload.js").read_text(encoding="utf-8")
+    page = (WEB / "js" / "gizmos" / "gizmo_popout.js").read_text(encoding="utf-8")
+    assert "ipcMain.handle('gizmo-popout-fit'" in main and "w.webContents === event.sender" in main
+    assert "gizmo-popout-fit" in preload and "bridge.fitPopout(w, h)" in page
