@@ -222,6 +222,9 @@
             const top = viewport ? viewport.offsetTop : 0;
             const left = viewport ? viewport.offsetLeft : 0;
             if (rect.bottom < top || rect.top > top + height) { close(); return; }
+            // Scrolled out of a popup / panel body: the menu would float over
+            // the popup's frame (or past it), so close like at the viewport edge.
+            if (!visibleInScrollParents(rect)) { close(); return; }
             const below = top + height - rect.bottom - 12;
             const above = rect.top - top - 12;
             const upwards = below < 180 && above > below;
@@ -236,6 +239,19 @@
             panel.style.left = Math.max(left + 8, Math.min(rect.left, left + width - parseFloat(panel.style.width) - 8)) + 'px';
             panel.style.setProperty('--combo-list-height', Math.max(24, panelHeight - (searchable ? 42 : 0) - 10) + 'px');
             panel.style.top = (upwards ? Math.max(top + 8, rect.top - panel.getBoundingClientRect().height + 1) : rect.bottom - 1) + 'px';
+        }
+
+        function visibleInScrollParents(rect) {
+            const midY = (rect.top + rect.bottom) / 2;
+            for (let el = trigger.parentElement; el && el !== doc.body && el !== doc.documentElement; el = el.parentElement) {
+                const style = root.getComputedStyle(el);
+                if (!/(auto|scroll|hidden|clip)/.test(style.overflowY + ' ' + style.overflowX)) continue;
+                const box = el.getBoundingClientRect();
+                // Keep it open while at least half the trigger is still inside.
+                if (midY < box.top || midY > box.bottom
+                    || rect.right < box.left || rect.left > box.right) return false;
+            }
+            return true;
         }
 
         function onScroll(event) {
