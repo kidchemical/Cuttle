@@ -206,7 +206,11 @@ if (typeof window !== 'undefined') {
                 const node = range.startContainer;
                 const el = node.nodeType === 1 ? node : node.parentElement;
                 const msg = el && el.closest ? el.closest('.message') : null;
-                if (msg) msg.classList.add('chat-find-message-active');
+                if (msg) {
+                    // A match inside a closed reply thread opens it (chat_threads.js).
+                    try { msg.dispatchEvent(new CustomEvent('cuttle:reveal', { bubbles: true })); } catch (_) {}
+                    msg.classList.add('chat-find-message-active');
+                }
                 const target = msg || el;
                 if (target && typeof target.scrollIntoView === 'function') {
                     target.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });

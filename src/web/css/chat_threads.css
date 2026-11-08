@@ -1,0 +1,320 @@
+/* Reply threads (chat_threads.js): steers, follow-ups and sub-agent replies
+ * folded under their turn's bubble. Rows keep their place in the transcript;
+ * replies are indented on a thread rail and hidden while the thread is closed.
+ */
+
+/* ── Replies (real transcript rows) ──
+ * One rail drops from the root avatar through the open thread and curves
+ * into each reply (an elbow at the reply's header row).
+ */
+
+.message.thread-root.thread-open,
+.message.thread-reply {
+    position: relative;
+}
+
+.message.thread-reply {
+    padding-left: 51px; /* root avatar (36px) + gap (15px): line up under the reply text */
+    margin-top: -10px;  /* half the transcript gap: replies sit close to their root */
+}
+
+.message.thread-reply-hidden {
+    display: none !important;
+}
+
+/* Rail: root avatar → bottom of the root bubble. */
+.message.thread-root.thread-open::after {
+    content: '';
+    position: absolute;
+    left: 17px;
+    top: 42px;
+    bottom: -10px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--thread-rail-color);
+    pointer-events: none;
+}
+
+/* Rail through every reply but the last; elbow into each reply. */
+.message.thread-reply::before,
+.message.thread-reply::after {
+    content: '';
+    position: absolute;
+    pointer-events: none;
+}
+
+.message.thread-reply::before {
+    left: 17px;
+    top: -10px;
+    bottom: -10px;
+    width: 2px;
+    background: var(--thread-rail-color);
+}
+
+.message.thread-reply::after {
+    left: 17px;
+    top: -10px;
+    width: 32px;
+    height: 24px;
+    border-left: 2px solid var(--thread-rail-color);
+    border-bottom: 2px solid var(--thread-rail-color);
+    border-bottom-left-radius: 12px;
+}
+
+.message.thread-reply.thread-reply-last::before {
+    display: none;
+}
+
+.message.thread-root,
+.message.thread-reply {
+    --thread-rail-color: color-mix(in srgb, var(--border-color, #2a2a3e) 70%, var(--text-secondary, #888) 30%);
+}
+
+.message.thread-reply .message-avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 1em;
+}
+
+/* ── Bar under the root bubble: "▸ 3 replies · 2 steers · 1 follow-up ● 1 new" ── */
+
+.chat-thread-bar {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    margin-top: 2px;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.chat-thread-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    margin-left: -6px;
+    padding: 4px 10px 4px 6px;
+    border: 0;
+    border-radius: 999px;
+    background: none;
+    color: var(--accent-color, #667eea);
+    font: inherit;
+    font-size: 0.86em;
+    font-weight: 600;
+    line-height: 1.3;
+    cursor: pointer;
+    text-align: left;
+    transition: background-color var(--dur-fast, 0.15s) ease;
+}
+
+.chat-thread-toggle:hover {
+    background: color-mix(in srgb, var(--accent-color, #667eea) 12%, transparent);
+}
+
+.chat-thread-toggle:focus-visible {
+    outline: 2px solid var(--accent-color, #667eea);
+    outline-offset: 1px;
+}
+
+.chat-thread-chevron {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    transition: transform var(--dur-fast, 0.15s) ease;
+}
+
+.chat-thread-bar.is-open .chat-thread-chevron {
+    transform: rotate(90deg);
+}
+
+.chat-thread-detail {
+    color: var(--text-secondary, #888);
+    font-weight: 400;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.chat-thread-detail::before {
+    content: '·';
+    margin-right: 6px;
+}
+
+.chat-thread-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 2px;
+    color: var(--text-secondary, #888);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.chat-thread-status.is-unread {
+    color: var(--accent-color, #667eea);
+}
+
+.chat-thread-dot,
+.chat-thread-pulse {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.chat-thread-dot {
+    background: var(--accent-color, #667eea);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color, #667eea) 22%, transparent);
+}
+
+.chat-thread-pulse {
+    background: currentColor;
+    animation: chat-thread-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes chat-thread-pulse {
+    0%, 100% { opacity: 0.35; transform: scale(0.85); }
+    50% { opacity: 1; transform: scale(1); }
+}
+
+.chat-thread-preview {
+    max-width: 100%;
+    padding-left: 20px; /* under the label, past the chevron */
+    color: var(--text-secondary, #888);
+    font-size: 0.84em;
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0.9;
+}
+
+/* ── Sub-agent replies (finished children; the fleet cards stay above) ── */
+
+.chat-thread-subagents {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 4px 0 2px;
+    padding-left: 4px;
+    min-width: 0;
+}
+
+.chat-thread-subagent {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    min-width: 0;
+}
+
+.chat-thread-subagent-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9em;
+}
+
+.chat-thread-subagent-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.chat-thread-subagent-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+
+.chat-thread-subagent-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 8px;
+    font-size: 0.86em;
+}
+
+.chat-thread-subagent-name {
+    font-weight: 600;
+    color: var(--text-primary, inherit);
+}
+
+.chat-thread-subagent-outcome {
+    color: var(--text-secondary, #888);
+}
+
+.chat-thread-subagent.is-failed .chat-thread-subagent-outcome,
+.chat-thread-subagent.is-lost .chat-thread-subagent-outcome {
+    color: #e5534b;
+}
+
+.chat-thread-subagent-text {
+    color: var(--text-primary, inherit);
+    font-size: 0.92em;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 6;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* ── Narrow panes: the bubble wrapper is display:contents there ── */
+
+@container chat-transcript (max-width: 560px) {
+    .message.thread-reply {
+        padding-left: 30px;
+        margin-top: -6px;
+    }
+
+    /* The bubble spans the full width under the avatar: the rail starts at the replies. */
+    .message.thread-root.thread-open::after {
+        display: none;
+    }
+
+    .message.thread-reply::before {
+        left: 13px;
+        top: -6px;
+        bottom: -6px;
+    }
+
+    .message.thread-reply::after {
+        left: 13px;
+        top: -6px;
+        width: 14px;
+        height: 18px;
+        border-bottom-left-radius: 9px;
+    }
+
+    .message.thread-reply .message-avatar {
+        width: 24px;
+        height: 24px;
+    }
+
+    .message:not(.system) .chat-thread-bar,
+    .message:not(.system) .chat-thread-subagents {
+        order: 10;
+        flex: 1 1 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .chat-thread-pulse {
+        animation: none;
+    }
+
+    .chat-thread-chevron,
+    .chat-thread-toggle {
+        transition: none;
+    }
+}

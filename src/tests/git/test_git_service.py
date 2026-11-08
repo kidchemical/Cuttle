@@ -474,3 +474,33 @@ def test_working_branch_tracks_existing_origin_without_resetting_local_commits(t
     with pytest.raises(GitError, match='Commit or stash'):
         use_working_branch(str(tmp_path), 'main')
     assert git('branch', '--show-current') == 'dev'
+
+
+def test_push_repo_retries_once_after_rejected_credential(monkeypatch):
+    """An expired OAuth token fails the first push; Git drops it, the retry refreshes."""
+    import subprocess
+    from api import git_service
+
+    calls = []
+
+    def fake_once(cwd, remote, branch):
+        calls.append(1)
+        if len(calls) == 1:
+            return subprocess.CompletedProcess([], 128, '', 'remote: Failed to authenticate user\n'
+                                               "fatal: Authentication failed for 'http://x/r.git/'")
+        return subprocess.CompletedProcess([], 0, '', '')
+
+    monkeypatch.setattr(git_service, '_push_once', fake_once)
+    assert git_service.push_repo('.', 'origin', 'main').returncode == 0
+    assert len(calls) == 2
+
+
+def test_push_repo_does_not_retry_other_failures(monkeypatch):
+    import subprocess
+    from api import git_service
+
+    calls = []
+    monkeypatch.setattr(git_service, '_push_once', lambda *a: calls.append(1) or
+                        subprocess.CompletedProcess([], 1, '', '! [rejected] main (non-fast-forward)'))
+    assert git_service.push_repo('.', 'origin', 'main').returncode == 1
+    assert len(calls) == 1

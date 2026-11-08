@@ -86,6 +86,7 @@
             timestamp: parsed > 0 ? parsed : Date.now(),
             report_url: reportUrl,
             query_id: m.query_id || meta.query_id || undefined,
+            turn_id: meta.turn_id || m.turn_id || undefined,
             slash_command: m.slash_command || meta.slash_command,
             slash_command_failed: !!(m.slash_command_failed || meta.slash_command_failed),
             cursor_run: meta.cursor_run || m.cursor_run || undefined,

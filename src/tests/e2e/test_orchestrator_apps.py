@@ -161,7 +161,8 @@ def test_orchestrator_app_edits_ladder_and_previews_supervise(page_ctx, static_s
     _set_select(page, '#orchTiers .orch-tier:nth-child(3) select[data-field=role]', 'escalation')
     _set_select(page, '#orchTiers .orch-tier:nth-child(3) select[data-add-profile]', 'grunt')
     assert not page.locator('#orchSave').is_disabled()
-    page.locator('#orchTiers .orch-tier').nth(2).locator('[data-move="-1"]').click()
+    page.locator('#orchTiers .orch-tier').nth(2).locator('.orch-tier-head [data-grip]').press('Alt+ArrowUp')
+    assert page.evaluate("document.activeElement.closest('.orch-tier').dataset.index") == '1'  # focus follows
     page.click('[data-tab="limits"]')
     page.locator('.orch-stepper[data-key="solo_minutes"] [data-step="-1"]').click()
     page.click('[data-tab="supervisor"]')
@@ -190,6 +191,46 @@ def test_orchestrator_app_edits_ladder_and_previews_supervise(page_ctx, static_s
     assert 'seed' not in put[2] and 'missing_profiles' not in put[2]
     page.click('[data-target="CH-001548"]')
     page.wait_for_function("document.getElementById('orchSupervise').textContent.includes('CH-001548')")
+    assert errors == []
+
+
+def _member_ids(page):
+    return page.evaluate("""() => [...document.querySelectorAll('#orchTiers .orch-tier')].map(t =>
+        [...t.querySelectorAll('[data-member] .orch-member-name')].map(n => n.textContent.replace(/Default|Temporary/g, '').trim()))""")
+
+
+def test_orchestrator_grips_reorder_members_and_tiers(page_ctx, static_server):
+    page, errors = page_ctx
+    api = FakeAPI()
+    page.route('**/api/**', api.handle)
+    page.goto(static_server + '/orchestrator_page.html')
+    page.locator('#orchTiers .orch-tier').first.wait_for()
+    _set_select(page, '#orchTiers .orch-tier:nth-child(1) select[data-add-profile]', 'scout')
+    assert _member_ids(page) == [['Grunt', 'Scout'], ['Expert (Opus)']]
+    tier = lambda i: page.locator('#orchTiers > .orch-tier').nth(i)
+    # Drag Scout above Grunt: it becomes the tier default.
+    scout = tier(0).locator('[data-member="1"]')
+    scout.locator('[data-grip]').drag_to(tier(0).locator('[data-member="0"]'), target_position={'x': 40, 'y': 2})
+    assert _member_ids(page) == [['Scout', 'Grunt'], ['Expert (Opus)']]
+    assert 'Default' in tier(0).locator('[data-member="0"]').inner_text()
+    # Drag Grunt into the expert tier, below Expert.
+    tier(0).locator('[data-member="1"] [data-grip]').drag_to(tier(1).locator('[data-member="0"]'), target_position={'x': 40, 'y': 30})
+    assert _member_ids(page) == [['Scout'], ['Expert (Opus)', 'Grunt']]
+    # Alt+Up from the top of a tier crosses into the tier above.
+    tier(1).locator('[data-member="0"] [data-grip]').press('Alt+ArrowUp')
+    assert _member_ids(page) == [['Scout', 'Expert (Opus)'], ['Grunt']]
+    # A tier that already holds the agent refuses it: no change.
+    _set_select(page, '#orchTiers .orch-tier:nth-child(2) select[data-add-profile]', 'scout')
+    tier(0).locator('[data-member="0"] [data-grip]').drag_to(tier(1).locator('[data-member="0"]'), target_position={'x': 40, 'y': 2})
+    assert _member_ids(page) == [['Scout', 'Expert (Opus)'], ['Grunt', 'Scout']]
+    # Drag the second tier's grip above the first.
+    tier(1).locator('.orch-tier-head [data-grip]').drag_to(tier(0), target_position={'x': 100, 'y': 4})
+    assert _member_ids(page) == [['Grunt', 'Scout'], ['Scout', 'Expert (Opus)']]
+    page.click('#orchSave')
+    page.wait_for_function("document.getElementById('orchSaveState').textContent === 'All changes saved'")
+    put = [c for c in api.calls if c[0] == 'PUT'][-1]
+    assert [t['id'] for t in put[2]['tiers']] == ['expert', 'worker']
+    assert [m['profile'] for m in put[2]['tiers'][0]['members']] == ['grunt', 'scout']
     assert errors == []
 
 

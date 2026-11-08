@@ -459,6 +459,27 @@ assert.equal(copy.id, 'fast-copy-2'); assert.equal(copy.name, 'Fast (copy)');
 assert.ok(!('seed' in copy) && !('is_default' in copy));
 assert.equal(M.duplicatePlaybook(copy, []).name, 'Fast (copy)');
 assert.deepEqual(M.moveItem(['a','b','c'], 2, -1), ['a','c','b']);
+assert.deepEqual(M.moveItemTo(['a','b','c'], 0, 3), ['b','c','a']);  // to the end
+assert.deepEqual(M.moveItemTo(['a','b','c'], 2, 0), ['c','a','b']);
+assert.deepEqual(M.moveItemTo(['a','b','c'], 0, 1), ['a','b','c']);  // dropped on itself
+{
+  const P = (id, on) => ({profile: id, on: on !== false});
+  const tiers = [{id:'w', members:[P('a'), P('b'), P('c')]}, {id:'x', members:[P('d'), P('b', false)]}];
+  // within a tier: c becomes the second choice, a stays default
+  assert.deepEqual(M.moveMember(tiers, {tier:0, index:2}, {tier:0, index:1})[0].members.map(m => m.profile), ['a','c','b']);
+  // across tiers: a lands first in x, keeps on/off, leaves w
+  const moved = M.moveMember(tiers, {tier:0, index:0}, {tier:1, index:0});
+  assert.deepEqual(moved[0].members.map(m => m.profile), ['b','c']);
+  assert.deepEqual(moved[1].members.map(m => m.profile), ['a','d','b']);
+  assert.deepEqual(tiers[0].members.map(m => m.profile), ['a','b','c']);  // input untouched
+  // refused: x already has b; a full tier takes nothing
+  assert.equal(M.moveMember(tiers, {tier:0, index:1}, {tier:1, index:0}), null);
+  assert.match(M.memberDropProblem(tiers[1], P('b')), /already/);
+  const full = {id:'f', members:[1,2,3,4,5,6].map(n => P('p' + n))};
+  assert.equal(M.moveMember([tiers[0], full], {tier:0, index:0}, {tier:1, index:6}), null);
+  assert.match(M.memberDropProblem(full, P('a')), /full/);
+  assert.equal(M.memberDropProblem(tiers[1], P('a')), '');
+}
 assert.deepEqual(M.profileUsage([{name:'P', tiers:[{members:[{profile:'a'},{agent:'cursor'}]}, {profiles:['b']}]}]), {a:['P'], b:['P']});
 assert.deepEqual(M.parseBranches('master, dev/core  x'), ['master','dev/core','x']);
 assert.equal(M.esc('<b>'), '&lt;b&gt;');

@@ -1316,10 +1316,17 @@ def git_push():
                                    sanitize_git_output(result.stderr or ''))
             detail = failure['error']
             print(f"Error git_push: {detail}", flush=True)
-            if 'could not read Username' in detail or 'Authentication failed' in detail:
+            from api.git_service import push_auth_rejected
+            if 'could not read Username' in detail:
                 detail = (
                     'Git push needs credentials for this remote. Set up a git credential '
                     'helper (for GitHub: gh auth setup-git) or an SSH remote.'
+                )
+            elif push_auth_rejected(detail):
+                detail = (
+                    'The remote rejected the saved login twice (expired or revoked token). '
+                    'Sign in again from a terminal (git fetch) so the credential helper '
+                    'stores a fresh one.\n' + detail
                 )
             return jsonify({
                 'success': False,

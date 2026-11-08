@@ -11022,6 +11022,8 @@
         if (opts.kind === 'interrupted-agent-turn') messageDiv.dataset.stopped = 'true';
         messageDiv.dataset.rawContent = String(content ?? '');
         if (opts.query_id) messageDiv.dataset.queryId = String(opts.query_id);
+        const turnKey = opts.turn_id || opts.query_id || queryIdFromReportUrl(opts.report_url);
+        if (turnKey) messageDiv.dataset.turnId = String(turnKey); // reply threads (chat_threads.js)
         if (opts.message_id != null && opts.message_id !== '') {
             messageDiv.dataset.messageId = String(opts.message_id);
         }
@@ -11426,6 +11428,17 @@
         activateViewport: activateChatViewport,
         copyText: copyTextToClipboard,
     });
+
+    // Steers, follow-ups and sub-agent replies fold under their turn's bubble
+    // (chat_threads.js; experimental `chat_reply_threads`, default on).
+    const replyThreads = CuttleChatThreads.create({
+        doc: document, win: window, container: () => document.getElementById('chatMessages'),
+        sessionId: () => session.current(), storage: localStorage, escapeHtml: escapeHtmlInline,
+        renderHandleLink: renderChatHandleLink, avatarHtml: profileAvatarInnerHtml,
+        isFollowingLatest: () => transcriptNav.isFollowingLatest(), revealTop: (el) => transcriptNav.revealMessageTop(el),
+    });
+    replyThreads.start(true);
+    replyThreads.syncFlag((u, o) => fetch(u, o));
 
     function formatTimeAgo(ts) {
         if (!ts || ts <= 0) return 'now';

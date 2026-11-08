@@ -1657,13 +1657,14 @@ def chat_steer():
             return err
 
     from api.agent_harness.steer import steer as steer_live_turn
+    from api.chat_coordinator import steered_user_meta
 
     info = steer_live_turn(db_sid if db_sid is not None else sid, message)
     if info.get('steered') and db_sid is not None:
         _persist_auth_user_message(
             db_sid,
             message,
-            {'steered': True, 'steered_agent': info.get('agent')},
+            steered_user_meta(info),
         )
     return jsonify({'success': True, **info})
 

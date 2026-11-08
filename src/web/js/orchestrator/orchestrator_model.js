@@ -270,6 +270,50 @@
         return out;
     }
 
+    /** Moves list[from] so it lands before the item now at `before` (0..length; length = end). */
+    function moveItemTo(list, from, before) {
+        const out = (list || []).slice();
+        if (from < 0 || from >= out.length || before < 0 || before > out.length) return out;
+        const [item] = out.splice(from, 1);
+        out.splice(before > from ? before - 1 : before, 0, item);
+        return out;
+    }
+
+    /**
+     * Moves a member, within its tier or into another one, landing before the
+     * member now at `to.index` (length = end). Order is meaningful: the first
+     * switched-on member is the tier's default, the rest are tried in order.
+     * Returns the new tiers, or null when another tier can't take it (full, or
+     * already holds that agent).
+     */
+    function moveMember(tiers, from, to) {
+        const src = tiers && tiers[from.tier];
+        const dst = tiers && tiers[to.tier];
+        if (!src || !dst) return null;
+        const out = tiers.slice();
+        const srcList = clone(tierMembers(src));
+        if (from.index < 0 || from.index >= srcList.length) return null;
+        if (from.tier === to.tier) {
+            out[from.tier] = withMembers(src, moveItemTo(srcList, from.index, to.index));
+            return out;
+        }
+        const dstList = clone(tierMembers(dst));
+        const [m] = srcList.splice(from.index, 1);
+        if (dstList.length >= MAX_MEMBERS || dstList.some((x) => memberKey(x) === memberKey(m))) return null;
+        dstList.splice(Math.max(0, Math.min(to.index, dstList.length)), 0, m);
+        out[from.tier] = withMembers(src, srcList);
+        out[to.tier] = withMembers(dst, dstList);
+        return out;
+    }
+
+    /** Why `member` can't move into `tier` ('' when it can). */
+    function memberDropProblem(tier, member) {
+        const list = tierMembers(tier);
+        if (list.some((x) => memberKey(x) === memberKey(member))) return 'That agent is already in this tier';
+        if (list.length >= MAX_MEMBERS) return `That tier is full (${MAX_MEMBERS})`;
+        return '';
+    }
+
     function uniqueId(base, taken) {
         const ids = new Set(taken || []);
         const stem = slug(base).replace(/-copy(-\d+)?$/, '').slice(0, 30) || 'playbook';
@@ -343,7 +387,7 @@
         DEFAULT_PIN, settingItems, effortLevels, pinLabel, agentIcon, ROLE_META,
         MAX_MEMBERS, isTemporary, isOn, tierMembers, memberKey, temporaryMember,
         addMember, removeMember, replaceMember, toggleMember, promoteMember,
-        newTier, newPlaybook, duplicatePlaybook, moveItem, parseBranches,
+        newTier, newPlaybook, duplicatePlaybook, moveItem, moveItemTo, moveMember, memberDropProblem, parseBranches,
         playbookProblems, formatTime,
     };
     root.CuttleOrchestrator = api;

@@ -412,11 +412,31 @@ def current_branch_name(cwd: str) -> str:
     return (proc.stdout or '').strip()
 
 
+_AUTH_REJECTED_MARKERS = ('Authentication failed', 'Failed to authenticate user',
+                          'HTTP Basic: Access denied', 'Invalid username or password')
+
+
+def push_auth_rejected(text: str) -> bool:
+    """True when the remote refused the credential that was sent."""
+    return any(m in (text or '') for m in _AUTH_REJECTED_MARKERS)
+
+
 def push_repo(cwd: str, remote: str, branch: str) -> subprocess.CompletedProcess:
     """Push; returns the raw result for the handler to shape (auth hints,
-    sanitize, rich payload stay transport-side). Uses the shared
-    ``git_push_command`` argv (upstream/HEAD fallbacks, credential-helper
-    flags) exactly like the legacy handler did."""
+    sanitize, rich payload stay transport-side). Retries once when the remote
+    rejects the stored credential: Git has then told the helper to drop it, and
+    OAuth helpers (Git Credential Manager) refresh an expired access token on
+    the next request (Gitea's last an hour)."""
+    result = _push_once(cwd, remote, branch)
+    if result.returncode != 0 and push_auth_rejected(
+            (result.stderr or '') + (result.stdout or '')):
+        result = _push_once(cwd, remote, branch)
+    return result
+
+
+def _push_once(cwd: str, remote: str, branch: str) -> subprocess.CompletedProcess:
+    """One ``git push`` with the shared ``git_push_command`` argv
+    (upstream/HEAD fallbacks, credential-helper flags)."""
     argv: List[str] = ['push', remote, branch]
     env = None
     if git_push_command is not None:

@@ -473,6 +473,11 @@ def steer_detached(chat_session_id: Any, agent_id: Optional[str], text: str) -> 
     info = steer.steer(chat_session_id, text)
     if not info.get("steered"):
         return None
+    # The detached run is still the first reply's turn: the steer threads there.
+    with wait._lock:
+        base_turn = str((wait._base or {}).get("query_id") or "")
+    if base_turn:
+        info["turn_id"] = base_turn
     # The answer is on its way: show the typing bubble now, not at the echo.
     wait.working(f"{wait.label} is answering your message…", force=True)
     return info

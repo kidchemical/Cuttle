@@ -31,6 +31,7 @@ CHAT_OWNERS = (
     ("chat_media.js", "CuttleChatMedia", "CuttleChatMedia.create("),
     ("chat_tts.js", "CuttleChatTts", "CuttleChatTts.create("),
     ("chat_transcript_nav.js", "CuttleChatTranscriptNav", "CuttleChatTranscriptNav.create("),
+    ("chat_threads.js", "CuttleChatThreads", "CuttleChatThreads.create("),
     ("chat_subagent_launchers.js", "CuttleChatSubagentLaunchers", "CuttleChatSubagentLaunchers.create("),
     ("chat_agent_controls.js", "CuttleChatAgentControls", "CuttleChatAgentControls.create("),
     ("chat_slash_palette.js", "CuttleChatSlashPalette", "CuttleChatSlashPalette.create("),

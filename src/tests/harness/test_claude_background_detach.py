@@ -378,6 +378,39 @@ def test_stream_lane_steers_into_detached_wait_without_running(monkeypatch):
     wait.finish("done", "Background work finished")
 
 
+def test_steer_into_detached_wait_threads_under_the_first_reply(monkeypatch):
+    """A steer into a detached run joins the first reply's turn (its query id),
+    not whatever turn row happens to be open, so it threads under that reply."""
+    from api import chat_delivery
+    from api.chat_coordinator import AgentSelection, PreparedAgentTurn, StreamTurnIO, submit_agent_stream_turn
+
+    wait = bw.BackgroundWait("6105", "claude")
+    wait.start(["watch CI"], pid=None)
+    bw.bind_saver(wait.job_id, _Saver(), {"agent_id": "claude", "query_id": "q-first-reply"})
+    token = steer.register(6105, "claude", lambda _t: _done_future())
+    rows = []
+    io = StreamTurnIO(
+        run_harness=lambda *a, **k: pytest.fail("must steer, not run"),
+        run_router=lambda **k: None, persist_user=lambda: None, make_saver=lambda: None,
+        notify_mobile=None, format_shortcut=lambda *a: {}, persist_steered_user=rows.append,
+    )
+    try:
+        list(submit_agent_stream_turn(
+            PreparedAgentTurn(message="/claude status?", session_id=6105), io=io, delivery=chat_delivery,
+            selection=AgentSelection(kind="harness", agent_id="claude", prompt="status?"),
+        ))
+        assert rows == [{"steered": True, "steered_agent": "claude", "turn_id": "q-first-reply"}]
+    finally:
+        steer.unregister(6105, token)
+        wait.finish("done", "Background work finished")
+
+
+def _done_future():
+    fut = concurrent.futures.Future()
+    fut.set_result((True, None))
+    return fut
+
+
 def test_harness_turn_runs_normally_without_a_detached_wait():
     from api import chat_delivery
     from api.chat_coordinator import AgentSelection, AgentTurnIO, PreparedAgentTurn, submit_agent_turn

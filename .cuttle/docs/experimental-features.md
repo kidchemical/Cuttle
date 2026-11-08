@@ -19,6 +19,15 @@ Toggles affect new launches without a restart; existing scopes retain their limi
 Configuration, platform support and removal boundary:
 [agent-resource-limits.md](agent-resource-limits.md).
 
+**Reply threads:** flag `chat_reply_threads` (default on). Steers sent into a
+running turn, the agent's later follow-up bubbles and finished sub-agent
+children show under that turn's bubble behind an "N replies" bar. A thread you
+open or close stays that way per chat; a live thread opens by itself and nothing
+closes a thread but you. A reply that arrives while its thread is closed shows a
+dot and a one-line preview. Off restores separate rows in time order. Owner:
+`src/web/js/chat/chat_threads.js` (+ pure `chat_thread_model.js`); design record
+[chat-reply-threads-plan.md](chat-reply-threads-plan.md).
+
 **Response post-processing:** flag `response_postprocessing` (default off).
 Its instructions, append/replace behavior, API/CLI, model, effort and fallback
 chain are configured together in Settings → Agents → Response post-processing,

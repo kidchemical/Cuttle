@@ -148,6 +148,12 @@
 
         function mountSubagentLaunchers(messageEl, subagents, opts) {
             if (!messageEl) return;
+            if (!(opts && opts.kind === 'parent')) {
+                // Reply threads (chat_threads.js) list finished children from these.
+                const list = Array.isArray(subagents) && subagents[0] && subagents[0].sessionId !== undefined
+                    ? subagents : normalizeSubagentList(subagents);
+                messageEl.__cuttleSubagentCards = list.length ? list : null;
+            }
             const wrap = messageEl.querySelector('.message-content-wrapper');
             if (!wrap) return;
             const html = renderSubagentLaunchersHtml(subagents, opts);

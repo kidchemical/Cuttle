@@ -452,6 +452,8 @@
             const messagesContainer = frameDoc.getElementById('chatMessages');
             const el = messagesContainer?.querySelector(`.message[data-message-index="${index}"]`);
             if (!el) return false;
+            // A reply inside a closed thread opens it first (chat_threads.js).
+            try { el.dispatchEvent(new frameWin.CustomEvent('cuttle:reveal', { bubbles: true })); } catch (_) {}
             chatPinnedToBottom = false;
             _suppressAutoScrollUntil = Date.now() + 600;
             _ignoreChatScrollPinUntil = Date.now() + 600;
@@ -485,6 +487,18 @@
             }
             updateJumpToBottomVisibility();
             return true;
+        }
+
+        /** Bring `el`'s top into view and stop following the bottom (an answer to read). */
+        function revealMessageTop(el) {
+            const box = frameDoc.getElementById('chatMessages');
+            if (!box || !el) return;
+            chatPinnedToBottom = false;
+            _suppressAutoScrollUntil = Date.now() + 600;
+            _ignoreChatScrollPinUntil = Date.now() + 600;
+            const delta = el.getBoundingClientRect().top - box.getBoundingClientRect().top - 12;
+            box.scrollTo({ top: Math.max(0, box.scrollTop + delta), behavior: 'smooth' });
+            updateJumpToBottomVisibility();
         }
 
         /** Pending ?msg=N (or CH-xxx-N) jump after the transcript finishes painting. */
@@ -611,6 +625,7 @@
             updateJumpToBottomVisibility,
             jumpToBottom,
             jumpToMessage,
+            revealMessageTop,
             queueMessageJump,
             consumePendingMessageJump,
             settleAfterLoad,

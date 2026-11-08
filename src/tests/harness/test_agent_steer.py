@@ -62,6 +62,17 @@ def test_registry_normalizes_chat_handles_and_forwards_text():
     assert steer.active_agent(77) is None
 
 
+def test_steer_reports_the_turn_it_joined(monkeypatch):
+    """The chat's open turn row names the turn a steer joins (reply threads)."""
+    monkeypatch.setattr("api.chat_turn_row.current",
+                        lambda sid: {"query_id": "q-live-1"} if str(sid) == "78" else None)
+    token = steer.register(78, "codex", lambda _t: _future((True, None)))
+    try:
+        assert steer.steer(78, "and the tests")["turn_id"] == "q-live-1"
+    finally:
+        steer.unregister(78, token)
+
+
 def test_registry_reports_rejection_and_missing_runs():
     assert steer.steer(5, "hello")["reason"] == "no_steerable_run"
     steer.register(5, "muse", lambda _t: _future((False, "turn is no longer active")))
@@ -544,6 +555,39 @@ def test_chat_steer_endpoint_persists_steered_user_message(tmp_path, monkeypatch
         meta = rows[-1].get("metadata") or {}
         assert meta.get("steered") is True
         assert meta.get("steered_agent") == "codex"
+        assert "turn_id" not in meta  # no open turn row in this fixture
+    finally:
+        steer.unregister(sid, reg)
+
+
+def test_chat_steer_endpoint_threads_the_row_under_the_live_turn(tmp_path, monkeypatch):
+    """The steered user row carries the live turn's id, so the transcript can
+    show it under that turn's reply instead of after it."""
+    from api import auth_db as auth_db_mod
+    from api import web_chat_api as wca
+
+    db_path = tmp_path / "steer-thread.db"
+    monkeypatch.setattr(auth_db_mod, "DB_PATH", db_path)
+    auth_db_mod._db_instance = None
+    db = auth_db_mod.AuthDatabase(db_path)
+    auth_db_mod._db_instance = db
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    monkeypatch.setattr("api.web_chat_api.get_auth_db", lambda: db)
+    monkeypatch.setenv("OWNER_USER_EMAIL", "owner@local")
+
+    owner = db.create_user("owner@local", "Owner", "local", password="x")
+    sid = db.create_chat_session(owner, "steer thread")
+    auth_token = db.create_auth_session(owner)
+    monkeypatch.setattr("api.chat_turn_row.current",
+                        lambda s: {"query_id": "q-thread-9"} if str(s) == str(sid) else None)
+    reg = steer.register(sid, "codex", lambda _t: _future((True, None)))
+    try:
+        client = wca.app.test_client()
+        client.set_cookie("session_token", auth_token)
+        resp = client.post("/api/chat-steer", json={"session_id": sid, "message": "also docs"})
+        assert resp.status_code == 200 and resp.get_json()["turn_id"] == "q-thread-9"
+        meta = [m for m in db.get_messages(sid) if m["role"] == "user"][-1].get("metadata") or {}
+        assert meta.get("steered") is True and meta.get("turn_id") == "q-thread-9"
     finally:
         steer.unregister(sid, reg)
 

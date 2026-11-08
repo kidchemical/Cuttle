@@ -145,6 +145,14 @@ class StreamTurnIO:
     persist_steered_user: Optional[Callable[[Dict[str, Any]], None]] = None
 
 
+def steered_user_meta(info: Dict[str, Any]) -> Dict[str, Any]:
+    """Metadata of the user row a steer saves: flag, agent, and the turn it joined."""
+    meta: Dict[str, Any] = {"steered": True, "steered_agent": info.get("agent")}
+    if info.get("turn_id"):
+        meta["turn_id"] = str(info["turn_id"])
+    return meta
+
+
 def _steer_into_background(
     prepared: PreparedAgentTurn,
     sel: AgentSelection,
@@ -164,7 +172,7 @@ def _steer_into_background(
     info = steer_detached(prepared.session_id, sel.agent_id, sel.prompt or "")
     if info is None:
         return None
-    persist_steered_user({"steered": True, "steered_agent": info.get("agent")})
+    persist_steered_user(steered_user_meta(info))
     return {
         "success": True,
         "response": "",
