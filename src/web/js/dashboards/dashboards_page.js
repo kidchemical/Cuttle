@@ -25,6 +25,7 @@
     const USAGE_ID = 'cuttle-usage';
     const CONTEXT_ID = 'cuttle-context';
     const JOBS_ID = 'cuttle-jobs';
+    const ORCH_ID = 'orchestration';
     const USAGE_COLORS = ['#636efa', '#ef553b', '#00cc96', '#ab63fa', '#ffa15a', '#19d3f3', '#ff6692', '#b6e880', '#ff97ff', '#fecb52'];
     const USAGE_FORMATS = {
         usd: { tick: '$,.2f', hover: '$,.2f' },
@@ -3292,6 +3293,7 @@
             params.set('tz', String(new Date().getTimezoneOffset()));
         }
         if (id === JOBS_ID && urlParams.get('hours')) params.set('hours', urlParams.get('hours'));
+        if (id === ORCH_ID) ['range', 'project'].forEach((k) => { if (urlParams.get(k)) params.set(k, urlParams.get(k)); });
         const q = params.toString() ? '?' + params.toString() : '';
         payload = await fetchJson('/api/dashboards/' + encodeURIComponent(id) + q);
         dashMark('fetch-done');
@@ -3300,6 +3302,8 @@
         else if (id === USAGE_ID) renderCuttleUsage();
         else if (id === CONTEXT_ID) renderCuttleContext();
         else if (id === JOBS_ID) renderCuttleJobs();
+        else if (id === ORCH_ID) window.CuttleOrchestrationDashboard.create({ escapeHtml, fmtCount,
+            backButton: DASH_BACK_BUTTON, onBack: () => navigateTo(''), setParams: switchDataset }).render(root, payload);
         else renderSoon();
     }
 

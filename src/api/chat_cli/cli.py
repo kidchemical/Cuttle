@@ -506,6 +506,7 @@ def cmd_operation(args: argparse.Namespace) -> int:
                     'instructions': args.instructions, 'required_branch': args.require_branch,
                     'required_path': args.require_path, 'forbidden_branches': args.forbid_branch,
                     'model_tiers': json.loads(args.model_tiers) if args.model_tiers is not None else None,
+                    'checkpoints': json.loads(args.checkpoints) if args.checkpoints is not None else None,
                 }.items() if v is not None}
                 if args.tasks is not None:
                     changes['task_ids'] = [t for t in args.tasks.split(',') if t.strip()]
@@ -543,7 +544,8 @@ def cmd_operation(args: argparse.Namespace) -> int:
                 required_branch=args.require_branch, required_path=args.require_path,
                 forbidden_branches=args.forbid_branch, model_tiers=json.loads(args.model_tiers),
                 agent=args.agent, forbidden_paths=args.forbid_paths,
-                on_violation=args.on_violation, **kwargs)
+                on_violation=args.on_violation,
+                checkpoints=json.loads(args.checkpoints) if args.checkpoints else None, **kwargs)
     _emit_text_once(payload, as_json=args.json,
                     text_fn=lambda p: json.dumps(p, indent=2, ensure_ascii=False, default=str))
     return 0 if payload.get('ok', True) else 1
@@ -730,6 +732,7 @@ def build_parser() -> argparse.ArgumentParser:
             op.add_argument('--forbid-branch', action='append', default=None,
                             help='Replaces the forbidden list (repeatable)')
             op.add_argument('--model-tiers', default=None, help='JSON object with worker/expert model guidance')
+            op.add_argument('--checkpoints', default=None, help='JSON event wakes (replaces them; {} = none)')
             op.add_argument('--tasks', default=None,
                             help="Comma-separated Tasks ids to follow ('' = none); lists the chat makes later still count")
             op.add_argument('--all-tasks', action='store_true', help='Follow every Tasks list the chat sees')
@@ -747,6 +750,10 @@ def build_parser() -> argparse.ArgumentParser:
                                  'stop, action:<.cuttle/actions name>, supervisor:<agent profile>')
             op.add_argument('--model-tiers', default='{}', help='JSON object with worker/expert model guidance')
             op.add_argument('--agent', default='', help='Run check-in turns on this harness (e.g. cursor); default: the chat\'s own')
+            op.add_argument('--checkpoints', default='',
+                            help='JSON: event wakes, e.g. {"milestone":{"do":["wake"]},"tests":{"when":"pass",'
+                                 '"do":["supervisor:reviewer"]},"repeat_failures":{"n":3},'
+                                 '"watched_paths":{"regex":"^api/","do":["stop","wake"]}}')
         op.set_defaults(func=cmd_operation)
 
     return p

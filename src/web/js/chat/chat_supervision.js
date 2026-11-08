@@ -275,6 +275,29 @@
             }
             const d = M.dialogDefaults(defaults, schedule);
             const editing = !!d.editId;
+            // Reviewer profiles (Apps → Agents) are optional: off with the orchestrator flag.
+            const profiles = await host.fetch('/api/agent-profiles', { credentials: 'include' })
+                .then((r) => r.json()).then((x) => (x && x.success && x.profiles) || []).catch(() => []);
+            const doOptions = (cur) => [['wake', 'Wake the supervisor'], ['stop,wake', 'Stop the chat, wake the supervisor']]
+                .concat(profiles.filter((pr) => pr && pr.id && pr.agent && pr.agent !== 'none').map((pr) => [
+                    'supervisor:' + pr.id, 'Send to reviewer: ' + (pr.name || pr.id)]))
+                .concat([[cur, cur]]).filter((o, i, all) => o[0] && all.findIndex((x) => x[0] === o[0]) === i)
+                .map(([v, l]) => '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(l) + '</option>').join('');
+            const cpRow = (c) => {
+                const f = d.checkpoints[c.id];
+                const param = c.id === 'tests'
+                    ? '<select name="cp_when_tests" aria-label="Which test runs">' + [['pass', 'that passes'], ['fail', 'that fails'], ['any', 'either way']]
+                        .map(([v, l]) => '<option value="' + v + '"' + (v === f.when ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>'
+                    : c.id === 'repeat_failures'
+                        ? '<input name="cp_n_repeat_failures" type="number" min="2" max="20" value="' + esc(f.n) + '" title="times in a row">'
+                        : c.id === 'watched_paths'
+                            ? '<input name="cp_regex_watched_paths" value="' + esc(f.regex || '') + '" placeholder="^(api|schema)/ or \\.sql$">' : '';
+                return '<div class="chat-supervision-checkpoint"><label class="chat-supervision-task"><span>' + esc(c.label)
+                    + '</span><input type="checkbox" role="switch" name="cp_on_' + c.id + '"' + (f.on ? ' checked' : '') + '></label>'
+                    + '<div class="chat-supervision-checkpoint-opts">' + param + '<select name="cp_do_' + c.id
+                    + '" aria-label="What happens">'
+                    + doOptions(f.do) + '</select></div></div>';
+            };
             const list = ((agents && agents.agents) || []).filter((a) => a && a.id && a.sticky !== false);
             const wrap = doc.createElement('div');
             wrap.className = 'chat-supervision-dialog-backdrop';
@@ -301,6 +324,10 @@
                         + '<input type="checkbox" role="switch" name="taskIds" value="'
                         + esc(t.id) + '"' + (t.selected ? ' checked' : '') + '></label>').join('')
                     + '<p class="chat-supervision-meta">Lists this chat creates later are followed too.</p></fieldset>' : '')
+                + '<fieldset class="chat-supervision-tasks"><legend>Also wake the supervisor when…</legend>'
+                    + M.CHECKPOINTS.map(cpRow).join('')
+                    + '<p class="chat-supervision-meta">On top of the interval and the usual stops (question, error, open'
+                    + ' Tasks, branch rules). “Stop the chat” halts it until the supervisor or you send it on.</p></fieldset>'
                 + '<label>Instructions<textarea name="instructions" rows="4">' + esc(d.instructions) + '</textarea></label>'
                 + '<details class="chat-supervision-advanced"><summary>Branch rules and model guidance</summary>'
                 + '<label>Must stay on branch<input name="requiredBranch" value="' + esc(d.requiredBranch)
@@ -343,7 +370,8 @@
             form.querySelectorAll('select').forEach((select) => {
                 select.classList.add('chip-config-select');
                 if (root.CuttleSearchableSelect) combos.push(root.CuttleSearchableSelect.enhance(select, {
-                    label: select.closest('label').firstChild.textContent,
+                    label: (select.closest('label') ? select.closest('label').firstChild.textContent : '')
+                        || select.getAttribute('aria-label') || '',
                     floating: true, searchable: select.name === 'agent' || select.name === 'model',
                 }));
             });
@@ -368,6 +396,11 @@
                     agent: fd.get('agent'), model: fd.get('model'), effort: fd.get('effort'), every: Number(fd.get('every')), instructions: fd.get('instructions'),
                     requiredBranch: fd.get('requiredBranch'), forbidden: fd.get('forbidden'),
                     worker: fd.get('worker'), expert: fd.get('expert'), taskIds: fd.getAll('taskIds'),
+                    checkpoints: Object.fromEntries(M.CHECKPOINTS.map((c) => [c.id, {
+                        on: fd.get('cp_on_' + c.id) != null, do: fd.get('cp_do_' + c.id) || 'wake',
+                        when: fd.get('cp_when_tests'), n: fd.get('cp_n_repeat_failures'),
+                        regex: fd.get('cp_regex_watched_paths'),
+                    }])),
                 }));
                 const errBox = form.querySelector('.chat-supervision-errors');
                 if (!payload.ok) { errBox.textContent = payload.errors.join(' '); return; }

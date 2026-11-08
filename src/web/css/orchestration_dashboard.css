@@ -1,0 +1,49 @@
+/* Orchestration & Supervision dashboard (orchestration_dashboard.js).
+   Role colors: validated categorical slots 1–3 (dark steps on Cuttle's dark
+   surfaces, light steps on #fff); "untiered" is the neutral Other bucket. */
+.orch-dash-root, body {
+    --orch-worker: #3987e5;
+    --orch-escalation: #d95926;
+    --orch-expert: #199e70;
+    --orch-untiered: #7d7c78;
+}
+body.light-mode {
+    --orch-worker: #2a78d6;
+    --orch-escalation: #eb6834;
+    --orch-expert: #1baf7a;
+    --orch-untiered: #9a9993;
+}
+.orch-dash-filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.orch-dash-project {
+    margin-left: auto; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--border-color);
+    background: var(--section-bg); color: var(--text-primary); font: inherit; font-size: 12px;
+}
+.orch-dash-legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 6px 0 2px; font-size: 11px; color: var(--text-secondary); }
+.orch-dash-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.orch-dash-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
+.orch-dash-swatch.role-worker, .orch-dash-seg.role-worker { background: var(--orch-worker); fill: var(--orch-worker); }
+.orch-dash-swatch.role-escalation, .orch-dash-seg.role-escalation { background: var(--orch-escalation); fill: var(--orch-escalation); }
+.orch-dash-swatch.role-expert, .orch-dash-seg.role-expert { background: var(--orch-expert); fill: var(--orch-expert); }
+.orch-dash-swatch.role-untiered, .orch-dash-seg.role-untiered { background: var(--orch-untiered); fill: var(--orch-untiered); }
+.orch-dash-chart { position: relative; }
+.orch-dash-svg { display: block; width: 100%; height: auto; max-height: 260px; }
+.orch-dash-grid { stroke: var(--border-color); stroke-width: 1; opacity: 0.5; }
+.orch-dash-baseline { stroke: var(--border-color); stroke-width: 1; }
+.orch-dash-axis { fill: var(--text-tertiary, var(--text-secondary)); font-size: 10px; font-variant-numeric: tabular-nums; }
+.orch-dash-hit { fill: transparent; cursor: default; }
+.orch-dash-hit:hover { fill: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.orch-dash-tip {
+    position: absolute; z-index: 5; pointer-events: none; min-width: 120px; padding: 6px 8px; border-radius: 6px;
+    border: 1px solid var(--border-color); background: var(--popup-bg, var(--section-bg)); color: var(--text-primary);
+    font-size: 11px; line-height: 1.5; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+.orch-dash-tip b { font-variant-numeric: tabular-nums; }
+.orch-dash-details { margin: 6px 0 4px; font-size: 12px; color: var(--text-secondary); }
+.orch-dash-details summary { cursor: pointer; }
+.orch-dash-bar { display: inline-flex; align-items: center; gap: 6px; min-width: 110px; }
+.orch-dash-bar-track { flex: 1 1 60px; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--text-primary) 10%, transparent); overflow: hidden; }
+.orch-dash-bar-fill { display: block; height: 100%; border-radius: 3px; background: var(--orch-worker); }
+.orch-dash-bar-num { font-variant-numeric: tabular-nums; min-width: 3.2em; text-align: right; color: var(--text-primary); }
+.orch-dash-muted { color: var(--text-tertiary, var(--text-secondary)); }
+.orch-dash-error { display: inline-block; max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.hist-table td.is-num, .hist-table th.is-num { text-align: right; font-variant-numeric: tabular-nums; }

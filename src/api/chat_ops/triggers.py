@@ -7,6 +7,11 @@ sub-agent ancestors, so a child committing to a forbidden branch is caught too.
 Only a new violation wakes the supervisor (``worker.guard_check``); quiet chats
 cost nothing. The interval schedule stays the backstop and owns stall detection.
 
+Checkpoints (``api.chat_ops.checkpoints``) ride the same events: a finished
+tool call (its command and failed flag) can fire ``tests`` / ``repeat_failures``
+/ ``watched_paths``, a Tasks ``tasks`` event (items just checked off) fires
+``milestone`` when the list is one the schedule follows (``run_checkpoints``).
+
 A finished agent turn (``turn_end``, published by ``api.chat_delivery.end``) is
 the other trigger: when the supervised chat stopped on a question card
 (``awaiting_input``), with open Tasks items (``idle_with_work``) or on an error,
@@ -18,6 +23,7 @@ once per ``EARLY_WAKE_DEBOUNCE_SEC``.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 
@@ -40,6 +46,9 @@ _pending = {}
 _commands = {}
 _turn_ends = set()
 _early_wakes = {}  # schedule id -> time of its last early wake (this process)
+_tools = []  # (session id, command, failed) of finished tool calls, for checkpoints
+_task_events = []  # (session id, detail) of Tasks completions
+MAX_TOOLS = 500
 MAX_COMMANDS = 50
 _wake = threading.Event()
 _stop = threading.Event()
@@ -48,6 +57,16 @@ _thread = None
 
 def on_session_event(kind, session_id, detail):
     """Runs on the publisher's thread (a live agent stream): note it and return."""
+    if kind == 'tasks':
+        with _lock:
+            _task_events.append((int(session_id), dict(detail or {})))
+            del _task_events[:-MAX_TOOLS]
+        _wake.set()
+        return
+    if kind == 'tool':
+        with _lock:
+            _tools.append((int(session_id), str((detail or {}).get('command') or ''), bool((detail or {}).get('failed'))))
+            del _tools[:-MAX_TOOLS]
     if kind == TURN_END:
         with _lock:
             _turn_ends.add(int(session_id))
@@ -78,6 +97,88 @@ def _drain_all():
         _pending.clear()
         _commands.clear()
     return events, commands
+
+
+def _drain_checkpoint_events():
+    with _lock:
+        tools, tasks = list(_tools), list(_task_events)
+        _tools.clear()
+        _task_events.clear()
+    return tools, tasks
+
+
+def run_checkpoints(tools, task_events, *, db=None, request=None):
+    """Fire the checkpoints of schedules watching the chats these events came from.
+
+    ``tools``: [(session id, command, failed)]; ``task_events``: [(session id, detail)].
+    A sub-agent's event counts for the schedule on its orchestrator, as for guards."""
+    from api.chat_ops import checkpoints as cp
+    if not tools and not task_events:
+        return 0
+    from api.auth_db import get_auth_db
+    db = db or get_auth_db()
+    lineage = {}
+    for sid in {t[0] for t in tools} | {e[0] for e in task_events}:
+        lineage[sid] = _lineage(db, sid)
+    watched = {w for chain in lineage.values() for w in chain}
+    fired = 0
+    for op in store.supervising(watched):
+        cfg = op['payload']
+        points = cfg.get('checkpoints') or {}
+        if not points:
+            continue
+        target = int(op['target'])
+        mine = lambda sid: target in lineage.get(sid, ())  # noqa: E731
+        result = op.get('result') or {}
+        try:
+            hits = []
+            counts = result.get('failure_counts') or {}
+            touched = False
+            for sid, command, failed in tools:
+                if not mine(sid):
+                    continue
+                touched = True
+                new_hits, counts = cp.tool_hits(points, command, failed, counts)
+                hits += [(cid, lines, f'tool in CH-{sid:06d}') for cid, lines in new_hits]
+            if touched and 'repeat_failures' in points:
+                store.patch_result(op['id'], failure_counts=counts)
+            if touched and 'watched_paths' in points:
+                _, row_ = service.context(target, op['actor'], db=db)[1:]
+                path = service.checkout_state(row_, db)[0]
+                if 'paths_base' not in result:
+                    # First look: today's state is the baseline, never a violation.
+                    head, files = cp.changed_paths(path, '')
+                    rx = re.compile(points['watched_paths']['regex'])
+                    store.patch_result(op['id'], paths_base=head, paths_reported=[f for f in files if rx.search(f)])
+                else:
+                    lines, head, reported = cp.watched_hits(points['watched_paths'], path, result.get('paths_base') or '',
+                                                            result.get('paths_reported') or [])
+                    if lines:
+                        store.patch_result(op['id'], paths_reported=reported)
+                        hits.append(('watched_paths', lines, 'files changed'))
+            if 'milestone' in points:
+                followed = None
+                for sid, detail in task_events:
+                    if not (mine(sid) or sid == target):
+                        continue
+                    if followed is None:
+                        followed = {t['id'] for t in service.supervised_tasks(
+                            db, int(db.get_chat_session_by_id(target)['user_id']), target,
+                            *(service.task_pick(cfg) or (None, None)))}
+                    if detail.get('gizmo_id') in followed:
+                        lines = cp.milestone_lines(detail)
+                        if lines:
+                            hits.append(('milestone', lines, f"tasks {detail.get('gizmo_id')}"))
+            # One firing per checkpoint kind per round; their lines merged.
+            merged = {}
+            for cid, lines, trigger in hits:
+                merged.setdefault(cid, ([], trigger))[0].extend(lines)
+            for cid, (lines, trigger) in merged.items():
+                fired += bool(worker.fire_checkpoint(op, cid, list(dict.fromkeys(lines)), db=db, request=request,
+                                                     trigger=trigger))
+        except Exception:
+            log.exception('checkpoint check failed for schedule %s', op['id'])
+    return fired
 
 
 def _drain_turn_ends():
@@ -174,6 +275,10 @@ def _loop():
             run_checks(events, commands=commands)
         except Exception:
             log.exception('guard trigger pump failed')
+        try:
+            run_checkpoints(*_drain_checkpoint_events())
+        except Exception:
+            log.exception('checkpoint pump failed')
         ended = _drain_turn_ends()
         try:
             wake_on_turn_end(ended)

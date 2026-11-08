@@ -42,6 +42,13 @@ DASHBOARDS: List[Dict[str, Any]] = [
         "status": "live",
         "href": "/dashboards_page.html?d=cuttle-jobs",
     },
+    {
+        "id": "orchestration",
+        "title": "Orchestration & Supervision",
+        "blurb": "Which models orchestrate, grind, escalate and supervise: tiers, escalations per project, round times, wakes and failures.",
+        "status": "live",
+        "href": "/dashboards_page.html?d=orchestration",
+    },
 ]
 
 

@@ -274,6 +274,8 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
         raise ValueError('Send to a different chat to avoid self-steering loops')
     if mode not in ('auto', 'queue'):
         raise ValueError('mode must be auto or queue')
+    from api.orchestration_telemetry import record
+    record.supervisor_action('sup_send', actor, int(row['id']), chars=len(text))
     try:
         # A follow-up to a sub-agent child gets its card round on the parent,
         # exactly like `subagents message` (bound to the sending turn).
@@ -360,7 +362,7 @@ def _agent_slash(agent, project_path):
 
 def supervise(target, actor=None, *, every=900, instructions='', required_branch='',
               required_path='', forbidden_branches=(), model_tiers=None, agent='',
-              start_now=False, forbidden_paths='', on_violation=None, task_ids=None, db=None):
+              start_now=False, forbidden_paths='', on_violation=None, task_ids=None, checkpoints=None, db=None):
     db, actor, row = context(target, actor, db=db)
     if actor == int(row['id']):
         raise ValueError('Supervisor and target must be different chats')
@@ -391,6 +393,9 @@ def supervise(target, actor=None, *, every=900, instructions='', required_branch
     if on_violation:
         from api.chat_ops.worker import parse_on_violation
         payload['on_violation'] = parse_on_violation(on_violation)
+    if checkpoints:
+        from api.chat_ops.checkpoints import parse_checkpoints
+        payload['checkpoints'] = parse_checkpoints(checkpoints)
     if forbidden_branches:
         from api.chat_ops.rules import branch_tips
         # Baseline for "a commit landed on a forbidden branch", from any checkout of the repo.
@@ -415,7 +420,7 @@ def _pin_supervisor_chat(db, sup, user_id, agent, model, effort, project_path):
 
 def start_supervisor(target, *, user_id, agent, every=900, instructions='', required_branch='',
                      required_path='', forbidden_branches=(), model_tiers=None, model='', effort='',
-                     task_ids=None, db=None):
+                     task_ids=None, checkpoints=None, db=None):
     """Create a fresh supervisor chat for ``target`` and brief it right away."""
     from api.auth_db import get_auth_db
     db = db or get_auth_db()
@@ -443,7 +448,8 @@ def start_supervisor(target, *, user_id, agent, every=900, instructions='', requ
         _pin_supervisor_chat(db, sup, user_id, slash, model, effort, row.get('project_path'))
         out = supervise(tid, sup, every=every, instructions=instructions, required_branch=required_branch,
                         required_path=required_path, forbidden_branches=forbidden_branches,
-                        model_tiers=model_tiers, agent=agent, start_now=True, task_ids=task_ids, db=db)
+                        model_tiers=model_tiers, agent=agent, start_now=True, task_ids=task_ids,
+                        checkpoints=checkpoints, db=db)
         store.patch_payload(out['operation']['id'], model=model, effort=effort)
         out['operation'] = store.find(out['operation']['id'])
         return out
@@ -458,7 +464,8 @@ SYNCED_FIELDS = ('every', 'agent', 'instructions', 'required_branch', 'required_
 _FIELD_LABELS = {'every': 'check-in interval', 'agent': 'check-in agent', 'instructions': 'instructions',
                  'required_branch': 'required branch', 'required_path': 'required checkout',
                  'forbidden_branches': 'forbidden branches', 'model_tiers': 'model guidance',
-                 'model': 'check-in model', 'effort': 'check-in effort', 'task_ids': 'Tasks lists'}
+                 'model': 'check-in model', 'effort': 'check-in effort', 'task_ids': 'Tasks lists',
+                 'checkpoints': 'wake checkpoints'}
 
 
 def _schedule_fields(cfg, project_path):
@@ -510,6 +517,8 @@ def resync_supervision(target, previous, current, *, note_lines=(), db=None):
                 kept.append(key)
         if updated:
             store.patch_payload(op['id'], **updated)
+            from api.orchestration_telemetry import record
+            record.supervision_schedule('edit', store.find(op['id']), fields=sorted(updated), source='playbook')
         _queue_update_notice(op, {**cfg, **updated}, updated, kept, note_lines, handle)
         out.append({'operation': op['id'], 'supervisor': f"CH-{int(op['actor']):06d}",
                     'updated': sorted(updated), 'kept': kept})
@@ -543,7 +552,7 @@ def _queue_update_notice(op, cfg, updated, kept, note_lines, handle):
 
 
 EDITABLE_FIELDS = ('every', 'agent', 'model', 'effort', 'instructions', 'required_branch', 'required_path',
-                   'forbidden_branches', 'model_tiers', 'task_ids')
+                   'forbidden_branches', 'model_tiers', 'task_ids', 'checkpoints')
 
 
 def update_supervision(op_id, user_id, changes, *, db=None):
@@ -589,6 +598,9 @@ def update_supervision(op_id, user_id, changes, *, db=None):
         if not isinstance(changes['model_tiers'] or {}, dict):
             raise ValueError('model_tiers must be a JSON object')
         new['model_tiers'] = changes['model_tiers'] or {}
+    if 'checkpoints' in changes:
+        from api.chat_ops.checkpoints import parse_checkpoints
+        new['checkpoints'] = parse_checkpoints(changes['checkpoints'])
     agent = cfg.get('agent') or ''
     if 'agent' in changes:
         agent = _agent_slash(changes['agent'], project)
@@ -621,12 +633,17 @@ def update_supervision(op_id, user_id, changes, *, db=None):
     if not updated:
         return {'operation': op, 'updated': []}
     patch = dict(updated)
+    if 'checkpoints' in updated:
+        # New watch settings start from today's files and counts, never a backlog.
+        store.drop_result_keys(op['id'], 'paths_base', 'paths_reported', 'failure_counts')
     if 'task_ids' in updated:
         patch['task_ids_known'] = new['task_ids_known']
     if 'forbidden_branches' in updated and updated['forbidden_branches']:
         from api.chat_ops.rules import branch_tips
         patch['forbidden_tips'] = branch_tips(checkout_state(row, db)[0], updated['forbidden_branches'])
     store.patch_payload(op['id'], **patch)
+    from api.orchestration_telemetry import record
+    record.supervision_schedule('edit', store.find(op['id']), fields=sorted(updated), source='user')
     if any(k in updated for k in pin_keys):
         _pin_supervisor_chat(db, int(op['actor']), int(user_id), agent, new.get('model', ''),
                              new.get('effort', ''), project)
@@ -822,6 +839,7 @@ def _schedule_view(op):
             'model': cfg.get('model') or '', 'effort': cfg.get('effort') or '',
             'instructions': cfg.get('instructions') or '', 'required_path': cfg.get('required_path') or '',
             'model_tiers': cfg.get('model_tiers') or {}, 'task_ids': cfg.get('task_ids'),
+            'checkpoints': cfg.get('checkpoints') or {},
             'forbidden_branches': cfg.get('forbidden_branches') or [], 'last_check': result.get('last_check'),
             'last_seen': seen, 'violations': seen.get('violations') or [],
             # A paused schedule says since when and whether it comes back by itself,
@@ -835,6 +853,8 @@ def stop(target, actor=None, *, db=None, request=None):
     """Stop the target's turn and drop sends still queued for it, so the stop
     holds: an outbox send would otherwise restart the chat as soon as it idles."""
     db, actor, row = context(target, actor, db=db)
+    from api.orchestration_telemetry import record
+    record.supervisor_action('sup_stop', actor, int(row['id']))
     held = store.cancel_sends_to(row['id'])
     out = dict((request or transport.request)(row['user_id'], row['id'], 'POST', '/api/chat-cancel') or {})
     out['cancelled_sends'] = [{'id': o['id'], 'from': f"CH-{o['actor']:06d}", 'text': o['payload'].get('text', '')[:200]}

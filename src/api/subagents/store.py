@@ -192,7 +192,7 @@ def insert_child(
     )
     conn.commit()
     conn.close()
-    return ChildRecord(
+    child = ChildRecord(
         id=cid,
         batch_id=batch_id,
         session_id=int(session_id),
@@ -207,6 +207,10 @@ def insert_child(
         display_name=spec.display_name or spec.title,
         avatar=spec.avatar,
     )
+    from api.orchestration_telemetry import record
+
+    record.child_spawned(db, child)
+    return child
 
 
 def get_batch(db, batch_id: str) -> Optional[BatchRecord]:
@@ -384,8 +388,13 @@ def update_child(
         f"UPDATE subagent_children SET {', '.join(sets)} WHERE id = ?{guard}",
         tuple(args),
     )
+    changed = cur.rowcount > 0
     conn.commit()
     conn.close()
+    if changed and (started or finished):
+        from api.orchestration_telemetry import record
+
+        record.child_round(db, child_id, started=started, finished=finished)
 
 
 def request_stop(db, child_id: str, *, at: Optional[float] = None) -> None:

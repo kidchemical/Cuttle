@@ -271,6 +271,34 @@ def test_menu_opens_dialog_and_posts_supervise(browser, static_server):
         assert path == "/api/chat-ops/supervise"
         assert body["target"] == "CH-000042" and body["agent"] == "codex" and body["every"] == 600
         assert body["forbidden_branches"] == ["main", "master"]
+        # New schedules wake on milestones and repeated failures by default.
+        assert body["checkpoints"] == {"milestone": {"do": ["wake"]}, "repeat_failures": {"do": ["wake"], "n": 3}}
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_dialog_checkpoint_rows_post_their_settings(browser, static_server):
+    from playwright.sync_api import expect
+    world = SupervisionWorld(flag=True)
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        frame.locator("#chatChromeMenuBtn").click()
+        frame.locator("[data-sup-start]").click()
+        form = frame.locator(".chat-supervision-dialog")
+        expect(form).to_be_visible()
+        watched = form.locator("[name=cp_on_watched_paths]")
+        watched.scroll_into_view_if_needed()
+        expect(form.locator("[name=cp_regex_watched_paths]")).to_be_hidden()  # options show once switched on
+        watched.click()
+        form.locator("[name=cp_regex_watched_paths]").fill("^api/")
+        form.locator("[name=cp_on_milestone]").click()  # off
+        page.screenshot(path=os.environ.get("SUPERVISION_DIALOG_SHOT", "/tmp/supervision_dialog.png"))
+        form.locator("[type=submit]").click()
+        expect(form).to_have_count(0)
+        body = world.posts[-1][1]
+        assert body["checkpoints"] == {"repeat_failures": {"do": ["wake"], "n": 3},
+                                       "watched_paths": {"do": ["stop", "wake"], "regex": "^api/"}}
         assert not errors
     finally:
         page.close()

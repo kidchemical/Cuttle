@@ -197,6 +197,60 @@
     }
 
     /** Dialog prefill from /api/chat-ops/sessions/<id>/defaults. */
+    // Event wakes ("checkpoints", api.chat_ops.checkpoints). New schedules start
+    // with milestones + repeated failures on; edits show what the schedule has.
+    const CHECKPOINTS = [
+        { id: 'milestone', label: 'A followed Tasks item or list is completed' },
+        { id: 'tests', label: 'A test run finishes' },
+        { id: 'repeat_failures', label: 'The same command keeps failing' },
+        { id: 'watched_paths', label: 'Watched files change (schemas, API contracts…)' },
+    ];
+    const CHECKPOINT_PRESETS = {
+        milestone: { on: true, do: 'wake' },
+        tests: { on: false, do: 'wake', when: 'pass' },
+        repeat_failures: { on: true, do: 'wake', n: 3 },
+        watched_paths: { on: false, do: 'stop,wake', regex: '' },
+    };
+
+    function checkpointFields(stored) {
+        const out = {};
+        CHECKPOINTS.forEach((c) => {
+            const preset = CHECKPOINT_PRESETS[c.id];
+            if (!stored) { out[c.id] = Object.assign({}, preset); return; }
+            const cfg = stored[c.id];
+            out[c.id] = cfg ? Object.assign({}, preset, cfg, { on: true, do: (cfg.do || ['wake']).join(',') })
+                : Object.assign({}, preset, { on: false });
+        });
+        return out;
+    }
+
+    /** Checkpoints body for the API from dialog fields; errors for bad params. */
+    function checkpointsBody(fields) {
+        const body = {};
+        const errors = [];
+        CHECKPOINTS.forEach((c) => {
+            const f = (fields || {})[c.id];
+            if (!f || !f.on) return;
+            const entry = { do: String(f.do || 'wake').split(',').map((x) => x.trim()).filter(Boolean) };
+            if (c.id === 'tests') entry.when = f.when || 'pass';
+            if (c.id === 'repeat_failures') {
+                const n = Number(f.n);
+                if (!(n >= 2 && n <= 20)) errors.push('Repeated failures: pick 2–20 attempts.');
+                entry.n = n;
+            }
+            if (c.id === 'watched_paths') {
+                const rx = String(f.regex || '').trim();
+                if (!rx) errors.push('Watched files: give a path pattern.');
+                else {
+                    try { new RegExp(rx); } catch (_) { errors.push('Watched files: the pattern is not a valid regex.'); }
+                }
+                entry.regex = rx;
+            }
+            body[c.id] = entry;
+        });
+        return { body, errors };
+    }
+
     /**
      * Dialog fields. ``schedule`` (an overview schedule row) switches it to
      * editing that schedule: its stored settings win over the chat's defaults.
@@ -217,6 +271,7 @@
                 id: String(t.id), title: String(t.title || t.id), done: Number(t.done) || 0,
                 total: Number(t.total) || 0, scope: t.scope || 'session', selected: !!t.selected,
             })),
+            checkpoints: checkpointFields(null),
         };
         if (!schedule) return base;
         const s = schedule;
@@ -235,6 +290,7 @@
             worker: (tiers.worker || []).join(', '),
             expert: (tiers.expert || []).join(', '),
             tasks: base.tasks.map((t) => Object.assign({}, t, { selected: picked ? picked.indexOf(t.id) >= 0 : t.selected })),
+            checkpoints: checkpointFields(s.checkpoints || {}),
         });
     }
 
@@ -277,6 +333,8 @@
         if (f.requiredBranch && forbidden.indexOf(f.requiredBranch) >= 0) {
             errors.push('The required branch is also in the forbidden list.');
         }
+        const points = f.checkpoints ? checkpointsBody(f.checkpoints) : null;
+        if (points) errors.push(...points.errors);
         const tiers = {};
         if (splitList(f.worker).length) tiers.worker = splitList(f.worker);
         if (splitList(f.expert).length) tiers.expert = splitList(f.expert);
@@ -295,6 +353,7 @@
                 required_path: String(f.requiredPath || '').trim(),
                 forbidden_branches: forbidden,
                 model_tiers: tiers,
+                ...(points ? { checkpoints: points.body } : {}),
                 // Only an offered list makes this an explicit pick; none offered = follow whatever appears.
                 ...(Array.isArray(f.tasks) && f.tasks.length
                     ? { task_ids: (f.taskIds || []).map(String).filter((id) => f.tasks.some((t) => t.id === id)) }
@@ -320,6 +379,7 @@
         SCHEMA_VERSION, INTERVALS, PAUSE_CHOICES, fmtInterval, fmtClock, fmtWhen, nextLabel,
         chipText, badgeText, pausedText, pauseBody,
         historyRow, view, isSupervised, supervisorOf, dialogDefaults, supervisePayload, pinChoices, scheduleById,
+        CHECKPOINTS, checkpointFields, checkpointsBody,
     };
     if (typeof module === 'object' && module.exports) module.exports = api;
     root.CuttleChatSupervisionModel = api;

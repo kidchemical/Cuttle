@@ -127,7 +127,7 @@ CHECKIN_REPLY_CHARS = 2500
 CONTEXT_HIGH_PERCENT = 75
 
 
-def checkin_text(cfg, snap, violations, stalled_min=None):
+def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None):
     """The check-in turn as markdown: it renders as a readable Cuttle bubble in the
     supervisor chat and reads as a brief to the agent. Full data: `status --json`."""
     handle = snap['handle']
@@ -150,6 +150,9 @@ def checkin_text(cfg, snap, violations, stalled_min=None):
                   'steer it to escalate now.']
     if violations:
         lines += ['', '**Rule violations:**'] + [f'- {v}' for v in violations]
+    if checkpoint:
+        from api.chat_ops.checkpoints import checkin_section
+        lines += checkin_section(*checkpoint)
     if snap['tasks']:
         lines += ['', '**Tasks:**'] + [f"- {t['title']}: {t['done']}/{t['total']} done" for t in snap['tasks']]
     status = (snap.get('live') or {}).get('status')
@@ -317,7 +320,7 @@ def _run_action(name, row, target, violations):
     return project_actions.execute_inline_action(token, session_id=str(row['id']))
 
 
-def _incident_supervisor(profile_id, db, row, cfg, snap, violations):
+def _incident_supervisor(profile_id, db, row, cfg, snap, violations, checkpoint=None):
     """A fresh chat on the profile's agent/model/effort, briefed once with the incident.
 
     It is not bound as a second supervisor; it acts through the normal chat verbs."""
@@ -335,7 +338,7 @@ def _incident_supervisor(profile_id, db, row, cfg, snap, violations):
     if row.get('project_path'):
         db.set_session_project(chat, uid, project_id=row.get('project_id'),
                                project_name=row.get('project_name'), project_path=row.get('project_path'))
-    text = checkin_text({**cfg, 'agent': agent}, snap, violations)
+    text = checkin_text({**cfg, 'agent': agent}, snap, violations, checkpoint=checkpoint)
     payload = {'text': text}
     if model or effort:
         payload['agent_pins'] = {agent: {'model': model, 'effort': effort}}
@@ -343,12 +346,14 @@ def _incident_supervisor(profile_id, db, row, cfg, snap, violations):
     return chat
 
 
-def _respond(op, db, actor, row, snap, violations):
-    """Run the schedule's non-wake ``on_violation`` entries for new violations.
+def _respond(op, db, actor, row, snap, violations, *, entries=None, checkpoint=None):
+    """Run the non-wake response entries (the schedule's ``on_violation``, or a
+    checkpoint's ``do``) for new violations / a fired checkpoint.
 
     Returns whether the supervisor should be woken for them."""
     cfg = op['payload']
-    entries = parse_on_violation(cfg.get('on_violation'))
+    entries = parse_on_violation(entries if entries is not None else cfg.get('on_violation'))
+    reasons = list(violations) + list((checkpoint or (None, []))[1])
     target = f"CH-{int(row['id']):06d}"
     for entry in entries:
         if entry == 'wake':
@@ -358,14 +363,35 @@ def _respond(op, db, actor, row, snap, violations):
                 service.stop(target, actor, db=db)
                 done = {}
             elif entry.startswith('action:'):
-                result = _run_action(entry.split(':', 1)[1], row, target, violations)
+                result = _run_action(entry.split(':', 1)[1], row, target, reasons)
                 done = {'success': bool((result or {}).get('success'))}
             else:
-                done = {'chat': _incident_supervisor(entry.split(':', 1)[1], db, row, cfg, snap, violations)}
+                done = {'chat': _incident_supervisor(entry.split(':', 1)[1], db, row, cfg, snap, violations,
+                                                     checkpoint=checkpoint)}
             store.record_check(op['id'], 'acted', {'entry': entry, **done})
         except Exception as exc:
             store.record_check(op['id'], 'error', {'entry': entry, 'error': str(exc)[:300]})
     return 'wake' in entries
+
+
+def fire_checkpoint(op, cid, lines, *, db=None, request=None, trigger=''):
+    """A checkpoint fired on ``op``'s target: record it, run its non-wake
+    responses (stop / action / reviewer profile) and wake the supervisor once
+    per pending checkpoint kind. Returns whether a check-in was queued."""
+    cfg = op['payload']
+    entries = ((cfg.get('checkpoints') or {}).get(cid) or {}).get('do') or ['wake']
+    db, actor, row = service.context(op['target'], op['actor'], db=db)
+    snap = service.snapshot(row['id'], actor, db=db, request=request or transport.request,
+                            task_pick=service.task_pick(cfg))
+    store.record_check(op['id'], 'checkpoint', {'checkpoint': cid, 'lines': lines[:10], 'trigger': trigger,
+                                                'state': snap['state']})
+    if not _respond(op, db, actor, row, snap, [], entries=entries, checkpoint=(cid, lines)):
+        return False
+    if any(o['payload'].get('checkpoint') == cid for o in _active_checkins(actor, op['id'])):
+        return False  # one undelivered wake per checkpoint kind; it reads fresh state when it runs
+    store.create('checkin', actor, actor, {'text': checkin_text(cfg, snap, [], checkpoint=(cid, lines)),
+                                           'schedule_id': op['id'], 'checkpoint': cid})
+    return True
 
 
 def guard_check(op, db=None, request=None, *, trigger='', commands=()):

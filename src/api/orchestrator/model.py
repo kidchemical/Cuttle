@@ -244,6 +244,26 @@ def active_tiers(playbook: Mapping[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
+def tier_of(playbook: Mapping[str, Any], *, profile_id: str = "", agent: str = "", model: str = "",
+            effort: str = "") -> Optional[Dict[str, str]]:
+    """The tier a spawned child belongs to: by profile id, else by a temporary
+    agent's harness + model (+ effort when the member pins one). None if no match."""
+    pid = _slug(profile_id)
+    for tier in playbook.get("tiers") or []:
+        for member in tier.get("members") or []:
+            if pid and member.get("profile") == pid:
+                hit = True
+            elif not member.get("profile") and agent:
+                hit = (member.get("agent") == agent and (member.get("model") or "") == (model or "")
+                       and (not member.get("effort") or member.get("effort") == (effort or "")))
+            else:
+                hit = False
+            if hit:
+                return {"tier": str(tier.get("id") or ""), "role": str(tier.get("role") or ""),
+                        "label": str(tier.get("label") or tier.get("id") or "")}
+    return None
+
+
 def referenced_profiles(playbook: Mapping[str, Any]) -> List[str]:
     out: List[str] = []
     for tier in playbook.get("tiers") or []:

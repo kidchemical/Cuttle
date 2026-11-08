@@ -1044,6 +1044,25 @@ def run_shell_action_lane(
                 except Exception as pe:
                     print(f"[CHAT] project command persist failed: {pe}", flush=True)
             return reply, message_content, False
+        step = None
+        if expanded and expanded.get('action') == 'prompt' and session_id is not None:
+            from api.project_commands import run_host_step
+            step = run_host_step(expanded.get('command') or {}, expanded.get('args') or '', session_id)
+        if step and step.get('reply'):
+            # The host step answered on its own (e.g. /orchestrate with no goal): no agent turn.
+            reply = {'success': True, 'response': step['reply'], 'session_id': session_id,
+                     'type': 'project_command'}
+            if auth_user:
+                try:
+                    persist_user_turn(session_id)
+                    saver = make_saver(session_id)
+                    if saver:
+                        saver(dict(reply))
+                except Exception as pe:
+                    print(f"[CHAT] project command persist failed: {pe}", flush=True)
+            return reply, message_content, False
+        if step and step.get('note') and expanded.get('message'):
+            expanded['message'] = expanded['message'].rstrip() + '\n\n' + step['note']
         if (
             expanded
             and expanded.get('action') == 'prompt'

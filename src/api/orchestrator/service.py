@@ -9,6 +9,7 @@ every fresh context, including after a harness switch.
 from __future__ import annotations
 
 import logging
+import re
 import shlex
 from typing import Any, Dict, List, Optional
 
@@ -215,7 +216,7 @@ def _session_owner(session_id: int, db) -> int:
 
 
 def bind(session: Any, playbook_id: str = "", goal: str = "", *, db=None,
-         user_id: Optional[int] = None) -> Dict[str, Any]:
+         user_id: Optional[int] = None, source: str = "cli") -> Dict[str, Any]:
     db = _db(db)
     sid = parse_session(session)
     owner = _session_owner(sid, db)
@@ -227,16 +228,119 @@ def bind(session: Any, playbook_id: str = "", goal: str = "", *, db=None,
             f"playbook {doc['id']!r} references missing profile(s): "
             + ", ".join(doc["missing_profiles"])
         )
-    store.bind(sid, owner, doc["id"], str(goal or "").strip()[:2000])
+    previous = store.binding(sid)
+    if previous and previous["playbook_id"] != doc["id"]:
+        # Rebinding to another playbook is a switch: same path as the chip.
+        rebind(sid, owner, playbook_id=doc["id"], goal=goal, db=db, source=source)
+        return brief(sid, db=db)
+    store.bind(sid, owner, doc["id"], str(goal or "").strip()[:2000],
+               action="goal" if previous else "bind", source=source)
     return brief(sid, db=db)
 
 
-def unbind(session: Any, *, db=None, user_id: Optional[int] = None) -> bool:
+def unbind(session: Any, *, db=None, user_id: Optional[int] = None, source: str = "cli") -> bool:
     db = _db(db)
     sid = parse_session(session)
     if user_id is not None and _session_owner(sid, db) != int(user_id):
         raise OrchestratorError("that chat belongs to another account")
-    return store.unbind(sid)
+    return store.unbind(sid, source=source)
+
+
+def get_binding(session: Any, *, user_id: Optional[int] = None, db=None) -> Dict[str, Any]:
+    """The chat's binding as the header chip shows it (``bound: False`` when none)."""
+    db = _db(db)
+    sid = parse_session(session)
+    owner = _session_owner(sid, db)
+    if user_id is not None and owner != int(user_id):
+        raise OrchestratorError("that chat belongs to another account")
+    row = store.binding(sid)
+    if not row:
+        return {"session": _handle(sid), "bound": False}
+    try:
+        doc = get_playbook(owner, row["playbook_id"], db=db)
+        name, missing = doc.get("name") or doc["id"], False
+    except OrchestratorError:
+        name, missing = row["playbook_id"], True
+    return {"session": _handle(sid), "bound": True, "playbook_id": row["playbook_id"],
+            "playbook_name": name, "playbook_missing": missing, "goal": row["goal"],
+            "bound_at": row["bound_at"]}
+
+
+def rebind(session: Any, user_id: int, *, playbook_id: Optional[str] = None, goal: Optional[str] = None,
+           db=None, source: str = "ui") -> Dict[str, Any]:
+    """Switch a bound chat's playbook and/or edit its goal; ``None`` keeps a field.
+
+    The agent gets the new brief at its next turn (the resume delta diffs it); a
+    turn already running keeps the old one. A playbook switch also carries the
+    new playbook's supervisor settings into each supervision schedule on the
+    chat, exactly like a playbook edit (``resync_supervision``)."""
+    db = _db(db)
+    sid = parse_session(session)
+    owner = _session_owner(sid, db)
+    if int(user_id) != owner:
+        raise OrchestratorError("that chat belongs to another account")
+    row = store.binding(sid)
+    if not row:
+        raise OrchestratorError(f"{_handle(sid)} is not orchestrating; start it with /orchestrate")
+    new_goal = row["goal"] if goal is None else str(goal).strip()[:2000]
+    new_pid = row["playbook_id"] if playbook_id in (None, "") else str(playbook_id).strip().lower().lstrip("@")
+    doc = get_playbook(owner, new_pid, db=db)
+    if doc.get("missing_profiles"):
+        raise OrchestratorError(f"playbook {doc['id']!r} references missing profile(s): "
+                                + ", ".join(doc["missing_profiles"]))
+    switched = doc["id"] != row["playbook_id"]
+    if not switched and new_goal == row["goal"]:
+        return {**get_binding(sid, db=db), "changed": []}
+    store.bind(sid, owner, doc["id"], new_goal, action="switch" if switched else "goal", source=source)
+    changed = (["playbook"] if switched else []) + (["goal"] if new_goal != row["goal"] else [])
+    resynced = []
+    if switched:
+        try:
+            old_doc = get_playbook(owner, row["playbook_id"], db=db)
+        except OrchestratorError:
+            old_doc = {}
+        from api.chat_ops.service import resync_supervision
+
+        profiles = profile_map(owner, db=db)
+        handle = _handle(sid)
+        note = [f"The user switched {handle} from playbook `{row['playbook_id']}` to "
+                f"**{doc.get('name') or doc['id']}** (`{doc['id']}`).",
+                f"{handle} gets the new brief by itself at its next turn; a turn already running keeps the old "
+                f"one. Full new brief: `python -m api.orchestrator brief {handle}`."]
+        resynced = resync_supervision(sid, supervisor_config(old_doc, profiles) if old_doc else {},
+                                      supervisor_config(doc, profiles), note_lines=note, db=db)
+    return {**get_binding(sid, db=db), "changed": changed, "supervision": resynced}
+
+
+_COMMAND_ARGS = re.compile(r"^\s*(?:@([a-z][a-z0-9_-]{0,39})\b)?\s*(.*)$", re.S | re.I)
+
+
+def bind_from_command(session_id: Any, args: str, *, db=None) -> Dict[str, Any]:
+    """Host step for a typed ``/orchestrate [@playbook] <goal>``: bind before the agent runs.
+
+    Returns ``{"note": …}`` to append to the agent prompt, or ``{"reply": …}``
+    for a terminal Cuttle reply (orchestrator off, unknown playbook, no goal on
+    an unbound chat). The agent never runs the bind itself."""
+    if not enabled():
+        return {"reply": "Orchestrator is off. Enable it in Settings → Experimental."}
+    db = _db(db)
+    sid = parse_session(session_id)
+    owner = _session_owner(sid, db)
+    m = _COMMAND_ARGS.match(args or "")
+    pid, goal = (m.group(1) or "").lower(), (m.group(2) or "").strip()
+    current = store.binding(sid)
+    if not goal and not current:
+        return {"reply": "Give the goal: `/orchestrate [@playbook] <goal>`, or use ☰ → **Orchestrate this chat…**."}
+    try:
+        if current:
+            out = rebind(sid, owner, playbook_id=pid or None, goal=goal or None, db=db, source="command")
+        else:
+            bind(sid, pid, goal, db=db, user_id=owner, source="command")
+            out = get_binding(sid, db=db)
+    except (OrchestratorError, PlaybookError) as exc:
+        return {"reply": f"Could not start orchestration: {exc}. Check Apps → Orchestrator / Apps → Agents."}
+    return {"note": f"Cuttle bound this chat to playbook **{out['playbook_name']}** (`{out['playbook_id']}`) "
+                    f"before this turn. Goal: {out['goal'] or '(none)'}. The playbook brief is in your context."}
 
 
 def brief(session: Any = None, *, playbook_id: str = "", user_id: Optional[int] = None,

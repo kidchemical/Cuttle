@@ -102,8 +102,9 @@ def test_supervision_editor_fits_and_uses_shared_controls(browser, static_server
         expect(form).to_be_visible()
         assert form.locator('.chat-supervision-dialog-body').evaluate('el => el.scrollTop') == 0
         assert form.get_attribute('aria-modal') == 'true'
-        assert form.locator('.cuttle-combo-trigger').count() == 4
-        assert form.get_by_role('switch').count() == 16
+        # agent / model / effort / interval + the checkpoint selects (tests: when + response; others: response)
+        assert form.locator('.cuttle-combo-trigger').count() == 4 + 5
+        assert form.get_by_role('switch').count() == 16 + 4  # Tasks lists + checkpoints
         footer = form.locator('.chat-supervision-dialog-footer')
         assert form.locator('[type=submit]').evaluate('el => getComputedStyle(el).backgroundColor') == 'rgb(47, 163, 122)'
         bounds = form.bounding_box()

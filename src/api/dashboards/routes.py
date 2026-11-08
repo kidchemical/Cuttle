@@ -82,4 +82,12 @@ def get_dashboard(dash_id: str):
         except ValueError:
             hours = 24
         return jsonify(service.cuttle_jobs(hours=hours))
+    if dash_id == "orchestration":
+        from api.auth_db import get_auth_db
+        from api.orchestration_telemetry.report import report as orchestration_report
+
+        return jsonify(orchestration_report(
+            user_id=int(current_user()["id"]),
+            range_id=(request.args.get("range") or "30d").strip().lower(),
+            project=(request.args.get("project") or "").strip(), db=get_auth_db()))
     return jsonify({"success": True, **meta})

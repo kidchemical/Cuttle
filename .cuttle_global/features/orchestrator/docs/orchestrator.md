@@ -10,17 +10,35 @@ limits, supervisor defaults and free-form notes. Users edit playbooks in
 
 ## Start
 
-`/orchestrate [@playbook] <goal>` binds the chat and prints the brief. Without
-`@playbook` it uses the user's default playbook. In the composer the command is
-a chip (`Orchestrate · <playbook>`); clicking it picks the playbook. Or:
+The binding (chat → playbook + goal) is **host state**; agents never set it.
+
+- **☰ → Orchestrate this chat…** picks the playbook and goal, then sends
+  `/orchestrate @<playbook> <goal>` as the chat's first turn on its own agent.
+- Typed `/orchestrate [@playbook] <goal>` does the same: the command's
+  `host_step: orchestrator.bind` binds the chat on the server **before** the
+  agent runs and appends one line naming the playbook. Without `@playbook` it
+  uses the user's default; with no goal on an unbound chat Cuttle answers by
+  itself (no agent turn); with no goal on a bound chat it switches playbook and
+  keeps the goal. In the composer the command is a chip (`Orchestrate · <playbook>`).
+- A bound chat shows **Orchestrating · \<playbook\>** in its header: Edit…
+  (switch playbook / edit goal), Open playbooks, Stop orchestrating. A switch is
+  not an agent turn: the brief changes at the next turn (resume delta), and each
+  supervision schedule on the chat takes the new playbook's supervisor settings
+  with one **Supervision update** check-in, as for a playbook edit.
+- Every bind / switch / goal edit / unbind is logged (`binding_events` in
+  `orchestrator.db`) with its source (`ui`, `command`, `cli`).
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.orchestrator start [--playbook ID] --goal "…" --json
+PYTHONPATH=src .venv/bin/python -m api.orchestrator switch [--playbook ID] [--goal "…"]   # change a bound chat
 PYTHONPATH=src .venv/bin/python -m api.orchestrator default [ID]     # show / set the default
 PYTHONPATH=src .venv/bin/python -m api.orchestrator brief            # reprint for this chat
 PYTHONPATH=src .venv/bin/python -m api.orchestrator stop             # unbind
 PYTHONPATH=src .venv/bin/python -m api.orchestrator list|get <id>|bindings --json
+PYTHONPATH=src .venv/bin/python -m api.orchestrator start [--playbook ID] --goal "…"   # scripts only; not from an agent turn
 ```
+
+REST: `GET|PUT|DELETE /api/orchestrator/bindings/<session>` (PUT
+`{playbook_id?, goal?}`; omitted fields are kept).
 
 Inside a Cuttle turn `--session` defaults to the current chat. A bound chat's
 brief is part of its compiled context, so a new harness joining the chat gets

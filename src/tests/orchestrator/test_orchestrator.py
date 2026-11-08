@@ -539,3 +539,126 @@ def test_playbook_edit_resyncs_running_supervision(tmp_path, orch, monkeypatch):
     assert len(pending) == 1 and "notes" in pending[0]["payload"]["text"]
     service.save_playbook(owner, {**edited, "notes": "never touch prod or staging"}, db=db)
     assert len([o for o in ops_store.listing(sup) if o["kind"] == "checkin" and o["state"] == "pending"]) == 1
+
+
+# ── host-owned binding: switch, history, typed command, routes ─────────────
+
+
+def _second_playbook(owner, db):
+    pb = service.get_playbook(owner, "default", db=db)
+    return service.save_playbook(owner, {**pb, "id": "strict", "name": "Strict",
+                                         "supervisor": {**pb["supervisor"], "instructions": "Be strict.",
+                                                        "forbid_branches": ["main"]}}, db=db)
+
+
+def test_rebind_switches_playbook_keeps_goal_and_resyncs_supervision(tmp_path, orch, monkeypatch):
+    from api.chat_ops import service as chat_ops, store as ops_store
+
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    db, owner, other, sid, other_sid = _seed_db(tmp_path)
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    sup = db.create_chat_session(owner, "supervisor")
+    service.bind(sid, "default", "ship it", db=db)
+    pb = service.get_playbook(owner, "default", db=db)
+    cfg = model.supervisor_config(pb, service.profile_map(owner, db=db))
+    op = chat_ops.supervise(sid, sup, instructions=cfg["instructions"], model_tiers=cfg["model_tiers"],
+                            db=db)["operation"]
+    _second_playbook(owner, db)
+
+    out = service.rebind(sid, owner, playbook_id="strict", db=db)
+    assert out["playbook_id"] == "strict" and out["goal"] == "ship it" and out["changed"] == ["playbook"]
+    payload = ops_store.find(op["id"])["payload"]
+    assert payload["instructions"] == "Be strict." and payload["forbidden_branches"] == ["main"]
+    notice = [o for o in ops_store.listing(sup) if o["kind"] == "checkin"][-1]["payload"]["text"]
+    assert "switched" in notice and "`strict`" in notice
+    assert "Strict" in service.brief_block(sid)
+
+    assert service.rebind(sid, owner, goal="ship it", db=db)["changed"] == []  # no-op
+    assert service.rebind(sid, owner, goal="ship v2", db=db)["changed"] == ["goal"]
+    with pytest.raises(service.OrchestratorError, match="another account"):
+        service.rebind(sid, other, goal="x", db=db)
+    with pytest.raises(service.OrchestratorError, match="not orchestrating"):
+        service.rebind(other_sid, other, goal="x", db=db)
+    service.unbind(sid, db=db, source="ui")
+    actions = [(e["action"], e["playbook_id"], e["source"]) for e in store.binding_events(session_id=sid)]
+    assert actions == [("bind", "default", "cli"), ("switch", "strict", "ui"),
+                       ("goal", "strict", "ui"), ("unbind", "strict", "ui")]
+
+
+def test_orchestrate_command_binds_on_the_host(tmp_path, orch, monkeypatch):
+    from api.project_commands import run_host_step
+
+    db, owner, other, sid, other_sid = _seed_db(tmp_path)
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    cmd = {"name": "orchestrate", "host_step": "orchestrator.bind"}
+    assert "Give the goal" in run_host_step(cmd, "", sid)["reply"]  # unbound, no goal: no agent turn
+    assert store.binding(sid) is None
+    assert "not found" in run_host_step(cmd, "@ghost do it", sid)["reply"]
+    note = run_host_step(cmd, "do the thing", sid)["note"]
+    assert "Cuttle bound this chat" in note and "do the thing" in note
+    assert store.binding(sid)["goal"] == "do the thing"
+    _second_playbook(owner, db)
+    run_host_step(cmd, "@strict", sid)  # bound + no goal: switch, keep goal
+    row = store.binding(sid)
+    assert row["playbook_id"] == "strict" and row["goal"] == "do the thing"
+    assert run_host_step({"name": "x", "host_step": "os.system"}, "", sid)["reply"].startswith("Unknown host step")
+    assert run_host_step({"name": "x"}, "", sid) is None
+    flags.set_enabled("orchestrator", False)
+    assert "off" in run_host_step(cmd, "goal", sid)["reply"]
+    flags.set_enabled("orchestrator", True)
+
+
+def test_bundled_orchestrate_command_declares_the_host_step():
+    from api.project_commands import _parse_command_file
+
+    path = REPO / ".cuttle_global" / "features" / "orchestrator" / "commands" / "orchestrate.md"
+    cmd = _parse_command_file(path, str(REPO))
+    assert cmd["host_step"] == "orchestrator.bind" and "api.orchestrator start" not in cmd["body"].split("Do **not**")[0]
+
+
+def test_binding_routes(tmp_path, monkeypatch, orch):
+    ctx = _client(tmp_path, monkeypatch)
+    client, sid = ctx["client"], ctx["sid"]
+    assert client.get(f"/api/orchestrator/bindings/{sid}").get_json() == {
+        "success": True, "session": f"CH-{sid:06d}", "bound": False}
+    assert client.put(f"/api/orchestrator/bindings/{sid}", json={"goal": "x"}).status_code == 400
+    client.put("/api/agent-profiles/worker", json={"name": "Worker", "agent": "cursor", "model": "auto"})
+    client.put("/api/orchestrator/playbooks/mine",
+               json={"name": "Mine", "tiers": [{"id": "w", "role": "worker", "profiles": ["worker"]}]})
+    service.bind(sid, "mine", "first goal")
+    got = client.get(f"/api/orchestrator/bindings/{sid}").get_json()
+    assert got["bound"] and got["playbook_id"] == "mine" and got["playbook_name"] == "Mine"
+    assert got["goal"] == "first goal"
+    put = client.put(f"/api/orchestrator/bindings/{sid}", json={"goal": "second goal"}).get_json()
+    assert put["success"] and put["goal"] == "second goal" and put["changed"] == ["goal"]
+    assert client.get(f"/api/orchestrator/bindings/{ctx['other_sid']}").status_code == 400
+
+
+def test_js_orchestration_chip_model():
+    script = """
+const assert = require('assert');
+const M = require(%s);
+assert.equal(M.chip({bound: false}), null);
+const c = M.chip({bound: true, playbook_id: 'fast', playbook_name: 'Fast', goal: 'ship', bound_at: 5});
+assert.equal(c.text, 'Orchestrating · Fast'); assert.equal(c.goal, 'ship'); assert.ok(!c.missing);
+assert.ok(M.chip({bound: true, playbook_id: 'gone', playbook_missing: true}).missing);
+const pbs = {default_id: 'default', playbooks: [{id: 'default', name: 'Default'},
+  {id: 'fast', name: 'Fast'}, {id: 'bad', name: 'Bad', missing_profiles: ['ghost']}]};
+const fresh = M.dialogDefaults({bound: false}, pbs);
+assert.equal(fresh.editing, false); assert.equal(fresh.playbookId, 'default');
+assert.equal(fresh.playbooks[0].label, 'Default (default)');
+assert.deepEqual(M.submitPlan(fresh, {playbookId: 'fast', goal: ' ship it '}),
+  {ok: true, kind: 'send', text: '/orchestrate @fast ship it'});
+assert.deepEqual(M.submitPlan(fresh, {playbookId: 'fast', goal: ''}).errors, ['Give the orchestrator a goal.']);
+assert.ok(M.submitPlan(fresh, {playbookId: 'bad', goal: 'x'}).errors[0].includes('missing profiles: ghost'));
+const edit = M.dialogDefaults({bound: true, playbook_id: 'fast', goal: 'ship'}, pbs);
+assert.equal(edit.editing, true); assert.equal(edit.playbookId, 'fast');
+assert.deepEqual(M.submitPlan(edit, {playbookId: 'fast', goal: 'ship'}), {ok: true, kind: 'none', body: {}});
+assert.deepEqual(M.submitPlan(edit, {playbookId: 'default', goal: 'ship v2'}),
+  {ok: true, kind: 'put', body: {playbook_id: 'default', goal: 'ship v2'}});
+""" % json.dumps(str(WEB / "js" / "chat" / "chat_orchestration_model.js"))
+    subprocess.run(["node", "-e", script], check=True)
+    page = (WEB / "chat_page.html").read_text(encoding="utf-8")
+    assert 'id="chatOrchestrationSlot"' in page
+    assert (page.index("/js/chat/chat_orchestration_model.js") < page.index("/js/chat/chat_orchestration.js")
+            < page.index("/js/chat/chat_page.js"))

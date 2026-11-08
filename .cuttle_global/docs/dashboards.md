@@ -35,6 +35,19 @@ Each source has its own score definition: DeepSWE pass@1, SWE-bench Verified res
 - Tables: why full briefings were re-sent on resumed sessions, and current always-on rule file sizes.
 - Range pills 7 / 30 / 90 days. Turns before the store existed were imported from query logs (`python -m api.cuttle_brain metrics backfill`): mode and size only.
 
+**Orchestration & Supervision** (`?d=orchestration`) answers which models orchestrate, grind, escalate and supervise, from the append-only event log `<home>/db/orchestration_telemetry.db` (owner `api.orchestration_telemetry`; written by host code, never by agents).
+
+- Recorded where things happen: every sub-agent spawn (`subagents.store.insert_child`: playbook + tier resolved from the parent's binding, project, profile, harness/model/effort, parent turn id) and every round start/end (`update_child`: status, duration, error), every supervision check (`chat_ops.store.record_check`, kept in full; the schedule's own history keeps 50), schedule start/edit/pause/resume/cancel, and supervisor send/stop on the chat it supervises. Playbook binds/switches come from `orchestrator.db` `binding_events`.
+- **Escalation** = a spawn on an escalation-role tier. Its source is the orchestrator chat's latest failed worker round, else its latest worker spawn (`detail.link`); "escalated after" per worker model uses that link.
+- **Orchestrator model** = the agent chip of the turn that spawned (batch `turn_id` → assistant row); supervisor model = the supervisor chat's most frequent agent.
+- Filters: range (7 / 30 / 90 days / all) and project. Spawns from chats with no playbook show as "Not in a playbook".
+- History before the log: `python -m api.orchestration_telemetry backfill` (once) — one round per child, tiers from each chat's playbook at import time, only the supervision checks still kept.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.orchestration_telemetry report --range 30d [--project PATH]   # dashboard JSON
+PYTHONPATH=src .venv/bin/python -m api.orchestration_telemetry events --kind child_spawn --days 7
+```
+
 ## Agent CLI
 
 ```bash

@@ -41,7 +41,11 @@ def create(kind, actor, target, payload, *, due=None, state='pending'):
     with connection() as conn:
         conn.execute('INSERT INTO operations VALUES (?,?,?,?,?,?,?,?,?)',
             (oid, kind, actor, target, json.dumps(payload), state, now if due is None else due, now, '{}'))
-    return get(oid, actor)
+    op = get(oid, actor)
+    if kind == 'supervise':
+        from api.orchestration_telemetry import record
+        record.supervision_schedule('start', op)
+    return op
 
 
 def get(oid, actor):
@@ -117,7 +121,11 @@ def cancel(oid, actor):
         conn.execute("UPDATE operations SET state='cancelled', updated=? WHERE id=? AND actor=? "
                      "AND (state IN ('pending','paused','verifying') OR (state='dispatching' AND kind='supervise'))",
                      (time.time(), oid, actor))
-    return get(oid, actor)
+    op = get(oid, actor)
+    if op and op.get('kind') == 'supervise' and op.get('state') == 'cancelled':
+        from api.orchestration_telemetry import record
+        record.supervision_schedule('cancel', op)
+    return op
 
 
 def cancel_sends_to(target):
@@ -165,6 +173,9 @@ def set_paused(oid, actor, paused, *, until=None):
                                    'paused_alerted': False})
         else:
             _patch(oid, 'result', {'paused_at': None, 'paused_until': None, 'paused_alerted': False})
+        from api.orchestration_telemetry import record
+        record.supervision_schedule('pause' if paused else 'resume', get(oid, actor),
+                                    until=float(until) if paused and until else None)
     return get(oid, actor)
 
 
@@ -244,6 +255,9 @@ def record_check(schedule_id, outcome, detail=None):
         conn.execute('DELETE FROM checks WHERE schedule_id=? AND at < (SELECT MIN(at) FROM '
                      '(SELECT at FROM checks WHERE schedule_id=? ORDER BY at DESC LIMIT ?))',
                      (schedule_id, schedule_id, HISTORY_KEEP))
+    # The checks table keeps the last HISTORY_KEEP per schedule; telemetry keeps them all.
+    from api.orchestration_telemetry import record
+    record.supervision_check(schedule_id, outcome, detail)
 
 
 def checks(schedule_id, limit=HISTORY_KEEP):
@@ -265,6 +279,18 @@ def _patch(oid, column, fields):
 def patch_payload(oid, **fields):
     """Merge fields into a schedule's stored config (e.g. a guard baseline)."""
     _patch(oid, 'payload', fields)
+
+
+def drop_result_keys(oid, *keys):
+    """Forget per-schedule tracking state (e.g. a checkpoint baseline)."""
+    with connection() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute('SELECT result FROM operations WHERE id=?', (oid,)).fetchone()
+        if row:
+            result = json.loads(row[0])
+            for key in keys:
+                result.pop(key, None)
+            conn.execute('UPDATE operations SET result=? WHERE id=?', (json.dumps(result), oid))
 
 
 def patch_result(oid, **fields):

@@ -65,6 +65,7 @@ def start_supervision():
             forbidden_branches=[str(b) for b in forbidden], model_tiers=tiers,
             model=str(data.get("model") or ""), effort=str(data.get("effort") or ""),
             task_ids=data.get("task_ids") if isinstance(data.get("task_ids"), list) else None,
+            checkpoints=data.get("checkpoints") if isinstance(data.get("checkpoints"), dict) else None,
         )
 
     return _call(run)

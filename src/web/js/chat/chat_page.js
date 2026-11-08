@@ -301,6 +301,7 @@
         const text = document.getElementById('chatSessionTitleText');
         if (!wrap || !text) return;
         supervision.setSession(sessionId);
+        orchestration.setSession(sessionId);
         composerLock.setSession(sessionId);
         if (sessionId == null || sessionId === '') {
             wrap.hidden = true;
@@ -435,7 +436,7 @@
             archived: isChatSessionArchived(sid), canArchive: isAuthMode() && !isTerminalSessionId(sid),
             subagentGroup: historyPanel.historySubagentGroupOwnedBy(sid) }),
         extraItems: (sid, icons) => [gitPush.menuHtml(icons), supervision.menuHtml(sid, icons.subagents),
-            composerLock.menuHtml(sid)],
+            orchestration.menuHtml(sid, icons.subagents), composerLock.menuHtml(sid)],
         currentSession: () => session.current(), closeHistoryMenu: () => historyPanel.closeMenu(),
         afterFill: (dropdown) => gitPush.refreshMenuMode(dropdown),
     });
@@ -445,6 +446,15 @@
         onSupervised: (sid, on, by) => composerLock.setSupervised(sid, on, by),
         enabledFlags: fetchEnabledExperimentalFlags, openChat: (sid) => loadChatSession(sid),
         closeMenus: () => closeAllSessionMenus(), confirm: (m) => window.confirm(m),
+        toast: (m, k) => (window.showToast || function () {})(m, k), viewportWidth: () => window.innerWidth,
+        setInterval: (f, ms) => window.setInterval(f, ms), clearInterval: (t) => window.clearInterval(t),
+    });
+
+    // "Orchestrating · <playbook>" chip + ☰ dialog (experimental `orchestrator`).
+    const orchestration = CuttleChatOrchestration.create({
+        doc: document, fetch: (u, o) => fetch(u, o), escapeHtml: escapeHtmlInline, enabledFlags: fetchEnabledExperimentalFlags,
+        sendMessage: (text) => sendMessage({ text }), closeMenus: () => closeAllSessionMenus(), confirm: (m) => window.confirm(m),
+        navigate: (page) => (window.parent !== window ? window.parent.postMessage({ type: 'cuttle-navigate', page }, '*') : window.location.assign(page)),
         toast: (m, k) => (window.showToast || function () {})(m, k), viewportWidth: () => window.innerWidth,
         setInterval: (f, ms) => window.setInterval(f, ms), clearInterval: (t) => window.clearInterval(t),
     });
