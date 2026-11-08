@@ -8227,7 +8227,30 @@ html.cuttle-bg-paused .chat-restore-spinner {
 .chat-bg-stop:hover:not(:disabled) { border-color: #f87171; color: #f87171; }
 .chat-bg-stop:disabled { opacity: 0.6; cursor: default; }
 @keyframes chat-bg-breathe { 50% { opacity: 0.4; } }
+.chat-bg-job { min-width: 0; display: grid; gap: 5px; margin: 4px 0 8px; font-size: 0.9em; }
+.chat-bg-work.has-jobs > .chat-bg-ring { display: none; }
+.chat-bg-watch:has(+ .chat-bg-job) .chat-bg-watch-label { white-space: normal; overflow-wrap: anywhere; }
+.chat-bg-job-owner, .chat-bg-job-health, .chat-bg-handoff { color: var(--text-secondary); overflow-wrap: anywhere; }
+.chat-bg-job-health.is-warning { color: var(--warning-color, #d69e36); }
+.chat-bg-job-summary, .chat-bg-result-title { font-weight: 600; overflow-wrap: anywhere; }
+.chat-bg-steps { list-style: none; padding: 2px 0; margin: 0; max-height: 220px; overflow: auto; }
+.chat-bg-step { position: relative; display: flex; gap: 9px; align-items: flex-start; padding: 5px 0; min-width: 0; }
+.chat-bg-step:not(:last-child)::after { content: ''; position: absolute; left: 6px; top: 22px; bottom: -3px; border-left: 1px solid color-mix(in srgb, var(--text-secondary) 25%, transparent); }
+.chat-bg-step-icon { box-sizing: border-box; flex: 0 0 14px; width: 14px; height: 14px; margin-top: 2px; border: 1.5px solid var(--text-secondary); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; }
+.chat-bg-step.is-running .chat-bg-step-icon { border-color: var(--accent-color, #667eea); border-right-color: transparent; animation: chat-bg-step-spin 1s linear infinite; }
+.chat-bg-step.is-done .chat-bg-step-icon { border-color: transparent; color: var(--success-color, #2e9d5b); }
+.chat-bg-step.is-failed .chat-bg-step-icon { border-color: transparent; color: var(--error-color, #d9534f); font-size: 18px; }
+.chat-bg-step-text { min-width: 0; overflow-wrap: anywhere; }
+.chat-bg-step-detail { display: block; color: var(--text-secondary); }
+.chat-bg-job-details { min-width: 0; color: var(--text-secondary); }
+.chat-bg-job-details summary { cursor: pointer; width: fit-content; color: var(--accent-color, #667eea); }
+.chat-bg-job-details[open] { display: grid; gap: 6px; }
+.chat-bg-job-details > div { overflow-wrap: anywhere; }
+.chat-bg-output { box-sizing: border-box; max-width: 100%; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; margin: 4px 0; background: color-mix(in srgb, var(--text-secondary) 8%, transparent); border-radius: 6px; font-size: 0.9em; }
+.chat-bg-result + .chat-bg-result { border-top: 1px solid color-mix(in srgb, var(--text-secondary) 20%, transparent); padding-top: 8px; }
+@keyframes chat-bg-step-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
+    .chat-bg-step.is-running .chat-bg-step-icon { animation: none; border-style: dashed; }
     .chat-bg-ring, .history-kind-badge.history-bg-badge { animation: none; }
 }
 @media (max-width: 600px) {

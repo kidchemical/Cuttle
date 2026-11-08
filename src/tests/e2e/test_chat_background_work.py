@@ -127,12 +127,12 @@ def test_detached_unit_watch_shows_unit_state_and_elapsed(browser, static_server
             'schedules': [], 'started_at': None, 'working': True, 'feed': False}}
         page.evaluate('live => bw.sync(live, "1821")', live)
         card = page.locator('#chat-background-work')
-        expect(card.locator('.chat-bg-title')).to_contain_text('Detached job running')
+        expect(card.locator('.chat-bg-title')).to_contain_text('Background job running')
         expect(card.locator('.chat-bg-title .chat-bg-elapsed')).to_have_text('14m')
         row = card.locator('.chat-bg-watch')
         expect(row.locator('.chat-bg-watch-label')).to_have_text('Running: ch1821-rig-build')
-        expect(row.locator('.chat-bg-watch-state')).to_have_text('running')
-        expect(row.locator('.chat-bg-watch-elapsed')).to_have_text('14m')
+        assert row.locator('.chat-bg-watch-state').count() == 0  # technical state lives in Details
+        assert row.locator('.chat-bg-watch-elapsed').count() == 0  # elapsed already in title
         assert row.locator('.chat-bg-watch-unit').count() == 0  # already in the label
         # No measured progress: an animated indeterminate bar, never a "0%".
         assert row.locator('.chat-bg-bar[data-progress="indeterminate"]').count() == 1
@@ -396,3 +396,66 @@ def test_indeterminate_bars_animate_and_respect_reduced_motion(browser, static_s
             assert not errors
         finally:
             context.close()
+
+
+def test_job_steps_details_staleness_and_completion_on_phone(browser, static_server):
+    """Runner facts, escaped output, persistent disclosure and terminal delivery receipts."""
+    context = browser.new_context(viewport={'width': 390, 'height': 844}, reduced_motion='reduce')
+    page = context.new_page()
+    errors = []
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    try:
+        page.goto(static_server + '/agent_feed.html')
+        page.set_content('<link rel="stylesheet" href="' + static_server + '/css/ui_boot.css">'
+                         '<link rel="stylesheet" href="' + static_server + '/css/chat_page.css">'
+                         '<div id="chatMessages"><div class="message assistant">The laptop tests are running.</div></div>')
+        page.add_script_tag(url=static_server + '/js/shared/progress_model.js')
+        page.add_script_tag(url=static_server + '/js/chat/chat_background_work.js')
+        page.evaluate("""() => { window.bw = CuttleChatBackgroundWork.create({ win: window,
+            currentSession: () => '7', sessionIdsEqual: (a,b) => String(a) === String(b), isBusy: () => false }); }""")
+        now = page.evaluate('Date.now() / 1000')
+        job = {'job_id': 'laptop', 'label': 'Laptop build and multiplayer checks', 'kind': 'unit',
+               'unit': 'ch7-tests', 'state': 'running', 'handoff': 'on_exit', 'resume_chat': 'CH-000007',
+               'origin_query_id': 'origin7', 'resume_note': 'Read the case logs and report the failures.',
+               'started_at': now - 7200, 'activity': {'schema_version': 1, 'updated_ts': now - 900,
+               'stale_after_sec': 600, 'output': '<script>window.injected = true</script>\nCase failed.',
+               'steps': [{'id': 'build', 'label': 'Build laptop player', 'state': 'done'},
+                         {'id': 'solo', 'label': 'Solo monster playthrough', 'state': 'failed', 'detail': 'Menu focus assertion failed'},
+                         {'id': 'presence', 'label': 'Check player facing', 'state': 'running'},
+                         {'id': 'menu', 'label': 'Check menu at five window shapes', 'state': 'pending'}]}}
+        bg = {'watches': [job], 'waits': [], 'schedules': [], 'working': True}
+        page.evaluate('bg => bw.sync({background: bg}, "7")', bg)
+        card = page.locator('#chat-background-work')
+        expect(card.locator('.chat-bg-step')).to_have_count(4)
+        expect(card.locator('.chat-bg-job-summary')).to_have_text('2 of 4 steps finished · 1 failed')
+        expect(card.locator('.chat-bg-job-health')).to_contain_text('No update for 15m')
+        expect(card.locator('.chat-bg-handoff')).to_contain_text('an agent will resume CH-000007')
+        for state, label in [('done', 'Done'), ('failed', 'Failed'), ('running', 'In progress'), ('pending', 'Pending')]:
+            assert card.locator('.chat-bg-step.is-' + state + ' .chat-bg-step-icon').get_attribute('aria-label') == label
+        assert card.locator('.is-running .chat-bg-step-icon').evaluate('el => getComputedStyle(el).animationName') == 'none'
+        page.emulate_media(reduced_motion='no-preference')
+        assert card.locator('.is-running .chat-bg-step-icon').evaluate('el => getComputedStyle(el).animationName') == 'chat-bg-step-spin'
+        card.locator('.chat-bg-job-details summary').click()
+        expect(card.locator('.chat-bg-output')).to_contain_text('<script>window.injected = true</script>')
+        assert not page.evaluate('window.injected || false')
+        assert card.locator('a[href="/query_log.html?id=origin7"]').count() == 1
+        job['activity']['updated_ts'] = now
+        page.evaluate('bg => bw.sync({background: bg}, "7")', bg)
+        expect(card.locator('.chat-bg-output')).to_be_visible()  # stays expanded across updates
+        expect(card.locator('.chat-bg-job-health')).not_to_have_class(re.compile('is-warning'))
+        assert card.evaluate('el => el.scrollWidth <= el.clientWidth + 1')
+        # Completion preserves the readable result and delivery receipt, without a running spinner.
+        job.update(state='failed', handoff='failed', followup_query_id='follow7')
+        page.evaluate('job => bw.sync({background: {watches: [], recent: [job]}}, "7")', job)
+        expect(card.locator('.chat-bg-title')).to_have_text('Background job results')
+        expect(card.locator('.chat-bg-handoff')).to_have_text('Follow-up delivery failed for CH-000007')
+        expect(card.locator('.chat-bg-job-health')).to_have_count(0)
+        expect(card.locator('.chat-bg-step.is-running')).to_have_count(0)  # ended without a step result
+        expect(card.locator('.chat-bg-step.is-unknown')).to_have_count(1)
+        assert card.locator('.chat-bg-stop').count() == 0
+        assert card.locator('a[href="/query_log.html?id=follow7"]').count() == 1
+        page.evaluate('job => bw.sync({background: {watches: [], recent: [{...job, handoff:"delivered"}]}}, "7")', job)
+        expect(card.locator('.chat-bg-handoff')).to_have_text('Follow-up delivered to CH-000007')
+        assert not errors
+    finally:
+        context.close()

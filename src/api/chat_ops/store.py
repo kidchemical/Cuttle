@@ -73,22 +73,28 @@ def involving(session_id, *, states=('pending', 'dispatching', 'verifying', 'pau
             'ORDER BY updated DESC LIMIT 100', (session_id, session_id, *states))]
 
 
-def notice_for_job(target, job_id):
+def notice_for_job(target, job_id, *, watch_token=None):
     """Whether a resume notice for detached job ``job_id`` was queued on ``target``.
 
     Lets a unit-watch poller that died mid-fire be recovered without a second resume."""
+    return job_notice(target, job_id, watch_token=watch_token) is not None
+
+
+def job_notice(target, job_id, *, watch_token=None):
+    """Latest durable delivery receipt for a job; no dispatch or other effects."""
     if not job_id:
-        return False
+        return None
     with connection() as conn:
-        rows = conn.execute("SELECT payload FROM operations WHERE kind='notice' AND target=?",
+        rows = conn.execute("SELECT * FROM operations WHERE kind='notice' AND target=? ORDER BY updated DESC",
                             (int(target),)).fetchall()
     for row in rows:
         try:
-            if json.loads(row['payload']).get('job_id') == job_id:
-                return True
+            payload = json.loads(row['payload'])
+            if payload.get('job_id') == job_id and (watch_token is None or payload.get('watch_token') == watch_token):
+                return public(row)
         except ValueError:
             continue
-    return False
+    return None
 
 
 def pull_due(oid, at):

@@ -45,7 +45,9 @@ Start the unit, then register the resume in the same turn:
 ```bash
 systemd-run --user --unit=ep-build-linux --remain-after-exit   --working-directory="$PWD" -- ./build.sh          # detached: survives a Flask restart
 
-PYTHONPATH=src .venv/bin/python -m api.job_watch watch-unit   --unit ep-build-linux   --resume "The Linux build finished. Read its log, then continue P6."
+PYTHONPATH=src .venv/bin/python -m api.job_watch watch-unit --unit ep-build-linux --id linux-checks \
+  --label "Linux build and smoke tests" --resume "Read the build and test logs, then continue P6." \
+  --activity-json '{"schema_version":1,"steps":[{"id":"build","label":"Build Linux player","state":"running"},{"id":"smoke","label":"Run smoke tests","state":"pending"}]}'
 ```
 
 - Prints the watch card — put it in your reply, then **end the turn**. The card shows
@@ -56,11 +58,11 @@ PYTHONPATH=src .venv/bin/python -m api.job_watch watch-unit   --unit ep-build-li
   exit — writes the terminal watch status, and queues your resume message on this chat
   through the chat-ops outbox, **exactly once** (a pass runs under a lock and claims
   the record before it fires). It survives Flask restarts and needs no open browser.
-- While it runs, the chat shows it in its background card (*Detached job running* —
-  `Running: <unit> · <SubState> · <elapsed>`), and `chat_cli status` lists it under
+- While it runs, the chat shows a compact *Background job running* card with
+  readable steps and an explicit completion handoff. `chat_cli status` lists it under
   `live.background.watches` (`kind: "unit"`) and reports the chat as
-  `waiting_background`, so supervision does not nudge it. The row clears when the
-  watch fires or its record is removed.
+  `waiting_background`, so supervision does not nudge it. Finished jobs retain up to
+  three receipts per chat for seven days, including follow-up delivery status.
 - Pass `--remain-after-exit` to `systemd-run` so the unit keeps its exit status;
   without it the resume turn has to say "exit status not available".
 - `--chat CH-…` names the chat to resume (default `CUTTLE_CHAT_SESSION_ID`).
@@ -69,3 +71,31 @@ PYTHONPATH=src .venv/bin/python -m api.job_watch watch-unit   --unit ep-build-li
 - Inspect with `python -m api.job_watch units`; `poll-units` forces one pass.
 - Rule of thumb: if the work outlives your turn on purpose, it needs `watch-unit`.
   Never finish a turn with "I'll check back later" for detached work.
+
+Use a human-readable `--label`, not a unit name. For multi-step jobs, have the
+runner publish a full activity snapshot at each step transition and periodically
+while waiting (the reporting CLI must run on the Host with the same Cuttle home):
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.job_watch report --id linux-checks \
+  --activity-json '{"schema_version":1,"summary":"Smoke tests running","steps":[{"id":"build","label":"Build Linux player","state":"done"},{"id":"smoke","label":"Run smoke tests","state":"running","detail":"Case 2 of 4"}],"output":"Build succeeded. Starting smoke tests.","stale_after_sec":600}'
+```
+
+Activity v1 is optional: at most 32 steps (`pending`, `running`, `done`, `failed`,
+`skipped`, `cancelled`), a 240-character summary, and the last 4,000 characters
+of explicitly supplied recent output. Supply only non-secret output. Optional
+`deadline_ts` is an expected deadline in epoch seconds, not an automatic kill.
+`updated_ts` is stamped by the Host on reporting; no update for `stale_after_sec`
+(default 600) shows a warning, not a claim that the job is hung. Activity is kept
+separate from lifecycle status, so a late heartbeat cannot turn a finished job
+back into a running one. Library producers call `job_watch.report_activity(id, snapshot)`;
+the pure normalizer is `api.job_activity.normalize`, with no host dependencies.
+Unknown versions/absent snapshots fall back to process status; remove reporting
+to return to that behavior without migrating watch records. Cuttle never guesses
+step progress or tails arbitrary log paths. Retained receipts keep the latest
+snapshot available after refresh/restart.
+
+Pausing a **supervision schedule** does not disable the job's independent completion
+follow-up. The card states this in Details and shows whether the follow-up is
+queued, sending, being verified, delivered, failed or cancelled. “Delivered” means
+the turn was accepted; it does not promise that the agent has finished its reply.

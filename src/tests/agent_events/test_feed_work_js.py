@@ -26,6 +26,9 @@ const owner = {
 };
 const tree = { owners: [owner], mesh: [], totals: { chats: 2, processes: 4, detached: 1 } };
 const out = {
+  overdue: B.jobView({state:'running',activity:{schema_version:1,deadline_ts:100,
+    updated_ts:190,stale_after_sec:600}},200),
+  recentOnly: B.plan({recent:[{job_id:'x',state:'done',handoff:'delivered'}]}),
   elapsed: [W.elapsed(5), W.elapsed(125), W.elapsed(3 * 3600 + 240), W.elapsed(-1)],
   handle: W.handle('7'), bytes: [W.bytes(0), W.bytes(5 * 1024 * 1024), W.bytes(3 * 1024 ** 3)],
   cmd: W.shortCommand('/home/u/.local/bin/claude -p --model x', 20),
@@ -79,6 +82,8 @@ def test_models():
                           env={"PATH": os.environ["PATH"], "WEB": str(WEB)})
     assert proc.returncode == 0, proc.stderr
     r = json.loads(proc.stdout)
+    assert r['overdue']['warning'] and r['overdue']['health'] == 'Expected deadline passed; check recent output.'
+    assert not r['recentOnly']['working'] and r['recentOnly']['title'] == 'Background job results'
     assert r["elapsed"] == ["5s", "2m", "3h 04m", ""]
     assert r["handle"] == "CH-000007"
     assert r["bytes"] == ["", "5 MB", "3.0 GB"]
@@ -116,13 +121,15 @@ def test_models():
     assert r["planNullPct"]["started"] == 500
     # A detached unit watch: "Running: ch1821-rig-build · running · 14m", no chat Stop (its card stops it).
     u = r["planUnit"]
-    assert u["title"] == "Detached job running" and u["working"] is True and u["stop"] is None
+    assert u["title"] == "Background job running" and u["working"] is True and u["stop"] is None
     assert u["label"] == "" and u["started"] == 1000
     # A unit only knows running/exited: indeterminate bar + elapsed, never "0%".
-    assert u["watches"] == [{"label": "Running: ch1821-rig-build", "percent": None, "indeterminate": True,
-                             "unit": "ch1821-rig-build", "subState": "running", "started": 1000}]
+    assert u["watches"][0]["job"]["job_id"] == "unit-x"
+    assert {k: v for k, v in u["watches"][0].items() if k != "job"} == {
+        "label": "Running: ch1821-rig-build", "percent": None, "indeterminate": True,
+        "unit": "ch1821-rig-build", "subState": "running", "started": 1000}
     both = r["planUnitAndJob"]
     assert both["title"] == "Job running" and both["stop"] == "chat" and both["label"] == "Build"
-    assert both["watches"][1] == {"label": "Bake", "percent": None, "indeterminate": True, "unit": "bake",
+    assert {k: v for k, v in both["watches"][1].items() if k != "job"} == {"label": "Bake", "percent": None, "indeterminate": True, "unit": "bake",
                                   "subState": "exited", "started": 2000}
     assert both["watches"][0]["percent"] == 10 and both["watches"][0]["indeterminate"] is False

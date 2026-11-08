@@ -413,7 +413,43 @@ def read_status(job_id: str) -> Optional[Dict[str, Any]]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    return data if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return None
+    activity = read_activity(job_id)
+    if activity:
+        data["activity"] = activity
+    return data
+
+
+def _activity_path(job_id: str) -> Path:
+    from core.runtime_paths import runtime_state_path
+
+    return runtime_state_path("job_activity", sanitize_job_id(job_id) + ".json")
+
+
+def read_activity(job_id: str) -> Optional[Dict[str, Any]]:
+    from api.job_activity import normalize
+
+    try:
+        return normalize(json.loads(_activity_path(job_id).read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return None
+
+
+def report_activity(job_id: str, activity: Dict[str, Any]) -> Path:
+    """Replace the runner's snapshot without racing the host's terminal status.
+
+    One producer owns this snapshot. The host never guesses steps from logs or
+    reads arbitrary paths. Output is an explicit, bounded, non-secret excerpt.
+    """
+    from api.job_activity import normalize
+
+    clean = normalize({**activity, "updated_ts": time.time()})
+    if clean is None:
+        raise ValueError("unsupported activity schema_version (expected 1)")
+    path = _activity_path(job_id)
+    _atomic_write_json(path, clean)
+    return path
 
 
 def read_status_reconciled(job_id: str, *, persist: bool = True) -> Optional[Dict[str, Any]]:
@@ -633,6 +669,56 @@ def unit_watch_records(chat_session_id: Any = None) -> List[Dict[str, Any]]:
     return out
 
 
+def _archive_unit(record: Dict[str, Any], outcome: Dict[str, Any], operation: Optional[str] = None,
+                  *, delivery_error: bool = False) -> None:
+    """Small durable receipt; steps/output remain with the activity owner."""
+    folder = unit_watch_dir() / "finished" / str(int(record["chat_session_id"]))
+    folder.mkdir(parents=True, exist_ok=True)
+    receipt = {k: v for k, v in record.items() if k not in ("record_path", "claimed_by", "claimed_ts")}
+    receipt.update(outcome=outcome, finished_ts=time.time(), operation=operation,
+                   delivery_error=delivery_error)
+    _atomic_write_json(folder / (record["id"] + ".json"), receipt)
+    for path in folder.glob("*.json"):
+        try:
+            if time.time() - path.stat().st_mtime > 7 * 86400:
+                path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def recent_unit_results(chat_session_id: Any, *, limit: int = 3) -> List[Dict[str, Any]]:
+    """Recent terminal jobs for a chat, including the outbox's current delivery state."""
+    from api.chat_ops import store
+
+    results = []
+    for path in (unit_watch_dir() / "finished" / str(int(chat_session_id))).glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or not isinstance(data.get("outcome"), dict) or not data.get("id"):
+                continue
+            if str(data.get("chat_session_id")) != str(chat_session_id):
+                continue
+            if time.time() - float(data.get("finished_ts") or 0) > 7 * 86400:
+                continue
+            try:
+                op = store.job_notice(int(chat_session_id), data["id"], watch_token=data.get("watch_token"))
+            except Exception:
+                op = None  # still show the terminal job if its delivery store is unavailable
+            state = (op or {}).get("state")
+            handoff = {"pending": "queued", "dispatching": "sending", "verifying": "verifying",
+                       "delivered": "delivered", "done": "delivered", "failed": "failed",
+                       "cancelled": "cancelled"}.get(state, "retrying" if data.get("delivery_error") else "unknown")
+            if state == "failed" and ((op or {}).get("result") or {}).get("query_id"):
+                handoff = "turn_failed"
+            data["handoff"] = handoff
+            query = str(((op or {}).get("result") or {}).get("query_id") or "")
+            data["followup_query_id"] = query if re.fullmatch(r"[\w-]{1,80}", query) else ""
+            results.append(data)
+        except (OSError, ValueError, TypeError):
+            continue
+    return sorted(results, key=lambda x: x["finished_ts"], reverse=True)[:limit]
+
+
 def _claim_record(record: Dict[str, Any]) -> Optional[Path]:
     """Atomically take ``record`` for firing; None when another poller has it.
 
@@ -690,10 +776,14 @@ def _recover_stale_claims(now: float) -> None:
         try:
             from api.chat_ops import store as chat_ops_store
 
-            queued = chat_ops_store.notice_for_job(int(data.get("chat_session_id") or 0), str(data.get("id") or ""))
+            queued = chat_ops_store.notice_for_job(int(data.get("chat_session_id") or 0), str(data.get("id") or ""),
+                                                  watch_token=data.get("watch_token"))
         except Exception:
             continue  # cannot tell: leave it rather than risk a second resume
         if queued:
+            status = read_status(data["id"]) or {}
+            _archive_unit(data, {"state": status.get("state") if status.get("state") in ("done", "failed") else "unknown",
+                                 "exit": status.get("exit")})
             claimed.unlink(missing_ok=True)
         else:
             _release_claim(claimed)
@@ -775,6 +865,7 @@ def register_unit_watch(
     label: str = "",
     title: str = "",
     allow_inactive: bool = False,
+    activity: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Record "resume this chat when ``unit`` (or ``pid``) exits" and return its card.
 
@@ -783,6 +874,10 @@ def register_unit_watch(
     watch resolve instantly or wake the wrong chat.
     """
     from api.cuttle_ui_capabilities import numeric_chat_session_id
+    from api.job_activity import normalize
+
+    if activity is not None and normalize(activity) is None:
+        raise ValueError("unsupported activity schema_version (expected 1)")
 
     unit = str(unit or "").strip()
     try:
@@ -831,6 +926,8 @@ def register_unit_watch(
         "resume_message": resume_message,
         "created_ts": now,
         "unknown_polls": 0,
+        "origin_query_id": os.environ.get("CUTTLE_AGENT_RUN_ID", ""),
+        "watch_token": uuid.uuid4().hex,
     }
     write_status(
         job_id,
@@ -847,7 +944,13 @@ def register_unit_watch(
             "unit_watch": True,
         },
     )
+    # An explicit id may be reused for a new run. Do not attach its old activity,
+    # receipt or already-delivered wake-up to this execution.
+    _activity_path(job_id).unlink(missing_ok=True)
+    (unit_watch_dir() / "finished" / str(int(sid)) / (job_id + ".json")).unlink(missing_ok=True)
     path = _write_unit_record(record)
+    if activity is not None:
+        report_activity(job_id, activity)
     return {
         "ok": True,
         "id": job_id,
@@ -890,8 +993,9 @@ def _post_unit_resume(record: Dict[str, Any], outcome: Dict[str, Any]) -> Option
 
     sid = int(record["chat_session_id"])
     label = "Detached job finished" if outcome.get("state") in ("done", "failed") else "Detached job watch"
-    op = chat_ops_store.create("notice", sid, sid, {
+    op = chat_ops_store.job_notice(sid, record["id"], watch_token=record.get("watch_token")) or chat_ops_store.create("notice", sid, sid, {
         "text": unit_resume_text(record, outcome), "label": label, "job_id": record["id"],
+        "watch_token": record.get("watch_token"),
     })
     return (op or {}).get("id")
 
@@ -907,8 +1011,12 @@ def _resolve_unit_watch(record: Dict[str, Any], outcome: Dict[str, Any]) -> Opti
     card_state = "done" if state == "done" else "failed"
     label = outcome.get("label") or ""
     try:
+        previous = read_status(record["id"]) or {}
         write_status(record["id"], state=card_state, percent=100 if card_state == "done" else None,
-                     label=label, extra={"unit": record.get("unit") or "", "pid": 0,
+                     label=label, extra={"started_at": previous.get("started_at"),
+                                         "started_ts": record.get("created_ts"),
+                                         "chat_session_id": str(record["chat_session_id"]),
+                                         "unit": record.get("unit") or "", "pid": 0,
                                          "unit_watch": True, "exit": outcome.get("exit"),
                                          "result": outcome.get("result") or ""})
     except (OSError, ValueError) as exc:
@@ -916,8 +1024,15 @@ def _resolve_unit_watch(record: Dict[str, Any], outcome: Dict[str, Any]) -> Opti
     op_id = None
     try:
         op_id = _post_unit_resume(record, outcome)
+        if not op_id:
+            raise ValueError("resume queue returned no receipt")
+        _archive_unit(record, outcome, op_id)
     except Exception as exc:  # the record goes back, so the next pass retries
         print(f"[unit_watch] resume queue failed for {record['id']}: {exc}", flush=True)
+        try:
+            _archive_unit(record, outcome, delivery_error=True)
+        except OSError:
+            pass
         _release_claim(claimed)
         return {"id": record["id"], "resolved": False, "error": str(exc)[:200], **outcome}
     try:
@@ -1055,11 +1170,28 @@ def main(argv: Optional[list] = None) -> int:
     wu.add_argument("--allow-inactive", action="store_true",
                     help="Register even though the unit/pid is not running yet")
     wu.add_argument("--json", action="store_true", help="Print the record as JSON instead of the card")
+    wu.add_argument("--activity-json", default="", help="Version 1 activity snapshot (readable steps)")
+
+    report = sub.add_parser("report", help="Publish readable steps, recent output and a heartbeat for an existing job")
+    report.add_argument("--id", required=True)
+    report.add_argument("--activity-json", required=True, help="Version 1 activity snapshot; replaces previous snapshot")
 
     sub.add_parser("poll-units", help="Resolve finished unit watches now (Flask and the daemon do this on a timer)")
     sub.add_parser("units", help="List pending unit watches")
 
     args = p.parse_args(argv)
+    if args.cmd == "report":
+        try:
+            activity = json.loads(args.activity_json)
+            if not isinstance(activity, dict):
+                raise ValueError("activity must be an object")
+            if read_status(args.id) is None:
+                raise ValueError("register or write the job status first")
+            print(report_activity(args.id, activity))
+            return 0
+        except (ValueError, TypeError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
     if args.cmd == "write":
         bars = None
         raw_bars = getattr(args, "bars_json", "") or ""
@@ -1109,10 +1241,11 @@ def main(argv: Optional[list] = None) -> int:
         return 0 if info.get("ok") else 1
     if args.cmd == "watch-unit":
         try:
+            activity = json.loads(args.activity_json) if args.activity_json else None
             info = register_unit_watch(
                 unit=args.unit, pid=args.pid, resume_message=args.resume,
                 chat_session_id=args.chat, job_id=args.id, label=args.label,
-                title=args.title, allow_inactive=args.allow_inactive,
+                title=args.title, allow_inactive=args.allow_inactive, activity=activity,
             )
         except ValueError as exc:
             print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)

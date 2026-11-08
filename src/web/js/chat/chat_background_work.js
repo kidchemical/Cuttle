@@ -53,6 +53,38 @@
     // its child rows say more than the command line does.
     const SUBAGENT_CMD = /\bapi\.subagents\b|\bsubagents\s+(spawn|message|wait)\b/;
 
+    const STEP_LABELS = { pending: 'Pending', running: 'In progress', done: 'Done', failed: 'Failed',
+        skipped: 'Skipped', cancelled: 'Cancelled', unknown: 'No result reported' };
+
+    /** Pure activity presentation. Silence is evidence of silence, never proof of a hang. */
+    function jobView(w, now) {
+        now = now == null ? Date.now() / 1000 : now;
+        const a = w.activity && w.activity.schema_version === 1 ? w.activity : {};
+        const terminal = w.state && w.state !== 'running';
+        const steps = (Array.isArray(a.steps) ? a.steps : []).slice(0, 32).map((s) => ({ ...s,
+            state: terminal && s.state === 'running' ? 'unknown' : STEP_LABELS[s.state] ? s.state : 'pending' }));
+        const age = a.updated_ts ? Math.max(0, now - a.updated_ts) : null;
+        const stale = !terminal && age != null && age > (a.stale_after_sec || 600);
+        const overdue = !terminal && a.deadline_ts && now > a.deadline_ts;
+        const finished = steps.filter((s) => ['done', 'failed', 'skipped', 'cancelled'].includes(s.state)).length;
+        const failed = steps.filter((s) => s.state === 'failed').length;
+        const health = terminal ? '' : overdue ? 'Expected deadline passed; check recent output.'
+            : stale ? 'No update for ' + elapsed(age) + '; the process may still be working.'
+            : age != null ? 'Updated ' + elapsed(age) + ' ago'
+            : 'Step progress unavailable; only process status is known.';
+        const target = w.resume_chat || 'this chat';
+        const handoff = ({ queued: 'Follow-up queued for ', sending: 'Sending follow-up to ',
+            verifying: 'Checking follow-up delivery to ', delivered: 'Follow-up delivered to ',
+            failed: 'Follow-up delivery failed for ', cancelled: 'Follow-up cancelled for ',
+            turn_failed: 'Follow-up ran and reported failure in ',
+            retrying: 'Follow-up could not be queued; retrying for ', unknown: 'Follow-up status unavailable for ' })[w.handoff];
+        return { steps, terminal, health, warning: !!(stale || overdue),
+            summary: a.summary || (steps.length ? finished + ' of ' + steps.length + ' steps finished'
+                + (failed ? ' · ' + failed + ' failed' : '') : ''),
+            handoff: handoff ? handoff + target : 'When finished, an agent will resume ' + target + ' to review the result.',
+            output: String(a.output || '').slice(-4000), deadline: a.deadline_ts || null };
+    }
+
     /** Live sub-agent children of this chat (live-status `subagents`) as rows. */
     function agentRows(list) {
         return (Array.isArray(list) ? list : []).filter((s) => s && typeof s === 'object').map((s) => {
@@ -81,10 +113,11 @@
         // is shown by its children's rows, not as a bare command wait.
         const waits = agents.length ? allWaits.filter((w) => !SUBAGENT_CMD.test(String((w && w.label) || ''))) : allWaits;
         const watches = bg.watches || [];
+        const recent = bg.recent || [];
         const schedules = bg.schedules || [];
         const n = Number(bg.process_count) || 0;
         const d = Number(bg.detached_count) || 0;
-        if (!waits.length && !watches.length && !schedules.length && !n && !agents.length) return null;
+        if (!waits.length && !watches.length && !recent.length && !schedules.length && !n && !agents.length) return null;
         const agentsLive = agents.some((a) => a.outcome === 'running' || a.outcome === 'queued');
         const working = !!(waits.length || watches.length || n || agentsLive);
         const meta = [];
@@ -105,9 +138,10 @@
         const subagentWaitsOnly = allWaits.length && !waits.length;
         return {
             title: waits.length ? 'Waiting in background' : bound.length ? 'Job running'
-                : units.length ? 'Detached job running'
+                : units.length ? 'Background job running'
                 : agents.length ? (agentsLive ? 'Sub-agents working' : 'Sub-agents')
-                : n ? (d ? 'Detached processes running' : 'Processes still running') : 'Supervising',
+                : n ? (d ? 'Detached processes running' : 'Processes still running')
+                : recent.length ? 'Background job results' : 'Supervising',
             label: (units.length && !bound.length && !waits.length) || subagentWaitsOnly ? '' : (bg.label || ''),
             agents,
             meta,
@@ -123,9 +157,11 @@
                 if (isUnit) {
                     row.unit = w.unit || '';
                     row.subState = w.sub_state || '';
+                    row.job = w;
                 }
                 return row;
             }),
+            recent,
             started: starts.length ? Math.min(...starts) : null,
             working,
             // Waits and bound watches stop through the chat's Stop path; loose
@@ -155,6 +191,7 @@
         let current = null; // { sid, plan, key }
         let observer = null;
         let ticker = 0;
+        const expanded = new Set();
 
         function container() { return doc.getElementById('chatMessages'); }
         function el() { return doc.getElementById(ID); }
@@ -182,6 +219,11 @@
             node.querySelectorAll('.chat-bg-watch-elapsed').forEach((span) => {
                 const at = Number(span.getAttribute('data-started'));
                 if (Number.isFinite(at)) span.textContent = elapsed(now - at);
+            });
+            node.querySelectorAll('.chat-bg-job-health').forEach((span) => {
+                const view = jobView(span.__job, now);
+                span.textContent = view.health;
+                span.classList.toggle('is-warning', view.warning);
             });
         }
 
@@ -223,7 +265,7 @@
                 openTarget(btn.getAttribute('data-chat-handle'));
                 return;
             }
-            if (t && t.closest && t.closest('a, button')) return;
+            if (t && t.closest && t.closest('a, button, details')) return;
             const p = current && current.plan;
             if (p && !p.working && !p.stop && p.targets.length === 1) openTarget(p.targets[0]);
         }
@@ -232,6 +274,12 @@
             let node = el();
             const box = container();
             if (!box) return;
+            // Read the actual disclosure state: native toggle events may still be
+            // queued when the next poll arrives immediately after a click.
+            if (node) node.querySelectorAll('details[data-job-key]').forEach((d) => {
+                const key = d.getAttribute('data-job-key');
+                if (d.open) expanded.add(key); else expanded.delete(key);
+            });
             if (!node) {
                 node = doc.createElement('div');
                 node.id = ID;
@@ -240,6 +288,7 @@
                 node.setAttribute('aria-live', 'polite');
             }
             node.classList.toggle('is-scheduled', !p.working);
+            node.classList.toggle('has-jobs', p.watches.some((w) => w.unit != null) || p.recent.length > 0);
             // Schedule-only card with one target: the whole card opens it.
             const opensOnClick = !p.working && !p.stop && p.targets.length === 1;
             node.classList.toggle('is-clickable', opensOnClick);
@@ -257,26 +306,79 @@
             if (p.started != null) title.append(mk('span', 'chat-bg-elapsed', elapsed(Date.now() / 1000 - p.started)));
             body.append(title);
             if (p.label) body.append(mk('div', 'chat-bg-label', p.label));
+            function timeline(view) {
+                const list = mk('ol', 'chat-bg-steps');
+                view.steps.forEach((s) => {
+                    const li = mk('li', 'chat-bg-step is-' + s.state);
+                    const icon = mk('span', 'chat-bg-step-icon', ({ done: '✓', failed: '×', skipped: '−', cancelled: '−', unknown: '?' })[s.state] || '');
+                    icon.setAttribute('aria-label', STEP_LABELS[s.state]);
+                    const text = mk('span', 'chat-bg-step-text', s.label);
+                    if (s.detail) text.append(mk('small', 'chat-bg-step-detail', s.detail));
+                    li.append(icon, text);
+                    list.append(li);
+                });
+                return list;
+            }
+            function jobInfo(w, parent, completed) {
+                const v = jobView(w);
+                const block = mk('div', 'chat-bg-job');
+                if (v.summary) block.append(mk('div', 'chat-bg-job-summary', v.summary));
+                if (!completed) {
+                    block.append(mk('div', 'chat-bg-job-owner', 'Job running independently · no agent active'));
+                    if (v.steps.length) block.append(timeline(v));
+                    const health = mk('div', 'chat-bg-job-health', v.health);
+                    health.__job = w;
+                    health.classList.toggle('is-warning', v.warning);
+                    block.append(health);
+                }
+                block.append(mk('div', 'chat-bg-handoff', v.handoff));
+                const details = mk('details', 'chat-bg-job-details');
+                const key = sid + '/' + (w.job_id || w.unit);
+                details.setAttribute('data-job-key', key);
+                details.open = expanded.has(key);
+                details.addEventListener('toggle', () => {
+                    if (!details.isConnected) return;
+                    if (details.open) expanded.add(key); else expanded.delete(key);
+                });
+                details.append(mk('summary', '', 'Details'));
+                if (completed && v.steps.length) details.append(timeline(v));
+                if (completed && w.finished_at) details.append(mk('div', '', 'Ended: ' + new Date(w.finished_at * 1000).toLocaleString()));
+                if (v.deadline) details.append(mk('div', '', 'Expected deadline: ' + new Date(v.deadline * 1000).toLocaleString()));
+                if (w.unit) details.append(mk('div', '', 'Process: ' + w.unit + (w.sub_state ? ' · ' + w.sub_state : '')));
+                if (w.resume_note) details.append(mk('div', 'chat-bg-resume-note', w.resume_note));
+                details.append(mk('div', '', 'Completion follow-ups are independent of supervision schedules.'));
+                if (w.handoff === 'delivered') details.append(mk('div', '', 'The agent turn was accepted; its reply may still be pending.'));
+                function queryLink(id, label) {
+                    if (!/^[\w-]{1,80}$/.test(id || '')) return;
+                    const a = mk('a', 'chat-bg-details', label);
+                    a.href = '/query_log.html?id=' + encodeURIComponent(id);
+                    details.append(a);
+                }
+                queryLink(w.origin_query_id, 'View originating turn');
+                queryLink(w.followup_query_id, 'View follow-up turn');
+                if (v.output) details.append(mk('pre', 'chat-bg-output', v.output));
+                else details.append(mk('div', '', 'No recent output published by this job.'));
+                block.append(details);
+                parent.append(block);
+            }
             p.watches.forEach((w) => {
                 const row = mk('div', 'chat-bg-watch');
                 row.append(mk('span', 'chat-bg-watch-label', w.label));
                 if (w.unit != null) {
-                    // e.g. "Running: ch1821-rig-build · running · 14m"
-                    if (w.unit && !String(w.label).includes(w.unit)) row.append(mk('span', 'chat-bg-watch-unit', w.unit));
-                    if (w.subState) row.append(mk('span', 'chat-bg-watch-state', w.subState));
                     row.title = 'Detached job' + (w.unit ? ' (systemd unit ' + w.unit + ')' : '')
                         + ': this chat resumes when it exits';
                 }
                 const bar = mk('span', 'chat-bg-bar');
                 const fill = mk('span', 'chat-bg-fill');
                 bar.append(fill);
+                const hasSteps = w.job && jobView(w.job).steps.length;
                 if (w.indeterminate) {
                     // Nothing measured: animated stripe (shared CSS), elapsed instead of "0%".
                     bar.setAttribute('data-progress', 'indeterminate');
                     bar.setAttribute('role', 'progressbar');
                     bar.setAttribute('aria-valuetext', 'In progress');
-                    row.append(bar);
-                    if (w.started != null) {
+                    if (!hasSteps) row.append(bar);
+                    if (w.started != null && !(w.unit != null && p.watches.length === 1)) {
                         const span = mk('span', 'chat-bg-watch-elapsed', elapsed(Date.now() / 1000 - w.started));
                         span.setAttribute('data-started', String(w.started));
                         row.append(span);
@@ -286,6 +388,14 @@
                     row.append(bar, mk('span', 'chat-bg-pct', w.percent + '%'));
                 }
                 body.append(row);
+                if (w.unit != null) jobInfo(w.job || w, body, false);
+            });
+            p.recent.forEach((w) => {
+                const result = mk('div', 'chat-bg-result');
+                result.append(mk('div', 'chat-bg-result-title', w.label + ' · '
+                    + ({ done: 'Finished', failed: 'Failed', unknown: 'Status unknown', gave_up: 'Watch expired' }[w.state] || 'Ended')));
+                jobInfo(w, result, true);
+                body.append(result);
             });
             if (p.agents.length) {
                 // Fleet-style rows: avatar, name, live status line, outcome. A row opens the child.
@@ -368,5 +478,5 @@
         return { sync, remove };
     }
 
-    root.CuttleChatBackgroundWork = { ID, plan, elapsed, create };
+    root.CuttleChatBackgroundWork = { ID, plan, jobView, elapsed, create };
 })(typeof window === 'undefined' ? globalThis : window);

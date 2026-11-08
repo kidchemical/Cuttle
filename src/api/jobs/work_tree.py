@@ -108,7 +108,7 @@ def _unit_sub_state(unit: str) -> str:
         from api.job_watch import unit_state
 
         st = unit_state(unit)
-        sub = str(st.get("sub_state") or st.get("active_state") or "") if st.get("queried") else ""
+        sub = str(st.get("sub_state") or st.get("active_state") or "") if st.get("queried") else "status unavailable"
     except Exception:
         sub = ""
     with _lock:
@@ -134,12 +134,19 @@ def _unit_watches() -> Dict[str, List[Dict[str, Any]]]:
             continue
         unit = str(rec.get("unit") or "")
         pid = int(rec.get("pid") or 0)
+        from api.job_watch import read_status
+
+        status = read_status(rec["id"]) or {}
         out.setdefault(chat, []).append({
             "job_id": rec.get("id"), "kind": "unit",
             "label": str(rec.get("label") or (f"Running: {unit}" if unit else f"Running: pid {pid}"))[:200],
             "unit": unit, "pid": pid,
             "sub_state": _unit_sub_state(unit) if unit else "running",
             "percent": None, "started_at": rec.get("created_ts"),
+            "activity": status.get("activity"), "state": status.get("state", "running"),
+            "resume_chat": _handle(chat), "handoff": "on_exit",
+            "resume_note": str(rec.get("resume_message") or "")[:400],
+            "origin_query_id": str(rec.get("origin_query_id") or "")[:80],
         })
     return out
 
@@ -401,15 +408,37 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
         e = index().get(chat)
     except Exception:
         return None
-    if not e or not (_working(e) or e.get("schedules")):
+    from api.job_watch import recent_unit_results, read_activity
+
+    # Terminal receipts do not light a running indicator or become live work.
+    try:
+        receipts = recent_unit_results(chat)
+    except Exception:
+        receipts = []
+    recent = [{"job_id": r["id"], "kind": "unit", "unit": r.get("unit", ""),
+               "label": r.get("label") or r["id"], "state": r["outcome"].get("state", "unknown"),
+               "started_at": r.get("created_ts"), "finished_at": r.get("finished_ts"),
+               "handoff": r["handoff"], "resume_chat": _handle(chat),
+               "resume_note": str(r.get("resume_message") or "")[:400],
+               "origin_query_id": r.get("origin_query_id", ""),
+               "followup_query_id": r.get("followup_query_id", ""),
+               "activity": read_activity(r["id"])} for r in receipts]
+    if not e and not recent:
         return None
+    e = e or {"waits": [], "watches": [], "schedules": []}
+    if not (_working(e) or e.get("schedules") or recent):
+        return None
+    # A failed enqueue can leave both a pending watch and a terminal receipt.
+    recent_ids = {r["job_id"] for r in recent}
+    watches = [w for w in e["watches"] if w.get("job_id") not in recent_ids]
     return {
         "label": _first_label(e),
         "waits": [{"job_id": w.get("job_id"), "label": w.get("label"), "started_at": w.get("started_at")}
                   for w in e["waits"]],
-        "watches": [{k: w.get(k) for k in ("job_id", "label", "percent", "started_at")}
-                    | ({k: w.get(k) for k in ("kind", "unit", "sub_state")} if w.get("kind") == "unit" else {})
-                    for w in e["watches"]],
+        "watches": [{k: w[k] for k in ("job_id", "label", "percent", "started_at", "kind", "unit", "sub_state",
+                                       "activity", "state", "resume_chat", "handoff", "resume_note", "origin_query_id") if k in w}
+                    for w in watches],
+        "recent": recent,
         "schedules": [{k: s.get(k) for k in ("id", "label", "detail", "status", "target")} for s in e["schedules"]],
         "process_count": int(e.get("process_count") or 0),
         "detached_count": int(e.get("detached_count") or 0),
