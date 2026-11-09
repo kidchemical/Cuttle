@@ -328,5 +328,7 @@ def test_experimental_conflicts_disable_toggle_with_explanation(browser, static_
         html=page.evaluate("renderExperimentalFlag({id:'voice_live',label:'GPT-Live',enabled:false,configured_enabled:false,blocked_by:[{id:'voice_realtime',label:'OpenAI Realtime'}]})")
         page.evaluate("html=>{document.getElementById('experimentalFlagList').innerHTML=html;}",html)
         expect(page.locator('#expFlag-voice_live')).to_be_disabled()
-        expect(page.locator('[data-experimental-flag="voice_live"]')).to_contain_text('first disable OpenAI Realtime')
+        warning = page.locator('[data-experimental-flag="voice_live"] .experimental-conflict-warning')
+        expect(warning).to_have_attribute('data-tooltip', __import__('re').compile('OpenAI Realtime'))
+        expect(warning).to_have_attribute('data-tooltip', __import__('re').compile('Turn off the conflicting features first'))
     finally:page.close()

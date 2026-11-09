@@ -12,6 +12,7 @@ Start Flask first (canonical daemon or direct API module):
   # or: .venv/bin/python src/scripts/cuttle_daemon.py
   # or: .venv/bin/python src/api/web_chat_api.py
 """
+import contextlib
 import json
 import os
 import sys
@@ -83,11 +84,60 @@ def browser(server_available, playwright_available):
     pw.stop()
 
 
+def _authenticated(ctx):
+    """Authenticate the browser context when the running server requires auth.
+
+    These journeys drive the real Flask shell. A server with auth enabled hides
+    the whole shell behind the auth gate, so the frame never becomes visible.
+    A server without auth needs no cookie.
+
+    The running server owns its own database (``<home>/db/cuttle_auth.db``), but
+    ``conftest.py`` isolates the *test* process onto a temporary auth DB. Reuse
+    the live server's fixture account by opening its database directly, so the
+    session cookie is valid for the shell the tests actually load.
+    """
+    try:
+        _r = ctx.request.get(f"{API_BASE}/api/auth/me", timeout=5000)
+        if _r.ok:
+            return contextlib.nullcontext()
+    except Exception:
+        return contextlib.nullcontext()
+    try:
+        from pathlib import Path
+        from api.auth_db import AuthDatabase
+        from api.fixture_accounts import fixture_browser_auth
+        real_db = Path(os.path.expanduser('~')) / '.local/share/cuttle/db/cuttle_auth.db'
+        if not real_db.exists():
+            return contextlib.nullcontext()
+        return fixture_browser_auth(ctx, API_BASE, db=AuthDatabase(real_db))
+    except Exception:
+        return contextlib.nullcontext()
+
+
 @pytest.fixture
 def page(browser):
     """Fresh context per test: a warm shell keeps SSE open, so reusing one page
     makes every later goto() hang waiting for the document to settle."""
     context = browser.new_context(ignore_https_errors=True)
+    # A fresh guest has never seen the first-launch "What's New" dialog, which
+    # overlays the shell and intercepts clicks. These journeys test navigation,
+    # not release notes, so opt out of the automatic update check for the test.
+    context.add_init_script(
+        "try { localStorage.setItem('cuttleAutoUpdateChecks', '0'); } catch (e) {}"
+    )
+    with _authenticated(context):
+        page = context.new_page()
+        yield page
+    context.close()
+
+
+@pytest.fixture
+def page_unauth(browser):
+    """Fresh signed-out context for journeys that assert the guest fallback."""
+    context = browser.new_context(ignore_https_errors=True)
+    context.add_init_script(
+        "try { localStorage.setItem('cuttleAutoUpdateChecks', '0'); } catch (e) {}"
+    )
     page = context.new_page()
     yield page
     context.close()
@@ -151,6 +201,15 @@ def test_browser_rail_footer_stays_in_viewport(page):
 def test_workspace_icon_opens_popover(page):
     """Blade rail has a Workspace control that opens save/load (web + Electron)."""
     page.goto(f"{API_BASE}/app_shell.html", wait_until="domcontentloaded")
+    # The signed-in account may have hidden the Workspace footer icon in its
+    # saved rail layout; this journey checks the popover, not that preference.
+    page.wait_for_selector('[data-id="nav-workspace"]', state="attached", timeout=10000)
+    page.evaluate(
+        """() => {
+            const b = document.querySelector('[data-id="nav-workspace"]');
+            if (b) b.hidden = false;
+        }"""
+    )
     btn = page.locator('[data-id="nav-workspace"]').first
     btn.wait_for(state="visible", timeout=10000)
     assert btn.get_attribute("data-tooltip") == "Workspace"
@@ -314,7 +373,8 @@ def test_chat_handle_survives_shell_reload(page):
     assert restored == "/chat_page.html?chat=789"
 
 
-def test_chat_deeplink_hides_welcome_then_falls_back(page):
+def test_chat_deeplink_hides_welcome_then_falls_back(page_unauth):
+    page = page_unauth
     """?chat= shows a spinner instead of flashing the new-chat splash, then gives up."""
     # Sample from inside the page: by the time a Playwright call lands, the restore
     # has already resolved, so an outside check can't prove the splash never flashed.

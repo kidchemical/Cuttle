@@ -8019,7 +8019,7 @@
         // work) lands as a new bubble: the existing reply does not end it.
         const liveActive = liveActiveRaw && (
             CuttleChatActivity.liveStatusIsFollowup(liveStatus)
-            || (!thisTurnHasAssistantReply(messages) && !turnAlreadyShowsAssistantReply())
+            || !turnAlreadyShowsAssistantReply()
         );
         const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
         const wasGeneratingUi = !!document.getElementById('typing-indicator-remote')

@@ -14,7 +14,7 @@ dialog.push-report-modal::backdrop {
 .push-report-card {
     display: flex; flex-direction: column; width: min(840px, 100%);
     max-height: min(90vh, 920px); min-width: 0; overflow: hidden;
-    background: linear-gradient(135deg, rgba(30, 30, 46, .98) 0%, rgba(20, 20, 35, .98) 100%);
+    background: var(--popup-bg);
     border: 1px solid rgba(139, 92, 246, .3); border-radius: 20px;
     box-shadow: 0 20px 60px rgba(139, 92, 246, .3);
     font-size: 14px; line-height: 1.55; text-align: left;
