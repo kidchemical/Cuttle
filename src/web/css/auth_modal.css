@@ -3,10 +3,9 @@
 .auth-modal-overlay {
     display: none;
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
+    inset: 0 0 var(--shell-voice-strip-h, 0px) 0;
+    box-sizing: border-box;
+    padding: calc(12px + var(--cuttle-safe-top, 0px)) calc(12px + var(--cuttle-safe-right, 0px)) calc(12px + var(--cuttle-safe-bottom, 0px)) calc(12px + var(--cuttle-safe-left, 0px));
     background: rgba(0, 0, 0, 0.7);
     backdrop-filter: blur(5px);
     z-index: 100000;
@@ -21,15 +20,20 @@
 }
 
 .auth-modal {
-    background: linear-gradient(135deg, rgba(30, 30, 46, 0.98) 0%, rgba(20, 20, 35, 0.98) 100%);
+    background: var(--popup-bg);
     border-radius: 20px;
     padding: 40px;
     max-width: 450px;
     width: 90%;
-    max-height: 90vh;
+    box-sizing: border-box;
+    max-height: 100%;
+    min-height: 0;
+    overscroll-behavior: contain;
+    color: var(--popup-text);
+    color-scheme: dark;
     overflow-y: auto;
-    box-shadow: 0 20px 60px rgba(139, 92, 246, 0.3);
-    border: 1px solid rgba(139, 92, 246, 0.3);
+    box-shadow: 0 20px 60px color-mix(in srgb, var(--popup-accent) 30%, transparent);
+    border: 1px solid color-mix(in srgb, var(--popup-accent) 30%, transparent);
     animation: slideIn 0.3s ease;
     position: relative;
     margin: auto;
@@ -61,7 +65,7 @@
     right: 15px;
     background: transparent;
     border: none;
-    color: #a0aec0;
+    color: var(--popup-muted);
     font-size: 28px;
     cursor: pointer;
     padding: 5px 10px;
@@ -70,7 +74,7 @@
 }
 
 .auth-modal-close:hover {
-    color: #fff;
+    color: var(--popup-text);
     transform: rotate(90deg);
 }
 
@@ -92,13 +96,13 @@
 .auth-modal-title {
     font-size: 28px;
     font-weight: 700;
-    color: #fff;
+    color: var(--popup-text);
     margin: 0 0 10px 0;
 }
 
 .auth-modal-subtitle {
     font-size: 14px;
-    color: #a0aec0;
+    color: var(--popup-muted);
     margin: 0;
 }
 
@@ -110,8 +114,8 @@
     margin: 0 0 18px;
     padding: 9px 12px;
     border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid color-mix(in srgb, var(--popup-text) 12%, transparent);
+    background: color-mix(in srgb, var(--popup-text) 4%, transparent);
     font-size: 13px;
 }
 
@@ -120,7 +124,7 @@
 }
 
 .auth-server-label {
-    color: #a0aec0;
+    color: var(--popup-muted);
     font-weight: 600;
 }
 
@@ -130,15 +134,15 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: #e2e8f0;
+    color: var(--popup-text);
 }
 
 .auth-server-change {
     flex-shrink: 0;
     appearance: none;
-    border: 1px solid rgba(139, 92, 246, 0.5);
-    background: rgba(139, 92, 246, 0.16);
-    color: #e9d5ff;
+    border: 1px solid color-mix(in srgb, var(--popup-accent) 50%, transparent);
+    background: color-mix(in srgb, var(--popup-accent) 16%, transparent);
+    color: var(--popup-accent);
     border-radius: 8px;
     padding: 5px 12px;
     font-size: 13px;
@@ -150,7 +154,7 @@
     display: flex;
     gap: 10px;
     margin-bottom: 30px;
-    background: rgba(139, 92, 246, 0.1);
+    background: color-mix(in srgb, var(--popup-accent) 10%, transparent);
     padding: 5px;
     border-radius: 10px;
 }
@@ -160,7 +164,7 @@
     padding: 12px 20px;
     background: transparent;
     border: none;
-    color: #a0aec0;
+    color: var(--popup-muted);
     font-size: 16px;
     font-weight: 600;
     cursor: pointer;
@@ -169,14 +173,14 @@
 }
 
 .auth-tab.active {
-    background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
-    color: #fff;
-    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+    background: var(--popup-accent);
+    color: var(--popup-text);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--popup-accent) 40%, transparent);
 }
 
 .auth-tab:hover:not(.active) {
-    background: rgba(139, 92, 246, 0.2);
-    color: #fff;
+    background: color-mix(in srgb, var(--popup-accent) 20%, transparent);
+    color: var(--popup-text);
 }
 
 .auth-form {
@@ -195,7 +199,7 @@
     display: block;
     font-size: 14px;
     font-weight: 600;
-    color: #e2e8f0;
+    color: var(--popup-text);
     margin-bottom: 8px;
 }
 
@@ -206,7 +210,7 @@
     margin-top: 10px;
     font-size: 13px;
     font-weight: 500;
-    color: #a0aec0;
+    color: var(--popup-muted);
     cursor: pointer;
     user-select: none;
 }
@@ -214,17 +218,17 @@
 .auth-show-password input {
     width: 16px;
     height: 16px;
-    accent-color: #8B5CF6;
+    accent-color: var(--popup-accent);
     cursor: pointer;
 }
 
 .auth-form-input {
     width: 100%;
     padding: 14px 18px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 2px solid rgba(139, 92, 246, 0.3);
+    background: color-mix(in srgb, var(--popup-text) 5%, transparent);
+    border: 2px solid color-mix(in srgb, var(--popup-accent) 30%, transparent);
     border-radius: 10px;
-    color: #fff;
+    color: var(--popup-text);
     font-size: 16px;
     transition: all 0.3s ease;
     box-sizing: border-box;
@@ -232,22 +236,22 @@
 
 .auth-form-input:focus {
     outline: none;
-    border-color: #8B5CF6;
-    background: rgba(255, 255, 255, 0.08);
-    box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.1);
+    border-color: var(--popup-accent);
+    background: color-mix(in srgb, var(--popup-text) 8%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--popup-accent) 10%, transparent);
 }
 
 .auth-form-input::placeholder {
-    color: #718096;
+    color: var(--popup-muted);
 }
 
 .auth-submit-button {
     width: 100%;
     padding: 14px 24px;
-    background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+    background: var(--popup-accent);
     border: none;
     border-radius: 10px;
-    color: #fff;
+    color: var(--popup-text);
     font-size: 16px;
     font-weight: 700;
     cursor: pointer;
@@ -257,7 +261,7 @@
 
 .auth-submit-button:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(139, 92, 246, 0.4);
+    box-shadow: 0 8px 20px color-mix(in srgb, var(--popup-accent) 40%, transparent);
 }
 
 .auth-guest-button {
@@ -265,16 +269,16 @@
     margin: 20px 0 16px;
     padding: 12px 20px;
     background: transparent;
-    border: 1px solid rgba(139, 92, 246, 0.45);
+    border: 1px solid color-mix(in srgb, var(--popup-accent) 45%, transparent);
     border-radius: 10px;
-    color: #e8edf5;
+    color: var(--popup-text);
     font-size: 15px;
     font-weight: 600;
     cursor: pointer;
 }
 
 .auth-guest-button:hover {
-    background: rgba(139, 92, 246, 0.12);
+    background: color-mix(in srgb, var(--popup-accent) 12%, transparent);
 }
 
 #loginForm:not(.active) + .auth-guest-button {
@@ -312,7 +316,7 @@ html.auth-required .app-shell {
     align-items: center;
     text-align: center;
     margin: 25px 0;
-    color: #718096;
+    color: var(--popup-muted);
     font-size: 14px;
 }
 
@@ -320,7 +324,7 @@ html.auth-required .app-shell {
 .auth-divider::after {
     content: '';
     flex: 1;
-    border-bottom: 1px solid rgba(139, 92, 246, 0.2);
+    border-bottom: 1px solid color-mix(in srgb, var(--popup-accent) 20%, transparent);
 }
 
 .auth-divider span {
@@ -339,10 +343,10 @@ html.auth-required .app-shell {
     justify-content: center;
     gap: 12px;
     padding: 12px 20px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 2px solid rgba(255, 255, 255, 0.1);
+    background: color-mix(in srgb, var(--popup-text) 5%, transparent);
+    border: 2px solid color-mix(in srgb, var(--popup-text) 10%, transparent);
     border-radius: 10px;
-    color: #fff;
+    color: var(--popup-text);
     font-size: 15px;
     font-weight: 600;
     cursor: pointer;
@@ -351,10 +355,10 @@ html.auth-required .app-shell {
 }
 
 .auth-oauth-button:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(139, 92, 246, 0.5);
+    background: color-mix(in srgb, var(--popup-text) 10%, transparent);
+    border-color: color-mix(in srgb, var(--popup-accent) 50%, transparent);
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.2);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--popup-accent) 20%, transparent);
 }
 
 .auth-oauth-icon {
@@ -406,8 +410,8 @@ html.auth-required .app-shell {
     display: flex;
     align-items: center;
     gap: 10px;
-    background: rgba(139, 92, 246, 0.2);
-    border: 2px solid rgba(139, 92, 246, 0.3);
+    background: color-mix(in srgb, var(--popup-accent) 20%, transparent);
+    border: 2px solid color-mix(in srgb, var(--popup-accent) 30%, transparent);
     border-radius: 50px;
     padding: 8px 16px;
     cursor: pointer;
@@ -415,19 +419,19 @@ html.auth-required .app-shell {
 }
 
 .user-menu-button:hover {
-    background: rgba(139, 92, 246, 0.3);
-    border-color: rgba(139, 92, 246, 0.5);
+    background: color-mix(in srgb, var(--popup-accent) 30%, transparent);
+    border-color: color-mix(in srgb, var(--popup-accent) 50%, transparent);
 }
 
 .user-avatar {
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+    background: var(--popup-accent);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #fff;
+    color: var(--popup-text);
     font-weight: 700;
     font-size: 14px;
 }
@@ -440,7 +444,7 @@ html.auth-required .app-shell {
 }
 
 .user-name {
-    color: #fff;
+    color: var(--popup-text);
     font-weight: 600;
     font-size: 14px;
 }
@@ -449,8 +453,8 @@ html.auth-required .app-shell {
     position: absolute;
     top: calc(100% + 10px);
     right: 0;
-    background: rgba(30, 30, 46, 0.98);
-    border: 1px solid rgba(139, 92, 246, 0.3);
+    background: var(--popup-bg);
+    border: 1px solid color-mix(in srgb, var(--popup-accent) 30%, transparent);
     border-radius: 12px;
     padding: 10px;
     min-width: 200px;
@@ -466,7 +470,7 @@ html.auth-required .app-shell {
 .user-menu-item {
     display: block;
     padding: 12px 16px;
-    color: #e2e8f0;
+    color: var(--popup-text);
     text-decoration: none;
     border-radius: 8px;
     transition: all 0.3s ease;
@@ -475,16 +479,16 @@ html.auth-required .app-shell {
 }
 
 .user-menu-item:hover {
-    background: rgba(139, 92, 246, 0.2);
-    color: #fff;
+    background: color-mix(in srgb, var(--popup-accent) 20%, transparent);
+    color: var(--popup-text);
 }
 
 .auth-login-button {
-    background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+    background: var(--popup-accent);
     border: none;
     border-radius: 50px;
     padding: 10px 24px;
-    color: #fff;
+    color: var(--popup-text);
     font-size: 14px;
     font-weight: 700;
     cursor: pointer;
@@ -493,14 +497,14 @@ html.auth-required .app-shell {
 
 .auth-login-button:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(139, 92, 246, 0.4);
+    box-shadow: 0 8px 20px color-mix(in srgb, var(--popup-accent) 40%, transparent);
 }
 
 /* Session sidebar for fullscreen chat */
 .chat-sessions-sidebar {
     width: 280px;
-    background: rgba(20, 20, 35, 0.95);
-    border-right: 1px solid rgba(139, 92, 246, 0.2);
+    background: var(--popup-bg);
+    border-right: 1px solid color-mix(in srgb, var(--popup-accent) 20%, transparent);
     padding: 20px;
     overflow-y: auto;
     display: none;
@@ -512,7 +516,7 @@ html.auth-required .app-shell {
 
 .session-item {
     padding: 12px 16px;
-    background: rgba(139, 92, 246, 0.1);
+    background: color-mix(in srgb, var(--popup-accent) 10%, transparent);
     border-radius: 10px;
     margin-bottom: 10px;
     cursor: pointer;
@@ -521,23 +525,23 @@ html.auth-required .app-shell {
 }
 
 .session-item:hover {
-    background: rgba(139, 92, 246, 0.2);
+    background: color-mix(in srgb, var(--popup-accent) 20%, transparent);
 }
 
 .session-item.active {
-    background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
-    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+    background: var(--popup-accent);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--popup-accent) 30%, transparent);
 }
 
 .session-name {
-    color: #fff;
+    color: var(--popup-text);
     font-weight: 600;
     font-size: 14px;
     margin-bottom: 4px;
 }
 
 .session-meta {
-    color: #a0aec0;
+    color: var(--popup-muted);
     font-size: 12px;
 }
 
@@ -568,10 +572,10 @@ html.auth-required .app-shell {
 .new-session-button {
     width: 100%;
     padding: 12px;
-    background: rgba(139, 92, 246, 0.2);
-    border: 2px dashed rgba(139, 92, 246, 0.5);
+    background: color-mix(in srgb, var(--popup-accent) 20%, transparent);
+    border: 2px dashed color-mix(in srgb, var(--popup-accent) 50%, transparent);
     border-radius: 10px;
-    color: #fff;
+    color: var(--popup-text);
     font-weight: 600;
     cursor: pointer;
     transition: all 0.3s ease;
@@ -579,7 +583,7 @@ html.auth-required .app-shell {
 }
 
 .new-session-button:hover {
-    background: rgba(139, 92, 246, 0.3);
+    background: color-mix(in srgb, var(--popup-accent) 30%, transparent);
     border-style: solid;
 }
 
@@ -597,9 +601,9 @@ html.auth-required .app-shell {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(139, 92, 246, 0.2);
-    border: 2px solid rgba(139, 92, 246, 0.45);
-    color: #e9d5ff;
+    background: color-mix(in srgb, var(--popup-accent) 20%, transparent);
+    border: 2px solid color-mix(in srgb, var(--popup-accent) 45%, transparent);
+    color: var(--popup-accent);
     font-size: 1.1rem;
     font-weight: 700;
     letter-spacing: 0.02em;
@@ -646,25 +650,25 @@ html.auth-required .app-shell {
 }
 
 .logout-confirm-cancel {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    color: #e2e8f0;
+    background: color-mix(in srgb, var(--popup-text) 6%, transparent);
+    border: 1px solid color-mix(in srgb, var(--popup-text) 14%, transparent);
+    color: var(--popup-text);
 }
 
 .logout-confirm-cancel:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 255, 255, 0.22);
+    background: color-mix(in srgb, var(--popup-text) 10%, transparent);
+    border-color: color-mix(in srgb, var(--popup-text) 22%, transparent);
 }
 
 .logout-confirm-submit {
-    background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
+    background: var(--popup-accent);
     border: none;
-    color: #fff;
+    color: var(--popup-text);
 }
 
 .logout-confirm-submit:hover {
     transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(139, 92, 246, 0.35);
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--popup-accent) 35%, transparent);
 }
 
 .logout-confirm-submit:active,
@@ -692,7 +696,7 @@ html.auth-required .app-shell {
 .logout-confirm-linked {
     margin: 0;
     font-size: 0.85rem;
-    color: #a0aec0;
+    color: var(--popup-muted);
     text-align: center;
 }
 
@@ -717,19 +721,19 @@ html.auth-required .app-shell {
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    color: #cbd5e1;
+    background: color-mix(in srgb, var(--popup-text) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--popup-text) 16%, transparent);
+    color: var(--popup-muted);
 }
 
 .logout-confirm-role.is-owner {
     background: rgba(251, 191, 36, 0.12);
     border-color: rgba(251, 191, 36, 0.4);
-    color: #fcd34d;
+    color: var(--popup-text);
 }
 
 .logout-confirm-role.is-guest {
-    color: #94a3b8;
+    color: var(--popup-muted);
 }
 
 .logout-confirm-profile-error {
@@ -741,3 +745,24 @@ html.auth-required .app-shell {
 }
 
 
+
+/* Shared popup controls, including composer and supervision forms. */
+html.light-mode .auth-modal, body.light-mode .auth-modal { color-scheme: light; }
+.auth-modal :is(.auth-tab.active, .auth-submit-button, .logout-confirm-submit),
+.user-avatar, .auth-login-button { color: var(--popup-on-accent); }
+.auth-modal input[role="switch"] {
+    appearance: none; -webkit-appearance: none; position: relative;
+    box-sizing: border-box; flex: 0 0 44px; width: 44px; height: 26px;
+    padding: 0; margin: 0; border: 1px solid var(--popup-border); border-radius: 999px;
+    background: color-mix(in srgb, var(--popup-text) 16%, var(--popup-bg)); cursor: pointer;
+}
+.auth-modal input[role="switch"]::after {
+    content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+    border-radius: 50%; background: var(--popup-text); transition: transform var(--dur-base, 200ms);
+}
+.auth-modal input[role="switch"]:checked { background: var(--popup-accent); border-color: transparent; }
+.auth-modal input[role="switch"]:checked::after { transform: translateX(18px); background: var(--popup-on-accent); }
+.auth-modal input[role="switch"]:focus-visible { outline: 2px solid var(--popup-accent); outline-offset: 3px; }
+@media (max-width: 600px), (max-height: 600px) {
+    .auth-modal { width: 100%; padding: 24px 20px; border-radius: var(--radius-lg, 14px); }
+}

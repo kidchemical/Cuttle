@@ -55,7 +55,7 @@ Limits come from (in order):
 GET  /api/agent-context?agent=cursor|muse|opencode|codex|antigravity|hermes|claude|deepseek&session=<id>&path=<cwd>
 GET  /api/agent-context?…&live=1   # Codex: force app-server occupancy refresh
 POST /api/agent-context/compact
-{"agent":"claude","session":"<id>","path":"<cwd>"}
+{"agent":"claude","session":"<id>","path":"<cwd>","mode":"native|fresh"}
 ```
 
 ## Compact paths
@@ -84,6 +84,69 @@ headless sessions that never wrote MSP snapshots may show 0% until the next
 turn that materializes a view.
 The current MSP view replaces older readings even when smaller after compaction.
 
+## Compaction and the Cuttle briefing
+
+The Context Compiler sends the full briefing once per native session, then
+change-deltas against an acknowledged receipt (`cuttle_brain.context_delta`).
+A compaction can summarize that briefing away, so every compaction drops the
+receipt and the next turn re-sends the full briefing:
+
+- manual Compact (gauge, `/cursor /compact`, `chat_cli compact`);
+- `context_compacted` reported by the adapter (Claude transcript boundaries,
+  Codex app-server);
+- fallback for CLIs that auto-compact silently (Cursor, OpenCode, Hermes,
+  Muse): on the **same** native session, a window fill at or below 60% of the
+  previous turn's (previous ≥ 20k tokens, `cuttle_brain.metrics.fill_dropped`)
+  counts as a compaction.
+
+The handoff seen-cursor is kept: the conversation lives in the native summary.
+
+**Managed (fresh) compact** — `POST /api/agent-context/compact` with
+`"mode": "fresh"` / `chat_cli compact CH-… --mode fresh`: no summary; the chat's
+native session is discarded (`clear_resume`), the receipt dropped and the
+agent's seen-cursor replaced by a `fresh` mark. The next turn starts a new
+session with the full briefing (rules, Tasks digest, orchestration brief) and
+the recent transcript plus earlier user messages under a "managed compact"
+notice. Same chat, handle, links and supervision. Works for any harness with
+resume (also Antigravity); refused while a CLI is live in the chat.
+
+**Agents compacting other chats** (sub-agents, supervised chats):
+`python -m api.chat_cli context|compact CH-…` (`chat-history.md`), fill in
+`subagents status --context` and in supervision snapshots/check-ins.
+
+## Auto-compaction (experimental flag `auto_compact`)
+
+Cuttle compacts an agent's session **between turns**, before its CLI would
+compact mid-task near the window edge. Owner: `src/api/auto_compact/`.
+
+- **When:** after a turn ends and a quiet period passes (default 20 s; a
+  message sent meanwhile just starts the next turn), if the fill is at or over
+  the threshold **or** the token cap, whichever comes first. Defaults:
+  ordinary chats 70% / 300k, agent-driven chats 60% / 250k.
+- **Agent-driven ("managed") chats:** supervised targets, supervisor chats,
+  sub-agent children, orchestrator-bound chats. Sub-agent children compact
+  just before their next turn (`api.subagents.turns` preflight), because their
+  turns can run in the parent's CLI process where Flask sees no turn end.
+- **Tasks milestone:** an item of the chat's own Tasks list checked off since
+  its last turn lowers the threshold for that turn end (default 40% / 150k).
+- **Never:** mid-turn, while a CLI still runs in the chat (Claude background
+  wait: retried every minute), right after a compact with no new turn, or on
+  an unreliable reading (billing aggregate / no usage yet).
+- **How:** `auto` uses the CLI's own compact; when the next turn still reads
+  over the threshold it starts a fresh session instead. CLIs without a
+  headless compact (Antigravity) are left to manage themselves unless the mode
+  is `fresh`. Failures back off (1, 2, 4, 8 turns) and stop after 4 in a row
+  until a setting changes. Each compact holds the chat busy with a live
+  status and leaves a `compact` timeline notice.
+- **Settings:** Settings → Agents → Auto-compaction (`/api/settings/auto-compact`,
+  key `auto_compact`). Per chat: the composer gauge popover (Default / On /
+  Off, threshold, milestones), stored in the Cuttle home. Supervision
+  check-ins tell the supervisor the target is covered.
+- **CLI:** `python -m api.auto_compact status CH-…` (policy + dry-run
+  decision), `set CH-… --enabled on|off|inherit --percent N|inherit
+  --milestone on|off|inherit`, `history CH-…`, `settings [--set JSON]`.
+  `CUTTLE_AUTO_COMPACT=0` stops the Flask trigger.
+
 ## Turn usage footers
 
 Footers label total input and its cached portion as “cached (included)”. Muse
@@ -97,6 +160,10 @@ Estimated costs retain `cost_estimated` through the kernel and show `~$`.
 **Claude Code:** native `claude -p --output-format stream-json --verbose
 --include-partial-messages` against the project
 cwd (no sandbox mirror). Resume IDs live in `claude_cli_session_map.json`.
+Compact is refused while the chat still has a live Claude CLI (running turn or
+detached background wait): that process holds the full window in memory, so a
+second `--resume` would only compact the file. After a compact the gauge reads
+the boundary's `postTokens` (snapshot flagged `compacted`) until the next turn.
 
 Slash: `/cursor /compact` (also `/summarize`, `/compress`).
 

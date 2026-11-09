@@ -28,6 +28,8 @@ STALL_SEC = 45 * 60
 # this factor, so a legitimately long wait does not wake the supervisor every
 # 45 minutes (each wake is a full supervisor turn).
 STALL_BACKOFF_MAX = 4
+# A supervisor out of usage with no reset time in its error retries after this.
+SUPERVISOR_QUOTA_RETRY_SEC = 3600
 
 
 def _uncertain(op, reason):
@@ -123,9 +125,11 @@ _STATE_TEXT = {'busy': 'working', 'waiting_background': 'waiting on its own back
                'awaiting_input': 'waiting on a question card', 'error': 'stopped on an error',
                'cancelled': 'stopped (cancelled)'}
 CHECKIN_REPLY_CHARS = 2500
+# Window fill at which a check-in suggests compacting the target.
+CONTEXT_HIGH_PERCENT = 75
 
 
-def checkin_text(cfg, snap, violations, stalled_min=None):
+def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, changes=None):
     """The check-in turn as markdown: it renders as a readable Cuttle bubble in the
     supervisor chat and reads as a brief to the agent. Full data: `status --json`."""
     handle = snap['handle']
@@ -137,6 +141,7 @@ def checkin_text(cfg, snap, violations, stalled_min=None):
     if any(where):
         joined = ' · '.join(w for w in where if w)
         lines.append(joined[0].upper() + joined[1:])
+    lines += list(changes or [])
     if stalled_min and snap['state'] == 'waiting_background':
         lines += ['', f'**No progress for {stalled_min} min:** its turn ended and it is waiting on background '
                   'work, but no new reply, commit, Tasks change or sub-agent reply since. Check that the job '
@@ -148,11 +153,27 @@ def checkin_text(cfg, snap, violations, stalled_min=None):
                   'steer it to escalate now.']
     if violations:
         lines += ['', '**Rule violations:**'] + [f'- {v}' for v in violations]
+    if checkpoint:
+        from api.chat_ops.checkpoints import checkin_section
+        lines += checkin_section(*checkpoint)
     if snap['tasks']:
         lines += ['', '**Tasks:**'] + [f"- {t['title']}: {t['done']}/{t['total']} done" for t in snap['tasks']]
     status = (snap.get('live') or {}).get('status')
     if status:
         lines.append(f'Live status: {status}')
+    ctx = snap.get('context') or {}
+    auto = ctx.get('auto_compact') or {}
+    if ctx.get('supported') and auto.get('enabled') and (ctx.get('percent') or 0) >= CONTEXT_HIGH_PERCENT:
+        cap = f" or {auto['max_tokens'] // 1000}k tokens" if auto.get('max_tokens') else ''
+        lines += ['', f"**Context {round(ctx['percent'])}% full** ({ctx['agent']}). Cuttle auto-compacts it "
+                  f"between turns at {auto['percent']}%{cap}" + (' and earlier at Tasks milestones' if auto.get('milestone') else '')
+                  + '; do not compact it yourself unless it is stuck.']
+    elif ctx.get('supported') and (ctx.get('percent') or 0) >= CONTEXT_HIGH_PERCENT:
+        how = (f"`python -m api.chat_cli compact {handle}`" if ctx.get('compact_available')
+               else f"`python -m api.chat_cli compact {handle} --mode fresh`")
+        lines += ['', f"**Context {round(ctx['percent'])}% full** ({ctx['agent']}). Between its turns "
+                  f"(never while it works), compact with {how}; `--mode fresh` restarts the session "
+                  'with the Cuttle briefing and recent transcript instead.']
     for w in snap.get('warnings') or []:
         lines.append(f'Note: {w}')
     reply = (snap.get('latest_reply') or {})
@@ -163,7 +184,8 @@ def checkin_text(cfg, snap, violations, stalled_min=None):
         lines += ['> ' + ln if ln.strip() else '>' for ln in text[:CHECKIN_REPLY_CHARS].rstrip().splitlines()]
         if cut:
             lines.append(f'> … (`python -m api.chat_cli status {handle} --json` has the rest)')
-    lines += ['', '**Your instructions:**', cfg['instructions'].strip()]
+    from api.chat_ops.brief import settings_lines
+    lines += settings_lines(cfg, snap)
     tiers = cfg.get('model_tiers') or {}
     if tiers:
         lines += ['', '**Model guidance:**'] + [f"- {k}: {', '.join(v)}" for k, v in tiers.items() if v]
@@ -282,6 +304,38 @@ def _violations(op, branch, path, *, db=None, commands=()):
     return found + moved, moved
 
 
+def _checkin_failure(db, actor, schedule_id, now):
+    """The newest delivered check-in of this schedule, when the supervisor never
+    answered it (its turn failed, e.g. out of usage): ``{'retry_at': epoch|None}``.
+    None when it was answered, is still running, or there is none. The schedule
+    marks a picture as seen when it queues the wake, so without this a failed
+    wake leaves an unchanged target unsupervised for good."""
+    latest = next((o for o in store.listing(actor) if o['kind'] == 'checkin'
+                   and o['payload'].get('schedule_id') == schedule_id
+                   and o['state'] in ('delivered', 'done', 'failed')), None)
+    if latest is None:
+        return None
+    if latest['state'] == 'failed' and not (latest.get('result') or {}).get('query_id'):
+        return {'retry_at': None}
+    query_id = (latest.get('result') or {}).get('query_id')
+    if db is None or not query_id:
+        return None
+    reply = db.assistant_message_by_query(actor, query_id)
+    meta = (reply or {}).get('metadata') or {}
+    if not reply or meta.get('in_progress'):
+        return None
+    from api.chat_attention import is_error
+    content = reply.get('content') or ''
+    if not is_error(content, meta):
+        return None
+    from api.agent_router import policy, quota
+    if not policy.is_quota_failure(content):
+        return {'retry_at': None}
+    # A "try again at 4:46 AM" is read from when the wake failed, not from now.
+    failed_at = float(latest.get('updated') or now)
+    return {'retry_at': quota.reset_at(content, failed_at) or failed_at + SUPERVISOR_QUOTA_RETRY_SEC}
+
+
 def _active_checkins(actor, schedule_id):
     return [o for o in store.listing(actor) if o['kind'] == 'checkin'
             and o['payload'].get('schedule_id') == schedule_id and o['state'] in ('pending', 'dispatching')]
@@ -308,7 +362,7 @@ def _run_action(name, row, target, violations):
     return project_actions.execute_inline_action(token, session_id=str(row['id']))
 
 
-def _incident_supervisor(profile_id, db, row, cfg, snap, violations):
+def _incident_supervisor(profile_id, db, row, cfg, snap, violations, checkpoint=None):
     """A fresh chat on the profile's agent/model/effort, briefed once with the incident.
 
     It is not bound as a second supervisor; it acts through the normal chat verbs."""
@@ -326,7 +380,7 @@ def _incident_supervisor(profile_id, db, row, cfg, snap, violations):
     if row.get('project_path'):
         db.set_session_project(chat, uid, project_id=row.get('project_id'),
                                project_name=row.get('project_name'), project_path=row.get('project_path'))
-    text = checkin_text({**cfg, 'agent': agent}, snap, violations)
+    text = checkin_text({**cfg, 'agent': agent}, snap, violations, checkpoint=checkpoint)
     payload = {'text': text}
     if model or effort:
         payload['agent_pins'] = {agent: {'model': model, 'effort': effort}}
@@ -334,12 +388,14 @@ def _incident_supervisor(profile_id, db, row, cfg, snap, violations):
     return chat
 
 
-def _respond(op, db, actor, row, snap, violations):
-    """Run the schedule's non-wake ``on_violation`` entries for new violations.
+def _respond(op, db, actor, row, snap, violations, *, entries=None, checkpoint=None):
+    """Run the non-wake response entries (the schedule's ``on_violation``, or a
+    checkpoint's ``do``) for new violations / a fired checkpoint.
 
     Returns whether the supervisor should be woken for them."""
     cfg = op['payload']
-    entries = parse_on_violation(cfg.get('on_violation'))
+    entries = parse_on_violation(entries if entries is not None else cfg.get('on_violation'))
+    reasons = list(violations) + list((checkpoint or (None, []))[1])
     target = f"CH-{int(row['id']):06d}"
     for entry in entries:
         if entry == 'wake':
@@ -349,14 +405,35 @@ def _respond(op, db, actor, row, snap, violations):
                 service.stop(target, actor, db=db)
                 done = {}
             elif entry.startswith('action:'):
-                result = _run_action(entry.split(':', 1)[1], row, target, violations)
+                result = _run_action(entry.split(':', 1)[1], row, target, reasons)
                 done = {'success': bool((result or {}).get('success'))}
             else:
-                done = {'chat': _incident_supervisor(entry.split(':', 1)[1], db, row, cfg, snap, violations)}
+                done = {'chat': _incident_supervisor(entry.split(':', 1)[1], db, row, cfg, snap, violations,
+                                                     checkpoint=checkpoint)}
             store.record_check(op['id'], 'acted', {'entry': entry, **done})
         except Exception as exc:
             store.record_check(op['id'], 'error', {'entry': entry, 'error': str(exc)[:300]})
     return 'wake' in entries
+
+
+def fire_checkpoint(op, cid, lines, *, db=None, request=None, trigger=''):
+    """A checkpoint fired on ``op``'s target: record it, run its non-wake
+    responses (stop / action / reviewer profile) and wake the supervisor once
+    per pending checkpoint kind. Returns whether a check-in was queued."""
+    cfg = op['payload']
+    entries = ((cfg.get('checkpoints') or {}).get(cid) or {}).get('do') or ['wake']
+    db, actor, row = service.context(op['target'], op['actor'], db=db)
+    snap = service.snapshot(row['id'], actor, db=db, request=request or transport.request,
+                            task_pick=service.task_pick(cfg))
+    store.record_check(op['id'], 'checkpoint', {'checkpoint': cid, 'lines': lines[:10], 'trigger': trigger,
+                                                'state': snap['state']})
+    if not _respond(op, db, actor, row, snap, [], entries=entries, checkpoint=(cid, lines)):
+        return False
+    if any(o['payload'].get('checkpoint') == cid for o in _active_checkins(actor, op['id'])):
+        return False  # one undelivered wake per checkpoint kind; it reads fresh state when it runs
+    store.create('checkin', actor, actor, {'text': checkin_text(cfg, snap, [], checkpoint=(cid, lines)),
+                                           'schedule_id': op['id'], 'checkpoint': cid})
+    return True
 
 
 def guard_check(op, db=None, request=None, *, trigger='', commands=()):
@@ -375,7 +452,8 @@ def guard_check(op, db=None, request=None, *, trigger='', commands=()):
         return False
     if sorted(violations) == sorted(reported):
         return False  # already raised; the interval check repeats it
-    snap = service.snapshot(row['id'], actor, db=db, request=request or transport.request)
+    snap = service.snapshot(row['id'], actor, db=db, request=request or transport.request,
+                            task_pick=service.task_pick(cfg))
     store.record_check(op['id'], 'violation', {'state': snap['state'], 'branch': snap['branch'],
                                                'violations': violations, 'trigger': trigger})
     if _respond(op, db, actor, row, snap, [v for v in violations if v not in reported]):
@@ -387,7 +465,7 @@ def guard_check(op, db=None, request=None, *, trigger='', commands=()):
 def _check_in(op, db, actor, sid, request):
     """Wake the supervisor only when the target needs attention or changed."""
     cfg = op['payload']
-    snap = service.snapshot(sid, actor, db=db, request=request)
+    snap = service.snapshot(sid, actor, db=db, request=request, task_pick=service.task_pick(cfg))
     found, moved = _violations(op, snap['branch'], snap['execution_path'], db=db)
     previous = op.get('result') or {}
     new = [v for v in found if v not in (previous.get('guard_reported') or [])]
@@ -407,6 +485,9 @@ def _check_in(op, db, actor, sid, request):
             'tasks': [{'title': t['title'], 'done': t['done'], 'total': t['total']} for t in snap['tasks']]}
     # The first check of a UI-started schedule always briefs the new supervisor.
     briefing = bool(cfg.get('brief_on_start')) and not previous.get('last_checkin')
+    # A settings edit (user or playbook) is told once, in this check-in, even
+    # mid-turn: that is when the supervisor may need to steer.
+    changes = service.changes_section(cfg, snap['handle'])
     now = time.time()
     progress = _progress(snap, db)
     progress_at = previous.get('progress_at') or now
@@ -423,24 +504,167 @@ def _check_in(op, db, actor, sid, request):
         tracking['stalled_since'] = previous.get('stalled_since') or progress_at
     elif streak == 0:
         tracking['stalled_since'] = None
-    # A working target or an unchanged picture costs no supervisor tokens.
-    if not violations and not briefing and not stalled and (
-            snap['state'] in ('busy', 'waiting_background') or signature == previous.get('signature')):
+    failure = _checkin_failure(db, actor, op['id'], now) if previous.get('last_checkin') else None
+    hold = (failure or {}).get('retry_at')
+    if hold and hold > now and not new:
+        # The supervisor is out of usage: no wake until it resets, then one at once.
+        store.record_check(op['id'], 'skipped', {**seen, 'reason': 'supervisor_quota', 'retry_at': hold})
+        store.finish(op['id'], 'pending', {**previous, **tracking, 'last_check': time.time(), 'last_seen': seen,
+                                            'skipped': 'supervisor_quota', 'retry_at': hold,
+                                            'guard_reported': found}, due=min(nxt, max(hold, now + 60)))
+        return
+    # A working target or an unchanged picture costs no supervisor tokens;
+    # a picture whose wake the supervisor never answered is not "seen".
+    if not violations and not briefing and not stalled and not changes and (
+            snap['state'] in ('busy', 'waiting_background')
+            or (signature == previous.get('signature') and not failure)):
         reason = snap['state'] if snap['state'] in ('busy', 'waiting_background') else 'unchanged'
         store.record_check(op['id'], 'skipped', {**seen, 'reason': reason})
         store.finish(op['id'], 'pending', {**previous, **tracking, 'last_check': time.time(),
                                             'last_seen': seen, 'skipped': reason, 'guard_reported': found}, due=nxt)
         return
+    if _template_nudge(op, cfg, snap, previous, request, db=db, actor=actor, quiet=not (
+            violations or briefing or stalled or changes or failure),
+            result={**previous, **tracking, 'signature': signature, 'last_check': time.time(),
+                    'last_seen': seen, 'guard_reported': found}, due=nxt):
+        return
     active = _active_checkins(actor, op['id'])
     store.record_check(op['id'], 'violation' if violations else 'stalled' if stalled else 'woke',
-                       {**seen, 'already_waiting': bool(active)})
+                       {**seen, 'already_waiting': bool(active), **({'retry': True} if failure else {})})
     # A moved forbidden branch is reported once, so it never waits behind a queued check-in.
     if not active or moved:
-        text = checkin_text(cfg, snap, violations, stalled_min=seen.get('stalled_min'))
+        text = checkin_text(cfg, snap, violations, stalled_min=seen.get('stalled_min'), changes=changes)
         store.create('checkin', actor, actor, {'text': text, 'schedule_id': op['id']})
+        if changes:
+            store.clear_pending_changes(op['id'], (cfg.get('pending_changes') or {}).get('rev'))
     store.finish(op['id'], 'pending', {**tracking, 'signature': signature, 'last_check': time.time(),
                                         'last_checkin': time.time(), 'last_seen': seen,
                                         'guard_reported': found}, due=nxt)
+
+
+def _template_nudge(op, cfg, snap, previous, request, *, db, actor, quiet, result, due):
+    """``nudge: template``: send an idle chat its next open Tasks item without a
+    supervisor turn. Only when nothing else needs judgment (``quiet``), and at most
+    ``TEMPLATE_NUDGE_LIMIT`` times in a row without Tasks progress; then the
+    supervisor is woken as usual. Returns whether the nudge replaced the wake."""
+    from api.chat_ops import brief
+    if not quiet or snap['state'] != 'idle_with_work' or brief.nudge(cfg.get('nudge')) != 'template':
+        return False
+    tsig = brief.tasks_signature(snap)
+    streak = int(previous.get('template_nudges') or 0) + 1 if previous.get('nudge_tasks') == tsig else 1
+    text = brief.template_nudge(snap) if streak <= brief.TEMPLATE_NUDGE_LIMIT else None
+    if not text:
+        return False
+    try:
+        service.send(op['target'], text, actor, db=db, request=request)
+    except Exception as exc:
+        store.record_check(op['id'], 'error', {'entry': 'nudge', 'error': str(exc)[:300]})
+        return False
+    store.record_check(op['id'], 'nudged', {'state': snap['state'], 'streak': streak, 'text': text[:300]})
+    store.finish(op['id'], 'pending', {**result, 'template_nudges': streak, 'nudge_tasks': tsig}, due=due)
+    return True
+
+
+# A pause nobody remembers is the failure this guards: default 6 h, setting
+# ``supervision_paused_alert_hours`` (0 disables).
+PAUSED_ALERT_HOURS = 6
+PAUSED_ALERT_SCAN_SEC = 300
+_last_pause_scan = 0.0
+
+
+def paused_alert_hours():
+    try:
+        from managers.settings_manager import get_settings_manager
+
+        raw = get_settings_manager().get_setting('supervision_paused_alert_hours', PAUSED_ALERT_HOURS)
+    except Exception:
+        raw = PAUSED_ALERT_HOURS
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return float(PAUSED_ALERT_HOURS)
+
+
+def _target_idle_with_work(op, db=None):
+    """Whether the supervised chat is sitting on unfinished Tasks items.
+
+    Read straight from the stores (no chat HTTP call): the alert scan must cost
+    nothing when every schedule is healthy."""
+    from api.chat_live_status import get_live_status
+    sid = int(op['target'])
+    if get_live_status(sid).get('active'):
+        return False
+    if db is None:
+        from api.auth_db import get_auth_db
+
+        db = get_auth_db()
+    row = db.get_chat_session_by_id(sid)
+    if not row:
+        return False
+    tasks = service.supervised_tasks(db, int(row['user_id']), sid, *(service.task_pick(op.get('payload')) or (None, None)))
+
+    def open_items(items):
+        for item in items or []:
+            if not item.get('done'):
+                return True
+            if open_items(item.get('children') or []):
+                return True
+        return False
+
+    return any(open_items((t.get('payload') or {}).get('items') or []) for t in tasks)
+
+
+def stale_pause_alerts(*, now=None, notify=None, db=None):
+    """Raise one notification per indefinitely paused schedule left too long.
+
+    Only for a pause with no expiry (a timed one comes back by itself) whose
+    target is idle with open Tasks items — i.e. work that has silently stopped.
+    Raised once per pause; resuming or re-pausing re-arms it."""
+    now = time.time() if now is None else now
+    hours = paused_alert_hours()
+    if hours <= 0:
+        return []
+    if notify is None:
+        from api.ui_notify import notify_tray
+
+        notify = notify_tray
+    raised = []
+    for op in store.paused_schedules():
+        result = op.get('result') or {}
+        if result.get('paused_alerted') or result.get('paused_until'):
+            continue
+        since = float(result.get('paused_at') or op['updated'] or now)
+        if now - since < hours * 3600:
+            continue
+        try:
+            if not _target_idle_with_work(op, db=db):
+                continue
+        except Exception:
+            continue
+        waited = int((now - since) // 3600)
+        message = (f"Supervision of CH-{int(op['target']):06d} has been paused for {waited} h "
+                   f"(by CH-{int(op['actor']):06d}) and that chat is idle with open Tasks items. "
+                   'Resume it from the supervision chip, or cancel the schedule.')
+        try:
+            notify(message, variant='warning')
+        except Exception:
+            continue
+        store.patch_result(op['id'], paused_alerted=True)
+        store.record_check(op['id'], 'paused_alert', {'paused_hours': waited})
+        raised.append({'id': op['id'], 'target': int(op['target']), 'hours': waited})
+    return raised
+
+
+def _pause_maintenance():
+    """Auto-resume expired pauses and warn about forgotten ones."""
+    global _last_pause_scan
+    for op in store.resume_expired():
+        print(f"[CHAT OPS] timed pause expired: supervision {op['id'][:8]} resumed", flush=True)
+    now = time.time()
+    if now - _last_pause_scan < PAUSED_ALERT_SCAN_SEC:
+        return
+    _last_pause_scan = now
+    stale_pause_alerts(now=now)
 
 
 def _background_tick():
@@ -467,9 +691,52 @@ def _background_tick():
         thread.start()
 
 
+# Detached-job (unit) watches: polled here as well as by the daemon. Flask
+# restarts far more often than the daemon, so new poller code reaches it first,
+# and a daemon started before the poller existed never fired a watch at all.
+# ``poll_unit_watches`` is exactly-once across both (flock + record claim).
+UNIT_WATCH_POLL_SEC = 15.0
+_last_unit_poll = 0.0
+_unit_poll_thread = None
+
+
+def _poll_units():
+    from api.job_watch import poll_unit_watches
+    try:
+        for done in poll_unit_watches():
+            if done.get('resolved'):
+                print(f"[CHAT OPS] unit watch {done.get('id')} resolved ({done.get('state')}) "
+                      f"-> resume queued on chat {done.get('chat_session_id')}", flush=True)
+    except Exception as exc:
+        print(f'[CHAT OPS] unit watch poll failed: {type(exc).__name__}: {exc}', flush=True)
+
+
+def _unit_watch_tick(now=None):
+    """Start one unit-watch pass every ``UNIT_WATCH_POLL_SEC`` on its own thread
+    (``systemctl`` calls must not hold up outbox delivery). Returns whether one started."""
+    global _last_unit_poll, _unit_poll_thread
+    now = time.time() if now is None else now
+    if now - _last_unit_poll < UNIT_WATCH_POLL_SEC:
+        return False
+    if _unit_poll_thread is not None and _unit_poll_thread.is_alive():
+        return False
+    _last_unit_poll = now
+    _unit_poll_thread = threading.Thread(target=_poll_units, name='cuttle-unit-watch', daemon=True)
+    _unit_poll_thread.start()
+    return True
+
+
 def _loop():
     store.recover_after_restart()
     while not _stop.wait(2):
+        try:
+            _pause_maintenance()
+        except Exception as exc:
+            print(f'[CHAT OPS] pause maintenance failed: {type(exc).__name__}', flush=True)
+        try:
+            _unit_watch_tick()
+        except Exception as exc:
+            print(f'[CHAT OPS] unit watch tick failed: {type(exc).__name__}', flush=True)
         try:
             _background_tick()
         except Exception as exc:

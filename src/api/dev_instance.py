@@ -115,13 +115,20 @@ def _valid_shadow_id(shadow_id: str) -> str:
 
 
 def _check_ancestors(candidate: Path, root: Path) -> None:
-    """Every ancestor from candidate down to root must exist symlink-free."""
+    """Every ancestor from candidate down to root must exist symlink-free.
+
+    One exception: the candidate's own ``temp`` directory may be a symlink to a
+    large-data disk (the documented place for throwaways). It is allowed only
+    as a direct child of the resolved candidate; every other symlink hop is
+    still refused.
+    """
     resolved_candidate = candidate.resolve()
     # Walk existing ancestors; none may be (or contain) a symlink hop.
     probe = root.absolute()
     while True:
         if os.path.islink(probe):
-            raise ShadowError(f"symlink ancestor refused: {probe}")
+            if not (probe.name == "temp" and probe.parent == resolved_candidate):
+                raise ShadowError(f"symlink ancestor refused: {probe}")
         if probe == resolved_candidate or probe == probe.parent:
             break
         probe = probe.parent
@@ -215,7 +222,7 @@ def prepare_snapshot(candidate: Path, shadow_id: str | None = None) -> dict:
     """
     candidate = candidate.resolve()
     shadow_id = _valid_shadow_id(shadow_id or uuid.uuid4().hex)
-    root = candidate / "temp" / "shadows" / shadow_id
+    root = _shadows_dir(candidate) / shadow_id
     _check_ancestors(candidate, root.parent)
     if root.exists() and any(root.iterdir()):
         raise ShadowError(f"refusing reused non-empty shadow root: {root}")
@@ -302,6 +309,10 @@ def refresh_seed_hashes(seed: dict) -> dict:
 
 
 def _shadows_dir(candidate: Path) -> Path:
+    # Keep the structural ``temp/shadows`` path even when ``temp`` is a symlink
+    # to a large-data disk; ``_check_ancestors`` allows that one hop and the
+    # shadow root still lives on the target disk. ``_is_shadow_root`` and
+    # ``discard_snapshot`` depend on the literal ``temp/shadows/<id>`` shape.
     return candidate.resolve() / "temp" / "shadows"
 
 

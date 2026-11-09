@@ -81,7 +81,11 @@ def ensure_schema(conn) -> None:
 def refresh(conn, session_id: int) -> None:
     """Reconcile attention after insert/content update within the same transaction."""
     conn.execute('INSERT OR IGNORE INTO chat_attention(session_id) VALUES (?)', (session_id,))
-    reply = conn.execute("SELECT id, content, metadata FROM chat_messages WHERE chat_session_id=? AND role='assistant' ORDER BY id DESC LIMIT 1", (session_id,)).fetchone()
+    # A running turn's empty row (api.chat_turn_row) is not a reply yet: the
+    # reply id moves (and "new reply" fires) when it is finalized.
+    reply = conn.execute("SELECT id, content, metadata FROM chat_messages WHERE chat_session_id=? AND role='assistant' "
+                         "AND (metadata IS NULL OR metadata NOT LIKE '%\"in_progress\": true%') "
+                         "ORDER BY id DESC LIMIT 1", (session_id,)).fetchone()
     user = conn.execute("SELECT MAX(id) FROM chat_messages WHERE chat_session_id=? AND role='user'", (session_id,)).fetchone()[0] or 0
     reply_id = reply['id'] if reply else 0
     error = int(is_error(reply['content'], reply['metadata'])) if reply else 0

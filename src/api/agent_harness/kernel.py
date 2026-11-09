@@ -34,6 +34,14 @@ def _looks_like_stale_session_writer(result: Optional[AgentResult]) -> bool:
     return any(m in blob for m in _STALE_SESSION_WRITER_MARKERS)
 
 
+def _with_thinking(thoughts: list, text: str) -> str:
+    if not thoughts:
+        return text
+    from api.agent_harness.reasoning_reply import with_thinking
+
+    return with_thinking(thoughts, text)
+
+
 def _put_status(status_queue: Any, message: str) -> None:
     if status_queue is None:
         return
@@ -244,6 +252,35 @@ def _attach_usage_to_web_response(out: Dict[str, Any], usage: Optional[Dict[str,
     out["usage"] = payload
     if payload.get("cost") is not None:
         out["cost"] = payload["cost"]
+
+
+def _silent_compaction(agent_id: str, sid: Optional[str], resume: Optional[str], result: Any) -> bool:
+    """Fallback for adapters that never report ``context_compacted``.
+
+    A resumed session whose window fill fell far below the previous turn's
+    was summarized by the CLI itself, so the Cuttle briefing may be gone.
+    Only the same native session counts: a new one already gets a full
+    briefing. Never raises; unknown fill reads as "not compacted".
+    """
+    if not resume or not sid:
+        return False
+    new_session = getattr(result, "session_id", None)
+    if new_session and str(new_session) != str(resume):
+        return False
+    try:
+        from api.agent_context import _usage_context_fill_tokens
+        from api.cuttle_brain.metrics import fill_dropped, last_context_fill
+
+        usage = result.usage if isinstance(getattr(result, "usage", None), dict) else {}
+        current, _src = _usage_context_fill_tokens(usage, agent_id=agent_id)
+        if not current:
+            return False
+        if fill_dropped(last_context_fill(sid, agent_id), current):
+            print(f"[kernel] {agent_id} context fill dropped: treating as compacted", flush=True)
+            return True
+    except Exception as exc:
+        print(f"[kernel] silent compaction check error: {exc}", flush=True)
+    return False
 
 
 def _record_context_metrics(
@@ -680,7 +717,33 @@ def run_agent_web_command(
 
         user_ctx = {"web_ui": True, "slash_command": slash, "chat_session_id": sid}
         _put_status(status_queue, f"Starting {label}…")
-        query_id = start_query_tracking(f"{slash} {prompt}", user_ctx)
+        # A chat turn opened its row + inspector under a query id already
+        # (api.chat_turn_row): track this run under that id so the live
+        # bubble's inspector link is this run's log from the first frame.
+        reserved = None
+        try:
+            from api.chat_turn_row import claim_query_id
+
+            reserved = claim_query_id(chat_session_id)
+        except Exception:
+            reserved = None
+        if reserved:
+            from api.query_tracker import start_query_tracking_with_id
+
+            query_id = start_query_tracking_with_id(reserved, f"{slash} {prompt}", user_ctx)
+        else:
+            query_id = start_query_tracking(f"{slash} {prompt}", user_ctx)
+        # The chat turn this run belongs to (a router retry is a second run in
+        # the same turn): exported to the CLI as CUTTLE_TURN_ID.
+        turn_id, turn_message_id, turn_message = query_id, None, None
+        try:
+            from api.chat_turn_row import current as _current_turn_row
+
+            _turn = _current_turn_row(chat_session_id) or {}
+            turn_id = _turn.get('query_id') or query_id
+            turn_message_id, turn_message = _turn.get('user_message_id'), _turn.get('user_message')
+        except Exception:
+            pass
         qid_token = bind_query_id(query_id)
         if status_queue is not None:
             status_queue = QueryStatusTee(status_queue)
@@ -904,11 +967,20 @@ def run_agent_web_command(
                     print(f"[agent_events] snapshot start unavailable: {exc}", flush=True)
             except Exception:
                 edit_baseline = None
+            try:
+                from api.chat_ops.git_hook import supervised_reason
+                supervised = supervised_reason(sid)
+            except Exception as exc:
+                print(f"[agent_harness] supervision lookup failed for CH-{sid}: {exc}", flush=True)
+                supervised = ''
+
             def _run_execute(prompt_text: str, resume_id: Optional[str]) -> AgentResult:
                 from core.agent_cli_env import agent_operation_context
 
                 with agent_operation_context(session_id=sid, agent_id=manifest.id,
-                                             model=model, run_id=query_id, project_path=cwd):
+                                             model=model, run_id=query_id, project_path=cwd,
+                                             supervised=supervised, turn_id=turn_id,
+                                             turn_message_id=turn_message_id, turn_message=turn_message):
                     return asyncio.run(
                         adapter.execute(
                             prompt_text,
@@ -1000,6 +1072,8 @@ def run_agent_web_command(
             and isinstance(result.meta, dict)
             and result.meta.get("context_compacted")
         )
+        if not compacted and not handled_by_meta and result.success:
+            compacted = _silent_compaction(manifest.id, sid, resume, result)
         if result.success and not handled_by_meta:
             # Settings/meta answers never reached the CLI: they must not move
             # this agent's seen cursor or claim the chat's last agent. The
@@ -1132,6 +1206,18 @@ def run_agent_web_command(
             "agent_id": manifest.id,
         }
 
+        # Every agent's reasoning rides in its reply, collapsed (reasoning_reply).
+        thoughts: list = []
+        try:
+            from api.agent_harness.reasoning_reply import turn_thinking
+
+            # Chat turns only: headless callers (rage investigator, …) parse
+            # the reply text and must get the answer alone.
+            if chat_session_id and tracker and tracker.query_id == query_id:
+                thoughts = turn_thinking(tracker)
+        except Exception:
+            thoughts = []
+
         if result.success:
             if tracker and tracker.query_id == query_id and tracker.execution_data:
                 tracker.add_tool_call(
@@ -1148,7 +1234,7 @@ def run_agent_web_command(
             finish_query_tracking(success=True)
             out = {
                 "success": True,
-                "response": result.output or "Done.",
+                "response": _with_thinking(thoughts, result.output or "Done."),
                 "session_id": chat_session_id,
                 "type": type_ok,
                 "query_id": query_id,

@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <link rel="icon" type="image/png" href="/img/cuttle-mascot_square.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon.png">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Settings - Cuttle</title>
@@ -558,6 +560,11 @@
                 <span id="agentSetupStatus" role="status" aria-live="polite"></span>
             </div>
 
+            <div class="settings-group" id="autoCompactSettings" hidden>
+                <h3 class="settings-title">Auto-compaction <span class="settings-scope">Experimental</span><button type="button" class="cuttle-info" data-tooltip="Compact an agent's context between turns, before its CLI compacts mid-task near the window edge. Fires when the window passes the percentage or the token cap, whichever comes first. Override per chat from the context gauge in the composer." aria-label="About Auto-compaction">i</button></h3>
+                <div id="autoCompactEditor"></div>
+            </div>
+
             <div class="settings-group" id="responsePostprocessingSettings" hidden>
                 <h3 class="settings-title">Response post-processing <span class="settings-scope">Experimental</span></h3>
                 <div id="responsePostprocessingEditor"></div>
@@ -931,6 +938,7 @@
     <script src="/js/settings/settings_releases.js?v=20261018updateCenter"></script>
     <script src="/js/settings/settings_storage.js?v=20261103cards"></script>
     <script src="/js/settings/settings_chat_preferences.js?v=20261016separateProcessor"></script>
+    <script src="/js/settings/settings_auto_compact.js?v=20261108autocompact"></script>
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261011menuPosition2"></script>
     <script src="/js/settings/settings_background_helpers.js?v=20261016separateProcessor"></script>
@@ -2160,6 +2168,7 @@
                     || '<div class="provider-status">No experimental features registered.</div>';
                 if (window.cuttleCompletionSettings) window.cuttleCompletionSettings.refresh();
                 chatPreferences.refreshProcessorAvailability();
+                window.CuttleSettingsAutoCompact.refresh();
                 if (d.kill_switch) {
                     list.innerHTML += '<div class="provider-status" style="margin-top:12px">'
                         + '⚠️ CUTTLE_EXPERIMENTAL=0 is set — every flag is forced off at the process level.</div>';
@@ -2997,6 +3006,7 @@
                 });
                 tabs.register('agents', function () {
                     chatPreferences.mountProcessor(document.getElementById('responsePostprocessingEditor'));
+                    window.CuttleSettingsAutoCompact.mount(document.getElementById('autoCompactEditor'));
                     loadAgentCatalog();
                     loadCompletionProviders();
                     loadGitAutoCommitSetting();
@@ -3018,6 +3028,7 @@
                 // No tab shell (e.g. markup edited by hand): load everything.
                 chatPreferences.mountGlobal(document.getElementById('sharedSystemPromptEditor'));
                 chatPreferences.mountProcessor(document.getElementById('responsePostprocessingEditor'));
+                window.CuttleSettingsAutoCompact.mount(document.getElementById('autoCompactEditor'));
                 window.CuttleSettingsReleases.mount(document.getElementById('cuttleReleaseSettings'));
                 loadAgentCatalog();
                 loadGitAutoCommitSetting();

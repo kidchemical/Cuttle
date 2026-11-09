@@ -130,11 +130,13 @@ def _new_chat(http, tag):
     return body["session_id"]
 
 
-def _history(http, sid):
+def _history(http, sid, *, live=False):
+    """Saved rows. A running turn's own row (api.chat_turn_row, ``in_progress``)
+    is included only with ``live=True``."""
     status, body = http.get(f"/api/auth/sessions/{sid}/messages")
     assert status == 200, body
     assert body.get("success") is True, body
-    return body["messages"]
+    return [m for m in body["messages"] if live or not m.get("in_progress")]
 
 
 def _control(http, nonce, payload):
@@ -338,8 +340,22 @@ class _SseDrain(threading.Thread):
         return out
 
 
+STOPPED_CARD = "<stopped card>"
+FAILED_CARD = "<failed card>"
+
+
+def _card(content):
+    """A turn that ended without a saved reply finalizes its own row as a
+    timestamped card (api.chat_turn_row): compare it by kind."""
+    if content.startswith("**Agent stopped before completion.**"):
+        return STOPPED_CARD
+    if content.startswith("**Agent failed before completion.**"):
+        return FAILED_CARD
+    return content
+
+
 def _role_contents(rows):
-    return [(m["role"], m["content"]) for m in rows]
+    return [(m["role"], _card(m["content"])) for m in rows]
 
 
 def _assert_exact_history(rows, want, label):
@@ -388,7 +404,9 @@ def _expected_assistants(lane, case):
     return {
         "success": ["shadow reply"],
         "usefulfailure": ["failed with text"],
-        "emptyfailure": [],
+        # The turn's row exists from turn start: an empty failure finalizes
+        # it as the failed card (query-log link), never an empty orphan.
+        "emptyfailure": [FAILED_CARD],
         "cancelled": [],
         "system": [],
         # Canonical row content is the scenario response (child inserts it
@@ -565,7 +583,7 @@ def test_shadow_stop_cancels_held_turn(live, lane):
 
         rows = _history(http, sid)
         _assert_exact_history(
-            rows, [("user", _lane_message(lane, tag))],
+            rows, [("user", _lane_message(lane, tag)), ("assistant", STOPPED_CARD)],
             f"stop-cancel {lane}")
         state = _control_state(http, nonce)
         assert state["completed"].get(uid, 0) == 1, state
@@ -632,8 +650,12 @@ def test_shadow_stop_resend_newer_keeps_lock(live, lane):
         rows = _history(http, sid)
         _assert_exact_history(rows, [
             ("user", _lane_message(lane, first_tag)),
+            ("assistant", STOPPED_CARD),
             ("user", _lane_message(lane, second_tag)),
         ], f"stop-resend newer-held {lane}")
+        # The newer held turn already owns its reply row (live, empty).
+        live_rows = [m for m in _history(http, sid, live=True) if m.get("in_progress")]
+        assert len(live_rows) == 1 and live_rows[0]["content"] == "", live_rows
 
         _release(http, nonce, second_uid)
         second_worker.join(timeout=60)
@@ -647,6 +669,7 @@ def test_shadow_stop_resend_newer_keeps_lock(live, lane):
         rows = _history(http, sid)
         _assert_exact_history(rows, [
             ("user", _lane_message(lane, first_tag)),
+            ("assistant", STOPPED_CARD),
             ("user", _lane_message(lane, second_tag)),
             ("assistant", "second reply"),
         ], f"stop-resend completed {lane}")

@@ -34,6 +34,19 @@ def _connect() -> sqlite3.Connection:
         goal TEXT NOT NULL DEFAULT '',
         bound_at REAL NOT NULL
     )""")
+    # Append-only: every bind / switch / goal edit / unbind, so a chat's playbook
+    # at any moment (and telemetry over it) survives the binding being replaced.
+    conn.execute("""CREATE TABLE IF NOT EXISTS binding_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        playbook_id TEXT NOT NULL DEFAULT '',
+        goal TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT '',
+        at REAL NOT NULL
+    )""")
+    conn.execute("CREATE INDEX IF NOT EXISTS binding_events_session ON binding_events(session_id, at)")
     conn.execute("""CREATE TABLE IF NOT EXISTS prefs (
         user_id INTEGER PRIMARY KEY,
         default_playbook TEXT NOT NULL DEFAULT ''
@@ -112,23 +125,57 @@ def set_default_playbook(user_id: int, playbook_id: str) -> None:
         conn.commit()
 
 
-def bind(session_id: int, user_id: int, playbook_id: str, goal: str = "") -> None:
+def bind(session_id: int, user_id: int, playbook_id: str, goal: str = "", *,
+         action: str = "bind", source: str = "") -> None:
+    """Upsert the chat's binding and log it (``action``: bind / switch / goal)."""
+    now = time.time()
     with closing(_connect()) as conn:
+        conn.execute(
+            "INSERT INTO binding_events (session_id, user_id, action, playbook_id, goal, source, at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (int(session_id), int(user_id), action, playbook_id, goal, source, now),
+        )
         conn.execute(
             """INSERT INTO bindings (session_id, user_id, playbook_id, goal, bound_at)
                VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(session_id) DO UPDATE SET playbook_id = excluded.playbook_id,
                    goal = excluded.goal, bound_at = excluded.bound_at""",
-            (int(session_id), int(user_id), playbook_id, goal, time.time()),
+            (int(session_id), int(user_id), playbook_id, goal, now),
         )
         conn.commit()
 
 
-def unbind(session_id: int) -> bool:
+def unbind(session_id: int, *, source: str = "") -> bool:
     with closing(_connect()) as conn:
+        row = conn.execute("SELECT user_id, playbook_id FROM bindings WHERE session_id = ?",
+                           (int(session_id),)).fetchone()
         cur = conn.execute("DELETE FROM bindings WHERE session_id = ?", (int(session_id),))
+        if row:
+            conn.execute(
+                "INSERT INTO binding_events (session_id, user_id, action, playbook_id, goal, source, at) "
+                "VALUES (?, ?, 'unbind', ?, '', ?, ?)",
+                (int(session_id), int(row["user_id"]), row["playbook_id"], source, time.time()),
+            )
         conn.commit()
         return cur.rowcount > 0
+
+
+def binding_events(*, user_id: Optional[int] = None, session_id: Optional[int] = None,
+                   since: float = 0.0, limit: int = 5000) -> List[Dict[str, Any]]:
+    """Binding history, oldest first (telemetry and "which playbook at time T")."""
+    clauses, params = ["at >= ?"], [float(since)]
+    if user_id is not None:
+        clauses.append("user_id = ?")
+        params.append(int(user_id))
+    if session_id is not None:
+        clauses.append("session_id = ?")
+        params.append(int(session_id))
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            "SELECT * FROM binding_events WHERE " + " AND ".join(clauses) + " ORDER BY at, id LIMIT ?",
+            (*params, int(limit)),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def binding(session_id: int) -> Optional[Dict[str, Any]]:

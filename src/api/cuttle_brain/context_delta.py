@@ -117,6 +117,10 @@ class ContextSnapshot:
     # Hash of the chat's bound orchestrator brief ("" when unbound). Playbook
     # edits must reach a resumed orchestrator, not only a fresh briefing.
     orchestrator: str = ""
+    # Hash of the chat's supervision digest ("" when it runs and is under none).
+    # A schedule that was paused must reach a resumed chat too: otherwise the
+    # supervisor keeps assuming its check-ins are still coming.
+    supervision: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -130,6 +134,7 @@ class ContextSnapshot:
             "skills": list(self.skills),
             "features": dict(self.features),
             "orchestrator": self.orchestrator,
+            "supervision": self.supervision,
         }
 
     @classmethod
@@ -145,6 +150,7 @@ class ContextSnapshot:
             skills=tuple(raw.get("skills") or ()),
             features=dict(raw.get("features") or {}),
             orchestrator=str(raw.get("orchestrator") or ""),
+            supervision=str(raw.get("supervision") or ""),
         )
 
 
@@ -159,6 +165,20 @@ def _orchestrator_brief(chat_session_id: Any) -> str:
         from api.orchestrator.service import brief_block
 
         return brief_block(chat_session_id)
+    except Exception:
+        return ""
+
+
+@capture_call
+def _supervision_digest(chat_session_id: Any) -> str:
+    if chat_session_id in (None, ""):
+        return ""
+    try:
+        from api.chat_ops.service import supervision_digest
+        from api.cuttle_ui_capabilities import numeric_chat_session_id
+
+        sid = numeric_chat_session_id(chat_session_id)
+        return supervision_digest(sid) if sid is not None else ""
     except Exception:
         return ""
 
@@ -191,6 +211,7 @@ def compute_snapshot(
     from api.experimental.context_bundles import markdown, snapshot
     global_docs.extend(n for n, _ in markdown("docs", project_path))
     brief = _orchestrator_brief(chat_session_id)
+    supervision = _supervision_digest(chat_session_id)
     return ContextSnapshot(
         schema_version=CONTEXT_SCHEMA_VERSION,
         global_rules=_rules_map(visible_global),
@@ -202,6 +223,7 @@ def compute_snapshot(
         skills=tuple(skill_inventory(project_path)),
         features=snapshot(project_path),
         orchestrator=_hash_text(brief) if brief else "",
+        supervision=_hash_text(supervision) if supervision else "",
     )
 
 
@@ -375,6 +397,14 @@ def build_delta_text(
                 "### Orchestrator playbook removed",
                 "- This chat is no longer bound to a playbook; drop its brief.",
             ]
+    if previous.supervision != current.supervision:
+        digest = _supervision_digest(chat_session_id)
+        if digest:
+            parts += ["### Supervision changed", digest]
+        else:
+            parts += ["### Supervision ended",
+                      "- No supervision schedule runs on this chat any more; "
+                      "nobody is checking it and nobody is woken by it."]
     if previous.features != current.features:
         parts.append("### Feature context availability")
         for ref in sorted(set(previous.features) | set(current.features)):

@@ -523,11 +523,11 @@ def test_structured_restore_and_copy_text():
 
 
 @node_only
-def test_copy_and_speech_use_processed_body_without_original_wire_markup():
+def test_copy_and_speech_keep_original_then_processed_text_without_wire_markup():
     response = '<cuttle_original_response>' + json.dumps('Original with **Markdown**') + '</cuttle_original_response>\n\nSummary'
     script = 'const m=require(process.argv[1]); process.stdout.write(JSON.stringify([m.postprocessedBody(process.argv[2]),m.postprocessedBody("Plain"),m.postprocessedBody("<cuttle_original_response>bad</cuttle_original_response>Tail")]));'
     proc = subprocess.run(['node', '-e', script, str(MOD_JS), response], text=True, capture_output=True, check=True)
-    assert json.loads(proc.stdout) == ['Summary', 'Plain', '<cuttle_original_response>bad</cuttle_original_response>Tail']
+    assert json.loads(proc.stdout) == ['Original with **Markdown**\n\nSummary', 'Plain', '<cuttle_original_response>bad</cuttle_original_response>Tail']
 
 
 CODELINK_HARNESS = """
@@ -716,7 +716,7 @@ def test_format_message_pipeline_interleaves_all_stages():
     assert '<h2 class="message-header">' in second
     assert "<strong>bold</strong>" in second and "<em>em</em>" in second
     assert "<code>code</code>" in second
-    assert second.count("<li>") == 4 and "<ul>" in second and "<ol>" in second
+    assert second.count("<li") == 4 and "<ul>" in second and "<ol>" in second
     assert '<div class="message-table-wrap">' in second
     assert 'style="text-align:right"' in second
     assert "<td>extra</td>" in second

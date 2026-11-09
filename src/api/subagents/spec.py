@@ -73,6 +73,9 @@ def parse_child(raw: Any, *, index: int = 0) -> ChildSpec:
             effort_explicit = True
         if not title:
             title = display_name
+    tier = str(raw.get("tier") or "").strip()
+    if tier and (profile_raw or agent_explicit):
+        raise ValueError(f"child {label!r}: give either a tier or a profile/agent, not both")
     route = bool(raw.get("route"))
     if agent in _ROUTE_AGENTS:
         route = True
@@ -91,6 +94,7 @@ def parse_child(raw: Any, *, index: int = 0) -> ChildSpec:
         agent_explicit=agent_explicit,
         model_explicit=model_explicit,
         effort_explicit=effort_explicit,
+        tier=tier[:60],
     )
 
 

@@ -482,8 +482,23 @@ def cmd_hook(args: argparse.Namespace) -> int:
     return 0 if payload['ok'] else 1
 
 
-_OPERATION_VERBS = ('operations', 'operation', 'cancel-operation', 'pause-operation', 'resume-operation')
-_CHAT_OP_VERBS = ('send', 'status', 'snapshot', 'stop', 'supervise') + _OPERATION_VERBS
+_OPERATION_VERBS = ('operations', 'operation', 'cancel-operation', 'pause-operation', 'resume-operation',
+                    'edit-operation')
+_CHAT_OP_VERBS = ('send', 'status', 'snapshot', 'stop', 'supervise', 'context', 'compact') + _OPERATION_VERBS
+
+
+FOCUS_NOTICE = ('Note: --instructions sets the Focus note, the user’s own free text in the Supervise dialog. '
+                'Settings are flags (--every, --agent/--model/--effort, --require-branch/--forbid-branch, '
+                '--involve, --nudge, --checkpoints, --model-tiers) and always win over Focus; set Focus only '
+                'with job-specific notes the user asked for.')
+
+
+def _focus_notice(args, payload) -> None:
+    """Steer agents away from Focus as a settings channel (stderr; never blocks)."""
+    if getattr(args, 'instructions', None) is None:
+        return
+    lines = [FOCUS_NOTICE] + [f'- {w}' for w in payload.get('warnings') or []]
+    print('\n'.join(lines), file=sys.stderr)
 
 
 def cmd_operation(args: argparse.Namespace) -> int:
@@ -493,17 +508,39 @@ def cmd_operation(args: argparse.Namespace) -> int:
     if verb in _OPERATION_VERBS:
         actor = service.session_id(args.as_chat or __import__('os').environ.get('CUTTLE_CHAT_SESSION_ID'))
         # Validate the acting chat before exposing its operation records.
-        service.context(actor, actor, db=db)
+        _db, _actor, acting = service.context(actor, actor, db=db)
         if verb == 'operations':
             payload = {'schema_version': 1, 'ok': True, 'operations': store.listing(actor)}
         else:
-            if verb == 'cancel-operation':
+            if verb == 'edit-operation':
+                if not store.get(args.id, actor):
+                    raise SystemExit(f'Operation {args.id} not found for this chat')
+                changes = {k: v for k, v in {
+                    'every': args.every, 'agent': args.agent, 'model': args.model, 'effort': args.effort,
+                    'instructions': args.instructions, 'required_branch': args.require_branch,
+                    'required_path': args.require_path, 'forbidden_branches': args.forbid_branch,
+                    'model_tiers': json.loads(args.model_tiers) if args.model_tiers is not None else None,
+                    'checkpoints': json.loads(args.checkpoints) if args.checkpoints is not None else None,
+                    'involve_user': args.involve, 'nudge': args.nudge,
+                }.items() if v is not None}
+                if args.tasks is not None:
+                    changes['task_ids'] = [t for t in args.tasks.split(',') if t.strip()]
+                if args.all_tasks:
+                    changes['task_ids'] = None
+                result = service.update_supervision(args.id, int(acting['user_id']), changes, db=db)
+                op, payload_extra = result['operation'], {'updated': result['updated'],
+                                                          'warnings': result.get('warnings') or []}
+            elif verb == 'cancel-operation':
                 op = store.cancel(args.id, actor)
             elif verb in ('pause-operation', 'resume-operation'):
-                op = store.set_paused(args.id, actor, verb == 'pause-operation')
+                pausing = verb == 'pause-operation'
+                until = service.pause_expiry(hours=args.hours, until=args.until,
+                                             indefinite=args.indefinite) if pausing else None
+                op = store.set_paused(args.id, actor, pausing, until=until)
             else:
                 op = store.get(args.id, actor)
-            payload = {'schema_version': 1, 'ok': True, 'operation': op}
+            payload = {'schema_version': 1, 'ok': True, 'operation': op,
+                       **(payload_extra if verb == 'edit-operation' else {})}
     else:
         kwargs = {'actor': args.as_chat, 'db': db}
         if verb == 'send':
@@ -514,15 +551,23 @@ def cmd_operation(args: argparse.Namespace) -> int:
             payload = service.snapshot(args.handle, usage_agents=args.usage, **kwargs)
         elif verb == 'stop':
             payload = service.stop(args.handle, **kwargs)
+        elif verb == 'context':
+            payload = service.agent_context(args.handle, agent=args.agent or None, **kwargs)
+        elif verb == 'compact':
+            payload = service.compact(args.handle, mode=args.mode, agent=args.agent or None, **kwargs)
         else:
             payload = service.supervise(args.handle, every=args.every, instructions=args.instructions,
                 required_branch=args.require_branch, required_path=args.require_path,
                 forbidden_branches=args.forbid_branch, model_tiers=json.loads(args.model_tiers),
                 agent=args.agent, forbidden_paths=args.forbid_paths,
-                on_violation=args.on_violation, **kwargs)
+                on_violation=args.on_violation,
+                checkpoints=json.loads(args.checkpoints) if args.checkpoints else None,
+                involve_user=args.involve, nudge=args.nudge, **kwargs)
+    if verb in ('supervise', 'edit-operation'):
+        _focus_notice(args, payload)
     _emit_text_once(payload, as_json=args.json,
                     text_fn=lambda p: json.dumps(p, indent=2, ensure_ascii=False, default=str))
-    return 0
+    return 0 if payload.get('ok', True) else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -645,7 +690,7 @@ def build_parser() -> argparse.ArgumentParser:
     search_p.set_defaults(func=cmd_search)
 
     for verb, help_text in (
-        ('install-hook', 'Install a git hook that refuses agent updates of protected branches'),
+        ('install-hook', 'Install (or upgrade) a git hook that refuses supervised-agent updates of protected branches'),
         ('uninstall-hook', "Remove Cuttle's protected-branch git hook"),
     ):
         hook_p = sub.add_parser(verb, parents=[common], help=help_text)
@@ -660,12 +705,16 @@ def build_parser() -> argparse.ArgumentParser:
         ('status', 'Busy, idle, awaiting input, error, and Tasks in one call'),
         ('snapshot', 'Status plus reply, worktree/branch, jobs, watches and optional plan usage'),
         ('stop', 'Stop the target chat through the ordinary cancellation path'),
+        ('context', "Context-window fill of the target chat's agent session"),
+        ('compact', "Compact the target chat's agent session between turns (native or fresh)"),
         ('supervise', 'Create durable recurring check-ins in the acting chat'),
         ('operations', 'List your delivery requests and supervision profiles'),
         ('operation', 'Inspect one delivery request or supervision profile'),
         ('cancel-operation', 'Cancel a pending delivery or recurring supervision profile'),
-        ('pause-operation', 'Pause a supervision schedule (no checks until resumed)'),
+        ('pause-operation', 'Pause a supervision schedule (timed by default: auto-resumes in 4 h)'),
         ('resume-operation', 'Resume a paused supervision schedule; checks right away'),
+        ('edit-operation', 'Change a supervision schedule in place (only the flags you pass); '
+                           'the supervisor gets one update check-in'),
     ):
         op = sub.add_parser(verb, parents=[common], help=help_text)
         op.add_argument('--as', dest='as_chat', help='Acting chat (default CUTTLE_CHAT_SESSION_ID); same owner required')
@@ -676,11 +725,49 @@ def build_parser() -> argparse.ArgumentParser:
         if verb == 'send':
             op.add_argument('--text', required=True)
             op.add_argument('--mode', choices=('auto', 'queue'), default='auto')
+        if verb == 'pause-operation':
+            op.add_argument('--hours', type=float, default=None,
+                            help='Auto-resume after this many hours (default 4; the pause is timed '
+                                 'unless you pass --indefinite)')
+            op.add_argument('--until', type=float, default=None, help='Auto-resume at this epoch time')
+            op.add_argument('--indefinite', action='store_true',
+                            help='Pause with no expiry — nothing resumes it but you')
+        if verb in ('context', 'compact'):
+            op.add_argument('--agent', default='', help="Harness id (default: the agent that last ran in the chat)")
+        if verb == 'compact':
+            op.add_argument('--mode', choices=('native', 'fresh'), default='native',
+                            help='native: the CLI summarizes its session; fresh: start a new session '
+                                 'with the full Cuttle briefing and recent transcript')
         if verb == 'snapshot':
             op.add_argument('--usage', action='append', default=[], help='Include plan usage for this agent (repeatable)')
+        if verb == 'edit-operation':
+            op.add_argument('--every', type=int, default=None, help='Seconds between checks, minimum 60')
+            op.add_argument('--agent', default=None, help='Supervisor harness (re-pins the supervisor chat)')
+            op.add_argument('--model', default=None, help="Supervisor model ('' = CLI default)")
+            op.add_argument('--effort', default=None, help="Supervisor effort ('' = CLI default)")
+            op.add_argument('--instructions', default=None,
+                            help="Focus: the user's job-specific notes ('' clears). Settings have their own flags")
+            op.add_argument('--involve', choices=('never', 'blocked', 'questions'), default=None,
+                            help='When the supervisor involves the user')
+            op.add_argument('--nudge', choices=('agent', 'template'), default=None,
+                            help='template: the host sends an idle chat its next open Tasks item (no supervisor turn)')
+            op.add_argument('--require-branch', default=None)
+            op.add_argument('--require-path', default=None)
+            op.add_argument('--forbid-branch', action='append', default=None,
+                            help='Replaces the forbidden list (repeatable)')
+            op.add_argument('--model-tiers', default=None, help='JSON object with worker/expert model guidance')
+            op.add_argument('--checkpoints', default=None, help='JSON event wakes (replaces them; {} = none)')
+            op.add_argument('--tasks', default=None,
+                            help="Comma-separated Tasks ids to follow ('' = none); lists the chat makes later still count")
+            op.add_argument('--all-tasks', action='store_true', help='Follow every Tasks list the chat sees')
         if verb == 'supervise':
             op.add_argument('--every', type=int, default=900, help='Seconds between checks, minimum 60')
-            op.add_argument('--instructions', required=True)
+            op.add_argument('--instructions', default=None,
+                            help="Optional Focus: the user's job-specific notes. Settings have their own flags")
+            op.add_argument('--involve', choices=('never', 'blocked', 'questions'), default='blocked',
+                            help='When the supervisor involves the user (default: blocked = logins/payments/irreversible)')
+            op.add_argument('--nudge', choices=('agent', 'template'), default='agent',
+                            help='template: the host sends an idle chat its next open Tasks item (no supervisor turn)')
             op.add_argument('--require-branch', default='')
             op.add_argument('--require-path', default='')
             op.add_argument('--forbid-branch', action='append', default=[])
@@ -692,6 +779,10 @@ def build_parser() -> argparse.ArgumentParser:
                                  'stop, action:<.cuttle/actions name>, supervisor:<agent profile>')
             op.add_argument('--model-tiers', default='{}', help='JSON object with worker/expert model guidance')
             op.add_argument('--agent', default='', help='Run check-in turns on this harness (e.g. cursor); default: the chat\'s own')
+            op.add_argument('--checkpoints', default='',
+                            help='JSON: event wakes, e.g. {"milestone":{"do":["wake"]},"tests":{"when":"pass",'
+                                 '"do":["supervisor:reviewer"]},"repeat_failures":{"n":3},'
+                                 '"watched_paths":{"regex":"^api/","do":["stop","wake"]}}')
         op.set_defaults(func=cmd_operation)
 
     return p

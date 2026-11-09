@@ -85,6 +85,10 @@
                       ? '<label><span>Readout</span><select data-field="metric">' + options(usageMetrics(), cfg.metric || 'auto', m => m, metricLabel) + '</select></label>'
                       : '')
                   + '<label><span>Window</span><select data-field="window">' + options(windowChoices(g), cfg.window || 'tightest', w => w.id, w => w.label) + '</select></label>'
+                  + (cfg.agent === 'claude'
+                      ? '<label class="gizmo-check"><input type="checkbox" data-field="api_credit"' + (cfg.api_credit ? ' checked' : '')
+                        + '><span>Include API credit (Providers key fallback)</span></label>'
+                      : '')
                 : '';
             return '<article class="gizmo-item" data-gizmo-item="' + esc(g.id) + '">'
                 + '<div class="gizmo-item-preview">' + M.renderGizmoHtml(g, state.data.get(M.dataKey(g)), 'card', now) + '</div>'
@@ -200,7 +204,7 @@
         const key = field.dataset.field;
         if (key === 'title') patch(id, { title: field.value });
         else if (key === 'dock') patch(id, { placement: { dock: field.value } });
-        else patch(id, { config: { [key]: field.value } });
+        else patch(id, { config: { [key]: field.type === 'checkbox' ? field.checked : field.value } });
     });
 
     $('gizmosList').addEventListener('click', async ev => {

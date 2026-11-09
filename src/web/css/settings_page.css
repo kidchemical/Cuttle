@@ -1109,6 +1109,10 @@ body.compact-shell-page .chat-prompt-editor textarea.setting-input {
 .chat-prompt-editor > .setting-item { margin: 0; }
 .postprocessing-executors > .setting-label { margin-bottom: 10px; }
 .postprocessing-executors .background-executor { margin-bottom: 12px; }
+.postprocessing-trigger { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; }
+.postprocessing-trigger > .setting-label { flex-basis: 100%; }
+.postprocessing-trigger select.setting-input { width: auto; min-width: 160px; }
+.postprocessing-trigger input.setting-input { width: 120px; }
 
 /* ── Cuttle updates: device update source + status (Settings → Cuttle updates) ── */
 #cuttleReleaseSettings select.setting-input[data-update-source] {

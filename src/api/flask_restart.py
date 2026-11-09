@@ -363,6 +363,7 @@ def list_active_work(exclude_session_id: Optional[Any] = None) -> Dict[str, Any]
 
     # Live subprocesses not already represented (synthetic worker sessions).
     enumeration_failed = False
+    detached_waits: List[Dict[str, Any]] = []
     try:
         from api import chat_run_registry as crr
 
@@ -371,6 +372,16 @@ def list_active_work(exclude_session_id: Optional[Any] = None) -> Dict[str, Any]
             if not bare or bare in represented_sids:
                 continue
             if exclude and bare == exclude:
+                continue
+            # A detached CLI in its *waiting* phase has already replied and only
+            # polls its own background tasks (sub-agent lanes, builds, units),
+            # which live outside Flask. Restarting ends that poll, not the
+            # work, so it never blocks a restart. A *working* one (answering a
+            # steer or following up on a finished task) still does.
+            wait = _waiting_detached_run(bare)
+            if wait is not None:
+                detached_waits.append(wait)
+                represented_sids.add(bare)
                 continue
             qids = crr.live_query_ids(bare) or []
             tasks.append(
@@ -396,9 +407,24 @@ def list_active_work(exclude_session_id: Optional[Any] = None) -> Dict[str, Any]
         "deduped_job_count": len(duplicate_jobs),
         "excluded_session_id": exclude,
         "enumeration_failed": enumeration_failed,
+        "detached_waits": detached_waits,
         "active_count": len(tasks),
         "is_idle": (not tasks) and not enumeration_failed,
     }
+
+
+def _waiting_detached_run(session_id: str) -> Optional[Dict[str, Any]]:
+    """The chat's detached run when it is only waiting on background tasks."""
+    try:
+        from api.agent_harness.background_wait import detached_wait
+
+        wait = detached_wait(session_id)
+    except Exception:
+        return None
+    if wait is None or wait.phase != "waiting":
+        return None
+    return {"kind": "detached_wait", "session_id": session_id,
+            "job_id": wait.job_id, "agent": wait.agent_id}
 
 
 def _terminal(state: str) -> bool:

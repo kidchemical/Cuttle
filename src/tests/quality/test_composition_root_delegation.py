@@ -31,6 +31,7 @@ CHAT_OWNERS = (
     ("chat_media.js", "CuttleChatMedia", "CuttleChatMedia.create("),
     ("chat_tts.js", "CuttleChatTts", "CuttleChatTts.create("),
     ("chat_transcript_nav.js", "CuttleChatTranscriptNav", "CuttleChatTranscriptNav.create("),
+    ("chat_threads.js", "CuttleChatThreads", "CuttleChatThreads.create("),
     ("chat_subagent_launchers.js", "CuttleChatSubagentLaunchers", "CuttleChatSubagentLaunchers.create("),
     ("chat_agent_controls.js", "CuttleChatAgentControls", "CuttleChatAgentControls.create("),
     ("chat_slash_palette.js", "CuttleChatSlashPalette", "CuttleChatSlashPalette.create("),
@@ -68,6 +69,8 @@ CHAT_OWNERS = (
     ("chat_background_work.js", "CuttleChatBackgroundWork", "CuttleChatBackgroundWork.create("),
     ("chat_timeline_notice.js", "CuttleChatTimelineNotice", "CuttleChatTimelineNotice.create("),
     ("chat_composer_lock.js", "CuttleChatComposerLock", "CuttleChatComposerLock.create("),
+    ("chat_composer_resize.js", "CuttleChatComposerResize", "CuttleChatComposerResize.create("),
+    ("chat_scrollbar_autohide.js", "CuttleChatScrollbarAutohide", "CuttleChatScrollbarAutohide.create("),
     ("chat_export.js", "CuttleChatExport", "CuttleChatExport.create("),
     ("chat_session_menu.js", "CuttleChatSessionMenu", "CuttleChatSessionMenu.create("),
 )

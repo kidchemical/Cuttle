@@ -114,6 +114,7 @@
         const pinText = pin ? `<span aria-hidden="true">${M.esc(M.agentIcon(state.catalog, pin.agent))}</span> ${M.esc(M.pinLabel(state.catalog, pin))}` : 'Missing profile — create it in Agents';
         const cls = ['orch-member', missing ? 'is-missing' : '', isDefault ? 'is-default' : '', on ? '' : 'is-off', temp ? 'is-temp' : ''].filter(Boolean).join(' ');
         return `<li class="${cls}" data-member="${index}">
+            <button type="button" class="orch-grip" data-grip="member" title="Drag to reorder or move to another tier (Alt+↑/↓)" aria-label="Move ${M.esc(label)}. Alt+Up or Alt+Down to move.">⠿</button>
             <label class="orch-switch" title="${on ? 'On — switch off to skip this agent' : 'Off — switch on to use this agent'}">
                 <input type="checkbox" data-toggle-member${on ? ' checked' : ''} aria-label="Use ${M.esc(label)}"><span aria-hidden="true"></span>
             </label>
@@ -145,12 +146,11 @@
             <div class="orch-tier-rail" aria-hidden="true"><span class="orch-tier-step">${index + 1}</span>${index < count - 1 ? '<span class="orch-tier-line"></span>' : ''}</div>
             <div class="orch-tier-card">
                 <div class="orch-tier-head">
+                    <button type="button" class="orch-grip" data-grip="tier" title="Drag to reorder tiers (Alt+↑/↓)" aria-label="Move the ${M.esc(tier.label)} tier. Alt+Up or Alt+Down to move.">⠿</button>
                     <span class="orch-role-badge" title="${M.esc(meta.hint)}"><span aria-hidden="true">${meta.icon}</span></span>
                     <input class="orch-tier-name" data-field="label" value="${M.esc(tier.label)}" aria-label="Tier name" maxlength="60">
                     <select data-field="role" aria-label="Tier role" class="orch-role-select">${roles}</select>
                     <span class="orch-tier-actions">
-                        <button type="button" class="orch-icon-btn" data-move="-1" ${index === 0 ? 'disabled' : ''} title="Move up" aria-label="Move tier up">↑</button>
-                        <button type="button" class="orch-icon-btn" data-move="1" ${index === count - 1 ? 'disabled' : ''} title="Move down" aria-label="Move tier down">↓</button>
                         <button type="button" class="orch-icon-btn is-danger" data-remove-tier ${count === 1 ? 'disabled' : ''} title="Remove tier" aria-label="Remove tier">✕</button>
                     </span>
                 </div>
@@ -211,7 +211,47 @@
         sup.require_branch.value = s.require_branch || '';
         sup.require_path.value = s.require_path || '';
         sup.instructions.value = s.instructions || '';
+        sup.involve_user.value = s.involve_user || 'blocked';
+        sup.nudge.value = s.nudge || 'agent';
         renderForbid();
+        renderCheckpoints();
+    }
+
+    // Event wakes: same vocabulary and validation as the "Supervise this chat…" dialog.
+    const SM = window.CuttleChatSupervisionModel;
+    function renderCheckpoints() {
+        const fields = SM.checkpointFields(state.draft.supervisor.checkpoints || {});
+        const reviewers = state.profiles.filter((p) => p && p.id && p.agent && p.agent !== 'none');
+        const opts = (cur) => [['wake', 'Wake the supervisor'], ['stop,wake', 'Stop the chat, wake the supervisor']]
+            .concat(reviewers.map((p) => ['supervisor:' + p.id, 'Send to reviewer: ' + (p.name || p.id)]))
+            .concat([[cur, cur]]).filter((o, i, all) => o[0] && all.findIndex((x) => x[0] === o[0]) === i)
+            .map(([v, l]) => `<option value="${M.esc(v)}"${v === cur ? ' selected' : ''}>${M.esc(l)}</option>`).join('');
+        $('orchCheckpointRows').innerHTML = SM.CHECKPOINTS.map((c) => {
+            const f = fields[c.id];
+            const param = c.id === 'tests'
+                ? `<select data-cp-when aria-label="Which test runs">${[['pass', 'that passes'], ['fail', 'that fails'], ['any', 'either way']]
+                    .map(([v, l]) => `<option value="${v}"${v === f.when ? ' selected' : ''}>${l}</option>`).join('')}</select>`
+                : c.id === 'repeat_failures'
+                    ? `<input data-cp-n type="number" min="2" max="20" value="${M.esc(f.n)}" aria-label="Times in a row">`
+                    : c.id === 'watched_paths'
+                        ? `<input data-cp-regex value="${M.esc(f.regex || '')}" placeholder="^(api|schema)/ or \\.sql$" aria-label="Path pattern" spellcheck="false">` : '';
+            return `<div class="orch-checkpoint" data-cp="${c.id}"><label class="orch-checkpoint-head"><input type="checkbox" data-cp-on${f.on ? ' checked' : ''}> ${M.esc(c.label)}</label>
+                <div class="orch-checkpoint-opts"${f.on ? '' : ' hidden'}>${param}<select data-cp-do aria-label="What happens">${opts(f.do)}</select></div></div>`;
+        }).join('');
+    }
+
+    function readCheckpoints() {
+        const fields = {};
+        $('orchCheckpointRows').querySelectorAll('[data-cp]').forEach((row) => {
+            const q = (sel) => row.querySelector(sel);
+            fields[row.dataset.cp] = { on: q('[data-cp-on]').checked, do: q('[data-cp-do]').value,
+                when: q('[data-cp-when]') && q('[data-cp-when]').value, n: q('[data-cp-n]') && q('[data-cp-n]').value,
+                regex: q('[data-cp-regex]') && q('[data-cp-regex]').value };
+            q('.orch-checkpoint-opts').hidden = !fields[row.dataset.cp].on;
+        });
+        const out = SM.checkpointsBody(fields);
+        $('orchCheckpointErrors').textContent = out.errors.join(' ');
+        state.draft.supervisor.checkpoints = out.body;
     }
 
     // ── Editor shell ────────────────────────────────────────────────────
@@ -410,9 +450,8 @@
         if (!btn || !box || btn.disabled) return;
         const i = Number(box.dataset.index);
         const tiers = state.draft.tiers;
-        if (btn.dataset.move) state.draft.tiers = M.moveItem(tiers, i, Number(btn.dataset.move));
-        else if (btn.hasAttribute('data-remove-tier')) {
-            if (tiers[i].profiles.length && !window.confirm(`Remove the ${tiers[i].label} tier?`)) return;
+        if (btn.hasAttribute('data-remove-tier')) {
+            if (M.tierMembers(tiers[i]).length && !window.confirm(`Remove the ${tiers[i].label} tier?`)) return;
             tiers.splice(i, 1);
         } else if (btn.hasAttribute('data-drop-member')) tiers[i] = M.removeMember(tiers[i], memberIndex(btn));
         else if (btn.hasAttribute('data-promote')) tiers[i] = M.promoteMember(tiers[i], memberIndex(btn));
@@ -422,6 +461,149 @@
         renderTiers();
         changed();
     });
+    // ── Reorder: drag a grip (tiers, or members within/across tiers) or Alt+↑/↓ on it.
+    // Only the grip arms a row as draggable, so the inputs inside a row stay editable.
+
+    let drag = null; // { kind: 'tier'|'member', tier, index, row, target, problem }
+
+    function dropMarks() {
+        tiersEl.querySelectorAll('.is-drop-before, .is-drop-after, .is-drop-into, .is-drop-denied')
+            .forEach((n) => n.classList.remove('is-drop-before', 'is-drop-after', 'is-drop-into', 'is-drop-denied'));
+    }
+
+    /** Insert-before index among `rows` for a pointer at y, plus the row edge to mark. */
+    function dropSlot(rows, y) {
+        for (let k = 0; k < rows.length; k++) {
+            const r = rows[k].getBoundingClientRect();
+            if (y < r.top + r.height / 2) return { before: k, row: rows[k], edge: 'is-drop-before' };
+        }
+        return { before: rows.length, row: rows[rows.length - 1] || null, edge: 'is-drop-after' };
+    }
+
+    function focusGrip(kind, tier, index) {
+        const box = tiersEl.querySelector(`.orch-tier[data-index="${tier}"]`);
+        const sel = kind === 'tier' ? '.orch-tier-head [data-grip]' : `[data-member="${index}"] [data-grip]`;
+        box?.querySelector(sel)?.focus();
+    }
+
+    /** Applies a move; returns false (and says why) when the target tier refuses the member. */
+    function applyMove(kind, from, to) {
+        if (kind === 'tier') {
+            state.draft.tiers = M.moveItemTo(state.draft.tiers, from.tier, to.before);
+        } else {
+            const next = M.moveMember(state.draft.tiers, { tier: from.tier, index: from.index }, { tier: to.tier, index: to.before });
+            if (!next) {
+                const m = M.tierMembers(state.draft.tiers[from.tier])[from.index];
+                toast(M.memberDropProblem(state.draft.tiers[to.tier], m) || 'Cannot move there', 'info');
+                return false;
+            }
+            state.draft.tiers = next;
+        }
+        renderTiers();
+        changed();
+        return true;
+    }
+
+    function isNoop(kind, from, to) {
+        const sameList = kind === 'tier' || to.tier === from.tier;
+        const at = kind === 'tier' ? from.tier : from.index;
+        return sameList && (to.before === at || to.before === at + 1);
+    }
+
+    tiersEl.addEventListener('pointerdown', (e) => {
+        const grip = e.target.closest('[data-grip]');
+        if (!grip) return;
+        const row = grip.closest(grip.dataset.grip === 'tier' ? '.orch-tier' : '.orch-member');
+        if (row) row.draggable = true;
+    });
+    tiersEl.addEventListener('pointerup', (e) => {
+        if (!drag) e.target.closest('[draggable="true"]')?.removeAttribute('draggable');
+    });
+    tiersEl.addEventListener('dragstart', (e) => {
+        const row = e.target;
+        if (!(row instanceof Element) || row.getAttribute('draggable') !== 'true') return;
+        const kind = row.classList.contains('orch-tier') ? 'tier' : 'member';
+        const box = row.closest('.orch-tier');
+        drag = { kind, tier: Number(box.dataset.index), index: kind === 'member' ? Number(row.dataset.member) : -1, row, target: null, problem: '' };
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', kind);
+        requestAnimationFrame(() => row.classList.add('is-dragging'));
+    });
+    tiersEl.addEventListener('dragover', (e) => {
+        if (!drag) return;
+        const box = e.target.closest('.orch-tier');
+        if (!box) return;
+        dropMarks();
+        drag.target = null;
+        if (drag.kind === 'tier') {
+            const slot = dropSlot([...tiersEl.children], e.clientY);
+            drag.target = { before: slot.before };
+        } else {
+            const ti = Number(box.dataset.index);
+            if (ti !== drag.tier) {
+                const m = M.tierMembers(state.draft.tiers[drag.tier])[drag.index];
+                drag.problem = M.memberDropProblem(state.draft.tiers[ti], m);
+                if (drag.problem) { box.classList.add('is-drop-denied'); return; } // no preventDefault → no-drop cursor
+            }
+            const ul = box.querySelector('.orch-members');
+            const slot = dropSlot([...ul.querySelectorAll(':scope > [data-member]')], e.clientY);
+            drag.target = { tier: ti, before: slot.before };
+            if (!slot.row) { ul.classList.add('is-drop-into'); e.preventDefault(); e.dataTransfer.dropEffect = 'move'; return; }
+            if (isNoop('member', drag, drag.target)) { e.preventDefault(); return; }
+            slot.row.classList.add(slot.edge);
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            return;
+        }
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (!isNoop('tier', drag, drag.target)) {
+            const rows = [...tiersEl.children];
+            const row = rows[Math.min(drag.target.before, rows.length - 1)];
+            row.classList.add(drag.target.before >= rows.length ? 'is-drop-after' : 'is-drop-before');
+        }
+    });
+    tiersEl.addEventListener('dragleave', (e) => {
+        if (drag && !tiersEl.contains(e.relatedTarget)) dropMarks();
+    });
+    tiersEl.addEventListener('drop', (e) => {
+        if (!drag || !drag.target) return;
+        e.preventDefault();
+        const { kind, target } = drag;
+        const from = { tier: drag.tier, index: drag.index };
+        if (!isNoop(kind, from, target)) applyMove(kind, from, target);
+    });
+    tiersEl.addEventListener('dragend', () => {
+        if (!drag) return;
+        dropMarks();
+        drag.row.classList.remove('is-dragging');
+        drag.row.removeAttribute('draggable');
+        drag = null;
+    });
+    tiersEl.addEventListener('keydown', (e) => {
+        const grip = e.target.closest('[data-grip]');
+        if (!grip || !e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+        e.preventDefault();
+        const delta = e.key === 'ArrowUp' ? -1 : 1;
+        const ti = Number(grip.closest('.orch-tier').dataset.index);
+        const last = state.draft.tiers.length - 1;
+        if (grip.dataset.grip === 'tier') {
+            const to = ti + delta;
+            if (to < 0 || to > last) return;
+            applyMove('tier', { tier: ti }, { before: delta < 0 ? to : to + 1 });
+            focusGrip('tier', to);
+            return;
+        }
+        const mi = memberIndex(grip);
+        const count = M.tierMembers(state.draft.tiers[ti]).length;
+        let to;
+        if (mi + delta >= 0 && mi + delta < count) to = { tier: ti, before: delta < 0 ? mi - 1 : mi + 2, at: mi + delta };
+        else if (delta < 0 && ti > 0) { const n = M.tierMembers(state.draft.tiers[ti - 1]).length; to = { tier: ti - 1, before: n, at: n }; }
+        else if (delta > 0 && ti < last) to = { tier: ti + 1, before: 0, at: 0 };
+        else return;
+        if (applyMove('member', { tier: ti, index: mi }, to)) focusGrip('member', to.tier, to.at);
+    });
+
     $('orchAddTier').addEventListener('click', () => {
         const tier = M.newTier(state.draft.tiers);
         tier.role = state.draft.tiers.some((t) => t.role === 'expert') ? 'escalation' : 'expert';
@@ -461,6 +643,9 @@
         s.require_branch = sup.require_branch.value.trim();
         s.require_path = sup.require_path.value.trim();
         s.instructions = sup.instructions.value.trim();
+        s.involve_user = sup.involve_user.value || 'blocked';
+        s.nudge = sup.nudge.value || 'agent';
+        readCheckpoints();
         changed();
     }
     sup.addEventListener('input', readSupervisor);
@@ -543,6 +728,7 @@
         try {
             const data = await call('/api/orchestrator/playbooks/' + encodeURIComponent(body.id), 'PUT', body);
             toast(`Saved ${data.playbook.name}`, 'success');
+            (data.playbook.warnings || []).forEach((w) => toast(w, 'info'));
             state.savedId = data.playbook.id;
             await load(data.playbook.id);
         } catch (err) {

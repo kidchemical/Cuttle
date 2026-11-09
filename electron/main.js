@@ -2290,6 +2290,18 @@ function openGizmoPopout(id, title) {
     win.loadURL(url.toString());
 }
 
+// A pop-out asks for room when its content outgrows the window (larger
+// Interface text size). Grow only — a window the user made bigger stays.
+ipcMain.handle('gizmo-popout-fit', (event, width, height) => {
+    const win = Array.from(gizmoPopouts.values()).find((w) => !w.isDestroyed() && w.webContents === event.sender);
+    if (!win) return { ok: false };
+    const [cw, ch] = win.getContentSize();
+    const w = Math.min(800, Math.max(cw, Math.ceil(Number(width) || 0)));
+    const h = Math.min(600, Math.max(ch, Math.ceil(Number(height) || 0)));
+    if (w !== cw || h !== ch) win.setContentSize(w, h);
+    return { ok: true, width: w, height: h };
+});
+
 ipcMain.handle('gizmo-popouts-sync', (event, list) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
         return { ok: false, error: 'Only the Cuttle window manages gizmo pop-outs.' };

@@ -117,6 +117,35 @@ def bindings_route():
     return jsonify(success=True, bindings=service.list_bindings(_uid()))
 
 
+@orchestrator_bp.get("/bindings/<session>")
+@owner_required
+def binding_route(session: str):
+    """The chat's binding for the header chip (``bound: false`` when none)."""
+    disabled = _disabled()
+    if disabled:
+        return disabled
+    try:
+        return jsonify(success=True, **service.get_binding(session, user_id=_uid()))
+    except service.OrchestratorError as exc:
+        return _error(exc)
+
+
+@orchestrator_bp.put("/bindings/<session>")
+@owner_required
+def rebind_route(session: str):
+    """Switch a bound chat's playbook and/or edit its goal (omitted fields are kept)."""
+    disabled = _disabled()
+    if disabled:
+        return disabled
+    body = request.get_json(silent=True) or {}
+    try:
+        out = service.rebind(session, _uid(), playbook_id=body.get("playbook_id"),
+                             goal=body.get("goal"), source="ui")
+    except service.OrchestratorError as exc:
+        return _error(exc)
+    return jsonify(success=True, **out)
+
+
 @orchestrator_bp.delete("/bindings/<session>")
 @owner_required
 def unbind_route(session: str):
@@ -124,7 +153,7 @@ def unbind_route(session: str):
     if disabled:
         return disabled
     try:
-        return jsonify(success=True, unbound=service.unbind(session, user_id=_uid()))
+        return jsonify(success=True, unbound=service.unbind(session, user_id=_uid(), source="ui"))
     except service.OrchestratorError as exc:
         return _error(exc)
 

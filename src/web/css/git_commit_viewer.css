@@ -16,9 +16,19 @@
     line-height: 1.35;
 }
 
+.git-graph-detail-subject,
+.git-graph-detail-body {
+    overflow-wrap: anywhere;
+}
+
+.git-graph-detail-body {
+    white-space: pre-wrap;
+    margin: 0 0 12px;
+}
+
 .git-graph-detail-kv {
     display: grid;
-    grid-template-columns: 72px 1fr;
+    grid-template-columns: 72px minmax(0, 1fr);
     gap: 4px 8px;
     margin-bottom: 12px;
     font-size: 12px;

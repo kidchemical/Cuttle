@@ -62,6 +62,17 @@ def test_registry_normalizes_chat_handles_and_forwards_text():
     assert steer.active_agent(77) is None
 
 
+def test_steer_reports_the_turn_it_joined(monkeypatch):
+    """The chat's open turn row names the turn a steer joins (reply threads)."""
+    monkeypatch.setattr("api.chat_turn_row.current",
+                        lambda sid: {"query_id": "q-live-1"} if str(sid) == "78" else None)
+    token = steer.register(78, "codex", lambda _t: _future((True, None)))
+    try:
+        assert steer.steer(78, "and the tests")["turn_id"] == "q-live-1"
+    finally:
+        steer.unregister(78, token)
+
+
 def test_registry_reports_rejection_and_missing_runs():
     assert steer.steer(5, "hello")["reason"] == "no_steerable_run"
     steer.register(5, "muse", lambda _t: _future((False, "turn is no longer active")))
@@ -544,6 +555,39 @@ def test_chat_steer_endpoint_persists_steered_user_message(tmp_path, monkeypatch
         meta = rows[-1].get("metadata") or {}
         assert meta.get("steered") is True
         assert meta.get("steered_agent") == "codex"
+        assert "turn_id" not in meta  # no open turn row in this fixture
+    finally:
+        steer.unregister(sid, reg)
+
+
+def test_chat_steer_endpoint_threads_the_row_under_the_live_turn(tmp_path, monkeypatch):
+    """The steered user row carries the live turn's id, so the transcript can
+    show it under that turn's reply instead of after it."""
+    from api import auth_db as auth_db_mod
+    from api import web_chat_api as wca
+
+    db_path = tmp_path / "steer-thread.db"
+    monkeypatch.setattr(auth_db_mod, "DB_PATH", db_path)
+    auth_db_mod._db_instance = None
+    db = auth_db_mod.AuthDatabase(db_path)
+    auth_db_mod._db_instance = db
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    monkeypatch.setattr("api.web_chat_api.get_auth_db", lambda: db)
+    monkeypatch.setenv("OWNER_USER_EMAIL", "owner@local")
+
+    owner = db.create_user("owner@local", "Owner", "local", password="x")
+    sid = db.create_chat_session(owner, "steer thread")
+    auth_token = db.create_auth_session(owner)
+    monkeypatch.setattr("api.chat_turn_row.current",
+                        lambda s: {"query_id": "q-thread-9"} if str(s) == str(sid) else None)
+    reg = steer.register(sid, "codex", lambda _t: _future((True, None)))
+    try:
+        client = wca.app.test_client()
+        client.set_cookie("session_token", auth_token)
+        resp = client.post("/api/chat-steer", json={"session_id": sid, "message": "also docs"})
+        assert resp.status_code == 200 and resp.get_json()["turn_id"] == "q-thread-9"
+        meta = [m for m in db.get_messages(sid) if m["role"] == "user"][-1].get("metadata") or {}
+        assert meta.get("steered") is True and meta.get("turn_id") == "q-thread-9"
     finally:
         steer.unregister(sid, reg)
 
@@ -578,9 +622,16 @@ steer = q.get(timeout=6)
 if mode == "deaf":
     result("done", 0.01)
     sys.exit(0)
-if mode == "late":
+if mode in ("late", "late2"):
     result("first answer", 0.01)
-if steer is not None:
+if mode == "late2":
+    # Answer the late steer as an extra turn; a second steer arrives meanwhile.
+    open(os.environ["FAKE_CLAUDE_MARK"], "w").close()
+    replay(steer)
+    second = q.get(timeout=6)
+    replay(second)
+    result("saw: %s + %s" % (steer["message"]["content"], second["message"]["content"]), 0.02)
+elif steer is not None:
     replay(steer)
     result("saw: %s" % steer["message"]["content"], 0.02)
 while q.get(timeout=6) is not None:
@@ -617,6 +668,44 @@ def test_claude_turn_accepts_mid_turn_steer(tmp_path, monkeypatch):
     assert res["undelivered_steers"] == []
     assert res["claude_session_id"] == "cs-1"
     assert steer.active_agent(5151) is None
+
+
+@pytestmark_posix
+def test_claude_stays_steerable_while_answering_a_late_steer(tmp_path, monkeypatch):
+    """A steer that lands as the first answer finishes starts an extra turn;
+    a steer sent while that extra turn works must go in, not be refused
+    (the composer would queue it)."""
+    import scripts.utilities.claude_cli_tool as mod
+
+    mark = tmp_path / "first-result"
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "late2")
+    monkeypatch.setenv("FAKE_CLAUDE_MARK", str(mark))
+    monkeypatch.setattr(mod, "claude_executable", lambda: _fake_bin(tmp_path, "claude", _FAKE_CLAUDE))
+    monkeypatch.setattr("scripts.utilities.claude_cli_session_store.save_claude_resume_id", lambda *a, **k: None)
+    results = []
+
+    def _go():
+        for _ in range(100):
+            if steer.active_agent(5353):
+                break
+            time.sleep(0.05)
+        results.append(steer.steer(5353, "one"))
+        for _ in range(100):
+            if mark.exists():
+                break
+            time.sleep(0.05)
+        time.sleep(0.2)  # the runner has handled the first result by now
+        results.append(steer.steer(5353, "two"))
+
+    t = threading.Thread(target=_go, daemon=True)
+    t.start()
+    res = asyncio.run(mod.ClaudeCliTool().execute_prompt(
+        "go", cwd=str(tmp_path), chat_session_id="5353", timeout=30, steerable=True))
+    t.join(5)
+    assert [r["steered"] for r in results] == [True, True], results
+    assert res["output"] == "first answer\n\nsaw: one + two"
+    assert res["steered"] == 2 and res["undelivered_steers"] == []
+    assert steer.active_agent(5353) is None
 
 
 @pytestmark_posix

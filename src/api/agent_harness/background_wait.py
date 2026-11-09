@@ -15,6 +15,13 @@ file, the standard watch/progress card), and the CLI keeps running detached:
 * ``steer_detached`` lets ``/api/chat`` (``api.chat_coordinator``) put the next
   message into the still-open run through ``api.agent_harness.steer`` instead of
   starting a second ``claude --resume`` on the same session.
+* the run has two phases. **Waiting** (nothing but a background task runs):
+  the chat is idle and the live-status card shows the task. **Working** (the
+  CLI answers a steer or follows up on a finished task): the CLI's activity
+  lines go to ``api.chat_live_status`` flagged ``followup`` (``status_sink`` is
+  the adapter's status queue after the hand-off; ``working`` / ``waiting``
+  switch phases), so every device shows the ordinary typing bubble with the
+  live status line until the answer lands as its own bubble.
 
 The CLI process stays registered in ``api.chat_run_registry`` (Stop / chat
 deletion kill it) and the job id is bound to the chat so ``/api/chat-cancel``
@@ -41,6 +48,7 @@ DETACHABLE_AGENTS = ("claude",)
 _PER_BUBBLE = frozenset({
     "response", "output", "usage", "cost", "success", "type", "error", "steered",
     "background_job", "drift_warning", "meta_command", "undelivered_steers",
+    "postprocessing", "message_id", "turn_row_slot",
 })
 _FINISHED_TTL_SEC = 3600.0
 
@@ -102,6 +110,11 @@ class BackgroundWait:
         self._sink: Optional[Callable[[Dict[str, Any]], None]] = None
         self._base: Dict[str, Any] = {}
         self._pending: List[Dict[str, Any]] = []
+        self._phase = "waiting"  # waiting (idle chat, card) | working (typing bubble)
+        # The answer's row while working (api.chat_turn_row, slot per job).
+        self._row: Optional[Dict[str, Any]] = None
+        # Run-log events before the first reply's query id is known (bind).
+        self._log_pending: List[Dict[str, Any]] = []
 
     # -- CLI side ---------------------------------------------------------
 
@@ -114,6 +127,7 @@ class BackgroundWait:
         self._write("running", waiting_label(tasks))
         with self._lock:
             self._state = "running"
+        self.log("status", f"Reply saved; {self.label} keeps running in the background. {waiting_label(tasks)}")
         _purge_finished()
         with _lock:
             _active[self.job_id] = self
@@ -133,18 +147,66 @@ class BackgroundWait:
         if self.running:
             self._write("running", label)
 
+    # -- phases: what the open chat shows ----------------------------------
+
+    @property
+    def phase(self) -> str:
+        return self._phase
+
+    def working(self, label: str, *, force: bool = False) -> None:
+        """The CLI is producing an answer: publish live status (typing bubble).
+
+        Idempotent while already working unless ``force`` (an explicit event
+        such as a steer echo replaces the current line).
+        """
+        if not self.running:
+            return
+        if self._phase == "working" and not force:
+            return
+        self._phase = "working"
+        self._open_row()
+        self._publish(label)
+
+    def waiting(self, label: str) -> None:
+        """Only background tasks run: clear live status, show ``label`` on the card."""
+        self._phase = "waiting"
+        self._clear_live()
+        self.progress(label)
+
+    def status_sink(self) -> "_StatusSink":
+        """A status-queue stand-in for the adapter's activity emitter after the hand-off."""
+        return _StatusSink(self)
+
     def followup(self, text: str, *, usage: Optional[Dict[str, Any]] = None,
                  errors: Optional[List[str]] = None) -> None:
-        """Persist one later CLI answer as its own assistant bubble."""
+        """Persist one later CLI answer as its own assistant bubble.
+
+        The working phase ends here: the bubble is saved first, then live
+        status clears, so a client that polls on the idle transition finds
+        the new row.
+        """
+        try:
+            self._persist_followup(text, usage=usage, errors=errors)
+        finally:
+            self._phase = "waiting"
+            self._close_row()
+            self._clear_live()
+
+    def _persist_followup(self, text: str, *, usage: Optional[Dict[str, Any]],
+                          errors: Optional[List[str]]) -> None:
         body_text = (text or "").strip() or (errors[0] if errors else "")
         if not body_text:
             return
+        self.log("writing", body_text)
         body: Dict[str, Any] = {
             "success": True,
             "response": body_text,
             "type": f"{self.agent_id}_error" if errors else f"{self.agent_id}_command",
             "background_followup": self.job_id,
         }
+        if self._row:
+            # The bubble the working phase showed: the answer lands in its row.
+            body["turn_row_slot"] = self._row_slot
         clean_usage = {k: v for k, v in (usage or {}).items()
                        if k in ("prompt_tokens", "completion_tokens", "total_tokens", "context_tokens",
                                 "cache_read_tokens", "cache_write_tokens", "cost") and v is not None}
@@ -185,12 +247,17 @@ class BackgroundWait:
             stopped = is_run_cancelled(self.chat_session_id)
         except Exception:
             pass
+        self.log("status", "Background run stopped" if (stopped or card_stopped)
+                 else f"Background run ended: {label}")
         if stopped and not card_stopped:
             self._write("failed", "Stopped", final=True)
         elif not card_stopped:
             self._write(state, label, final=True)
             if notice:
                 self.followup(notice)
+        self._phase = "waiting"
+        self._close_row(status="cancelled" if stopped else "skipped")
+        self._clear_live()
         try:
             from api.chat_run_registry import clear_session_jobs
 
@@ -206,12 +273,95 @@ class BackgroundWait:
             self._sink = saver
             self._base = {k: v for k, v in (base or {}).items() if k not in _PER_BUBBLE}
             pending, self._pending = self._pending, []
+            logs, self._log_pending = self._log_pending, []
             base_copy = self._base
+        for event in logs:
+            _log_event(base_copy.get("query_id"), event)
         for body in pending:
             _deliver(saver, base_copy, body)
         self._maybe_drop()
 
+    def log(self, kind: str, text: str) -> None:
+        """Append one event to the first reply's run log (Agent Feed / inspector).
+
+        That run is marked finished at the first reply; without these the
+        background phase (steers, later answers, its end) never shows there.
+        """
+        text = (text or "").strip()
+        if not text:
+            return
+        event = {"kind": kind, "t": time.time(), "block_id": secrets.token_hex(16),
+                 "text": text[:20000], "summary": text[:200]}
+        with self._lock:
+            qid = str((self._base or {}).get("query_id") or "")
+            if not qid:
+                self._log_pending.append(event)
+                return
+        _log_event(qid, event)
+
     # -- internals --------------------------------------------------------
+
+    @property
+    def _row_slot(self) -> str:
+        return f"bg:{self.job_id}"
+
+    def _open_row(self) -> None:
+        """Give the working phase's typing bubble its row + inspector from its first frame.
+
+        Under the first reply's query id when known (the detached CLI is still
+        that run); its own otherwise."""
+        if self._row:
+            return
+        try:
+            from api.auth_db import get_auth_db
+            from api.chat_turn_row import open_row
+
+            with self._lock:
+                qid = str((self._base or {}).get("query_id") or "") or None
+            self._row = open_row(get_auth_db(), self.chat_session_id, slot=self._row_slot, query_id=qid,
+                                 label=f"{self.label} follow-up")
+        except Exception as exc:
+            print(f"[background_wait] follow-up row open failed for {self.job_id}: {exc}", flush=True)
+            self._row = None
+
+    def _close_row(self, status: str = "skipped") -> None:
+        """End the working phase's row if no answer landed in it (no-op once saved)."""
+        if not self._row:
+            return
+        self._row = None
+        try:
+            from api.auth_db import get_auth_db
+            from api.chat_turn_row import close
+
+            close(get_auth_db(), self.chat_session_id, status=status, slot=self._row_slot)
+        except Exception as exc:
+            print(f"[background_wait] follow-up row close failed for {self.job_id}: {exc}", flush=True)
+
+    def _publish(self, message: str) -> None:
+        """One live-status line for the working phase (flagged ``followup``)."""
+        text = (message or "").strip()
+        if not text or not self.running or self._phase != "working":
+            return
+        try:
+            from api.chat_live_status import set_live_status
+            from api.chat_run_registry import is_run_cancelled
+
+            row = self._row or {}
+            set_live_status(self.chat_session_id, text, active=True, followup=True,
+                            is_cancelled=is_run_cancelled, query_id=row.get("query_id"),
+                            report_url=row.get("report_url"), message_id=row.get("message_id"))
+        except Exception as exc:
+            print(f"[background_wait] live status publish failed for {self.job_id}: {exc}", flush=True)
+
+    def _clear_live(self) -> None:
+        """Clear live status, but only a follow-up entry (never a newer turn's)."""
+        try:
+            from api.chat_live_status import clear_live_status, get_live_status
+
+            if get_live_status(self.chat_session_id).get("followup"):
+                clear_live_status(self.chat_session_id)
+        except Exception as exc:
+            print(f"[background_wait] live status clear failed for {self.job_id}: {exc}", flush=True)
 
     def _write(self, state: str, label: str, *, final: bool = False) -> None:
         extra: Dict[str, Any] = {
@@ -227,7 +377,8 @@ class BackgroundWait:
         try:
             from api.job_watch import write_status
 
-            write_status(self.job_id, state=state, percent=100 if state == "done" else 0,
+            # A background wait never measures progress: running = indeterminate.
+            write_status(self.job_id, state=state, percent=100 if state == "done" else None,
                          label=label, extra=extra)
         except Exception as exc:
             print(f"[background_wait] status write failed for {self.job_id}: {exc}", flush=True)
@@ -254,6 +405,34 @@ class BackgroundWait:
             with _lock:
                 if _active.get(self.job_id) is self:
                     del _active[self.job_id]
+
+
+class _StatusSink:
+    """Status-queue protocol (``put(("status", text))``) over a wait's live status.
+
+    Lines arriving while the wait is merely waiting (heartbeats, the wait-cap
+    notice) are dropped: there is no answer in progress to show them under.
+    """
+
+    def __init__(self, wait: BackgroundWait):
+        self._wait = wait
+
+    def put(self, item: Any) -> None:
+        if isinstance(item, (tuple, list)) and len(item) >= 2 and item[0] == "status":
+            self._wait._publish(str(item[1] or ""))
+
+    put_preview = put
+
+
+def _log_event(query_id: Any, event: Dict[str, Any]) -> None:
+    if not query_id:
+        return
+    try:
+        from api.agent_events.writer import record
+
+        record("event", str(query_id), event)
+    except Exception as exc:
+        print(f"[background_wait] run log append failed: {exc}", flush=True)
 
 
 def _deliver(saver: Callable[[Dict[str, Any]], None], base: Dict[str, Any], body: Dict[str, Any]) -> None:
@@ -322,11 +501,25 @@ def detached_wait(chat_session_id: Any, agent_id: Optional[str] = None) -> Optio
 
 def steer_detached(chat_session_id: Any, agent_id: Optional[str], text: str) -> Optional[Dict[str, Any]]:
     """Steer ``text`` into this chat's detached run; None when there is none or it refused."""
-    if not agent_id or detached_wait(chat_session_id, agent_id) is None:
+    wait = detached_wait(chat_session_id, agent_id) if agent_id else None
+    if wait is None:
         return None
     from api.agent_harness import steer
 
     if steer.active_agent(chat_session_id) != agent_id:
         return None
     info = steer.steer(chat_session_id, text)
-    return info if info.get("steered") else None
+    if not info.get("steered"):
+        return None
+    # The detached run is still the first reply's turn: the steer threads there.
+    with wait._lock:
+        base_turn = str((wait._base or {}).get("query_id") or "")
+    if base_turn:
+        info["turn_id"] = base_turn
+    # Sent while the chat looked idle (only background tasks running): to the
+    # user this is a new message, not a reply to the old turn's bubble.
+    info["background_idle"] = wait.phase == "waiting"
+    wait.log("status", f"Message steered in: {(text or '').strip()[:500]}")
+    # The answer is on its way: show the typing bubble now, not at the echo.
+    wait.working(f"{wait.label} is answering your message…", force=True)
+    return info

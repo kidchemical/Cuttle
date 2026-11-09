@@ -14,7 +14,9 @@
    never reads page scope.
 
    deps: { win, fetch, escapeHtml, normalizeUsage, getSlashCtx,
-           getSessionId, getProjectPath, toast, notice? }.
+           getSessionId, getProjectPath, toast, notice?, autoCompact? }.
+   `autoCompact` is the CuttleChatAutoCompact namespace (chat_auto_compact.js):
+   the popover's per-chat Auto-compact section, hidden while its flag is off.
    `notice` is the page's timeline-notice adder (chat_timeline_notice.js
    `add`/`update`): Compact posts a running row that settles into a saved
    "context compacted · 82% → 14%" notice, or an error row.
@@ -191,6 +193,7 @@
             `<p class="context-gauge-popover-title">${escapeHtml(label)} context</p>` +
             `<p class="context-gauge-popover-meter">${meter}</p>` +
             (hint ? `<p class="context-gauge-popover-hint">${escapeHtml(hint)}</p>` : '') +
+            `<div class="context-gauge-auto-compact-slot" hidden></div>` +
             `<div class="context-gauge-popover-actions">` +
             (canCompact
                 ? (`<button type="button" class="context-gauge-compact-btn" data-action="compact"` +
@@ -229,6 +232,8 @@
         const getProjectPath = deps.getProjectPath;
         const toast = deps.toast || function () {};
         const notice = deps.notice || null;
+        const autoCompact = deps.autoCompact && typeof deps.autoCompact.create === 'function'
+            ? deps.autoCompact.create({ fetch: doFetch, escapeHtml, toast }) : null;
 
         let status = null;
         let fetchTimer = 0;
@@ -385,11 +390,15 @@
         }
 
         function renderPopover(el, payload) {
+            // A refresh keeps the mounted Auto-compact section (and its focus).
+            const kept = el.querySelector('.context-gauge-auto-compact-slot');
             el.innerHTML = renderPopoverHtml(payload, {
                 escapeHtml,
                 busy,
                 fallbackAgent: stickyAgentId(),
             });
+            const fresh = el.querySelector('.context-gauge-auto-compact-slot');
+            if (kept && fresh && !kept.hidden) fresh.replaceWith(kept);
         }
 
         function positionPopover(anchorBtn, pop) {
@@ -428,12 +437,21 @@
             renderPopover(pop, current || { agent_id: agent, percent: 0 });
             positionPopover(anchorBtn, pop);
             anchorBtn.setAttribute('aria-expanded', 'true');
+            mountAutoCompact(anchorBtn, pop);
             const compactBtn = pop.querySelector('[data-action="compact"]');
             if (compactBtn) {
                 compactBtn.onclick = () => runCompact(anchorBtn);
             }
             const closeBtn = pop.querySelector('[data-action="close"]');
             if (closeBtn) closeBtn.onclick = () => closePopover();
+        }
+
+        function mountAutoCompact(anchorBtn, pop) {
+            const slot = autoCompact && pop.querySelector('.context-gauge-auto-compact-slot');
+            if (!slot) return;
+            autoCompact.mount(slot, getSessionId()).then((shown) => {
+                if (shown && !pop.hidden) positionPopover(anchorBtn, pop);
+            });
         }
 
         async function runCompact(anchorBtn) {

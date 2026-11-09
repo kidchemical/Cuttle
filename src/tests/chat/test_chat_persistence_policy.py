@@ -257,12 +257,28 @@ def test_history_policy_matrix(authed_db, monkeypatch, lane, outcome,
     assert _no_real_execution == {"kernel": 0, "dispatch": 0}
     assistants = _assistant_rows(db, sid)
 
-    assert [m["content"] for m in assistants] == expected
+    assert [_card(m["content"]) for m in assistants] == expected
+    for row in assistants:  # the turn's own row, finalized: never left in progress
+        assert not (row.get("metadata") or {}).get("in_progress")
+        assert (row.get("metadata") or {}).get("query_id") or outcome.startswith("supervised")
 
     if outcome == "superseded":
         _newer_held_check(sid)
     else:
         _release_check(sid)
+
+
+STOPPED_CARD = "<stopped card>"
+FAILED_CARD = "<failed card>"
+
+
+def _card(content):
+    """Stopped / failed turn cards carry a timestamp: compare them by kind."""
+    if content.startswith("**Agent stopped before completion.**"):
+        return STOPPED_CARD
+    if content.startswith("**Agent failed before completion.**"):
+        return FAILED_CARD
+    return content
 
 
 def _expected_assistant_contents(lane, outcome):
@@ -274,13 +290,21 @@ def _expected_assistant_contents(lane, outcome):
     useful failure text is retained everywhere, including sync lanes
     (coarse kept-rule gates); superseded claimed turns save nothing
     while the newer turn keeps the busy slot.
+
+    The turn's assistant row exists from turn start (api.chat_turn_row), so a
+    turn that ends without a saved reply finalizes that same row: an empty
+    failure becomes the failed card, a stopped or superseded turn the stopped
+    card (with its query-log link). Status lines and system answers leave
+    nothing; a supervised canonical row stands in for it.
     """
     if outcome == "success_text":
         if lane.startswith("pipeline"):
             return [_PIPELINE_FALLBACK]
         return ["matrix reply"]
-    if outcome in ("empty_failed", "cancelled_turn"):
-        return []
+    if outcome == "empty_failed":
+        return [FAILED_CARD]
+    if outcome == "cancelled_turn":
+        return [STOPPED_CARD]
     if outcome == "failed_nonempty":
         return ["failed with text"]
     if outcome in ("cancelled_text", "system"):
@@ -288,7 +312,7 @@ def _expected_assistant_contents(lane, outcome):
     if outcome in ("supervised_skip", "supervised_coord"):
         return ["canonical supervised row"]
     if outcome == "superseded":
-        return []
+        return [STOPPED_CARD]
     raise AssertionError(f"unknown outcome {outcome}")
 
 

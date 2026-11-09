@@ -613,4 +613,4 @@ def test_handoff_transcript_drops_foreign_reasoning():
         '<cuttle_original_response>"<think>private plan</think>draft"</cuttle_original_response>'
         "  Final answer.<thinking>more</thinking>"
     )
-    assert _strip_injected_blocks(raw) == "Final answer."
+    assert _strip_injected_blocks(raw) == "draft  Final answer."

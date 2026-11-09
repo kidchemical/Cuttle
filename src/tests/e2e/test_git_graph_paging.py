@@ -144,9 +144,9 @@ def test_failed_page_offers_retry_instead_of_looping(git_page):
 def test_ref_chips_by_kind(git_page):
     page, _api, errors = git_page()
     chips = page.locator(".git-graph-row").first.locator(".git-graph-ref")
-    assert chips.all_inner_texts() == ["main", "v1.0"]  # HEAD folds into the branch chip
+    assert chips.all_inner_texts() == ["HEAD", "main", "v1.0"]  # HEAD is its own first chip
     assert "is-head" in chips.nth(0).get_attribute("class")
-    assert "is-tag" in chips.nth(1).get_attribute("class")
+    assert "is-tag" in chips.nth(2).get_attribute("class")
     assert errors == []
 
 

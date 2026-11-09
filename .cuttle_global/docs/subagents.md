@@ -25,7 +25,14 @@ PYTHONPATH=src .venv/bin/python -m api.subagents spawn --parent CH-000535 --wait
 
 `--child` is repeatable JSON. Keys: `title`, `message` (required), `agent`
 (harness id: `cursor`, `codex`, `muse`, …), `model`, `effort`, `route` (bool),
-`profile` (catalog id or inline `{name,avatar,agent}`), `avatar`.
+`profile` (catalog id or inline `{name,avatar,agent}`), `avatar`, `tier`
+(orchestrator chats: a playbook tier; Cuttle runs its first agent with budget
+left — `features/orchestrator/docs/orchestrator.md`).
+
+A pinned child whose account is out of usage (a recent quota failure, or the
+cached `/usage` plan windows at their limit) is refused before any chat is
+created; a child that fails on quota marks its account for later spawns and
+routed turns.
 
 `model` must be an id the named harness's own CLI accepts — pass it exactly as
 that harness spells it (some qualify with a provider prefix, some are bare); do
@@ -74,6 +81,14 @@ another owner's batch. Crash/SIGKILL recovery (rows left active with no
 process at all) is explicitly deferred: inspect with `status`, terminally
 stop with `cancel`.
 
+**Parent stopped listening.** A `--wait` CLI notes the process that launched it
+(the parent's agent CLI). If that process is gone when the round ends (your
+turn hit its background-wait limit, timed out, or Flask restarted), the CLI queues
+a Cuttle notice turn on the parent chat with each child's handle, status and
+reply, and the parent continues from there. Running `spawn --wait` as a
+background command is therefore safe for long children: you are told when it
+finishes either way. While the launcher is still alive nothing extra is posted.
+
 `--route` asks the existing Cuttle router to pick `agent`+`model` for children
 that omitted them (or set `"route": true`).
 
@@ -86,6 +101,7 @@ long). `--tasks` pins a parent Tasks gizmo with one item per child.
 ```bash
 PYTHONPATH=src .venv/bin/python -m api.subagents status --parent CH-000535 --json
 PYTHONPATH=src .venv/bin/python -m api.subagents status --batch "<batch-id>" --json
+PYTHONPATH=src .venv/bin/python -m api.subagents status --parent CH-000535 --context --json
 PYTHONPATH=src .venv/bin/python -m api.subagents wait "<batch-id>" --json
 PYTHONPATH=src .venv/bin/python -m api.subagents message --session CH-000540 --text "follow up" --wait --json
 PYTHONPATH=src .venv/bin/python -m api.subagents cancel --batch "<batch-id>" --json
@@ -96,6 +112,12 @@ PYTHONPATH=src .venv/bin/python -m api.subagents profiles list --json
 ```
 
 `--session` / `--parent` accept `CH-000535` or a numeric id. Tests may pass `--db`.
+
+`status --context` adds each child's agent window fill (`context.percent`,
+`compact_available`). A conversational child you keep reusing that runs above
+~75% can be compacted between its turns with
+`python -m api.chat_cli compact CH-… [--mode fresh]` (see `chat-history.md`);
+never while it is working.
 
 ## Caps
 
@@ -119,7 +141,44 @@ become one card per child — name/avatar, harness · model · effort, outcome
 (`queued` / `running` / `done` / `failed` / `cancelled` / `lost` = host process
 died) and a one-line plain-text result (full text in the tooltip). Outcome comes
 from the child row, never inferred; history reload refreshes cards from it.
-Click opens the child chat.
+Click opens the child chat. A follow-up round (`python -m api.subagents message`)
+gets its own card on the bubble of the turn that sent it (same rules as below),
+and the earlier bubble's card is frozen at the previous round's outcome
+(`frozen: true`, never re-hydrated).
+
+Cards show **the moment `spawn` creates the batch** and attach to the **turn that
+launched it**, the same for every agent (Claude Code, Codex, Cursor, OpenCode, …).
+Every agent turn Cuttle runs exports its identity to the agent's process:
+`CUTTLE_TURN_ID` (the turn's query id), plus `CUTTLE_TURN_MESSAGE` (the user
+bubble that started it, `CH-<chat>-<N>`) and `CUTTLE_TURN_MESSAGE_ID` where there
+is one. `spawn` and `message` record that turn on the batch / follow-up round, and
+every assistant row records the turn it belongs to (`metadata.turn_id`, stamped
+on every write path). So:
+
+- the card is live on that turn's in-progress bubble as soon as `spawn` runs (and
+  in the pinned background card), and stays on the reply that turn saves,
+  matched by turn id;
+- a reply from a different turn never takes another turn's card;
+- nothing depends on timing or on which agent ran the turn.
+
+If that turn's reply was already saved when `spawn` ran (an agent still working in
+the background after its reply), the card goes on the first reply of that turn
+saved after the spawn, never back onto the earlier one.
+
+While the children work, the parent's pinned **background card** (the one that
+shows "Waiting in background") lists them as fleet-style rows: avatar, name,
+live status line and outcome, each opening its child chat. It also folds in the
+agent's own background task that runs the `api.subagents` command. Supervised
+chats stay as "Open CH-…" buttons under "Supervising".
+
+A follow-up to a child — `subagents message` or `chat_cli send CH-<child>` —
+starts a new card round the same way, bound to the turn that sent it, and the
+round ends when the child's turn ends.
+
+A manual run from a plain terminal has no turn env: pass `--anchor CH-<chat>-<N>`
+(spawn and message) to pin the cards to that parent bubble, else they go on the
+parent's latest bubble. If the parent has no bubble at all yet, the background
+card shows them until one exists.
 
 Running fleet cards show the harness's latest status (reading files, running
 commands/tests, writing, etc.) rather than a fixed "Working…". The child CLI

@@ -769,6 +769,15 @@
                 }
             } catch (_) {}
 
+            // Signed out (session expired / revoked): keep this pane's ?chat=
+            // handle. Dropping it told the shell the pane was a new chat, which
+            // persisted ?new=1 over every pane of the space's saved layout. The
+            // restore stays pending; the page's auth-changed handler opens the
+            // chat once the user signs back in.
+            if (h.isAuthenticated && !h.isAuthenticated()) {
+                h.showWelcomeSplash({ keepChatUrl: true });
+                return;
+            }
             chatRestoreAbandoned = true;
             h.showWelcomeSplash();
             h.showToast('Chat took too long to load — starting a new chat.', 'warning');

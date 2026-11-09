@@ -197,16 +197,17 @@ def test_subagent_live_orbs_and_badges():
 
     src = CHAT_JS.read_text(encoding="utf-8")
     blob = "\n".join(_extract_function(src, name) for name in _ORB_HELPERS)
+    # Cards ride the live bubble of the turn that spawned them (turn_id).
     first = {"handle": "CH-000540", "label": "Chef A", "agent": "cursor",
              "generating": True, "fleet": True, "outcome": "running",
-             "summary": "Reading files"}
+             "summary": "Reading files", "turn_id": "t540"}
     second = {"session_id": 541, "title": "Chef B", "agent": "codex",
-              "fleet": True, "outcome": "queued"}
+              "fleet": True, "outcome": "queued", "turn_id": "t540"}
     with playwright.sync_playwright() as driver:
         browser = launch_chromium(driver)
         page = browser.new_page()
         try:
-            page.set_content('<div id="typing-indicator"><div class="message-content-wrapper">'
+            page.set_content('<div id="typing-indicator" data-turn-id="t540"><div class="message-content-wrapper">'
                              '<div class="message-footer"></div></div></div>')
             page.add_script_tag(content=ACTIVITY_JS.read_text(encoding="utf-8"))
             page.add_script_tag(content=FLEET_JS.read_text(encoding="utf-8"))

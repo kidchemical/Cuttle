@@ -180,6 +180,25 @@ def test_set_active_noops_while_turn_cancelled():
         delivery._cancel_sticky.clear()
 
 
+def test_followup_flag_rides_the_entry_and_clears_with_it():
+    """A detached run's follow-up activity is flagged so clients show it past the last reply."""
+    from api import chat_live_status as svc
+
+    svc.set_live_status("901", "tool 1: Bash", followup=True)
+    live = svc.get_live_status("901")
+    assert live["active"] is True and live["followup"] is True
+    # Later lines keep the flag; an ordinary turn does not carry it.
+    svc.set_live_status("901", "tool 2: Read")
+    assert svc.get_live_status("901")["followup"] is True
+    svc.clear_live_status("901")
+    assert not svc.get_live_status("901").get("followup")
+    svc.set_live_status("901", "Working", turn=3)
+    assert svc.get_live_status("901")["followup"] is False
+    svc.clear_live_status("901", turn=3)
+    assert not svc.get_live_status("901").get("followup")
+    assert not wca._public_live_generating("901")[3].get("followup")
+
+
 def test_unknown_session_reads_idle():
     assert wca.get_chat_live_status("nope")["active"] is False
 

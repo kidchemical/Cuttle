@@ -237,6 +237,48 @@ def test_terminal_delivery_updates_canonical_not_duplicate(supervised_env, monke
     assert len(asst) == 1
 
 
+def test_terminal_answer_is_postprocessed_once_into_canonical_bubble(supervised_env, monkeypatch):
+    """Supervised replies skip the ordinary turn pass, so the terminal owner runs it."""
+    from api import response_postprocessing as pp
+    from api.agent_router.supervised import orchestrator as orch
+
+    updates = []
+
+    class FakeDB:
+        def add_message(self, sid, role, content, metadata=None):
+            return 7
+
+        def update_message_content(self, mid, content, metadata=None):
+            updates.append((content, metadata))
+            return True
+
+        def get_messages(self, sid, limit=80):
+            return []
+
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: FakeDB())
+    calls = []
+
+    def fake_process(body, **kw):
+        calls.append(body["response"])
+        body["postprocessing"] = {"status": "completed", "mode": "append",
+                                  "original_response": body["response"]}
+        body["response"] = ('<cuttle_original_response>' + json.dumps(body["response"])
+                            + '</cuttle_original_response>\n\nTLDR')
+
+    monkeypatch.setattr(pp, "process_result", fake_process)
+    task = create_supervised_task("done", parent_session_id="42")
+    task.coordinator_response_message_id = 7
+    task.phase = TaskPhase.APPROVED.value
+    task.final_response = "All good."
+    save_task(task)
+    orch._deliver_terminal(task)
+    orch._deliver_terminal(load_task(task.task_id))
+    assert calls == ["All good."]
+    content, meta = updates[-1]
+    assert content.startswith('<cuttle_original_response>"All good."</cuttle_original_response>')
+    assert meta["postprocessing"]["status"] == "completed"
+
+
 def test_jump_wording():
     assert "completed" in jump_notification_label("approved").lower()
     assert "cancelled" in jump_notification_label("cancelled").lower()

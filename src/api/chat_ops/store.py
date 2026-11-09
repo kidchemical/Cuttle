@@ -41,7 +41,11 @@ def create(kind, actor, target, payload, *, due=None, state='pending'):
     with connection() as conn:
         conn.execute('INSERT INTO operations VALUES (?,?,?,?,?,?,?,?,?)',
             (oid, kind, actor, target, json.dumps(payload), state, now if due is None else due, now, '{}'))
-    return get(oid, actor)
+    op = get(oid, actor)
+    if kind == 'supervise':
+        from api.orchestration_telemetry import record
+        record.supervision_schedule('start', op)
+    return op
 
 
 def get(oid, actor):
@@ -73,6 +77,39 @@ def involving(session_id, *, states=('pending', 'dispatching', 'verifying', 'pau
             'ORDER BY updated DESC LIMIT 100', (session_id, session_id, *states))]
 
 
+def notice_for_job(target, job_id, *, watch_token=None):
+    """Whether a resume notice for detached job ``job_id`` was queued on ``target``.
+
+    Lets a unit-watch poller that died mid-fire be recovered without a second resume."""
+    return job_notice(target, job_id, watch_token=watch_token) is not None
+
+
+def job_notice(target, job_id, *, watch_token=None):
+    """Latest durable delivery receipt for a job; no dispatch or other effects."""
+    if not job_id:
+        return None
+    with connection() as conn:
+        rows = conn.execute("SELECT * FROM operations WHERE kind='notice' AND target=? ORDER BY updated DESC",
+                            (int(target),)).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(row['payload'])
+            if payload.get('job_id') == job_id and (watch_token is None or payload.get('watch_token') == watch_token):
+                return public(row)
+        except ValueError:
+            continue
+    return None
+
+
+def pull_due(oid, at):
+    """Bring a pending schedule's next check forward to ``at`` (never later).
+
+    True when it moved; a paused, cancelled or already-checking schedule is left alone."""
+    with connection() as conn:
+        return bool(conn.execute("UPDATE operations SET due=? WHERE id=? AND kind='supervise' "
+                                 "AND state='pending' AND due>?", (float(at), oid, float(at))).rowcount)
+
+
 def recent(limit=200):
     with connection() as conn:
         return [public(r) for r in conn.execute(
@@ -84,7 +121,11 @@ def cancel(oid, actor):
         conn.execute("UPDATE operations SET state='cancelled', updated=? WHERE id=? AND actor=? "
                      "AND (state IN ('pending','paused','verifying') OR (state='dispatching' AND kind='supervise'))",
                      (time.time(), oid, actor))
-    return get(oid, actor)
+    op = get(oid, actor)
+    if op and op.get('kind') == 'supervise' and op.get('state') == 'cancelled':
+        from api.orchestration_telemetry import record
+        record.supervision_schedule('cancel', op)
+    return op
 
 
 def cancel_sends_to(target):
@@ -104,17 +145,115 @@ def cancel_sends_to(target):
     return rows
 
 
-def set_paused(oid, actor, paused):
-    """Pause or resume a schedule; a resumed schedule checks right away."""
+def set_paused(oid, actor, paused, *, until=None):
+    """Pause or resume a schedule; a resumed schedule checks right away.
+
+    ``until`` (epoch seconds) makes the pause timed: :func:`resume_expired`
+    brings it back by itself. A pause with no expiry is indefinite and only a
+    person (or an agent) can end it — which is how a supervision schedule once
+    sat forgotten for three days, so ``paused_at``/``paused_until`` are recorded
+    for the chips, the agent's own context and the stale-pause alert."""
     now = time.time()
     with connection() as conn:
         if paused:
-            conn.execute("UPDATE operations SET state='paused', updated=? WHERE id=? AND actor=? "
-                         "AND kind='supervise' AND state IN ('pending','dispatching')", (now, oid, actor))
+            # An already-paused schedule may be re-paused to change its expiry
+            # (extend a pause, or make a timed one indefinite and back).
+            changed = conn.execute(
+                "UPDATE operations SET state='paused', updated=? WHERE id=? AND actor=? "
+                "AND kind='supervise' AND state IN ('pending','dispatching','paused')",
+                (now, oid, actor)).rowcount
         else:
-            conn.execute("UPDATE operations SET state='pending', due=?, updated=? WHERE id=? AND actor=? "
-                         "AND kind='supervise' AND state='paused'", (now, now, oid, actor))
+            changed = conn.execute(
+                "UPDATE operations SET state='pending', due=?, updated=? WHERE id=? AND actor=? "
+                "AND kind='supervise' AND state='paused'", (now, now, oid, actor)).rowcount
+    if changed:
+        if paused:
+            _patch(oid, 'result', {'paused_at': get(oid, actor)['result'].get('paused_at') or now,
+                                   'paused_until': float(until) if until else None,
+                                   'paused_alerted': False})
+        else:
+            _patch(oid, 'result', {'paused_at': None, 'paused_until': None, 'paused_alerted': False})
+        from api.orchestration_telemetry import record
+        record.supervision_schedule('pause' if paused else 'resume', get(oid, actor),
+                                    until=float(until) if paused and until else None)
     return get(oid, actor)
+
+
+def resume_expired(now=None):
+    """Resume every timed pause whose expiry has passed; the resumed rows.
+
+    Called by the outbox pump, so a timed pause auto-resumes and checks right
+    away even if nobody has the chat open."""
+    now = time.time() if now is None else now
+    resumed = []
+    with connection() as conn:
+        rows = [public(r) for r in conn.execute(
+            "SELECT * FROM operations WHERE kind='supervise' AND state='paused'")]
+    for row in rows:
+        until = (row.get('result') or {}).get('paused_until')
+        try:
+            due_at = float(until)
+        except (TypeError, ValueError):
+            continue
+        if due_at > now:
+            continue
+        # Due now in real time, whatever clock the caller compared against.
+        real = time.time()
+        with connection() as conn:
+            changed = conn.execute("UPDATE operations SET state='pending', due=?, updated=? "
+                                   "WHERE id=? AND state='paused'", (real, real, row['id'])).rowcount
+        if changed:
+            _patch(row['id'], 'result', {'paused_at': None, 'paused_until': None, 'paused_alerted': False})
+            record_check(row['id'], 'resumed', {'auto': True, 'paused_at': (row.get('result') or {}).get('paused_at')})
+            resumed.append(find(row['id']))
+    return resumed
+
+
+def merge_pending_changes(oid, *, updated, kept, notes, source, at):
+    """Add a settings edit to the schedule's ``pending_changes`` (payload), the
+    record its next check-in folds in. Edits merge; ``rev`` grows on each."""
+    with connection() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute('SELECT payload FROM operations WHERE id=?', (oid,)).fetchone()
+        if not row:
+            return None
+        payload = json.loads(row[0])
+        old = payload.get('pending_changes') or {}
+        merged_updated = sorted(set(old.get('updated') or []) | set(updated))
+        merged = {
+            'rev': int(old.get('rev') or 0) + 1,
+            'updated': merged_updated,
+            'kept': [k for k in dict.fromkeys([*(old.get('kept') or []), *kept]) if k not in merged_updated],
+            'notes': list(dict.fromkeys([*(old.get('notes') or []), *notes])),
+            'sources': list(dict.fromkeys([*(old.get('sources') or []), source])),
+            'since': old.get('since') or at,
+        }
+        payload['pending_changes'] = merged
+        conn.execute('UPDATE operations SET payload=? WHERE id=?', (json.dumps(payload), oid))
+        return merged
+
+
+def clear_pending_changes(oid, rev):
+    """Drop ``pending_changes`` once a check-in carried them; an edit that landed
+    after the check read them (newer ``rev``) stays for the next one."""
+    with connection() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute('SELECT payload FROM operations WHERE id=?', (oid,)).fetchone()
+        if not row:
+            return False
+        payload = json.loads(row[0])
+        if int((payload.get('pending_changes') or {}).get('rev') or 0) != int(rev or 0):
+            return False
+        payload.pop('pending_changes', None)
+        conn.execute('UPDATE operations SET payload=? WHERE id=?', (json.dumps(payload), oid))
+        return True
+
+
+def paused_schedules():
+    """Every paused supervision schedule (for the stale-pause alert and context)."""
+    with connection() as conn:
+        return [public(r) for r in conn.execute(
+            "SELECT * FROM operations WHERE kind='supervise' AND state='paused'")]
 
 
 def due():
@@ -156,6 +295,9 @@ def record_check(schedule_id, outcome, detail=None):
         conn.execute('DELETE FROM checks WHERE schedule_id=? AND at < (SELECT MIN(at) FROM '
                      '(SELECT at FROM checks WHERE schedule_id=? ORDER BY at DESC LIMIT ?))',
                      (schedule_id, schedule_id, HISTORY_KEEP))
+    # The checks table keeps the last HISTORY_KEEP per schedule; telemetry keeps them all.
+    from api.orchestration_telemetry import record
+    record.supervision_check(schedule_id, outcome, detail)
 
 
 def checks(schedule_id, limit=HISTORY_KEEP):
@@ -179,6 +321,18 @@ def patch_payload(oid, **fields):
     _patch(oid, 'payload', fields)
 
 
+def drop_result_keys(oid, *keys):
+    """Forget per-schedule tracking state (e.g. a checkpoint baseline)."""
+    with connection() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute('SELECT result FROM operations WHERE id=?', (oid,)).fetchone()
+        if row:
+            result = json.loads(row[0])
+            for key in keys:
+                result.pop(key, None)
+            conn.execute('UPDATE operations SET result=? WHERE id=?', (json.dumps(result), oid))
+
+
 def patch_result(oid, **fields):
     """Merge fields into an operation's result without touching state or due."""
     _patch(oid, 'result', fields)
@@ -186,12 +340,22 @@ def patch_result(oid, **fields):
 
 def supervisor_links():
     """``{target: actor}`` for supervision schedules still in force (paused
-    included); when a chat has several supervisors the newest one wins."""
+    included, for UI grouping); when a chat has several supervisors the newest
+    one wins. Use :func:`actively_supervised` to ask whether a chat is
+    supervised right now."""
     with connection() as conn:
         rows = conn.execute(
             "SELECT actor, target FROM operations WHERE kind='supervise' "
             "AND state IN ('pending','dispatching','paused') ORDER BY updated ASC").fetchall()
     return {int(r['target']): int(r['actor']) for r in rows}
+
+
+def actively_supervised(target):
+    """Whether ``target`` has a live (pending/dispatching, not paused) supervision schedule."""
+    with connection() as conn:
+        return conn.execute(
+            "SELECT 1 FROM operations WHERE kind='supervise' AND state IN ('pending','dispatching') "
+            "AND target=? LIMIT 1", (int(target),)).fetchone() is not None
 
 
 def supervising(targets):

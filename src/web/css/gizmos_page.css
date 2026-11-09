@@ -41,6 +41,7 @@ body.light-mode .gizmos-page option { background: var(--bg-secondary, #fafafc); 
     border-radius: var(--page-card-radius);
 }
 .gizmo-item-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; align-content: start; }
+.gizmo-item-fields label.gizmo-check { display: flex; align-items: center; gap: 6px; grid-column: 1 / -1; }
 .gizmo-item-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .gizmo-item-meta { margin-left: auto; font-size: 11px; color: var(--text-secondary); }
 .gizmos-empty { padding: 24px; text-align: center; border: 1px dashed var(--border-color, #444); border-radius: var(--page-card-radius); color: var(--text-secondary); }

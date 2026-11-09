@@ -145,6 +145,31 @@ class StreamTurnIO:
     persist_steered_user: Optional[Callable[[Dict[str, Any]], None]] = None
 
 
+def steered_user_meta(info: Dict[str, Any]) -> Dict[str, Any]:
+    """Metadata of the user row a steer saves: flag, agent, and the turn it joined."""
+    meta: Dict[str, Any] = {"steered": True, "steered_agent": info.get("agent")}
+    if info.get("turn_id"):
+        meta["turn_id"] = str(info["turn_id"])
+    if info.get("background_idle"):
+        # Steered into a detached run while the chat was idle: delivered into
+        # that CLI, but shown as a new message, not a reply in its thread.
+        meta["steer_idle"] = True
+    return meta
+
+
+def steer_chat(session_id: Any, message: str) -> Dict[str, Any]:
+    """Steer ``message`` into the chat's live run: its detached background run, else its live turn.
+
+    The detached path also shows the working-phase typing bubble and stamps
+    the turn the steer joined; ``steer.steer`` alone does neither.
+    """
+    from api.agent_harness import steer
+    from api.agent_harness.background_wait import steer_detached
+
+    info = steer_detached(session_id, steer.active_agent(session_id), message)
+    return info if info is not None else steer.steer(session_id, message)
+
+
 def _steer_into_background(
     prepared: PreparedAgentTurn,
     sel: AgentSelection,
@@ -164,13 +189,14 @@ def _steer_into_background(
     info = steer_detached(prepared.session_id, sel.agent_id, sel.prompt or "")
     if info is None:
         return None
-    persist_steered_user({"steered": True, "steered_agent": info.get("agent")})
+    persist_steered_user(steered_user_meta(info))
     return {
         "success": True,
         "response": "",
         "no_reply": True,
         "steered": True,
         "agent": info.get("agent"),
+        "steer_idle": bool(info.get("background_idle")),
         "session_id": prepared.session_id,
         "type": "background_steer",
     }
@@ -270,7 +296,7 @@ def submit_agent_turn(
             io.persist_user()
             body = _run_router()
             if body is None:
-                body = _fallback()
+                body = _fallback(message)
             elif isinstance(body, dict):
                 _after(body)
             return AgentTurnResult(body=body, status=200, selection=sel)
@@ -282,17 +308,17 @@ def submit_agent_turn(
             after_run=_after,
         )
         if body is None:
-            body = _fallback()
+            body = _fallback(message)
         return AgentTurnResult(body=body, status=status, selection=sel)
 
     if sel.kind == "pipeline":
-        def _run_fallback():
-            return _fallback()
+        def _run_fallback(message):
+            return _fallback(message)
 
         if not claim:
             io.persist_user()
             return AgentTurnResult(
-                body=_run_fallback(), status=200, selection=sel
+                body=_run_fallback(message), status=200, selection=sel
             )
         body, status = _run_lane(
             prepared.session_id,
@@ -303,7 +329,7 @@ def submit_agent_turn(
         )
         return AgentTurnResult(body=body, status=status, selection=sel)
 
-    return AgentTurnResult(body=_fallback(), status=200, selection=sel)
+    return AgentTurnResult(body=_fallback(message), status=200, selection=sel)
 
 
 def submit_agent_stream_turn(

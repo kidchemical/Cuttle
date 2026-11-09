@@ -1316,10 +1316,17 @@ def git_push():
                                    sanitize_git_output(result.stderr or ''))
             detail = failure['error']
             print(f"Error git_push: {detail}", flush=True)
-            if 'could not read Username' in detail or 'Authentication failed' in detail:
+            from api.git_service import push_auth_rejected
+            if 'could not read Username' in detail:
                 detail = (
                     'Git push needs credentials for this remote. Set up a git credential '
                     'helper (for GitHub: gh auth setup-git) or an SSH remote.'
+                )
+            elif push_auth_rejected(detail):
+                detail = (
+                    'The remote rejected the saved login twice (expired or revoked token). '
+                    'Sign in again from a terminal (git fetch) so the credential helper '
+                    'stores a fresh one.\n' + detail
                 )
             return jsonify({
                 'success': False,
@@ -1364,6 +1371,47 @@ def git_push():
             'success': False,
             'error': str(e)
         }), 500
+
+@git_bp.route('/git/checkout', methods=['POST'])
+@owner_required
+def git_checkout():
+    """Move HEAD to a local branch or a commit (detached) — Git page jump.
+
+    Body: ``ref`` (local branch name or commit hash), ``path``/``project_id``,
+    optional ``repo_root``. 409 when tracked files have uncommitted edits.
+    """
+    from api.git_service import DirtyWorkTreeError, GitError, checkout_ref
+
+    data = request.get_json(silent=True) or {}
+    ref = str(data.get('ref') or '').strip()
+    if not ref:
+        return jsonify({'success': False, 'error': 'ref is required'}), 400
+    path = (data.get('path') or '').strip() or None
+    project_id = data.get('project_id')
+    if project_id is not None and str(project_id).strip() == '':
+        project_id = None
+    if project_id is not None:
+        try:
+            project_id = int(project_id)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid project_id'}), 400
+
+    cwd, cwd_err = _resolve_optional_repo_cwd(path, project_id)
+    if not cwd_err:
+        cwd, cwd_err = _scope_repo_root(cwd, data.get('repo_root'))
+    if cwd_err:
+        return jsonify({'success': False, 'error': cwd_err}), 400
+
+    try:
+        out = checkout_ref(cwd, ref)
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except DirtyWorkTreeError as e:
+        return jsonify({'success': False, 'error': str(e), 'dirty': True}), 409
+    except GitError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    return jsonify({'success': True, **out})
+
 
 @git_bp.route('/git/branch', methods=['POST'])
 @owner_required

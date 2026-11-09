@@ -103,6 +103,7 @@ def test_git_routes_auth_matrix(tmp_path, monkeypatch):
         ("POST", "/api/git/push", {}),
         ("POST", "/api/git/push-exceptions", {}),
         ("POST", "/api/git/branch", {"action": "create", "branch": "x"}),
+        ("POST", "/api/git/checkout", {"ref": "main"}),
         ("POST", "/api/git/commit", {"message": "x", "path": str(repo)}),
         ("POST", "/api/git/ignore", {"path": "f"}),
     ]:
@@ -207,6 +208,37 @@ def test_git_branch_lifecycle_and_validation(tmp_path, monkeypatch):
         assert res.status_code == 200, (action, res.get_json())
         assert frag in res.get_json()["message"]
     assert _git("branch", "--show-current", cwd=repo).stdout.strip() == "main"
+
+
+def test_git_checkout_jumps_head_and_refuses_dirty_tree(tmp_path, monkeypatch):
+    repo = _init_repo(tmp_path / "repo")
+    seed = _git("rev-parse", "HEAD", cwd=repo).stdout.strip()
+    (repo / "a.txt").write_text("two\n", encoding="utf-8")
+    _git("commit", "-am", "second", cwd=repo)
+    ctx = _ctx(tmp_path, monkeypatch, repo)
+    c = ctx["client"]
+    post = lambda body: c.post("/api/git/checkout", json={"path": str(repo), **body},
+                               environ_base=LAN)
+
+    assert post({}).status_code == 400
+    assert post({"ref": "nope"}).status_code == 400
+
+    res = post({"ref": seed[:9]})
+    assert res.status_code == 200, res.get_json()
+    body = res.get_json()
+    assert body["detached"] is True and body["head"] == seed
+    graph = c.get(f"/api/git/graph?path={repo}", environ_base=LAN).get_json()
+    assert graph["detached"] is True and graph["head"] == seed
+    assert graph["count"] == 2  # the newer commit on main stays reachable
+
+    (repo / "a.txt").write_text("dirty\n", encoding="utf-8")
+    res = post({"ref": "main"})
+    assert res.status_code == 409 and res.get_json()["dirty"] is True
+    _git("checkout", "--", "a.txt", cwd=repo)
+
+    res = post({"ref": "main"})
+    assert res.status_code == 200
+    assert res.get_json()["branch"] == "main" and res.get_json()["detached"] is False
 
 
 def test_git_branches_scoped_to_picked_repo_in_multi_repo_project(tmp_path, monkeypatch):
@@ -442,3 +474,33 @@ def test_working_branch_tracks_existing_origin_without_resetting_local_commits(t
     with pytest.raises(GitError, match='Commit or stash'):
         use_working_branch(str(tmp_path), 'main')
     assert git('branch', '--show-current') == 'dev'
+
+
+def test_push_repo_retries_once_after_rejected_credential(monkeypatch):
+    """An expired OAuth token fails the first push; Git drops it, the retry refreshes."""
+    import subprocess
+    from api import git_service
+
+    calls = []
+
+    def fake_once(cwd, remote, branch):
+        calls.append(1)
+        if len(calls) == 1:
+            return subprocess.CompletedProcess([], 128, '', 'remote: Failed to authenticate user\n'
+                                               "fatal: Authentication failed for 'http://x/r.git/'")
+        return subprocess.CompletedProcess([], 0, '', '')
+
+    monkeypatch.setattr(git_service, '_push_once', fake_once)
+    assert git_service.push_repo('.', 'origin', 'main').returncode == 0
+    assert len(calls) == 2
+
+
+def test_push_repo_does_not_retry_other_failures(monkeypatch):
+    import subprocess
+    from api import git_service
+
+    calls = []
+    monkeypatch.setattr(git_service, '_push_once', lambda *a: calls.append(1) or
+                        subprocess.CompletedProcess([], 1, '', '! [rejected] main (non-fast-forward)'))
+    assert git_service.push_repo('.', 'origin', 'main').returncode == 1
+    assert len(calls) == 1

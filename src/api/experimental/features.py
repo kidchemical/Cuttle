@@ -70,6 +70,19 @@ register_flag(FlagSpec(
 ))
 
 register_flag(FlagSpec(
+    id="chat_reply_threads", label="Reply threads",
+    description="Fold steers you send into a running turn, the agent's later follow-up bubbles and finished sub-agent replies under that turn's bubble as a collapsible \"N replies\" thread, with a quiet dot and preview when something new arrives. Off shows them as separate rows in time order.",
+    # Default on: low-risk display over rows the transcript already has.
+    default=True, category="chat", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="auto_compact", label="Auto-compaction",
+    description="Compact an agent's context between turns, before its CLI would compact mid-task: when the window passes a percentage or token cap, after a quiet period, and earlier at a Tasks milestone. Supervised, supervisor, sub-agent and orchestrator chats get their own (lower) threshold. Configure in Settings → Agents; override per chat from the composer's context gauge.",
+    default=False, category="agents", risk="medium", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
     id="chat_supervision", label="Chat supervision",
     description="Show chat supervision in the UI: a header chip in the supervisor chat (target, interval, next check, check history, pause/cancel), a \"Supervised by\" badge with branch-rule warnings in the worker chat, queued messages, a \"Supervise this chat…\" menu action, and schedules on the Jobs page. Agent commands (python -m api.chat_cli supervise/send) work regardless.",
     default=False, category="agents", risk="low", since="0.0.0", needs_restart=False,

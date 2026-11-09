@@ -293,7 +293,8 @@ def test_oracle_pipeline_stream_cancelled_row_divergence(
 
 
 def test_oracle_pipeline_stream_cancel_discards(authed_db, monkeypatch):
-    """Stop mid-run: user row stays, late result saves/parks nothing."""
+    """Stop mid-run: user row stays, the late result saves/parks nothing; the
+    turn's own row (open since turn start) becomes the stopped card."""
     client, db, uid = authed_db
     sid = db.create_chat_session(uid)
     import api.agent_router.integration as integration
@@ -314,7 +315,10 @@ def test_oracle_pipeline_stream_cancel_discards(authed_db, monkeypatch):
     assert _event_types(text)[-1] == "done"  # consumer still sees termination
     assert _announced_sid(text) == sid
     rows = db.get_messages(sid)
-    assert [m["role"] for m in rows] == ["user"]  # late reply discarded
+    assert [m["role"] for m in rows] == ["user", "assistant"]
+    assert rows[1]["content"].startswith("**Agent stopped before completion.**")
+    assert "late-reply" not in rows[1]["content"]  # late reply discarded
+    assert rows[1]["metadata"]["query_id"] and not rows[1]["metadata"].get("in_progress")
     assert chat_delivery.try_begin(sid) is True  # free + sticky cleared
     chat_delivery.end(sid)
 
@@ -675,3 +679,26 @@ def test_stream_persist_failure_releases_and_reports():
     assert "p5f-persist-boom" in events[0][1]["response"]
     assert chat_delivery.try_begin("p5f-dpersist") is True
     chat_delivery.end("p5f-dpersist")
+
+
+def test_unknown_slash_token_is_a_named_failure_not_no_graph(authed_db, router_abstain):
+    """Two stacked agent badges sent "/claude/codex go" (CH-001821-431). No
+    agent matched, and the reply was the success-shaped "No graph is running",
+    which read like an answer. It now fails and names the token."""
+    client, db, uid = authed_db
+    sid = db.create_chat_session(uid)
+    res = client.post(
+        "/api/chat",
+        json={"message": "/claude/codex go", "sticky_agent": "none", "stream": False,
+              "session_id": sid},
+    )
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["success"] is False and body["type"] == "unknown_command"
+    assert "`/claude/codex` is not an agent or command" in body["response"]
+    assert "No graph" not in body["response"]
+    rows = db.get_messages(sid)
+    assert [m["role"] for m in rows] == ["user", "assistant"]  # shown in the chat, not dropped
+    assert "/claude/codex" in rows[1]["content"]
+    assert chat_delivery.try_begin(sid) is True  # released
+    chat_delivery.end(sid)

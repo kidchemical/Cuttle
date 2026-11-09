@@ -38,12 +38,17 @@ def chat_op_metadata(request_data, session_id=None) -> dict:
     except Exception:
         op = None
     bare = str(session_id or '').replace('db_session_', '')
-    if op and op.get('kind') in ('send', 'checkin') and str(op.get('target')) == bare:
+    if op and op.get('kind') in ('send', 'checkin', 'notice') and str(op.get('target')) == bare:
         handle = f"CH-{int(op['actor']):06d}"
+        if op['kind'] == 'notice':
+            # Cuttle's own notice (background work that outlived its turn finished).
+            label = str((op.get('payload') or {}).get('label') or 'Cuttle notice')[:80]
+        else:
+            label = 'Supervision check-in' if op['kind'] == 'checkin' else f'Sent by {handle}'
         meta.update({
             'origin': 'chat_ops', 'speaker': 'Cuttle', 'speaker_kind': 'parent', 'avatar': 'cuttle',
             'parent_session_id': int(op['actor']), 'parent_handle': handle,
-            'parent_label': 'Supervision check-in' if op['kind'] == 'checkin' else f'Sent by {handle}',
+            'parent_label': label, 'chat_op_kind': op['kind'],
         })
     return meta
 

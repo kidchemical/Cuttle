@@ -210,11 +210,42 @@ def patch(gizmo_id, ops, *, user_id=None, session_id=None, actor=None, db=None, 
                 edit_mode=edit, description=model._description_from_sources(ops, existing=row),
                 expected_revision=row['revision'], operation='patch', linked_sessions=links,
                 actor=actor or operation_actor(session_id=sid, user_id=uid))
+            _publish_completions(row, updated, sid)
             return public(updated)
         except ValueError as exc:
             if 'revision conflict' not in str(exc) or attempt == 4 or expected is not None:
                 raise GizmoError(str(exc), 'conflict') from exc
     raise GizmoError('Tasks revision conflict', 'conflict')
+
+
+def _done_items(items, prefix=''):
+    """{item id: text} of every checked item, nested ones included."""
+    out = {}
+    for item in items or []:
+        if item.get('done'):
+            out[str(item.get('id'))] = str(item.get('text') or '')
+        out.update(_done_items(item.get('children') or []))
+    return out
+
+
+def _publish_completions(before, after, actor_sid):
+    """Tell session listeners (supervision checkpoints) which items were just
+    checked off and whether the list is now complete. Never raises."""
+    try:
+        was = _done_items((before.get('payload') or {}).get('items'))
+        now = _done_items((after.get('payload') or {}).get('items'))
+        newly = [text for iid, text in now.items() if iid not in was]
+        top = (after.get('payload') or {}).get('items') or []
+        completed = bool(top) and all(i.get('done') for i in top) and (before.get('status') == 'active')
+        if not newly and not completed:
+            return
+        sessions = [s for s in [after.get('session_id'), actor_sid, *(after.get('linked_sessions') or [])] if s]
+        from api.session_events import publish
+        for sid in dict.fromkeys(int(s) for s in sessions):
+            publish('tasks', sid, gizmo_id=after.get('id'), title=after.get('title') or '', done=newly[:20],
+                    completed=completed)
+    except Exception:
+        pass
 
 
 def delete(gizmo_id, *, user_id=None, actor=None, db=None):

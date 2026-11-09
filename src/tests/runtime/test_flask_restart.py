@@ -372,3 +372,26 @@ def test_restart_chooser_standardizes_agent_variations_but_not_mixed_actions():
     assert next(o for o in a['options'] if o['params'].get('mode') == 'when-idle')['id'] == 'idle'
     mixed = dict(first, options=first['options'] + [{'id': 'push', 'action': 'git.push'}])
     assert canonicalize_restart_form(mixed) == mixed
+
+
+@pytest.mark.parametrize("phase,blocks", [("waiting", False), ("working", True)])
+def test_detached_wait_only_blocks_while_working(monkeypatch, phase, blocks):
+    """A detached CLI polling its background tasks is not work a restart would lose."""
+    from api import chat_delivery, chat_run_registry as crr
+    from api.agent_harness import background_wait as bw
+    from api import active_executions
+
+    monkeypatch.setattr(chat_delivery, "busy_entries", lambda: [])
+    monkeypatch.setattr(active_executions, "get_executing_jobs", lambda: [])
+    monkeypatch.setattr(crr, "active_run_session_ids", lambda: ["1821"])
+    monkeypatch.setattr(crr, "live_query_ids", lambda sid: [])
+    wait = bw.BackgroundWait("1821")
+    wait._phase = phase
+    monkeypatch.setattr(bw, "detached_wait", lambda sid, agent_id=None: wait if sid == "1821" else None)
+
+    from api import flask_restart as fr
+
+    work = fr.list_active_work()
+    assert work["is_idle"] is (not blocks)
+    assert [t["session_id"] for t in work["tasks"]] == (["1821"] if blocks else [])
+    assert [w["session_id"] for w in work["detached_waits"]] == ([] if blocks else ["1821"])

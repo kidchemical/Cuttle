@@ -3,6 +3,9 @@ from flask import Blueprint, jsonify, request
 from api.http_authz import authenticated_required, owner_required, require_session_actor
 
 agent_harness_bp = Blueprint("agent_harness_api", __name__)
+# Per-chat auto-compact policy rides next to /api/agent-context (api.auto_compact).
+from api.auto_compact.routes import auto_compact_bp  # noqa: E402
+agent_harness_bp.register_blueprint(auto_compact_bp)
 _resolve_path = lambda data: ""
 
 def configure_context_routes(resolve_path, require_actor):
@@ -52,7 +55,7 @@ def api_agent_context_status():
 
 @agent_harness_bp.route('/api/agent-context/compact', methods=['POST'])
 def api_agent_context_compact():
-    """Compact / summarize the sticky agent CLI session (Cursor, Muse, OpenCode)."""
+    """Compact the sticky agent CLI session: ``mode`` native (CLI summary) or fresh (new session + briefing)."""
     try:
         from api.agent_context import compact_agent_context, normalize_agent_id
 
@@ -82,7 +85,13 @@ def api_agent_context_compact():
                 path = _resolve_path(data if isinstance(data, dict) else {}) or ''
             except Exception:
                 path = ''
-        result = compact_agent_context(
+        mode = str(data.get('mode') or 'native').strip().lower()
+        if mode not in ('native', 'fresh'):
+            return jsonify({'success': False, 'error': 'mode must be native or fresh'}), 400
+        from api.agent_context import fresh_compact_agent_context
+
+        run = fresh_compact_agent_context if mode == 'fresh' else compact_agent_context
+        result = run(
             chat_session_id=session or None,
             agent_id=agent,
             cwd=path or None,

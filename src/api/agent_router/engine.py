@@ -174,23 +174,15 @@ def _order_by_availability(decision: RoutingDecision) -> Tuple[RoutingDecision, 
     that were stepped over (for the routing chip).
     """
     import api.agent_router.budget as budget
-    import api.agent_router.quota as quota
+    from api.agent_router.availability import RANK as rank, target_state
 
     chain: list = []
     for t in [decision.target, decision.escalation_target, *(decision.fallbacks or [])]:
         if t is not None and t.key() not in {c.key() for c in chain}:
             chain.append(t)
     bset = budget.budget_settings()
-    accounts = budget.snapshot() if bset["enabled"] else {}
-    rank = {"ok": 0, "unknown": 0, "low": 1, "blocked": 2}
-    states = []
-    for t in chain:
-        if quota.is_exhausted(t):
-            states.append(("blocked", "out of usage"))
-        elif bset["enabled"]:
-            states.append(budget.target_state(t, accounts, low_headroom=bset["low_headroom"]))
-        else:
-            states.append(("ok", ""))
+    accounts = budget.snapshot() if bset["enabled"] else None
+    states = [target_state(t, accounts=accounts, settings=bset) for t in chain]
     if all(st == "blocked" for st, _ in states):
         return decision, []  # nothing can run on paper — let dispatch probe
     order = sorted(range(len(chain)), key=lambda i: (rank[states[i][0]], i))

@@ -249,12 +249,35 @@ def _persist_assistant(
         cursor_run = result.get("cursor_run")
         if isinstance(cursor_run, dict) and cursor_run:
             meta["cursor_run"] = cursor_run
-    db.add_message(int(session_id), "assistant", text, metadata=meta)
+    from api.chat_turn_row import finalize
+
+    if finalize(db, int(session_id), text, meta) is None:  # no open turn row
+        db.add_message(int(session_id), "assistant", text, metadata=meta)
 
 
 def _cancelled(db, child_id: str) -> bool:
     row = store.get_child(db, child_id)
     return bool(row and row.status == STATUS_CANCELLED)
+
+
+def _note_account_usage(spec: ChildSpec, result: Dict[str, Any]) -> None:
+    """Tell the router's cooldown memory (shared with Flask, api.agent_router.quota)
+    when a child ran out of usage or succeeded, so the next spawn and the next
+    routed turn skip or retry that account the same way. Never raises."""
+    try:
+        from api.agent_router import quota
+        from api.agent_router.policy import FailureKind, classify_failure, is_quota_failure
+        from api.agent_router.types import ExecutionTarget
+
+        target = ExecutionTarget(str(spec.agent or ""), str(spec.model or ""))
+        kind, _reason = classify_failure(result, response_text=str(result.get("response") or ""))
+        blob = f"{result.get('response') or ''}\n{result.get('error') or ''}"
+        if kind == FailureKind.TRANSPORT.value and is_quota_failure(blob):
+            quota.mark_exhausted(target, blob)
+        elif kind == FailureKind.NONE.value:
+            quota.note_success(target)
+    except Exception:
+        pass
 
 
 def run_child_turn(
@@ -324,6 +347,31 @@ def run_child_turn(
             pass
         return {"success": False, "cancelled": True, "response": ""}
 
+    # Auto-compact the child's session before this turn when its policy says so
+    # (api.auto_compact). Here, not after the last turn ended: this process may
+    # be the parent's CLI, where no Flask turn-end listener runs. Never raises.
+    try:
+        from api.auto_compact.service import preflight
+
+        preflight(child.session_id, agent=str(spec.agent or ""), cwd=project_path, db=db)
+    except Exception:
+        pass
+
+    # The child's reply row + inspector from its first frame (api.chat_turn_row):
+    # the child pane's live bubble gets its id and query-log link at once, and
+    # the kernel tracks this run under the same query id.
+    from api import chat_turn_row
+
+    row = chat_turn_row.open_row(db, child.session_id, turn=turn, user_input=user_text,
+                                 label=f"Sub-agent {child.label or child.id}")
+    if row:
+        sink.put(("query_started", {"query_id": row["query_id"], "report_url": row["report_url"],
+                                    "message_id": row["message_id"]}))
+
+    def _close_row(status):
+        if row:
+            chat_turn_row.close(db, child.session_id, status=status, turn=turn)
+
     model_id = resolve_child_model_id(spec.agent, spec.model, spec.effort)
     exec_kw = None
     effort = str(spec.effort or "").strip()
@@ -372,10 +420,12 @@ def run_child_turn(
             pass
 
     if _cancelled(db, child.id):
+        _close_row("cancelled")
         return {"success": False, "cancelled": True, "response": ""}
 
     if not isinstance(result, dict):
         result = {"success": True, "response": str(result)}
+    _note_account_usage(spec, result)
 
     # The kernel reports query_id on the returned body; fall back to the sink
     # for turns whose reply text came from somewhere other than that result.
@@ -407,9 +457,16 @@ def run_child_turn(
             _persist_assistant(db, child.session_id, result, child=child, spec=spec)
         except Exception:
             pass
+    _close_row("cancelled" if result.get("cancelled") or text.startswith("[CANCELLED]")
+               else "failed" if not text else "skipped")
     if not text:
         text = store.latest_assistant_text(db, child.session_id)
 
+    # The child chat keeps its reasoning block; the result handed back to the
+    # parent agent carries only the answer (api.transcript_text).
+    from api.transcript_text import agent_visible_text
+
+    text = agent_visible_text(text)
     if result.get("cancelled") or str(text).startswith("[CANCELLED]"):
         store.update_child(
             db, child.id, status=STATUS_CANCELLED, result=text, finished=True

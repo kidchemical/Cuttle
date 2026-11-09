@@ -6,6 +6,7 @@ Database models and management for user authentication and chat sessions
 import sqlite3
 import secrets
 import json
+import threading
 import re
 import time
 import uuid
@@ -33,6 +34,12 @@ _CHAT_HANDLE_RE = re.compile(r'^(?:ch[-\s]?)?0*(\d+)$', re.IGNORECASE)
 
 # Database path
 DB_PATH = data_db_dir() / 'cuttle_auth.db'
+
+# Account logins last 30 days and slide forward while in use: a token past
+# the halfway mark is renewed on its next verified request.
+AUTH_SESSION_LIFETIME_HOURS = 720
+AUTH_SESSION_RENEW_BELOW_DAYS = 15
+AUTH_SESSION_RENEWABLE_MIN_DAYS = 7
 
 class AuthDatabase:
     """Manages user authentication and chat session data"""
@@ -296,6 +303,14 @@ class AuthDatabase:
             # child. Only the process running the child turn can kill its CLI
             # (api.subagents.stop_watch polls this column there).
             'ALTER TABLE subagent_children ADD COLUMN stop_requested_at REAL',
+            # Fleet card rounds (api.subagents.fleet): a follow-up round mints a
+            # new card on the parent's next reply and freezes the previous one.
+            'ALTER TABLE subagent_children ADD COLUMN card_message_id INTEGER',
+            'ALTER TABLE subagent_children ADD COLUMN card_pending INTEGER',
+            # Turn ids (api.chat_turn_id): the agent turn a batch / a follow-up
+            # round was started in; its cards bind to the row of that turn.
+            'ALTER TABLE subagent_batches ADD COLUMN turn_id TEXT',
+            'ALTER TABLE subagent_children ADD COLUMN card_turn_id TEXT',
         ):
             try:
                 cursor.execute(col_sql)
@@ -784,7 +799,7 @@ class AuthDatabase:
     
     # ==================== Auth Session Management ====================
     
-    def create_auth_session(self, user_id: int, expires_hours: int = 720) -> str:
+    def create_auth_session(self, user_id: int, expires_hours: int = AUTH_SESSION_LIFETIME_HOURS) -> str:
         """Create auth session and return token (default 30 days)"""
         session_token = secrets.token_urlsafe(32)
         # SQLite CURRENT_TIMESTAMP is UTC, even when the host runs in PDT/etc.
@@ -821,12 +836,23 @@ class AuthDatabase:
         row = cursor.fetchone()
         
         if row:
-            # Update last activity
+            # Update last activity, and slide a long-lived login forward once it
+            # is in the back half of its life. The expiry used to be fixed at
+            # login + 30 days, so a desktop app in constant use was signed out
+            # mid-session on day 30. Short-lived tokens (fixture QA, < 7 days
+            # by design) are never extended.
+            renewed = (datetime.now(timezone.utc).replace(tzinfo=None)
+                       + timedelta(hours=AUTH_SESSION_LIFETIME_HOURS))
             cursor.execute('''
-                UPDATE auth_sessions 
-                SET last_activity = CURRENT_TIMESTAMP 
+                UPDATE auth_sessions
+                SET last_activity = CURRENT_TIMESTAMP,
+                    expires_at = CASE
+                        WHEN julianday(expires_at) - julianday(created_at) >= ?
+                         AND julianday(expires_at) - julianday('now') < ?
+                        THEN ? ELSE expires_at END
                 WHERE session_token = ?
-            ''', (session_token,))
+            ''', (AUTH_SESSION_RENEWABLE_MIN_DAYS, AUTH_SESSION_RENEW_BELOW_DAYS,
+                  renewed.isoformat(' '), session_token))
             conn.commit()
         
         conn.close()
@@ -1731,7 +1757,13 @@ class AuthDatabase:
     
     def add_message(self, chat_session_id: int, role: str, content: str, 
                    metadata: Optional[Dict] = None) -> int:
-        """Add a message to chat session"""
+        """Add a message to chat session.
+
+        Every assistant row is stamped with the turn it belongs to
+        (``api.chat_turn_id``), and sub-agent cards started in that turn bind
+        to it, whichever path saves the row."""
+        if role == 'assistant':
+            metadata = self._stamp_turn(chat_session_id, metadata)
         conn = self._get_connection()
         cursor = conn.cursor()
         
@@ -1763,7 +1795,34 @@ class AuthDatabase:
         self.update_session_activity(chat_session_id)
         from api.chat_live_status import notify_changed
         notify_changed()
+        if role == 'assistant':
+            self._bind_turn_cards(chat_session_id, message_id, metadata)
         return message_id
+
+    @staticmethod
+    def _stamp_turn(chat_session_id, metadata):
+        try:
+            from api.chat_turn_id import stamp
+            return stamp(chat_session_id, metadata)
+        except Exception:
+            return metadata
+
+    _binding = threading.local()
+
+    def _bind_turn_cards(self, chat_session_id, message_id, metadata):
+        """Bind sub-agent cards started in this row's turn (never re-entrant)."""
+        from api.chat_turn_id import turn_id_of
+        tid = turn_id_of(metadata)
+        if not tid or not message_id or getattr(self._binding, 'on', False):
+            return
+        self._binding.on = True
+        try:
+            from api.subagents.service import bind_turn_cards
+            bind_turn_cards(self, int(chat_session_id), int(message_id), tid)
+        except Exception as exc:
+            print(f"[SUBAGENTS] turn card binding failed for row {message_id}: {exc}", flush=True)
+        finally:
+            self._binding.on = False
 
     def get_attention(self, session_id: int, user_id: int) -> Optional[Dict]:
         return self.get_attention_many(user_id, [session_id]).get(session_id)
@@ -1873,6 +1932,26 @@ class AuthDatabase:
         finally:
             conn.close()
 
+    def assistant_message_by_query(self, chat_session_id: int, query_id: str) -> Optional[Dict[str, Any]]:
+        """The newest assistant row carrying ``query_id`` (metadata decoded), or None."""
+        conn = self._get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM chat_messages WHERE chat_session_id=? AND role='assistant' "
+                "AND json_valid(metadata) AND json_extract(metadata, '$.query_id')=? ORDER BY id DESC LIMIT 1",
+                (int(chat_session_id), str(query_id)),
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return None
+        out = dict(row)
+        try:
+            out['metadata'] = json.loads(out.get('metadata') or '{}')
+        except (TypeError, ValueError):
+            out['metadata'] = {}
+        return out
+
     def add_message_once(self, chat_session_id: int, content: str, *,
                          delivery_key: str, metadata: Optional[Dict] = None) -> Optional[int]:
         """Atomically persist a server completion, including cross-process retries.
@@ -1892,7 +1971,7 @@ class AuthDatabase:
                 (chat_session_id, delivery_key)).fetchone()
             if row:
                 return int(row[0])
-            payload = {**(metadata or {}), 'delivery_key': delivery_key}
+            payload = {**(self._stamp_turn(chat_session_id, metadata) or {}), 'delivery_key': delivery_key}
             cursor = conn.execute(
                 "INSERT INTO chat_messages (chat_session_id, role, content, metadata) "
                 "VALUES (?, 'assistant', ?, ?)",
@@ -1904,9 +1983,11 @@ class AuthDatabase:
             conn.commit()
             from api.chat_live_status import notify_changed
             notify_changed()
-            return int(cursor.lastrowid)
+            mid = int(cursor.lastrowid)
         finally:
             conn.close()
+        self._bind_turn_cards(chat_session_id, mid, payload)
+        return mid
 
     def get_message_by_id(self, message_id: int) -> Optional[Dict[str, Any]]:
         """Fetch one chat message row by id (ownership checks stay call-side)."""
@@ -1926,9 +2007,22 @@ class AuthDatabase:
         content: str,
         metadata: Optional[Dict] = None,
     ) -> bool:
-        """Replace message content (and optional metadata) by id."""
+        """Replace message content (and optional metadata) by id.
+
+        New metadata for an assistant row keeps (or gains) its turn id."""
         conn = self._get_connection()
         cursor = conn.cursor()
+        target = conn.execute('SELECT chat_session_id, role, metadata FROM chat_messages WHERE id=?',
+                              (int(message_id),)).fetchone()
+        if metadata is not None and target is not None and target['role'] == 'assistant':
+            from api.chat_turn_id import turn_id_of
+            try:
+                old_meta = json.loads(target['metadata']) if target['metadata'] else {}
+            except ValueError:
+                old_meta = {}
+            if not turn_id_of(metadata) and turn_id_of(old_meta):
+                metadata = {**metadata, 'turn_id': turn_id_of(old_meta)}  # never lose the anchor
+            metadata = self._stamp_turn(target['chat_session_id'], metadata)
         if metadata is not None:
             cursor.execute(
                 '''
@@ -1962,6 +2056,8 @@ class AuthDatabase:
         if affected:
             from api.chat_live_status import notify_changed
             notify_changed()
+            if metadata is not None and target is not None and target['role'] == 'assistant':
+                self._bind_turn_cards(target['chat_session_id'], int(message_id), metadata)
         return affected > 0
 
     def merge_message_metadata_by_query(
@@ -2066,6 +2162,7 @@ class AuthDatabase:
         limit: Optional[int] = None,
         before_id: Optional[int] = None,
         after_id: Optional[int] = None,
+        include_in_progress: bool = False,
     ) -> List[Dict[str, Any]]:
         """Get messages from chat session.
 
@@ -2074,6 +2171,11 @@ class AuthDatabase:
         - ``before_id`` + ``limit`` → N messages with id < before_id (older page)
         - ``after_id`` → messages with id > after_id (sync / tail)
         - no limit/before/after → full transcript
+
+        A running turn's assistant row (``api.chat_turn_row``, empty and marked
+        ``in_progress``) is left out unless ``include_in_progress``: only the
+        chat history route shows it (as the live bubble's id); context compile,
+        titling, supervision and the CLI must never read an empty reply.
         """
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -2148,7 +2250,59 @@ class AuthDatabase:
         if reverse:
             messages.reverse()
 
+        if not include_in_progress:
+            messages = [m for m in messages
+                        if not (isinstance(m.get('metadata'), dict) and m['metadata'].get('in_progress'))]
         return messages
+
+    def in_progress_messages(self, chat_session_id: int) -> List[Dict[str, Any]]:
+        """Assistant rows of turns still marked in progress (``api.chat_turn_row``)."""
+        conn = self._get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM chat_messages WHERE chat_session_id=? AND role='assistant' "
+                "AND metadata LIKE '%\"in_progress\": true%' ORDER BY id ASC",
+                (int(chat_session_id),),
+            ).fetchall()
+        finally:
+            conn.close()
+        out = []
+        for row in rows:
+            msg = dict(row)
+            try:
+                msg['metadata'] = json.loads(msg['metadata']) if msg.get('metadata') else {}
+            except Exception:
+                msg['metadata'] = {}
+            if isinstance(msg['metadata'], dict) and msg['metadata'].get('in_progress'):
+                out.append(msg)
+        return out
+
+    def newest_message_id(self, chat_session_id: int) -> int:
+        conn = self._get_connection()
+        try:
+            row = conn.execute('SELECT MAX(id) FROM chat_messages WHERE chat_session_id=?',
+                               (int(chat_session_id),)).fetchone()
+            return int(row[0] or 0)
+        finally:
+            conn.close()
+
+    def delete_message(self, message_id: int) -> bool:
+        """Remove one row (an empty turn row that never showed a reply)."""
+        conn = self._get_connection()
+        try:
+            session = conn.execute('SELECT chat_session_id FROM chat_messages WHERE id=?',
+                                   (int(message_id),)).fetchone()
+            affected = conn.execute('DELETE FROM chat_messages WHERE id=?', (int(message_id),)).rowcount
+            if session:
+                from api.chat_attention import refresh
+                refresh(conn, session[0])
+            conn.commit()
+        finally:
+            conn.close()
+        if affected:
+            from api.chat_live_status import notify_changed
+            notify_changed()
+        return affected > 0
 
     def get_message_by_share_index(
         self,

@@ -27,6 +27,7 @@ case. ``timeout=None`` preserves the legacy wait-forever semantics.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -411,11 +412,31 @@ def current_branch_name(cwd: str) -> str:
     return (proc.stdout or '').strip()
 
 
+_AUTH_REJECTED_MARKERS = ('Authentication failed', 'Failed to authenticate user',
+                          'HTTP Basic: Access denied', 'Invalid username or password')
+
+
+def push_auth_rejected(text: str) -> bool:
+    """True when the remote refused the credential that was sent."""
+    return any(m in (text or '') for m in _AUTH_REJECTED_MARKERS)
+
+
 def push_repo(cwd: str, remote: str, branch: str) -> subprocess.CompletedProcess:
     """Push; returns the raw result for the handler to shape (auth hints,
-    sanitize, rich payload stay transport-side). Uses the shared
-    ``git_push_command`` argv (upstream/HEAD fallbacks, credential-helper
-    flags) exactly like the legacy handler did."""
+    sanitize, rich payload stay transport-side). Retries once when the remote
+    rejects the stored credential: Git has then told the helper to drop it, and
+    OAuth helpers (Git Credential Manager) refresh an expired access token on
+    the next request (Gitea's last an hour)."""
+    result = _push_once(cwd, remote, branch)
+    if result.returncode != 0 and push_auth_rejected(
+            (result.stderr or '') + (result.stdout or '')):
+        result = _push_once(cwd, remote, branch)
+    return result
+
+
+def _push_once(cwd: str, remote: str, branch: str) -> subprocess.CompletedProcess:
+    """One ``git push`` with the shared ``git_push_command`` argv
+    (upstream/HEAD fallbacks, credential-helper flags)."""
     argv: List[str] = ['push', remote, branch]
     env = None
     if git_push_command is not None:
@@ -508,6 +529,54 @@ def branch_operation(cwd: str, action: str, branch: str) -> Dict[str, str]:
         raise GitError(f'Git branch operation failed: {proc.stderr}',
                        returncode=proc.returncode, stderr=proc.stderr)
     return {'message': message, 'output': proc.stdout or ''}
+
+
+class DirtyWorkTreeError(GitError):
+    """Tracked files have uncommitted edits; moving HEAD would carry them."""
+
+
+_COMMIT_HASH_RE = re.compile(r'^[0-9a-fA-F]{4,40}$')
+
+
+def checkout_ref(cwd: str, ref: str) -> Dict[str, Any]:
+    """Move HEAD to a local branch (``git switch``) or one commit (detached).
+
+    ``ref`` is a local branch name or a commit hash; anything else raises
+    ValueError. Refuses with DirtyWorkTreeError while tracked files have
+    uncommitted edits so a jump never drags work onto another commit.
+    """
+    target = (ref or '').strip()
+    if not target or target.startswith('-'):
+        raise ValueError('A branch or commit is required')
+    status = _check(_run(['status', '--porcelain', '--untracked-files=no'], cwd),
+                    'Cannot read status')
+    if (status.stdout or '').strip():
+        raise DirtyWorkTreeError(
+            'Commit or stash your uncommitted changes before moving HEAD.')
+
+    if _run(['show-ref', '--verify', '--quiet', f'refs/heads/{target}'], cwd).returncode == 0:
+        cmd = ['switch', target]
+    elif _COMMIT_HASH_RE.match(target):
+        resolved = _run(['rev-parse', '--verify', '--quiet', f'{target}^{{commit}}'], cwd)
+        full = (resolved.stdout or '').strip()
+        if resolved.returncode != 0 or not full:
+            raise ValueError(f'Commit not found: {target}')
+        cmd = ['switch', '--detach', full]
+    else:
+        raise ValueError(f'Not a local branch or commit hash: {target}')
+
+    proc = _check(_run(cmd, cwd), 'Checkout failed')
+    head = (_run(['rev-parse', 'HEAD'], cwd).stdout or '').strip()
+    branch = (_run(['branch', '--show-current'], cwd).stdout or '').strip()
+    message = (f'Switched to branch {branch}' if branch
+               else f'HEAD detached at {head[:7]}')
+    return {
+        'head': head,
+        'branch': branch or None,
+        'detached': not branch,
+        'message': message,
+        'output': ((proc.stdout or '') + (proc.stderr or '')).strip(),
+    }
 
 
 # --- Worktrees (git worktree) ------------------------------------------------

@@ -749,11 +749,11 @@ def test_collapsed_pane_parks_to_strip_and_restores(browser, static_server):
         assert state["expandHandle"], state      # divider restore affordance
         assert 24 <= state["colWidth"] <= 32, state  # slim strip
         assert _saved_leaf_collapsed(page, "L1") is True
-        # Parked-left divider chevron points where the pane grows (right).
-        chevron = page.locator(
-            "#splitContainer > .split-resize-handle.pane-expand").evaluate(
-            "el => getComputedStyle(el, '::after').content")
-        assert chevron == '"›"', chevron
+        # Parked-left divider records where the pane grows (right).
+        grow = page.locator(
+            "#splitContainer > .split-resize-handle.pane-expand"
+        ).get_attribute("data-expand-dir")
+        assert grow == "right", grow
         # Park survives a full reload through the restore path.
         page.reload(wait_until="domcontentloaded")
         page.wait_for_function(
@@ -864,6 +864,36 @@ def _drag_root_handle(page, nth, dx):
     page.mouse.down()
     page.mouse.move(x0 + dx, y0, steps=8)
     page.mouse.up()
+
+
+def test_parked_first_pane_does_not_leak_into_other_spaces(browser, static_server):
+    """Column 0 is reused across spaces: its parked state must not follow it,
+    and a layout whose only pane is parked opens instead of showing a strip."""
+    world = ShellWorld()
+    context, page, errors, blocked = _open(
+        browser, static_server, world, seed=V2_NESTED)
+    try:
+        _load_shell(page, static_server)
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "3 panes")
+        page.evaluate("() => window.setPaneCollapsed(getColumnEl(0), true)")
+        _pump_until(page, lambda: _park_state(page)["parked"] == 1, 20000, "col0 parked")
+        first_space = page.evaluate("() => spacesState.active")
+        _electron_titlebar(page)
+        page.locator("#shellSpacesAdd").click()
+        _pump_until(page, lambda: _col_count(page) == 1, 20000, "new space")
+        assert _park_state(page)["parked"] == 0
+        page.locator(f".shell-space-tab[data-space-id='{first_space}']").click()
+        _pump_until(page, lambda: _col_count(page) == 3, 20000, "back to 3 panes")
+        assert _park_state(page)["parked"] == 1
+        # A saved lone parked leaf (the broken state) mounts open.
+        page.evaluate("""() => applyWorkspaceColumns(null, null,
+            { type: 'leaf', id: 'LONE', page: '/chat_page.html', collapsed: true })""")
+        _pump_until(page, lambda: _col_count(page) == 1, 20000, "lone leaf")
+        assert _park_state(page)["parked"] == 0
+        assert not errors
+        _assert_blocked_api_free(blocked)
+    finally:
+        context.close()
 
 
 def test_expand_divider_drag_sets_restored_width(browser, static_server):

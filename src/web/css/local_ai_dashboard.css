@@ -1,0 +1,24 @@
+.local-ai-meta, .local-ai-rank-note, .local-ai-filters, .local-ai-axes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .65rem;
+    align-items: center;
+    margin: .8rem 0;
+}
+.local-ai-meta { color: var(--text-secondary, #94a3b8); font-size: .85rem; }
+.local-ai-rank-note { color: var(--text-secondary, #94a3b8); font-size: .86rem; line-height: 1.45; }
+.local-ai-filters label, .local-ai-axes label { display: inline-flex; align-items: center; gap: .35rem; color: var(--text-secondary, #94a3b8); font-size: .83rem; }
+.local-ai-filters select, .local-ai-axes select { max-width: 13rem; min-width: 8rem; min-height: 2rem; color: var(--text-primary, #e2e8f0); background: var(--surface-raised, rgba(15,23,42,.75)); border: 1px solid var(--border-color, #334155); border-radius: .4rem; }
+.local-ai-axes { padding: .55rem .7rem; border: 1px solid var(--border-color, #334155); border-radius: .65rem; background: color-mix(in srgb, var(--surface-raised, #172033) 68%, transparent); }
+.local-ai-widget { margin-bottom: 1rem; }
+.local-ai-chart { min-height: 28rem; }
+.local-ai-table th button { border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: inherit; padding: 0; }
+.local-ai-table td small { display: block; margin-top: .25rem; color: var(--text-secondary, #94a3b8); font-size: .76rem; line-height: 1.35; }
+.local-ai-table td small a, .local-ai-build-details a { color: var(--accent-color, #60a5fa); }
+.local-ai-build-details { margin-top: 1.4rem; }
+.local-ai-build-details > p { color: var(--text-secondary, #94a3b8); }
+.local-ai-build-details details { margin: .5rem 0; padding: .65rem .8rem; border: 1px solid var(--border-color, #334155); border-radius: .6rem; background: color-mix(in srgb, var(--surface-raised, #172033) 56%, transparent); }
+.local-ai-build-details summary { cursor: pointer; display: flex; justify-content: space-between; gap: 1rem; }
+.local-ai-build-details summary span { color: var(--text-secondary, #94a3b8); font-size: .82rem; }
+.local-ai-build-details li { margin: .3rem 0; }
+@media (max-width: 700px) { .local-ai-chart { min-height: 22rem; } .local-ai-filters label, .local-ai-axes label { width: 100%; justify-content: space-between; } .local-ai-filters select, .local-ai-axes select { max-width: 68%; } }

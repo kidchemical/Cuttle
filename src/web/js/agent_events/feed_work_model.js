@@ -79,6 +79,13 @@
         return out;
     }
 
+    function progressModel() {
+        const P = root.CuttleProgress || globalThis.CuttleProgress;
+        if (P) return P;
+        if (typeof require === 'function') return require('../shared/progress_model.js');
+        throw new Error('progress_model.js must load before feed_work_model.js');
+    }
+
     /** Work items listed above the process tree. */
     function ownerLines(owner) {
         const lines = [];
@@ -90,9 +97,14 @@
         }
         (owner.waits || []).forEach((w) => lines.push({ kind: 'wait', text: w.label || 'Background wait',
             started: w.started_at, job_id: w.job_id || '' }));
-        (owner.watches || []).forEach((w) => lines.push({ kind: 'watch', text: w.label || w.job_id,
-            started: w.started_at, job_id: w.job_id || '',
-            percent: Number.isFinite(Number(w.percent)) ? Math.max(0, Math.min(100, Number(w.percent))) : null }));
+        (owner.watches || []).forEach((w) => {
+            // Shared rule (js/shared/progress_model.js): measured → percent; else
+            // indeterminate (null percent, never a dead 0%). Unit watches never measure.
+            const m = progressModel().measure({ percent: w.percent, started_at: w.started_at,
+                state: 'running', measured: w.kind === 'unit' ? false : undefined });
+            lines.push({ kind: 'watch', text: w.label || w.job_id, started: w.started_at, job_id: w.job_id || '',
+                percent: m.percent, indeterminate: !m.determinate });
+        });
         (owner.schedules || []).forEach((s) => lines.push({ kind: 'schedule',
             text: [s.label, s.detail].filter(Boolean).join(' · '), id: s.id, status: s.status,
             target: s.target || '', cancellable: !!s.cancellable }));

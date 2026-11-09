@@ -16,16 +16,21 @@ def node(pid, chat, *, detached=False, parent_chat=None, children=(), t=1000.0):
 @pytest.fixture
 def sources(monkeypatch):
     """Every source of the tree, replaced; tests fill in what they need."""
-    state = {"forest": {}, "waits": [], "watches": {}, "schedules": {}, "runs": [], "meta": {}, "parents": {},
-             "mesh": []}
+    state = {"forest": {}, "waits": [], "watches": {}, "units": {}, "schedules": {}, "runs": [], "meta": {},
+             "parents": {}, "mesh": []}
     monkeypatch.setattr(processes, "forest", lambda max_age=None: state["forest"])
     monkeypatch.setattr(work_tree, "_waits", lambda: state["waits"])
-    monkeypatch.setattr(work_tree, "_watches", lambda skip: state["watches"])
+    monkeypatch.setattr(work_tree, "_watches", lambda skip: {c: [w for w in rows if w["job_id"] not in skip]
+                                                             for c, rows in state["watches"].items()})
+    monkeypatch.setattr(work_tree, "_unit_watches", lambda: state["units"])
     monkeypatch.setattr(work_tree, "_schedules", lambda: state["schedules"])
     monkeypatch.setattr(work_tree, "_active_runs", lambda: state["runs"])
     monkeypatch.setattr(work_tree, "_chat_meta", lambda chats: state["meta"])
     monkeypatch.setattr(work_tree, "_subagent_parents", lambda chats: state["parents"])
     monkeypatch.setattr(work_tree, "_mesh_active", lambda: state["mesh"])
+    # Parent chats with working sub-agent children (own DB query, not the index).
+    state["busy_parents"] = set()
+    monkeypatch.setattr(work_tree, "_subagent_busy_parents", lambda: set(state["busy_parents"]))
     monkeypatch.setattr(work_tree, "_feed_enabled", lambda: True)
     work_tree.invalidate()
     yield state
@@ -89,6 +94,48 @@ def test_schedules_alone_do_not_light_the_activity_dot(sources):
     assert [r["background"] for r in rows] == [True, False, False, False]
 
 
+def test_a_unit_watch_shows_as_running_detached_work(sources):
+    """CH-001821's laptop build: a watch-unit record is visible in the chat's background state."""
+    sources["units"] = {"1821": [{"job_id": "unit-ch1821-rig-build-ab12cd", "kind": "unit",
+                                  "label": "Running: ch1821-rig-build", "unit": "ch1821-rig-build", "pid": 0,
+                                  "sub_state": "running", "percent": None, "started_at": 1793523200.0}]}
+    # Its card also bound the job id to the chat: shown once.
+    sources["watches"] = {"1821": [{"job_id": "unit-ch1821-rig-build-ab12cd", "label": "dup", "percent": 0}]}
+    bg = work_tree.background_summary(1821)
+    assert bg["working"] is True and bg["label"] == "Running: ch1821-rig-build"
+    assert bg["watches"] == [{"job_id": "unit-ch1821-rig-build-ab12cd", "label": "Running: ch1821-rig-build",
+                              "percent": None, "started_at": 1793523200.0, "kind": "unit",
+                              "unit": "ch1821-rig-build", "sub_state": "running"}]
+    assert work_tree.background_session_ids() == {"1821"}
+    [owner] = work_tree.work_tree()["owners"]
+    assert owner["state"] == "watch" and owner["label"] == "Running: ch1821-rig-build"
+
+
+def test_unit_watch_source_reads_records_and_clears_when_they_go(monkeypatch, tmp_path):
+    from api import job_watch as jw
+
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    (tmp_path / "home" / "output").mkdir(parents=True)
+    calls = []
+
+    def state(unit):
+        calls.append(unit)
+        return {"queried": True, "running": True, "active_state": "active", "sub_state": "running", "pid": 9}
+
+    monkeypatch.setattr(jw, "unit_state", state)
+    monkeypatch.setattr(work_tree, "_unit_state_cache", {})
+    info = jw.register_unit_watch(unit="ch1821-rig-build", chat_session_id="CH-001821")
+    [row] = work_tree._unit_watches()["1821"]
+    assert row["label"] == "Running: ch1821-rig-build" and row["unit"] == "ch1821-rig-build"
+    assert row["sub_state"] == "running" and row["kind"] == "unit" and row["job_id"] == info["id"]
+    assert row["started_at"] == pytest.approx(jw.time.time(), abs=60)
+    calls.clear()
+    work_tree._unit_watches()
+    assert calls == []  # SubState cached between index builds
+    jw.Path(info["record"]).unlink()  # the watch fired or was removed
+    assert work_tree._unit_watches() == {}
+
+
 def test_a_failing_source_degrades_to_nothing(sources, monkeypatch):
     monkeypatch.setattr(processes, "forest", lambda max_age=None: (_ for _ in ()).throw(OSError("no /proc")))
     work_tree.invalidate()
@@ -148,3 +195,29 @@ def test_work_tree_and_end_routes(client, sources, monkeypatch):
     monkeypatch.setattr(processes, "end_chat_processes", lambda chat: {"chat_session_id": chat, "ended": [], "errors": []})
     res = client.post("/api/jobs/chats/4/end-processes")
     assert res.status_code == 200 and res.get_json()["chat_session_id"] == "4"
+
+
+def test_a_running_subagent_child_lights_its_parent_chat(sources):
+    """CH-002112's report: a chat whose only live work is a sub-agent looked idle.
+
+    The parent is idle while the child runs, and the child chat is not a
+    process/watch the parent owns, so `background` has to come from the
+    sub-agent store (`_subagent_busy_parents`).
+    """
+    sources["busy_parents"] = {"1822"}
+    assert work_tree.background_session_ids() == {"1822"}
+    rows = [{"id": 1822, "generating": False}, {"id": 7, "generating": False},
+            {"id": 1822, "generating": True}]
+    work_tree.mark_background(rows)
+    # Generating chats keep the live-run spinner, not the background one.
+    assert [r["background"] for r in rows] == [True, False, False]
+
+
+def test_subagent_parents_and_owned_work_both_count(sources):
+    sources["forest"] = {"5": {"roots": [node(50, "5")], "process_count": 1, "detached_count": 0,
+                               "spawned_by": {}}}
+    sources["units"] = {"6": [{"job_id": "unit-x", "kind": "unit", "label": "Running: build",
+                               "unit": "build", "pid": 0, "sub_state": "running", "percent": None,
+                               "started_at": 1.0}]}
+    sources["busy_parents"] = {"7"}
+    assert work_tree.background_session_ids() == {"5", "6", "7"}

@@ -1598,6 +1598,57 @@ body.history-hide-commands .chat-history .history-agent-chip.is-command-chip { d
     50% { opacity: 1; transform: scale(1.15); }
 }
 
+/* Idle chat whose agents still own background work — detached waits, watch
+   jobs, unit watches, owned processes, a running sub-agent (kind `background`,
+   chat_activity.js). A real spinning wheel, as legible as the status dots: the
+   dots' footprint, a full-strength 2px accent arc with one gap. It stays apart
+   from `running` by shape and speed — hollow and slow, never faint. */
+.history-background-icon,
+.chat-session-background-icon {
+    position: absolute;
+    left: 4px;
+    top: 50%;
+    margin-top: -6px;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--accent-color, #667eea);
+    /* One gap turns the ring into a wheel; `running` keeps a full ring. */
+    border-right-color: transparent;
+    border-radius: 50%;
+    box-shadow: 0 0 6px color-mix(in srgb, var(--accent-color, #667eea) 50%, transparent);
+    animation: history-background-spin 2.6s linear infinite;
+}
+
+/* In the chat title the status indicators share a flex row (see
+   `.chat-session-title .history-running-icon`), so restore normal flow. */
+.chat-session-background-icon {
+    position: relative;
+    inset: auto;
+    margin: 0;
+    pointer-events: none;
+}
+
+.chat-session-background-icon[hidden] { display: none !important; }
+
+@keyframes history-background-spin {
+    to { transform: rotate(360deg); }
+}
+
+html.cuttle-bg-paused .history-background-icon,
+html.cuttle-bg-paused .chat-session-background-icon {
+    animation-play-state: paused !important;
+}
+
+/* Reduced motion: parked, not dimmed — the same full-strength wheel. */
+@media (prefers-reduced-motion: reduce) {
+    .history-background-icon,
+    .chat-session-background-icon {
+        animation: none !important;
+    }
+}
+
 .history-unread-icon,
 .chat-session-unread-icon {
     flex-shrink: 0;
@@ -2444,6 +2495,42 @@ body.has-video-background .chat-restore-loader {
     box-sizing: border-box;
 }
 
+/* Drag grip (chat_composer_resize.js): bottom-right corner makes the
+   new-chat composer taller; double-click resets to auto height. */
+.composer-resizable { position: relative; }
+.composer-resize-grip {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 14px;
+    height: 14px;
+    cursor: ns-resize;
+    touch-action: none;
+    opacity: 0.45;
+    border-bottom-right-radius: 14px;
+    background:
+        linear-gradient(135deg, transparent 0 55%, var(--text-secondary) 55% 62%, transparent 62% 72%,
+            var(--text-secondary) 72% 79%, transparent 79%);
+    transition: opacity var(--dur-base) var(--ease-out);
+}
+.composer-resizable:hover .composer-resize-grip,
+.composer-resizing .composer-resize-grip { opacity: 0.9; }
+.composer-resizing, .composer-resizing * { user-select: none; cursor: ns-resize; }
+/* In-chat composer: same grip mirrored into the top-right corner; drag up
+   to grow. Clipped to the outer triangle so it never takes Send's clicks. */
+.composer-resize-grip--up {
+    bottom: auto;
+    top: 3px;
+    border-bottom-right-radius: 0;
+    border-top-right-radius: 14px;
+    clip-path: polygon(0 0, 100% 0, 100% 100%);
+    background:
+        linear-gradient(45deg, transparent 0 55%, var(--text-secondary) 55% 62%, transparent 62% 72%,
+            var(--text-secondary) 72% 79%, transparent 79%);
+}
+.input-wrapper.is-composer-locked .composer-resize-grip { display: none; }
+@media (pointer: coarse) { .composer-resize-grip { display: none; } }
+
 /* Short desktop windows / split panes: keep micro chats usable. Mobile
    keyboard resizing must not toggle the welcome branding. */
 @media (max-height: 560px) {
@@ -2883,6 +2970,31 @@ body.has-video-background .chat-restore-loader {
 }
 
 .chat-messages::-webkit-scrollbar-thumb:hover {
+    background: var(--text-tertiary);
+}
+
+/* Auto-hiding chat scrollbars (chat_scrollbar_autohide.js toggles
+   .is-scrolling while the scroller moves or the pointer is on its edge).
+   Track stays transparent; only the thumb appears. Both the standard
+   properties (Chromium 121+/Firefox — these win over ::-webkit-scrollbar
+   when set) and the WebKit pseudos are covered. */
+.scrollbar-autohide {
+    scrollbar-color: transparent transparent;
+    transition: scrollbar-color 0.25s ease;
+}
+.scrollbar-autohide.is-scrolling {
+    scrollbar-color: var(--border-color) transparent;
+}
+.scrollbar-autohide::-webkit-scrollbar-track {
+    background: transparent;
+}
+.scrollbar-autohide::-webkit-scrollbar-thumb {
+    background: transparent;
+}
+.scrollbar-autohide.is-scrolling::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+}
+.scrollbar-autohide.is-scrolling::-webkit-scrollbar-thumb:hover {
     background: var(--text-tertiary);
 }
 
@@ -3426,6 +3538,12 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
     background: color-mix(in srgb, var(--accent-color) 15%, transparent);
 }
 
+/* Level ring while speaking (chat_tts.js sets --tts-level 0..1 from the audio). */
+.message-tts-btn.is-playing {
+    box-shadow: 0 0 0 calc(var(--tts-level, 0) * 6px) color-mix(in srgb, var(--accent-color) 35%, transparent);
+    transition: box-shadow 60ms linear;
+}
+
 .message-tts-btn.is-loading {
     opacity: 0.75;
     cursor: wait;
@@ -3605,6 +3723,10 @@ body.midnight-mode .message.assistant .message-sender-group .slash-command-chip-
 
 .message-content ol {
     list-style-type: decimal;
+    /* Outside markers ("10. ") sit in this padding and .message-content clips
+       overflow: size it in ch (digits are ~1ch) so monospace themes and
+       two-digit numbers never lose their leading digit. */
+    padding-left: max(24px, calc(4ch + 0.25em));
 }
 
 .message-content li {
@@ -4669,6 +4791,54 @@ pre.has-code-copy:hover .code-copy-btn,
 }
 .context-gauge-popover-close:hover {
     color: var(--text-primary, #e2e8f0);
+}
+/* Per-chat Auto-compact section (chat_auto_compact.js). */
+.context-gauge-auto-compact-slot {
+    margin: 0 0 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+.context-gauge-auto-compact-slot[hidden] {
+    display: none !important;
+}
+.context-gauge-auto-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 6px;
+}
+.context-gauge-auto-row label {
+    color: var(--text-secondary, #94a3b8);
+    font-size: 11.5px;
+}
+.context-gauge-auto-row label:first-child {
+    min-width: 76px;
+}
+.context-gauge-auto-row select,
+.context-gauge-auto-row input {
+    background: rgba(15, 23, 42, 0.55);
+    color: var(--text-primary, #e2e8f0);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    border-radius: 6px;
+    font-size: 12px;
+    padding: 3px 6px;
+}
+.context-gauge-auto-pct {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: var(--text-secondary, #94a3b8);
+}
+.context-gauge-auto-pct input {
+    width: 4.2em;
+}
+.context-gauge-auto-note {
+    margin: 0 0 4px;
+    color: var(--text-secondary, #94a3b8);
+    font-size: 11px;
+}
+.context-gauge-auto-note--warn {
+    color: #fbbf24;
 }
 
 .textarea-with-slash-menu {
@@ -6048,18 +6218,12 @@ pre.has-code-copy:hover .code-copy-btn,
 
 .response-original-content {
     margin-top: 8px;
-    padding-left: 12px;
-    border-left: 2px solid color-mix(in srgb, var(--accent, #58a6ff) 48%, transparent);
-    font-style: italic;
-}
-
-.response-original-content pre,
-.response-original-content code {
-    font-style: normal;
 }
 
 .response-postprocessed-label {
-    margin: 12px 0 4px;
+    margin: 14px 0 4px;
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, var(--text-secondary, #888) 30%, transparent);
     color: var(--text-secondary);
     font-size: 0.72em;
     font-weight: 700;
@@ -8044,27 +8208,82 @@ html.cuttle-bg-paused .chat-restore-spinner {
     color: var(--text-primary);
     font-size: 0.86em;
 }
-.chat-bg-work.is-scheduled { border-style: dotted; opacity: 0.85; }
+/* Status mark: one family of shapes, colour + motion say the state.
+   working     accent dot sending out two staggered pings (work running now)
+   supervising green dot with one slow ping (a schedule is watching)
+   paused      amber pause glyph, no motion (nothing checks until resumed)
+   idle        still hollow ring (only finished results left) */
+.chat-bg-work { --bg-mark: var(--accent-color, #667eea); }
+.chat-bg-work[data-state="supervising"] { --bg-mark: #3fbf7f; border-color: color-mix(in srgb, #3fbf7f 50%, var(--border-color)); background: color-mix(in srgb, #3fbf7f 6%, transparent); }
+.chat-bg-work[data-state="paused"] { --bg-mark: #e0a63a; border-color: color-mix(in srgb, #e0a63a 55%, var(--border-color)); background: color-mix(in srgb, #e0a63a 7%, transparent); }
+.chat-bg-work[data-state="idle"] { --bg-mark: var(--text-secondary); border-style: dotted; }
 .chat-bg-ring {
+    position: relative;
     flex-shrink: 0;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    border: 2px solid var(--accent-color, #667eea);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--accent-color, #667eea) 60%, transparent);
-    animation: chat-bg-breathe 2.4s ease-in-out infinite;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
-.chat-bg-work.is-scheduled .chat-bg-ring { animation: none; border-style: dashed; box-shadow: none; }
-.chat-bg-body { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.chat-bg-ring-core {
+    position: relative;
+    z-index: 1;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--bg-mark);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--bg-mark) 70%, transparent);
+}
+.chat-bg-ring::before,
+.chat-bg-ring::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 1.5px solid var(--bg-mark);
+    opacity: 0;
+}
+.chat-bg-work[data-state="working"] .chat-bg-ring::before { animation: chat-bg-ping 1.8s cubic-bezier(0.2, 0.6, 0.35, 1) infinite; }
+.chat-bg-work[data-state="working"] .chat-bg-ring::after { animation: chat-bg-ping 1.8s cubic-bezier(0.2, 0.6, 0.35, 1) 0.9s infinite; }
+.chat-bg-work[data-state="supervising"] .chat-bg-ring::before { animation: chat-bg-ping 3.2s ease-out infinite; }
+.chat-bg-work[data-state="supervising"] .chat-bg-ring-core { animation: chat-bg-heartbeat 3.2s ease-in-out infinite; }
+/* Pause glyph: two bars, still. */
+.chat-bg-work[data-state="paused"] .chat-bg-ring-core { width: 10px; height: 10px; border-radius: 0; box-shadow: none;
+    background: linear-gradient(90deg, var(--bg-mark) 0 35%, transparent 35% 65%, var(--bg-mark) 65% 100%); }
+.chat-bg-work[data-state="idle"] .chat-bg-ring-core { background: transparent; border: 1.5px solid var(--bg-mark); box-shadow: none; }
+@keyframes chat-bg-ping { 0% { transform: scale(0.5); opacity: 0.85; } 100% { transform: scale(2.1); opacity: 0; } }
+@keyframes chat-bg-heartbeat { 0%, 100% { transform: scale(1); } 8% { transform: scale(1.25); } 16% { transform: scale(1); } }
+/* The body keeps a readable width; when the buttons don't fit beside it they wrap onto their own row
+   (narrow screens), instead of squeezing the text column to nothing under them. */
+.chat-bg-work { flex-wrap: wrap; row-gap: 8px; }
+.chat-bg-body { flex: 1 1 200px; min-width: 0; display: grid; gap: 2px; }
 .chat-bg-title { font-weight: 650; display: flex; gap: 8px; align-items: baseline; }
 .chat-bg-elapsed, .chat-bg-meta, .chat-bg-pct { color: var(--text-secondary); font-size: 0.86em; font-weight: 400; font-variant-numeric: tabular-nums; }
 .chat-bg-label, .chat-bg-meta, .chat-bg-watch-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-bg-label { color: var(--text-secondary); }
-.chat-bg-watch { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.chat-bg-watch { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
 .chat-bg-watch-label { flex: 1; min-width: 0; }
-.chat-bg-bar { width: 110px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--text-secondary) 20%, transparent); overflow: hidden; flex-shrink: 0; }
+.chat-bg-watch-unit, .chat-bg-watch-state, .chat-bg-watch-elapsed { color: var(--text-secondary); font-size: 0.86em; font-variant-numeric: tabular-nums; flex-shrink: 0; white-space: nowrap; }
+/* A long unit name ellipsizes instead of widening the row past the card (phones). */
+.chat-bg-watch-unit { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chat-bg-watch-unit::before, .chat-bg-watch-state::before, .chat-bg-watch-elapsed::before { content: '· '; }
+/* Sub-agent children (fleet-style rows): avatar, name, live status, outcome. Rows open the child. */
+.chat-bg-agents { display: grid; gap: 4px; margin-top: 4px; min-width: 0; }
+.chat-bg-agent { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; padding: 4px 6px; border: 1px solid color-mix(in srgb, var(--text-secondary) 22%, transparent); border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.chat-bg-agent:hover, .chat-bg-agent:focus-visible { border-color: var(--accent-color, #667eea); }
+.chat-bg-agent-avatar { flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 0.8em; font-weight: 650; background: color-mix(in srgb, var(--accent-color, #667eea) 18%, transparent); }
+.chat-bg-agent.is-running .chat-bg-agent-avatar, .chat-bg-agent.is-queued .chat-bg-agent-avatar { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color, #667eea) 70%, transparent); animation: chat-bg-breathe 2.4s ease-in-out infinite; }
+.chat-bg-agent-text { flex: 1 1 auto; min-width: 0; display: grid; }
+.chat-bg-agent-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-bg-agent-status { color: var(--text-secondary); font-size: 0.86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-bg-agent-outcome { flex-shrink: 0; font-size: 0.8em; color: var(--text-secondary); white-space: nowrap; }
+.chat-bg-agent.is-done .chat-bg-agent-outcome { color: var(--success-color, #2e9d5b); }
+.chat-bg-agent.is-failed .chat-bg-agent-outcome, .chat-bg-agent.is-lost .chat-bg-agent-outcome { color: var(--error-color, #d9534f); }
+.chat-bg-supervising { font-size: 0.8em; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+.chat-bg-bar { flex: 0 1 110px; width: 110px; min-width: 36px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--text-secondary) 20%, transparent); overflow: hidden; }
 .chat-bg-fill { display: block; height: 100%; background: var(--accent-color, #667eea); }
-.chat-bg-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.chat-bg-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; flex-shrink: 0; max-width: 100%; margin-left: auto; }
 .chat-bg-details { font-size: 0.86em; color: var(--accent-color, #667eea); text-decoration: none; }
 .chat-bg-work.is-clickable { cursor: pointer; }
 .chat-bg-work.is-clickable:hover { opacity: 1; border-color: var(--accent-color, #667eea); }
@@ -8095,9 +8314,37 @@ html.cuttle-bg-paused .chat-restore-spinner {
 .chat-bg-stop:hover:not(:disabled) { border-color: #f87171; color: #f87171; }
 .chat-bg-stop:disabled { opacity: 0.6; cursor: default; }
 @keyframes chat-bg-breathe { 50% { opacity: 0.4; } }
+.chat-bg-job { min-width: 0; display: grid; gap: 5px; margin: 4px 0 8px; font-size: 0.9em; }
+.chat-bg-work.has-jobs > .chat-bg-ring { display: none; }
+.chat-bg-watch:has(+ .chat-bg-job) .chat-bg-watch-label { white-space: normal; overflow-wrap: anywhere; }
+.chat-bg-job-owner, .chat-bg-job-health, .chat-bg-handoff { color: var(--text-secondary); overflow-wrap: anywhere; }
+.chat-bg-job-health.is-warning { color: var(--warning-color, #d69e36); }
+.chat-bg-job-summary, .chat-bg-result-title { font-weight: 600; overflow-wrap: anywhere; }
+.chat-bg-steps { list-style: none; padding: 2px 0; margin: 0; max-height: 220px; overflow: auto; }
+.chat-bg-step { position: relative; display: flex; gap: 9px; align-items: flex-start; padding: 5px 0; min-width: 0; }
+.chat-bg-step:not(:last-child)::after { content: ''; position: absolute; left: 6px; top: 22px; bottom: -3px; border-left: 1px solid color-mix(in srgb, var(--text-secondary) 25%, transparent); }
+.chat-bg-step-icon { box-sizing: border-box; flex: 0 0 14px; width: 14px; height: 14px; margin-top: 2px; border: 1.5px solid var(--text-secondary); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; }
+.chat-bg-step.is-running .chat-bg-step-icon { border-color: var(--accent-color, #667eea); border-right-color: transparent; animation: chat-bg-step-spin 1s linear infinite; }
+.chat-bg-step.is-done .chat-bg-step-icon { border-color: transparent; color: var(--success-color, #2e9d5b); }
+.chat-bg-step.is-failed .chat-bg-step-icon { border-color: transparent; color: var(--error-color, #d9534f); font-size: 18px; }
+.chat-bg-step-text { min-width: 0; overflow-wrap: anywhere; }
+.chat-bg-step-detail { display: block; color: var(--text-secondary); }
+.chat-bg-job-details { min-width: 0; color: var(--text-secondary); }
+.chat-bg-job-details summary { cursor: pointer; width: fit-content; color: var(--accent-color, #667eea); }
+.chat-bg-job-details[open] { display: grid; gap: 6px; }
+.chat-bg-job-details > div { overflow-wrap: anywhere; }
+.chat-bg-job-links { display: flex; flex-wrap: wrap; gap: 12px; }
+.chat-bg-output { box-sizing: border-box; max-width: 100%; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; margin: 4px 0; background: color-mix(in srgb, var(--text-secondary) 8%, transparent); border-radius: 6px; font-size: 0.9em; }
+.chat-bg-result + .chat-bg-result { border-top: 1px solid color-mix(in srgb, var(--text-secondary) 20%, transparent); padding-top: 8px; }
+@keyframes chat-bg-step-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-    .chat-bg-ring, .history-kind-badge.history-bg-badge { animation: none; }
+    .chat-bg-step.is-running .chat-bg-step-icon { animation: none; border-style: dashed; }
+    .chat-bg-ring, .chat-bg-ring::before, .chat-bg-ring::after, .chat-bg-ring-core,
+    .history-kind-badge.history-bg-badge { animation: none !important; }
 }
 @media (max-width: 600px) {
     .chat-bg-work { width: calc(100% - 16px); }
+    /* Phones: the buttons always get their own row under the text, aligned with it (past the ring). */
+    .chat-bg-actions { flex-basis: 100%; justify-content: flex-start; padding-left: 26px; }
+    .chat-bg-title { flex-wrap: wrap; }
 }

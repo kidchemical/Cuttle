@@ -15,6 +15,30 @@ DASHBOARDS: List[Dict[str, Any]] = [
         "public": True,
     },
     {
+        "id": "local-models",
+        "title": "Open-weight Coding Models",
+        "blurb": "A ranked, filterable local-model shortlist with weight links, memory estimates, coding evidence and 3D trade-offs.",
+        "status": "live",
+        "href": "/dashboards_page.html?d=local-models",
+        "public": True,
+    },
+    {
+        "id": "local-ai-hardware",
+        "title": "Local AI Hardware",
+        "blurb": "Compare GPUs, accelerators and unified-memory systems by cost, power, memory, linking and local inference evidence.",
+        "status": "live",
+        "href": "/dashboards_page.html?d=local-ai-hardware",
+        "public": True,
+    },
+    {
+        "id": "local-ai-builds",
+        "title": "Local AI Builds",
+        "blurb": "Live-listing snapshots for complete local-AI systems, with ranked trade-offs and linked advertised component configurations.",
+        "status": "live",
+        "href": "/dashboards_page.html?d=local-ai-builds",
+        "public": True,
+    },
+    {
         "id": "cuttle-performance",
         "title": "My Cuttle Performance",
         "blurb": "Your actual Cuttle task outcomes (accept/reject, cost, time) next to public scores.",
@@ -41,6 +65,13 @@ DASHBOARDS: List[Dict[str, Any]] = [
         "blurb": "Every execution Cuttle handles — agent turns and mesh jobs — with runs, success rate, cost, durations and per-agent breakdown.",
         "status": "live",
         "href": "/dashboards_page.html?d=cuttle-jobs",
+    },
+    {
+        "id": "orchestration",
+        "title": "Orchestration & Supervision",
+        "blurb": "Which models orchestrate, grind, escalate and supervise: tiers, escalations per project, round times, wakes and failures.",
+        "status": "live",
+        "href": "/dashboards_page.html?d=orchestration",
     },
 ]
 

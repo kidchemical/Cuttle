@@ -255,8 +255,12 @@
                         }
                         inList = 'ordered';
                     }
+                    // Keep the number the author typed: a list split by a
+                    // paragraph ("1. … text … 2. …") or written 1/3/5 must not
+                    // be renumbered from 1 by the browser.
+                    const num = parseInt(line.match(/^(\d+)\./)[1], 10);
                     const content = line.replace(/^\d+\.\s/, '');
-                    listItems.push(`<li>${formatInlineMarkdown(content)}</li>`);
+                    listItems.push(`<li value="${num}">${formatInlineMarkdown(content)}</li>`);
                     continue;
                 }
         

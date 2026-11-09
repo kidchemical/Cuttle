@@ -56,7 +56,10 @@ def test_task_cancel_reaps_child_and_releases_thread(tmp_path, monkeypatch, tran
     tid = "handoff-task-cancel-" + transport
     monkeypatch.setenv("S2_TID", tid)
     monkeypatch.setenv("S2_MODE", "hold")
-    monkeypatch.setenv("S2_EXEC_MODE", "hold")
+    # The exec fake has no "hold" mode; "slow" keeps it alive until the
+    # cancel kills it (an instant exit raced task.cancel() on CI).
+    monkeypatch.setenv("S2_EXEC_MODE", "slow")
+    monkeypatch.setenv("S2_SLEEP", "60")
     module = codex_app_server_turn if transport == "turn" else codex_cli_tool
     executable = _fake_bin(tmp_path, "fake-codex", (
         _FAKE_TURN_SERVER if transport == "turn" else _FAKE_EXEC_SERVER

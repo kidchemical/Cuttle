@@ -6,6 +6,7 @@ registers, stores or kills anything:
 - agent turns in flight: ``api.agent_events`` runs with status ``running``
 - detached background waits: ``api.agent_harness.background_wait``
 - watch jobs bound to a chat: ``api.chat_run_registry.job_bindings`` + ``api.job_watch``
+- detached-job (unit) watches: ``api.job_watch.unit_watch_records`` + systemd SubState
 - agent-owned OS processes, detached ones included: ``api.jobs.processes``
 - supervision schedules: ``api.jobs.ledger.chat_op_jobs``
 - mesh jobs (no chat owner): ``api.jobs.ledger``
@@ -88,6 +89,65 @@ def _watches(skip: Set[str]) -> Dict[str, List[Dict[str, Any]]]:
             if isinstance(data.get("bars"), list):
                 row["bars"] = data["bars"][:6]
             out.setdefault(_bare(chat), []).append(row)
+    return out
+
+
+# systemd SubState per unit, shared by every index build for this long: the
+# index is rebuilt every couple of seconds and a ``systemctl show`` is a process.
+UNIT_STATE_TTL_SEC = 10.0
+_unit_state_cache: Dict[str, Any] = {}
+
+
+def _unit_sub_state(unit: str) -> str:
+    now = time.monotonic()
+    with _lock:
+        hit = _unit_state_cache.get(unit)
+    if hit and now - hit[0] <= UNIT_STATE_TTL_SEC:
+        return hit[1]
+    try:
+        from api.job_watch import unit_state
+
+        st = unit_state(unit)
+        sub = str(st.get("sub_state") or st.get("active_state") or "") if st.get("queried") else "status unavailable"
+    except Exception:
+        sub = ""
+    with _lock:
+        _unit_state_cache[unit] = (now, sub)
+    return sub
+
+
+def _unit_watches() -> Dict[str, List[Dict[str, Any]]]:
+    """Pending detached-job watches (``job_watch watch-unit``), by the chat they resume.
+
+    The record lives until the poller resumes the chat, so the row disappears
+    when the watch fires or is removed."""
+    try:
+        from api.job_watch import unit_watch_records
+
+        records = unit_watch_records()
+    except Exception:
+        return {}
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for rec in records:
+        chat = _bare(rec.get("chat_session_id"))
+        if not chat:
+            continue
+        unit = str(rec.get("unit") or "")
+        pid = int(rec.get("pid") or 0)
+        from api.job_watch import read_status
+
+        status = read_status(rec["id"]) or {}
+        out.setdefault(chat, []).append({
+            "job_id": rec.get("id"), "kind": "unit",
+            "label": str(rec.get("label") or (f"Running: {unit}" if unit else f"Running: pid {pid}"))[:200],
+            "unit": unit, "pid": pid,
+            "sub_state": _unit_sub_state(unit) if unit else "running",
+            "percent": None, "started_at": rec.get("created_ts"),
+            "activity": status.get("activity"), "state": status.get("state", "running"),
+            "resume_chat": _handle(chat), "handoff": "on_exit",
+            "resume_note": str(rec.get("resume_message") or "")[:400],
+            "origin_query_id": str(rec.get("origin_query_id") or "")[:80],
+        })
     return out
 
 
@@ -186,8 +246,11 @@ def _subagent_parents(chats: Iterable[str]) -> Dict[str, str]:
 def _build_index() -> Dict[str, Dict[str, Any]]:
     forest = processes.forest()
     waits = _waits()
-    wait_ids = {str(w.get("job_id") or "") for w in waits}
-    watches = _watches(wait_ids)
+    units = _unit_watches()
+    # A unit watch's card may also bind its job id to the chat: show it once.
+    skip = {str(w.get("job_id") or "") for w in waits}
+    skip |= {str(u.get("job_id") or "") for rows in units.values() for u in rows}
+    watches = _watches(skip)
     schedules = _schedules()
     index: Dict[str, Dict[str, Any]] = {}
 
@@ -205,6 +268,8 @@ def _build_index() -> Dict[str, Dict[str, Any]]:
             # Epoch when recorded: the ISO string is naive local time (ambiguous across DST).
             entry(chat)["waits"].append({**wait, "started_at": wait.get("started_ts") or wait.get("started_at")})
     for chat, rows in watches.items():
+        entry(chat)["watches"].extend(rows)
+    for chat, rows in units.items():
         entry(chat)["watches"].extend(rows)
     for chat, rows in schedules.items():
         entry(chat)["schedules"].extend(rows)
@@ -236,6 +301,7 @@ def invalidate() -> None:
     processes.invalidate()
     with _lock:
         _index_cache["at"] = 0.0
+        _subagent_cache["at"] = 0.0  # sub-agent parents are cached beside the index
 
 
 def _working(e: Dict[str, Any]) -> bool:
@@ -243,12 +309,60 @@ def _working(e: Dict[str, Any]) -> bool:
     return bool(e.get("waits") or e.get("watches") or e.get("process_count"))
 
 
-def background_session_ids() -> Set[str]:
-    """Chats that own live waits, watch jobs or processes right now."""
+# Parent chats with working sub-agent children, cached like the index: the
+# sessions list polls often and this is a second DB round-trip.
+_subagent_cache: Dict[str, Any] = {"at": 0.0, "ids": set()}
+
+
+def _subagent_busy_parents() -> Set[str]:
+    """Parent chats whose spawned sub-agent children are still working.
+
+    A parent is idle while its children run (``spawn`` detaches), and a child
+    chat is not a process or watch the parent owns, so without this a chat
+    whose only live work is a sub-agent looks finished in the sessions list.
+    Pending counts: a queued child of a live batch (``--collect serial``) is
+    work the parent is still waiting on.
+    """
+    now = time.monotonic()
+    with _lock:
+        hit = _subagent_cache
+        if hit["at"] and now - hit["at"] <= INDEX_TTL_SEC:
+            return set(hit["ids"])
+    ids: Set[str] = set()
     try:
-        return {chat for chat, e in index().items() if _working(e)}
+        from api.auth_db import get_auth_db
+        from api.subagents.types import STATUS_PENDING, STATUS_RUNNING, TERMINAL_BATCH
+
+        conn = get_auth_db()._get_connection()
+        try:
+            marks = ",".join("?" * len(TERMINAL_BATCH))
+            rows = conn.execute(
+                "SELECT DISTINCT b.parent_session_id AS parent "
+                "FROM subagent_children c JOIN subagent_batches b ON b.id = c.batch_id "
+                f"WHERE c.status IN (?, ?) AND b.status NOT IN ({marks})",
+                (STATUS_PENDING, STATUS_RUNNING, *TERMINAL_BATCH),
+            ).fetchall()
+        finally:
+            conn.close()
+        ids = {_bare(r["parent"]) for r in rows if r["parent"] is not None}
+        ids.discard("")
     except Exception:
         return set()
+    with _lock:
+        _subagent_cache.update(at=now, ids=set(ids))
+    return ids
+
+
+def background_session_ids() -> Set[str]:
+    """Chats that own live waits, watch jobs, processes or sub-agents right now.
+
+    Unit (detached-job) watches arrive through ``_working`` as watches.
+    """
+    try:
+        owned = {chat for chat, e in index().items() if _working(e)}
+    except Exception:
+        owned = set()
+    return owned | _subagent_busy_parents()
 
 
 def mark_background(sessions: List[Dict[str, Any]]) -> None:
@@ -287,6 +401,40 @@ def _feed_enabled() -> bool:
         return False
 
 
+# A delivered result stays on the card this long, so its end is seen.
+RESULT_LINGER_SEC = 300
+
+
+def _result_settled(chat: str, receipt: Dict[str, Any], *, now: Optional[float] = None) -> bool:
+    """True when a finished job no longer belongs on the pinned card.
+
+    Its follow-up was delivered, the chat is idle (that turn has finished, so
+    the answer is in the transcript), and it ended more than a few minutes ago.
+    Results that still need attention (failed, retrying, queued) stay; they
+    used to stay for 7 days, so a chat kept a "Background job results" card
+    for jobs its agent handled hours earlier."""
+    if receipt.get("handoff") != "delivered":
+        return False
+    now = time.time() if now is None else now
+    if now - float(receipt.get("finished_ts") or 0) < RESULT_LINGER_SEC:
+        return False
+    try:
+        from api import chat_delivery
+
+        return not chat_delivery.is_busy(chat)
+    except Exception:
+        return False
+
+
+def _finished_label(label: str) -> str:
+    """A finished job's label without the "Running: " it was registered with.
+
+    Unit watches default to "Running: <unit>" (``job_watch``); next to the
+    job's final state that reads as "Running: ch1821-adsbot · Finished"."""
+    label = str(label or "")
+    return label[len("Running: "):].strip() or label if label.startswith("Running: ") else label
+
+
 def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
     """Compact background-work summary for one chat's live status, or None."""
     chat = _bare(session_id)
@@ -294,13 +442,38 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
         e = index().get(chat)
     except Exception:
         return None
-    if not e or not (_working(e) or e.get("schedules")):
+    from api.job_watch import recent_unit_results, read_activity
+
+    # Terminal receipts do not light a running indicator or become live work.
+    try:
+        receipts = [r for r in recent_unit_results(chat) if not _result_settled(chat, r)]
+    except Exception:
+        receipts = []
+    recent = [{"job_id": r["id"], "kind": "unit", "unit": r.get("unit", ""),
+               "label": _finished_label(r.get("label") or r["id"]), "state": r["outcome"].get("state", "unknown"),
+               "started_at": r.get("created_ts"), "finished_at": r.get("finished_ts"),
+               "handoff": r["handoff"], "resume_chat": _handle(chat),
+               "resume_note": str(r.get("resume_message") or "")[:400],
+               "origin_query_id": r.get("origin_query_id", ""),
+               "followup_query_id": r.get("followup_query_id", ""),
+               "activity": read_activity(r["id"])} for r in receipts]
+    if not e and not recent:
         return None
+    e = e or {"waits": [], "watches": [], "schedules": []}
+    if not (_working(e) or e.get("schedules") or recent):
+        return None
+    # A failed enqueue can leave both a pending watch and a terminal receipt.
+    recent_ids = {r["job_id"] for r in recent}
+    watches = [w for w in e["watches"] if w.get("job_id") not in recent_ids]
     return {
         "label": _first_label(e),
-        "waits": [{"job_id": w.get("job_id"), "label": w.get("label"), "started_at": w.get("started_at")}
+        "waits": [{"job_id": w.get("job_id"), "label": w.get("label"), "started_at": w.get("started_at"),
+                   "agent": w.get("agent") or ""}
                   for w in e["waits"]],
-        "watches": [{k: w.get(k) for k in ("job_id", "label", "percent", "started_at")} for w in e["watches"]],
+        "watches": [{k: w[k] for k in ("job_id", "label", "percent", "started_at", "kind", "unit", "sub_state",
+                                       "activity", "state", "resume_chat", "handoff", "resume_note", "origin_query_id") if k in w}
+                    for w in watches],
+        "recent": recent,
         "schedules": [{k: s.get(k) for k in ("id", "label", "detail", "status", "target")} for s in e["schedules"]],
         "process_count": int(e.get("process_count") or 0),
         "detached_count": int(e.get("detached_count") or 0),

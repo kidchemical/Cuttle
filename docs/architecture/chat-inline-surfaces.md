@@ -7,8 +7,21 @@ do not hand-roll a fourth look.
 | Family | Use when | Owner | Saved? |
 |---|---|---|---|
 | **Timeline notice** | A fact happened: project / worktree / checkout changed, Stopped generating, model changed, context compacted. One line, centered. | `src/web/js/chat/chat_timeline_notice.js` (`CuttleChatTimelineNotice`), page call site `addSystemMessage(spec, opts)` | Yes, `role=system` row with readable `content` + `metadata.timeline_notice` |
-| **Live status card** | Work is still running for this chat with no turn generating: detached Claude waits, watch jobs, supervision schedules, leftover processes. Pinned last, updates in place, has actions (Open / Details / Stop). | `src/web/js/chat/chat_background_work.js` (`CuttleChatBackgroundWork`) | No, it is derived from live status |
+| **Live status card** | Work is still running for this chat with no turn generating: detached Claude waits, watch jobs, supervision schedules, leftover processes. Pinned last, updates in place, has actions (Open / Details / Stop). While a detached run is actually *working* (answering a steer, following up on a finished task) it publishes live status flagged `followup`, so the ordinary typing bubble takes over and the card hides until the run is only waiting again. | `src/web/js/chat/chat_background_work.js` (`CuttleChatBackgroundWork`) | No, it is derived from live status |
 | **Action card** | The agent asks, confirms, watches or reports inside its reply (`<cuttle_action_form>`). | `chat_action_forms.js` (pure) + `chat_action_cards.js` (effects); runbook `.cuttle_global/docs/action-forms.md` | Part of the assistant message |
+
+**Reply threads** are not a fourth surface: they regroup existing rows.
+Steers, a turn's later follow-up bubbles and finished sub-agent children
+fold under the turn's bubble behind an "N replies" bar
+(`chat_threads.js` + pure `chat_thread_model.js`, keyed by `turn_id`). Rows
+keep their place, so `CH-…-N` numbering is unchanged. A row that should join
+a thread carries its turn's `turn_id` in metadata; never hand-roll a reply list.
+
+Rows Cuttle sends into a chat as a turn (chat_ops check-ins, relayed sends,
+notices; `metadata.origin == 'chat_ops'`, `chat_op_kind`) stay user-role
+bubbles because the agent must read them, but never look typed: the header
+badge comes from `CuttleChatSupervisionModel.chatOpBadge` and
+`[data-chat-op]` drops the user's accent fill (`chat_supervision.css`).
 
 Sub-agent fleet cards (`chat_subagent_fleet.js`) and supervised activity rows
 (`supervised_control.js`) are specialized renderings inside a parent reply,
@@ -24,7 +37,9 @@ addSystemMessage({ type: 'stop', label: 'Stopped generating.' }, { persist: true
 ```
 
 - `type` (`project`, `worktree`, `checkout`, `model`, `stop`, `compact`,
-  `notice`) picks the icon and styling. Add a row to `TYPES` for a new kind of
+  `supervision`, `notice`) picks the icon and styling. The host saves some
+  rows itself (`role=system` + `metadata.timeline_notice`), e.g.
+  `api.chat_ops.service.record_schedule_change` for a supervision settings edit. Add a row to `TYPES` for a new kind of
   fact; do not put emoji in the label.
 - `state: 'running'` shows a spinner and elapsed time, never fades and is never
   persisted. Settle it with `update(el, spec, { persist: true })` to `done`, or

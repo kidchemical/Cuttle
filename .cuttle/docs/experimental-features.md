@@ -19,6 +19,25 @@ Toggles affect new launches without a restart; existing scopes retain their limi
 Configuration, platform support and removal boundary:
 [agent-resource-limits.md](agent-resource-limits.md).
 
+**Reply threads:** flag `chat_reply_threads` (default on). Steers sent into a
+running turn, the agent's later follow-up bubbles and finished sub-agent
+children show under that turn's bubble behind an "N replies" bar. A thread you
+open or close stays that way per chat; a live thread opens by itself and nothing
+closes a thread but you. A reply that arrives while its thread is closed shows a
+dot and a one-line preview. Off restores separate rows in time order. Owner:
+`src/web/js/chat/chat_threads.js` (+ pure `chat_thread_model.js`); design record
+[chat-reply-threads-plan.md](chat-reply-threads-plan.md).
+
+**Auto-compaction:** flag `auto_compact` (default off). Compacts an agent's
+context between turns at a threshold below the CLI's own (ordinary chats and
+agent-driven chats separately, lower at a Tasks milestone). Configure in
+Settings → Agents → Auto-compaction; override per chat in the composer's
+context-gauge popover. Rules, CLI and teardown owner: `src/api/auto_compact/`
+and `.cuttle_global/docs/agent-context.md` → Auto-compaction. Teardown: the
+flag row, `src/api/auto_compact/`, its blueprint nesting in
+`agent_harness/routes.py`, the preflight call in `subagents/turns.py`, the
+settings route family, `chat_auto_compact.js` / `settings_auto_compact.js`.
+
 **Response post-processing:** flag `response_postprocessing` (default off).
 Its instructions, append/replace behavior, API/CLI, model, effort and fallback
 chain are configured together in Settings → Agents → Response post-processing,

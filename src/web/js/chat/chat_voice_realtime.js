@@ -14,6 +14,11 @@
     function supported() {
         return !!nativeBridge() || supportsWebrtc();
     }
+    /** Meter a stream with the shared helper; null when it is not loaded. */
+    function meter(stream) {
+        const Level = root.CuttleAudioLevel;
+        return Level && stream ? Level.createStreamMeter(root, stream) : null;
+    }
     function create(host) {
         let current = null;
         let sequence = 0;
@@ -32,6 +37,7 @@
             if (s.dc) s.dc.close();
             if (s.pc) s.pc.close();
             if (s.audio) { s.audio.pause(); s.audio.srcObject = null; }
+            s.outMeter?.close(); s.inMeter?.close();
         }
         function closeNative(s) {
             try { s.bridge?.realtimeVoiceStop?.(); } catch (_) {}
@@ -211,6 +217,7 @@
                 });
                 if (mine !== sequence) { stream.getTracks().forEach((t) => t.stop()); return; }
                 s.stream = stream;
+                s.inMeter = meter(stream);
                 const tokenResponse = await host.fetch('/api/voice-stt/realtime/session', {
                     method: 'POST', credentials: 'include', signal: s.abort.signal,
                     headers:{'Content-Type':'application/json'},body:JSON.stringify(context||{}),
@@ -224,6 +231,7 @@
                 s.pc.ontrack = (e) => {
                     if (current !== s) return;
                     s.audio.srcObject = e.streams[0];
+                    s.outMeter?.close(); s.outMeter = meter(e.streams[0]);
                     s.audio.play().catch(() => fail(s, 'Audio playback blocked; tap mic to reconnect'));
                 };
                 stream.getTracks().forEach((t) => s.pc.addTrack(t, stream));
@@ -275,7 +283,18 @@
             }});
             respond(s);
         }
-        return { start: start, stop: close, mute: mute, isOpen: () => !!current, agentResult: agentResult };
+        /** Assistant (out) and microphone (in) RMS for the meters; null when unknown. */
+        function levels() {
+            const s = current;
+            if (!s) return null;
+            if (s.native) {
+                const read = s.bridge && typeof s.bridge.voiceCallLevels === 'function' ? s.bridge.voiceCallLevels : null;
+                try { return read ? (root.CuttleAudioLevel?.parseNative(read.call(s.bridge)) || null) : null; } catch (_) { return null; }
+            }
+            if (!s.outMeter && !s.inMeter) return null;
+            return { out: s.outMeter ? s.outMeter.level() : 0, in: s.inMeter ? s.inMeter.level() : 0 };
+        }
+        return { start: start, stop: close, mute: mute, isOpen: () => !!current, agentResult: agentResult, levels: levels };
     }
     const api = { create: create, supported: supported };
     root.CuttleChatVoiceRealtime = api;

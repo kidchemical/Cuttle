@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <link rel="icon" type="image/png" href="/img/cuttle-mascot_square.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon.png">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Orchestrator - Cuttle</title>
@@ -13,7 +15,7 @@
     <link rel="stylesheet" href="/css/chip_config_modal.css?v=20261030orchChip">
     <link rel="stylesheet" href="/css/searchable_select.css?v=20261011attachedMenus">
     <link rel="stylesheet" href="/css/page_controls.css?v=20261103pills">
-    <link rel="stylesheet" href="/css/orchestrator_page.css?v=20261030orch4">
+    <link rel="stylesheet" href="/css/orchestrator_page.css?v=20261108cp1">
 </head>
 <body class="compact-shell-page" data-page="orchestrator">
     <main class="orch-page orchestrator-page cuttle-page">
@@ -89,7 +91,29 @@
                             <span class="orch-label">Forbidden branches</span>
                             <div class="orch-tags-input" id="orchForbid"><input placeholder="Add a branch and press Enter" aria-label="Add forbidden branch" spellcheck="false"></div>
                         </div>
-                        <label class="orch-wide">Instructions<textarea name="instructions" rows="3" maxlength="2000"></textarea></label>
+                        <label>Involve the user
+                            <select name="involve_user">
+                                <option value="blocked">Only for logins, payments, irreversible steps</option>
+                                <option value="never">Never</option>
+                                <option value="questions">For question cards it cannot answer</option>
+                            </select></label>
+                        <label>Nudge an idle orchestrator
+                            <select name="nudge">
+                                <option value="agent">Supervisor writes the next step</option>
+                                <option value="template">Host sends the next Tasks item (no supervisor turn)</option>
+                            </select></label>
+                        <details class="orch-wide orch-advanced">
+                            <summary>Advanced: Focus notes</summary>
+                            <label>Focus (optional)<textarea name="instructions" rows="3" maxlength="2000"
+                                placeholder="Job-specific notes only, e.g. “Enforce the org chart.”"></textarea></label>
+                            <p class="orch-help">The supervisor's job and every setting above reach it from the host and win over Focus. Don't restate branches, models, intervals, or when to involve you here.</p>
+                        </details>
+                        <fieldset class="orch-wide orch-checkpoints" id="orchCheckpoints">
+                            <legend class="orch-label">Also wake the supervisor when…</legend>
+                            <div id="orchCheckpointRows"></div>
+                            <p class="orch-help">On top of the interval. “Stop the chat” halts the orchestrator until someone sends it on. A reviewer is an agent profile that gets a fresh chat briefed with the event.</p>
+                            <p class="orch-help orch-error" id="orchCheckpointErrors" role="alert"></p>
+                        </fieldset>
                     </form>
                 </section>
 
@@ -125,8 +149,9 @@
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/shared/page_controls.js?v=20261011pageControls2"></script>
     <script src="/js/chat/chat_chip_config.js?v=20261030orchChip"></script>
+    <script src="/js/chat/chat_supervision_model.js?v=20261108cards1"></script>
     <script src="/js/orchestrator/orchestrator_model.js?v=20261030orch4"></script>
     <script src="/js/orchestrator/agent_pin_picker.js?v=20261029orch3"></script>
-    <script src="/js/orchestrator/orchestrator_page.js?v=20261030orch4"></script>
+    <script src="/js/orchestrator/orchestrator_page.js?v=20261108cp1"></script>
 </body>
 </html>

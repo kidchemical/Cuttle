@@ -40,26 +40,102 @@ def _latest(db, sid):
     return next((r for r in reversed(rows) if r.get('role') == 'assistant'), None)
 
 
-def status(target, actor=None, *, db=None, request=None):
+def _unit_waits(sid):
+    """Pending detached-job watches on the chat, shaped like background waits.
+
+    Read from the records only (no ``systemctl``): a record exists until the
+    poller resumes the chat, which is exactly "it wakes by itself"."""
+    try:
+        from api.job_watch import unit_watch_records
+        records = unit_watch_records(sid)
+    except Exception:
+        return []
+    return [{'job_id': r.get('id'), 'label': r.get('label') or '', 'unit': r.get('unit') or '',
+             'pid': int(r.get('pid') or 0), 'started_ts': r.get('created_ts'), 'kind': 'unit_watch',
+             'chat_session_id': str(sid)} for r in records]
+
+
+def supervised_tasks(db, uid, sid, task_ids=None, known_ids=None):
+    """Tasks lists a check reads: every list visible to the chat, or the
+    schedule's pick ``task_ids`` (missing/archived ids are skipped) plus any of
+    the chat's own lists created after the pick (ids not in ``known_ids``)."""
+    from api.gizmos import tasks as gizmo_tasks
+    visible = gizmo_tasks.list_tasks(user_id=uid, session_id=sid, db=db)
+    if task_ids is None:
+        return visible
+    known = set(known_ids or ()) | set(task_ids)
+    out = [t for t in visible if t['id'] not in known and t.get('scope') != 'project'
+           and (t.get('session_id') == sid or sid in (t.get('linked_sessions') or []))]
+    for tid in task_ids:
+        try:
+            task = gizmo_tasks.get(str(tid), user_id=uid, db=db)
+        except Exception:
+            continue
+        if (task.get('status') or 'active') == 'active':
+            out.append(task)
+    return out
+
+
+def task_pick(cfg):
+    """A schedule payload's Tasks pick as ``(task_ids, task_ids_known)``, or None (every list)."""
+    cfg = cfg or {}
+    if cfg.get('task_ids') is None:
+        return None
+    return list(cfg['task_ids']), list(cfg.get('task_ids_known') or ())
+
+
+def task_candidates(db, uid, sid, project_path=''):
+    """Active Tasks lists a supervisor could follow for chat ``sid``: the chat's
+    own (session-scoped, linked, or created there) first and preselected, then
+    the rest of its project's lists."""
+    project = str(project_path or '').strip().replace('\\', '/').rstrip('/')
+    rows = [r for r in db.list_chat_widgets(user_id=uid, status='active') if r.get('type') == 'tasks']
+    out, owner_paths = [], {}
+
+    def chat_project(owner):
+        # Session-scoped lists store no project; it is the owning chat's.
+        if owner not in owner_paths:
+            chat = db.get_chat_session_by_id(owner) or {}
+            owner_paths[owner] = str(chat.get('project_path') or '')
+        return owner_paths[owner]
+
+    for r in rows:
+        owner = int(r['session_id']) if r.get('session_id') is not None else None
+        own = owner == sid or sid in [int(x) for x in (r.get('linked_sessions') or [])]
+        path = r.get('project_path') or (chat_project(owner) if owner is not None and not own else '')
+        path = str(path).replace('\\', '/').rstrip('/')
+        if not own and not (project and path == project):
+            continue
+        items = (r.get('payload') or {}).get('items') or []
+        done, total = _count_items(items)
+        out.append({'id': r['id'], 'title': r.get('title') or 'Tasks', 'scope': r.get('scope') or 'session',
+                    'session_id': r.get('session_id'), 'done': done, 'total': total, 'selected': own})
+    out.sort(key=lambda t: not t['selected'])
+    return out
+
+
+def _count_items(items):
+    done = total = 0
+    for item in items or []:
+        total += 1
+        done += bool(item.get('done'))
+        a, b = _count_items(item.get('children') or [])
+        done += a
+        total += b
+    return done, total
+
+
+def status(target, actor=None, *, db=None, request=None, task_pick=None):
+    """``task_pick``: a schedule's ``(task_ids, task_ids_known)`` (``task_pick()``), or None for every list."""
     from api.chat_attention import is_error
-    from api.gizmos.tasks import list_tasks
     db, actor, row = context(target, actor, db=db)
     sid, uid = int(row['id']), int(row['user_id'])
     request = request or transport.request
     live = request(uid, sid, 'GET', '/api/chat-live-status')
-    tasks = list_tasks(user_id=uid, session_id=sid, db=db)
-    def counts(items):
-        done = total = 0
-        for item in items:
-            total += 1
-            done += bool(item.get('done'))
-            a, b = counts(item.get('children') or [])
-            done += a
-            total += b
-        return done, total
+    tasks = supervised_tasks(db, uid, sid, *(task_pick or (None, None)))
     progress = []
     for task in tasks:
-        done, total = counts(task['payload']['items'])
+        done, total = _count_items(task['payload']['items'])
         progress.append({'id': task['id'], 'title': task['title'], 'done': done, 'total': total,
                          'items': task['payload']['items']})
     attention = db.get_attention(sid, uid) or {}
@@ -87,10 +163,11 @@ def status(target, actor=None, *, db=None, request=None):
         state = 'error'
     else:
         from api.agent_harness.background_wait import running_on_disk
-        waits = running_on_disk(sid)
+        waits = running_on_disk(sid) + _unit_waits(sid)
         if waits:
             # The turn ended but its CLI is still waiting on background work and
-            # will post a follow-up bubble by itself (agent_harness.background_wait).
+            # will post a follow-up bubble by itself (agent_harness.background_wait),
+            # or a detached-job watch will resume it when the job exits (job_watch).
             state = 'waiting_background'
             live = {**live, 'background_wait': waits}
         elif any(t['done'] < t['total'] for t in progress):
@@ -112,7 +189,7 @@ _FORM = re.compile(r'<cuttle_action_form\b[^>]*>(.*?)</cuttle_action_form>', re.
 def readable_reply(content):
     """A stored reply as a person reads it: the agent's own answer (unwrapped from
     post-processing), no reasoning blocks, and question cards as one line."""
-    text = str(content or '')
+    text = _THINK.sub('', str(content or ''))
     wrapped = _WRAPPED.match(text)
     if wrapped:
         try:
@@ -146,11 +223,11 @@ def checkout_state(row, db, *, binding=None):
         return path, None
 
 
-def snapshot(target, actor=None, *, db=None, request=None, usage_agents=()):
+def snapshot(target, actor=None, *, db=None, request=None, usage_agents=(), task_pick=None):
     from api.worktrees.chat_binding import get_chat_binding
     from api.jobs.ledger import unified_jobs
     db, actor, row = context(target, actor, db=db)
-    result = status(target, actor, db=db, request=request)
+    result = status(target, actor, db=db, request=request, task_pick=task_pick)
     warnings = []
     binding = get_chat_binding(row['id'], db=db)
     path, branch = checkout_state(row, db, binding=binding)
@@ -178,8 +255,13 @@ def snapshot(target, actor=None, *, db=None, request=None, usage_agents=()):
             continue
     from api.gizmos.usage import snapshot as usage_snapshot
     usage = {agent: usage_snapshot(agent) for agent in usage_agents}
+    try:
+        fill = context_fill(db, row)
+    except Exception:
+        fill = None
+        warnings.append('Context fill unavailable')
     result.update(worktree=binding, execution_path=path, branch=branch,
-                  jobs=jobs, watches=watches, usage=usage, warnings=warnings)
+                  jobs=jobs, watches=watches, usage=usage, warnings=warnings, context=fill)
     return result
 
 
@@ -192,6 +274,15 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
         raise ValueError('Send to a different chat to avoid self-steering loops')
     if mode not in ('auto', 'queue'):
         raise ValueError('mode must be auto or queue')
+    from api.orchestration_telemetry import record
+    record.supervisor_action('sup_send', actor, int(row['id']), chars=len(text))
+    try:
+        # A follow-up to a sub-agent child gets its card round on the parent,
+        # exactly like `subagents message` (bound to the sending turn).
+        from api.subagents.service import note_external_round
+        note_external_round(int(row['id']), db=db)
+    except Exception as exc:
+        print(f"[CHAT OPS] sub-agent card round for CH-{int(row['id']):06d} failed: {exc}", flush=True)
     request = request or transport.request
     if mode == 'auto':
         live = request(row['user_id'], row['id'], 'GET', '/api/chat-live-status')
@@ -271,7 +362,10 @@ def _agent_slash(agent, project_path):
 
 def supervise(target, actor=None, *, every=900, instructions='', required_branch='',
               required_path='', forbidden_branches=(), model_tiers=None, agent='',
-              start_now=False, forbidden_paths='', on_violation=None, db=None):
+              start_now=False, forbidden_paths='', on_violation=None, task_ids=None, checkpoints=None,
+              involve_user='', nudge='', db=None):
+    """``instructions`` is the optional Focus note; the brief comes from the settings (``brief``)."""
+    from api.chat_ops import brief
     db, actor, row = context(target, actor, db=db)
     if actor == int(row['id']):
         raise ValueError('Supervisor and target must be different chats')
@@ -279,8 +373,7 @@ def supervise(target, actor=None, *, every=900, instructions='', required_branch
         raise ValueError('Check-in interval must be 60–86400 seconds')
     if model_tiers is not None and not isinstance(model_tiers, dict):
         raise ValueError('model_tiers must be a JSON object')
-    if not instructions.strip():
-        raise ValueError('Give the supervisor explicit instructions')
+    instructions = brief.focus(instructions)
     if forbidden_paths:
         try:
             re.compile(forbidden_paths)
@@ -290,20 +383,48 @@ def supervise(target, actor=None, *, every=900, instructions='', required_branch
                'required_path': str(Path(required_path).resolve()) if required_path else '',
                'forbidden_branches': list(forbidden_branches), 'model_tiers': model_tiers or {},
                'agent': _agent_slash(agent, row.get('project_path')), 'brief_on_start': bool(start_now),
-               'forbidden_paths': forbidden_paths or ''}
+               'forbidden_paths': forbidden_paths or '', 'involve_user': brief.involve(involve_user),
+               'nudge': brief.nudge(nudge)}
+    if task_ids is not None:
+        # An explicit pick (possibly empty: follow no Tasks list); absent = every list the chat sees.
+        if not isinstance(task_ids, (list, tuple)) or len(task_ids) > 50:
+            raise ValueError('task_ids must be a list of at most 50 Tasks ids')
+        payload['task_ids'] = list(dict.fromkeys(str(t).strip() for t in task_ids if str(t).strip()))
+        # Lists offered at pick time; the chat's own lists made later are still followed.
+        payload['task_ids_known'] = [t['id'] for t in task_candidates(db, int(row['user_id']), int(row['id']),
+                                                                      row.get('project_path') or '')]
     if on_violation:
         from api.chat_ops.worker import parse_on_violation
         payload['on_violation'] = parse_on_violation(on_violation)
+    if checkpoints:
+        from api.chat_ops.checkpoints import parse_checkpoints
+        payload['checkpoints'] = parse_checkpoints(checkpoints)
     if forbidden_branches:
         from api.chat_ops.rules import branch_tips
         # Baseline for "a commit landed on a forbidden branch", from any checkout of the repo.
         payload['forbidden_tips'] = branch_tips(checkout_state(row, db)[0], list(forbidden_branches))
     due = time.time() + (0 if start_now else every)
-    return {'schema_version': 1, 'ok': True, 'operation': store.create('supervise', actor, row['id'], payload, due=due)}
+    return {'schema_version': 1, 'ok': True, 'operation': store.create('supervise', actor, row['id'], payload, due=due),
+            'warnings': brief.focus_warnings(instructions)}
+
+
+def _pin_supervisor_chat(db, sup, user_id, agent, model, effort, project_path):
+    """Pin the new supervisor chat's harness/model/effort and seed its composer chip.
+
+    Check-in rows are Cuttle-authored (``speaker_kind: parent``), so they never
+    set the composer agent; without this seed the chat opens with no badge."""
+    from api.subagents.identity import child_slash_command, pin_child_session
+    from api.subagents.types import ChildSpec
+    spec = ChildSpec(title='', message='', agent=agent, model=model, effort=effort)
+    pin_child_session(sup, spec, project_path=project_path or '')
+    chip = (child_slash_command(spec, session_id=sup).get('chips') or [{}])[0]
+    db.set_composer_selection(sup, int(user_id), {'stickyChips': [{
+        'prefix': f'/{agent}', 'label': chip.get('label') or agent, 'category': agent}]})
 
 
 def start_supervisor(target, *, user_id, agent, every=900, instructions='', required_branch='',
-                     required_path='', forbidden_branches=(), model_tiers=None, db=None):
+                     required_path='', forbidden_branches=(), model_tiers=None, model='', effort='',
+                     task_ids=None, checkpoints=None, involve_user='', nudge='', db=None):
     """Create a fresh supervisor chat for ``target`` and brief it right away."""
     from api.auth_db import get_auth_db
     db = db or get_auth_db()
@@ -311,18 +432,31 @@ def start_supervisor(target, *, user_id, agent, every=900, instructions='', requ
     row = db.get_chat_session(tid, int(user_id))
     if not row or not row.get('is_active'):
         raise ValueError('Target chat not found')
-    _agent_slash(agent, row.get('project_path'))
-    if not str(instructions or '').strip():
-        raise ValueError('Give the supervisor explicit instructions')
+    slash = _agent_slash(agent, row.get('project_path'))
+    if not slash:
+        raise ValueError('Pick an agent for the supervisor')
+    model, effort = str(model or '').strip(), str(effort or '').strip().lower()
+    if model or effort:
+        from api.agent_harness.agent_models import check_agent_pin
+        problem = check_agent_pin(slash, model, effort)
+        if problem:
+            raise ValueError(problem)
+    from api.chat_ops import brief
+    brief.focus(instructions), brief.involve(involve_user), brief.nudge(nudge)  # validate before creating a chat
     sup = db.create_chat_session(int(user_id), f'Supervisor · CH-{tid:06d}')
     try:
         # Same project so the supervisor sees its rules, but never the worker's checkout.
         if row.get('project_path'):
             db.set_session_project(sup, int(user_id), project_id=row.get('project_id'),
                                    project_name=row.get('project_name'), project_path=row.get('project_path'))
-        return supervise(tid, sup, every=every, instructions=instructions, required_branch=required_branch,
-                         required_path=required_path, forbidden_branches=forbidden_branches,
-                         model_tiers=model_tiers, agent=agent, start_now=True, db=db)
+        _pin_supervisor_chat(db, sup, user_id, slash, model, effort, row.get('project_path'))
+        out = supervise(tid, sup, every=every, instructions=instructions, required_branch=required_branch,
+                        required_path=required_path, forbidden_branches=forbidden_branches,
+                        model_tiers=model_tiers, agent=agent, start_now=True, task_ids=task_ids,
+                        checkpoints=checkpoints, involve_user=involve_user, nudge=nudge, db=db)
+        store.patch_payload(out['operation']['id'], model=model, effort=effort)
+        out['operation'] = store.find(out['operation']['id'])
+        return out
     except Exception:
         db.delete_chat_session(sup, int(user_id))
         raise
@@ -330,10 +464,13 @@ def start_supervisor(target, *, user_id, agent, every=900, instructions='', requ
 
 # Schedule fields an outside source (an orchestrator playbook) may own.
 SYNCED_FIELDS = ('every', 'agent', 'instructions', 'required_branch', 'required_path',
-                 'forbidden_branches', 'model_tiers')
-_FIELD_LABELS = {'every': 'check-in interval', 'agent': 'check-in agent', 'instructions': 'instructions',
+                 'forbidden_branches', 'model_tiers', 'checkpoints', 'involve_user', 'nudge')
+_FIELD_LABELS = {'every': 'check-in interval', 'agent': 'check-in agent', 'instructions': 'Focus',
+                 'involve_user': 'when to involve the user', 'nudge': 'how idle chats are nudged',
                  'required_branch': 'required branch', 'required_path': 'required checkout',
-                 'forbidden_branches': 'forbidden branches', 'model_tiers': 'model guidance'}
+                 'forbidden_branches': 'forbidden branches', 'model_tiers': 'model guidance',
+                 'model': 'check-in model', 'effort': 'check-in effort', 'task_ids': 'Tasks lists',
+                 'checkpoints': 'wake checkpoints'}
 
 
 def _schedule_fields(cfg, project_path):
@@ -351,7 +488,7 @@ def _schedule_fields(cfg, project_path):
     return out
 
 
-def resync_supervision(target, previous, current, *, note_lines=(), db=None):
+def resync_supervision(target, previous, current, *, note_lines=(), source='the playbook', db=None):
     """Carry an edit of the settings a supervision schedule came from into it.
 
     ``previous``/``current`` are the source's settings before and after the edit
@@ -377,40 +514,211 @@ def resync_supervision(target, previous, current, *, note_lines=(), db=None):
         cfg = op['payload']
         updated, kept = {}, []
         for key in SYNCED_FIELDS:
-            if key not in new or new[key] == old.get(key, cfg.get(key)):
+            if key not in new:
                 continue
-            if cfg.get(key) == old.get(key):
+            was = old.get(key, cfg.get(key))
+            if _same_setting(new[key], was):
+                continue
+            if _same_setting(cfg.get(key), was):
                 updated[key] = new[key]
-            elif cfg.get(key) != new[key]:
+            elif not _same_setting(cfg.get(key), new[key]):
                 kept.append(key)
         if updated:
             store.patch_payload(op['id'], **updated)
-        cfg = {**cfg, **updated}
-        lines = [(f"/{cfg['agent']} " if cfg.get('agent') else '') + f'**Supervision update for {handle}**', '']
-        lines += list(note_lines)
-        if updated:
-            lines += ['', 'Your schedule now uses the new ' + ', '.join(_FIELD_LABELS[k] for k in updated) + '.']
-            if 'instructions' in updated:
-                lines += ['', '**Your instructions:**', cfg['instructions'].strip()]
-            tiers = cfg.get('model_tiers') or {}
-            if 'model_tiers' in updated and tiers:
-                lines += ['', '**Model guidance:**'] + [f"- {k}: {', '.join(v)}" for k, v in tiers.items() if v]
-        if kept:
-            lines += ['', 'Kept your own ' + ', '.join(_FIELD_LABELS[k] for k in kept)
-                      + ' (set on this schedule, not by the source).']
-        lines += ['', f'Check `python -m api.chat_cli status {handle}`. If it is mid-turn on work the change '
-                  f'affects, steer it now with `python -m api.chat_cli send {handle} --text "…"`; otherwise '
-                  'it needs no message. End your turn when done.']
-        # One pending notice per schedule: a newer edit replaces an undelivered one.
-        for pending in store.listing(op['actor']):
-            if (pending['kind'] == 'checkin' and pending['state'] == 'pending'
-                    and pending['payload'].get('schedule_id') == op['id'] and pending['payload'].get('resync')):
-                store.cancel(pending['id'], op['actor'])
-        store.create('checkin', op['actor'], op['actor'],
-                     {'text': '\n'.join(lines), 'schedule_id': op['id'], 'resync': True})
+            if 'checkpoints' in updated:
+                store.drop_result_keys(op['id'], 'paths_base', 'paths_reported', 'failure_counts')
+            from api.orchestration_telemetry import record
+            record.supervision_schedule('edit', store.find(op['id']), fields=sorted(updated), source='playbook')
+        # Nothing of this schedule changed: the target reads the new brief at its
+        # next turn by itself, so only a turn already running is worth a wake.
+        notice = 'none'
+        if updated or (op['state'] != 'paused' and _target_busy(row)):
+            notice = record_schedule_change(op, updated, kept, note_lines, source=source, db=db)
         out.append({'operation': op['id'], 'supervisor': f"CH-{int(op['actor']):06d}",
-                    'updated': sorted(updated), 'kept': kept})
+                    'updated': sorted(updated), 'kept': kept, 'notice': notice})
     return out
+
+
+def _same_setting(a, b):
+    """Equal settings; every blank (None, '', {}, []) is the same "not set"."""
+    return a == b or (not a and not b and not isinstance(a, (int, float)) and not isinstance(b, (int, float)))
+
+
+def _target_busy(row):
+    """Whether the target is mid-turn; an unreadable status counts as busy."""
+    try:
+        live = transport.request(int(row['user_id']), int(row['id']), 'GET', '/api/chat-live-status')
+        return bool(live.get('generating'))
+    except Exception:
+        return True
+
+
+def record_schedule_change(op, updated, kept, note_lines, *, source, db=None):
+    """Record an edit of a schedule's settings without spending a turn on it.
+
+    The user sees one timeline notice in the supervisor chat (a fact, not a
+    message). The supervisor reads the change in its next check-in
+    (``changes_section``): the pending record is folded into it, and a live
+    schedule checks within ``CHANGE_WAKE_SEC`` so the change reaches it soon; a
+    paused one keeps the record until it resumes. ``source``: who edited ("you",
+    "playbook Default"). Returns ``'pending'`` or ``'held'`` (paused)."""
+    now = time.time()
+    store.merge_pending_changes(op['id'], updated=sorted(updated), kept=list(kept),
+                                notes=[n for n in note_lines if n], source=source, at=now)
+    if updated:
+        _timeline_notice(op, updated, source, db=db)
+    if op['state'] == 'paused':
+        return 'held'
+    store.pull_due(op['id'], now + CHANGE_WAKE_SEC)
+    return 'pending'
+
+
+# A burst of saves (edit, fix a typo, save again) reaches the supervisor once.
+CHANGE_WAKE_SEC = 20
+
+
+def _timeline_notice(op, updated, source, *, db=None):
+    from api.auth_db import get_auth_db
+    db = db or get_auth_db()
+    fields = ', '.join(_FIELD_LABELS.get(k, k) for k in sorted(updated))
+    label = f"Supervision of CH-{int(op['target']):06d} changed"
+    detail = f'{fields} · by {source}'
+    try:
+        db.add_message(int(op['actor']), 'system', f'{label} · {detail}', metadata={
+            'kind': 'supervision-change', 'schedule_id': op['id'],
+            'timeline_notice': {'type': 'supervision', 'label': label, 'detail': detail, 'state': 'done'}})
+    except Exception:
+        pass  # the record still reaches the supervisor; the notice is only the user's view
+
+
+def changes_section(cfg, handle):
+    """Check-in lines naming the schedule edits since the last check-in ([] when none)."""
+    pending = cfg.get('pending_changes') or {}
+    updated, kept, notes = pending.get('updated') or [], pending.get('kept') or [], pending.get('notes') or []
+    if not (updated or notes):
+        return []
+    by = ', '.join(pending.get('sources') or []) or 'the user'
+    lines = ['', f'**Settings changed since your last check-in** (by {by}):']
+    lines += [f'- {n}' for n in notes]
+    if updated:
+        lines.append('- Your schedule now uses the new ' + ', '.join(_FIELD_LABELS.get(k, k) for k in updated)
+                     + ' (below).')
+    if kept:
+        lines.append('- Kept your own ' + ', '.join(_FIELD_LABELS.get(k, k) for k in kept)
+                     + ' (set on this schedule, not by the source).')
+    lines.append(f'- If {handle} is mid-turn on work the change affects, steer it now; otherwise it needs '
+                 'no message about the change.')
+    return lines
+
+
+EDITABLE_FIELDS = ('every', 'agent', 'model', 'effort', 'instructions', 'required_branch', 'required_path',
+                   'forbidden_branches', 'model_tiers', 'task_ids', 'checkpoints', 'involve_user', 'nudge')
+
+
+def update_supervision(op_id, user_id, changes, *, db=None):
+    """Edit a live (or paused) schedule in place; only fields present in ``changes`` move.
+
+    Validates like ``supervise``/``start_supervisor``, re-pins the supervisor chat
+    when its agent/model/effort change, re-baselines forbidden-branch tips, and
+    queues one "Supervision update" check-in naming what changed. A paused
+    schedule stays paused."""
+    from api.auth_db import get_auth_db
+    db = db or get_auth_db()
+    op = owned_operation(op_id, user_id, db=db)
+    if op['kind'] != 'supervise' or op['state'] not in ('pending', 'dispatching', 'verifying', 'paused'):
+        raise ValueError('Only a live supervision schedule can be edited')
+    changes = {k: v for k, v in (changes or {}).items() if k in EDITABLE_FIELDS}
+    cfg = op['payload']
+    row = db.get_chat_session_by_id(int(op['target'])) or {}
+    project = row.get('project_path') or ''
+    new = {}
+    if 'every' in changes:
+        every = int(changes['every'] or 0)
+        if not 60 <= every <= 86400:
+            raise ValueError('Check-in interval must be 60–86400 seconds')
+        new['every'] = every
+    from api.chat_ops import brief
+    if 'instructions' in changes:
+        new['instructions'] = brief.focus(changes['instructions'])
+    if 'involve_user' in changes:
+        new['involve_user'] = brief.involve(changes['involve_user'])
+    if 'nudge' in changes:
+        new['nudge'] = brief.nudge(changes['nudge'])
+    if 'required_branch' in changes:
+        new['required_branch'] = str(changes['required_branch'] or '').strip()
+    if 'required_path' in changes:
+        path = str(changes['required_path'] or '').strip()
+        new['required_path'] = str(Path(path).resolve()) if path else ''
+    if 'forbidden_branches' in changes:
+        raw = changes['forbidden_branches'] or []
+        if isinstance(raw, str):
+            raw = raw.split(',')
+        new['forbidden_branches'] = [str(b).strip() for b in raw if str(b).strip()]
+    if new.get('required_branch', cfg.get('required_branch')) and \
+            new.get('required_branch', cfg.get('required_branch')) in new.get('forbidden_branches', cfg.get('forbidden_branches') or []):
+        raise ValueError('The required branch is also in the forbidden list')
+    if 'model_tiers' in changes:
+        if not isinstance(changes['model_tiers'] or {}, dict):
+            raise ValueError('model_tiers must be a JSON object')
+        new['model_tiers'] = changes['model_tiers'] or {}
+    if 'checkpoints' in changes:
+        from api.chat_ops.checkpoints import parse_checkpoints
+        new['checkpoints'] = parse_checkpoints(changes['checkpoints'])
+    agent = cfg.get('agent') or ''
+    if 'agent' in changes:
+        agent = _agent_slash(changes['agent'], project)
+        if not agent:
+            raise ValueError('Pick an agent for the supervisor')
+        new['agent'] = agent
+    pin_keys = ('agent', 'model', 'effort')
+    if any(k in changes for k in pin_keys):
+        model = str(changes.get('model', cfg.get('model')) or '').strip()
+        effort = str(changes.get('effort', cfg.get('effort')) or '').strip().lower()
+        if 'agent' in changes and 'model' not in changes and new['agent'] != cfg.get('agent'):
+            model = effort = ''  # another harness's model never carries over
+        if model or effort:
+            from api.agent_harness.agent_models import check_agent_pin
+            problem = check_agent_pin(agent, model, effort)
+            if problem:
+                raise ValueError(problem)
+        new['model'], new['effort'] = model, effort
+    if 'task_ids' in changes:
+        ids = changes['task_ids']
+        if ids is not None and (not isinstance(ids, (list, tuple)) or len(ids) > 50):
+            raise ValueError('task_ids must be a list of at most 50 Tasks ids')
+        new['task_ids'] = None if ids is None else list(dict.fromkeys(str(t).strip() for t in ids if str(t).strip()))
+        new['task_ids_known'] = [t['id'] for t in task_candidates(db, int(row.get('user_id') or user_id),
+                                                                  int(op['target']), project)]
+    policy = {'involve_user': brief.DEFAULT_INVOLVE, 'nudge': brief.DEFAULT_NUDGE}
+
+    def same(k, v):  # blank model/effort/tiers equal a field the schedule never stored
+        old = cfg.get(k) or policy.get(k)
+        return v == old or (k != 'task_ids' and not v and not old)
+    updated = {k: v for k, v in new.items() if k != 'task_ids_known' and not same(k, v)}
+    if not updated:
+        return {'operation': op, 'updated': []}
+    patch = dict(updated)
+    if 'checkpoints' in updated:
+        # New watch settings start from today's files and counts, never a backlog.
+        store.drop_result_keys(op['id'], 'paths_base', 'paths_reported', 'failure_counts')
+    if 'task_ids' in updated:
+        patch['task_ids_known'] = new['task_ids_known']
+    if 'forbidden_branches' in updated and updated['forbidden_branches']:
+        from api.chat_ops.rules import branch_tips
+        patch['forbidden_tips'] = branch_tips(checkout_state(row, db)[0], updated['forbidden_branches'])
+    store.patch_payload(op['id'], **patch)
+    from api.orchestration_telemetry import record
+    record.supervision_schedule('edit', store.find(op['id']), fields=sorted(updated), source='user')
+    if any(k in updated for k in pin_keys):
+        _pin_supervisor_chat(db, int(op['actor']), int(user_id), agent, new.get('model', ''),
+                             new.get('effort', ''), project)
+    if 'every' in updated:
+        # A shorter interval takes effect now; a longer one from the next check.
+        last = (op.get('result') or {}).get('last_check') or time.time()
+        store.pull_due(op['id'], last + updated['every'])
+    record_schedule_change(store.find(op['id']), updated, [], [], source='you', db=db)
+    warnings = brief.focus_warnings(updated['instructions']) if 'instructions' in updated else []
+    return {'operation': store.find(op['id']), 'updated': sorted(updated), 'warnings': warnings}
 
 
 def supervise_defaults(session, user_id, *, db=None):
@@ -430,15 +738,78 @@ def supervise_defaults(session, user_id, *, db=None):
                                     text=True, timeout=5, check=True).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             pass
-    return {'handle': f'CH-{sid:06d}', 'branch': branch, 'execution_path': path,
-            'worktree': bool(checkout), 'project_path': row.get('project_path') or ''}
+    return {'handle': f'CH-{sid:06d}', 'branch': branch, 'execution_path': path, 'branches': _branch_names(path),
+            'worktree': bool(checkout), 'project_path': row.get('project_path') or '',
+            'tasks': task_candidates(db, int(user_id), sid, row.get('project_path') or ''),
+            'playbook': _playbook_supervisor(sid, db)}
 
 
-def set_paused(op_id, user_id, paused, *, db=None):
+def _branch_names(path):
+    """Local branches, then remote-only ones, for the dialog's branch pickers ([] off git)."""
+    if not path:
+        return []
+    try:
+        from api.git_service import list_branches
+        rows = list_branches(path)['branches']
+    except Exception:
+        return []
+    local = [b['name'] for b in rows if not b.get('remote')]
+    remote = [b['name'] for b in rows if b.get('remote') and '->' not in b['name']]
+    return list(dict.fromkeys(local + remote))
+
+
+def _playbook_supervisor(sid, db):
+    """The supervisor defaults of the playbook ``sid`` runs (None when it is not
+    orchestrating): the "Supervise this chat…" dialog starts from them."""
+    try:
+        from api.orchestrator import service as orch, store as orch_store
+        from api.orchestrator.model import supervisor_config
+        binding = orch_store.binding(int(sid)) if orch.enabled() else None
+        if not binding:
+            return None
+        owner = int(db.get_chat_session_by_id(int(sid))['user_id'])
+        doc = orch.get_playbook(owner, binding['playbook_id'], db=db)
+        return {'id': doc['id'], 'name': doc.get('name') or doc['id'],
+                **supervisor_config(doc, orch.profile_map(owner, db=db))}
+    except Exception:
+        return None
+
+
+# A pause with no stated end is how supervision gets forgotten: default to a
+# timed one, and keep the indefinite pause an explicit choice.
+DEFAULT_PAUSE_SEC = 4 * 3600
+MAX_PAUSE_SEC = 30 * 24 * 3600
+MIN_PAUSE_SEC = 60
+
+
+def pause_expiry(*, hours=None, until=None, indefinite=False, now=None):
+    """Epoch expiry for a pause request, or None for an explicit indefinite pause."""
+    now = time.time() if now is None else now
+    if indefinite:
+        return None
+    if until not in (None, ''):
+        try:
+            when = float(until)
+        except (TypeError, ValueError):
+            raise ValueError('until must be epoch seconds') from None
+    elif hours not in (None, ''):
+        try:
+            when = now + float(hours) * 3600
+        except (TypeError, ValueError):
+            raise ValueError('hours must be a number') from None
+    else:
+        when = now + DEFAULT_PAUSE_SEC
+    if not now + MIN_PAUSE_SEC <= when <= now + MAX_PAUSE_SEC:
+        raise ValueError('Pause must end between 1 minute and 30 days from now')
+    return when
+
+
+def set_paused(op_id, user_id, paused, *, hours=None, until=None, indefinite=False, db=None):
     op = owned_operation(op_id, user_id, db=db)
     if op['kind'] != 'supervise':
         raise ValueError('Only supervision schedules can be paused')
-    return store.set_paused(op['id'], op['actor'], paused)
+    expiry = pause_expiry(hours=hours, until=until, indefinite=indefinite) if paused else None
+    return store.set_paused(op['id'], op['actor'], paused, until=expiry)
 
 
 def cancel(op_id, user_id, *, db=None):
@@ -474,6 +845,69 @@ def overview(session, user_id, *, db=None):
             'supervised_by': supervised_by, 'queued': queued}
 
 
+def _ago(seconds):
+    seconds = max(0, int(seconds or 0))
+    if seconds < 3600:
+        return f'{seconds // 60} min'
+    if seconds < 86400:
+        return f'{seconds // 3600} h {(seconds % 3600) // 60} min'
+    return f'{seconds // 86400} d {(seconds % 86400) // 3600} h'
+
+
+def _clock(epoch):
+    from datetime import datetime
+    try:
+        return datetime.fromtimestamp(float(epoch)).strftime('%Y-%m-%d %H:%M')
+    except (TypeError, ValueError, OSError):
+        return ''
+
+
+def supervision_digest(session_id, *, now=None, operations=None):
+    """The chat's own supervision state as markdown for its context envelope.
+
+    A paused schedule is invisible from inside a chat: check-ins simply stop, so
+    both the supervisor and the supervised chat can work for days without anyone
+    noticing (incident 2026-11-03: one schedule paused from the UI stayed paused
+    for three days). Every turn of either chat now carries this block."""
+    now = time.time() if now is None else now
+    try:
+        sid = int(session_id)
+    except (TypeError, ValueError):
+        return ''
+    ops = store.involving(sid) if operations is None else operations
+    mine, over = [], []
+    for op in ops:
+        if op['kind'] != 'supervise':
+            continue
+        (mine if int(op['actor']) == sid else over).append(op)
+    if not mine and not over:
+        return ''
+    lines = []
+    for op in sorted(mine + over, key=lambda o: (o['state'] != 'paused', o['updated'])):
+        cfg, result = op['payload'], op['result'] or {}
+        own = int(op['actor']) == sid
+        who = (f"you supervise CH-{int(op['target']):06d}" if own
+               else f"CH-{int(op['actor']):06d} supervises this chat")
+        every = f"every {int(cfg.get('every') or 0) // 60} min" if cfg.get('every') else ''
+        if op['state'] == 'paused':
+            since = result.get('paused_at') or op['updated']
+            until = result.get('paused_until')
+            head = f"**PAUSED since {_clock(since)} ({_ago(now - float(since or now))} ago)** — {who}"
+            tail = (f"auto-resumes {_clock(until)}" if until
+                    else 'no auto-resume: nothing checks or wakes anyone until someone resumes it')
+            extra = (f"Resume with `python -m api.chat_cli resume-operation {op['id']} "
+                     f"--as CH-{int(op['actor']):06d}`." if own else
+                     f"Tell CH-{int(op['actor']):06d}, or resume it from the chip in the UI.")
+            lines.append(f"- {head} — {every}, {tail}. {extra}")
+        else:
+            state = 'checking now' if op['state'] == 'dispatching' else f"next check {_clock(op['due'])}"
+            lines.append(f"- active — {who}, {every}, {state}")
+    return ('### Supervision schedules on this chat\n'
+            'Cuttle owns these timers, not your turn. A PAUSED schedule means no check-ins and '
+            'no wake-ups for anyone — say so to the user instead of assuming supervision is running.\n'
+            + '\n'.join(lines))
+
+
 def mark_supervision(sessions):
     """Set ``supervisor_session_id`` (the chat supervising this row) and
     ``supervises_session_ids`` (chats this row supervises) on session-list rows,
@@ -499,8 +933,17 @@ def _schedule_view(op):
     return {'id': op['id'], 'state': op['state'], 'supervisor': f"CH-{op['actor']:06d}",
             'target': f"CH-{op['target']:06d}", 'every': cfg.get('every'), 'next_check': op['due'],
             'agent': cfg.get('agent') or '', 'required_branch': cfg.get('required_branch') or '',
+            'model': cfg.get('model') or '', 'effort': cfg.get('effort') or '',
+            'instructions': cfg.get('instructions') or '', 'involve_user': cfg.get('involve_user') or 'blocked',
+            'nudge': cfg.get('nudge') or 'agent', 'required_path': cfg.get('required_path') or '',
+            'model_tiers': cfg.get('model_tiers') or {}, 'task_ids': cfg.get('task_ids'),
+            'checkpoints': cfg.get('checkpoints') or {},
             'forbidden_branches': cfg.get('forbidden_branches') or [], 'last_check': result.get('last_check'),
             'last_seen': seen, 'violations': seen.get('violations') or [],
+            # A paused schedule says since when and whether it comes back by itself,
+            # so "paused" can never read as "running" on a chip.
+            'paused_at': result.get('paused_at') or (op['updated'] if op['state'] == 'paused' else None),
+            'paused_until': result.get('paused_until'),
             'history': store.checks(op['id'], limit=20)}
 
 
@@ -508,8 +951,97 @@ def stop(target, actor=None, *, db=None, request=None):
     """Stop the target's turn and drop sends still queued for it, so the stop
     holds: an outbox send would otherwise restart the chat as soon as it idles."""
     db, actor, row = context(target, actor, db=db)
+    from api.orchestration_telemetry import record
+    record.supervisor_action('sup_stop', actor, int(row['id']))
     held = store.cancel_sends_to(row['id'])
     out = dict((request or transport.request)(row['user_id'], row['id'], 'POST', '/api/chat-cancel') or {})
     out['cancelled_sends'] = [{'id': o['id'], 'from': f"CH-{o['actor']:06d}", 'text': o['payload'].get('text', '')[:200]}
                               for o in held]
     return out
+
+
+def chat_agent(db, row):
+    """Harness id (``claude``) the chat's turns run on, or ''.
+
+    The agent that last ran a turn here (Brain handoff record) wins; otherwise
+    the same pin a sent turn would get (``pin_to_chat_agent``)."""
+    from api.cuttle_brain.handoff import get_last_agent
+    last = (get_last_agent(str(row['id'])) or '').strip()
+    if last:
+        return last
+    pinned = pin_to_chat_agent(db, row, '_')
+    return pinned.split()[0].lstrip('/').lower() if pinned.startswith('/') else ''
+
+
+def context_fill(db, row, *, agent=None):
+    """Compact window-fill view of a chat's agent (None when it has no harness)."""
+    from api.agent_context import get_agent_context_status
+    aid = (agent or chat_agent(db, row) or '').strip().lower()
+    if not aid:
+        return None
+    path, _branch = checkout_state(row, db)
+    status = get_agent_context_status(chat_session_id=str(row['id']), agent_id=aid, cwd=path or None)
+    if not status.get('success'):
+        return {'agent': aid, 'supported': False, 'error': status.get('error')}
+    out = {'agent': aid, 'supported': True, 'percent': status.get('percent'),
+           'used_tokens': status.get('used_tokens'), 'limit_tokens': status.get('limit_tokens'),
+           'compact_available': bool(status.get('compact_available')), 'hint': status.get('hint')}
+    auto = _auto_compact_view(row['id'], db)
+    if auto:
+        out['auto_compact'] = auto
+    return out
+
+
+def _auto_compact_view(sid, db):
+    """The chat's auto-compact policy when the feature is on (else None)."""
+    try:
+        from api.auto_compact.service import chat_policy
+        view = chat_policy(sid, db=db)
+    except Exception:
+        return None
+    if not view.get('available'):
+        return None
+    p = view['policy']
+    return {'enabled': p['enabled'], 'percent': p['percent'], 'max_tokens': p['max_tokens'],
+            'milestone': p['milestone'], 'scope': p['scope']}
+
+
+def agent_context(target, actor=None, *, agent=None, db=None):
+    db, actor, row = context(target, actor, db=db)
+    return {'schema_version': 1, 'ok': True, 'handle': f"CH-{row['id']:06d}",
+            'context': context_fill(db, row, agent=agent)}
+
+
+def compact(target, actor=None, *, mode='native', agent=None, db=None, request=None):
+    """Compact the target chat's agent session between turns.
+
+    ``native`` asks the CLI to summarize its own session; ``fresh`` discards it
+    so the next turn starts a new session with the full Cuttle briefing and
+    the recent transcript. Runs on the host (it owns the live-CLI check) and
+    is refused while the target is busy: a compact must never race a turn."""
+    if mode not in ('native', 'fresh'):
+        raise ValueError('mode must be native or fresh')
+    db, actor, row = context(target, actor, db=db)
+    sid, uid = int(row['id']), int(row['user_id'])
+    aid = (agent or chat_agent(db, row) or '').strip().lower()
+    if not aid:
+        raise ValueError('Target chat has not run a harness agent yet; pass --agent')
+    request = request or transport.request
+    live = request(uid, sid, 'GET', '/api/chat-live-status') or {}
+    if live.get('generating'):
+        return {'schema_version': 1, 'ok': False, 'handle': f'CH-{sid:06d}',
+                'error': 'Target chat is busy; compact between turns'}
+    path, _branch = checkout_state(row, db)
+    try:
+        result = request(uid, sid, 'POST', '/api/agent-context/compact',
+                         {'agent': aid, 'session': str(sid), 'mode': mode, 'path': path})
+    except RuntimeError as exc:
+        # The host's own refusal (no session yet, live CLI, unsupported agent).
+        return {'schema_version': 1, 'ok': False, 'handle': f'CH-{sid:06d}',
+                'agent': aid, 'mode': mode, 'error': str(exc)}
+    after = (result.get('status') or {}) if isinstance(result, dict) else {}
+    return {'schema_version': 1, 'ok': bool(result.get('success')), 'handle': f'CH-{sid:06d}',
+            'agent': aid, 'mode': mode, 'method': result.get('method'),
+            'detail': result.get('detail') or result.get('message'),
+            'error': result.get('error'),
+            'percent_after': after.get('percent') if after.get('success') else None}

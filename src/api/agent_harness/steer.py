@@ -197,4 +197,15 @@ def steer(chat_session_id: Any, message: str, *, timeout: float = 10.0) -> Dict[
             "error": err,
             "agent": entry.agent_id,
         }
-    return {"steered": True, "agent": entry.agent_id, "text": text}
+    # The turn this steer joins (api.chat_turn_id): the chat's open turn row.
+    # Saved on the steered user row so the transcript threads it under that turn.
+    try:
+        from api.chat_turn_id import ambient
+
+        turn_id = ambient(chat_session_id)
+    except Exception:
+        turn_id = ""
+    out = {"steered": True, "agent": entry.agent_id, "text": text}
+    if turn_id:
+        out["turn_id"] = turn_id
+    return out

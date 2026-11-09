@@ -148,6 +148,43 @@ def record_turn(**fields: Any) -> None:
         print(f"[cuttle_brain.metrics] record failed: {exc}", flush=True)
 
 
+def last_context_fill(
+    chat_session_id: Any, agent_id: str, *, db_path: Optional[Path] = None
+) -> Optional[int]:
+    """Window fill the newest recorded successful turn of ``agent_id`` left in
+    this chat (None when unknown). Read before recording the current turn."""
+    if chat_session_id is None or not (agent_id or "").strip():
+        return None
+    try:
+        conn = connect(db_path)
+        try:
+            row = conn.execute(
+                "SELECT context_tokens FROM context_turns WHERE chat_session_id = ? "
+                "AND agent_id = ? AND success = 1 AND context_tokens > 0 "
+                "ORDER BY ts DESC LIMIT 1",
+                (str(chat_session_id), str(agent_id).strip()),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    return int(row["context_tokens"]) if row else None
+
+
+# A resumed CLI session's window only grows between turns unless the CLI
+# summarized it. A large drop is therefore treated as a compaction the adapter
+# did not report (Cursor, OpenCode, Hermes, Muse auto-compact silently).
+_DROP_MIN_PREVIOUS = 20_000
+_DROP_RATIO = 0.6
+
+
+def fill_dropped(previous: Optional[int], current: Optional[int]) -> bool:
+    """True when ``current`` fill is far below ``previous`` (silent compaction)."""
+    if not previous or not current or previous < _DROP_MIN_PREVIOUS:
+        return False
+    return current <= previous * _DROP_RATIO
+
+
 def fetch_turns(*, since_ts: float, db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
     conn = connect(db_path)
     try:

@@ -52,14 +52,22 @@ _LIMIT_BOUNDS = {
 DEFAULT_SUPERVISOR: Dict[str, Any] = {
     "every_sec": 900,
     "agent": "",
-    "instructions": (
-        "Keep the orchestrator on its Tasks list; nudge it when it stalls; "
-        "enforce the org chart."
-    ),
+    # Focus: job-specific notes only. The supervisor's job and every setting
+    # below reach it from the host (``api.chat_ops.brief``), never from here.
+    "instructions": "Enforce the org chart: work is delegated by tier, not done in the orchestrator chat.",
+    "involve_user": "blocked",
+    "nudge": "agent",
     "require_branch": "",
     "require_path": "",
     "forbid_branches": [],
+    # Event wakes (chat_ops checkpoints). Shape is checked here; the host
+    # validates entries on save (``service.save_playbook``).
+    "checkpoints": {"milestone": {"do": ["wake"]}, "repeat_failures": {"n": 3, "do": ["wake"]}},
 }
+MAX_CHECKPOINTS = 10
+# Mirrors ``api.chat_ops.brief`` (this module stays Cuttle-free; the host validates again).
+INVOLVE_CHOICES = ("never", "blocked", "questions")
+NUDGE_CHOICES = ("agent", "template")
 
 
 class PlaybookError(ValueError):
@@ -157,6 +165,12 @@ def normalize_playbook(raw: Any) -> Dict[str, Any]:
         sup["agent"] = _slug(sup_raw.get("agent"))
     if "instructions" in sup_raw:
         sup["instructions"] = _text(sup_raw.get("instructions"), 2000)
+    for key, allowed in (("involve_user", INVOLVE_CHOICES), ("nudge", NUDGE_CHOICES)):
+        if sup_raw.get(key) not in (None, ""):
+            value = str(sup_raw[key]).strip().lower()
+            if value not in allowed:
+                raise PlaybookError(f"supervisor.{key} must be one of {', '.join(allowed)}")
+            sup[key] = value
     if "require_path" in sup_raw:
         sup["require_path"] = _text(sup_raw.get("require_path"), 500)
     branch = _text(sup_raw.get("require_branch"), 200)
@@ -173,6 +187,12 @@ def normalize_playbook(raw: Any) -> Dict[str, Any]:
         if not _BRANCH_RE.match(b):
             raise PlaybookError(f"supervisor.forbid_branches: {b!r} is not a valid branch name")
     sup["forbid_branches"] = forbid[:20]
+    if "checkpoints" in sup_raw:
+        points = sup_raw.get("checkpoints") or {}
+        if not isinstance(points, Mapping) or len(points) > MAX_CHECKPOINTS or not all(
+                isinstance(k, str) and isinstance(v, Mapping) for k, v in points.items()):
+            raise PlaybookError("supervisor.checkpoints must map checkpoint ids to settings objects")
+        sup["checkpoints"] = json.loads(json.dumps(points))
 
     return {
         "schema": SCHEMA_VERSION,
@@ -242,6 +262,52 @@ def active_tiers(playbook: Mapping[str, Any]) -> List[Dict[str, Any]]:
         if members:
             out.append({**tier, "members": members})
     return out
+
+
+def tier_of(playbook: Mapping[str, Any], *, profile_id: str = "", agent: str = "", model: str = "",
+            effort: str = "") -> Optional[Dict[str, str]]:
+    """The tier a spawned child belongs to: by profile id, else by a temporary
+    agent's harness + model (+ effort when the member pins one). None if no match."""
+    pid = _slug(profile_id)
+    for tier in playbook.get("tiers") or []:
+        for member in tier.get("members") or []:
+            if pid and member.get("profile") == pid:
+                hit = True
+            elif not member.get("profile") and agent:
+                hit = (member.get("agent") == agent and (member.get("model") or "") == (model or "")
+                       and (not member.get("effort") or member.get("effort") == (effort or "")))
+            else:
+                hit = False
+            if hit:
+                return {"tier": str(tier.get("id") or ""), "role": str(tier.get("role") or ""),
+                        "label": str(tier.get("label") or tier.get("id") or "")}
+    return None
+
+
+def find_tier(playbook: Mapping[str, Any], name: str) -> Optional[Dict[str, Any]]:
+    """A tier by id, label or role (case-insensitive; first match in ladder order)."""
+    key = str(name or "").strip().lower()
+    if not key:
+        return None
+    tiers = list(playbook.get("tiers") or [])
+    for field in ("id", "label", "role"):
+        for tier in tiers:
+            if str(tier.get(field) or "").strip().lower() == key:
+                return dict(tier)
+    return None
+
+
+STATE_RANK = {"ok": 0, "unknown": 0, "low": 1, "blocked": 2}
+
+
+def pick_member(states: List[str]) -> Optional[int]:
+    """Index of the member to run, given each switched-on member's account state in
+    tier order: the first that is ok/unknown, else the first low one; None when
+    every one is blocked. Declared order breaks ties — it is the user's preference."""
+    ranked = sorted(range(len(states)), key=lambda i: (STATE_RANK.get(states[i], 0), i))
+    if not ranked or states[ranked[0]] == "blocked":
+        return None
+    return ranked[0]
 
 
 def referenced_profiles(playbook: Mapping[str, Any]) -> List[str]:
@@ -318,6 +384,9 @@ def supervisor_config(
         "required_path": str(sup.get("require_path") or ""),
         "forbidden_branches": [str(b) for b in sup.get("forbid_branches") or []],
         "model_tiers": model_tiers(playbook, profiles),
+        "checkpoints": dict(sup.get("checkpoints") or {}),
+        "involve_user": str(sup.get("involve_user") or "blocked"),
+        "nudge": str(sup.get("nudge") or "agent"),
     }
 
 
@@ -358,6 +427,9 @@ def supervisor_argv(
     for branch in cfg["forbidden_branches"]:
         argv += ["--forbid-branch", branch]
     argv += ["--model-tiers", json.dumps(cfg["model_tiers"], separators=(",", ":"))]
+    argv += ["--involve", cfg["involve_user"], "--nudge", cfg["nudge"]]
+    if cfg["checkpoints"]:
+        argv += ["--checkpoints", json.dumps(cfg["checkpoints"], separators=(",", ":"))]
     argv.append("--json")
     return argv
 
@@ -387,9 +459,12 @@ def render_brief(
     lines += [
         "",
         f"Delegate only through real child chats: `{spawn_cli} spawn --parent <this chat> --wait --json "
-        "--child '{\"title\":…,\"profile\":\"<id>\",\"message\":…}'`. Never use your own CLI's built-in "
-        "subagent/task tool. The profile pins harness, model and effort; do not restate them on the child. "
-        "A temporary agent has no saved profile: its cell shows the exact `profile` object to send.",
+        "--child '{\"title\":…,\"tier\":\"<tier id>\",\"message\":…}'`. Never use your own CLI's built-in "
+        "subagent/task tool. Spawn by `tier`: Cuttle runs the tier's first agent whose account has budget "
+        "left, skipping out-of-usage ones in the order below (the spawn's `tier_picks` says who ran and "
+        "who was skipped). Use `\"profile\":\"<id>\"` instead only to pick one agent on purpose (a "
+        "parallel lane on a different agent); the profile pins harness, model and effort, so never restate "
+        "them. A temporary agent has no saved profile: its cell shows the exact `profile` object to send.",
         "",
         "### Org chart (in escalation order)",
         "",
@@ -404,14 +479,14 @@ def render_brief(
             for m in tier["members"]
         )
         use_for = (tier.get("use_for") or "").replace("|", "\\|").replace("\n", " ")
-        lines.append(f"| {tier['label']} | {tier['role']} | {cells} | {use_for} |")
+        lines.append(f"| {tier['label']} (`{tier['id']}`) | {tier['role']} | {cells} | {use_for} |")
     lines += [
         "",
         "### Rules",
         "",
         f"1. **Default down.** Every task starts at the {worker['label']} tier unless it is planning or "
-        "review that needs expert judgment. Use the first agent in a tier; the others are alternates "
-        "(parallel lane, or when the first is out of usage).",
+        "review that needs expert judgment. A tier's agents are in preference order; a `tier` spawn "
+        "takes the first one with budget, the rest are alternates (parallel lanes).",
         f"2. **Escalate on evidence, one tier at a time.** Retry a failed child task "
         f"{limits['child_retries']}× on the same tier with a sharper brief, then move to the next tier. "
         "Say why in one line when you escalate.",
@@ -419,7 +494,9 @@ def render_brief(
         f"{limits['solo_minutes']} minutes on one problem in your own turn, delegate it to the worker "
         "tier with what you tried, then escalate if that child fails.",
         "4. **Never resend an identical failing spawn.** A setup error (\"was not started\", unsupported "
-        "model/effort, missing CLI, quota) means fix the spec or switch to the tier's next agent. After "
+        "model/effort, missing CLI) means fix the spec or switch to the tier's next agent. \"Out of budget\" "
+        "or \"every agent in the … tier is out of budget\" comes back before any chat exists: follow its "
+        "hint (spawn by tier, or escalate one tier) — it is not a task failure. After "
         f"{limits['setup_retries']} setup failures on one task, report it instead of looping.",
         "5. **Experts plan and review; they do not grind.** Send them the plan, the diff, or a specific "
         "question. For high-stakes plans or merges, ask every expert agent (`--collect all`) and reconcile.",

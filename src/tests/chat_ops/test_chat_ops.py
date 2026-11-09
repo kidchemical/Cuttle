@@ -404,6 +404,39 @@ def test_busy_target_costs_no_supervisor_turn(chats, monkeypatch):
     assert store.get(sched["id"], chats[2])["state"] == "pending"
 
 
+def test_settings_change_is_told_once_in_the_next_check_in_even_mid_turn(chats, monkeypatch):
+    """A pending settings edit wakes the supervisor once (a busy target too: that is
+    when it may need steering); the check-in carries it and the record clears."""
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    service.update_supervision(sched["id"], owner, {"instructions": "new rules"}, db=db)
+    assert store.find(sched["id"])["due"] <= __import__("time").time() + service.CHANGE_WAKE_SEC + 1
+    checkins = _tick(chats, sched, _snap("busy"), monkeypatch)
+    assert len(checkins) == 1
+    text = checkins[0]["payload"]["text"]
+    assert "Settings changed since your last check-in** (by you)" in text and "new rules" in text
+    assert "pending_changes" not in store.find(sched["id"])["payload"]
+    store.finish(checkins[0]["id"], "done", {})
+    assert len(_tick(chats, sched, _snap("busy"), monkeypatch)) == 1  # nothing new: no second wake
+
+
+def test_edit_landing_mid_check_survives_the_clear(chats):
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    first = store.merge_pending_changes(sched["id"], updated=["every"], kept=[], notes=[], source="you", at=1)
+    store.merge_pending_changes(sched["id"], updated=["instructions"], kept=[], notes=[], source="you", at=2)
+    assert store.clear_pending_changes(sched["id"], first["rev"]) is False
+    assert store.find(sched["id"])["payload"]["pending_changes"]["updated"] == ["every", "instructions"]
+
+
+def test_chat_op_rows_name_their_kind(chats):
+    from api.chat_metadata import chat_op_metadata
+    db, owner, sup, target, _foreign = chats
+    op = store.create("checkin", sup, sup, {"text": "x"})
+    meta = chat_op_metadata({"chat_op_id": op["id"]}, sup)
+    assert meta["chat_op_kind"] == "checkin" and meta["parent_label"] == "Supervision check-in"
+
+
 def test_busy_target_without_progress_wakes_supervisor(chats, monkeypatch):
     sched = _schedule(chats)
     clock = [1000.0]
@@ -443,6 +476,81 @@ def test_idle_target_wakes_supervisor_once_until_it_changes(chats, monkeypatch):
     assert len(_tick(chats, sched, _snap("idle_with_work", reply_id=2), monkeypatch)) == 2
 
 
+def test_template_nudge_sends_the_next_item_without_a_supervisor_turn(chats, monkeypatch):
+    sched = _schedule(chats, nudge="template")
+    sent = []
+    monkeypatch.setattr(service, "send", lambda target, text, actor=None, **k: sent.append((target, text)))
+    items = [{"id": "a", "text": "Rig", "done": True},
+             {"id": "b", "text": "Blend", "done": False, "children": [{"id": "c", "text": "Idle loop"}]}]
+
+    def snap(reply_id, done=1):
+        out = _snap("idle_with_work", reply_id=reply_id, done=done)
+        out["tasks"][0]["items"] = items
+        return out
+    assert _tick(chats, sched, snap(1), monkeypatch) == [] and len(sent) == 1
+    assert "**Blend › Idle loop**" in sent[0][1]
+    # It replied without checking anything off: one more nudge, then the supervisor is woken.
+    assert _tick(chats, sched, snap(2), monkeypatch) == [] and len(sent) == 2
+    assert len(_tick(chats, sched, snap(3), monkeypatch)) == 1 and len(sent) == 2
+    outcomes = [c["outcome"] for c in store.checks(sched["id"])]
+    assert outcomes.count("nudged") == 2
+    # Errors still need judgment: never a template.
+    sched2 = _schedule(chats, nudge="template")
+    _tick(chats, sched2, _snap("error"), monkeypatch)
+    assert len(sent) == 2
+
+
+def _answer(chats, checkin, query_id, content, **meta):
+    db, _owner, sup, _target, _foreign = chats
+    store.finish(checkin["id"], "delivered", {"query_id": query_id})
+    db.add_message(sup, "assistant", content, {"query_id": query_id, **meta})
+
+
+def test_failed_check_in_wakes_the_supervisor_again(chats, monkeypatch):
+    sched = _schedule(chats)
+    first = _tick(chats, sched, _snap("error"), monkeypatch)
+    _answer(chats, first[0], "q1", "codex_error: connection reset", slash_command_failed=True)
+    again = _tick(chats, sched, _snap("error"), monkeypatch)
+    assert len(again) == 2  # the unchanged picture was never really seen
+    _answer(chats, again[0], "q2", "Sent the worker a resume.")
+    assert len(_tick(chats, sched, _snap("error"), monkeypatch)) == 2  # answered: quiet again
+
+
+def test_check_in_still_running_is_not_a_failure(chats, monkeypatch):
+    sched = _schedule(chats)
+    first = _tick(chats, sched, _snap("error"), monkeypatch)
+    _answer(chats, first[0], "q1", "", in_progress=True)
+    assert len(_tick(chats, sched, _snap("error"), monkeypatch)) == 1
+
+
+def test_supervisor_out_of_usage_waits_for_the_reset(chats, monkeypatch):
+    from datetime import datetime
+    sched = _schedule(chats)
+    clock = [datetime(2026, 11, 8, 0, 30).timestamp()]
+    monkeypatch.setattr(worker.time, "time", lambda: clock[0])
+    monkeypatch.setattr(worker, "_git_head", lambda path: "abc")
+    first = _tick(chats, sched, _snap("error"), monkeypatch)
+    _answer(chats, first[0], "q1", "You've hit your usage limit. Upgrade to Pro or try again at 4:46 AM.",
+            slash_command_failed=True)
+    reset = datetime(2026, 11, 8, 4, 46).timestamp()
+    clock[0] += 900
+    assert len(_tick(chats, sched, _snap("error"), monkeypatch)) == 1
+    op = store.get(sched["id"], chats[2])
+    assert op["result"]["skipped"] == "supervisor_quota" and op["due"] <= reset
+    clock[0] = reset + 1
+    assert len(_tick(chats, sched, _snap("error"), monkeypatch)) == 2
+
+
+def test_reset_at_reads_a_time_of_day_as_the_next_one():
+    from datetime import datetime
+    from api.agent_router import quota
+    now = datetime(2026, 11, 8, 0, 30).timestamp()
+    assert quota.reset_at("try again at 4:46 AM.", now) == datetime(2026, 11, 8, 4, 46).timestamp()
+    assert quota.reset_at("try again at 12:10 AM", now) == datetime(2026, 11, 9, 0, 10).timestamp()
+    assert quota.reset_at("try again at Oct 5th, 2026 12:55 AM", now) is None  # past
+    assert quota.reset_at("no reset here", now) is None
+
+
 def test_branch_violation_wakes_supervisor_and_keeps_schedule(chats, monkeypatch):
     sched = _schedule(chats, required_branch="dev/multiplayer", forbidden_branches=["dev/core"])
     checkins = _tick(chats, sched, _snap("busy", branch="dev/core"), monkeypatch)
@@ -465,9 +573,46 @@ def test_supervise_validates_inputs(chats):
     with pytest.raises(ValueError):
         service.supervise(_ch(target), _ch(sup), every=10, instructions="x", db=db)
     with pytest.raises(ValueError):
-        service.supervise(_ch(target), _ch(sup), instructions=" ", db=db)
+        service.supervise(_ch(target), _ch(sup), instructions="x" * 2001, db=db)
+    with pytest.raises(ValueError):
+        service.supervise(_ch(target), _ch(sup), involve_user="sometimes", db=db)
+    with pytest.raises(ValueError):
+        service.supervise(_ch(target), _ch(sup), nudge="loud", db=db)
     with pytest.raises(ValueError):
         service.supervise(_ch(sup), _ch(sup), instructions="x", db=db)
+
+
+def test_supervise_focus_is_optional_and_settings_carry_the_brief(chats):
+    """No Focus needed: the check-in states the job and each host-enforced setting."""
+    db, _owner, sup, target, _foreign = chats
+    out = service.supervise(_ch(target), _ch(sup), forbidden_branches=["main"], involve_user="never", db=db)
+    cfg = out["operation"]["payload"]
+    assert cfg["instructions"] == "" and cfg["involve_user"] == "never" and cfg["nudge"] == "agent"
+    assert out["warnings"] == []
+    snap = {"handle": _ch(target), "state": "idle", "tasks": [{"id": "t", "title": "Plan", "done": 1, "total": 2}]}
+    text = worker.checkin_text(cfg, snap, [])
+    assert "**Your job:**" in text and '"Plan"' in text and "never touch `main`" in text
+    assert "Never involve the user" in text and "**Focus**" not in text
+    focused = worker.checkin_text({**cfg, "instructions": "Animation first."}, snap, [])
+    assert "**Focus** (the user's notes for this job):\nAnimation first." in focused
+
+
+def test_focus_restating_settings_is_warned_not_rejected(chats):
+    db, owner, sup, target, _foreign = chats
+    text = ("Use opus for reviews. Never merge or push protected branches. Do not involve the user. "
+            "Run `python -m api.jobs work-tree --json` every check-in. Review at every milestone. "
+            "Check in every 10 minutes.")
+    out = service.supervise(_ch(target), _ch(sup), instructions=text, db=db)
+    joined = " ".join(out["warnings"])
+    for hint in ("--model", "--forbid-branch", "--involve", "runbook", "milestone", "--every"):
+        assert hint in joined, hint
+    assert service.supervise(_ch(target), _ch(sup), instructions="Commit a checkpoint about every 90 min.",
+                             db=db)["warnings"] == []  # the worker's own cadence is a job note
+    edited = service.update_supervision(out["operation"]["id"], owner, {"instructions": "Animation first."}, db=db)
+    assert edited["updated"] == ["instructions"] and edited["warnings"] == []
+    # The dialog always sends the policy fields: their defaults are not an edit of an older schedule.
+    again = service.update_supervision(out["operation"]["id"], owner, {"involve_user": "blocked", "nudge": "agent"}, db=db)
+    assert again["updated"] == []
 
 
 # --- CLI ----------------------------------------------------------------------
@@ -552,6 +697,120 @@ def test_start_supervisor_creates_a_briefed_chat_in_the_target_project(chats):
     assert out["operation"]["payload"]["brief_on_start"] is True
     with pytest.raises(ValueError):
         service.start_supervisor(_ch(foreign), user_id=owner, agent="cursor", instructions="x", db=db)
+
+
+def test_start_supervisor_pins_model_effort_and_seeds_the_composer_chip(chats, monkeypatch):
+    db, owner, _sup, target, _foreign = chats
+    pinned = []
+    monkeypatch.setattr("api.agent_harness.agent_models.check_agent_pin",
+                        lambda a, m="", e="", **k: None if m == "terra" else f"unknown model {m}")
+    monkeypatch.setattr("api.subagents.identity.pin_child_session",
+                        lambda sid, spec, project_path="": pinned.append((sid, spec.agent, spec.model, spec.effort)))
+    out = service.start_supervisor(_ch(target), user_id=owner, agent="codex", model="terra", effort="high",
+                                   instructions="watch", db=db)
+    sup = out["operation"]["actor"]
+    assert pinned == [(sup, "codex", "terra", "high")]
+    chips = db.get_composer_selection(sup, owner)["stickyChips"]
+    assert chips[0]["prefix"].strip() == "/codex" and chips[0]["category"] == "codex"
+    with pytest.raises(ValueError, match="unknown model"):
+        service.start_supervisor(_ch(target), user_id=owner, agent="codex", model="nope", instructions="x", db=db)
+    with pytest.raises(ValueError, match="Pick an agent"):
+        service.start_supervisor(_ch(target), user_id=owner, agent="", instructions="x", db=db)
+
+
+def _list(db, owner, wid, *, sid=None, scope="session", project="", done=False):
+    db.upsert_chat_widget(widget_id=wid, user_id=owner, wtype="tasks", title=wid, scope=scope,
+                          session_id=sid, project_path=project,
+                          payload={"items": [{"id": "1", "text": "a", "done": done, "children": []}]})
+
+
+def test_supervision_follows_only_the_picked_tasks_lists(chats):
+    db, owner, sup, target, _foreign = chats
+    db.set_session_project(target, owner, project_id=7, project_name="Game", project_path="/games/x")
+    _list(db, owner, "own", sid=target)
+    _list(db, owner, "shared", scope="project", project="/games/x")
+    db.set_session_project(sup, owner, project_id=7, project_name="Game", project_path="/games/x")
+    _list(db, owner, "elsewhere", sid=sup, done=True)
+    cands = service.supervise_defaults(_ch(target), owner, db=db)["tasks"]
+    assert [(t["id"], t["selected"]) for t in cands][0] == ("own", True)
+    assert {t["id"]: t["selected"] for t in cands} == {"own": True, "shared": False, "elsewhere": False}
+    # Default: every visible list (own + project-scoped).
+    assert {t["id"] for t in service.status(_ch(target), _ch(sup), db=db, request=FakeHost())["tasks"]} == {"own", "shared"}
+    op = service.supervise(_ch(target), _ch(sup), instructions="w", task_ids=["elsewhere"], db=db)["operation"]
+    pick = service.task_pick(op["payload"])
+    out = service.status(_ch(target), _ch(sup), db=db, request=FakeHost(), task_pick=pick)
+    assert [t["id"] for t in out["tasks"]] == ["elsewhere"] and out["state"] == "idle"
+    # A list the target creates after the pick is still followed; project lists are not.
+    _list(db, owner, "later", sid=target)
+    _list(db, owner, "later-project", scope="project", project="/games/x")
+    out = service.status(_ch(target), _ch(sup), db=db, request=FakeHost(), task_pick=pick)
+    assert {t["id"] for t in out["tasks"]} == {"elsewhere", "later"} and out["state"] == "idle_with_work"
+    empty = service.supervise(_ch(target), _ch(sup), instructions="w", task_ids=[], db=db)["operation"]
+    # An explicit empty pick follows no list (all current ones were offered).
+    assert service.status(_ch(target), _ch(sup), db=db, request=FakeHost(),
+                          task_pick=service.task_pick(empty["payload"]))["tasks"] == []
+
+
+def test_update_supervision_edits_in_place_and_tells_the_supervisor(chats, monkeypatch):
+    db, owner, sup, target, _foreign = chats
+    pinned = []
+    monkeypatch.setattr("api.agent_harness.agent_models.check_agent_pin",
+                        lambda a, m="", e="", **k: None if m in ("", "terra") else f"unknown model {m}")
+    monkeypatch.setattr("api.subagents.identity.pin_child_session",
+                        lambda sid, spec, project_path="": pinned.append((sid, spec.agent, spec.model, spec.effort)))
+    op = service.supervise(_ch(target), _ch(sup), instructions="watch", agent="cursor", every=900, db=db)["operation"]
+    service.set_paused(op["id"], owner, True, indefinite=True, db=db)
+    # Unchanged fields (blank model on an older schedule included) are not edits.
+    assert service.update_supervision(op["id"], owner, {"every": 900, "model": "", "instructions": "watch"},
+                                      db=db)["updated"] == []
+    out = service.update_supervision(op["id"], owner, {
+        "every": 300, "agent": "codex", "model": "terra", "effort": "high", "instructions": "new rules",
+        "forbidden_branches": "main, prod", "task_ids": ["plan"]}, db=db)
+    assert out["updated"] == ["agent", "effort", "every", "forbidden_branches", "instructions", "model", "task_ids"]
+    cfg = out["operation"]["payload"]
+    assert cfg["agent"] == "codex" and cfg["model"] == "terra" and cfg["every"] == 300
+    assert cfg["forbidden_branches"] == ["main", "prod"] and cfg["task_ids"] == ["plan"]
+    assert out["operation"]["state"] == "paused"  # editing never resumes
+    assert pinned == [(sup, "codex", "terra", "high")]
+    assert db.get_composer_selection(sup, owner)["stickyChips"][0]["category"] == "codex"
+    # An edit never spends a supervisor turn of its own: the user gets a timeline
+    # notice, and the change waits on the schedule for its next check-in.
+    assert [o for o in store.listing(sup) if o["kind"] == "checkin"] == []
+    notices = [m for m in db.get_messages(sup) if m["role"] == "system"]
+    assert len(notices) == 1
+    meta = notices[0]["metadata"]
+    meta = json.loads(meta) if isinstance(meta, str) else meta
+    assert meta["timeline_notice"]["type"] == "supervision" and meta["kind"] == "supervision-change"
+    assert "Focus" in meta["timeline_notice"]["detail"] and "by you" in meta["timeline_notice"]["detail"]
+    service.update_supervision(op["id"], owner, {"every": 600}, db=db)
+    pending = store.find(op["id"])["payload"]["pending_changes"]
+    assert pending["rev"] == 2 and pending["sources"] == ["you"]
+    assert pending["updated"] == ["agent", "effort", "every", "forbidden_branches", "instructions", "model",
+                                  "task_ids"]
+    section = "\n".join(service.changes_section(store.find(op["id"])["payload"], _ch(target)))
+    assert "Settings changed since your last check-in** (by you)" in section and "Focus" in section
+    with pytest.raises(ValueError, match="unknown model"):
+        service.update_supervision(op["id"], owner, {"model": "nope"}, db=db)
+    with pytest.raises(ValueError, match="also in the forbidden"):
+        service.update_supervision(op["id"], owner, {"required_branch": "prod"}, db=db)
+    with pytest.raises(ValueError, match="interval"):
+        service.update_supervision(op["id"], owner, {"every": 5}, db=db)
+    service.cancel(op["id"], owner, db=db)
+    with pytest.raises(ValueError, match="live supervision"):
+        service.update_supervision(op["id"], owner, {"every": 600}, db=db)
+
+
+def test_edit_route_and_cli(client, chats, monkeypatch, capsys):
+    db, owner, sup, target, _foreign = chats
+    _flag(monkeypatch, True)
+    op = service.supervise(_ch(target), _ch(sup), instructions="watch", db=db)["operation"]
+    res = client.post(f"/api/chat-ops/operations/{op['id']}/edit", json={"every": 1200})
+    assert res.get_json()["success"] and res.get_json()["updated"] == ["every"]
+    from api.chat_cli.cli import build_parser
+    args = build_parser().parse_args(["edit-operation", op["id"], "--as", _ch(sup), "--tasks", "a,b", "--json"])
+    monkeypatch.setattr("api.chat_cli.cli._open_db", lambda _p: db)
+    assert args.func(args) == 0
+    assert json.loads(capsys.readouterr().out)["operation"]["payload"]["task_ids"] == ["a", "b"]
 
 
 def test_mark_supervision_links_history_rows(chats, monkeypatch):
@@ -640,7 +899,10 @@ def test_routes_overview_control_and_start(client, chats, monkeypatch):
         "target": _ch(target), "agent": "cursor", "every": 600, "instructions": "watch",
         "forbidden_branches": "main, master"}).get_json()
     assert started["success"] and started["operation"]["payload"]["forbidden_branches"] == ["main", "master"]
-    bad = client.post("/api/chat-ops/supervise", json={"target": _ch(target), "agent": "cursor"})
+    bare = client.post("/api/chat-ops/supervise", json={"target": _ch(target), "agent": "cursor"}).get_json()
+    assert bare["success"] and bare["operation"]["payload"]["instructions"] == ""  # Focus is optional
+    bad = client.post("/api/chat-ops/supervise", json={"target": _ch(target), "agent": "cursor",
+                                                       "involve_user": "sometimes"})
     assert bad.status_code == 400
 
 
@@ -751,3 +1013,143 @@ def test_stop_cancels_sends_queued_for_the_target(chats):
     assert store.due() == []
     assert all(o["state"] == "cancelled" for o in store.listing(sup) if o["kind"] == "send")
     assert ("POST", "/api/chat-cancel", target, None) in host.calls
+
+
+# --- a paused schedule cannot be silently forgotten ---------------------------
+
+
+def test_pause_is_timed_by_default_and_auto_resumes(chats):
+    db, owner, sup, _target, _foreign = chats
+    sched = _schedule(chats)
+    paused = service.set_paused(sched["id"], owner, True, db=db)
+    assert paused["state"] == "paused"
+    assert paused["result"]["paused_at"] <= time.time()
+    # Default: 4 h, not indefinite — the pause ends by itself.
+    assert time.time() + service.DEFAULT_PAUSE_SEC - 5 < paused["result"]["paused_until"]
+    assert store.resume_expired() == []  # not yet due
+    assert store.resume_expired(now=paused["result"]["paused_until"] + 1)[0]["state"] == "pending"
+    back = store.get(sched["id"], sup)
+    assert back["state"] == "pending" and back["due"] <= time.time() + 1
+    assert back["result"]["paused_until"] is None
+    assert store.checks(sched["id"])[0]["outcome"] == "resumed"
+
+
+def test_pause_durations_and_explicit_indefinite(chats):
+    db, owner, _sup, _target, _foreign = chats
+    sched = _schedule(chats)
+    hour = service.set_paused(sched["id"], owner, True, hours=1, db=db)["result"]["paused_until"]
+    assert 3500 < hour - time.time() < 3700
+    when = time.time() + 7200
+    assert service.set_paused(sched["id"], owner, True, until=when, db=db)["result"]["paused_until"] == when
+    forever = service.set_paused(sched["id"], owner, True, indefinite=True, db=db)
+    assert forever["result"]["paused_until"] is None
+    assert store.resume_expired(now=time.time() + 10 * 86400) == []  # nothing resumes it
+    with pytest.raises(ValueError, match="1 minute and 30 days"):
+        service.set_paused(sched["id"], owner, True, hours=0.001, db=db)
+    with pytest.raises(ValueError, match="1 minute and 30 days"):
+        service.set_paused(sched["id"], owner, True, hours=24 * 40, db=db)
+    with pytest.raises(ValueError, match="epoch seconds"):
+        service.set_paused(sched["id"], owner, True, until="soon", db=db)
+
+
+def test_paused_schedule_view_says_since_when(chats):
+    db, owner, sup, _target, _foreign = chats
+    sched = _schedule(chats)
+    service.set_paused(sched["id"], owner, True, hours=1, db=db)
+    view = service.overview(_ch(sup), owner, db=db)["supervising"][0]
+    assert view["state"] == "paused" and view["paused_at"] <= time.time()
+    assert view["paused_until"] > time.time()
+    service.set_paused(sched["id"], owner, True, indefinite=True, db=db)
+    view = service.overview(_ch(sup), owner, db=db)["supervising"][0]
+    assert view["paused_until"] is None and view["paused_at"]
+
+
+def test_supervision_digest_tells_both_chats_about_a_pause(chats):
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    assert f"active — you supervise {_ch(target)}" in service.supervision_digest(sup)
+    assert f"{_ch(sup)} supervises this chat" in service.supervision_digest(target)
+    assert service.supervision_digest(999) == ""
+    service.set_paused(sched["id"], owner, True, indefinite=True, db=db)
+    mine = service.supervision_digest(sup)
+    assert "**PAUSED since" in mine and "no auto-resume" in mine
+    assert f"resume-operation {sched['id']}" in mine
+    theirs = service.supervision_digest(target)
+    assert "**PAUSED since" in theirs and f"{_ch(sup)} supervises this chat" in theirs
+    service.set_paused(sched["id"], owner, True, hours=2, db=db)
+    assert "auto-resumes" in service.supervision_digest(sup)
+
+
+def test_context_envelope_carries_the_pause(chats, monkeypatch):
+    db, owner, sup, _target, _foreign = chats
+    sched = _schedule(chats)
+    service.set_paused(sched["id"], owner, True, indefinite=True, db=db)
+    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
+    from api.cuttle_brain import context_compiler
+
+    block = context_compiler._runtime_block(inventory={}, chat_session_id=_ch(sup))
+    assert "Supervision schedules on this chat" in block
+    assert "**PAUSED since" in block
+
+
+def test_a_forgotten_pause_notifies_once(chats, monkeypatch):
+    db, owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    service.set_paused(sched["id"], owner, True, indefinite=True, db=db)
+    toasts = []
+    monkeypatch.setattr(worker, "_target_idle_with_work", lambda op, db=None: True)
+    kwargs = {"notify": lambda msg, variant="info": toasts.append((msg, variant)), "db": db}
+
+    assert worker.stale_pause_alerts(**kwargs) == []  # paused minutes ago, not hours
+    late = time.time() + 7 * 3600
+    assert worker.stale_pause_alerts(now=late, **kwargs)[0]["target"] == target
+    assert "paused for 7 h" in toasts[0][0] and toasts[0][1] == "warning"
+    assert worker.stale_pause_alerts(now=late, **kwargs) == []  # once per pause
+    assert store.checks(sched["id"])[0]["outcome"] == "paused_alert"
+
+    # A timed pause is never alerted: it comes back by itself.
+    service.set_paused(sched["id"], owner, False, db=db)
+    service.set_paused(sched["id"], owner, True, hours=4, db=db)
+    assert worker.stale_pause_alerts(now=late, **kwargs) == []
+    # Nor is one whose target has nothing left open.
+    service.set_paused(sched["id"], owner, True, indefinite=True, db=db)
+    monkeypatch.setattr(worker, "_target_idle_with_work", lambda op, db=None: False)
+    assert worker.stale_pause_alerts(now=late, **kwargs) == []
+    monkeypatch.setattr(worker, "paused_alert_hours", lambda: 0)
+    monkeypatch.setattr(worker, "_target_idle_with_work", lambda op, db=None: True)
+    assert worker.stale_pause_alerts(now=late, **kwargs) == []  # setting 0 disables
+
+
+def test_idle_with_open_tasks_is_what_makes_a_pause_stale(chats):
+    db, owner, _sup, target, _foreign = chats
+    sched = _schedule(chats)
+    op = store.get(sched["id"], chats[2])
+    from api.gizmos import tasks as tasks_gizmo
+
+    assert worker._target_idle_with_work(op, db=db) is False
+    tasks_gizmo.create(gizmo_id="plan", user_id=owner, session_id=target, title="Plan",
+                       items=[{"id": "a", "text": "ship it"}], db=db)
+    assert worker._target_idle_with_work(op, db=db) is True
+
+
+def test_route_and_cli_pause_durations(client, chats, monkeypatch):
+    _flag(monkeypatch, True)
+    from api.chat_cli.cli import main
+    db, _owner, sup, _target, _foreign = chats
+    sched = _schedule(chats)
+    body = client.post(f"/api/chat-ops/operations/{sched['id']}/pause", json={"hours": 1}).get_json()
+    assert 3500 < body["operation"]["result"]["paused_until"] - time.time() < 3700
+    body = client.post(f"/api/chat-ops/operations/{sched['id']}/pause",
+                       json={"indefinite": True}).get_json()
+    assert body["operation"]["result"]["paused_until"] is None
+    bad = client.post(f"/api/chat-ops/operations/{sched['id']}/pause", json={"hours": 999})
+    assert bad.status_code == 400
+    client.post(f"/api/chat-ops/operations/{sched['id']}/resume")
+
+    db_path = str(db.db_path)
+    assert main(["pause-operation", sched["id"], "--hours", "2", "--db", db_path,
+                 "--as", _ch(sup), "--json"]) == 0
+    assert store.get(sched["id"], sup)["result"]["paused_until"] > time.time() + 7000
+    assert main(["pause-operation", sched["id"], "--indefinite", "--db", db_path,
+                 "--as", _ch(sup), "--json"]) == 0
+    assert store.get(sched["id"], sup)["result"]["paused_until"] is None

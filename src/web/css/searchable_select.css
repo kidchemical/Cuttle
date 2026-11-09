@@ -26,9 +26,9 @@
     gap: 8px;
     padding: 11px 12px;
     border-radius: 10px;
-    background-color: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    color: #e2e8f0;
+    background-color: var(--popup-field);
+    border: 1px solid var(--popup-border);
+    color: var(--popup-text);
     font-size: 14px;
     font-family: inherit;
     text-align: left;
@@ -37,8 +37,8 @@
 
 .cuttle-combo-trigger:focus-visible {
     outline: none;
-    border-color: rgba(139, 92, 246, 0.6);
-    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
+    border-color: var(--popup-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--popup-accent) 25%, transparent);
 }
 
 .cuttle-combo-trigger:disabled,
@@ -57,21 +57,22 @@
     flex: none;
     width: 12px;
     height: 12px;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a0aec0' stroke-width='2'><path d='M6 9l6 6 6-6'/></svg>");
-    background-repeat: no-repeat;
-    background-position: center;
+    box-sizing: border-box;
+    width: 8px; height: 8px; margin: 0 3px 4px;
+    border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+    transform: rotate(45deg);
     transition: transform 0.15s ease;
 }
 
 .cuttle-combo.is-open .cuttle-combo-caret {
-    transform: rotate(180deg);
+    transform: rotate(225deg);
 }
 
 .cuttle-combo-panel {
     margin-top: 6px;
     border-radius: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    background: rgba(20, 20, 35, 0.98);
+    border: 1px solid var(--popup-border);
+    background: var(--popup-bg);
     overflow: hidden;
 }
 
@@ -131,9 +132,9 @@
     box-sizing: border-box;
     padding: 10px 12px;
     border: none;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(255, 255, 255, 0.04);
-    color: #e2e8f0;
+    border-bottom: 1px solid var(--popup-border);
+    background: var(--popup-field);
+    color: var(--popup-text);
     font-size: 14px;
     font-family: inherit;
 }
@@ -155,7 +156,7 @@
     padding: 9px 10px;
     border-radius: 8px;
     font-size: 14px;
-    color: #e2e8f0;
+    color: var(--popup-text);
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
@@ -164,11 +165,12 @@
 
 .cuttle-combo-option:hover,
 .cuttle-combo-option.is-active {
-    background: rgba(139, 92, 246, 0.22);
+    background: var(--popup-hover);
 }
 
 .cuttle-combo-option.is-selected {
-    color: #c4b5fd;
+    color: var(--popup-text);
+    background: var(--popup-hover);
     font-weight: 600;
 }
 
@@ -180,5 +182,5 @@
 .cuttle-combo-empty {
     padding: 9px 10px;
     font-size: 13px;
-    color: #a0aec0;
+    color: var(--popup-muted);
 }

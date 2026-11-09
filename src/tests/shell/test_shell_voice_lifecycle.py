@@ -124,7 +124,7 @@ win.CuttleChatVoiceLive={create:host=>({start:async()=>{opened=true;host.onStatu
 globalThis.window=win;
 require(process.argv[1]);
 const api=win.CuttleShellVoice.create({win});
-const [call,mute,end]=slot.children;
+const [call,mute,end]=slot.children.filter(c=>c.className.includes('shell-voice-btn'));
 const visible=()=>[call,mute,end].filter(b=>!b.hidden).map(b=>b.attrs['aria-label']);
 (async()=>{
   assert.ok(slot.hidden,'no offer, no call: strip hidden');
@@ -187,7 +187,7 @@ win.CuttleChatVoiceRealtime={create:host=>{engineHost=host;return {start:async()
 globalThis.window=win;
 require(process.argv[1]);
 const api=win.CuttleShellVoice.create({win});
-const [call,mute,end]=slot.children;
+const [call,mute,end]=slot.children.filter(c=>c.className.includes('shell-voice-btn'));
 const visible=()=>[call,mute,end].filter(b=>!b.hidden).map(b=>b.attrs['aria-label']);
 (async()=>{
   const errors=[];

@@ -562,6 +562,7 @@
                 host.addUserMessage(text, {
                     timestamp: Date.now(),
                     steered: true,
+                    steer_idle: !!data.steer_idle,
                     steered_agent: data.agent,
                 });
                 host.autoScroll();

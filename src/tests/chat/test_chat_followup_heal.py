@@ -61,7 +61,8 @@ def test_live_waiting_uses_this_turn_not_previous_assistant():
     assert "function thisTurnHasAssistantReply(messages)" in src
     waiting = src.split("const liveActiveRaw = remoteLiveStatusLooksActive(liveStatus);", 1)[1]
     waiting = waiting.split("const statusLabel", 1)[0]
-    assert "thisTurnHasAssistantReply(messages)" in waiting
+    assert "CuttleChatActivity.liveStatusIsFollowup(liveStatus)" in waiting
+    assert "!turnAlreadyShowsAssistantReply()" in waiting
     assert "transcriptEndsWithAssistant(messages)" not in waiting
     assert "lastVisibleChatMessageIsAssistant()" not in waiting
     assert "if (isLoadingThisSession() && turnAlreadyShowsAssistantReply() && !activeEventSource)" in src

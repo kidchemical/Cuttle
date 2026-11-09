@@ -267,12 +267,15 @@ def test_attach_metadata_launchers(tmp_path: Path):
         timeout=6,
         runner=_runner_factory(),
         db=db,
+        turn_id="turn1",
     )
-    meta = service.attach_batches_to_assistant_meta(parent, {}, db=db)
+    meta = service.attach_batches_to_assistant_meta(parent, {"turn_id": "turn1"}, db=db)
     handles = {s["handle"] for s in meta["subagents"]}
     assert spawned["children"][0]["handle"] in handles
     assert spawned["children"][1]["handle"] in handles
     assert meta.get("subagent_batch_id") == spawned["id"]
+    # A reply of another turn never carries them.
+    assert "subagents" not in service.attach_batches_to_assistant_meta(parent, {"turn_id": "turn2"}, db=db)
 
 
 def test_live_overlay_shape(tmp_path: Path):
@@ -290,11 +293,15 @@ def test_live_overlay_shape(tmp_path: Path):
     assert overlay is not None
     assert overlay["subagent"]["handle"].startswith("CH-")
     parent_orbs = service.public_parent_subagents(parent, db=db)
-    assert parent_orbs, "unattached finished children should still paint parent orbs"
+    # Finished with no parent bubble to carry it: it stays on the live strip.
+    assert parent_orbs, "unattached finished children still show (live strip)"
     assert parent_orbs[0]["handle"].startswith("CH-")
-    from api.subagents.store import bind_unattached_batches
+    # Once a bubble carries it, it shows from history, not live.
+    from api.subagents import store
 
-    bind_unattached_batches(db, parent, 999)
+    db.add_message(parent, "assistant", "a reply", metadata=None)
+    [batch] = store.list_batches_for_parent(db, parent)
+    service.leave_cards_on_last_bubble(db, batch)
     assert service.public_parent_subagents(parent, db=db) == []
 
 
@@ -967,6 +974,7 @@ def test_run_child_turn_stamps_the_owning_process(tmp_path: Path):
     def runner(**kwargs):
         seen["owner"] = store.get_child(db, kwargs["child"].id).owner_pid
         seen["query_id"] = store.get_child(db, kwargs["child"].id).query_id
+        seen["rows"] = db.in_progress_messages(kwargs["child"].session_id)
         return {"success": True, "response": "ok", "query_id": "cafe1234"}
 
     service.spawn(
@@ -978,39 +986,50 @@ def test_run_child_turn_stamps_the_owning_process(tmp_path: Path):
         db=db,
     )
     assert seen["owner"] == os.getpid()
-    assert seen["query_id"] == ""
+    # The child turn's reply row and query id exist before the harness runs
+    # (api.chat_turn_row): the child pane's inspector link works at once.
+    [live] = seen["rows"]
+    assert seen["query_id"] and seen["query_id"] == live["metadata"]["query_id"]
 
 
-def test_list_live_for_parent_drops_stale_unattached(tmp_path: Path):
-    """A terminal batch with no parent bubble must not paint orbs forever.
+def test_list_live_for_parent_has_no_timing_window(tmp_path: Path):
+    """What shows live depends on where a batch is bound, never on its age.
 
-    Regression: a CLI-spawned (or dead-owner) batch never binds a parent
-    bubble, so it stayed in the live set and its cards painted on every later
-    turn's typing indicator.
+    Regression guard: a CLI-spawned (or dead-owner) batch once painted on every
+    later turn's typing indicator. Now an unbound finished batch stays on the
+    live strip only (the page never puts it on another turn's bubble), batches
+    from before turn-anchored cards never resurface, and nothing expires on a timer.
     """
     from api.subagents import store
 
     db, _db_path, owner, parent = _seed(tmp_path)
-    running = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all", lifetime="one_shot")
-    attached = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all", lifetime="one_shot")
-    store.update_batch(db, attached.id, status="done", finished=True, attach_message_id=123)
-    recent = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all", lifetime="one_shot")
-    store.update_batch(db, recent.id, status="done", finished=True)
-    stale = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all", lifetime="one_shot")
-    store.update_batch(db, stale.id, status="done", finished=True)
+    by_turn = {"cards": store.CARDS_BY_TURN}
+    running = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all",
+                                 lifetime="one_shot", metadata=by_turn)
+    on_saved = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all",
+                                  lifetime="one_shot", metadata=by_turn)
+    saved_row = db.add_message(parent, "assistant", "saved reply", metadata=None)
+    store.update_batch(db, on_saved.id, status="done", finished=True, attach_message_id=saved_row)
+    on_live = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all",
+                                 lifetime="one_shot", metadata=by_turn)
+    live_row = db.add_message(parent, "assistant", "", metadata={"in_progress": True})
+    store.update_batch(db, on_live.id, status="done", finished=True, attach_message_id=live_row)
+    orphan = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all",
+                                lifetime="one_shot", metadata=by_turn)
+    store.update_batch(db, orphan.id, status="done", finished=True)
+    legacy = store.insert_batch(db, parent_session_id=parent, user_id=owner, collect="all", lifetime="one_shot")
+    store.update_batch(db, legacy.id, status="done", finished=True)
     conn = db._get_connection()
-    conn.execute(
-        "UPDATE subagent_batches SET finished_at = '2020-01-01 00:00:00' WHERE id = ?",
-        (stale.id,),
-    )
+    conn.execute("UPDATE subagent_batches SET finished_at = '2020-01-01 00:00:00' WHERE id = ?", (orphan.id,))
     conn.commit()
     conn.close()
 
     live = {b.id for b in store.list_live_for_parent(db, parent)}
-    assert running.id in live          # running batches always paint
-    assert recent.id in live           # freshly-finished, no bubble yet: synthesis window
-    assert attached.id not in live     # terminal + bound to a bubble
-    assert stale.id not in live        # terminal + unattached + old: dropped
+    assert running.id in live        # a batch still working always shows
+    assert on_live.id in live        # finished, its turn's row still running
+    assert on_saved.id not in live   # finished, a saved bubble carries it
+    assert orphan.id in live         # finished, bound nowhere: strip (age irrelevant)
+    assert legacy.id not in live     # pre-turn-anchored history never resurfaces
 
 
 def _batch_with_child(db, owner, parent, *, lifetime="one_shot", title="Kid"):
@@ -1033,7 +1052,11 @@ def _age_child(db, child_id):
 
 def test_open_batch_with_only_finished_children_stops_painting(tmp_path: Path):
     """Regression (CH-001548): a batch left ``running`` after its only child died
-    painted that card on every later turn's working bubble, then vanished."""
+    painted that card on every later turn's working bubble, then vanished.
+
+    Now: finished rounds bound to a saved bubble show from history; an unbound
+    one shows only on the strip (never another turn's bubble) until its round
+    ends and it is left on the parent's last bubble."""
     from api.subagents import store
 
     db, _db_path, owner, parent = _seed(tmp_path)
@@ -1044,20 +1067,28 @@ def test_open_batch_with_only_finished_children_stops_painting(tmp_path: Path):
     store.update_batch(db, dead.id, attach_message_id=99)
     idle, idle_kid = _batch_with_child(db, owner, parent, lifetime="conversational", title="Idle")
     store.update_child(db, idle_kid.id, status="done", finished=True)
-    just_done, just_kid = _batch_with_child(db, owner, parent, title="JustDone")
-    store.update_child(db, just_kid.id, status="done", finished=True)
     old_open, old_kid = _batch_with_child(db, owner, parent, title="OldOpen")
     store.update_child(db, old_kid.id, status="failed", finished=True)
     _age_child(db, old_kid.id)
-    _age_child(db, idle_kid.id)
 
     live = {b.id for b in store.list_live_for_parent(db, parent)}
     assert working.id in live          # a child is running
-    assert just_done.id in live        # round just ended, unattached: synthesis window
     assert dead.id not in live         # open, children finished, bound to a bubble
-    assert idle.id not in live         # idle conversational round, long finished
-    assert old_open.id not in live     # open, child died long ago
+    assert idle.id not in live and old_open.id not in live  # pre-turn-anchored rows: not live
 
+    # A turn-anchored conversational round ends with a parent bubble to carry it.
+    reply = db.add_message(parent, "assistant", "earlier reply", metadata=None)
+    fresh, fresh_kid = _batch_with_child(db, owner, parent, lifetime="conversational", title="Fresh")
+    conn = db._get_connection()
+    conn.execute("UPDATE subagent_batches SET metadata = ? WHERE id = ?",
+                 (json.dumps({"cards": store.CARDS_BY_TURN}), fresh.id))
+    conn.commit()
+    conn.close()
+    store.update_child(db, fresh_kid.id, status="done", finished=True)
+    assert fresh.id in {b.id for b in store.list_live_for_parent(db, parent)}  # strip until left
+    service._finalize_if_complete(db, store.get_batch(db, fresh.id))
+    assert store.get_batch(db, fresh.id).attach_message_id == reply
+    assert fresh.id not in {b.id for b in store.list_live_for_parent(db, parent)}
 
 def test_orphan_reconcile_closes_the_batch(tmp_path: Path, monkeypatch):
     from api.subagents import service, store

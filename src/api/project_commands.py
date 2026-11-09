@@ -140,6 +140,7 @@ def _parse_command_file(path: Path, project_path: str) -> Optional[Dict[str, Any
     if execute == "agent":
         execute = "prompt"
     watch = _normalize_watch(meta.get("watch"))
+    host_step = str(meta.get("host_step") or "").strip() or None
     timeout = None
     raw_timeout = meta.get("timeout")
     if raw_timeout is not None:
@@ -161,6 +162,7 @@ def _parse_command_file(path: Path, project_path: str) -> Optional[Dict[str, Any
         "execute": execute,
         "watch": watch,
         "timeout": timeout,
+        "host_step": host_step,
         "body": body.strip(),
         "path": str(path),
         "project_path": str(Path(project_path).resolve()),
@@ -626,6 +628,29 @@ _STICKY_HEAD_RE = re.compile(
     r"^(?P<head>/(?:cursor(?:-cli)?|claude|hermes|codex|muse|opencode|antigravity|deepseek))\s+",
     re.IGNORECASE,
 )
+
+
+# Host steps a prompt command may run before its agent turn (frontmatter
+# ``host_step: <name>``). Allowlisted names only, never a module path from a
+# command file: host state is set by Cuttle, not by asking the agent to run a CLI.
+HOST_STEPS = {
+    "orchestrator.bind": ("api.orchestrator.service", "bind_from_command"),
+}
+
+
+def run_host_step(cmd: Dict[str, Any], args: str, session_id: Any) -> Optional[Dict[str, Any]]:
+    """Run ``cmd``'s host step: ``{"note": …}`` (append to the prompt), ``{"reply": …}``
+    (terminal Cuttle reply, no agent turn), or None (no step / no chat)."""
+    name = (cmd or {}).get("host_step")
+    if not name or session_id in (None, ""):
+        return None
+    target = HOST_STEPS.get(name)
+    if not target:
+        return {"reply": f"Unknown host step `{name}` in /{cmd.get('name')}."}
+    import importlib
+
+    fn = getattr(importlib.import_module(target[0]), target[1])
+    return fn(session_id, args or "") or None
 
 
 def try_expand_message_project_command(

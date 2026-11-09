@@ -9,12 +9,18 @@ import api.dashboards.benchmarklist as benchmarklist
 import api.dashboards.catalog as catalog
 import api.dashboards.deepswe as deepswe
 import api.dashboards.integrations as integrations
+import api.dashboards.local_ai as local_ai
 
 JsonFetcher = Callable[[str], Any]
 
 
 def hub() -> Dict[str, Any]:
     return {"success": True, "dashboards": catalog.list_dashboards()}
+
+
+def local_ai_dashboard(dash_id: str) -> Dict[str, Any]:
+    """Public curated local-AI research snapshot (no owner-local state)."""
+    return local_ai.dashboard(dash_id)
 
 
 def cuttle_jobs(*, hours: int = 24) -> Dict[str, Any]:

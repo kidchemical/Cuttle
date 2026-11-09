@@ -31,7 +31,32 @@
         call.type='button';call.className='shell-voice-btn shell-voice-call';call.setAttribute('aria-label','Start voice call');call.title='Call';
         mute.type='button';mute.className='shell-voice-btn shell-voice-mute';mute.setAttribute('aria-label','Mute');
         end.type='button';end.className='shell-voice-btn shell-voice-end';end.setAttribute('aria-label','End voice');end.title='End call';
-        call.innerHTML=CALL_ICON;end.innerHTML=HANG_UP_ICON;bar.append(call,mute,end);
+        call.innerHTML=CALL_ICON;end.innerHTML=HANG_UP_ICON;
+        // Live level meter: the assistant's voice (out) or yours (in), whichever is louder.
+        const meter=doc.createElement('div');meter.className='shell-voice-meter';meter.setAttribute('aria-hidden','true');meter.hidden=true;
+        const meterBars=[];for(let i=0;i<5;i++){const b=doc.createElement('span');meterBars.push(b);meter.append(b);}
+        bar.append(call,meter,mute,end);
+        let meterRaf=0,meterHeld=0;
+        function readLevels(){try{return controller?.levels?.()||null;}catch(_){return null;}}
+        function paintMeter(){
+            meterRaf=0;
+            if(!active||bar.hidden){meterHeld=0;return;}
+            const Level=win.CuttleAudioLevel,lv=readLevels();
+            if(Level&&lv){
+                const speaking=lv.out>=lv.in*0.8&&lv.out>0.004;
+                meterHeld=Level.peakHold(meterHeld,speaking?lv.out:lv.in);
+                meter.setAttribute('data-source',muted&&!speaking?'muted':speaking?'assistant':'you');
+                const reduced=(()=>{try{return win.matchMedia?.('(prefers-reduced-motion: reduce)').matches;}catch(_){return false;}})();
+                const heights=Level.bars(Level.display(meterHeld),meterBars.length,reduced?0:Date.now()/1000);
+                meterBars.forEach((b,i)=>{b.style.transform='scaleY('+heights[i].toFixed(3)+')';});
+                meter.hidden=false;
+            }else meter.hidden=true;
+            meterRaf=win.requestAnimationFrame?win.requestAnimationFrame(paintMeter):0;
+        }
+        function syncMeter(){
+            if(active&&!bar.hidden){if(!meterRaf&&win.requestAnimationFrame)meterRaf=win.requestAnimationFrame(paintMeter);}
+            else{if(meterRaf)try{win.cancelAnimationFrame(meterRaf);}catch(_){}meterRaf=0;meter.hidden=true;meterHeld=0;}
+        }
         call.onclick=()=>void dial();mute.onclick=()=>{muted=!muted;controller?.mute?.(muted);paint();};end.onclick=()=>void stop();
         function currentOffer(){
             for(let i=offers.length-1;i>=0;i--){
@@ -81,6 +106,7 @@
                 mute.innerHTML=muted?MIC_OFF_ICON:MIC_ICON;mute.title=muted?'Unmute':'Mute';mute.setAttribute('aria-pressed',String(muted));
             }
             if(wasHidden!==bar.hidden)publishHeight();
+            syncMeter();
         }
         function attach(sessionId,listener){
             const key=String(sessionId); if(!listeners.has(key))listeners.set(key,new Set());listeners.get(key).add(listener);
@@ -119,7 +145,12 @@
         // so a screen lock must NOT hang up (only pagehide / explicit End do).
         doc.addEventListener('visibilitychange',()=>{if(doc.hidden&&!isMobileShell())void stop();});
         win.addEventListener('pagehide',()=>void stop());
-        const api={start,stop,attach,offer,isOpen:sid=>!!(active&&String(active.session_id)===String(sid)&&controller?.isOpen()),
+        const api={start,stop,attach,offer,
+            /** Any call live (any chat): the reply chime stays quiet so it cannot steal the call's audio. */
+            isActive:()=>!!(active&&controller?.isOpen?.()),
+            /** {out,in} RMS of the live call for that chat, or null. */
+            levels:sid=>String(active?.session_id)===String(sid)?readLevels():null,
+            isOpen:sid=>!!(active&&String(active.session_id)===String(sid)&&controller?.isOpen()),
             engine:sid=>String(active?.session_id)===String(sid)?active.engine:null};
         win.cuttleVoiceRuntime=api;return api;
     }

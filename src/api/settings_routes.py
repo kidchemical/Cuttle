@@ -95,6 +95,9 @@ SETTING_FAMILIES = (
      "backend": "api.agent_harness.steer (key 'agent_steer') + catalog (key 'agent_harness'); "
                 "model/effort defaults read here, written via POST /agent-defaults/<id>",
      "validator": "validate_agent_adapters_update", "read": "authenticated", "write": "owner"},
+    {"name": "auto-compact", "routes": ["GET/POST /settings/auto-compact"],
+     "backend": "api.auto_compact.service (settings-manager key 'auto_compact')",
+     "validator": "api.auto_compact.policy.validate_patch", "read": "authenticated", "write": "owner"},
     {"name": "timeouts", "routes": ["GET/POST /settings/timeouts"],
      "backend": "settings-manager key 'timeouts' (resolved by get_timeouts)",
      "validator": "validate_timeouts_update", "read": "authenticated", "write": "owner"},
@@ -572,6 +575,39 @@ def update_agent_review_setting():
     except ReviewError as e:
         return jsonify({'success': False, 'error': str(e)}), 400
     return jsonify({'success': True, 'commit_policy': commit_policy()})
+
+
+# --- auto-compact (backend: api.auto_compact.service) ----------------------
+
+def _auto_compact_body():
+    from api.auto_compact import policy, service
+    if not service.available():
+        return {'success': True, 'available': False}
+    return {'success': True, 'available': True, 'settings': service.settings(), 'defaults': policy.defaults(),
+            'limits': {'percent': policy.PERCENT_RANGE, 'milestone_percent': policy.MILESTONE_PERCENT_RANGE,
+                       'max_tokens': policy.MAX_TOKENS_RANGE, 'quiet_seconds': policy.QUIET_RANGE,
+                       'modes': policy.MODES}}
+
+
+@settings_bp.route('/settings/auto-compact', methods=['GET'])
+@authenticated_required
+def get_auto_compact_setting():
+    """When agents' context is compacted between turns (flag ``auto_compact``)."""
+    return jsonify(_auto_compact_body())
+
+
+@settings_bp.route('/settings/auto-compact', methods=['POST'])
+@owner_required
+def update_auto_compact_setting():
+    """Body: a partial settings object (``chats`` / ``managed`` / ``milestone`` / ``mode`` / ``quiet_seconds``)."""
+    from api.auto_compact import policy, service
+    if not service.available():
+        return jsonify({'success': True, 'available': False})
+    try:
+        service.save_settings(request.get_json(silent=True) or {})
+    except policy.PolicyError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    return jsonify(_auto_compact_body())
 
 
 # --- timeouts (backend: managers.settings_manager) -------------------------

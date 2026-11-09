@@ -64,6 +64,10 @@
                     startedAt: String(item.started_at || ''),
                     finishedAt: String(item.finished_at || ''),
                     liveStatusAt: String(item.live_status_at || ''),
+                    // Live entries only: the parent bubble that owns this card, and
+                    // the parent turn it was started in (api.chat_turn_id).
+                    boundMessageId: item.bound_message_id != null ? String(item.bound_message_id) : '',
+                    turnId: String(item.turn_id || ''),
                 });
             });
             return out;
@@ -71,6 +75,10 @@
 
         function parentRefsFromOpts(opts) {
             if (!opts) return [];
+            // A supervision check-in's "parent" is the supervisor chat it sits in:
+            // a launcher would open this same chat. Its header badge names it.
+            if (String(opts.origin || '') === 'chat_ops' && (opts.chat_op_kind === 'checkin'
+                || /^Supervision check-in/i.test(String(opts.parent_label || '')))) return [];
             const handleRaw = String(opts.parent_handle || '').trim();
             const sid = opts.parent_session_id != null && opts.parent_session_id !== ''
                 ? String(opts.parent_session_id)
@@ -144,6 +152,12 @@
 
         function mountSubagentLaunchers(messageEl, subagents, opts) {
             if (!messageEl) return;
+            if (!(opts && opts.kind === 'parent')) {
+                // Reply threads (chat_threads.js) list finished children from these.
+                const list = Array.isArray(subagents) && subagents[0] && subagents[0].sessionId !== undefined
+                    ? subagents : normalizeSubagentList(subagents);
+                messageEl.__cuttleSubagentCards = list.length ? list : null;
+            }
             const wrap = messageEl.querySelector('.message-content-wrapper');
             if (!wrap) return;
             const html = renderSubagentLaunchersHtml(subagents, opts);
@@ -235,14 +249,53 @@
             paintSubagentOrbs();
         }
 
+        /**
+         * Where each live card shows (pure). Cards are keyed to the TURN that
+         * started them (`turnId`, api.chat_turn_id), never to "the latest bubble":
+         * - its owning saved bubble is on screen → that bubble shows it (history
+         *   hydration keeps it current);
+         * - the live bubble of its turn is on screen → there (`live`);
+         * - otherwise → `strip`: the pinned background card shows it, at once
+         *   (the turn's bubble is elsewhere or finished, or a manual CLI run).
+         * A card with no turn (a manual CLI run) never rides a turn's bubble:
+         * it is on its anchor / latest bubble, else the strip. The same for
+         * every harness; nothing here depends on which agent ran the turn.
+         * `liveTurnIds`: turn ids of the live bubbles on screen.
+         */
+        function placeLive(list, savedIds, liveTurnIds) {
+            const turns = liveTurnIds instanceof Set ? liveTurnIds : new Set(liveTurnIds || []);
+            const out = { live: [], strip: [] };
+            (list || []).forEach((s) => {
+                if (s.boundMessageId && savedIds.has(String(s.boundMessageId))) return; // owner shows it
+                const onLive = !!s.turnId && turns.has(String(s.turnId));
+                (onLive ? out.live : out.strip).push(s);
+            });
+            return out;
+        }
+
+        function savedBubbleIds() {
+            const ids = new Set();
+            frameDoc.querySelectorAll('#chatMessages .message[data-message-id]').forEach((el) => {
+                if (el.id !== 'typing-indicator' && el.id !== 'typing-indicator-remote') ids.add(String(el.dataset.messageId));
+            });
+            return ids;
+        }
+
         function mountLiveSubagentBadges() {
             if (typeof frameDoc === 'undefined' || !frameDoc.querySelectorAll) return;
-            // Badges link to the child sessions as soon as they attach — mount
-            // onto the in-progress bubble, not just the finalized reply.
+            // Cards link to the child sessions as soon as the batch exists: on the
+            // in-progress bubble of their turn; once the owning reply is saved its
+            // bubble carries them. Elsewhere: the pinned background card's rows.
             // Empty list unmounts (mountSubagentLaunchers removes on empty html).
-            frameDoc.querySelectorAll('#typing-indicator, #typing-indicator-remote').forEach((el) => {
-                try { mountSubagentLaunchers(el, liveList); } catch (_) {}
+            const bubbles = Array.from(frameDoc.querySelectorAll('#typing-indicator, #typing-indicator-remote'));
+            const liveTurns = new Set(bubbles.map((el) => String(el.dataset.turnId || '')).filter(Boolean));
+            const placed = placeLive(liveList, savedBubbleIds(), liveTurns);
+            bubbles.forEach((el) => {
+                const own = placed.live.filter((s) => s.turnId === String(el.dataset.turnId || ''));
+                try { mountSubagentLaunchers(el, own); } catch (_) {}
             });
+            // Cards no live bubble of their turn carries are shown by the pinned
+            // background card (chat_background_work.js, from live `subagents`).
         }
 
         return {
@@ -255,6 +308,7 @@
             syncLive: syncSubagentOrbs,
             paintLive: paintSubagentOrbs,
             clearLive: clearSubagentOrbs,
+            placeLive,
         };
     }
 

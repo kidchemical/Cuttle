@@ -174,6 +174,16 @@ out.liveStale = A.liveStatusLooksActive(
   { active: true, updated_at: NOW / 1000 - 600 }, NOW);
 out.liveNoTs = A.liveStatusLooksActive({ active: true }, NOW);
 out.liveIdle = A.liveStatusLooksActive({ active: false }, NOW);
+// follow-up activity (detached run answering a steer / finishing background work)
+const reply = { queryId: 'q1', timestamp: NOW };
+out.predatesSameQuery = A.liveStatusPredatesReply(
+  { active: true, query_id: 'q1', updated_at: NOW / 1000 - 10 }, reply);
+out.predatesFollowup = A.liveStatusPredatesReply(
+  { active: true, followup: true, query_id: 'q1', updated_at: NOW / 1000 - 10 }, reply);
+out.followupActive = A.liveStatusIsFollowup({ active: true, followup: true });
+out.followupIdle = A.liveStatusIsFollowup({ active: false, followup: true });
+out.followupCancelled = A.liveStatusIsFollowup({ active: true, followup: true, cancelled: true });
+out.followupPlainTurn = A.liveStatusIsFollowup({ active: true });
 out.clsKinds = [A.activityClassToKind('chat-history-item has-unread-error'),
   A.activityClassToKind('chat-history-item has-unread'),
   A.activityClassToKind('chat-history-item has-queued'),
@@ -368,6 +378,13 @@ def test_live_status_and_snapshot_mapping():
     assert res["liveNull"] is False
     assert res["liveFresh"] is True
     assert res["liveStale"] is False  # 3-minute staleness gate
+    # Same query as the painted reply → stale snapshot; a follow-up never is.
+    assert res["predatesSameQuery"] is True
+    assert res["predatesFollowup"] is False
+    assert res["followupActive"] is True
+    assert res["followupIdle"] is False
+    assert res["followupCancelled"] is False
+    assert res["followupPlainTurn"] is False
     assert res["liveNoTs"] is True  # no timestamp → trust the flag
     assert res["liveIdle"] is False
     assert res["clsKinds"] == ["error", "unread", "queued", "paused", ""]

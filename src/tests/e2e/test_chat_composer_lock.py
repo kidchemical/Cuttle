@@ -130,3 +130,39 @@ def test_plain_chat_never_locks(browser, static_server):
         assert not errors
     finally:
         page.close()
+
+
+def test_chat_composer_grip_beside_send_drags_up(browser, static_server):
+    """Unlocked in-chat composer: the grip after Send grows the textarea upward."""
+    from .test_chat_action_card_render import CardWorld
+    page, frame, errors = _open_card_chat(browser, static_server, CardWorld(["reply"]))
+    try:
+        page.evaluate("localStorage.removeItem('cuttle.composerHeight.chat')")
+        grip = frame.locator("#chatComposerWrap > .composer-resize-grip--up")
+        grip.wait_for(state="visible")
+        wrap = frame.locator("#chatComposerWrap").bounding_box()
+        box = grip.bounding_box()
+        # Top-right corner of the composer, out of the actions row (Send stays put).
+        assert wrap["x"] + wrap["width"] - (box["x"] + box["width"]) < 6
+        assert box["y"] - wrap["y"] < 6
+        assert frame.locator("#chatComposerWrap .composer-actions .composer-resize-grip").count() == 0
+        # Send keeps its clicks: the hit-test at Send's centre is Send.
+        hit = frame.locator("#sendButton").evaluate("""el => { const r = el.getBoundingClientRect();
+            return el.contains(document.elementFromPoint(r.x + r.width * 0.8, r.y + r.height * 0.2)); }""")
+        assert hit
+        input = frame.locator("#chatInput")
+        before = input.bounding_box()
+        x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(x, y - 150, steps=6)
+        page.mouse.up()
+        after = input.bounding_box()
+        assert after["height"] > before["height"] + 120
+        assert abs((after["y"] + after["height"]) - (before["y"] + before["height"])) < 4  # grew up
+        assert int(page.evaluate("localStorage.getItem('cuttle.composerHeight.chat')")) > 150
+        grip.dblclick()
+        assert input.bounding_box()["height"] < after["height"] - 100
+        assert not errors
+    finally:
+        page.close()

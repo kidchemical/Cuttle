@@ -3,28 +3,21 @@ name: orchestrate
 title: orchestrate
 description: Run this chat as an orchestrator under a playbook (org chart, escalation, supervisor defaults)
 execute: prompt
+host_step: orchestrator.bind
 ---
 
 # Orchestrate
 
-Bind this chat to an Orchestrator playbook and follow its brief for the rest of
-the chat. Runbook: `feature/orchestrator/docs/orchestrator.md`.
+Cuttle has already bound this chat to the playbook named at the end of this
+message, before your turn (`host_step: orchestrator.bind`). Do **not** run
+`api.orchestrator start`: the binding, the playbook pick and the goal are host
+state, and the user changes them from the chat's **Orchestrating** header chip.
+Runbook: `feature/orchestrator/docs/orchestrator.md`.
 
-The user's arguments are the goal. If they start with `@<playbook-id>`, that
-word picks the playbook (the composer chip adds it); otherwise omit
-`--playbook` so the user's default playbook is used. If there is no goal, ask
-for it with one Q&A action form and end the turn.
-
-1. Bind and print the brief (Cuttle venv + `src` on `PYTHONPATH`, from the
-   Cuttle checkout — also for guest projects; see `agent-ops-cli.md`):
-
-   ```bash
-   PYTHONPATH=src .venv/bin/python -m api.orchestrator start [--playbook <id>] --goal "<goal>" --json
-   ```
-
-   On error (unknown playbook, missing profile), show it and point the user to
-   Apps → Orchestrator / Apps → Agents. Do not improvise an org chart.
-2. Follow the printed brief. Cuttle re-injects it into every fresh context for
-   this chat, including after a harness switch.
-3. Draft the high-level plan into a Tasks gizmo. For a large or risky goal,
+1. Follow the playbook brief in your context (reprint it with
+   `PYTHONPATH=src .venv/bin/python -m api.orchestrator brief --json` if you
+   need it). Cuttle re-injects it into every fresh context for this chat,
+   including after a harness switch, and sends the new one when the user
+   switches playbook.
+2. Draft the high-level plan into a Tasks gizmo. For a large or risky goal,
    send the plan to an expert-tier profile for review before delegating.

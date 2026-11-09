@@ -31,7 +31,23 @@
         if (!state.gizmo) return;
         window.CuttleScroll.setHtml(box, M.renderGizmoHtml(state.gizmo, state.data, 'popout', Date.now()));
         document.title = state.gizmo.title + ' - Cuttle';
+        fitWindow();
     }
+
+    // The page clips overflow (it is a fixed desktop window), so ask the host
+    // to grow the window when larger text makes the meter taller or wider.
+    function fitWindow() {
+        const bridge = window.electron && window.electron.gizmos;
+        const inner = box.firstElementChild;
+        if (!bridge || !bridge.fitPopout || !inner) return;
+        const w = Math.max(inner.scrollWidth, box.scrollWidth);
+        const h = Math.max(inner.scrollHeight, box.scrollHeight);
+        if (w > window.innerWidth + 1 || h > window.innerHeight + 1) {
+            bridge.fitPopout(w, h).catch(() => { /* older host: keep clipping */ });
+        }
+    }
+    // The Interface text scale can land after the first render.
+    window.addEventListener('load', () => setTimeout(fitWindow, 300));
 
     async function loadData(force) {
         if (!state.gizmo) return;

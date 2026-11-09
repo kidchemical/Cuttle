@@ -229,6 +229,12 @@
         /** RMS for the waveform: live mic while listening, playback while speaking. */
         function voiceLevel() {
             try {
+                // Call engines: the louder of the assistant's audio and the mic.
+                const call = engine === 'live' ? live : engine === 'realtime' ? realtime : null;
+                if (call && typeof call.levels === 'function') {
+                    const lv = call.levels();
+                    if (lv) return Math.max(lv.out || 0, lv.in || 0);
+                }
                 if (phase === 'listening') {
                     if (engine === 'server' && recorder && typeof recorder.level === 'function') {
                         const v = recorder.level();
@@ -587,7 +593,7 @@
             sharedVoice = voiceRuntime();
             if (sharedVoice) {
                 detachVoice?.(); detachVoice=sharedVoice.attach(context.session_id,conversationCallbacks());
-                live={start:()=>sharedVoice.start(context),stop:()=>sharedVoice.engine(context.session_id)?sharedVoice.stop():Promise.resolve(),isOpen:()=>sharedVoice.isOpen(context.session_id)};
+                live={start:()=>sharedVoice.start(context),stop:()=>sharedVoice.engine(context.session_id)?sharedVoice.stop():Promise.resolve(),isOpen:()=>sharedVoice.isOpen(context.session_id),levels:()=>sharedVoice.levels?.(context.session_id)||null};
             } else if (!live) live=Live.create({fetch:host.fetch,...conversationCallbacks()});
             setPhase('processing','Connecting GPT-Live…');
             try { await live.start(context); }
@@ -720,7 +726,7 @@
                 sharedVoice = host.sessionId ? voiceRuntime() : null;
                 if (sharedVoice) {
                     const context=await voiceContext();detachVoice?.();detachVoice=sharedVoice.attach(context.session_id,conversationCallbacks());
-                    realtime={start:()=>sharedVoice.start(context),stop:()=>sharedVoice.engine(context.session_id)?sharedVoice.stop():Promise.resolve(),isOpen:()=>sharedVoice.isOpen(context.session_id)};
+                    realtime={start:()=>sharedVoice.start(context),stop:()=>sharedVoice.engine(context.session_id)?sharedVoice.stop():Promise.resolve(),isOpen:()=>sharedVoice.isOpen(context.session_id),levels:()=>sharedVoice.levels?.(context.session_id)||null};
                     try{await realtime.start();}catch(err){if(active)setPhase('idle',err.message);}
                     return;
                 }
@@ -728,7 +734,7 @@
                 if (!realtime) realtime = Realtime.create({
                     fetch: host.fetch, experimentalFlags: host.experimentalFlags,
                     onTranscript: appendLiveTranscript,
-                    onStatus: (text) => { if (active) setPhase('listening', text); },
+                    onStatus: conversationCallbacks().onStatus,
                     onError: (text) => { if (active) setPhase('idle', text); },
                     realtimeUsage: async (payload) => {
                         try {

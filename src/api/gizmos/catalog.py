@@ -89,8 +89,13 @@ def _usage_config(raw: Dict[str, Any], existing: Optional[Dict[str, Any]] = None
         notify = _truthy(raw.get("notify_on_unblock"))
     else:
         notify = _truthy(base.get("notify_on_unblock", False))
-    return {"agent": agent, "window": window, "show": show,
-            "metric": metric, "notify_on_unblock": notify}
+    # Claude Code only: add the Anthropic API-credit fallback as a row.
+    api_credit = agent == "claude" and _truthy(raw.get("api_credit", base.get("api_credit", False)))
+    out = {"agent": agent, "window": window, "show": show,
+           "metric": metric, "notify_on_unblock": notify}
+    if api_credit:
+        out["api_credit"] = True
+    return out
 
 
 def _usage_title(config: Dict[str, Any]) -> str:
@@ -99,7 +104,12 @@ def _usage_title(config: Dict[str, Any]) -> str:
 
 
 def _usage_data(config: Dict[str, Any], refresh: bool) -> Dict[str, Any]:
-    return usage.snapshot(config.get("agent"), force=refresh)
+    snap = usage.snapshot(config.get("agent"), force=refresh)
+    if config.get("agent") == "claude" and config.get("api_credit"):
+        from api.agent_harness.agents.claude.api_fallback import merge_claude_usage
+
+        snap = merge_claude_usage(snap)
+    return snap
 
 
 def _usage_options() -> Dict[str, Any]:

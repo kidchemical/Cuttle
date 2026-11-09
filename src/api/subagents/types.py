@@ -86,6 +86,9 @@ class ChildSpec:
     agent_explicit: bool = False
     model_explicit: bool = False
     effort_explicit: bool = False
+    # Orchestrator tier to pick from ("worker", a tier label or id); resolved to a
+    # member with budget left before any chat exists (api.orchestrator.service).
+    tier: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -127,6 +130,13 @@ class ChildRecord:
     live_status_at: str = ""
     live_turn_id: str = ""
     stop_requested_at: Optional[float] = None
+    # Fleet card rounds: the parent bubble showing this child's live card
+    # (None → the batch's attach bubble), and whether a follow-up round is
+    # waiting for the parent's next saved reply to mint its card.
+    card_message_id: Optional[int] = None
+    card_pending: bool = False
+    # The parent turn a follow-up round was sent in (api.chat_turn_id).
+    card_turn_id: str = ""
 
     def handle(self) -> str:
         return chat_handle(self.session_id)
@@ -168,6 +178,11 @@ class BatchRecord:
     created_at: str = ""
     finished_at: str = ""
     children: List[ChildRecord] = field(default_factory=list)
+    # The parent turn the batch was spawned in (api.chat_turn_id): its cards
+    # bind to the assistant row of that turn.
+    turn_id: str = ""
+    # Spawned under turn-anchored cards (store.CARDS_BY_TURN in its metadata).
+    cards_by_turn: bool = False
 
     def public(self) -> Dict[str, Any]:
         return {
@@ -179,5 +194,6 @@ class BatchRecord:
             "status": self.status,
             "watch_id": self.watch_id or None,
             "widget_id": self.widget_id or None,
+            "turn_id": self.turn_id or None,
             "children": [c.public() for c in self.children],
         }

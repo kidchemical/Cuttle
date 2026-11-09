@@ -86,3 +86,12 @@ def test_parallel_turn_contexts_are_isolated_and_propagate_to_tool_threads():
         assert env['CUTTLE_AGENT_RUN_ID'] == f'query-{sid}'
     assert dict(os.environ) == before
     assert agent_cli_env() == agent_cli_env(before)
+
+
+def test_supervised_marker_is_set_per_turn_and_cleared_for_user_driven_turns():
+    from core.agent_cli_env import agent_operation_context
+    inherited = {'CUTTLE_SUPERVISED': 'subagent'}
+    with agent_operation_context(session_id='1', agent_id='fixture', supervised='subagent'):
+        assert agent_cli_env({})['CUTTLE_SUPERVISED'] == 'subagent'
+    with agent_operation_context(session_id='2', agent_id='fixture'):
+        assert agent_cli_env(inherited)['CUTTLE_SUPERVISED'] == ''

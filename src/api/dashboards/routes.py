@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify, request
 
 import api.dashboards.catalog as catalog
 import api.dashboards.context as context
+import api.dashboards.local_ai as local_ai
 import api.dashboards.service as service
 import api.dashboards.usage as usage
 from api.http_authz import authenticated_required, current_user, is_owner_user
@@ -35,6 +36,8 @@ def get_dashboard(dash_id: str):
     if not owner and not meta.get("public"):
         return jsonify({"success": False, "error": "Owner privileges required."}), 403
     force = owner and str(request.args.get("refresh") or "").lower() in ("1", "true", "yes")
+    if dash_id in local_ai.dashboard_ids():
+        return jsonify(service.local_ai_dashboard(dash_id))
     if dash_id == "model-benchmarks":
         source_id = (request.args.get("source") or "deepswe").strip().lower()
         return jsonify(service.model_benchmarks(force=force, source_id=source_id))
@@ -82,4 +85,12 @@ def get_dashboard(dash_id: str):
         except ValueError:
             hours = 24
         return jsonify(service.cuttle_jobs(hours=hours))
+    if dash_id == "orchestration":
+        from api.auth_db import get_auth_db
+        from api.orchestration_telemetry.report import report as orchestration_report
+
+        return jsonify(orchestration_report(
+            user_id=int(current_user()["id"]),
+            range_id=(request.args.get("range") or "30d").strip().lower(),
+            project=(request.args.get("project") or "").strip(), db=get_auth_db()))
     return jsonify({"success": True, **meta})

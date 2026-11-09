@@ -10,17 +10,35 @@ limits, supervisor defaults and free-form notes. Users edit playbooks in
 
 ## Start
 
-`/orchestrate [@playbook] <goal>` binds the chat and prints the brief. Without
-`@playbook` it uses the user's default playbook. In the composer the command is
-a chip (`Orchestrate · <playbook>`); clicking it picks the playbook. Or:
+The binding (chat → playbook + goal) is **host state**; agents never set it.
+
+- **☰ → Orchestrate this chat…** picks the playbook and goal, then sends
+  `/orchestrate @<playbook> <goal>` as the chat's first turn on its own agent.
+- Typed `/orchestrate [@playbook] <goal>` does the same: the command's
+  `host_step: orchestrator.bind` binds the chat on the server **before** the
+  agent runs and appends one line naming the playbook. Without `@playbook` it
+  uses the user's default; with no goal on an unbound chat Cuttle answers by
+  itself (no agent turn); with no goal on a bound chat it switches playbook and
+  keeps the goal. In the composer the command is a chip (`Orchestrate · <playbook>`).
+- A bound chat shows **Orchestrating · \<playbook\>** in its header: Edit…
+  (switch playbook / edit goal), Open playbooks, Stop orchestrating. A switch is
+  not an agent turn: the brief changes at the next turn (resume delta), and each
+  supervision schedule on the chat takes the new playbook's supervisor settings
+  with one **Supervision update** check-in, as for a playbook edit.
+- Every bind / switch / goal edit / unbind is logged (`binding_events` in
+  `orchestrator.db`) with its source (`ui`, `command`, `cli`).
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.orchestrator start [--playbook ID] --goal "…" --json
+PYTHONPATH=src .venv/bin/python -m api.orchestrator switch [--playbook ID] [--goal "…"]   # change a bound chat
 PYTHONPATH=src .venv/bin/python -m api.orchestrator default [ID]     # show / set the default
 PYTHONPATH=src .venv/bin/python -m api.orchestrator brief            # reprint for this chat
 PYTHONPATH=src .venv/bin/python -m api.orchestrator stop             # unbind
 PYTHONPATH=src .venv/bin/python -m api.orchestrator list|get <id>|bindings --json
+PYTHONPATH=src .venv/bin/python -m api.orchestrator start [--playbook ID] --goal "…"   # scripts only; not from an agent turn
 ```
+
+REST: `GET|PUT|DELETE /api/orchestrator/bindings/<session>` (PUT
+`{playbook_id?, goal?}`; omitted fields are kept).
 
 Inside a Cuttle turn `--session` defaults to the current chat. A bound chat's
 brief is part of its compiled context, so a new harness joining the chat gets
@@ -28,17 +46,42 @@ it too. Treat it as standing instructions.
 
 ## Delegating
 
-Spawn with the profile id; the profile pins harness, model and effort. A
-temporary agent's brief cell shows the inline `profile` object to send instead:
+Spawn by **tier** (its id from the brief's org chart; a label or role also
+works). Cuttle picks the tier's first switched-on agent whose account can run,
+in the order set on the Orchestrator page:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m api.subagents spawn --parent CH-… --wait --json \
-  --child "{\"title\":\"…\",\"profile\":\"grunt\",\"message\":\"…\"}"
+  --child "{\"title\":\"…\",\"tier\":\"worker\",\"message\":\"…\"}"
 ```
+
+- **Out of budget is skipped.** An agent is skipped when its account recently
+  failed with "out of usage" (until the reset that error named) or the cached
+  plan usage (the `/usage` windows) shows it at its limit. Nearly-spent
+  accounts drop behind healthy ones only when router budget awareness is on
+  (`agent_router.budget.enabled`). Accounts with no usage API keep their place.
+- The result's `tier_picks` names who ran and who was skipped, and why.
+- Every agent blocked → the spawn fails before any chat exists, listing each
+  account; escalate a tier or wait for the reset.
+- A child that fails on quota marks its account, so the next spawn and the
+  next routed turn skip it. The marks and the usage snapshot are shared with
+  Flask through `<home>/cache/router_quota.json` / `router_budget.json`.
+
+Spawn by `profile` (id, or a temporary agent's inline object from its brief
+cell) only to pick one agent on purpose, e.g. a parallel lane on a different
+agent. A named agent that is out of budget is refused before any chat is
+created, with the tier's runnable alternative in the error.
 
 Spawn checks every child's harness/model/effort against that CLI's catalog
 before any chat is created. A rejection names the child and the bad pin: fix
 the spec or use the tier's next profile — never resend it unchanged.
+
+**Long-lived lanes fill up.** Before reusing a conversational child for its
+next task, check `subagents status --parent CH-… --context --json`; above ~75%
+run `python -m api.chat_cli compact CH-<child>` between its turns, or
+`--mode fresh` to restart it on a clean session (it keeps its chat, links and
+shared Tasks list; the briefing and recent transcript are re-sent). One-shot
+children need neither.
 
 ## Supervisor
 
@@ -53,16 +96,43 @@ PYTHONPATH=src .venv/bin/python -m api.orchestrator supervise-command CH-<orches
 Run the returned `command` from the supervisor chat. It omits `--agent` unless
 the playbook pins one, so check-ins follow that chat's own agent.
 
+### Change the bound orchestrator chat's agent
+
+The supervision schedule's `--agent`, `--model`, and `--effort` settings pin
+the **supervisor chat**. They do not change the bound orchestrator's active
+agent. To change the orchestrator chat's harness, model, or effort, use the
+target-chat procedure in [chat-history.md](../../../docs/chat-history.md#change-the-target-chats-agent-model-or-effort):
+check `status`, send the target harness's model and effort slash commands to
+the orchestrator with `chat_cli send`, then verify the resulting agent chip or
+status before reporting success. If it is busy, queue the commands in order and
+let its current turn finish; do not stop it to apply the new setting. Send a
+continuation in that harness only if the orchestrator needs a prompt to resume.
+Never send these instructions to its child chats.
+
+**Event wakes.** A playbook's supervisor settings carry `checkpoints` (Apps →
+Orchestrator → Supervisor: Tasks milestones, test runs, repeated failures,
+watched paths, each with its own response — wake, stop the chat, or a reviewer
+profile). They ride the supervise command, the ☰ **Supervise this chat…**
+dialog on an orchestrating chat starts from the playbook's supervisor defaults
+(checkpoints included), and a playbook edit carries changed checkpoints into
+running schedules. Default: milestones + repeated failures (3).
+
 ## Playbook edits while it runs
 
 A bound orchestrator gets the edited brief at its **next turn** (resume delta
 "Orchestrator playbook updated"); a turn already running keeps the old one.
 Saving the playbook also updates each supervision schedule on a bound chat:
-fields still matching the old playbook (interval, instructions, guards, model
-guidance) take the new values, fields set on the schedule itself are kept, and
-the supervisor gets one **Supervision update** check-in naming the change. On
-that check-in, steer the orchestrator only if its live turn is doing work the
-edit affects; otherwise end the turn.
+fields still matching the old playbook (interval, Focus, involve/nudge
+policy, guards, model guidance, wake checkpoints; a field never set counts as matching an empty one)
+take the new values, fields set on the schedule itself are kept, and the
+edit costs no turn of its own: the supervisor chat shows a timeline notice
+("Supervision of CH-… changed"), and the change is folded into the next
+check-in as **Settings changed since your last check-in** (a live schedule
+checks within ~20 s, even while the orchestrator is mid-turn; a paused one
+waits until it resumes). An edit that moves none of the schedule's settings is
+passed on only while the orchestrator is mid-turn, with no notice. On that
+check-in, steer the orchestrator only if its live turn is doing work the edit
+affects; otherwise carry on with the check-in.
 
 ## Editing
 

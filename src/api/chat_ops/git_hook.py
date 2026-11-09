@@ -4,13 +4,14 @@ Git's ``reference-transaction`` hook (git >= 2.28) sees every ref update (commit
 merge, rebase, reset, ``branch -f``, ``update-ref``) and aborts the transaction
 by exiting non-zero in the ``prepared`` phase. Protected branches are standard
 per-repository git config (``git config --add cuttle.protectBranch <branch>``),
-shared by every worktree and never in the tree. Only processes that carry
-``CUTTLE_CHAT_SESSION_ID`` (set for every Cuttle agent turn) whose own checkout
-(``CUTTLE_AGENT_PROJECT_PATH``) is not on that branch are refused: an agent
-working in a dev/core checkout may still commit to dev/core, one working in a
-feature worktree may not. The user's terminal, editors and the Git UI pass.
-The hook never calls Cuttle, so it works while Cuttle is down and cannot hang
-a commit.
+shared by every worktree and never in the tree. Only supervised agent turns are
+refused: processes carrying ``CUTTLE_SUPERVISED`` (set by the turn launcher for
+sub-agent children, orchestrator lanes and chats under a live, unpaused
+supervise schedule; see :func:`supervised_reason`) whose own checkout
+(``CUTTLE_AGENT_PROJECT_PATH``) is not on that branch. A top-level chat the user
+drives directly, an agent working in the branch's own checkout, the user's
+terminal, editors and the Git UI pass. The hook never calls Cuttle, so it works
+while Cuttle is down and cannot hang a commit.
 """
 from __future__ import annotations
 
@@ -20,15 +21,18 @@ import subprocess
 from pathlib import Path
 
 HOOK_NAME = 'reference-transaction'
-MARKER = '# cuttle-protect-branch-hook v1'
+MARKER_PREFIX = '# cuttle-protect-branch-hook '
+MARKER = MARKER_PREFIX + 'v2'
+ENV_SUPERVISED = 'CUTTLE_SUPERVISED'
 
 SCRIPT = f"""#!/bin/sh
 {MARKER}
 # Installed by `python -m api.chat_cli install-hook`. Refuses updates of branches
-# listed in `git config cuttle.protectBranch` by Cuttle agents whose own checkout
-# is not on that branch; everyone else passes.
+# listed in `git config cuttle.protectBranch` by supervised Cuttle agents
+# ({ENV_SUPERVISED} set: sub-agents, orchestrator lanes, supervised chats) whose own
+# checkout is not on that branch; everyone else passes.
 [ "$1" = prepared ] || exit 0
-[ -n "$CUTTLE_CHAT_SESSION_ID" ] || exit 0
+[ -n "${ENV_SUPERVISED}" ] || exit 0
 protected=$(git config --get-all cuttle.protectBranch 2>/dev/null) || {{ cat >/dev/null; exit 0; }}
 own=""
 if [ -n "$CUTTLE_AGENT_PROJECT_PATH" ]; then
@@ -39,7 +43,7 @@ status=0
 while read -r old new ref; do
   for b in $protected; do
     if [ "$ref" = "refs/heads/$b" ] && [ "$b" != "$own" ]; then
-      echo "cuttle: agent chat CH-$CUTTLE_CHAT_SESSION_ID may not update protected branch '$b' (git config cuttle.protectBranch)" >&2
+      echo "cuttle: supervised agent chat CH-$CUTTLE_CHAT_SESSION_ID (supervised: ${ENV_SUPERVISED}) may not update protected branch '$b' (git config cuttle.protectBranch)" >&2
       status=1
     fi
   done
@@ -58,10 +62,31 @@ def hooks_dir(repo):
 
 
 def _ours(path):
+    """Any version of Cuttle's hook, so ``install`` upgrades older installs in place."""
     try:
-        return MARKER in path.read_text(errors='replace')
+        return MARKER_PREFIX in path.read_text(errors='replace')
     except OSError:
         return False
+
+
+def supervised_reason(session_id, db=None):
+    """Why a chat's agent turns run unattended, for ``CUTTLE_SUPERVISED``; '' when user-driven.
+
+    ``subagent`` covers child chats (orchestrator lanes are spawned as children);
+    ``supervised`` covers targets of a supervise schedule that is live; a paused schedule
+    does not count (the chat is user-driven while its supervision is paused).
+    """
+    try:
+        sid = int(session_id)
+    except (TypeError, ValueError):
+        return ''
+    from api.chat_ops import store
+    if store.actively_supervised(sid):
+        return 'supervised'
+    if db is None:
+        from api.auth_db import get_auth_db
+        db = get_auth_db()
+    return 'subagent' if db.session_nesting_depth(sid) > 0 else ''
 
 
 def install(repo, branches=()):

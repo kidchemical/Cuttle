@@ -1213,6 +1213,15 @@ def _fetch_claude_plan_limits(oauth) -> Dict[str, Any]:
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            # Rate limited, not a login problem: back off and keep the last reading.
+            try:
+                retry_after = int(float(exc.headers.get("retry-after") or 0))
+            except (TypeError, ValueError):
+                retry_after = 0
+            return {"success": False, "retry_after": retry_after if retry_after > 0 else 300, "error": (
+                "Claude usage API is rate-limiting requests (HTTP 429); "
+                "showing the last reading and retrying shortly.")}
         return {"success": False, "error": (
             f"Claude usage API returned HTTP {exc.code}. "
             "Run a Claude turn (or `claude` → `/login`) and retry.")}

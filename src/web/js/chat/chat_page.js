@@ -301,6 +301,7 @@
         const text = document.getElementById('chatSessionTitleText');
         if (!wrap || !text) return;
         supervision.setSession(sessionId);
+        orchestration.setSession(sessionId);
         composerLock.setSession(sessionId);
         if (sessionId == null || sessionId === '') {
             wrap.hidden = true;
@@ -435,7 +436,7 @@
             archived: isChatSessionArchived(sid), canArchive: isAuthMode() && !isTerminalSessionId(sid),
             subagentGroup: historyPanel.historySubagentGroupOwnedBy(sid) }),
         extraItems: (sid, icons) => [gitPush.menuHtml(icons), supervision.menuHtml(sid, icons.subagents),
-            composerLock.menuHtml(sid)],
+            orchestration.menuHtml(sid, icons.subagents), composerLock.menuHtml(sid)],
         currentSession: () => session.current(), closeHistoryMenu: () => historyPanel.closeMenu(),
         afterFill: (dropdown) => gitPush.refreshMenuMode(dropdown),
     });
@@ -446,6 +447,15 @@
         enabledFlags: fetchEnabledExperimentalFlags, openChat: (sid) => loadChatSession(sid),
         closeMenus: () => closeAllSessionMenus(), confirm: (m) => window.confirm(m),
         toast: (m, k) => (window.showToast || function () {})(m, k), viewportWidth: () => window.innerWidth,
+        setInterval: (f, ms) => window.setInterval(f, ms), clearInterval: (t) => window.clearInterval(t),
+    });
+
+    // "Orchestrating · <playbook>" chip + ☰ dialog (experimental `orchestrator`).
+    const orchestration = CuttleChatOrchestration.create({
+        doc: document, fetch: (u, o) => fetch(u, o), escapeHtml: escapeHtmlInline, enabledFlags: fetchEnabledExperimentalFlags,
+        sendMessage: (text) => sendMessage({ text }), closeMenus: () => closeAllSessionMenus(), confirm: (m) => window.confirm(m),
+        navigate: (page) => (window.parent !== window ? window.parent.postMessage({ type: 'cuttle-navigate', page }, '*') : window.location.assign(page)),
+        toast: (m, k) => (window.showToast || function () {})(m, k), viewportWidth: () => window.innerWidth, openChat: (sid) => loadChatSession(sid),
         setInterval: (f, ms) => window.setInterval(f, ms), clearInterval: (t) => window.clearInterval(t),
     });
 
@@ -593,6 +603,10 @@
 
     // Cross-device auth chat sync (poll + focus). LocalStorage chats need no sync.
     let lastSeenServerMessageId = 0;
+    /** This chat's running turn row id (api.chat_turn_row), from query_started / live status. */
+    let currentTurnRowId = null;
+    /** Query ids already toasted as "Running…" (the turn row and the harness share one id). */
+    const toastedQueryIds = new Set();
     /** Lazy transcript window — newest page first; scroll-up loads older pages. */
     const CHAT_HISTORY_PAGE_SIZE = 10;
     let chatHistoryHasMore = false;
@@ -4475,7 +4489,7 @@
         // Owned by chat_composer.js — DOM/state gather, domain composes.
         return CuttleChatComposer.composeMessageWithSlashChip(
             { body, chips: chips || [] },
-            { isControl: isNativeControlCommand }
+            { isControl: isNativeControlCommand, agentId: CuttleChatSlash.composerChipAgentId }
         );
     }
 
@@ -6967,15 +6981,9 @@
         }
     }
     
-    function autoResizeWelcomeTextarea() {
-        const textarea = document.getElementById('welcomeChatInput');
-        if (textarea) {
-            textarea.style.height = 'auto';
-            const next = Math.min(textarea.scrollHeight, 168);
-            textarea.style.height = next + 'px';
-            textarea.style.overflowY = textarea.scrollHeight > 168 ? 'auto' : 'hidden';
-        }
-    }
+    const welcomeComposerResize = CuttleChatComposerResize.create({ doc: document, win: window,
+        storage: () => window.localStorage, inputId: 'welcomeChatInput', wrapSelector: '.welcome-composer-wrap' });
+    function autoResizeWelcomeTextarea() { welcomeComposerResize.fit(); }
     
     // ── Deep-link restore (?chat=) ─────────────────────────────
     // chat_page.html raises data-chat-restoring and kicks off the transcript
@@ -6998,7 +7006,7 @@
     }
 
     /** Drop to the new-chat splash (also the give-up path for a slow restore). */
-    function showWelcomeSplash() {
+    function showWelcomeSplash(opts) {
         clearChatRestoreVeil();
         detachLocalGenerationForNavigation();
         const welcome = document.getElementById('welcomeScreen');
@@ -7017,7 +7025,7 @@
         if (window.CuttleAuth && window.CuttleAuth.setCurrentChatSession) {
             window.CuttleAuth.setCurrentChatSession(null);
         }
-        syncChatUrl(null);
+        if (!(opts && opts.keepChatUrl)) syncChatUrl(null);
         applyStarredSlashChips();
         restoreWelcomeStickySlash();
         restoreComposerDraft('new', { force: true });
@@ -7121,6 +7129,9 @@
             }
         }
         if (live.report_url) updateTypingIndicatorQueryLink(live.report_url);
+        if ((live.message_id != null || live.query_id) && liveStatusLooksActive(live)) {
+            stampLiveBubbleTurnRow(live.message_id, live.report_url, live.query_id);
+        }
 
         const stillGoing = liveStatusLooksActive(live);
         if (isLoadingThisSession() && turnAlreadyShowsAssistantReply() && !activeEventSource) {
@@ -7358,6 +7369,7 @@
                 focusWelcomeComposer: focusWelcomeComposer,
                 takeChatTranscriptPrefetch: takeChatTranscriptPrefetch,
                 waitForAuthReady: waitForAuthReady,
+                isAuthenticated: isAuthMode,
                 firstTruthy: firstTruthy,
                 loadChatSession: loadChatSession,
                 showWelcomeSplash: showWelcomeSplash,
@@ -7692,6 +7704,11 @@
 
     function appendServerMessageToUI(msg, opts = {}) {
         if (!msg || msg.id == null) return;
+        // The running turn's empty row belongs to the live bubble, never a reply.
+        if (msg.in_progress) {
+            stampLiveBubbleTurnRow(msg.id, msg.report_url, msg.query_id);
+            return;
+        }
         const cancelOpts = Object.assign({ announce: false }, opts);
         if (msg.role === 'assistant' && consumeCancelledAgentReply(msg.content, cancelOpts)) {
             const mid = Number(msg.id);
@@ -7998,9 +8015,12 @@
         // live-status is fetched in parallel with messages; a reply can already be
         // in history while that snapshot still says active. Prefer the transcript.
         const liveActiveRaw = remoteLiveStatusLooksActive(liveStatus);
-        const liveActive = liveActiveRaw
-            && !thisTurnHasAssistantReply(messages)
-            && !turnAlreadyShowsAssistantReply();
+        // A follow-up (detached run answering a steer / finishing background
+        // work) lands as a new bubble: the existing reply does not end it.
+        const liveActive = liveActiveRaw && (
+            CuttleChatActivity.liveStatusIsFollowup(liveStatus)
+            || !turnAlreadyShowsAssistantReply()
+        );
         const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
         const wasGeneratingUi = !!document.getElementById('typing-indicator-remote')
             || (session.current() != null
@@ -8610,6 +8630,11 @@
                     }
                 );
                 switch (syncDecision.decision) {
+                    case 'live-row':
+                        // The running turn's row: its id + inspector go to the
+                        // live bubble (reload mid-turn, another device).
+                        stampLiveBubbleTurnRow(mid, msg.report_url, msg.query_id);
+                        continue;
                     case 'claim-interrupted':
                         stampAssistantElFromServer(stoppedQueryBubble(syncDecision.queryId), msg);
                         continue;
@@ -10136,8 +10161,15 @@
                                         rememberTurnBadge([], { active: true, slash_command: ev.slash_command });
                                         refreshTypingIndicatorHeaderBadges();
                                     }
+                                    if (streamPlan.messageId != null || streamPlan.queryId) {
+                                        stampLiveBubbleTurnRow(streamPlan.messageId, streamPlan.reportUrl, streamPlan.queryId);
+                                    }
                                     if (streamPlan.paintLink) {
                                         updateTypingIndicatorQueryLink(streamPlan.reportUrl);
+                                    }
+                                    const toastKey = streamPlan.queryId || streamPlan.reportUrl;
+                                    if (streamPlan.paintLink && !toastedQueryIds.has(toastKey)) {
+                                        toastedQueryIds.add(toastKey);
                                         (window.showToast || function() {})('Running…', 'info', {
                                             linkUrl: streamPlan.queryId
                                                 ? ('/query_log.html?id=' + encodeURIComponent(streamPlan.queryId))
@@ -10551,6 +10583,7 @@
                             const assistantTs = Date.now();
                             const el = activity.addMessage(data.response, 'assistant', {
                                 report_url: data.report_url,
+                                message_id: data.message_id || undefined,
                                 timestamp: assistantTs,
                                 slash_command: assistantSlash || undefined,
                                 slash_command_failed: assistantFailed,
@@ -10572,6 +10605,7 @@
                             const assistantTs = Date.now();
                             const elOpts = {
                                 report_url: data.report_url,
+                                message_id: data.message_id || undefined,
                                 timestamp: assistantTs,
                                 slash_command: assistantSlash || undefined,
                                 slash_command_failed: assistantFailed,
@@ -10598,6 +10632,7 @@
                     const assistantTs = Date.now();
                     activity.addMessage(data.response, 'assistant', {
                         report_url: data.report_url,
+                                message_id: data.message_id || undefined,
                         timestamp: assistantTs,
                         slash_command: assistantSlash || undefined,
                         slash_command_failed: assistantFailed,
@@ -10610,6 +10645,7 @@
                         stampAssistantElFromServer(existing, {
                             content: data.response,
                             report_url: data.report_url,
+                                message_id: data.message_id || undefined,
                             routing_badge: data.routing_badge || undefined,
                             usage: normalizeUsagePayload(data.usage) || undefined,
                         });
@@ -10620,6 +10656,7 @@
                 saveChatSession(data.response, 'assistant', {
                     query_id: data.query_id,
                     report_url: data.report_url,
+                                message_id: data.message_id || undefined,
                     slash_command: assistantSlash || undefined,
                     slash_command_failed: assistantFailed,
                     routing_badge: data.routing_badge || undefined,
@@ -10657,6 +10694,7 @@
                     if (!turnAlreadyShowsAssistantReply(errBody)) {
                         activity.addMessage(errBody, 'assistant', {
                             report_url: data.report_url,
+                                message_id: data.message_id || undefined,
                             timestamp: Date.now(),
                             slash_command: assistantSlash || undefined,
                             slash_command_failed: assistantFailed,
@@ -10968,6 +11006,10 @@
                 if (already) return already;
             }
             const saved = opts.timeline_notice ? { timeline_notice: opts.timeline_notice } : null;
+            // A server-side (auto-)compact lands as this notice: repaint the composer meter.
+            if (opts.kind === 'context-compact' && !opts.prepend) {
+                try { contextGauge.scheduleRefresh(250); } catch (_) {}
+            }
             return addSystemMessage(CuttleChatTimelineNotice.fromRow(content, opts.kind, saved), {
                 persist: true,
                 kind: opts.kind,
@@ -10984,6 +11026,8 @@
         if (opts.kind === 'interrupted-agent-turn') messageDiv.dataset.stopped = 'true';
         messageDiv.dataset.rawContent = String(content ?? '');
         if (opts.query_id) messageDiv.dataset.queryId = String(opts.query_id);
+        const turnKey = opts.turn_id || opts.query_id || queryIdFromReportUrl(opts.report_url);
+        if (turnKey) messageDiv.dataset.turnId = String(turnKey); // reply threads (chat_threads.js)
         if (opts.message_id != null && opts.message_id !== '') {
             messageDiv.dataset.messageId = String(opts.message_id);
         }
@@ -11000,6 +11044,7 @@
         }
         if (role === 'user' && opts.steered) {
             messageDiv.classList.add('is-steered');
+            if (opts.steer_idle) messageDiv.dataset.steerIdle = '1'; // new message, not a thread reply
         }
         if (
             role === 'assistant'
@@ -11089,6 +11134,8 @@
                 : [];
             headerChip = messageHeaderBadgesHtml(chips, false, project);
             if (opts.steered) headerChip += steerBadgeHtml(opts.steered_agent);
+            const opBadge = parentSpeaker && window.CuttleChatSupervisionModel ? window.CuttleChatSupervisionModel.chatOpBadge(opts) : null;
+            if (opBadge) { headerChip += slashCommandChipHeaderHtml(opBadge.label, opBadge.title, 'command', false); messageDiv.dataset.chatOp = opBadge.kind; }
             if (chips.length) suppressInlineSlashChips = true;
         } else {
             headerChip = messageHeaderBadgesHtml([], false, project);
@@ -11368,6 +11415,7 @@
         getProjectPath: () => (currentProject && currentProject.path) ? String(currentProject.path) : '',
         toast: (message, variant) => (window.showToast || function () {})(message, variant),
         notice: { add: (spec, o) => addSystemMessage(spec, o), update: (el, spec, o) => timelineNotices().update(el, spec, o) },
+        autoCompact: window.CuttleChatAutoCompact,
     });
 
     // Transcript navigation: follow-latest scroll, nav rail + pins, jumps,
@@ -11388,6 +11436,17 @@
         activateViewport: activateChatViewport,
         copyText: copyTextToClipboard,
     });
+
+    // Steers, follow-ups and sub-agent replies fold under their turn's bubble
+    // (chat_threads.js; experimental `chat_reply_threads`, default on).
+    const replyThreads = CuttleChatThreads.create({
+        doc: document, win: window, container: () => document.getElementById('chatMessages'),
+        sessionId: () => session.current(), storage: localStorage, escapeHtml: escapeHtmlInline,
+        renderHandleLink: renderChatHandleLink, avatarHtml: profileAvatarInnerHtml,
+        isFollowingLatest: () => transcriptNav.isFollowingLatest(), revealTop: (el) => transcriptNav.revealMessageTop(el),
+    });
+    replyThreads.start(true);
+    replyThreads.syncFlag((u, o) => fetch(u, o));
 
     function formatTimeAgo(ts) {
         if (!ts || ts <= 0) return 'now';
@@ -11768,6 +11827,29 @@
         if (link && reportUrl) {
             applyQueryLogTarget(link, reportUrl);
         }
+    }
+
+    /**
+     * Hand the live bubble (local or remote) its turn row (api.chat_turn_row):
+     * the assistant row id that exists from turn start, plus its inspector link.
+     * Kept as data-turn-message-id (not data-message-id) so history sync never
+     * mistakes the placeholder for a saved reply; the final reply bubble is
+     * painted with the same id as its data-message-id.
+     */
+    function stampLiveBubbleTurnRow(messageId, reportUrl, queryId) {
+        const mid = messageId == null || messageId === '' ? '' : String(messageId);
+        // The turn id (= the turn's query id) is the anchor sub-agent cards bind
+        // by (api.chat_turn_id): known even where no early row exists.
+        const tid = String(queryId || queryIdFromReportUrl(reportUrl) || '');
+        if (!mid && !tid) return;
+        document.querySelectorAll('#typing-indicator, #typing-indicator-remote').forEach((el) => {
+            if (mid) el.dataset.turnMessageId = mid;
+            if (tid) el.dataset.turnId = tid;
+            const link = el.querySelector('.message-query-log-link');
+            if (link && reportUrl) applyQueryLogTarget(link, reportUrl);
+        });
+        if (mid) currentTurnRowId = mid;
+        try { subagentLaunchers.paintLive(); } catch (_) {}
     }
     
     /** Finalize the live placeholder before Stop tears down its transports. */
@@ -12368,15 +12450,11 @@
         window.CuttleEmoticons.applyToTextarea(textarea);
     }
 
-    function autoResizeTextarea() {
-        const textarea = document.getElementById('chatInput');
-        if (textarea) {
-            textarea.style.height = 'auto';
-            const next = Math.min(textarea.scrollHeight, 168);
-            textarea.style.height = next + 'px';
-            textarea.style.overflowY = textarea.scrollHeight > 168 ? 'auto' : 'hidden';
-        }
-    }
+    const chatComposerResize = CuttleChatComposerResize.create({ doc: document, win: window,
+        storage: () => window.localStorage, inputId: 'chatInput', wrapSelector: '#chatComposerWrap',
+        grow: 'up', storageKey: CuttleChatComposerResize.CHAT_STORAGE_KEY });
+    function autoResizeTextarea() { chatComposerResize.fit(); }
+    CuttleChatScrollbarAutohide.create({ doc: document, win: window });
     
     // Utility Functions
     function escapeHtml(text) {
@@ -12558,7 +12636,7 @@
                 saveComposerDraft(session.current() || 'new');
             });
             wireComposerEmoticons(chatInput);
-            chatInput.style.height = 'auto';
+            autoResizeTextarea();
             LOG('DOMContentLoaded: chat input keydown listener attached');
         } else {
             LOG_ERR('DOMContentLoaded: chatInput not found');

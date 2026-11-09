@@ -86,6 +86,7 @@
             timestamp: parsed > 0 ? parsed : Date.now(),
             report_url: reportUrl,
             query_id: m.query_id || meta.query_id || undefined,
+            turn_id: meta.turn_id || m.turn_id || undefined,
             slash_command: m.slash_command || meta.slash_command,
             slash_command_failed: !!(m.slash_command_failed || meta.slash_command_failed),
             cursor_run: meta.cursor_run || m.cursor_run || undefined,
@@ -108,11 +109,13 @@
             parent_handle: meta.parent_handle || m.parent_handle || undefined,
             parent_label: meta.parent_label || m.parent_label || undefined,
             origin: meta.origin || m.origin || undefined,
+            chat_op_kind: meta.chat_op_kind || undefined,
             control_request_id: meta.control_request_id || m.control_request_id || undefined,
             supervised_task_id: meta.supervised_task_id || undefined,
             supervised_phase: meta.supervised_phase || undefined,
             supervised_terminal: !!meta.supervised_terminal,
             steered: !!meta.steered,
+            steer_idle: !!meta.steer_idle,
             steered_agent: meta.steered_agent || m.steered_agent || undefined,
             supervised_delivery_event_id: meta.supervised_delivery_event_id || undefined,
             parent_user_message_id: meta.parent_user_message_id || undefined,
@@ -295,17 +298,21 @@
 
     function splitPostprocessedResponse(text) {
         const source = String(text || '');
-        const match = /^<cuttle_original_response>([\s\S]*?)<\/cuttle_original_response>\s*/i.exec(source);
+        // Leading <think> blocks (the turn's reasoning) sit ahead of the wrapper.
+        const match = /^((?:\s*<think>[\s\S]*?<\/think>)*)\s*<cuttle_original_response>([\s\S]*?)<\/cuttle_original_response>\s*/i.exec(source);
         if (!match) return null;
         try {
-            const original = JSON.parse(match[1]);
-            return typeof original === 'string' ? {original, response: source.slice(match[0].length)} : null;
+            const original = JSON.parse(match[2]);
+            return typeof original === 'string'
+                ? {lead: match[1].trim(), original, response: source.slice(match[0].length)} : null;
         } catch (_) { return null; }
     }
 
+    /** The agent's own reply first, then whatever post-processing added. */
     function postprocessedBody(text) {
         const parsed = splitPostprocessedResponse(text);
-        return parsed ? parsed.response : text;
+        if (!parsed) return text;
+        return [parsed.original.trim(), parsed.response.trim()].filter(Boolean).join('\n\n');
     }
 
     /**
@@ -318,8 +325,10 @@
         const d = deps || {};
         let out = String(text || '');
         const thinkBlocks = [];
-        // Host-generated original reply disclosure. JSON framing keeps quoted
-        // markup inert; its contents use the ordinary escaped markdown renderer.
+        // Append-mode post-processing: the agent's reply sits in a collapsed
+        // "Original response" disclosure, then the processor's text follows under
+        // its own label. JSON framing keeps quoted markup inert; the original
+        // uses the escaped markdown renderer.
         const processed = splitPostprocessedResponse(out);
         if (processed) {
             const placeholder = '{{CUTTLE_THINK_' + thinkBlocks.length + '}}';
@@ -327,8 +336,8 @@
                 ? d.formatMessage(processed.original) : d.escapeHtmlInline(processed.original);
             thinkBlocks.push('<details class="response-original-block"><summary>Original response</summary>'
                 + '<div class="response-original-content">' + content + '</div></details>'
-                + '<div class="response-postprocessed-label">Post-processed response</div>');
-            out = placeholder + '\n\n' + processed.response;
+                + '<div class="response-postprocessed-label">Added by post-processing</div>');
+            out = (processed.lead ? processed.lead + '\n\n' : '') + placeholder + '\n\n' + processed.response;
         }
         const pushThinkBlock = (content) => {
             const placeholder = '{{CUTTLE_THINK_' + thinkBlocks.length + '}}';
@@ -452,14 +461,17 @@
             const valueMatch = String(attrs).match(/\bvalue\s*=\s*["']([^"']+)["']/i);
             const id = d.escapeHtmlInline(idMatch ? idMatch[1] : ('p_' + progressBlocks.length));
             const label = d.escapeHtmlInline(labelMatch ? labelMatch[1] : 'Progress');
-            const value = d.clamp(valueMatch ? valueMatch[1] : 0, 0, 100);
+            // No value attribute = not measured: an indeterminate bar, no "0%".
+            const measured = !!(valueMatch && String(valueMatch[1]).trim() !== '');
+            const value = measured ? d.clamp(valueMatch[1], 0, 100) : 0;
             const placeholder = '{{CUTTLE_PROGRESS_' + progressBlocks.length + '}}';
             progressBlocks.push(
                 '<div class="ui-card" data-progress-id="' + id + '">'
                 + '<div class="ui-title">' + label + '</div>'
                 + '<div class="progress-row">'
-                + '<div class="progress-track"><div class="progress-bar" style="width:' + value + '%"></div></div>'
-                + '<div class="progress-value">' + value + '%</div>'
+                + '<div class="progress-track"' + (measured ? '' : ' data-progress="indeterminate"') + '>'
+                + '<div class="progress-bar" style="width:' + value + '%"></div></div>'
+                + (measured ? '<div class="progress-value">' + value + '%</div>' : '')
                 + '</div></div>'
             );
             return placeholder;

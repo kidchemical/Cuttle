@@ -151,6 +151,9 @@
         const escapeHtmlInline = deps.escapeHtmlInline;
         const clamp = deps.clamp;
         const hostTeardownSignal = deps.hostTeardownSignal;
+        if (hostTeardownSignal && typeof hostTeardownSignal.addEventListener === 'function') {
+            hostTeardownSignal.addEventListener('abort', function () { teardownHostLightbox(); }, { once: true });
+        }
         const fetchFn = deps.fetch || frameWin.fetch.bind(frameWin);
 
         function buildMediaThumbHtml(src, opts) {
@@ -930,6 +933,30 @@
             _lightboxItems = Array.isArray(items) ? items.filter(Boolean) : [];
             if (!_lightboxItems.length) return;
             showLightboxIndex(startIndex || 0);
+            // Android system back runs in the shell (`__cuttleHandleBack`):
+            // it closes the open lightbox before navigating the pane.
+            try { lightboxHostWindow().__cuttleCloseLightbox = closeCuttleLightbox; } catch (_) {}
+        }
+
+        function releaseLightboxHostHook() {
+            try {
+                const hostWin = lightboxHostWindow();
+                if (hostWin.__cuttleCloseLightbox === closeCuttleLightbox) {
+                    hostWin.__cuttleCloseLightbox = null;
+                }
+            } catch (_) {}
+        }
+
+        /** Frame unload: the overlay lives on the shell but its listeners die
+         *  with this frame, so leaving it would strand an uncloseable cover. */
+        function teardownHostLightbox() {
+            const root = _cuttleLightbox;
+            if (root) {
+                try { root.remove(); } catch (_) {}
+                _cuttleLightbox = null;
+                lightboxSetOpenClass(false);
+            }
+            releaseLightboxHostHook();
         }
 
         function closeCuttleLightbox() {
@@ -949,6 +976,7 @@
             }
             root.hidden = true;
             lightboxSetOpenClass(false);
+            releaseLightboxHostHook();
             _lightboxItems = [];
             _lightboxIndex = 0;
             resetLightboxZoomState();

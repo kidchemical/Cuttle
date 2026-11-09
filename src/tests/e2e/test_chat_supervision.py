@@ -36,8 +36,11 @@ const sched = {id: 's1', state: 'pending', supervisor: 'CH-000001', target: 'CH-
     {at: now - 1860, outcome: 'woke', detail: {state: 'idle_with_work', already_waiting: true}},
     {at: now - 2760, outcome: 'violation', detail: {state: 'busy', violations: ['on forbidden branch main']}},
   ]};
-const v = M.view({supervising: [sched], supervised_by: [Object.assign({}, sched, {state: 'paused'})],
+const paused = Object.assign({}, sched, {state: 'paused', paused_at: now - 3 * 86400});
+const v = M.view({supervising: [sched], supervised_by: [paused],
   queued: [{id: 'q1', from: 'CH-000001', text: 'next\n  step'}]}, now, {locale: 'en-US'});
+const timed = M.view({supervising: [Object.assign({}, paused, {paused_until: now + 3600})]},
+  now, {locale: 'en-US'});
 const bad = M.supervisePayload({target: 'CH-000002', agent: '', every: 7, instructions: ' ',
   requiredBranch: 'main', forbidden: 'main, master'});
 const good = M.supervisePayload(Object.assign(M.dialogDefaults({handle: 'CH-000002', branch: 'dev/x'}),
@@ -46,7 +49,39 @@ console.log(JSON.stringify({
   intervals: [300, 3600, 5400, 45].map(M.fmtInterval),
   chip: v.chips[0], badge: v.badges[0], queued: v.queued[0], warn: v.warn, empty: v.empty,
   emptyView: M.view({}, now), due: M.nextLabel(Object.assign({}, sched, {next_check: now - 1}), now),
+  pausedChip: timed.chips[0], pauseChoices: M.PAUSE_CHOICES.map((c) => c.id),
+  pauseBodies: ['1h', '4h', 'indefinite', 'nonsense'].map((id) => M.pauseBody(id, now * 1000)),
+  tomorrow: M.pauseBody('tomorrow', now * 1000),
   bad, good,
+  pins: M.pinChoices({models: ['a', {id: 'b', label: 'B'}], efforts: ['low'], model_efforts: {b: ['x', 'y']}}, 'b'),
+  noPins: M.pinChoices({supports_model_pin: false, supports_effort: false, models: ['a'], efforts: ['low']}, ''),
+  picked: M.supervisePayload(Object.assign(M.dialogDefaults({handle: 'CH-000002',
+    tasks: [{id: 'own', title: 'Own', selected: true}, {id: 'proj', scope: 'project'}]}),
+    {agent: 'codex', model: 'b', effort: 'x', taskIds: ['proj', 'ghost']})).body,
+  edit: M.dialogDefaults({handle: 'CH-000002', tasks: [{id: 'own', selected: true}, {id: 'proj'}]},
+    {id: 's9', agent: 'codex', model: 'b', effort: 'x', every: 600, instructions: 'mine',
+     forbidden_branches: ['main', 'prod'], model_tiers: {worker: ['cursor auto']}, task_ids: ['proj']}),
+  pbDefaults: M.dialogDefaults({handle: 'CH-000002', playbook: {id: 'pb', name: 'Strict', every: 600, agent: 'codex',
+    instructions: 'Be strict', forbidden_branches: ['main'], model_tiers: {worker: ['cursor auto']},
+    checkpoints: {tests: {when: 'fail', do: ['supervisor:rev']}}}}),
+  policy: M.dialogDefaults({handle: 'CH-000002', branches: ['dev/x', 'main', 'feature']}),
+  policyEdit: M.dialogDefaults({handle: 'CH-000002'}, {id: 's1', involve_user: 'never', nudge: 'template'}),
+  picker: [
+    M.taskPickerView([{id: 'a'}, {id: 'b'}, {id: 'c'}, {id: 'd'}, {id: 'e', selected: true}], ''),
+    M.taskPickerView([{id: 'a', title: 'Rig'}, {id: 'b', title: 'Blend'}, {id: 'c', title: 'rigging'}], 'RIG'),
+    M.taskPickerView([{id: 'a'}, {id: 'b'}], ''),
+  ],
+  branchOpts: M.branchOptions(['dev', 'main'], ['gone', 'main']),
+  noFocus: M.supervisePayload(Object.assign(M.dialogDefaults({handle: 'CH-000002'}), {agent: 'codex'})),
+  found: M.scheduleById({supervising: [{id: 'a'}], supervised_by: [{id: 'b', target: 'CH-000002'}]}, 'b'),
+  wakes: M.wakesText({milestone: {do: ['wake']}, repeat_failures: {n: 4}}),
+  opBadges: [
+    {origin: 'chat_ops', chat_op_kind: 'checkin', parent_label: 'Supervision check-in'},
+    {origin: 'chat_ops', parent_label: 'Supervision check-in'},
+    {origin: 'chat_ops', chat_op_kind: 'send', parent_label: 'Sent by CH-000007'},
+    {origin: 'chat_ops', parent_label: 'Background work finished'},
+    {origin: 'subagent', parent_label: 'Parent chat'}, null,
+  ].map((o) => M.chatOpBadge(o)),
 }));
 """
 
@@ -64,20 +99,71 @@ def _model():
 def test_model_view_rows_and_payload():
     r = _model()
     assert r["intervals"] == ["5m", "1h", "90m", "45s"]
+    # Rows Cuttle sent (not the user) name their kind; older rows read it from the label.
+    assert [b and (b["kind"], b["label"]) for b in r["opBadges"]] == [
+        ("checkin", "Supervision check-in"), ("checkin", "Supervision check-in"),
+        ("send", "Sent by CH-000007"), ("notice", "Background work finished"), None, None]
     chip = r["chip"]
-    assert chip["text"].startswith("Supervising CH-000002 · every 15m · next ")
+    # Header chips stay short; who / since when / rules live in the popover, each said once.
+    assert chip["text"].startswith("Supervising · next ")
+    assert chip["title"] == "Supervising CH-000002"
+    d = chip["details"]
+    assert d["status"].startswith("Next check ") and d["status"].endswith(" · every 15m") and d["hint"] == ""
+    assert d["facts"] == [{"label": "Check-ins", "value": "/cursor"},
+                          {"label": "Branch rules", "value": "stay on dev/x · never main"},
+                          {"label": "Last seen", "value": "working · 2/5 tasks done"}]
     assert chip["rules"] == "stay on dev/x · never main" and chip["tasks"] == "2/5 tasks done"
     assert [h["text"] for h in chip["history"]] == [
         "skipped, busy", "skipped, no change",
-        "woke supervisor (idle_with_work), previous check-in still pending",
-        "rule broken, woke supervisor (busy)"]
+        "woke supervisor (idle with open tasks), previous check-in still pending",
+        "rule broken, woke supervisor (working)"]
     assert [h["tone"] for h in chip["history"]] == ["muted", "muted", "active", "warn"]
-    assert r["badge"]["text"] == "Supervised by CH-000001" and r["badge"]["paused"] is True
+    assert r["badge"]["paused"] is True
+    assert r["badge"]["text"] == "Supervised · Paused" and r["badge"]["title"] == "Supervised by CH-000001"
+    b = r["badge"]["details"]
+    assert b["status"].startswith("Since ") and b["status"].endswith(" · until you resume it")
+    assert b["hint"].startswith("Nothing checks this chat")
     assert r["badge"]["next"] == "paused"
+    assert r["pausedChip"]["text"] == "Supervising · Paused"
+    assert " · resumes " in r["pausedChip"]["details"]["status"]
+    assert r["wakes"] == "Tasks milestones, repeated failures (4×)"
+    # Pausing offers timed options first and an indefinite one last.
+    assert r["pauseChoices"] == ["1h", "4h", "tomorrow", "indefinite"]
+    assert r["pins"] == {"models": [{"id": "a", "label": "a"}, {"id": "b", "label": "B"}], "efforts": ["x", "y"]}
+    assert r["noPins"] == {"models": [], "efforts": []}
+    assert r["picked"]["model"] == "b" and r["picked"]["effort"] == "x"
+    assert r["picked"]["task_ids"] == ["proj"]  # unknown ids dropped
+    assert "task_ids" not in r["good"]["body"]  # no lists offered: follow whatever appears
+    e = r["edit"]
+    assert e["editId"] == "s9" and e["agent"] == "codex" and e["model"] == "b" and e["every"] == 600
+    assert e["forbidden"] == ["main", "prod"] and e["worker"] == "cursor auto" and e["instructions"] == "mine"
+    assert [(t["id"], t["selected"]) for t in e["tasks"]] == [("own", False), ("proj", True)]
+    assert r["found"]["target"] == "CH-000002"
+    pb = r["pbDefaults"]
+    assert pb["playbookName"] == "Strict" and pb["every"] == 600 and pb["agent"] == "codex"
+    assert pb["forbidden"] == ["main"] and pb["worker"] == "cursor auto" and pb["instructions"] == "Be strict"
+    assert {k: v["on"] for k, v in pb["checkpoints"].items()} == {
+        "milestone": False, "tests": True, "repeat_failures": False, "watched_paths": False}
+    assert pb["checkpoints"]["tests"]["do"] == "supervisor:rev" and pb["checkpoints"]["tests"]["when"] == "fail"
+    assert r["pauseBodies"] == [{"hours": 1}, {"hours": 4}, {"indefinite": True}, {"hours": 1}]
+    assert r["tomorrow"]["until"] > 1_800_000_000
     assert r["queued"]["preview"] == "next step"
     assert r["warn"] is True and r["empty"] is False and r["emptyView"]["empty"] is True
     assert r["due"] == "checking…"
-    assert r["bad"]["ok"] is False and len(r["bad"]["errors"]) == 4
+    assert r["bad"]["ok"] is False and len(r["bad"]["errors"]) == 3  # Focus is optional
+    # Settings, not prose: policy fields default, round-trip, and reach the body.
+    pol = r["policy"]
+    assert pol["instructions"] == "" and pol["involveUser"] == "blocked" and pol["nudge"] == "agent"
+    assert pol["forbidden"] == ["main"]  # default names only branches the repo has
+    assert r["policyEdit"]["involveUser"] == "never" and r["policyEdit"]["nudge"] == "template"
+    nf = r["noFocus"]
+    assert nf["ok"] and nf["body"]["instructions"] == "" and nf["body"]["involve_user"] == "blocked"
+    assert nf["body"]["nudge"] == "agent"
+    # Tasks picker: three up front plus anything checked; search finds the rest.
+    assert r["picker"][0] == {"ids": ["a", "b", "c"], "hidden": 2, "hiddenSelected": 1, "searchable": True}
+    assert r["picker"][1]["ids"] == ["a", "c"] and r["picker"][1]["hidden"] == 1
+    assert r["picker"][2]["searchable"] is False
+    assert r["branchOpts"] == ["dev", "main", "gone"]
     body = r["good"]["body"]
     assert r["good"]["ok"] and body["agent"] == "codex" and body["every"] == 900
     assert body["required_branch"] == "dev/x" and body["forbidden_branches"] == ["main", "master"]
@@ -121,6 +207,11 @@ class SupervisionWorld(CardWorld):
                 self.posts.append((path, json.loads(req.post_data or "{}")))
                 if path.endswith("/pause"):
                     self.overview["supervising"][0]["state"] = "paused"
+                    self.overview["supervising"][0]["paused_at"] = time.time() - 120
+                    body = json.loads(req.post_data or "{}")
+                    if body.get("hours"):
+                        self.overview["supervising"][0]["paused_until"] = (
+                            time.time() + float(body["hours"]) * 3600)
                 if path.endswith("/q1/cancel"):
                     self.overview["queued"] = []
                 if path == "/api/chat-ops/supervise":
@@ -128,7 +219,10 @@ class SupervisionWorld(CardWorld):
                 return reply({"success": True, "operation": {"id": path.split("/")[-2]}})
             if path.endswith("/defaults"):
                 return reply({"success": True, "handle": "CH-000042", "branch": "dev/x",
-                              "execution_path": "/repo", "worktree": False})
+                              "execution_path": "/repo", "worktree": False,
+                              "branches": ["dev/x", "main", "master", "feature"],
+                              "tasks": [{"id": f"t{i}", "title": f"List {i}", "done": 0, "total": 2,
+                                         "selected": i == 0} for i in range(5)]})
             return reply(self.overview)
         if path == "/api/agents":
             return reply({"success": True, "agents": [{"id": "cursor", "label": "Cursor"},
@@ -158,9 +252,10 @@ def test_pills_hidden_until_flag_then_popover_pause_and_queue_cancel(browser, st
 
         _toggle_flag(frame, world, True)
         chip = slot.locator("[data-sup-open=chip]")
-        expect(chip).to_contain_text("Supervising CH-001548 · every 15m · next ")
+        expect(chip).to_contain_text("Supervising · next ")
+        assert "is-active" in chip.get_attribute("class")
         badge = slot.locator("[data-sup-open=badge]")
-        expect(badge).to_contain_text("Supervised by CH-001581")
+        expect(badge).to_contain_text("Supervised · ")
         assert "is-warn" in badge.get_attribute("class")
         expect(slot.locator("[data-sup-open=queued]")).to_contain_text("1 queued")
 
@@ -168,10 +263,21 @@ def test_pills_hidden_until_flag_then_popover_pause_and_queue_cancel(browser, st
         pop = frame.locator(".chat-supervision-popover")
         expect(pop.locator(".chat-supervision-history li")).to_have_count(2)
         expect(pop.locator(".chat-supervision-history li").first).to_contain_text("skipped, busy")
+        expect(pop.locator(".chat-supervision-head")).to_contain_text("Supervising CH-001548")
+        expect(pop.locator(".chat-supervision-state")).to_have_text("Active")
+        expect(pop.locator(".chat-supervision-status")).to_contain_text("every 15m")
+        expect(pop.locator(".chat-supervision-head .cuttle-info[data-tooltip]")).to_have_count(1)
         page.screenshot(path=os.environ.get("SUPERVISION_SHOT", "/tmp/supervision_popover.png"))
-        pop.locator("[data-sup-act=pause]").click()
+        pop.locator("[data-sup-act=pause-menu]").click()
+        expect(pop.locator(".chat-supervision-pause-menu")).to_contain_text("Pause for how long?")
+        pop.locator("[data-sup-pause='1h']").click()
         frame.locator("[data-sup-open=chip].is-paused").wait_for()
-        assert world.posts[-1][0] == "/api/chat-ops/operations/sup1/pause"
+        assert world.posts[-1] == ("/api/chat-ops/operations/sup1/pause", {"hours": 1})
+        expect(frame.locator("[data-sup-open=chip]")).to_have_text("Supervising · Paused")
+        paused = frame.locator(".chat-supervision-popover")  # still open: the pause re-rendered it
+        expect(paused.locator(".chat-supervision-state")).to_have_text("Paused")
+        expect(paused.locator(".chat-supervision-status")).to_contain_text("No check-ins or wake-ups until then.")
+        page.screenshot(path=os.environ.get("SUPERVISION_PAUSED_SHOT", "/tmp/supervision_paused.png"))
 
         badge.click()
         expect(frame.locator(".chat-supervision-popover")).to_contain_text("on forbidden branch main")
@@ -212,19 +318,75 @@ def test_menu_opens_dialog_and_posts_supervise(browser, static_server):
         form = frame.locator(".chat-supervision-dialog")
         expect(form).to_be_visible()
         expect(frame.locator("#chatChromeMenuDropdown")).to_be_hidden()
+        # Branch rules are pickers over the repo's branches, never free text.
         expect(form.locator("[name=requiredBranch]")).to_have_value("dev/x")
-        form.locator("[name=requiredBranch]").fill("main")
+        expect(form.locator(".chat-supervision-branch-chip")).to_have_text(["main×", "master×"])
+        form.get_by_role('button', name='Must stay on branch', exact=True).click()
+        frame.get_by_role('option', name='main', exact=True).click()
         form.locator("[type=submit]").click()
         expect(form.locator(".chat-supervision-errors")).to_contain_text("also in the forbidden list")
-        form.locator("[name=requiredBranch]").fill("dev/x")
-        form.locator("[name=agent]").select_option("codex")
-        form.locator("[name=every]").select_option("600")
+        form.get_by_role('button', name='Must stay on branch', exact=True).click()
+        frame.get_by_role('option', name='dev/x', exact=True).click()
+        form.get_by_role('button', name='Never touch branches', exact=True).click()
+        frame.get_by_role('option', name='feature', exact=True).click()
+        form.get_by_role('button', name='Allow master').click()
+        expect(form.locator(".chat-supervision-branch-chip")).to_have_text(["main×", "feature×"])
+        # Tasks: three lists shown, the rest found by search; a checked list stays submitted.
+        rows = form.locator("[data-task-id]")
+        expect(rows.locator("visible=true")).to_have_count(3)
+        form.locator(".chat-supervision-task-search").fill("List 4")
+        expect(rows.locator("visible=true")).to_have_count(1)
+        form.locator("[data-task-id=t4] input").check()
+        form.locator(".chat-supervision-task-search").fill("")
+        expect(rows.locator("visible=true")).to_have_count(3)
+        expect(form.locator(".chat-supervision-task-more")).to_have_text("2 more (1 followed) · search to find them")
+        # Focus sits under Advanced, read-only until the pencil.
+        form.locator('.chat-supervision-advanced summary').click()
+        focus = form.locator("[name=instructions]")
+        expect(focus).to_have_value("")
+        expect(focus).not_to_be_editable()
+        form.locator("[data-sup-focus-edit]").click()
+        focus.fill("Animation first.")
+        form.get_by_role('button', name='Supervisor agent', exact=True).click()
+        frame.get_by_role('option', name='Codex', exact=True).click()
+        form.get_by_role('button', name='Check every', exact=True).click()
+        frame.get_by_role('option', name='10m', exact=True).click()
         form.locator("[type=submit]").click()
         expect(form).to_have_count(0)
         path, body = world.posts[-1]
         assert path == "/api/chat-ops/supervise"
         assert body["target"] == "CH-000042" and body["agent"] == "codex" and body["every"] == 600
-        assert body["forbidden_branches"] == ["main", "master"]
+        assert body["forbidden_branches"] == ["main", "feature"] and body["required_branch"] == "dev/x"
+        assert body["task_ids"] == ["t0", "t4"] and body["instructions"] == "Animation first."
+        assert body["involve_user"] == "blocked" and body["nudge"] == "agent"
+        # New schedules wake on milestones and repeated failures by default.
+        assert body["checkpoints"] == {"milestone": {"do": ["wake"]}, "repeat_failures": {"do": ["wake"], "n": 3}}
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_dialog_checkpoint_rows_post_their_settings(browser, static_server):
+    from playwright.sync_api import expect
+    world = SupervisionWorld(flag=True)
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        frame.locator("#chatChromeMenuBtn").click()
+        frame.locator("[data-sup-start]").click()
+        form = frame.locator(".chat-supervision-dialog")
+        expect(form).to_be_visible()
+        watched = form.locator("[name=cp_on_watched_paths]")
+        watched.scroll_into_view_if_needed()
+        expect(form.locator("[name=cp_regex_watched_paths]")).to_be_hidden()  # options show once switched on
+        watched.click()
+        form.locator("[name=cp_regex_watched_paths]").fill("^api/")
+        form.locator("[name=cp_on_milestone]").click()  # off
+        page.screenshot(path=os.environ.get("SUPERVISION_DIALOG_SHOT", "/tmp/supervision_dialog.png"))
+        form.locator("[type=submit]").click()
+        expect(form).to_have_count(0)
+        body = world.posts[-1][1]
+        assert body["checkpoints"] == {"repeat_failures": {"do": ["wake"], "n": 3},
+                                       "watched_paths": {"do": ["stop", "wake"], "regex": "^api/"}}
         assert not errors
     finally:
         page.close()
@@ -253,8 +415,35 @@ def test_host_started_checkin_paints_promptly_as_cuttle(browser, static_server):
         expect(bubble).to_have_count(1, timeout=3000)
         expect(bubble).to_contain_text("Cuttle")
         expect(bubble).to_contain_text("Scheduled supervision check-in")
+        # Distinct from a typed message: kind attribute, header badge, no accent fill.
+        expect(bubble).to_have_attribute("data-chat-op", "checkin")
+        expect(bubble.locator(".message-header-row")).to_contain_text("Supervision check-in")
+        fill = bubble.locator(".message-content").evaluate("e => getComputedStyle(e).borderTopStyle")
+        assert fill == "dashed"
+        image = bubble.locator(".message-content").evaluate("e => getComputedStyle(e).backgroundImage")
+        assert image == "none"  # not the user's accent gradient
+        # Its parent is this same chat, so no launcher pill repeats the label.
+        expect(bubble.locator(".subagent-launchers, .subagent-launcher")).to_have_count(0)
+        page.wait_for_timeout(800)
         expect(frame.locator("#typing-indicator-remote")).to_be_visible(timeout=3000)
         page.screenshot(path=os.environ.get("SUPERVISION_CHECKIN_SHOT", "/tmp/supervision_checkin.png"))
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_dialog_closes_on_escape_right_after_it_opens(browser, static_server):
+    from playwright.sync_api import expect
+    world = SupervisionWorld(flag=True)
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        frame.locator("#chatChromeMenuBtn").click()
+        frame.locator("[data-sup-start]").click()
+        form = frame.locator(".chat-supervision-dialog")
+        expect(form).to_be_visible()
+        page.keyboard.press("Escape")  # focus starts on a dropdown trigger, which must not swallow it
+        expect(form).to_have_count(0)
+        assert world.posts == []
         assert not errors
     finally:
         page.close()

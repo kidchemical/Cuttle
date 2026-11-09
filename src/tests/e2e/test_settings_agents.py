@@ -157,10 +157,13 @@ def test_prompt_editors_and_processor_roundtrip(browser, static_server, width):
         processor = page.locator('#responsePostprocessingEditor')
         processor.get_by_role('switch', name='Process completed replies').click()
         processor.get_by_role('textbox', name='Post-processing instructions').fill('Three bullet TLDR')
-        choose(page, processor.locator('select'), 'replace')
+        choose(page, processor.locator('select[aria-label="Post-processing output"]'), 'replace')
+        choose(page, processor.locator('select[aria-label="Post-processing trigger unit"]'), 'chars')
+        processor.get_by_role('spinbutton', name='Post-processing trigger minimum').fill('600')
         processor.get_by_role('button', name='Save post-processing').click()
         expect(processor.get_by_role('status').last).to_contain_text('saved')
-        assert world.processor == {'enabled': True, 'prompt': 'Three bullet TLDR', 'mode': 'replace', 'chain': []}
+        assert world.processor == {'enabled': True, 'prompt': 'Three bullet TLDR', 'mode': 'replace', 'chain': [],
+                                   'trigger': {'unit': 'chars', 'min': 600}}
 
         open_system_prompt(page)
         shared = page.locator('#sharedSystemPromptEditor')

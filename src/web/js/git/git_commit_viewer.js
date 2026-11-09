@@ -90,7 +90,7 @@
         return (
             '<p class="git-graph-detail-subject">' + esc((d && d.subject) || '') + '</p>'
             + ((d && d.body)
-                ? '<p class="git-graph-muted" style="white-space:pre-wrap;margin:0 0 12px">' + esc(d.body) + '</p>'
+                ? '<p class="git-graph-muted git-graph-detail-body">' + esc(d.body) + '</p>'
                 : '')
             + '<dl class="git-graph-detail-kv">'
             + '<dt>Hash</dt><dd>' + esc(d && d.hash) + '</dd>'

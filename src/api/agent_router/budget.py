@@ -12,12 +12,18 @@ Fetches run on a background thread and are cached; routing never waits on a
 vendor API. Accounts with no usage API (Muse, OpenCode, Hermes, …) read as
 ``unknown`` and keep their declared position.
 
+The snapshot is mirrored to ``<home>/cache/router_budget.json`` so other
+processes (``python -m api.subagents`` choosing orchestrator tier members) reuse
+Flask's last fetch instead of calling vendor APIs again.
+
 Settings: ``settings.json → agent_router.budget``
 ``{"enabled": false, "low_headroom": 0.15, "refresh_s": 300}``.
 """
 
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -189,6 +195,40 @@ _FETCHED_AT = 0.0
 _REFRESHING: Optional[threading.Thread] = None
 
 
+def _cache_path():
+    from core.runtime_paths import runtime_cache_path
+
+    return runtime_cache_path("router_budget.json")
+
+
+def _save_cache(accounts: Dict[str, Account], fetched_at: float) -> None:
+    try:
+        path = _cache_path()
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps({"fetched_at": fetched_at,
+                                   "accounts": [a.to_dict() for a in accounts.values()]}), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _load_cache() -> None:
+    """Adopt another process's snapshot when it is newer. Caller holds _LOCK."""
+    global _FETCHED_AT
+    try:
+        data = json.loads(_cache_path().read_text(encoding="utf-8"))
+        fetched = float(data.get("fetched_at") or 0)
+        if fetched <= _FETCHED_AT:
+            return
+        fields = set(Account.__dataclass_fields__)
+        accs = [Account(**{k: v for k, v in row.items() if k in fields}) for row in data.get("accounts") or []]
+    except (OSError, ValueError, TypeError, AttributeError):
+        return
+    _ACCOUNTS.clear()
+    _ACCOUNTS.update({a.agent: a for a in accs})
+    _FETCHED_AT = fetched
+
+
 def _refresh_now() -> None:
     global _FETCHED_AT, _REFRESHING
     now = time.time()
@@ -203,6 +243,8 @@ def _refresh_now() -> None:
         _ACCOUNTS.update(fresh)
         _FETCHED_AT = now
         _REFRESHING = None
+    if fresh:
+        _save_cache(fresh, now)
 
 
 def snapshot(*, wait: bool = False, timeout: float = 12.0, force: bool = False) -> Dict[str, Account]:
@@ -210,6 +252,7 @@ def snapshot(*, wait: bool = False, timeout: float = 12.0, force: bool = False) 
     global _REFRESHING
     max_age = budget_settings()["refresh_s"]
     with _LOCK:
+        _load_cache()
         stale = force or (time.time() - _FETCHED_AT) > max_age
         thread = _REFRESHING
         if stale and thread is None:
@@ -222,6 +265,14 @@ def snapshot(*, wait: bool = False, timeout: float = 12.0, force: bool = False) 
         return dict(_ACCOUNTS)
 
 
+def cached_snapshot(*, timeout: float = 12.0) -> Dict[str, Account]:
+    """The last snapshot from any process; fetches (waiting) only when none exists."""
+    with _LOCK:
+        _load_cache()
+        have = bool(_ACCOUNTS)
+    return snapshot(wait=not have, timeout=timeout)
+
+
 def set_accounts(accounts: List[Account]) -> None:
     """Test/seed hook: install a snapshot without fetching."""
     global _FETCHED_AT
@@ -229,6 +280,7 @@ def set_accounts(accounts: List[Account]) -> None:
         _ACCOUNTS.clear()
         _ACCOUNTS.update({a.agent: a for a in accounts})
         _FETCHED_AT = time.time()
+        _save_cache(_ACCOUNTS, _FETCHED_AT)
 
 
 def clear() -> None:
@@ -236,6 +288,10 @@ def clear() -> None:
     with _LOCK:
         _ACCOUNTS.clear()
         _FETCHED_AT = 0.0
+        try:
+            _cache_path().unlink()
+        except OSError:
+            pass
 
 
 def target_state(target: ExecutionTarget, accounts: Dict[str, Account], *, low_headroom: float) -> Tuple[str, str]:

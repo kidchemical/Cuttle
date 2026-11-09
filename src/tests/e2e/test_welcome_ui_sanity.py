@@ -260,3 +260,28 @@ def test_slash_palette_closes_across_panes(browser, static_server):
     menu.wait_for(state='hidden')
     assert input.input_value() == '/'
     context.close()
+
+
+def test_welcome_composer_corner_drag_resizes_and_persists(welcome):
+    page = welcome
+    page.set_viewport_size({"width": 1200, "height": 900})
+    page.evaluate("localStorage.removeItem('cuttle.composerHeight.welcome')")
+    input = page.locator('#welcomeChatInput')
+    before = input.bounding_box()['height']
+    grip = page.locator('.welcome-composer-wrap .composer-resize-grip')
+    box = grip.bounding_box()
+    x, y = box['x'] + box['width'] / 2, box['y'] + box['height'] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x, y + 120, steps=6)
+    page.mouse.up()
+    after = input.bounding_box()['height']
+    assert after > before + 100
+    # Typing keeps the dragged height instead of auto-shrinking it.
+    input.fill('hi')
+    page.evaluate("window.autoResizeWelcomeTextarea()")
+    assert abs(input.bounding_box()['height'] - after) < 2
+    assert int(page.evaluate("localStorage.getItem('cuttle.composerHeight.welcome')")) > 140
+    grip.dblclick()
+    assert input.bounding_box()['height'] < after - 100
+    assert page.evaluate("localStorage.getItem('cuttle.composerHeight.welcome')") is None

@@ -14,10 +14,19 @@ and aborts the transaction by exiting non-zero in the `prepared` phase.
 
 - **Which branches**: standard git config, per repository, shared by all its
   worktrees, never in the tree: `git config --add cuttle.protectBranch dev/core`.
-- **Whose updates**: processes carrying `CUTTLE_CHAT_SESSION_ID` whose own
-  checkout (`CUTTLE_AGENT_PROJECT_PATH`) is not on that branch, so agents working
-  in the dev/core checkout keep working (Cuttle sets both for every agent turn).
-  The user's terminal, Unity, and the Git UI pass untouched.
+- **Whose updates**: only supervised agent turns — processes carrying
+  `CUTTLE_SUPERVISED` (non-empty reason: `subagent` for child chats, which
+  includes orchestrator lanes; `supervised` for targets of a `chat_cli
+  supervise` schedule that is live; a paused
+  schedule does not count) whose own checkout (`CUTTLE_AGENT_PROJECT_PATH`)
+  is not on that branch, so agents working in the dev/core checkout keep
+  working. The kernel sets the marker per turn (`git_hook.supervised_reason`).
+  A top-level chat the user drives directly may update protected branches when
+  asked (v1 refused every agent chat, CH-001998); the user's terminal, Unity,
+  and the Git UI pass untouched.
+- **Upgrade**: the script carries a version marker (`cuttle-protect-branch-hook
+  vN`); re-running `install-hook <repo>` replaces any older Cuttle version in
+  place and leaves `cuttle.protectBranch` alone.
 - **No Cuttle call** from the hook: it reads git config and the environment, so
   it works when Cuttle is down and cannot hang a commit.
 - **Install**: `python -m api.chat_cli install-hook <repo> --protect <branch>` copies a ~30-line

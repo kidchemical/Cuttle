@@ -253,3 +253,42 @@ def test_lightbox_host_listeners_end_with_the_chat_frame(browser, static_server)
         assert not errors
     finally:
         page.close()
+
+
+def test_host_back_hook_closes_lightbox(browser, static_server):
+    """Android system back runs in the shell; it closes the lightbox via the hook."""
+    meta_calls = []
+    page, frame, errors = _open_media_chat(browser, static_server, meta_calls)
+    try:
+        frame.locator(".message.assistant .cuttle-media-thumb").first.click()
+        box = page.locator("#cuttle-shell-lightbox")
+        expect(box).to_be_visible()
+        assert page.evaluate("typeof window.__cuttleCloseLightbox === 'function'")
+        page.evaluate("window.__cuttleCloseLightbox()")
+        expect(box).to_be_hidden()
+        assert page.evaluate("window.__cuttleCloseLightbox == null")
+        assert not page.evaluate(
+            "document.documentElement.classList.contains('cuttle-lightbox-open')")
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_open_lightbox_is_removed_when_the_chat_frame_unloads(browser, static_server):
+    """Back used to navigate the pane under an open lightbox: the overlay stayed
+    on the shell with dead-frame listeners and could never be closed."""
+    meta_calls = []
+    page, frame, errors = _open_media_chat(browser, static_server, meta_calls)
+    try:
+        frame.locator(".message.assistant .cuttle-media-thumb").first.click()
+        expect(page.locator("#cuttle-shell-lightbox")).to_be_visible()
+        page.evaluate("document.querySelector('iframe').src = 'about:blank'")
+        page.wait_for_function(
+            "document.querySelector('iframe').contentWindow.location.href === 'about:blank'")
+        expect(page.locator("#cuttle-shell-lightbox")).to_have_count(0)
+        assert not page.evaluate(
+            "document.documentElement.classList.contains('cuttle-lightbox-open')")
+        assert page.evaluate("window.__cuttleCloseLightbox == null")
+        assert not errors
+    finally:
+        page.close()

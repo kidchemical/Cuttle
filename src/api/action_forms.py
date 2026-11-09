@@ -758,6 +758,22 @@ def _pending_block_id(attrs: Optional[str]) -> str:
     return m.group(2) if m else ""
 
 
+def _message_meta(msg: Dict[str, Any]) -> Dict[str, Any]:
+    """A message row's metadata as a fresh dict, whether decoded or raw JSON.
+
+    ``get_message_by_id`` returns the raw row (metadata as a JSON string); reading
+    that as "no metadata" made locking a card overwrite the bubble's whole
+    metadata — query id (inspector link), project, sub-agent cards included.
+    """
+    raw = (msg or {}).get("metadata")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw) if raw.strip() else {}
+        except ValueError:
+            raw = {}
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
 def _namespaced_form_result_meta(
     meta: Dict[str, Any],
     form_id: str,
@@ -1288,8 +1304,7 @@ def mark_action_form_consumed_in_history(
             body = "\n" + json.dumps(parsed, ensure_ascii=False) + "\n"
         patched = f"<cuttle_action_form_pending{attrs}>{body}</cuttle_action_form_pending>"
         new_content = content[: match.start()] + patched + content[match.end() :]
-        meta = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
-        meta = dict(meta or {})
+        meta = _message_meta(msg)
         meta = _namespaced_form_result_meta(
             meta,
             str(form_id),
@@ -1365,8 +1380,7 @@ def patch_action_form_watch_in_history(
             body = "\n" + json.dumps(parsed, ensure_ascii=False) + "\n"
         patched = f"<cuttle_action_form_pending{attrs}>{body}</cuttle_action_form_pending>"
         new_content = content[: match.start()] + patched + content[match.end() :]
-        meta = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
-        meta = dict(meta or {})
+        meta = _message_meta(msg)
         entry: Dict[str, Any] = {"form_id": str(form_id), "watch_terminal": bool(terminal)}
         if snap:
             entry["watch_snapshot"] = snap

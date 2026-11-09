@@ -61,6 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
     st = sub.add_parser("start", parents=[common], help="Bind this chat to a playbook and print its brief")
     st.add_argument("--playbook", default="", help="Playbook id (default: the one set in Apps → Orchestrator)")
     st.add_argument("--goal", default="")
+    sw = sub.add_parser("switch", parents=[common],
+                        help="Change a bound chat's playbook and/or goal (supervision follows the new playbook)")
+    sw.add_argument("--playbook", default=None)
+    sw.add_argument("--goal", default=None)
     sub.add_parser("stop", parents=[common], help="Unbind this chat")
     b = sub.add_parser("brief", parents=[common], help="Print the brief for this chat (or --playbook preview)")
     b.add_argument("--playbook", default="")
@@ -111,6 +115,14 @@ def main(argv=None) -> int:
                 return _fail("start needs --session outside a Cuttle turn", as_json)
             out = service.bind(session, args.playbook, args.goal, db=db)
             _emit({"ok": True, **out}, as_json, out["brief"])
+        elif args.verb == "switch":
+            session = _session(args)
+            if not session:
+                return _fail("switch needs --session outside a Cuttle turn", as_json)
+            sid = service.parse_session(session)
+            out = service.rebind(sid, service._session_owner(sid, db), playbook_id=args.playbook,
+                                 goal=args.goal, db=db, source="cli")
+            _emit({"ok": True, **out}, as_json, f"{out['session']} → {out['playbook_id']}")
         elif args.verb == "stop":
             session = _session(args)
             if not session:

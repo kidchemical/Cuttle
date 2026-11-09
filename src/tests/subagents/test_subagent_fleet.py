@@ -58,13 +58,13 @@ def test_entry_drops_think_blocks_from_summary_and_detail():
 def test_flag_switches_live_and_saved_payloads(tmp_path: Path, monkeypatch):
     db, _p, _o, parent = _seed(tmp_path)
     service.spawn(parent_session_id=parent, children=[{"title": "A", "message": "a"}],
-                  wait=True, timeout=6, runner=_runner_factory({"A": "All good."}), db=db)
+                  wait=True, timeout=6, runner=_runner_factory({"A": "All good."}), db=db, turn_id="t1")
     monkeypatch.setattr(fleet, "fleet_enabled", lambda: False)
     assert "fleet" not in service.public_parent_subagents(parent, db=db)[0]
     monkeypatch.setattr(fleet, "fleet_enabled", lambda: True)
     live = service.public_parent_subagents(parent, db=db)[0]
     assert (live["outcome"], live["summary"]) == ("done", "All good.")
-    meta = service.attach_batches_to_assistant_meta(parent, {}, db=db)
+    meta = service.attach_batches_to_assistant_meta(parent, {"turn_id": "t1"}, db=db)
     assert meta["subagents"][0]["outcome"] == "done"
 
 
@@ -72,8 +72,8 @@ def test_history_hydration_reflects_current_child_row(tmp_path: Path, monkeypatc
     db, _p, _o, parent = _seed(tmp_path)
     spawned = service.spawn(parent_session_id=parent,
                             children=[{"title": "A", "message": "a"}, {"title": "B", "message": "b"}],
-                            wait=True, timeout=6, runner=_runner_factory(), db=db)
-    saved = service.attach_batches_to_assistant_meta(parent, {}, db=db)  # pre-flag snapshot
+                            wait=True, timeout=6, runner=_runner_factory(), db=db, turn_id="t1")
+    saved = service.attach_batches_to_assistant_meta(parent, {"turn_id": "t1"}, db=db)  # pre-flag snapshot
     a, b = spawned["children"]
     # After the reply was saved: B is re-run and its host dies.
     store.update_child(db, b["id"], status="failed", error=ORPHAN_ERROR, finished=True)
@@ -228,3 +228,50 @@ console.log(JSON.stringify({html, cards:(many.match(/subagent-fleet-card /g)||[]
     assert "1m 05s" in html and html.count("1m 05s") == 4  # running/queued show no duration
     assert out["cards"] == 24 and out["more"] and out["dur"] == "1m 05s"
     assert out["has"] is True and out["none"] is False
+
+
+def _save_reply(db, parent, text, turn):
+    """What chat_turn_persist does for turn ``turn``: build meta, save the bubble, bind."""
+    meta = service.attach_batches_to_assistant_meta(parent, {"turn_id": turn}, db=db)
+    mid = db.add_message(parent, "assistant", text, metadata=meta or None)
+    store.bind_unattached_batches(db, parent, int(mid), turn)
+    return mid
+
+
+def _history(db, parent):
+    messages = [dict(m) for m in db.get_messages(parent, limit=50)]
+    service.hydrate_parent_fleet(db, messages)
+    out = {}
+    for m in messages:
+        meta = m.get("metadata")
+        meta = json.loads(meta) if isinstance(meta, str) else (meta or {})
+        out[m["id"]] = meta.get("subagents") or []
+    return out
+
+
+def test_followup_round_mints_new_card_and_freezes_old(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(fleet, "fleet_enabled", lambda: True)
+    db, _p, _o, parent = _seed(tmp_path)
+    spawned = service.spawn(parent_session_id=parent, children=[{"title": "Chatty", "message": "hi"}],
+                            lifetime="conversational", wait=True, timeout=6,
+                            runner=_runner_factory({"Chatty": "first answer"}), db=db, turn_id="t1")
+    sid = spawned["children"][0]["session_id"]
+    first = _save_reply(db, parent, "spawned Chatty", "t1")
+    quiet = _save_reply(db, parent, "unrelated reply", "t2")  # another turn → no card
+    assert _history(db, parent)[quiet] == []
+
+    service.message_child(sid, "again", wait=False, runner=lambda *a, **k: None, db=db, turn_id="t3")
+    hist = _history(db, parent)
+    old = hist[first][0]
+    assert old["frozen"] is True and old["outcome"] == "done" and "first answer" in old["summary"]
+
+    second = _save_reply(db, parent, "sent Chatty a follow-up", "t3")
+    child_id = spawned["children"][0]["id"]
+    store.update_child(db, child_id, status="done", result="second answer", finished=True)
+    hist = _history(db, parent)
+    assert "first answer" in hist[first][0]["summary"]  # old card unchanged
+    assert hist[second][0]["handle"] == f"CH-{sid:06d}" and "second answer" in hist[second][0]["summary"]
+    assert not hist[second][0].get("frozen")
+    assert store.pending_card_children(db, parent) == []
+    later = _save_reply(db, parent, "later", "t4")
+    assert _history(db, parent)[later] == []  # minted once

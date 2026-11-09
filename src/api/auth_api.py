@@ -464,11 +464,17 @@ def get_current_user():
                 'authenticated': False
             }), 401
         
-        return jsonify({
+        response = jsonify({
             'success': True,
             'authenticated': True,
             'user': _user_public(user),
         })
+        # The DB expiry slides while in use (verify_auth_session); slide the
+        # browser cookie with it, or the cookie's own 30-day max_age signs the
+        # desktop app out anyway. Only for cookie logins, never header tokens.
+        if (request.cookies.get('session_token') or '').strip() == session_token:
+            _set_session_cookie(response, session_token)
+        return response
         
     except Exception as e:
         print(f"Get current user error: {e}")
@@ -1365,6 +1371,7 @@ def get_session_messages(session_id):
             limit=limit,
             before_id=before_id,
             after_id=after_id,
+            include_in_progress=True,
         )
 
         has_more = False
@@ -1388,6 +1395,10 @@ def get_session_messages(session_id):
                         msg[key] = meta[key]
                 if meta.get('kind') and not msg.get('kind'):
                     msg['kind'] = meta['kind']
+                if meta.get('in_progress'):
+                    # The running turn's row (api.chat_turn_row): the client
+                    # gives its id to the live bubble instead of painting it.
+                    msg['in_progress'] = True
 
         try:
             from api.subagents.identity import hydrate_subagent_message_badges

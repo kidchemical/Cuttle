@@ -15,7 +15,7 @@ def test_expiry_restart_and_account_isolation(tmp_path, monkeypatch):
         {"label": "Weekly", "used_percent": 100, "reset_at": 3000}]}
     path = tmp_path / "credentials.json"
     first = claude_usage_cache.snapshot(path, credentials, lambda: good)
-    clock[0] += 61
+    clock[0] += claude_usage_cache.FRESH_S + 1
     fail = lambda: {"success": False, "error": "token expired"}
     # No in-memory snapshot: subsequent calls recover directly from disk.
     for _ in range(2):
@@ -59,3 +59,36 @@ def test_expired_credentials_use_persistent_plan(tmp_path, monkeypatch):
     assert result["stale"] and "expired" in result["error"]
     assert "Scheduled reset passed" in agent_usage.format_claude_usage_markdown(
         {"success": True, "plan": result})
+
+
+def test_rate_limit_is_quiet_while_the_reading_is_recent_and_backs_off(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
+    claude_usage_cache._backoff_until.clear()
+    clock = [10_000]
+    monkeypatch.setattr(claude_usage_cache.time, "time", lambda: clock[0])
+    creds = {"refreshToken": "r-429"}
+    path = tmp_path / "credentials.json"
+    calls = []
+    good = {"success": True, "windows": [{"label": "Weekly", "used_percent": 86, "reset_at": 99_999}]}
+    limited = {"success": False, "retry_after": 300, "error": "rate limited"}
+
+    def fetch(result):
+        def _f():
+            calls.append(result)
+            return result
+        return _f
+
+    claude_usage_cache.snapshot(path, creds, fetch(good))
+    clock[0] += claude_usage_cache.FRESH_S - 1
+    claude_usage_cache.snapshot(path, creds, fetch(good))
+    assert len(calls) == 1  # still fresh: no request
+    clock[0] += 2
+    quiet = claude_usage_cache.snapshot(path, creds, fetch(limited))
+    assert quiet["rate_limited"] and not quiet["stale"] and not quiet.get("error")
+    clock[0] += 60
+    claude_usage_cache.snapshot(path, creds, fetch(good))
+    assert len(calls) == 2  # inside the Retry-After window: not asked again
+    clock[0] = 10_000 + claude_usage_cache.QUIET_RATE_LIMIT_S + 1
+    claude_usage_cache._backoff_until.clear()
+    loud = claude_usage_cache.snapshot(path, creds, fetch(limited))
+    assert loud["stale"] and "rate-limiting" in loud["error"]

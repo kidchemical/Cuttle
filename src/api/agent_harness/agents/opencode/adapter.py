@@ -251,6 +251,15 @@ def _throttle_kind(activity: str) -> str:
     return ""
 
 
+def _opencode_tool_failed(state: dict) -> bool:
+    """OpenCode reports a shell command that exits non-zero as ``completed``
+    with ``metadata.exit``; only a tool that could not run is ``error``."""
+    if state.get("status") == "error":
+        return True
+    exit_code = (state.get("metadata") or {}).get("exit")
+    return state.get("status") == "completed" and isinstance(exit_code, int) and exit_code != 0
+
+
 def _opencode_tool_label(tool: str, title: str) -> str:
     title = (title or "").strip()
     if title:
@@ -1210,9 +1219,10 @@ class Adapter:
                         text_log.save(kind, text, part.get("id"))
                     if ev.get("type") == "tool_use":
                         state = part.get("state") or {}
+                        failed = _opencode_tool_failed(state)
                         native_tools.record(part.get("id") or part.get("callID"), _opencode_tool_label(str(part.get("tool") or "tool"), str(state.get("title") or "")), state.get("input"),
-                                            phase=str(state.get("status") or "completed"), result=state.get("output"),
-                                            failed=state.get("status") == "error")
+                                            phase="failed" if failed else str(state.get("status") or "completed"),
+                                            result=state.get("output"), failed=failed)
                         metadata = state.get("metadata") or {}
                         diff = metadata.get("filediff") or {}
                         if isinstance(diff, dict) and diff.get("file") and diff.get("patch") is not None:

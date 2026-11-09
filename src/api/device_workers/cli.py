@@ -344,7 +344,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 write_status(
                     watch_id,
                     state="failed",
-                    percent=int(result.get("percent") or 0),
+                    percent=result.get("percent"),
                     label=(str(result.get("label") or "") + " — watch timed out")[:200],
                     bars=result.get("bars"),
                 )

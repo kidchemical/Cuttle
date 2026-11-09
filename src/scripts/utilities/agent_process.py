@@ -51,12 +51,13 @@ _REAP_WAIT_SEC = 15.0
 _REAP_CONFIRM_SEC = 5.0
 
 
-async def kill_process_tree(proc) -> bool:
+async def kill_process_tree(proc, keep=()) -> bool:
     """Kill an asyncio-spawned CLI and all of its children (no orphans).
 
     The registry helper blocks (psutil sweep + pid waits), so it runs in a
     worker thread — never on the caller's event loop. Returns True only
     when the process exit is actually confirmed via ``returncode``.
+    ``keep`` pids (and their descendants) are spared: handed-off background work.
     """
     if proc is None:
         return True
@@ -65,7 +66,7 @@ async def kill_process_tree(proc) -> bool:
     try:
         from api.chat_run_registry import kill_process_tree as _sync_kill
 
-        await asyncio.to_thread(_sync_kill, proc)
+        await asyncio.to_thread(_sync_kill, proc, keep) if keep else await asyncio.to_thread(_sync_kill, proc)
     except Exception:
         # Retain the standalone Windows tree-kill fallback when registry
         # cleanup is unavailable. This only targets the supplied child.
@@ -73,7 +74,7 @@ async def kill_process_tree(proc) -> bool:
         if os.name == "nt" and pid:
             try:
                 killer = await asyncio.create_subprocess_exec(
-                    "taskkill", "/F", "/T", "/PID", str(pid),
+                    *(["taskkill", "/F", "/PID"] if keep else ["taskkill", "/F", "/T", "/PID"]), str(pid),
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )

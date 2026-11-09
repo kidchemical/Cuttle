@@ -46,7 +46,17 @@ public final class LiveVoiceAudio {
     private boolean previousSpeaker;
     private volatile boolean running, closing, muted;
     private volatile long generation;
-    private final AudioManager.OnAudioFocusChangeListener focus = change -> { if (change < 0) stop(); };
+    // RMS (0..1) of the newest speaker / microphone 20 ms slice, polled by the
+    // page for the call meters. Decays to silence when nothing plays.
+    private volatile float outputLevel, inputLevel;
+    private volatile long outputAt, inputAt;
+    // Only a permanent loss (another app took over audio) ends the call. A
+    // transient or duck loss is a short sound (notification, the WebView's
+    // reply chime) and must not hang up: that dropped every call the moment
+    // the delegated agent's answer landed.
+    private final AudioManager.OnAudioFocusChangeListener focus = change -> {
+        if (change == AudioManager.AUDIOFOCUS_LOSS) stop();
+    };
 
     public LiveVoiceAudio(Consumer<String> events) { this("live", events); }
 
@@ -148,6 +158,7 @@ public final class LiveVoiceAudio {
             try {
                 int size = input.read(frame, 0, frame.length);
                 if (size < 0) { fail(own, "Native microphone stopped unexpectedly."); break; }
+                if (size > 0) { inputLevel = muted ? 0f : rms(frame, 0, size); inputAt = System.nanoTime(); }
                 if (size > 0 && generation == own && !muted && !closing) {
                     // A transient backlog (host busy reading a long turn) must not
                     // end the call: drop this frame and keep the socket alive.
@@ -171,12 +182,36 @@ public final class LiveVoiceAudio {
                 long epoch = clearEpoch;
                 int offset = 0;
                 while (running && generation == own && epoch == clearEpoch && offset < frame.length) {
-                    int written = output.write(frame, offset, frame.length-offset, AudioTrack.WRITE_BLOCKING);
+                    // 20 ms slices so the meter tracks the audio actually going out.
+                    int slice = Math.min(960, frame.length - offset);
+                    outputLevel = rms(frame, offset, slice); outputAt = System.nanoTime();
+                    int written = output.write(frame, offset, slice, AudioTrack.WRITE_BLOCKING);
                     if (written <= 0) break;
                     offset += written;
                 }
             } catch (Exception ignored) { break; }
         }
+    }
+
+    private static float rms(byte[] pcm, int offset, int length) {
+        int samples = length / 2;
+        if (samples <= 0) return 0f;
+        double sum = 0;
+        for (int i = 0; i < samples; i++) {
+            int at = offset + i * 2;
+            double v = (short) ((pcm[at] & 0xff) | (pcm[at + 1] << 8)) / 32768.0;
+            sum += v * v;
+        }
+        return (float) Math.sqrt(sum / samples);
+    }
+
+    /** {"out":rms,"in":rms} for the page's call meters; 0 once a side is quiet for 150 ms. */
+    public String levels() {
+        if (!running) return "";
+        long now = System.nanoTime(), stale = 150_000_000L;
+        float out = now - outputAt > stale ? 0f : outputLevel;
+        float in = now - inputAt > stale ? 0f : inputLevel;
+        return "{\"out\":" + out + ",\"in\":" + in + "}";
     }
 
     /** Barge-in: drop the cancelled reply's queued and device-buffered audio. */
@@ -188,6 +223,7 @@ public final class LiveVoiceAudio {
         if (output != null) {
             try { output.pause(); output.flush(); output.play(); } catch (Exception ignored) {}
         }
+        outputLevel = 0f;
     }
 
     public synchronized void mute(boolean value) {

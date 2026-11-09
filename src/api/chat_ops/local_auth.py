@@ -15,7 +15,8 @@ import time
 
 PREFIX = 'cuttle-chat-op.'
 ROUTES = {('GET', '/api/chat-live-status'), ('POST', '/api/chat'),
-          ('POST', '/api/chat-steer'), ('POST', '/api/chat-cancel')}
+          ('POST', '/api/chat-steer'), ('POST', '/api/chat-cancel'),
+          ('POST', '/api/agent-context/compact')}
 
 
 def _key():

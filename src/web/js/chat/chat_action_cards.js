@@ -1063,14 +1063,19 @@
             const bars = CuttleChatActionForms.normalizeWatchBars(data || {});
             const stack = wrap.querySelector('[data-watch-bars]');
             if (stack) {
-                stack.innerHTML = CuttleChatActionForms.renderWatchBarsHtml(bars, host.escapeHtml, data && data.grid);
+                // Rebuild only on change: the per-second elapsed tick must not
+                // restart an indeterminate bar's animation.
+                const html = CuttleChatActionForms.renderWatchBarsHtml(bars, host.escapeHtml, data && data.grid);
+                if (stack.__barsHtml !== html) {
+                    stack.innerHTML = html;
+                    stack.__barsHtml = html;
+                }
             } else {
-                // Legacy single-bar markup
-                const pct = bars[0] ? bars[0].percent : 0;
-                const bar = wrap.querySelector('.progress-bar');
-                const val = wrap.querySelector('.progress-value');
-                if (bar) bar.style.width = pct + '%';
-                if (val) val.textContent = pct + '%';
+                // Legacy single-bar markup (shared determinate/indeterminate rules).
+                const b = bars[0] || {};
+                const m = globalThis.CuttleProgress.measure({ percent: b.percent, state: b.state });
+                globalThis.CuttleProgress.apply(wrap.querySelector('.progress-track'), wrap.querySelector('.progress-bar'),
+                    wrap.querySelector('.progress-value'), m.determinate ? m : { ...m, label: '' });
             }
             let grid = wrap.querySelector('[data-watch-grid]');
             if (!grid && data && data.grid) {
