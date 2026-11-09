@@ -91,9 +91,12 @@ def test_cuttle_home_is_per_user_and_overridable(tmp_path, monkeypatch):
 
 
 def test_relative_cuttle_home_is_rejected(monkeypatch):
-    monkeypatch.setenv("CUTTLE_HOME", "src/data")
-    with pytest.raises(ValueError, match="absolute path"):
-        cuttle_home()
+    # Scoped: autouse teardowns (router quota) write under cuttle_home() and
+    # run before this test's monkeypatch is undone.
+    with monkeypatch.context() as m:
+        m.setenv("CUTTLE_HOME", "src/data")
+        with pytest.raises(ValueError, match="absolute path"):
+            cuttle_home()
 
 
 @pytest.mark.parametrize("channel,filename", [

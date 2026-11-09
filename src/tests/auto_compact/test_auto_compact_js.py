@@ -73,7 +73,7 @@ def result():
     env = dict(os.environ, CHAT_JS=str(JS / "chat/chat_auto_compact.js"),
                SETTINGS_JS=str(JS / "settings/settings_auto_compact.js"),
                GAUGE_JS=str(JS / "chat/chat_context_gauge.js"))
-    proc = subprocess.run(["node", "-e", HARNESS], capture_output=True, text=True, env=env, timeout=30)
+    proc = subprocess.run(["node", "-e", HARNESS], capture_output=True, text=True, encoding="utf-8", env=env, timeout=30)
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 

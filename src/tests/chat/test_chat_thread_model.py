@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import os
 import subprocess
 from pathlib import Path
 
@@ -78,7 +79,8 @@ def out():
     if shutil.which("node") is None:
         pytest.skip("node not available")
     res = subprocess.run(["node", "-e", HARNESS], capture_output=True, text=True, check=True,
-                         env={"MOD_JS": str(MOD_JS), "PATH": "/usr/bin:/bin:/usr/local/bin"})
+                         encoding="utf-8",
+                         env={**os.environ, "MOD_JS": str(MOD_JS)})
     return json.loads(res.stdout)
 
 
