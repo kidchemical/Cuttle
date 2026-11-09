@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 import api.dashboards.catalog as catalog
+import api.dashboards.local_ai as local_ai
 import api.dashboards.service as service
 import api.dashboards.usage as usage
 
@@ -73,6 +74,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(json.dumps(backfill_from_history(dry_run=args.dry_run), indent=2))
         return 0
     if args.cmd == "get":
+        if args.id in local_ai.dashboard_ids():
+            print(json.dumps(service.local_ai_dashboard(args.id), indent=2))
+            return 0
         if args.id == "model-benchmarks":
             payload = service.model_benchmarks(
                 cache_dir=args.cache_dir,

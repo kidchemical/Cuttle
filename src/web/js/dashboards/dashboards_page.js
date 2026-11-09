@@ -3297,7 +3297,12 @@
         const q = params.toString() ? '?' + params.toString() : '';
         payload = await fetchJson('/api/dashboards/' + encodeURIComponent(id) + q);
         dashMark('fetch-done');
-        if (id === 'model-benchmarks') renderModelBenchmarks();
+        if (window.CuttleLocalAiDashboard && window.CuttleLocalAiDashboard.owns(id)) {
+            window.CuttleLocalAiDashboard.create({
+                backButton: DASH_BACK_BUTTON,
+                navigateTo,
+            }).render(root, payload);
+        } else if (id === 'model-benchmarks') renderModelBenchmarks();
         else if (id === 'cuttle-performance') renderCuttlePerformance();
         else if (id === USAGE_ID) renderCuttleUsage();
         else if (id === CONTEXT_ID) renderCuttleContext();

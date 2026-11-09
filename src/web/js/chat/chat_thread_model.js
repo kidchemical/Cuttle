@@ -2,7 +2,7 @@
    Cuttle Chat — reply-thread model (chat_thread_model.js). Pure.
    Owner: which transcript rows form a turn's reply thread — steers you
    sent into a running turn, the agent's later follow-up bubbles, and the
-   sub-agent children that turn spawned — plus the thread bar's counts,
+   thread bar’s counts,
    label, latest-reply pick and unread keys.
 
    No DOM, storage, page globals or Cuttle imports. The controller
@@ -11,8 +11,7 @@
 
    Record (one per transcript row, in transcript order):
      { role: 'user'|'assistant', steered, steerIdle, turnId, messageId, live,
-       subagents: [{ handle, label, displayName, avatar, outcome,
-                     summary, detail, finishedAt }], ts }
+       ts }
    Rules:
    - A non-steer user row starts a turn.
    - The first assistant row of a turn id is that turn's root; a later
@@ -25,24 +24,17 @@
      while the chat looked idle) is a plain row that starts a new turn:
      the run's later rows with that turn id open a fresh thread below it
      instead of joining the old bubble's.
-   - Finished sub-agent children (fleet cards on any member row) are
-     sub-agent replies; running ones only count as `working`.
    - A thread with no replies is not a thread (no bar).
    ================================================================ */
 (function (root) {
     'use strict';
 
-    const KIND = Object.freeze({ STEER: 'steer', FOLLOWUP: 'followup', SUBAGENT: 'subagent' });
-    const SUBAGENT_FINISHED = new Set(['done', 'failed', 'cancelled', 'lost']);
+    const KIND = Object.freeze({ STEER: 'steer', FOLLOWUP: 'followup' });
 
     function threadKeyFor(rec, index) {
         if (rec.turnId) return 't:' + rec.turnId;
         if (rec.messageId != null && rec.messageId !== '') return 'm:' + rec.messageId;
         return 'i:' + index;
-    }
-
-    function subagentKey(s) {
-        return String(s.handle || s.sessionId || s.label || '');
     }
 
     function newThread(rec, index, segment) {
@@ -52,33 +44,9 @@
             turnId: rec.turnId || '',
             root: index,
             replies: [],
-            subagents: [],
-            counts: { steer: 0, followup: 0, subagent: 0 },
-            working: 0,
+            counts: { steer: 0, followup: 0 },
             live: !!rec.live,
-            _subSeen: new Set(),
         };
-    }
-
-    /**
-     * Finished children are replies; running / queued ones only show as
-     * "N working" on the bar (their fleet cards already show progress).
-     */
-    function addSubagents(thread, rec) {
-        const list = Array.isArray(rec.subagents) ? rec.subagents : [];
-        list.forEach((s) => {
-            if (!s || typeof s !== 'object') return;
-            const k = subagentKey(s);
-            if (!k || thread._subSeen.has(k)) return;
-            thread._subSeen.add(k);
-            const outcome = String(s.outcome || '');
-            if (SUBAGENT_FINISHED.has(outcome)) {
-                thread.subagents.push(s);
-                thread.counts.subagent += 1;
-            } else if (s.generating || outcome === 'running' || outcome === 'queued') {
-                thread.working += 1;
-            }
-        });
     }
 
     function addReply(thread, index, kind, rec) {
@@ -116,7 +84,6 @@
                 const existing = tid ? byTurn.get(tid) : undefined;
                 if (existing !== undefined) {
                     addReply(threads[existing], i, KIND.FOLLOWUP, rec);
-                    addSubagents(threads[existing], rec);
                     memberOf[i] = existing;
                     return;
                 }
@@ -126,7 +93,6 @@
                 if (tid) byTurn.set(tid, ti);
                 memberOf[i] = ti;
                 if (turnRoot < 0) turnRoot = ti;
-                addSubagents(t, rec);
                 return;
             }
             if (rec.role === 'user' && rec.steered) {
@@ -146,7 +112,7 @@
         const kept = [];
         const remap = new Map();
         threads.forEach((t, i) => {
-            if (!t.replies.length && !t.subagents.length) return;
+            if (!t.replies.length) return;
             remap.set(i, kept.length);
             kept.push(t);
         });
@@ -155,7 +121,6 @@
             memberOf[i] = m >= 0 && remap.has(m) ? remap.get(m) : -1;
         }
         kept.forEach((t) => {
-            delete t._subSeen;
             t.latest = latestReply(t, list);
             t.unreadKeys = unreadKeys(t, list);
         });
@@ -170,25 +135,15 @@
         return Number.isFinite(p) ? p : NaN;
     }
 
-    /** Newest reply: the last row reply, unless a sub-agent finished after it. */
+    /** Newest reply is the last transcript row in the thread. */
     function latestReply(thread, records) {
-        const lastRow = thread.replies.length ? thread.replies[thread.replies.length - 1] : null;
-        let best = lastRow ? { kind: lastRow.kind, index: lastRow.index, at: parseTime(records[lastRow.index].ts) } : null;
-        thread.subagents.forEach((s) => {
-            const at = parseTime(s.finishedAt);
-            if (!best || (Number.isFinite(at) && (!Number.isFinite(best.at) || at > best.at))) {
-                best = { kind: KIND.SUBAGENT, subagent: s, at };
-            }
-        });
-        if (!best && thread.subagents.length) {
-            best = { kind: KIND.SUBAGENT, subagent: thread.subagents[thread.subagents.length - 1], at: NaN };
-        }
-        return best;
+        const last = thread.replies[thread.replies.length - 1];
+        return last ? { kind: last.kind, index: last.index, at: parseTime(records[last.index].ts) } : null;
     }
 
     /**
      * Keys of agent-authored replies (your own steers are never unread):
-     * saved follow-ups by message id, finished sub-agents by handle + outcome.
+     * saved follow-ups by message id.
      */
     function unreadKeys(thread, records) {
         const out = [];
@@ -198,10 +153,6 @@
             if (rec.live || rec.messageId == null || rec.messageId === '') return;
             out.push({ key: 'm:' + rec.messageId, messageId: Number(rec.messageId), at: parseTime(rec.ts) });
         });
-        thread.subagents.forEach((s) => {
-            const outcome = String(s.outcome || '');
-            out.push({ key: 's:' + subagentKey(s) + ':' + outcome, messageId: null, at: parseTime(s.finishedAt) });
-        });
         return out;
     }
 
@@ -209,14 +160,13 @@
         return n + ' ' + (n === 1 ? one : many);
     }
 
-    /** Bar text: "3 replies" + "2 steers · 1 follow-up · 1 sub-agent". */
+    /** Bar text: "3 replies" + "2 steers · 1 follow-up". */
     function summary(thread) {
         const c = thread.counts;
-        const total = c.steer + c.followup + c.subagent;
+        const total = c.steer + c.followup;
         const parts = [];
         if (c.steer) parts.push(plural(c.steer, 'steer', 'steers'));
         if (c.followup) parts.push(plural(c.followup, 'follow-up', 'follow-ups'));
-        if (c.subagent) parts.push(plural(c.subagent, 'sub-agent', 'sub-agents'));
         return { total, label: plural(total, 'reply', 'replies'), detail: parts.join(' · ') };
     }
 

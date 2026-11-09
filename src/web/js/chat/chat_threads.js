@@ -2,7 +2,7 @@
    Cuttle Chat — reply threads (chat_threads.js).
    Owner: drawing a turn's reply thread in the transcript — the
    "N replies" bar under the turn's bubble, collapse / expand, the quiet
-   unread dot + preview, sub-agent replies, and keeping open threads open.
+   unread dot + preview, and keeping open threads open.
    Grouping rules live in chat_thread_model.js (pure).
 
    The transcript stays one flat list of rows in saved order: this module
@@ -19,7 +19,7 @@
    - a live thread (its turn or a reply is still running, or you just
      steered into it) opens by itself;
    - nothing ever closes a thread except you.
-   Unread: an agent reply (follow-up / finished sub-agent) that arrives
+   Unread: an agent reply (follow-up) that arrives
    while its thread is closed, or since your last visit, shows a dot and
    a one-line preview until you open the thread.
 
@@ -39,10 +39,6 @@
     const LIVE_IDS = new Set(['typing-indicator', 'typing-indicator-remote']);
     const REPLY_CLASSES = ['thread-reply', 'thread-reply--steer', 'thread-reply--followup',
         'thread-reply-last', 'thread-reply-hidden'];
-    const OUTCOME_LABEL = {
-        done: 'Replied', failed: 'Failed', cancelled: 'Cancelled', lost: 'Lost',
-        running: 'Working…', queued: 'Queued',
-    };
     const CHEVRON = '<svg class="chat-thread-chevron" viewBox="0 0 16 16" aria-hidden="true">'
         + '<path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" '
         + 'stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -148,7 +144,6 @@
                 turnId: String(el.dataset.turnId || el.dataset.queryId || ''),
                 messageId: mid != null && mid !== '' ? Number(mid) : null,
                 live: LIVE_IDS.has(el.id),
-                subagents: Array.isArray(el.__cuttleSubagentCards) ? el.__cuttleSubagentCards : null,
                 ts: ts ? Number(ts.getAttribute('data-ts')) || null : null,
             };
         }
@@ -167,11 +162,6 @@
             const latest = thread.latest;
             if (!latest) return '';
             const M = model();
-            if (latest.kind === M.KIND.SUBAGENT) {
-                const s = latest.subagent || {};
-                const who = s.displayName || s.label || s.handle || 'Sub-agent';
-                return who + ': ' + M.previewText(s.summary || s.detail || OUTCOME_LABEL[s.outcome] || '', 110);
-            }
             const el = rows[latest.index];
             if (!el) return '';
             const sender = el.querySelector('.message-sender');
@@ -190,9 +180,6 @@
             let status = '';
             if (thread.live) {
                 status = '<span class="chat-thread-status is-live"><span class="chat-thread-pulse" aria-hidden="true"></span>working</span>';
-            } else if (thread.working) {
-                status = '<span class="chat-thread-status is-live"><span class="chat-thread-pulse" aria-hidden="true"></span>'
-                    + thread.working + ' working</span>';
             } else if (!open && unreadCount) {
                 status = '<span class="chat-thread-status is-unread"><span class="chat-thread-dot" aria-hidden="true"></span>'
                     + unreadCount + ' new</span>';
@@ -208,27 +195,6 @@
                 + status
                 + '</button>'
                 + (showPreview ? '<div class="chat-thread-preview" title="' + esc(preview) + '">' + esc(preview) + '</div>' : '');
-        }
-
-        function subagentsHtml(list) {
-            return list.map((s) => {
-                const outcome = String(s.outcome || (s.generating ? 'running' : ''));
-                const who = s.displayName || s.label || s.handle || 'Sub-agent';
-                const finished = outcome === 'done' || outcome === 'failed' || outcome === 'cancelled' || outcome === 'lost';
-                const text = finished ? (s.detail || s.summary || '') : (s.summary || OUTCOME_LABEL[outcome] || '');
-                const avatar = h.avatarHtml ? h.avatarHtml(s.avatar || '') : '';
-                const link = s.handle && h.renderHandleLink ? h.renderHandleLink(s.handle) : esc(s.handle || '');
-                return '<div class="chat-thread-subagent is-' + esc(outcome || 'unknown') + '">'
-                    + '<span class="chat-thread-subagent-avatar" aria-hidden="true">' + avatar + '</span>'
-                    + '<div class="chat-thread-subagent-body">'
-                    + '<div class="chat-thread-subagent-head">'
-                    + '<span class="chat-thread-subagent-name">' + esc(who) + '</span>'
-                    + '<span class="chat-thread-subagent-outcome">' + esc(OUTCOME_LABEL[outcome] || outcome || '') + '</span>'
-                    + '<span class="chat-thread-subagent-link">' + link + '</span>'
-                    + '</div>'
-                    + (text ? '<div class="chat-thread-subagent-text">' + esc(text) + '</div>' : '')
-                    + '</div></div>';
-            }).join('');
         }
 
         /**
@@ -267,11 +233,8 @@
                 bar.className = 'chat-thread-bar';
                 bar.setAttribute('data-chat-find-skip', '');
             }
-            // Bar (+ sub-agent replies) stay last in the bubble, under its footer.
-            const after = bar.nextElementSibling;
-            if (!bar.parentNode || (after && !after.classList.contains('chat-thread-subagents'))) {
-                wrap.appendChild(bar);
-            }
+            // Keep the bar last in the bubble, under its footer.
+            if (bar.parentNode !== wrap || bar.nextElementSibling) wrap.appendChild(bar);
             const html = barHtml(thread, open, unreadCount, preview);
             if (bar.__cuttleThreadHtml !== html) {
                 bar.innerHTML = html;
@@ -282,23 +245,7 @@
             bar.classList.toggle('is-live', !!thread.live);
             bar.dataset.threadKey = thread.key;
 
-            let subs = wrap.querySelector(':scope > .chat-thread-subagents');
-            const wantSubs = open && thread.subagents.length;
-            if (!wantSubs) {
-                if (subs) subs.remove();
-                return;
-            }
-            if (!subs) {
-                subs = h.doc.createElement('div');
-                subs.className = 'chat-thread-subagents';
-                subs.setAttribute('role', 'list');
-            }
-            if (subs.previousElementSibling !== bar) bar.after(subs);
-            const sh = subagentsHtml(thread.subagents);
-            if (subs.__cuttleThreadHtml !== sh) {
-                subs.innerHTML = sh;
-                subs.__cuttleThreadHtml = sh;
-            }
+
         }
 
         function priorKeys(els) {

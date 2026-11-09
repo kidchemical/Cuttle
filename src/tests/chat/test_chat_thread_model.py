@@ -2,7 +2,7 @@
 
 Which rows fold under a turn's bubble: steers (by turn id, or the current
 turn for rows saved before steers carried one), later follow-ups of the
-same turn, finished sub-agent children; and what the bar says.
+same turn; and what the bar says.
 """
 
 from __future__ import annotations
@@ -62,6 +62,7 @@ out.subagents = shape(M.group([u({}), a({ turnId: 'T1', messageId: 11, subagents
   { handle: 'CH-000202', label: 'Judge', outcome: 'running', generating: true },
   { handle: 'CH-000203', label: 'Critic', outcome: 'failed', finishedAt: '2026-11-08T09:00:00Z' },
 ] })]));
+out.mixed = shape(M.group([u({}), a({ turnId: 'T1', messageId: 11, subagents: [{ handle: 'CH-000201', outcome: 'done' }] }), u({ steered: true, turnId: 'T1' })]));
 out.onlyRunning = shape(M.group([u({}), a({ turnId: 'T1', subagents: [{ handle: 'CH-000202', outcome: 'running' }] })]));
 out.preview = [
   M.previewText('/claude   also check\n the token refresh'),
@@ -116,14 +117,12 @@ def test_live_bubble_is_the_root_and_live_followups_are_replies(out):
 
 
 @node_only
-def test_finished_subagents_are_replies_running_ones_only_working(out):
-    t = out["subagents"]["threads"][0]
-    assert t["counts"] == {"steer": 0, "followup": 0, "subagent": 2}
-    assert t["working"] == 1 and t["live"] is False
-    assert t["summary"]["detail"] == "2 sub-agents"
-    assert t["latest"]["kind"] == "subagent"
-    assert t["unread"] == ["s:CH-000201:done", "s:CH-000203:failed"]
+def test_fleet_cards_do_not_create_or_change_reply_threads(out):
+    assert out["subagents"]["threads"] == []
     assert out["onlyRunning"]["threads"] == []
+    t = out["mixed"]["threads"][0]
+    assert t["summary"] == {"total": 1, "label": "1 reply", "detail": "1 steer"}
+    assert t["unread"] == []
 
 
 @node_only

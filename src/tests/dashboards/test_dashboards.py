@@ -72,6 +72,7 @@ def _fetcher(url: str):
 def test_catalog_includes_model_benchmarks():
     ids = {d["id"] for d in catalog.list_dashboards()}
     assert "model-benchmarks" in ids
+    assert {"local-models", "local-ai-hardware", "local-ai-builds"} <= ids
     assert catalog.get_dashboard("nope") is None
 
 
@@ -220,7 +221,9 @@ def test_guest_sees_only_public_dashboards(tmp_path: Path, monkeypatch, owner_se
     client.set_cookie("session_token", db.create_auth_session(guest_id))
 
     hub = client.get("/api/dashboards").get_json()
-    assert [d["id"] for d in hub["dashboards"]] == ["model-benchmarks"]
+    assert [d["id"] for d in hub["dashboards"]] == [
+        "model-benchmarks", "local-models", "local-ai-hardware", "local-ai-builds",
+    ]
     body = client.get("/api/dashboards/model-benchmarks?refresh=1").get_json()
     assert body["rows"][0]["model"] == "gpt-6-astra"
     assert forced == [False]  # guests cannot force a refetch

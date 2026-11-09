@@ -9,6 +9,8 @@ Global page for tracked landscapes (rail: **Dashboards**). First live tile is **
 
 Model Benchmarks supports DeepSWE, SWE-bench Verified, and Aider Polyglot. The Aggregate view groups identical model names and averages each model's best listed score per available benchmark with equal weight. Its chart shows benchmark count, mean score, and cross-benchmark score spread. This is a rough summary across different tasks and harnesses, not a controlled ranking. Cost and duration are only populated where a source reports them.
 
+**Open-weight Coding Models**, **Local AI Hardware**, and **Local AI Builds** are public, curated research snapshots (`?d=local-models`, `?d=local-ai-hardware`, and `?d=local-ai-builds`). They share a sortable, filterable 3D trade-off view; **Overall rank** and **Overall score** are selectable axes. Each response reports its catalog schema/version and research timestamp. Scores are explicit weighted decision inputs—not a claim that unlike benchmark suites, power figures or token/s measurements are directly comparable. Build rows link to a seller or manufacturer configuration and expose every advertised component; when a seller withholds the exact discrete SKU, that fact is shown and the part links back to the configuration for confirmation at checkout.
+
 Each source has its own score definition: DeepSWE pass@1, SWE-bench Verified resolved percentage, and Aider Polyglot pass@1. Filters include provider, reasoning effort, and harness. **NEW** marks DeepSWE configs first seen by Cuttle in the last 48 hours.
 
 **My Cuttle Performance** (`?d=cuttle-performance`) uses the same 3D widget, one point per agent / model / reasoning effort, built from *your* turns in `<home>/db/router_outcomes.db`:
@@ -81,6 +83,9 @@ subscription charges or historical invoices.
 |---|---|---|
 | GET | `/api/dashboards` | Catalog |
 | GET | `/api/dashboards/model-benchmarks` | `?source=deepswe\|swebench\|aider\|aggregate`; `?refresh=1` bypasses source caches |
+| GET | `/api/dashboards/local-models` | Curated open-weight coding / agentic model catalog |
+| GET | `/api/dashboards/local-ai-hardware` | Curated GPU, accelerator and unified-memory comparison catalog |
+| GET | `/api/dashboards/local-ai-builds` | Curated live-listing build catalog with linked advertised components |
 | GET | `/api/dashboards/cuttle-performance` | Local outcomes. `?source=all\|pinned\|router`, `?days=7\|30\|90\|0`; `?label=1` / `?refresh=1` runs a Jev label pass |
 | GET | `/api/dashboards/cuttle-usage` | `?range=7d\|14d\|30d\|90d\|1y\|all` or `?start=&end=` (YYYY-MM-DD); `?group=model\|harness\|none`, `?interval=auto\|day\|week\|month`, `?source=all\|pinned\|router`, `?tz=<minutes>` |
 | GET | `/api/dashboards/cuttle-context` | `?range=7d\|30d\|90d`, `?tz=<minutes>` |

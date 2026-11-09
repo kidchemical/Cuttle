@@ -194,7 +194,7 @@ def test_reveal_opens_a_closed_thread_and_flag_off_restores_flat_rows(browser, s
         page.close()
 
 
-def test_finished_subagents_are_replies_under_the_parent_turn(browser, static_server):
+def test_fleet_cards_do_not_create_reply_threads(browser, static_server):
     page, errors = _page(browser, static_server)
     try:
         page.evaluate('''() => {
@@ -205,16 +205,8 @@ def test_finished_subagents_are_replies_under_the_parent_turn(browser, static_se
             ] }));
             boot();
         }''')
-        bar = page.locator('.message[data-message-id="31"] .chat-thread-bar')
-        expect(bar.locator('.chat-thread-label')).to_have_text('1 reply')
-        expect(bar.locator('.chat-thread-status')).to_have_text('1 working')
+        expect(page.locator('.chat-thread-bar')).to_have_count(0)
         expect(page.locator('.chat-thread-subagents')).to_have_count(0)
-        bar.locator('.chat-thread-toggle').click()
-        sub = page.locator('.chat-thread-subagent')
-        expect(sub).to_have_count(1)
-        expect(sub.locator('.chat-thread-subagent-name')).to_have_text('Scout')
-        expect(sub.locator('.chat-thread-subagent-text')).to_have_text('Found two bugs in auth.')
-        expect(sub.locator('a.chat-handle-link')).to_have_attribute('data-chat-handle', 'CH-000501')
         assert not errors
     finally:
         page.close()
