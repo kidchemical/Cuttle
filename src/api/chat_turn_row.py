@@ -31,6 +31,7 @@ keep the old insert-at-save behaviour: ``open_row`` returns None.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import uuid
@@ -400,6 +401,24 @@ def _run(query_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _owned_elsewhere(run: Optional[Dict[str, Any]]) -> bool:
+    """Whether a running run's capture process is another live process.
+
+    ``_open`` only knows this process's turns; a turn run by ``api.subagents
+    spawn`` or the daemon is not an orphan just because Flask reads history."""
+    owner = ((run or {}).get('metadata') or {}).get('capture_owner')
+    if not isinstance(owner, dict) or not owner.get('pid'):
+        return False
+    try:
+        if int(owner['pid']) == os.getpid():
+            return False
+        from api.agent_events.lifecycle import owner_alive
+
+        return owner_alive(owner)
+    except Exception:
+        return False
+
+
 def heal_orphans(db: Any, session_id: Any, *, store: Any = None) -> list:
     """Settle in-progress rows whose turn is not open in this process.
 
@@ -425,6 +444,8 @@ def heal_orphans(db: Any, session_id: Any, *, store: Any = None) -> list:
             except Exception:
                 run = None
         status = (run or {}).get('status') or 'interrupted'
+        if status == 'running' and _owned_elsewhere(run):
+            continue  # a live turn in another process (sub-agent CLI, daemon) finalizes its own row
         if status in ('running', 'ok'):
             status = 'interrupted'
         from api.chat_turn_recovery import interrupted_turn_card

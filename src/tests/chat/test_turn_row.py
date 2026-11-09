@@ -309,6 +309,34 @@ def test_orphan_row_from_a_dead_turn_heals_on_history_read(authed):
     assert db.in_progress_messages(sid) == []
 
 
+def test_history_read_never_heals_a_turn_running_in_another_process(authed, monkeypatch):
+    """A sub-agent turn runs in the `api.subagents spawn` CLI, not Flask.
+
+    Flask's open set does not know it, so a history read stamped the live
+    turn "interrupted" mid-run (CH-002266-2)."""
+    import subprocess
+    import sys
+    import psutil
+    from api import chat_turn_row
+
+    client, db, owner = authed
+    sid = db.create_chat_session(owner)
+    row = chat_turn_row.open_row(db, sid, turn=1)
+    chat_turn_row.reset_for_tests()  # the turn is not open in this process
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        run = {"status": "running", "metadata": {"capture_owner": {
+            "pid": other.pid, "started_at": psutil.Process(other.pid).create_time()}}}
+        monkeypatch.setattr(chat_turn_row, "_run", lambda qid: run)
+        assert chat_turn_row.heal_orphans(db, sid) == []
+        assert db.in_progress_messages(sid)
+    finally:
+        other.kill()
+        other.wait()
+    # Once that process is gone the row is a real orphan and heals.
+    assert chat_turn_row.heal_orphans(db, sid) == [row["message_id"]]
+
+
 def test_history_read_during_the_reply_save_never_stamps_the_interrupted_card(authed, monkeypatch):
     """A poll landing between finalize's start and its commit healed the live row.
 
