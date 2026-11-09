@@ -1016,9 +1016,14 @@
             // Exclusive sticky agent: only one agent badge at a time (Cursor vs Muse etc.)
             const _stickyMatch = S.SLASH_COMMANDS.find((s) => s.prefix === cmd.prefix && s.stickySession);
             if (_stickyMatch) {
+                const incomingAgent = S.composerChipAgentId({ prefix: cmd.prefix, category: cmd.category });
                 state.chips = state.chips.filter((c) => {
                     const m = S.SLASH_COMMANDS.find((s) => s.prefix === c.prefix);
                     if (m && m.stickySession) return false;
+                    // A badge restored from history ("/claude", no trailing space) is
+                    // not the registry entry but is still another agent's badge.
+                    const chipAgent = S.composerChipAgentId(c);
+                    if (chipAgent && incomingAgent && chipAgent !== incomingAgent) return false;
                     return !isOrphanedCompanionChip(c, cmd);
                 });
             }

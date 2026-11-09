@@ -516,6 +516,19 @@ def begin_external_round(db, child_id: str) -> None:
         conn.close()
 
 
+def running_external_children(db) -> List[ChildRecord]:
+    """Children in an external round (``begin_external_round``) still marked running."""
+    conn = db._get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM subagent_children WHERE status = ? AND live_turn_id = ?",
+            (STATUS_RUNNING, EXTERNAL_ROUND),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [_row_child(r) for r in rows]
+
+
 def reconcile_orphan_children(db) -> List[str]:
     """Fail non-terminal children whose owning process is gone.
 

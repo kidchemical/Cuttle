@@ -487,6 +487,20 @@ _OPERATION_VERBS = ('operations', 'operation', 'cancel-operation', 'pause-operat
 _CHAT_OP_VERBS = ('send', 'status', 'snapshot', 'stop', 'supervise', 'context', 'compact') + _OPERATION_VERBS
 
 
+FOCUS_NOTICE = ('Note: --instructions sets the Focus note, the user’s own free text in the Supervise dialog. '
+                'Settings are flags (--every, --agent/--model/--effort, --require-branch/--forbid-branch, '
+                '--involve, --nudge, --checkpoints, --model-tiers) and always win over Focus; set Focus only '
+                'with job-specific notes the user asked for.')
+
+
+def _focus_notice(args, payload) -> None:
+    """Steer agents away from Focus as a settings channel (stderr; never blocks)."""
+    if getattr(args, 'instructions', None) is None:
+        return
+    lines = [FOCUS_NOTICE] + [f'- {w}' for w in payload.get('warnings') or []]
+    print('\n'.join(lines), file=sys.stderr)
+
+
 def cmd_operation(args: argparse.Namespace) -> int:
     from api.chat_ops import service, store
     db = _open_db(args.db)
@@ -507,13 +521,15 @@ def cmd_operation(args: argparse.Namespace) -> int:
                     'required_path': args.require_path, 'forbidden_branches': args.forbid_branch,
                     'model_tiers': json.loads(args.model_tiers) if args.model_tiers is not None else None,
                     'checkpoints': json.loads(args.checkpoints) if args.checkpoints is not None else None,
+                    'involve_user': args.involve, 'nudge': args.nudge,
                 }.items() if v is not None}
                 if args.tasks is not None:
                     changes['task_ids'] = [t for t in args.tasks.split(',') if t.strip()]
                 if args.all_tasks:
                     changes['task_ids'] = None
                 result = service.update_supervision(args.id, int(acting['user_id']), changes, db=db)
-                op, payload_extra = result['operation'], {'updated': result['updated']}
+                op, payload_extra = result['operation'], {'updated': result['updated'],
+                                                          'warnings': result.get('warnings') or []}
             elif verb == 'cancel-operation':
                 op = store.cancel(args.id, actor)
             elif verb in ('pause-operation', 'resume-operation'):
@@ -545,7 +561,10 @@ def cmd_operation(args: argparse.Namespace) -> int:
                 forbidden_branches=args.forbid_branch, model_tiers=json.loads(args.model_tiers),
                 agent=args.agent, forbidden_paths=args.forbid_paths,
                 on_violation=args.on_violation,
-                checkpoints=json.loads(args.checkpoints) if args.checkpoints else None, **kwargs)
+                checkpoints=json.loads(args.checkpoints) if args.checkpoints else None,
+                involve_user=args.involve, nudge=args.nudge, **kwargs)
+    if verb in ('supervise', 'edit-operation'):
+        _focus_notice(args, payload)
     _emit_text_once(payload, as_json=args.json,
                     text_fn=lambda p: json.dumps(p, indent=2, ensure_ascii=False, default=str))
     return 0 if payload.get('ok', True) else 1
@@ -726,7 +745,12 @@ def build_parser() -> argparse.ArgumentParser:
             op.add_argument('--agent', default=None, help='Supervisor harness (re-pins the supervisor chat)')
             op.add_argument('--model', default=None, help="Supervisor model ('' = CLI default)")
             op.add_argument('--effort', default=None, help="Supervisor effort ('' = CLI default)")
-            op.add_argument('--instructions', default=None)
+            op.add_argument('--instructions', default=None,
+                            help="Focus: the user's job-specific notes ('' clears). Settings have their own flags")
+            op.add_argument('--involve', choices=('never', 'blocked', 'questions'), default=None,
+                            help='When the supervisor involves the user')
+            op.add_argument('--nudge', choices=('agent', 'template'), default=None,
+                            help='template: the host sends an idle chat its next open Tasks item (no supervisor turn)')
             op.add_argument('--require-branch', default=None)
             op.add_argument('--require-path', default=None)
             op.add_argument('--forbid-branch', action='append', default=None,
@@ -738,7 +762,12 @@ def build_parser() -> argparse.ArgumentParser:
             op.add_argument('--all-tasks', action='store_true', help='Follow every Tasks list the chat sees')
         if verb == 'supervise':
             op.add_argument('--every', type=int, default=900, help='Seconds between checks, minimum 60')
-            op.add_argument('--instructions', required=True)
+            op.add_argument('--instructions', default=None,
+                            help="Optional Focus: the user's job-specific notes. Settings have their own flags")
+            op.add_argument('--involve', choices=('never', 'blocked', 'questions'), default='blocked',
+                            help='When the supervisor involves the user (default: blocked = logins/payments/irreversible)')
+            op.add_argument('--nudge', choices=('agent', 'template'), default='agent',
+                            help='template: the host sends an idle chat its next open Tasks item (no supervisor turn)')
             op.add_argument('--require-branch', default='')
             op.add_argument('--require-path', default='')
             op.add_argument('--forbid-branch', action='append', default=[])

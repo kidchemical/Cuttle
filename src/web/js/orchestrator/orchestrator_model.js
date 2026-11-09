@@ -256,7 +256,7 @@
             schema: 2, id: slug(id) || 'new-playbook', name: 'New playbook', description: '',
             tiers: [{ id: 'worker', label: 'Worker', role: 'worker', members: [], use_for: '' }],
             limits: { solo_attempts: 2, solo_minutes: 40, child_retries: 1, setup_retries: 2 },
-            supervisor: { every_sec: 900, agent: '', instructions: '', require_branch: '', require_path: '', forbid_branches: [] },
+            supervisor: { every_sec: 900, agent: '', instructions: '', involve_user: 'blocked', nudge: 'agent', require_branch: '', require_path: '', forbid_branches: [] },
             notes: '',
         };
     }

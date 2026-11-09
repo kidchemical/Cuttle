@@ -189,7 +189,7 @@
      * Compose the outbound message from resolved composer chips and body.
      * `parts` = { body, chips } (the page resolves the active composer's
      * chips, with welcome fallback, and owns slashCtx/DOM); `deps` =
-     * { isControl(text) → bool }. A trailing control chip (or a typed
+     * { isControl(text) → bool, agentId(chip) → agent id | '' }. A trailing control chip (or a typed
      * control body) outranks stacked sticky agent chips. Returns the body
      * unchanged when no chips apply. Mirrors the page's original shape.
      */
@@ -205,6 +205,16 @@
             chips = chips.slice(controlIdx);
         } else if (isControl && isControl(body)) {
             return body;
+        }
+        // One agent per message: stacked badges of different agents (a restored
+        // /claude badge plus a picked /codex) used to send "/claude/codex …",
+        // which no agent matches. The last agent picked wins, with its own
+        // model/effort chips; non-agent chips stay.
+        const agentOf = typeof d.agentId === 'function' ? d.agentId : null;
+        if (agentOf) {
+            const agents = chips.map((c) => agentOf(c) || '');
+            const winner = agents.filter(Boolean).pop();
+            if (winner) chips = chips.filter((c, i) => !agents[i] || agents[i] === winner);
         }
         const prefixPart = chips.map((c) => c.prefix).join('');
         if (!body) {

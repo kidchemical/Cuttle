@@ -96,6 +96,19 @@ PYTHONPATH=src .venv/bin/python -m api.orchestrator supervise-command CH-<orches
 Run the returned `command` from the supervisor chat. It omits `--agent` unless
 the playbook pins one, so check-ins follow that chat's own agent.
 
+### Change the bound orchestrator chat's agent
+
+The supervision schedule's `--agent`, `--model`, and `--effort` settings pin
+the **supervisor chat**. They do not change the bound orchestrator's active
+agent. To change the orchestrator chat's harness, model, or effort, use the
+target-chat procedure in [chat-history.md](../../../docs/chat-history.md#change-the-target-chats-agent-model-or-effort):
+check `status`, send the target harness's model and effort slash commands to
+the orchestrator with `chat_cli send`, then verify the resulting agent chip or
+status before reporting success. If it is busy, queue the commands in order and
+let its current turn finish; do not stop it to apply the new setting. Send a
+continuation in that harness only if the orchestrator needs a prompt to resume.
+Never send these instructions to its child chats.
+
 **Event wakes.** A playbook's supervisor settings carry `checkpoints` (Apps →
 Orchestrator → Supervisor: Tasks milestones, test runs, repeated failures,
 watched paths, each with its own response — wake, stop the chat, or a reviewer
@@ -109,8 +122,8 @@ running schedules. Default: milestones + repeated failures (3).
 A bound orchestrator gets the edited brief at its **next turn** (resume delta
 "Orchestrator playbook updated"); a turn already running keeps the old one.
 Saving the playbook also updates each supervision schedule on a bound chat:
-fields still matching the old playbook (interval, instructions, guards, model
-guidance, wake checkpoints; a field never set counts as matching an empty one)
+fields still matching the old playbook (interval, Focus, involve/nudge
+policy, guards, model guidance, wake checkpoints; a field never set counts as matching an empty one)
 take the new values, fields set on the schedule itself are kept, and the
 edit costs no turn of its own: the supervisor chat shows a timeline notice
 ("Supervision of CH-… changed"), and the change is folded into the next

@@ -296,7 +296,7 @@ def submit_agent_turn(
             io.persist_user()
             body = _run_router()
             if body is None:
-                body = _fallback()
+                body = _fallback(message)
             elif isinstance(body, dict):
                 _after(body)
             return AgentTurnResult(body=body, status=200, selection=sel)
@@ -308,17 +308,17 @@ def submit_agent_turn(
             after_run=_after,
         )
         if body is None:
-            body = _fallback()
+            body = _fallback(message)
         return AgentTurnResult(body=body, status=status, selection=sel)
 
     if sel.kind == "pipeline":
-        def _run_fallback():
-            return _fallback()
+        def _run_fallback(message):
+            return _fallback(message)
 
         if not claim:
             io.persist_user()
             return AgentTurnResult(
-                body=_run_fallback(), status=200, selection=sel
+                body=_run_fallback(message), status=200, selection=sel
             )
         body, status = _run_lane(
             prepared.session_id,
@@ -329,7 +329,7 @@ def submit_agent_turn(
         )
         return AgentTurnResult(body=body, status=status, selection=sel)
 
-    return AgentTurnResult(body=_fallback(), status=200, selection=sel)
+    return AgentTurnResult(body=_fallback(message), status=200, selection=sel)
 
 
 def submit_agent_stream_turn(

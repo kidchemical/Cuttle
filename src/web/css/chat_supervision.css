@@ -176,6 +176,22 @@ body.light-mode .chat-supervision-paused { color: #8a5200; }
 .chat-supervision-dialog :is(input, textarea):focus-visible { outline: 2px solid var(--popup-accent); outline-offset: 2px; }
 .chat-supervision-dialog .cuttle-combo { margin-top: 6px; }
 .chat-supervision-dialog .cuttle-combo-trigger { min-height: 44px; }
+.chat-supervision-dialog label.chat-supervision-task[hidden] { display: none; }
+.chat-supervision-dialog .chat-supervision-task-search { margin: 4px 0 6px; }
+.chat-supervision-task-more:empty { display: none; }
+.chat-supervision-branch-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chat-supervision-branch-chips:empty { display: none; }
+.chat-supervision-branch-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px;
+    border-radius: var(--radius-pill, 999px); border: 1px solid var(--popup-border); background: var(--popup-field);
+    color: var(--popup-text); font: 13px/1.6 var(--font-mono, monospace); }
+.chat-supervision-branch-chip button { border: 0; background: none; color: var(--popup-muted); cursor: pointer;
+    min-width: 24px; min-height: 24px; border-radius: 50%; font-size: 15px; line-height: 1; }
+.chat-supervision-branch-chip button:hover { color: var(--popup-text); background: var(--popup-border); }
+.chat-supervision-focus { margin-top: 12px; }
+.chat-supervision-focus-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--popup-muted); }
+.chat-supervision-focus-edit { border: 1px solid var(--popup-border); background: none; color: var(--popup-text);
+    min-width: 32px; min-height: 32px; border-radius: var(--radius-md, 10px); cursor: pointer; }
+.chat-supervision-dialog textarea[readonly] { opacity: 0.75; cursor: default; }
 .chat-supervision-advanced { margin-top: 20px; }
 .chat-supervision-advanced summary { color: var(--popup-muted); cursor: pointer; padding: 8px 0; }
 .chat-supervision-dialog-footer { padding: 12px 24px 20px; border-top: 1px solid var(--popup-border); }

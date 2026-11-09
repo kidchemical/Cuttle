@@ -83,7 +83,7 @@ const CHIPS = {chips_json};
 function composeMessageWithSlashChip(textarea) {{
     return CuttleChatComposer.composeMessageWithSlashChip(
         {{ body: String((textarea && textarea.value) || '').trim(), chips: CHIPS }},
-        {{ isControl: CuttleChatSlash.isNativeControlCommand }}
+        {{ isControl: CuttleChatSlash.isNativeControlCommand, agentId: CuttleChatSlash.composerChipAgentId }}
     );
 }}
 function isSendableComposerMessage(message, attachments) {{
@@ -368,3 +368,34 @@ def test_python_sticky_prefix_already_accepts_bare_cursor():
     assert sticky_prefix_from_text("/cursor") == "/cursor "
     assert sticky_prefix_from_text("/cursor ") == "/cursor "
     assert sticky_prefix_from_text("/cursor fix it") == "/cursor "
+
+
+# --------------------------------------------------------------------------
+# Stacked agent badges — "/claude/codex go" (CH-001821-431)
+# --------------------------------------------------------------------------
+
+RESTORED_CLAUDE_CHIP = {"prefix": "/claude", "label": "Claude Code", "category": "claude"}
+
+
+def test_stacked_agent_badges_send_only_the_last_agent():
+    """A badge restored from history plus a picked /codex sent "/claude/codex go",
+    which matched no agent and got the "No graph is running" reply."""
+    res = _run_js(
+        """
+process.stdout.write(JSON.stringify({ composed: composeMessageWithSlashChip({ value: 'go' }) }));
+""",
+        chips=[RESTORED_CLAUDE_CHIP, CODEX_CHIP],
+    )
+    assert res["composed"] == "/codex go"
+
+
+def test_agent_companion_chips_follow_the_winning_agent():
+    claude_model = {"prefix": "/claude model claude-opus-5-5 ", "label": "Opus 5.5", "category": "claude-model"}
+    codex_effort = {"prefix": "/codex effort high ", "label": "high", "category": "codex-effort"}
+    res = _run_js(
+        """
+process.stdout.write(JSON.stringify({ composed: composeMessageWithSlashChip({ value: 'go' }) }));
+""",
+        chips=[RESTORED_CLAUDE_CHIP, claude_model, CODEX_CHIP, codex_effort],
+    )
+    assert res["composed"] == "/codex /codex effort high go"

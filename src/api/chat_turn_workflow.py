@@ -282,7 +282,7 @@ def finalize_stream_result(
     return bool(not superseded and kept)
 
 
-def pipeline_fallback_result() -> Dict[str, Any]:
+def pipeline_fallback_result(message: str = "") -> Dict[str, Any]:
     """Normalized no-LLM compatibility outcome (P5-F).
 
     The pipeline is not a graph engine anymore (visual graphs retired):
@@ -291,7 +291,25 @@ def pipeline_fallback_result() -> Dict[str, Any]:
     the coordinator arms return it instead of None so no surface
     reimplements the fallback. Moved verbatim from the route's
     ``_no_pipeline_chat_result``.
+
+    A message that starts with a slash token no agent or command matched
+    (``/claude/codex go`` from two stacked badges) is a failed turn that
+    names the token — not a success reply about graphs, which read like an
+    answer and hid the mistake (CH-001821-432).
     """
+    token = (str(message or "").strip().split() or [""])[0]
+    if token.startswith("/") and len(token) > 1:
+        shown = token if len(token) <= 60 else token[:57] + "…"
+        return {
+            'success': False,
+            'type': 'unknown_command',
+            'error': 'unknown_command',
+            'response': (
+                f'Nothing ran: `{shown}` is not an agent or command. '
+                'Pick one agent (for example `/codex …`), or remove the agent badge '
+                'and send plain text for the router.'
+            ),
+        }
     return {
         'success': True,
         'type': 'no_pipeline',

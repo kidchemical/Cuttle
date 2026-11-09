@@ -91,7 +91,23 @@
                             <span class="orch-label">Forbidden branches</span>
                             <div class="orch-tags-input" id="orchForbid"><input placeholder="Add a branch and press Enter" aria-label="Add forbidden branch" spellcheck="false"></div>
                         </div>
-                        <label class="orch-wide">Instructions<textarea name="instructions" rows="3" maxlength="2000"></textarea></label>
+                        <label>Involve the user
+                            <select name="involve_user">
+                                <option value="blocked">Only for logins, payments, irreversible steps</option>
+                                <option value="never">Never</option>
+                                <option value="questions">For question cards it cannot answer</option>
+                            </select></label>
+                        <label>Nudge an idle orchestrator
+                            <select name="nudge">
+                                <option value="agent">Supervisor writes the next step</option>
+                                <option value="template">Host sends the next Tasks item (no supervisor turn)</option>
+                            </select></label>
+                        <details class="orch-wide orch-advanced">
+                            <summary>Advanced: Focus notes</summary>
+                            <label>Focus (optional)<textarea name="instructions" rows="3" maxlength="2000"
+                                placeholder="Job-specific notes only, e.g. “Enforce the org chart.”"></textarea></label>
+                            <p class="orch-help">The supervisor's job and every setting above reach it from the host and win over Focus. Don't restate branches, models, intervals, or when to involve you here.</p>
+                        </details>
                         <fieldset class="orch-wide orch-checkpoints" id="orchCheckpoints">
                             <legend class="orch-label">Also wake the supervisor when…</legend>
                             <div id="orchCheckpointRows"></div>

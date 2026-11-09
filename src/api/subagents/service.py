@@ -117,6 +117,10 @@ def _reconcile(db, batch: Optional[BatchRecord] = None) -> None:
         orphans = store.reconcile_orphan_children(db)
     except Exception:
         return
+    try:
+        close_stale_external_rounds(db)
+    except Exception:
+        pass
     # A batch whose last child just died must close too, or it reads as running.
     for batch_id in {c.batch_id for c in map(lambda cid: store.get_child(db, cid), orphans) if c}:
         try:
@@ -1075,15 +1079,72 @@ def on_child_turns_ended(session_ids, *, db=None) -> List[str]:
                 continue  # a newer turn of the child is already running
         except Exception:
             pass
-        text = store.latest_assistant_text(db, sid)
-        from api.chat_attention import is_error
+        _close_external_round(db, child)
+        closed.append(child.id)
+    return closed
 
-        failed = not text.strip() or is_error(text, {})
-        store.update_child(db, child.id, status=STATUS_FAILED if failed else STATUS_DONE,
-                           result=text, error="No reply" if not text.strip() else "", finished=True)
-        batch = store.get_batch(db, child.batch_id)
-        if batch:
-            _finalize_if_complete(db, batch)
+
+def _close_external_round(db, child: ChildRecord) -> None:
+    """End an external round with the child's newest reply as its outcome."""
+    sid = int(child.session_id)
+    text = store.latest_assistant_text(db, sid)
+    from api.chat_attention import is_error
+
+    failed = not text.strip() or is_error(text, {})
+    store.update_child(db, child.id, status=STATUS_FAILED if failed else STATUS_DONE,
+                       result=text, error="No reply" if not text.strip() else "", finished=True)
+    batch = store.get_batch(db, child.batch_id)
+    if batch:
+        _finalize_if_complete(db, batch)
+
+
+# An external round is marked running when ``chat_cli send`` is called, before
+# the message is delivered. The grace covers the gap until its turn starts.
+EXTERNAL_ROUND_GRACE_SEC = 120
+
+
+def _utc_epoch(stamp: str) -> Optional[float]:
+    import calendar
+
+    try:
+        return float(calendar.timegm(time.strptime(stamp[:19], "%Y-%m-%d %H:%M:%S")))
+    except (TypeError, ValueError):
+        return None
+
+
+def close_stale_external_rounds(db, *, now: Optional[float] = None) -> List[str]:
+    """Close external rounds that never got (or no longer have) a turn behind them.
+
+    ``on_child_turns_ended`` closes a round when the child's turn ends. A send
+    that is cancelled or fails before delivery starts no turn, so that close
+    never comes and the card says "running" forever. A round is stale when the
+    child chat is not busy, no send to it is still waiting in the chat-ops
+    outbox, and it started more than the grace period ago."""
+    now = time.time() if now is None else now
+    closed: List[str] = []
+    for child in store.running_external_children(db):
+        started = _utc_epoch(child.started_at)
+        if started is not None and now - started < EXTERNAL_ROUND_GRACE_SEC:
+            continue
+        sid = int(child.session_id)
+        try:
+            from api import chat_delivery
+
+            if chat_delivery.is_busy(sid):
+                continue
+        except Exception:
+            continue
+        try:
+            from api.chat_ops import store as ops_store
+
+            waiting = [o for o in ops_store.involving(
+                sid, states=("pending", "dispatching", "verifying", "steering"))
+                if str(o.get("target")) == str(sid) and o.get("kind") in ("send", "notice")]
+        except Exception:
+            continue  # unknown outbox state: leave the round alone
+        if waiting:
+            continue
+        _close_external_round(db, child)
         closed.append(child.id)
     return closed
 
@@ -1155,7 +1216,7 @@ def public_parent_subagents(session_id: Any, *, db=None) -> List[Dict[str, Any]]
         # so a dead-owner run stops bleeding into later turns.
         live = store.list_live_for_parent(db, int(sid))
         if any(
-            c.status not in TERMINAL_CHILD and c.owner_pid
+            c.status not in TERMINAL_CHILD and (c.owner_pid or c.live_turn_id == store.EXTERNAL_ROUND)
             for b in live for c in b.children
         ):
             _reconcile(db)
@@ -1219,7 +1280,8 @@ def hydrate_parent_fleet(db, messages: List[Dict[str, Any]]) -> None:
             cid = str((entry or {}).get("id") or "") if isinstance(entry, dict) else ""
             if cid and cid not in children:
                 children[cid] = store.get_child(db, cid)
-    if any(c and c.status not in TERMINAL_CHILD and c.owner_pid for c in children.values()):
+    if any(c and c.status not in TERMINAL_CHILD and (c.owner_pid or c.live_turn_id == store.EXTERNAL_ROUND)
+           for c in children.values()):
         _reconcile(db)
         children = {cid: store.get_child(db, cid) for cid in children}
     for msg, meta in targets:
@@ -1248,7 +1310,8 @@ def child_live_status(session_id: Any, *, db=None) -> Optional[Dict[str, Any]]:
     # reported as generating, or the pane spins forever with no agent behind it.
     # Gated on an actual outstanding child so ordinary live-status polls for
     # non-sub-agent chats stay a single indexed read.
-    if child.status in (STATUS_PENDING, STATUS_RUNNING) and child.owner_pid:
+    if child.status in (STATUS_PENDING, STATUS_RUNNING) and (
+            child.owner_pid or child.live_turn_id == store.EXTERNAL_ROUND):
         _reconcile(db)
         child = store.get_child_by_session(db, int(sid)) or child
     generating = child.status in ("pending", STATUS_RUNNING)

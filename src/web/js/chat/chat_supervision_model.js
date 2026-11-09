@@ -21,10 +21,20 @@
         { id: 'tomorrow', label: 'Until tomorrow', tomorrow: true },
         { id: 'indefinite', label: 'Until I resume', indefinite: true },
     ];
-    const DEFAULT_FORBIDDEN = 'main, master';
-    const DEFAULT_INSTRUCTIONS = 'Keep this chat working through its Tasks list until every item is done. '
-        + 'When it stalls, waits on a finished job, or stops after a failure, send it a concrete next step. '
-        + 'Never merge or push to protected branches. The user is not involved.';
+    const DEFAULT_FORBIDDEN = ['main', 'master'];
+    // The supervisor's job and settings come from the host (api.chat_ops.brief);
+    // Focus is optional free text for job-specific notes, under Advanced.
+    const INVOLVE_CHOICES = [
+        { id: 'blocked', label: 'Only when blocked' },
+        { id: 'never', label: 'Never' },
+        { id: 'questions', label: 'For questions it cannot answer' },
+    ];
+    const NUDGE_CHOICES = [
+        { id: 'agent', label: 'Supervisor writes the next step' },
+        { id: 'template', label: 'Send the next Tasks item (no supervisor turn)' },
+    ];
+    // Tasks lists shown before searching; the rest are one query away.
+    const TASKS_SHOWN = 3;
 
     function fmtInterval(seconds) {
         const s = Math.max(0, Math.round(Number(seconds) || 0));
@@ -156,6 +166,7 @@
         violation: 'rule broken, woke supervisor',
         error: 'check failed',
         resumed: 'timed pause expired, resumed',
+        nudged: 'sent the next Tasks item (no supervisor turn)',
         paused_alert: 'paused too long, user notified',
     };
 
@@ -253,7 +264,30 @@
     }
 
     function splitList(raw) {
-        return String(raw || '').split(',').map((s) => s.trim()).filter(Boolean);
+        const parts = Array.isArray(raw) ? raw : String(raw || '').split(',');
+        return parts.map((s) => String(s).trim()).filter((s, i, all) => s && all.indexOf(s) === i);
+    }
+
+    /**
+     * Which Tasks lists the picker shows: with no query, the first ``limit``
+     * (the chat's own come first); with a query, every title match. Hidden
+     * rows stay in the form, so ``hiddenSelected`` lists are still followed.
+     */
+    function taskPickerView(tasks, query, limit) {
+        const all = Array.isArray(tasks) ? tasks : [];
+        const q = String(query || '').trim().toLowerCase();
+        const n = Number(limit) > 0 ? Number(limit) : TASKS_SHOWN;
+        const shown = q
+            ? all.filter((t) => String(t.title || t.id).toLowerCase().indexOf(q) >= 0)
+            : all.slice(0, n);
+        const hiddenRows = all.filter((t) => shown.indexOf(t) < 0);
+        return { ids: shown.map((t) => t.id), hidden: hiddenRows.length,
+            hiddenSelected: hiddenRows.filter((t) => t.selected).length, searchable: all.length > n };
+    }
+
+    /** Branch picker options: the repo's branches, plus stored names it no longer has. */
+    function branchOptions(branches, keep) {
+        return splitList([].concat(Array.isArray(branches) ? branches : [], splitList(keep)));
     }
 
     /** Dialog prefill from /api/chat-ops/sessions/<id>/defaults. */
@@ -320,10 +354,14 @@
         const base = {
             target: d.handle || '',
             every: 900,
-            instructions: DEFAULT_INSTRUCTIONS,
+            instructions: '',
+            involveUser: 'blocked',
+            nudge: 'agent',
+            branches: splitList(d.branches),
             requiredBranch: d.branch || '',
             requiredPath: d.worktree ? (d.execution_path || '') : '',
-            forbidden: DEFAULT_FORBIDDEN,
+            // Defaults name only branches the repo has (all of them off git).
+            forbidden: DEFAULT_FORBIDDEN.filter((b) => !(d.branches || []).length || d.branches.indexOf(b) >= 0),
             worker: '',
             expert: '',
             // Tasks lists the supervisor follows: the chat's own preselected, project lists optional.
@@ -342,9 +380,11 @@
                 agent: String(pb.agent || ''),
                 every: Number(pb.every) || base.every,
                 instructions: pb.instructions || base.instructions,
+                involveUser: pb.involve_user || base.involveUser,
+                nudge: pb.nudge || base.nudge,
                 requiredBranch: pb.required_branch || base.requiredBranch,
                 requiredPath: pb.required_path || base.requiredPath,
-                forbidden: (pb.forbidden_branches || []).length ? pb.forbidden_branches.join(', ') : base.forbidden,
+                forbidden: (pb.forbidden_branches || []).length ? splitList(pb.forbidden_branches) : base.forbidden,
                 worker: (tiers.worker || []).join(', '),
                 expert: (tiers.expert || []).join(', '),
                 checkpoints: checkpointFields(pb.checkpoints || {}),
@@ -360,10 +400,12 @@
             model: String(s.model || ''),
             effort: String(s.effort || ''),
             every: Number(s.every) || base.every,
-            instructions: s.instructions || base.instructions,
+            instructions: s.instructions || '',
+            involveUser: s.involve_user || base.involveUser,
+            nudge: s.nudge || base.nudge,
             requiredBranch: s.required_branch || '',
             requiredPath: s.required_path || '',
-            forbidden: (s.forbidden_branches || []).join(', '),
+            forbidden: splitList(s.forbidden_branches),
             worker: (tiers.worker || []).join(', '),
             expert: (tiers.expert || []).join(', '),
             tasks: base.tasks.map((t) => Object.assign({}, t, { selected: picked ? picked.indexOf(t.id) >= 0 : t.selected })),
@@ -405,7 +447,7 @@
         if (!f.target) errors.push('No chat to supervise.');
         if (!f.agent) errors.push('Pick an agent for the supervisor.');
         if (INTERVALS.indexOf(every) < 0) errors.push('Pick a check interval.');
-        if (!String(f.instructions || '').trim()) errors.push('Give the supervisor instructions.');
+        if (String(f.instructions || '').trim().length > 2000) errors.push('Focus is limited to 2000 characters.');
         const forbidden = splitList(f.forbidden);
         if (f.requiredBranch && forbidden.indexOf(f.requiredBranch) >= 0) {
             errors.push('The required branch is also in the forbidden list.');
@@ -426,6 +468,8 @@
                 effort: String(f.effort || '').trim(),
                 every,
                 instructions: String(f.instructions || '').trim(),
+                involve_user: f.involveUser || 'blocked',
+                nudge: f.nudge || 'agent',
                 required_branch: String(f.requiredBranch || '').trim(),
                 required_path: String(f.requiredPath || '').trim(),
                 forbidden_branches: forbidden,
@@ -478,6 +522,7 @@
         chipText, badgeText, pausedText, pauseBody,
         historyRow, view, isSupervised, supervisorOf, dialogDefaults, supervisePayload, pinChoices, scheduleById,
         CHECKPOINTS, checkpointFields, checkpointsBody,
+        INVOLVE_CHOICES, NUDGE_CHOICES, TASKS_SHOWN, taskPickerView, branchOptions,
     };
     if (typeof module === 'object' && module.exports) module.exports = api;
     root.CuttleChatSupervisionModel = api;

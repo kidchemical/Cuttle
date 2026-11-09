@@ -297,6 +297,8 @@
                     'supervisor:' + pr.id, 'Send to reviewer: ' + (pr.name || pr.id)]))
                 .concat([[cur, cur]]).filter((o, i, all) => o[0] && all.findIndex((x) => x[0] === o[0]) === i)
                 .map(([v, l]) => '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(l) + '</option>').join('');
+            const choiceOptions = (choices, cur) => choices.map((c) => '<option value="' + esc(c.id) + '"'
+                + (c.id === cur ? ' selected' : '') + '>' + esc(c.label) + '</option>').join('');
             const cpRow = (c) => {
                 const f = d.checkpoints[c.id];
                 const param = c.id === 'tests'
@@ -332,23 +334,40 @@
                 + '<label>Model<select name="model"></select></label>'
                 + '<label>Effort<select name="effort"></select></label>'
                 + '<label>Check every<select name="every">' + M.INTERVALS.map((s) => '<option value="' + s + '"'
-                    + (s === d.every ? ' selected' : '') + '>' + M.fmtInterval(s) + '</option>').join('') + '</select></label></div>'
+                    + (s === d.every ? ' selected' : '') + '>' + M.fmtInterval(s) + '</option>').join('') + '</select></label>'
+                + '<label>Involve me<select name="involveUser">' + choiceOptions(M.INVOLVE_CHOICES, d.involveUser) + '</select></label>'
+                + '<label>When it idles with open Tasks<select name="nudge">' + choiceOptions(M.NUDGE_CHOICES, d.nudge)
+                + '</select></label></div>'
                 + (d.tasks.length ? '<fieldset class="chat-supervision-tasks"><legend>Tasks lists to follow</legend>'
-                    + d.tasks.map((t) => '<label class="chat-supervision-task"><span>' + esc(t.title)
+                    + (M.taskPickerView(d.tasks, '').searchable ? '<input type="search" class="chat-supervision-task-search"'
+                        + ' placeholder="Search ' + d.tasks.length + ' lists…" aria-label="Search Tasks lists">' : '')
+                    + d.tasks.map((t) => '<label class="chat-supervision-task" data-task-id="' + esc(t.id) + '"><span>' + esc(t.title)
                         + ' <small>' + t.done + '/' + t.total
                         + (t.scope === 'project' ? ' · project list' : '') + '</small></span>'
                         + '<input type="checkbox" role="switch" name="taskIds" value="'
                         + esc(t.id) + '"' + (t.selected ? ' checked' : '') + '></label>').join('')
+                    + '<p class="chat-supervision-meta chat-supervision-task-more"></p>'
                     + '<p class="chat-supervision-meta">Lists this chat creates later are followed too.</p></fieldset>' : '')
+                + '<fieldset class="chat-supervision-tasks"><legend>Branch rules</legend>'
+                + '<label>Must stay on branch<select name="requiredBranch"><option value="">Any branch</option>'
+                    + M.branchOptions(d.branches, d.requiredBranch).map((b) => '<option value="' + esc(b) + '"'
+                        + (b === d.requiredBranch ? ' selected' : '') + '>' + esc(b) + '</option>').join('') + '</select></label>'
+                + '<label>Never touch branches<select name="forbiddenAdd" data-sup-forbid-add><option value="">Add a branch…</option>'
+                    + M.branchOptions(d.branches, d.forbidden).map((b) => '<option value="' + esc(b) + '">' + esc(b) + '</option>').join('')
+                    + '</select></label><div class="chat-supervision-branch-chips" data-sup-forbid></div>'
+                + '<p class="chat-supervision-meta">The host checks these on every event and reports a violation to the supervisor.</p></fieldset>'
                 + '<fieldset class="chat-supervision-tasks"><legend>Also wake the supervisor when…</legend>'
                     + M.CHECKPOINTS.map(cpRow).join('')
                     + '<p class="chat-supervision-meta">On top of the interval and the usual stops (question, error, open'
                     + ' Tasks, branch rules). “Stop the chat” halts it until the supervisor or you send it on.</p></fieldset>'
-                + '<label>Instructions<textarea name="instructions" rows="4">' + esc(d.instructions) + '</textarea></label>'
-                + '<details class="chat-supervision-advanced"><summary>Branch rules and model guidance</summary>'
-                + '<label>Must stay on branch<input name="requiredBranch" value="' + esc(d.requiredBranch)
-                + '" placeholder="any"></label>'
-                + '<label>Never touch branches<input name="forbidden" value="' + esc(d.forbidden) + '"></label>'
+                + '<details class="chat-supervision-advanced"><summary>Advanced: Focus notes and model guidance</summary>'
+                + '<div class="chat-supervision-focus"><div class="chat-supervision-focus-head"><span>Focus (optional)</span>'
+                + '<button type="button" class="chat-supervision-focus-edit" data-sup-focus-edit aria-label="Edit Focus" title="Edit Focus">✎</button></div>'
+                + '<textarea name="instructions" rows="4" maxlength="2000" readonly aria-label="Focus"'
+                + ' placeholder="No Focus notes. Job-specific guidance only, e.g. “animation first; verify runtime IK exceptions”.">'
+                + esc(d.instructions) + '</textarea>'
+                + '<p class="chat-supervision-meta">The supervisor already gets its job and every setting above; settings win'
+                + ' over Focus. Don’t restate branches, models, intervals or when to involve you here.</p></div>'
                 + '<label>Worker models (optional)<input name="worker" value="' + esc(d.worker) + '" placeholder="e.g. cursor auto, codex terra medium"></label>'
                 + '<label>Expert models (optional)<input name="expert" value="' + esc(d.expert) + '" placeholder="e.g. claude opus"></label></details></div>'
                 + '<footer class="chat-supervision-dialog-footer"><div class="chat-supervision-errors" role="alert"></div>'
@@ -379,6 +398,45 @@
                 fillSelect(form.model, M.pinChoices(row, '').models, form.agent.value === d.agent ? d.model : '');
                 fillEffort();
             };
+            // Never-touch branches: picked from the repo's branches, shown as removable chips.
+            const forbidden = (d.forbidden || []).slice();
+            const chipsBox = form.querySelector('[data-sup-forbid]');
+            const renderForbidden = () => {
+                chipsBox.innerHTML = forbidden.map((b) => '<span class="chat-supervision-branch-chip">' + esc(b)
+                    + '<button type="button" data-sup-forbid-remove="' + esc(b) + '" aria-label="Allow ' + esc(b)
+                    + '" title="Remove">×</button></span>').join('');
+            };
+            renderForbidden();
+            form.forbiddenAdd.addEventListener('change', () => {
+                const b = form.forbiddenAdd.value;
+                if (b && forbidden.indexOf(b) < 0) { forbidden.push(b); renderForbidden(); }
+                form.forbiddenAdd.value = '';
+            });
+            chipsBox.addEventListener('click', (ev) => {
+                const btn = ev.target.closest && ev.target.closest('[data-sup-forbid-remove]');
+                if (!btn) return;
+                forbidden.splice(forbidden.indexOf(btn.getAttribute('data-sup-forbid-remove')), 1);
+                renderForbidden();
+            });
+            // Tasks picker: a few lists up front, the rest by search. Hidden rows stay in
+            // the form, so a checked list off screen is still submitted.
+            const taskSearch = form.querySelector('.chat-supervision-task-search');
+            const filterTasks = () => {
+                const live = d.tasks.map((t) => Object.assign({}, t, {
+                    selected: !!form.querySelector('input[name="taskIds"][value="' + root.CSS.escape(t.id) + '"]:checked') }));
+                const v = M.taskPickerView(live, taskSearch ? taskSearch.value : '');
+                form.querySelectorAll('[data-task-id]').forEach((row) => { row.hidden = v.ids.indexOf(row.getAttribute('data-task-id')) < 0; });
+                const more = form.querySelector('.chat-supervision-task-more');
+                if (more) more.textContent = v.hidden ? v.hidden + ' more' + (v.hiddenSelected
+                    ? ' (' + v.hiddenSelected + ' followed)' : '') + ' · search to find them' : '';
+            };
+            if (taskSearch) taskSearch.addEventListener('input', filterTasks);
+            if (d.tasks.length) filterTasks();
+            // Focus is read-only until the pencil: settings are the fields above.
+            form.querySelector('[data-sup-focus-edit]').addEventListener('click', () => {
+                form.instructions.readOnly = false;
+                form.instructions.focus();
+            });
             form.agent.addEventListener('change', fillPins);
             form.model.addEventListener('change', fillEffort);
             fillPins();
@@ -388,7 +446,7 @@
                 if (root.CuttleSearchableSelect) combos.push(root.CuttleSearchableSelect.enhance(select, {
                     label: (select.closest('label') ? select.closest('label').firstChild.textContent : '')
                         || select.getAttribute('aria-label') || '',
-                    floating: true, searchable: select.name === 'agent' || select.name === 'model',
+                    floating: true, searchable: ['agent', 'model', 'requiredBranch', 'forbiddenAdd'].indexOf(select.name) >= 0,
                 }));
             });
             // Capture phase: a closed dropdown's trigger stops Escape from bubbling, so the
@@ -413,7 +471,8 @@
                 const fd = new root.FormData(form);
                 const payload = M.supervisePayload(Object.assign({}, d, {
                     agent: fd.get('agent'), model: fd.get('model'), effort: fd.get('effort'), every: Number(fd.get('every')), instructions: fd.get('instructions'),
-                    requiredBranch: fd.get('requiredBranch'), forbidden: fd.get('forbidden'),
+                    requiredBranch: fd.get('requiredBranch'), forbidden: forbidden.slice(),
+                    involveUser: fd.get('involveUser'), nudge: fd.get('nudge'),
                     worker: fd.get('worker'), expert: fd.get('expert'), taskIds: fd.getAll('taskIds'),
                     checkpoints: Object.fromEntries(M.CHECKPOINTS.map((c) => [c.id, {
                         on: fd.get('cp_on_' + c.id) != null, do: fd.get('cp_do_' + c.id) || 'wake',
@@ -431,10 +490,12 @@
                             + '/edit', payload.body);
                         close();
                         host.toast((res.updated || []).length ? 'Supervision updated' : 'No changes', 'success');
+                        (res.warnings || []).forEach((w) => host.toast(w, 'info'));
                     } else {
                         const res = await call('POST', '/api/chat-ops/supervise', payload.body);
                         close();
                         host.toast('Supervisor started: CH-' + String(res.operation.actor).padStart(6, '0'), 'success');
+                        (res.warnings || []).forEach((w) => host.toast(w, 'info'));
                     }
                     refresh();
                 } catch (e) {

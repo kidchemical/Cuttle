@@ -4489,7 +4489,7 @@
         // Owned by chat_composer.js — DOM/state gather, domain composes.
         return CuttleChatComposer.composeMessageWithSlashChip(
             { body, chips: chips || [] },
-            { isControl: isNativeControlCommand }
+            { isControl: isNativeControlCommand, agentId: CuttleChatSlash.composerChipAgentId }
         );
     }
 

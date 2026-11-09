@@ -401,6 +401,15 @@ def _feed_enabled() -> bool:
         return False
 
 
+def _finished_label(label: str) -> str:
+    """A finished job's label without the "Running: " it was registered with.
+
+    Unit watches default to "Running: <unit>" (``job_watch``); next to the
+    job's final state that reads as "Running: ch1821-adsbot · Finished"."""
+    label = str(label or "")
+    return label[len("Running: "):].strip() or label if label.startswith("Running: ") else label
+
+
 def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
     """Compact background-work summary for one chat's live status, or None."""
     chat = _bare(session_id)
@@ -416,7 +425,7 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
     except Exception:
         receipts = []
     recent = [{"job_id": r["id"], "kind": "unit", "unit": r.get("unit", ""),
-               "label": r.get("label") or r["id"], "state": r["outcome"].get("state", "unknown"),
+               "label": _finished_label(r.get("label") or r["id"]), "state": r["outcome"].get("state", "unknown"),
                "started_at": r.get("created_ts"), "finished_at": r.get("finished_ts"),
                "handoff": r["handoff"], "resume_chat": _handle(chat),
                "resume_note": str(r.get("resume_message") or "")[:400],

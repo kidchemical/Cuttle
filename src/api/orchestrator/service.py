@@ -177,7 +177,10 @@ def save_playbook(user_id: int, raw: Any, *, db=None) -> Dict[str, Any]:
             relay_edit(user_id, before, doc, db=db)
         except Exception:  # the save stands; a missed relay is not a failed save
             log.exception("orchestrator: relaying playbook %s edit failed", doc["id"])
-    return get_playbook(user_id, doc["id"], db=db)
+    from api.chat_ops.brief import focus_warnings
+    out = get_playbook(user_id, doc["id"], db=db)
+    warnings = focus_warnings(doc["supervisor"].get("instructions"))
+    return {**out, "warnings": warnings} if warnings else out
 
 
 def relay_edit(user_id: int, before: Dict[str, Any], after: Dict[str, Any], *, db=None) -> List[Dict[str, Any]]:

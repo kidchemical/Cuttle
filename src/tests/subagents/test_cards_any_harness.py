@@ -254,3 +254,44 @@ def test_chat_cli_send_to_a_child_gets_a_card_round(authed, monkeypatch, tmp_pat
     assert service.on_child_turns_ended([child.session_id], db=db) == []  # once
     first_row = next(m for m in db.get_messages(sid) if m["id"] == first["message_id"])
     assert [c.get("frozen") for c in first_row["metadata"]["subagents"]] == [True]  # round one kept
+
+
+def test_cancelled_send_to_a_child_does_not_leave_it_running(authed, monkeypatch, tmp_path):
+    """A send marks the child's round running before delivery; when that send is
+    cancelled no turn ever runs, so no turn end closes the round (CH-002215)."""
+    import time as _time
+
+    from api import chat_delivery, chat_turn_row
+    from api.chat_ops import service as ops
+    from api.chat_ops import store as ops_store
+
+    _client, db, owner, _path = authed
+    sid = db.create_chat_session(owner)
+    db.add_message(sid, "user", "/codex review", metadata=None)
+    first = chat_turn_row.open_row(db, sid, turn=1)
+    service.spawn(parent_session_id=sid, children=[{"title": "Reviewer", "message": "review"}], wait=True,
+                  timeout=10, runner=lambda **kw: {"success": True, "response": "round one ok"}, db=db)
+    _saver(db, sid, tmp_path)({"success": True, "response": "spawned", "query_id": first["query_id"]})
+    [child] = store.list_batches_for_parent(db, sid)[0].children
+
+    host = lambda uid, s, method, path, data=None, stream=False: {"generating": False}  # noqa: E731
+    ops.send(f"CH-{child.session_id:06d}", "one more thing", f"CH-{sid:06d}", db=db, request=host)
+    assert store.get_child(db, child.id).status == "running"
+    later = _time.time() + service.EXTERNAL_ROUND_GRACE_SEC + 60
+
+    # Still queued in the outbox: the round is real, leave it open.
+    assert service.close_stale_external_rounds(db, now=later) == []
+    # Fresh round: within the grace period nothing closes, even with no queued send.
+    ops_store.cancel_sends_to(child.session_id)
+    assert service.close_stale_external_rounds(db) == []
+    # A busy child chat is working: leave it open.
+    monkeypatch.setattr(chat_delivery, "is_busy", lambda s: True)
+    assert service.close_stale_external_rounds(db, now=later) == []
+    monkeypatch.setattr(chat_delivery, "is_busy", lambda s: False)
+
+    # Cancelled, idle and past the grace: closed with the child's newest reply.
+    assert service.close_stale_external_rounds(db, now=later) == [child.id]
+    done = store.get_child(db, child.id)
+    assert done.status == "done" and done.result == "round one ok"
+    assert store.get_batch(db, child.batch_id).status != "running"
+    assert service.close_stale_external_rounds(db, now=later) == []  # once

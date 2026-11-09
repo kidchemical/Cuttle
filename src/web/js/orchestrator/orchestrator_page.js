@@ -211,6 +211,8 @@
         sup.require_branch.value = s.require_branch || '';
         sup.require_path.value = s.require_path || '';
         sup.instructions.value = s.instructions || '';
+        sup.involve_user.value = s.involve_user || 'blocked';
+        sup.nudge.value = s.nudge || 'agent';
         renderForbid();
         renderCheckpoints();
     }
@@ -641,6 +643,8 @@
         s.require_branch = sup.require_branch.value.trim();
         s.require_path = sup.require_path.value.trim();
         s.instructions = sup.instructions.value.trim();
+        s.involve_user = sup.involve_user.value || 'blocked';
+        s.nudge = sup.nudge.value || 'agent';
         readCheckpoints();
         changed();
     }
@@ -724,6 +728,7 @@
         try {
             const data = await call('/api/orchestrator/playbooks/' + encodeURIComponent(body.id), 'PUT', body);
             toast(`Saved ${data.playbook.name}`, 'success');
+            (data.playbook.warnings || []).forEach((w) => toast(w, 'info'));
             state.savedId = data.playbook.id;
             await load(data.playbook.id);
         } catch (err) {

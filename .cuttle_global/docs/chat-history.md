@@ -63,12 +63,25 @@ PYTHONPATH=src .venv/bin/python -m api.chat_cli snapshot CH-001548 --usage codex
 PYTHONPATH=src .venv/bin/python -m api.chat_cli send     CH-001548 --text "Continue with the next open task." --json
 PYTHONPATH=src .venv/bin/python -m api.chat_cli stop     CH-001548 --json
 PYTHONPATH=src .venv/bin/python -m api.chat_cli supervise CH-001548 --every 900 --agent cursor \
-  --instructions "Keep it on its Tasks list; nudge it when it stalls." \
-  --require-branch dev/multiplayer --forbid-branch dev/core --forbid-branch master \
+  --involve blocked --require-branch dev/multiplayer --forbid-branch dev/core --forbid-branch master \
   --model-tiers '{"worker":["cursor auto","codex terra medium"],"expert":["claude opus"]}' --json
 PYTHONPATH=src .venv/bin/python -m api.chat_cli operations --json
 PYTHONPATH=src .venv/bin/python -m api.chat_cli cancel-operation <id> --json
 ```
+
+**Settings, not prose.** Every check-in states the supervisor's job and each
+setting (Tasks lists, branch rules, `--involve`, checkpoints, `--nudge`) from the
+schedule itself (`api.chat_ops.brief`); settings win. `--instructions` is the
+optional **Focus**: the user's job-specific notes (e.g. "animation first;
+verify runtime IK exceptions"), shown under Advanced in the Supervise dialog.
+Don't put models, branches, intervals, when to involve the user, milestone
+reviews or per-check-in procedures there — use the flags (or a rule/runbook);
+the CLI prints why on stderr and the result carries `warnings`. Only set or
+change Focus when the user asked for that guidance. `--involve`: `blocked`
+(default: logins, payments, irreversible steps), `never`, `questions`.
+`--nudge template`: an idle chat with open Tasks items gets its next item from
+the host with no supervisor turn (twice without Tasks progress, then the
+supervisor is woken); errors, questions, stalls and violations always wake it.
 
 | Verb | Use |
 |---|---|
@@ -84,7 +97,7 @@ PYTHONPATH=src .venv/bin/python -m api.chat_cli cancel-operation <id> --json
 | `supervise … --agent ID` | Prefix each check-in with `/<agent>` so that harness runs it (validated against the agent catalog) |
 | `operations` / `operation <id>` / `cancel-operation <id>` | Inspect or cancel your queued sends and supervision schedules |
 | `pause-operation <id>` / `resume-operation <id>` | Pause a schedule; resume checks right away. **A pause is timed:** no flag = 4 h, `--hours N` / `--until <epoch>` set your own; the host resumes it and checks immediately. `--indefinite` pauses with no expiry — nothing but a resume brings it back, so only use it when you mean to turn supervision off. Paused schedules are listed in both chats' context envelope ("Supervision schedules on this chat") with since-when, and an indefinite pause left over `supervision_paused_alert_hours` (default 6) while the target is idle with open Tasks items raises one UI/tray warning |
-| `edit-operation <id>` | Change a supervision schedule in place; only the flags you pass move: `--every`, `--agent` / `--model` / `--effort` (re-pins the supervisor chat and its composer chip), `--instructions`, `--require-branch`, `--require-path`, `--forbid-branch` (replaces the list, re-baselines tips), `--model-tiers`, `--tasks a,b` (Tasks lists to follow; the chat's own lists made later still count) / `--all-tasks`. A paused schedule stays paused. The edit adds a timeline notice to the supervisor chat and rides the next check-in ("Settings changed since your last check-in"; a live schedule checks within ~20 s), never a turn of its own. UI: Edit… in the supervision chip popover |
+| `edit-operation <id>` | Change a supervision schedule in place; only the flags you pass move: `--every`, `--agent` / `--model` / `--effort` (re-pins the supervisor chat and its composer chip), `--instructions` (Focus; see above), `--involve`, `--nudge`, `--require-branch`, `--require-path`, `--forbid-branch` (replaces the list, re-baselines tips), `--model-tiers`, `--tasks a,b` (Tasks lists to follow; the chat's own lists made later still count) / `--all-tasks`. A paused schedule stays paused. The edit adds a timeline notice to the supervisor chat and rides the next check-in ("Settings changed since your last check-in"; a live schedule checks within ~20 s), never a turn of its own. UI: Edit… in the supervision chip popover |
 
 Send states: `pending` → `delivered` (host started the turn) / `done` /
 `failed`. If the connection drops mid-send (for example, Flask restarts), the
@@ -101,6 +114,29 @@ attempts never reached the chat; run `status` before resending by hand.
 then end your turn. Do not sleep-loop inside a turn. Each check-in arrives as
 a new turn in your chat. Act on the target with `send` (steer or queue). Do not
 message its sub-agent children unless asked.
+
+### Change the target chat's agent, model, or effort
+
+`chat_cli send` can deliver the target harness's own slash commands; it does
+not change the supervisor chat or its schedule. Use the target's harness prefix
+and a model/effort supported by that harness, for example:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.chat_cli send CH-001548 \
+  --text "/claude model claude-opus-5-5" --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli send CH-001548 \
+  --text "/claude effort medium" --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli send CH-001548 \
+  --text "/claude Continue with the next open task." --json
+```
+
+First check `status`. When the target is busy, sends may steer the live turn;
+if a send reports `target_busy` / queued, let it deliver after that turn rather
+than stopping the chat. A model change does not switch the model of a turn
+already running. Queue model and effort commands in order, then send a
+continuation only if the target needs a prompt to resume its work. Afterward,
+check `status` or `snapshot` and the target's agent chip / confirmation before
+reporting the new setting. Do not contact the target's child chats.
 
 Sends and supervision need the host up (Flask on loopback); read-only `get` /
 `session` / `search` do not. Library: `api.chat_ops` (service, store, worker, rules, triggers).

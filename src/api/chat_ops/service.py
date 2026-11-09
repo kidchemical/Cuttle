@@ -362,7 +362,10 @@ def _agent_slash(agent, project_path):
 
 def supervise(target, actor=None, *, every=900, instructions='', required_branch='',
               required_path='', forbidden_branches=(), model_tiers=None, agent='',
-              start_now=False, forbidden_paths='', on_violation=None, task_ids=None, checkpoints=None, db=None):
+              start_now=False, forbidden_paths='', on_violation=None, task_ids=None, checkpoints=None,
+              involve_user='', nudge='', db=None):
+    """``instructions`` is the optional Focus note; the brief comes from the settings (``brief``)."""
+    from api.chat_ops import brief
     db, actor, row = context(target, actor, db=db)
     if actor == int(row['id']):
         raise ValueError('Supervisor and target must be different chats')
@@ -370,8 +373,7 @@ def supervise(target, actor=None, *, every=900, instructions='', required_branch
         raise ValueError('Check-in interval must be 60–86400 seconds')
     if model_tiers is not None and not isinstance(model_tiers, dict):
         raise ValueError('model_tiers must be a JSON object')
-    if not instructions.strip():
-        raise ValueError('Give the supervisor explicit instructions')
+    instructions = brief.focus(instructions)
     if forbidden_paths:
         try:
             re.compile(forbidden_paths)
@@ -381,7 +383,8 @@ def supervise(target, actor=None, *, every=900, instructions='', required_branch
                'required_path': str(Path(required_path).resolve()) if required_path else '',
                'forbidden_branches': list(forbidden_branches), 'model_tiers': model_tiers or {},
                'agent': _agent_slash(agent, row.get('project_path')), 'brief_on_start': bool(start_now),
-               'forbidden_paths': forbidden_paths or ''}
+               'forbidden_paths': forbidden_paths or '', 'involve_user': brief.involve(involve_user),
+               'nudge': brief.nudge(nudge)}
     if task_ids is not None:
         # An explicit pick (possibly empty: follow no Tasks list); absent = every list the chat sees.
         if not isinstance(task_ids, (list, tuple)) or len(task_ids) > 50:
@@ -401,7 +404,8 @@ def supervise(target, actor=None, *, every=900, instructions='', required_branch
         # Baseline for "a commit landed on a forbidden branch", from any checkout of the repo.
         payload['forbidden_tips'] = branch_tips(checkout_state(row, db)[0], list(forbidden_branches))
     due = time.time() + (0 if start_now else every)
-    return {'schema_version': 1, 'ok': True, 'operation': store.create('supervise', actor, row['id'], payload, due=due)}
+    return {'schema_version': 1, 'ok': True, 'operation': store.create('supervise', actor, row['id'], payload, due=due),
+            'warnings': brief.focus_warnings(instructions)}
 
 
 def _pin_supervisor_chat(db, sup, user_id, agent, model, effort, project_path):
@@ -420,7 +424,7 @@ def _pin_supervisor_chat(db, sup, user_id, agent, model, effort, project_path):
 
 def start_supervisor(target, *, user_id, agent, every=900, instructions='', required_branch='',
                      required_path='', forbidden_branches=(), model_tiers=None, model='', effort='',
-                     task_ids=None, checkpoints=None, db=None):
+                     task_ids=None, checkpoints=None, involve_user='', nudge='', db=None):
     """Create a fresh supervisor chat for ``target`` and brief it right away."""
     from api.auth_db import get_auth_db
     db = db or get_auth_db()
@@ -437,8 +441,8 @@ def start_supervisor(target, *, user_id, agent, every=900, instructions='', requ
         problem = check_agent_pin(slash, model, effort)
         if problem:
             raise ValueError(problem)
-    if not str(instructions or '').strip():
-        raise ValueError('Give the supervisor explicit instructions')
+    from api.chat_ops import brief
+    brief.focus(instructions), brief.involve(involve_user), brief.nudge(nudge)  # validate before creating a chat
     sup = db.create_chat_session(int(user_id), f'Supervisor · CH-{tid:06d}')
     try:
         # Same project so the supervisor sees its rules, but never the worker's checkout.
@@ -449,7 +453,7 @@ def start_supervisor(target, *, user_id, agent, every=900, instructions='', requ
         out = supervise(tid, sup, every=every, instructions=instructions, required_branch=required_branch,
                         required_path=required_path, forbidden_branches=forbidden_branches,
                         model_tiers=model_tiers, agent=agent, start_now=True, task_ids=task_ids,
-                        checkpoints=checkpoints, db=db)
+                        checkpoints=checkpoints, involve_user=involve_user, nudge=nudge, db=db)
         store.patch_payload(out['operation']['id'], model=model, effort=effort)
         out['operation'] = store.find(out['operation']['id'])
         return out
@@ -460,8 +464,9 @@ def start_supervisor(target, *, user_id, agent, every=900, instructions='', requ
 
 # Schedule fields an outside source (an orchestrator playbook) may own.
 SYNCED_FIELDS = ('every', 'agent', 'instructions', 'required_branch', 'required_path',
-                 'forbidden_branches', 'model_tiers', 'checkpoints')
-_FIELD_LABELS = {'every': 'check-in interval', 'agent': 'check-in agent', 'instructions': 'instructions',
+                 'forbidden_branches', 'model_tiers', 'checkpoints', 'involve_user', 'nudge')
+_FIELD_LABELS = {'every': 'check-in interval', 'agent': 'check-in agent', 'instructions': 'Focus',
+                 'involve_user': 'when to involve the user', 'nudge': 'how idle chats are nudged',
                  'required_branch': 'required branch', 'required_path': 'required checkout',
                  'forbidden_branches': 'forbidden branches', 'model_tiers': 'model guidance',
                  'model': 'check-in model', 'effort': 'check-in effort', 'task_ids': 'Tasks lists',
@@ -607,7 +612,7 @@ def changes_section(cfg, handle):
 
 
 EDITABLE_FIELDS = ('every', 'agent', 'model', 'effort', 'instructions', 'required_branch', 'required_path',
-                   'forbidden_branches', 'model_tiers', 'task_ids', 'checkpoints')
+                   'forbidden_branches', 'model_tiers', 'task_ids', 'checkpoints', 'involve_user', 'nudge')
 
 
 def update_supervision(op_id, user_id, changes, *, db=None):
@@ -632,10 +637,13 @@ def update_supervision(op_id, user_id, changes, *, db=None):
         if not 60 <= every <= 86400:
             raise ValueError('Check-in interval must be 60–86400 seconds')
         new['every'] = every
+    from api.chat_ops import brief
     if 'instructions' in changes:
-        if not str(changes['instructions'] or '').strip():
-            raise ValueError('Give the supervisor explicit instructions')
-        new['instructions'] = str(changes['instructions'])
+        new['instructions'] = brief.focus(changes['instructions'])
+    if 'involve_user' in changes:
+        new['involve_user'] = brief.involve(changes['involve_user'])
+    if 'nudge' in changes:
+        new['nudge'] = brief.nudge(changes['nudge'])
     if 'required_branch' in changes:
         new['required_branch'] = str(changes['required_branch'] or '').strip()
     if 'required_path' in changes:
@@ -681,8 +689,10 @@ def update_supervision(op_id, user_id, changes, *, db=None):
         new['task_ids'] = None if ids is None else list(dict.fromkeys(str(t).strip() for t in ids if str(t).strip()))
         new['task_ids_known'] = [t['id'] for t in task_candidates(db, int(row.get('user_id') or user_id),
                                                                   int(op['target']), project)]
+    policy = {'involve_user': brief.DEFAULT_INVOLVE, 'nudge': brief.DEFAULT_NUDGE}
+
     def same(k, v):  # blank model/effort/tiers equal a field the schedule never stored
-        old = cfg.get(k)
+        old = cfg.get(k) or policy.get(k)
         return v == old or (k != 'task_ids' and not v and not old)
     updated = {k: v for k, v in new.items() if k != 'task_ids_known' and not same(k, v)}
     if not updated:
@@ -707,7 +717,8 @@ def update_supervision(op_id, user_id, changes, *, db=None):
         last = (op.get('result') or {}).get('last_check') or time.time()
         store.pull_due(op['id'], last + updated['every'])
     record_schedule_change(store.find(op['id']), updated, [], [], source='you', db=db)
-    return {'operation': store.find(op['id']), 'updated': sorted(updated)}
+    warnings = brief.focus_warnings(updated['instructions']) if 'instructions' in updated else []
+    return {'operation': store.find(op['id']), 'updated': sorted(updated), 'warnings': warnings}
 
 
 def supervise_defaults(session, user_id, *, db=None):
@@ -727,10 +738,24 @@ def supervise_defaults(session, user_id, *, db=None):
                                     text=True, timeout=5, check=True).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             pass
-    return {'handle': f'CH-{sid:06d}', 'branch': branch, 'execution_path': path,
+    return {'handle': f'CH-{sid:06d}', 'branch': branch, 'execution_path': path, 'branches': _branch_names(path),
             'worktree': bool(checkout), 'project_path': row.get('project_path') or '',
             'tasks': task_candidates(db, int(user_id), sid, row.get('project_path') or ''),
             'playbook': _playbook_supervisor(sid, db)}
+
+
+def _branch_names(path):
+    """Local branches, then remote-only ones, for the dialog's branch pickers ([] off git)."""
+    if not path:
+        return []
+    try:
+        from api.git_service import list_branches
+        rows = list_branches(path)['branches']
+    except Exception:
+        return []
+    local = [b['name'] for b in rows if not b.get('remote')]
+    remote = [b['name'] for b in rows if b.get('remote') and '->' not in b['name']]
+    return list(dict.fromkeys(local + remote))
 
 
 def _playbook_supervisor(sid, db):
@@ -909,7 +934,8 @@ def _schedule_view(op):
             'target': f"CH-{op['target']:06d}", 'every': cfg.get('every'), 'next_check': op['due'],
             'agent': cfg.get('agent') or '', 'required_branch': cfg.get('required_branch') or '',
             'model': cfg.get('model') or '', 'effort': cfg.get('effort') or '',
-            'instructions': cfg.get('instructions') or '', 'required_path': cfg.get('required_path') or '',
+            'instructions': cfg.get('instructions') or '', 'involve_user': cfg.get('involve_user') or 'blocked',
+            'nudge': cfg.get('nudge') or 'agent', 'required_path': cfg.get('required_path') or '',
             'model_tiers': cfg.get('model_tiers') or {}, 'task_ids': cfg.get('task_ids'),
             'checkpoints': cfg.get('checkpoints') or {},
             'forbidden_branches': cfg.get('forbidden_branches') or [], 'last_check': result.get('last_check'),

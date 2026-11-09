@@ -64,6 +64,15 @@ console.log(JSON.stringify({
   pbDefaults: M.dialogDefaults({handle: 'CH-000002', playbook: {id: 'pb', name: 'Strict', every: 600, agent: 'codex',
     instructions: 'Be strict', forbidden_branches: ['main'], model_tiers: {worker: ['cursor auto']},
     checkpoints: {tests: {when: 'fail', do: ['supervisor:rev']}}}}),
+  policy: M.dialogDefaults({handle: 'CH-000002', branches: ['dev/x', 'main', 'feature']}),
+  policyEdit: M.dialogDefaults({handle: 'CH-000002'}, {id: 's1', involve_user: 'never', nudge: 'template'}),
+  picker: [
+    M.taskPickerView([{id: 'a'}, {id: 'b'}, {id: 'c'}, {id: 'd'}, {id: 'e', selected: true}], ''),
+    M.taskPickerView([{id: 'a', title: 'Rig'}, {id: 'b', title: 'Blend'}, {id: 'c', title: 'rigging'}], 'RIG'),
+    M.taskPickerView([{id: 'a'}, {id: 'b'}], ''),
+  ],
+  branchOpts: M.branchOptions(['dev', 'main'], ['gone', 'main']),
+  noFocus: M.supervisePayload(Object.assign(M.dialogDefaults({handle: 'CH-000002'}), {agent: 'codex'})),
   found: M.scheduleById({supervising: [{id: 'a'}], supervised_by: [{id: 'b', target: 'CH-000002'}]}, 'b'),
   wakes: M.wakesText({milestone: {do: ['wake']}, repeat_failures: {n: 4}}),
   opBadges: [
@@ -127,12 +136,12 @@ def test_model_view_rows_and_payload():
     assert "task_ids" not in r["good"]["body"]  # no lists offered: follow whatever appears
     e = r["edit"]
     assert e["editId"] == "s9" and e["agent"] == "codex" and e["model"] == "b" and e["every"] == 600
-    assert e["forbidden"] == "main, prod" and e["worker"] == "cursor auto" and e["instructions"] == "mine"
+    assert e["forbidden"] == ["main", "prod"] and e["worker"] == "cursor auto" and e["instructions"] == "mine"
     assert [(t["id"], t["selected"]) for t in e["tasks"]] == [("own", False), ("proj", True)]
     assert r["found"]["target"] == "CH-000002"
     pb = r["pbDefaults"]
     assert pb["playbookName"] == "Strict" and pb["every"] == 600 and pb["agent"] == "codex"
-    assert pb["forbidden"] == "main" and pb["worker"] == "cursor auto" and pb["instructions"] == "Be strict"
+    assert pb["forbidden"] == ["main"] and pb["worker"] == "cursor auto" and pb["instructions"] == "Be strict"
     assert {k: v["on"] for k, v in pb["checkpoints"].items()} == {
         "milestone": False, "tests": True, "repeat_failures": False, "watched_paths": False}
     assert pb["checkpoints"]["tests"]["do"] == "supervisor:rev" and pb["checkpoints"]["tests"]["when"] == "fail"
@@ -141,7 +150,20 @@ def test_model_view_rows_and_payload():
     assert r["queued"]["preview"] == "next step"
     assert r["warn"] is True and r["empty"] is False and r["emptyView"]["empty"] is True
     assert r["due"] == "checking…"
-    assert r["bad"]["ok"] is False and len(r["bad"]["errors"]) == 4
+    assert r["bad"]["ok"] is False and len(r["bad"]["errors"]) == 3  # Focus is optional
+    # Settings, not prose: policy fields default, round-trip, and reach the body.
+    pol = r["policy"]
+    assert pol["instructions"] == "" and pol["involveUser"] == "blocked" and pol["nudge"] == "agent"
+    assert pol["forbidden"] == ["main"]  # default names only branches the repo has
+    assert r["policyEdit"]["involveUser"] == "never" and r["policyEdit"]["nudge"] == "template"
+    nf = r["noFocus"]
+    assert nf["ok"] and nf["body"]["instructions"] == "" and nf["body"]["involve_user"] == "blocked"
+    assert nf["body"]["nudge"] == "agent"
+    # Tasks picker: three up front plus anything checked; search finds the rest.
+    assert r["picker"][0] == {"ids": ["a", "b", "c"], "hidden": 2, "hiddenSelected": 1, "searchable": True}
+    assert r["picker"][1]["ids"] == ["a", "c"] and r["picker"][1]["hidden"] == 1
+    assert r["picker"][2]["searchable"] is False
+    assert r["branchOpts"] == ["dev", "main", "gone"]
     body = r["good"]["body"]
     assert r["good"]["ok"] and body["agent"] == "codex" and body["every"] == 900
     assert body["required_branch"] == "dev/x" and body["forbidden_branches"] == ["main", "master"]
@@ -197,7 +219,10 @@ class SupervisionWorld(CardWorld):
                 return reply({"success": True, "operation": {"id": path.split("/")[-2]}})
             if path.endswith("/defaults"):
                 return reply({"success": True, "handle": "CH-000042", "branch": "dev/x",
-                              "execution_path": "/repo", "worktree": False})
+                              "execution_path": "/repo", "worktree": False,
+                              "branches": ["dev/x", "main", "master", "feature"],
+                              "tasks": [{"id": f"t{i}", "title": f"List {i}", "done": 0, "total": 2,
+                                         "selected": i == 0} for i in range(5)]})
             return reply(self.overview)
         if path == "/api/agents":
             return reply({"success": True, "agents": [{"id": "cursor", "label": "Cursor"},
@@ -293,12 +318,35 @@ def test_menu_opens_dialog_and_posts_supervise(browser, static_server):
         form = frame.locator(".chat-supervision-dialog")
         expect(form).to_be_visible()
         expect(frame.locator("#chatChromeMenuDropdown")).to_be_hidden()
-        form.locator('.chat-supervision-advanced summary').click()
+        # Branch rules are pickers over the repo's branches, never free text.
         expect(form.locator("[name=requiredBranch]")).to_have_value("dev/x")
-        form.locator("[name=requiredBranch]").fill("main")
+        expect(form.locator(".chat-supervision-branch-chip")).to_have_text(["main×", "master×"])
+        form.get_by_role('button', name='Must stay on branch', exact=True).click()
+        frame.get_by_role('option', name='main', exact=True).click()
         form.locator("[type=submit]").click()
         expect(form.locator(".chat-supervision-errors")).to_contain_text("also in the forbidden list")
-        form.locator("[name=requiredBranch]").fill("dev/x")
+        form.get_by_role('button', name='Must stay on branch', exact=True).click()
+        frame.get_by_role('option', name='dev/x', exact=True).click()
+        form.get_by_role('button', name='Never touch branches', exact=True).click()
+        frame.get_by_role('option', name='feature', exact=True).click()
+        form.get_by_role('button', name='Allow master').click()
+        expect(form.locator(".chat-supervision-branch-chip")).to_have_text(["main×", "feature×"])
+        # Tasks: three lists shown, the rest found by search; a checked list stays submitted.
+        rows = form.locator("[data-task-id]")
+        expect(rows.locator("visible=true")).to_have_count(3)
+        form.locator(".chat-supervision-task-search").fill("List 4")
+        expect(rows.locator("visible=true")).to_have_count(1)
+        form.locator("[data-task-id=t4] input").check()
+        form.locator(".chat-supervision-task-search").fill("")
+        expect(rows.locator("visible=true")).to_have_count(3)
+        expect(form.locator(".chat-supervision-task-more")).to_have_text("2 more (1 followed) · search to find them")
+        # Focus sits under Advanced, read-only until the pencil.
+        form.locator('.chat-supervision-advanced summary').click()
+        focus = form.locator("[name=instructions]")
+        expect(focus).to_have_value("")
+        expect(focus).not_to_be_editable()
+        form.locator("[data-sup-focus-edit]").click()
+        focus.fill("Animation first.")
         form.get_by_role('button', name='Supervisor agent', exact=True).click()
         frame.get_by_role('option', name='Codex', exact=True).click()
         form.get_by_role('button', name='Check every', exact=True).click()
@@ -308,7 +356,9 @@ def test_menu_opens_dialog_and_posts_supervise(browser, static_server):
         path, body = world.posts[-1]
         assert path == "/api/chat-ops/supervise"
         assert body["target"] == "CH-000042" and body["agent"] == "codex" and body["every"] == 600
-        assert body["forbidden_branches"] == ["main", "master"]
+        assert body["forbidden_branches"] == ["main", "feature"] and body["required_branch"] == "dev/x"
+        assert body["task_ids"] == ["t0", "t4"] and body["instructions"] == "Animation first."
+        assert body["involve_user"] == "blocked" and body["nudge"] == "agent"
         # New schedules wake on milestones and repeated failures by default.
         assert body["checkpoints"] == {"milestone": {"do": ["wake"]}, "repeat_failures": {"do": ["wake"], "n": 3}}
         assert not errors

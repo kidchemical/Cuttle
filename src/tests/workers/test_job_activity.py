@@ -99,3 +99,20 @@ def test_reusing_an_explicit_job_id_starts_a_new_lifetime(monkeypatch, tmp_path)
         monkeypatch.setattr(jw, "unit_state", lambda u: {"queried": True, "running": False, "exit": 0})
         assert jw.poll_unit_watches()[0]["resolved"]
     assert len([o for o in store.listing(7) if o["kind"] == "notice"]) == 2
+
+
+def test_finished_unit_drops_the_default_running_label(monkeypatch, tmp_path):
+    """A finished unit read "Running: ch1821-adsbot · Finished" on the chat card."""
+    from api.jobs import work_tree
+
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
+    monkeypatch.setattr(jw, "unit_state", lambda u: {"queried": True, "running": True})
+    jw.register_unit_watch(unit="ch1821-adsbot", chat_session_id=7)
+    assert jw.unit_watch_records(7)[0]["label"] == "Running: ch1821-adsbot"  # live: still running
+    monkeypatch.setattr(jw, "unit_state", lambda u: {"queried": True, "running": False, "exit": 0})
+    assert jw.poll_unit_watches()[0]["resolved"]
+    monkeypatch.setattr(work_tree, "index", lambda: {})
+    monkeypatch.setattr(work_tree, "_subagent_busy_parents", lambda: set())
+    assert work_tree.background_summary(7)["recent"][0]["label"] == "ch1821-adsbot"
+    assert work_tree._finished_label("Laptop build") == "Laptop build"
+    assert work_tree._finished_label("Running: ") == "Running: "

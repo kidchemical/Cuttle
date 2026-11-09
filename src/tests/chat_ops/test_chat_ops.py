@@ -476,6 +476,30 @@ def test_idle_target_wakes_supervisor_once_until_it_changes(chats, monkeypatch):
     assert len(_tick(chats, sched, _snap("idle_with_work", reply_id=2), monkeypatch)) == 2
 
 
+def test_template_nudge_sends_the_next_item_without_a_supervisor_turn(chats, monkeypatch):
+    sched = _schedule(chats, nudge="template")
+    sent = []
+    monkeypatch.setattr(service, "send", lambda target, text, actor=None, **k: sent.append((target, text)))
+    items = [{"id": "a", "text": "Rig", "done": True},
+             {"id": "b", "text": "Blend", "done": False, "children": [{"id": "c", "text": "Idle loop"}]}]
+
+    def snap(reply_id, done=1):
+        out = _snap("idle_with_work", reply_id=reply_id, done=done)
+        out["tasks"][0]["items"] = items
+        return out
+    assert _tick(chats, sched, snap(1), monkeypatch) == [] and len(sent) == 1
+    assert "**Blend › Idle loop**" in sent[0][1]
+    # It replied without checking anything off: one more nudge, then the supervisor is woken.
+    assert _tick(chats, sched, snap(2), monkeypatch) == [] and len(sent) == 2
+    assert len(_tick(chats, sched, snap(3), monkeypatch)) == 1 and len(sent) == 2
+    outcomes = [c["outcome"] for c in store.checks(sched["id"])]
+    assert outcomes.count("nudged") == 2
+    # Errors still need judgment: never a template.
+    sched2 = _schedule(chats, nudge="template")
+    _tick(chats, sched2, _snap("error"), monkeypatch)
+    assert len(sent) == 2
+
+
 def _answer(chats, checkin, query_id, content, **meta):
     db, _owner, sup, _target, _foreign = chats
     store.finish(checkin["id"], "delivered", {"query_id": query_id})
@@ -549,9 +573,46 @@ def test_supervise_validates_inputs(chats):
     with pytest.raises(ValueError):
         service.supervise(_ch(target), _ch(sup), every=10, instructions="x", db=db)
     with pytest.raises(ValueError):
-        service.supervise(_ch(target), _ch(sup), instructions=" ", db=db)
+        service.supervise(_ch(target), _ch(sup), instructions="x" * 2001, db=db)
+    with pytest.raises(ValueError):
+        service.supervise(_ch(target), _ch(sup), involve_user="sometimes", db=db)
+    with pytest.raises(ValueError):
+        service.supervise(_ch(target), _ch(sup), nudge="loud", db=db)
     with pytest.raises(ValueError):
         service.supervise(_ch(sup), _ch(sup), instructions="x", db=db)
+
+
+def test_supervise_focus_is_optional_and_settings_carry_the_brief(chats):
+    """No Focus needed: the check-in states the job and each host-enforced setting."""
+    db, _owner, sup, target, _foreign = chats
+    out = service.supervise(_ch(target), _ch(sup), forbidden_branches=["main"], involve_user="never", db=db)
+    cfg = out["operation"]["payload"]
+    assert cfg["instructions"] == "" and cfg["involve_user"] == "never" and cfg["nudge"] == "agent"
+    assert out["warnings"] == []
+    snap = {"handle": _ch(target), "state": "idle", "tasks": [{"id": "t", "title": "Plan", "done": 1, "total": 2}]}
+    text = worker.checkin_text(cfg, snap, [])
+    assert "**Your job:**" in text and '"Plan"' in text and "never touch `main`" in text
+    assert "Never involve the user" in text and "**Focus**" not in text
+    focused = worker.checkin_text({**cfg, "instructions": "Animation first."}, snap, [])
+    assert "**Focus** (the user's notes for this job):\nAnimation first." in focused
+
+
+def test_focus_restating_settings_is_warned_not_rejected(chats):
+    db, owner, sup, target, _foreign = chats
+    text = ("Use opus for reviews. Never merge or push protected branches. Do not involve the user. "
+            "Run `python -m api.jobs work-tree --json` every check-in. Review at every milestone. "
+            "Check in every 10 minutes.")
+    out = service.supervise(_ch(target), _ch(sup), instructions=text, db=db)
+    joined = " ".join(out["warnings"])
+    for hint in ("--model", "--forbid-branch", "--involve", "runbook", "milestone", "--every"):
+        assert hint in joined, hint
+    assert service.supervise(_ch(target), _ch(sup), instructions="Commit a checkpoint about every 90 min.",
+                             db=db)["warnings"] == []  # the worker's own cadence is a job note
+    edited = service.update_supervision(out["operation"]["id"], owner, {"instructions": "Animation first."}, db=db)
+    assert edited["updated"] == ["instructions"] and edited["warnings"] == []
+    # The dialog always sends the policy fields: their defaults are not an edit of an older schedule.
+    again = service.update_supervision(out["operation"]["id"], owner, {"involve_user": "blocked", "nudge": "agent"}, db=db)
+    assert again["updated"] == []
 
 
 # --- CLI ----------------------------------------------------------------------
@@ -720,14 +781,14 @@ def test_update_supervision_edits_in_place_and_tells_the_supervisor(chats, monke
     meta = notices[0]["metadata"]
     meta = json.loads(meta) if isinstance(meta, str) else meta
     assert meta["timeline_notice"]["type"] == "supervision" and meta["kind"] == "supervision-change"
-    assert "instructions" in meta["timeline_notice"]["detail"] and "by you" in meta["timeline_notice"]["detail"]
+    assert "Focus" in meta["timeline_notice"]["detail"] and "by you" in meta["timeline_notice"]["detail"]
     service.update_supervision(op["id"], owner, {"every": 600}, db=db)
     pending = store.find(op["id"])["payload"]["pending_changes"]
     assert pending["rev"] == 2 and pending["sources"] == ["you"]
     assert pending["updated"] == ["agent", "effort", "every", "forbidden_branches", "instructions", "model",
                                   "task_ids"]
     section = "\n".join(service.changes_section(store.find(op["id"])["payload"], _ch(target)))
-    assert "Settings changed since your last check-in** (by you)" in section and "instructions" in section
+    assert "Settings changed since your last check-in** (by you)" in section and "Focus" in section
     with pytest.raises(ValueError, match="unknown model"):
         service.update_supervision(op["id"], owner, {"model": "nope"}, db=db)
     with pytest.raises(ValueError, match="also in the forbidden"):
@@ -838,7 +899,10 @@ def test_routes_overview_control_and_start(client, chats, monkeypatch):
         "target": _ch(target), "agent": "cursor", "every": 600, "instructions": "watch",
         "forbidden_branches": "main, master"}).get_json()
     assert started["success"] and started["operation"]["payload"]["forbidden_branches"] == ["main", "master"]
-    bad = client.post("/api/chat-ops/supervise", json={"target": _ch(target), "agent": "cursor"})
+    bare = client.post("/api/chat-ops/supervise", json={"target": _ch(target), "agent": "cursor"}).get_json()
+    assert bare["success"] and bare["operation"]["payload"]["instructions"] == ""  # Focus is optional
+    bad = client.post("/api/chat-ops/supervise", json={"target": _ch(target), "agent": "cursor",
+                                                       "involve_user": "sometimes"})
     assert bad.status_code == 400
 
 

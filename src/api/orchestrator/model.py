@@ -52,10 +52,11 @@ _LIMIT_BOUNDS = {
 DEFAULT_SUPERVISOR: Dict[str, Any] = {
     "every_sec": 900,
     "agent": "",
-    "instructions": (
-        "Keep the orchestrator on its Tasks list; nudge it when it stalls; "
-        "enforce the org chart."
-    ),
+    # Focus: job-specific notes only. The supervisor's job and every setting
+    # below reach it from the host (``api.chat_ops.brief``), never from here.
+    "instructions": "Enforce the org chart: work is delegated by tier, not done in the orchestrator chat.",
+    "involve_user": "blocked",
+    "nudge": "agent",
     "require_branch": "",
     "require_path": "",
     "forbid_branches": [],
@@ -64,6 +65,9 @@ DEFAULT_SUPERVISOR: Dict[str, Any] = {
     "checkpoints": {"milestone": {"do": ["wake"]}, "repeat_failures": {"n": 3, "do": ["wake"]}},
 }
 MAX_CHECKPOINTS = 10
+# Mirrors ``api.chat_ops.brief`` (this module stays Cuttle-free; the host validates again).
+INVOLVE_CHOICES = ("never", "blocked", "questions")
+NUDGE_CHOICES = ("agent", "template")
 
 
 class PlaybookError(ValueError):
@@ -161,6 +165,12 @@ def normalize_playbook(raw: Any) -> Dict[str, Any]:
         sup["agent"] = _slug(sup_raw.get("agent"))
     if "instructions" in sup_raw:
         sup["instructions"] = _text(sup_raw.get("instructions"), 2000)
+    for key, allowed in (("involve_user", INVOLVE_CHOICES), ("nudge", NUDGE_CHOICES)):
+        if sup_raw.get(key) not in (None, ""):
+            value = str(sup_raw[key]).strip().lower()
+            if value not in allowed:
+                raise PlaybookError(f"supervisor.{key} must be one of {', '.join(allowed)}")
+            sup[key] = value
     if "require_path" in sup_raw:
         sup["require_path"] = _text(sup_raw.get("require_path"), 500)
     branch = _text(sup_raw.get("require_branch"), 200)
@@ -375,6 +385,8 @@ def supervisor_config(
         "forbidden_branches": [str(b) for b in sup.get("forbid_branches") or []],
         "model_tiers": model_tiers(playbook, profiles),
         "checkpoints": dict(sup.get("checkpoints") or {}),
+        "involve_user": str(sup.get("involve_user") or "blocked"),
+        "nudge": str(sup.get("nudge") or "agent"),
     }
 
 
@@ -415,6 +427,7 @@ def supervisor_argv(
     for branch in cfg["forbidden_branches"]:
         argv += ["--forbid-branch", branch]
     argv += ["--model-tiers", json.dumps(cfg["model_tiers"], separators=(",", ":"))]
+    argv += ["--involve", cfg["involve_user"], "--nudge", cfg["nudge"]]
     if cfg["checkpoints"]:
         argv += ["--checkpoints", json.dumps(cfg["checkpoints"], separators=(",", ":"))]
     argv.append("--json")

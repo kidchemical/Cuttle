@@ -184,7 +184,8 @@ def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, chang
         lines += ['> ' + ln if ln.strip() else '>' for ln in text[:CHECKIN_REPLY_CHARS].rstrip().splitlines()]
         if cut:
             lines.append(f'> … (`python -m api.chat_cli status {handle} --json` has the rest)')
-    lines += ['', '**Your instructions:**', cfg['instructions'].strip()]
+    from api.chat_ops.brief import settings_lines
+    lines += settings_lines(cfg, snap)
     tiers = cfg.get('model_tiers') or {}
     if tiers:
         lines += ['', '**Model guidance:**'] + [f"- {k}: {', '.join(v)}" for k, v in tiers.items() if v]
@@ -522,6 +523,11 @@ def _check_in(op, db, actor, sid, request):
         store.finish(op['id'], 'pending', {**previous, **tracking, 'last_check': time.time(),
                                             'last_seen': seen, 'skipped': reason, 'guard_reported': found}, due=nxt)
         return
+    if _template_nudge(op, cfg, snap, previous, request, db=db, actor=actor, quiet=not (
+            violations or briefing or stalled or changes or failure),
+            result={**previous, **tracking, 'signature': signature, 'last_check': time.time(),
+                    'last_seen': seen, 'guard_reported': found}, due=nxt):
+        return
     active = _active_checkins(actor, op['id'])
     store.record_check(op['id'], 'violation' if violations else 'stalled' if stalled else 'woke',
                        {**seen, 'already_waiting': bool(active), **({'retry': True} if failure else {})})
@@ -534,6 +540,29 @@ def _check_in(op, db, actor, sid, request):
     store.finish(op['id'], 'pending', {**tracking, 'signature': signature, 'last_check': time.time(),
                                         'last_checkin': time.time(), 'last_seen': seen,
                                         'guard_reported': found}, due=nxt)
+
+
+def _template_nudge(op, cfg, snap, previous, request, *, db, actor, quiet, result, due):
+    """``nudge: template``: send an idle chat its next open Tasks item without a
+    supervisor turn. Only when nothing else needs judgment (``quiet``), and at most
+    ``TEMPLATE_NUDGE_LIMIT`` times in a row without Tasks progress; then the
+    supervisor is woken as usual. Returns whether the nudge replaced the wake."""
+    from api.chat_ops import brief
+    if not quiet or snap['state'] != 'idle_with_work' or brief.nudge(cfg.get('nudge')) != 'template':
+        return False
+    tsig = brief.tasks_signature(snap)
+    streak = int(previous.get('template_nudges') or 0) + 1 if previous.get('nudge_tasks') == tsig else 1
+    text = brief.template_nudge(snap) if streak <= brief.TEMPLATE_NUDGE_LIMIT else None
+    if not text:
+        return False
+    try:
+        service.send(op['target'], text, actor, db=db, request=request)
+    except Exception as exc:
+        store.record_check(op['id'], 'error', {'entry': 'nudge', 'error': str(exc)[:300]})
+        return False
+    store.record_check(op['id'], 'nudged', {'state': snap['state'], 'streak': streak, 'text': text[:300]})
+    store.finish(op['id'], 'pending', {**result, 'template_nudges': streak, 'nudge_tasks': tsig}, due=due)
+    return True
 
 
 # A pause nobody remembers is the failure this guards: default 6 h, setting
