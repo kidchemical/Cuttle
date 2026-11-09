@@ -8333,6 +8333,7 @@ html.cuttle-bg-paused .chat-restore-spinner {
 .chat-bg-job-details summary { cursor: pointer; width: fit-content; color: var(--accent-color, #667eea); }
 .chat-bg-job-details[open] { display: grid; gap: 6px; }
 .chat-bg-job-details > div { overflow-wrap: anywhere; }
+.chat-bg-job-links { display: flex; flex-wrap: wrap; gap: 12px; }
 .chat-bg-output { box-sizing: border-box; max-width: 100%; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; margin: 4px 0; background: color-mix(in srgb, var(--text-secondary) 8%, transparent); border-radius: 6px; font-size: 0.9em; }
 .chat-bg-result + .chat-bg-result { border-top: 1px solid color-mix(in srgb, var(--text-secondary) 20%, transparent); padding-top: 8px; }
 @keyframes chat-bg-step-spin { to { transform: rotate(360deg); } }

@@ -11006,6 +11006,10 @@
                 if (already) return already;
             }
             const saved = opts.timeline_notice ? { timeline_notice: opts.timeline_notice } : null;
+            // A server-side (auto-)compact lands as this notice: repaint the composer meter.
+            if (opts.kind === 'context-compact' && !opts.prepend) {
+                try { contextGauge.scheduleRefresh(250); } catch (_) {}
+            }
             return addSystemMessage(CuttleChatTimelineNotice.fromRow(content, opts.kind, saved), {
                 persist: true,
                 kind: opts.kind,

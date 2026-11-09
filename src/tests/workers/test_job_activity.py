@@ -116,3 +116,38 @@ def test_finished_unit_drops_the_default_running_label(monkeypatch, tmp_path):
     assert work_tree.background_summary(7)["recent"][0]["label"] == "ch1821-adsbot"
     assert work_tree._finished_label("Laptop build") == "Laptop build"
     assert work_tree._finished_label("Running: ") == "Running: "
+
+
+def test_delivered_result_leaves_the_card_once_the_chat_is_idle(monkeypatch, tmp_path):
+    """CH-001821 kept a "Background job results" card for jobs whose follow-ups
+    its agent had answered hours earlier (receipts were pinned for 7 days)."""
+    from api import chat_delivery
+    from api.jobs import work_tree
+
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path))
+    monkeypatch.setattr(jw, "unit_state", lambda u: {"queried": True, "running": True})
+    info = jw.register_unit_watch(unit="ch1821-adsbot", chat_session_id=7)
+    monkeypatch.setattr(jw, "unit_state", lambda u: {"queried": True, "running": False, "exit": 0})
+    assert jw.poll_unit_watches()[0]["resolved"]
+    monkeypatch.setattr(work_tree, "index", lambda: {})
+    monkeypatch.setattr(work_tree, "_subagent_busy_parents", lambda: set())
+    monkeypatch.setattr(chat_delivery, "is_busy", lambda s: False)
+    [receipt] = jw.recent_unit_results(7)
+    later = float(receipt["finished_ts"]) + work_tree.RESULT_LINGER_SEC + 1
+
+    # Queued (not delivered yet): stays however old.
+    assert not work_tree._result_settled("7", receipt, now=later)
+    op = store.job_notice(7, info["id"])
+    store.finish(op["id"], "delivered", {"query_id": "followup123"})
+    [receipt] = jw.recent_unit_results(7)
+    # Delivered but just ended: still shown for a few minutes.
+    assert work_tree.background_summary(7)["recent"]
+    assert not work_tree._result_settled("7", receipt, now=float(receipt["finished_ts"]) + 5)
+    # Delivered while the follow-up turn still runs: stays.
+    monkeypatch.setattr(chat_delivery, "is_busy", lambda s: True)
+    assert not work_tree._result_settled("7", receipt, now=later)
+    # Delivered, old, chat idle: off the card, and with nothing else the card goes.
+    monkeypatch.setattr(chat_delivery, "is_busy", lambda s: False)
+    assert work_tree._result_settled("7", receipt, now=later)
+    monkeypatch.setattr(work_tree.time, "time", lambda: later)
+    assert work_tree.background_summary(7) is None

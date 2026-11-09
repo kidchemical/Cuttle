@@ -387,18 +387,20 @@
                 if (v.deadline) details.append(mk('div', '', 'Expected deadline: ' + new Date(v.deadline * 1000).toLocaleString()));
                 if (w.unit) details.append(mk('div', '', 'Process: ' + w.unit + (w.sub_state ? ' · ' + w.sub_state : '')));
                 if (w.resume_note) details.append(mk('div', 'chat-bg-resume-note', w.resume_note));
-                details.append(mk('div', '', 'Completion follow-ups are independent of supervision schedules.'));
-                if (w.handoff === 'delivered') details.append(mk('div', '', 'The agent turn was accepted; its reply may still be pending.'));
+                // Links share one row (they used to run together as
+                // "View originating turnView follow-up turn").
+                const links = mk('div', 'chat-bg-job-links');
                 function queryLink(id, label) {
                     if (!/^[\w-]{1,80}$/.test(id || '')) return;
                     const a = mk('a', 'chat-bg-details', label);
                     a.href = '/query_log.html?id=' + encodeURIComponent(id);
-                    details.append(a);
+                    links.append(a);
                 }
-                queryLink(w.origin_query_id, 'View originating turn');
-                queryLink(w.followup_query_id, 'View follow-up turn');
+                queryLink(w.origin_query_id, 'Started by');
+                queryLink(w.followup_query_id, 'Follow-up turn');
+                if (links.childNodes.length) details.append(links);
                 if (v.output) details.append(mk('pre', 'chat-bg-output', v.output));
-                else details.append(mk('div', '', 'No recent output published by this job.'));
+                else if (!completed) details.append(mk('div', '', 'No recent output published by this job.'));
                 block.append(details);
                 parent.append(block);
             }
@@ -468,7 +470,7 @@
                 actions.append(b);
             });
             if (p.feed) {
-                const a = mk('a', 'chat-bg-details', 'Details');
+                const a = mk('a', 'chat-bg-details', 'Agent Feed');
                 a.href = '/agent_feed.html?chat=' + encodeURIComponent(handle(sid));
                 a.title = 'Open the Running tree in Agent Feed';
                 actions.append(a);

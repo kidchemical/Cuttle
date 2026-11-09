@@ -401,6 +401,31 @@ def _feed_enabled() -> bool:
         return False
 
 
+# A delivered result stays on the card this long, so its end is seen.
+RESULT_LINGER_SEC = 300
+
+
+def _result_settled(chat: str, receipt: Dict[str, Any], *, now: Optional[float] = None) -> bool:
+    """True when a finished job no longer belongs on the pinned card.
+
+    Its follow-up was delivered, the chat is idle (that turn has finished, so
+    the answer is in the transcript), and it ended more than a few minutes ago.
+    Results that still need attention (failed, retrying, queued) stay; they
+    used to stay for 7 days, so a chat kept a "Background job results" card
+    for jobs its agent handled hours earlier."""
+    if receipt.get("handoff") != "delivered":
+        return False
+    now = time.time() if now is None else now
+    if now - float(receipt.get("finished_ts") or 0) < RESULT_LINGER_SEC:
+        return False
+    try:
+        from api import chat_delivery
+
+        return not chat_delivery.is_busy(chat)
+    except Exception:
+        return False
+
+
 def _finished_label(label: str) -> str:
     """A finished job's label without the "Running: " it was registered with.
 
@@ -421,7 +446,7 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
 
     # Terminal receipts do not light a running indicator or become live work.
     try:
-        receipts = recent_unit_results(chat)
+        receipts = [r for r in recent_unit_results(chat) if not _result_settled(chat, r)]
     except Exception:
         receipts = []
     recent = [{"job_id": r["id"], "kind": "unit", "unit": r.get("unit", ""),
