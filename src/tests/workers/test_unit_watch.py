@@ -168,7 +168,8 @@ def test_unit_state_reads_systemctl_properties(monkeypatch):
                                                            "Result=success\nExecMainStatus=0\nMainPID=99\n"))
     state = jw.unit_state("x")
     assert state == {"queried": True, "active_state": "active", "sub_state": "running",
-                     "result": "success", "exit": 0, "pid": 99, "running": True}
+                     "result": "success", "exit": 0, "pid": 99, "running": True,
+                     "scheduled": False, "starts_at": None}
     monkeypatch.setattr(jw, "_systemctl", lambda args: (None, ""))
     assert jw.unit_state("x")["queried"] is False
 

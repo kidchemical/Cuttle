@@ -560,6 +560,11 @@
                 <span id="agentSetupStatus" role="status" aria-live="polite"></span>
             </div>
 
+            <div class="settings-group" id="agentBillingSettings" hidden>
+                <h3 class="settings-title">Billing <span class="settings-scope" data-scope="server">All devices</span><button type="button" class="cuttle-info" data-tooltip="For agents that can run on your plan subscription or on API credit: which one each turn uses first." aria-label="About Billing">i</button></h3>
+                <div id="agentBillingEditor"></div>
+            </div>
+
             <div class="settings-group" id="autoCompactSettings" hidden>
                 <h3 class="settings-title">Auto-compaction <span class="settings-scope">Experimental</span><button type="button" class="cuttle-info" data-tooltip="Compact an agent's context between turns, before its CLI compacts mid-task near the window edge. Fires when the window passes the percentage or the token cap, whichever comes first. Override per chat from the context gauge in the composer." aria-label="About Auto-compaction">i</button></h3>
                 <div id="autoCompactEditor"></div>
@@ -939,6 +944,7 @@
     <script src="/js/settings/settings_storage.js?v=20261103cards"></script>
     <script src="/js/settings/settings_chat_preferences.js?v=20261016separateProcessor"></script>
     <script src="/js/settings/settings_auto_compact.js?v=20261108autocompact"></script>
+    <script src="/js/settings/settings_agent_billing.js?v=20261109billing1"></script>
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261011menuPosition2"></script>
     <script src="/js/settings/settings_background_helpers.js?v=20261016separateProcessor"></script>
@@ -3007,6 +3013,7 @@
                 tabs.register('agents', function () {
                     chatPreferences.mountProcessor(document.getElementById('responsePostprocessingEditor'));
                     window.CuttleSettingsAutoCompact.mount(document.getElementById('autoCompactEditor'));
+                    window.CuttleSettingsAgentBilling.mount(document.getElementById('agentBillingEditor'));
                     loadAgentCatalog();
                     loadCompletionProviders();
                     loadGitAutoCommitSetting();
@@ -3029,6 +3036,7 @@
                 chatPreferences.mountGlobal(document.getElementById('sharedSystemPromptEditor'));
                 chatPreferences.mountProcessor(document.getElementById('responsePostprocessingEditor'));
                 window.CuttleSettingsAutoCompact.mount(document.getElementById('autoCompactEditor'));
+                window.CuttleSettingsAgentBilling.mount(document.getElementById('agentBillingEditor'));
                 window.CuttleSettingsReleases.mount(document.getElementById('cuttleReleaseSettings'));
                 loadAgentCatalog();
                 loadGitAutoCommitSetting();

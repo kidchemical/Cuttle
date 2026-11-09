@@ -2565,16 +2565,8 @@ def _apply_request_agent_pins(session_id, data, message_text=None) -> None:
     try:
         claude = _entry('claude')
         if claude:
-            from scripts.utilities.claude_cli_session_store import (
-                save_claude_effort,
-                save_claude_model,
-            )
-            model = str(claude.get('model') or '').strip()
-            effort = str(claude.get('effort') or '').strip().lower()
-            if model:
-                save_claude_model(session_id, model)
-            if effort and effort not in ('default', 'reset', 'clear', 'none'):
-                save_claude_effort(session_id, effort)
+            from api.agent_harness.agents.claude.routes import apply_request_pins
+            apply_request_pins(session_id, claude)
     except Exception as exc:
         print(f"[CHAT] apply claude agent_pins failed: {exc}", flush=True)
 

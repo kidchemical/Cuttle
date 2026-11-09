@@ -377,6 +377,14 @@ def cancel_job(job_id: str) -> Dict[str, Any]:
     killed = 0
     if state == "running" or pids:
         killed = kill_status_pids(pids)
+    disarmed = ""
+    if data.get("unit_watch") and data.get("unit") and state == "running":
+        # A scheduled unit has no process yet: Stop must disarm its timer, or it
+        # would start the job after the user stopped it.
+        timer = timer_state(str(data["unit"]))
+        if timer.get("waiting"):
+            _systemctl(["stop", timer["unit"]])
+            disarmed = timer["unit"]
     if state in ("done", "failed") and not pids:
         return {
             "ok": True,
@@ -402,6 +410,7 @@ def cancel_job(job_id: str) -> Dict[str, Any]:
         "pids": pids,
         "path": str(path),
         "state": "failed",
+        **({"disarmed_timer": disarmed} if disarmed else {}),
     }
 
 
@@ -621,7 +630,7 @@ def unit_state(unit: str) -> Dict[str, Any]:
             return None
 
     pid = _int(props.get("MainPID")) or 0
-    return {
+    out = {
         "queried": True,
         "active_state": active,
         "sub_state": props.get("SubState") or "",
@@ -631,7 +640,71 @@ def unit_state(unit: str) -> Dict[str, Any]:
         # A unit started with --remain-after-exit stays ActiveState=active after its process ends, with
         # SubState=exited: that job is finished. (Every watched build used it, so no watch ever fired.)
         "running": active in _RUNNING_UNIT_STATES and (props.get("SubState") or "") not in _FINISHED_SUB_STATES,
+        "scheduled": False,
+        "starts_at": None,
     }
+    if not out["running"] and active == "inactive":
+        timer = timer_state(unit)
+        if timer.get("waiting"):
+            # ``systemd-run --on-calendar=…``: the service has not started yet; its
+            # timer will start it. Scheduled work is pending, not finished.
+            out.update(running=True, scheduled=True, starts_at=timer.get("next_ts"),
+                       sub_state="scheduled", timer=timer["unit"])
+    return out
+
+
+def _timer_unit(unit: str) -> str:
+    stem = str(unit or "")
+    stem = stem[:-len(".service")] if stem.endswith(".service") else stem
+    return f"{stem}.timer" if stem and "." not in stem.rsplit("@", 1)[-1] else ""
+
+
+def timer_state(unit: str) -> Dict[str, Any]:
+    """The systemd timer that starts ``unit`` later (``systemd-run --on-calendar``).
+
+    ``waiting`` is True while it is armed and has not fired; ``next_ts`` is when it
+    fires (epoch). systemd owns the schedule; Cuttle only reads it."""
+    timer = _timer_unit(unit)
+    if not timer:
+        return {"unit": "", "waiting": False}
+    code, text = _systemctl(["show", timer, "--timestamp=unix",
+                             "--property=LoadState,ActiveState,SubState,NextElapseUSecRealtime"])
+    if code is None:
+        return {"unit": timer, "waiting": False}
+    props = dict(line.partition("=")[::2] for line in text.splitlines())
+    raw = str(props.get("NextElapseUSecRealtime") or "").strip().lstrip("@")
+    try:
+        next_ts = float(raw) if raw else None
+    except ValueError:
+        next_ts = None
+    waiting = (props.get("LoadState") == "loaded" and props.get("ActiveState") == "active"
+               and props.get("SubState") == "waiting")
+    return {"unit": timer, "waiting": waiting, "next_ts": next_ts}
+
+
+def start_scheduled_now(job_id: str) -> Dict[str, Any]:
+    """Start a timer-scheduled unit watch's service now and disarm its timer.
+
+    Only for a pending unit watch whose unit is still waiting on its timer
+    (``systemd-run --on-calendar``); anything else raises ``LookupError`` /
+    ``ValueError``. The watch keeps following the same unit, so the chat is
+    resumed when it exits exactly as it would have been."""
+    sid = sanitize_job_id(job_id)
+    rec = next((r for r in unit_watch_records() if r.get("id") == sid), None)
+    if rec is None or not rec.get("unit"):
+        raise LookupError(f"no pending unit watch {sid}")
+    unit = str(rec["unit"])
+    state = unit_state(unit)
+    if not state.get("scheduled"):
+        raise ValueError(f"unit {unit} is not waiting on a timer (it is {state.get('sub_state') or 'unknown'})")
+    code, _ = _systemctl(["start", "--no-block", unit])
+    if code != 0:
+        raise ValueError(f"systemctl --user start {unit} failed")
+    _systemctl(["stop", state.get("timer") or _timer_unit(unit)])
+    data = read_status(sid) or {}
+    write_status(sid, state="running", percent=None, label=str(data.get("label") or rec.get("label") or ""),
+                 extra={"started_early_ts": time.time(), "scheduled_for": state.get("starts_at")})
+    return {"ok": True, "id": sid, "unit": unit, "was_scheduled_for": state.get("starts_at")}
 
 
 def _unit_job_id(unit: str, pid: int) -> str:
@@ -1178,6 +1251,8 @@ def main(argv: Optional[list] = None) -> int:
 
     sub.add_parser("poll-units", help="Resolve finished unit watches now (Flask and the daemon do this on a timer)")
     sub.add_parser("units", help="List pending unit watches")
+    sn = sub.add_parser("start-now", help="Start a timer-scheduled unit watch's job now (systemd-run --on-calendar)")
+    sn.add_argument("--id", required=True)
 
     args = p.parse_args(argv)
     if args.cmd == "report":
@@ -1265,6 +1340,13 @@ def main(argv: Optional[list] = None) -> int:
     if args.cmd == "units":
         print(json.dumps({"watches": unit_watch_records()}, ensure_ascii=False, default=str))
         return 0
+    if args.cmd == "start-now":
+        try:
+            print(json.dumps(start_scheduled_now(args.id)))
+            return 0
+        except (LookupError, ValueError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}))
+            return 1
     return 2
 
 

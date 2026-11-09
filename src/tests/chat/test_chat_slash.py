@@ -42,6 +42,11 @@ out.parseBody = S.parseStoredSlashCommandMessage('just text');
 out.parseTitle = S.parseTitleSlashChips('/cursor /model refresh extra words here', {});
 out.parseTitleEmoji = S.parseTitleSlashChips('/cursor /model 🦘 jump stick bug', {});
 out.parseModelId = S.parseStoredSlashCommandHead('/model openai/gpt-4o rest', {});
+out.claudeRefresh = S.parseStoredSlashCommandMessage('/claude /model refresh');
+out.cursorRefresh = S.parseStoredSlashCommandMessage('/cursor /model refresh');
+out.claudeModelSet = S.parseStoredSlashCommandMessage('/claude /model opus');
+out.claudeModelSetCursorRelated = S.isCursorRelatedSlashChip(out.claudeModelSet.chips[1]);
+out.claudeRefreshCursorRelated = S.isCursorRelatedSlashChip(out.claudeRefresh.chips[1]);
 out.normalize = S.normalizeSlashCommandStored({ label: 'X', meta: '/x' });
 out.normalizeNull = S.normalizeSlashCommandStored(null);
 out.meta = S.slashCommandMetaFromUserMessage('/codex hi');
@@ -163,6 +168,16 @@ def test_parsing_matrix():
     assert emoji["body"] == "\U0001F998 jump stick bug"
     assert res["parseModelId"]["chips"][0]["modelId"] == "openai/gpt-4o"
     assert res["parseModelId"]["body"] == "rest"
+    # `/model refresh` is a Refresh command of the agent before it, never a
+    # Cursor model pick named "refresh" ("Cursor | refresh" on a Claude refresh).
+    assert res["claudeRefresh"]["chips"][1] == {
+        "label": "Refresh", "meta": "/model refresh", "category": "claude-cmd"}
+    assert res["cursorRefresh"]["chips"][1]["category"] == "cursor-cmd"
+    assert res["cursorRefresh"]["chips"][1]["label"] == "Refresh"
+    assert res["claudeModelSet"]["chips"][1]["category"] == "claude-model"
+    assert res["claudeModelSet"]["chips"][1]["label"] == "opus"
+    assert res["claudeModelSetCursorRelated"] is False
+    assert res["claudeRefreshCursorRelated"] is False
     assert res["parseSkill"]["chips"][0]["category"] == "skill"
     assert [c["meta"] for c in res["parseMulti"]["chips"]] == ["/cursor", "/usage"]
     assert res["parseMulti"]["body"] == "now"

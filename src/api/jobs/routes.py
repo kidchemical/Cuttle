@@ -99,6 +99,22 @@ def work_tree_route():
     return jsonify(work_tree.work_tree())
 
 
+@jobs_bp.post("/unit-watch/<job_id>/start-now")
+@owner_required
+def start_unit_now_route(job_id: str):
+    """Start a timer-scheduled detached job now (its watch keeps following it)."""
+    from api.job_watch import start_scheduled_now
+
+    try:
+        result = start_scheduled_now(job_id)
+    except LookupError as e:
+        return jsonify(success=False, error=str(e)), 404
+    except ValueError as e:
+        return jsonify(success=False, error=str(e)), 409
+    work_tree.invalidate()
+    return jsonify(success=True, **result)
+
+
 @jobs_bp.post("/processes/<int:pid>/end")
 @owner_required
 def end_process_route(pid: int):

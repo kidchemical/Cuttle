@@ -69,6 +69,17 @@ PYTHONPATH=src .venv/bin/python -m api.job_watch watch-unit --unit ep-build-linu
 - Register **after** the job is running: a watch on a dead unit is refused
   (`--allow-inactive` overrides).
 - Inspect with `python -m api.job_watch units`; `poll-units` forces one pass.
+- **Starting later** (after a reset, overnight): let systemd own the schedule —
+  `systemd-run --user --unit=<name> --on-calendar='2026-11-09 15:52' --remain-after-exit -- ./job.sh`,
+  then `watch-unit --unit <name>` as usual. While the timer waits the card says
+  *Background job scheduled* with the start time and a **Start now** button
+  (`python -m api.job_watch start-now --id <id>`); Stop disarms the timer. Never
+  hide a wait inside the job (`sleep N` in a script): the card can only call that
+  "running", and nobody can start it early.
+- **Before deferring for a usage limit**, check live usage
+  (`python -m api.gizmos usage <agent>`). A spawn's `out of usage until … (re-probe
+  after an earlier failed run; the reset was not named)` is a guess, not the
+  vendor's reset; if the agent you are running on *is* that agent, it is wrong.
 - Rule of thumb: if the work outlives your turn on purpose, it needs `watch-unit`.
   Never finish a turn with "I'll check back later" for detached work.
 

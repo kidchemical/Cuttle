@@ -7,6 +7,11 @@ Combines the two signals Cuttle has before spending a run:
 
 States: ``blocked`` (would fail — skip it), ``low`` (little headroom — run it
 after healthy ones), ``ok``, ``unknown`` (no usage API; keep declared order).
+A cooldown whose error named its reset wins. One whose reset was guessed (the
+default re-probe window) yields to a live usage snapshot fetched after it was
+marked that does not show the account blocked: live plan windows are facts, a
+guessed cooldown is not.
+
 ``low`` is only reported when ``agent_router.budget.enabled`` is on: that switch
 opts into reordering by headroom. ``blocked`` from live usage is reported
 whenever a snapshot is passed in.
@@ -31,12 +36,27 @@ def target_state(
 ) -> Tuple[str, str]:
     """(state, short why). ``accounts=None`` skips live usage (cooldowns only);
     ``verbose`` adds a cooldown's reset time to the why."""
-    if quota.is_exhausted(target):
+    rec = (quota.record(target) or {}) if quota.is_exhausted(target) else None
+    live = None
+    if accounts is not None:
+        bset = settings or budget.budget_settings()
+        live = budget.target_state(target, accounts, low_headroom=bset["low_headroom"])
+    if rec is not None and not _live_overrides(rec, target, accounts, live):
         return "blocked", (quota.reason(target) if verbose else "") or "out of usage"
-    if accounts is None:
+    if live is None:
         return "ok", ""
-    bset = settings or budget.budget_settings()
-    state, why = budget.target_state(target, accounts, low_headroom=bset["low_headroom"])
+    state, why = live
     if state == "low" and not bset["enabled"]:
         return "ok", ""
     return state, why
+
+
+def _live_overrides(rec: Dict, target: ExecutionTarget, accounts, live) -> bool:
+    """A guessed cooldown yields to a newer live snapshot that is not blocked."""
+    if rec.get("reset_named") or live is None or live[0] in ("blocked", "unknown"):
+        return False
+    marked_at = rec.get("marked_at")
+    if not isinstance(marked_at, (int, float)):
+        return False  # a mark from before marked_at existed: let it expire on its own
+    acc = (accounts or {}).get(target.agent)
+    return bool(acc and not acc.error and acc.fetched_at > marked_at)

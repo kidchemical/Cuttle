@@ -98,6 +98,9 @@ SETTING_FAMILIES = (
     {"name": "auto-compact", "routes": ["GET/POST /settings/auto-compact"],
      "backend": "api.auto_compact.service (settings-manager key 'auto_compact')",
      "validator": "api.auto_compact.policy.validate_patch", "read": "authenticated", "write": "owner"},
+    {"name": "agent-billing", "routes": ["GET/POST /settings/agent-billing"],
+     "backend": "api.agent_harness.agents.claude.api_fallback (settings-manager key 'agent_billing_fallback')",
+     "validator": "api_fallback.save_settings", "read": "authenticated", "write": "owner"},
     {"name": "timeouts", "routes": ["GET/POST /settings/timeouts"],
      "backend": "settings-manager key 'timeouts' (resolved by get_timeouts)",
      "validator": "validate_timeouts_update", "read": "authenticated", "write": "owner"},
@@ -608,6 +611,29 @@ def update_auto_compact_setting():
     except policy.PolicyError as e:
         return jsonify({'success': False, 'error': str(e)}), 400
     return jsonify(_auto_compact_body())
+
+
+# --- agent billing (backend: claude api_fallback) ----------------------------
+
+@settings_bp.route('/settings/agent-billing', methods=['GET'])
+@authenticated_required
+def get_agent_billing_setting():
+    """Per-agent billing order: subscription first (default) or API first."""
+    from api.agent_harness.agents.claude import api_fallback
+    return jsonify({'success': True, 'agents': {'claude': api_fallback.settings_view()}})
+
+
+@settings_bp.route('/settings/agent-billing', methods=['POST'])
+@owner_required
+def update_agent_billing_setting():
+    """Body: { claude: { prefer?, fallback_enabled?, monthly_budget_usd? } }."""
+    from api.agent_harness.agents.claude import api_fallback
+    body = request.get_json(silent=True) or {}
+    try:
+        view = api_fallback.save_settings(body.get('claude') or {})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    return jsonify({'success': True, 'agents': {'claude': view}})
 
 
 # --- timeouts (backend: managers.settings_manager) -------------------------

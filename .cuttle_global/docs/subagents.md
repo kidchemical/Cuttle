@@ -32,7 +32,12 @@ left — `features/orchestrator/docs/orchestrator.md`).
 A pinned child whose account is out of usage (a recent quota failure, or the
 cached `/usage` plan windows at their limit) is refused before any chat is
 created; a child that fails on quota marks its account for later spawns and
-routed turns.
+routed turns. Only a *failed* run can mark an account (a successful reply that
+mentions "budget" or a number like `1.402` never does). A mark whose error named
+the vendor's reset holds until then; one with a guessed reset ("the reset was not
+named") yields to a newer live `/usage` snapshot that shows the account usable,
+and any later successful turn on that agent clears it. Don't park work for hours
+on a budget block without checking `python -m api.gizmos usage <agent>`.
 
 `model` must be an id the named harness's own CLI accepts — pass it exactly as
 that harness spells it (some qualify with a provider prefix, some are bare); do

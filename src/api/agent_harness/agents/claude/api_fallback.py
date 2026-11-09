@@ -12,7 +12,14 @@ Settings (``settings.json``)::
 
     "agent_billing_fallback": {"claude": {"enabled": true, "monthly_budget_usd": 200}}
 
-Off by default (it spends money). Kill switch: ``CUTTLE_CLAUDE_API_FALLBACK=0``.
+Off by default (it spends money). Kill switch: ``CUTTLE_CLAUDE_API_FALLBACK=0``
+(also blocks API-first turns).
+
+Billing order: ``"prefer": "subscription" | "api"`` in the same block sets the
+default; a chat can pin its own (``claude_cli_session_store`` billing pin) and
+one message can override with a leading ``/use-api`` / ``/use-subscription``.
+API first runs on the key while one is set and the budget is not spent, and
+drops to the subscription otherwise (or when the API rejects the key/credit).
 The key itself is never stored here; it is read from the process environment
 (the Providers page applies saves to ``os.environ``) or ``<home>/.env``.
 
@@ -55,6 +62,36 @@ _RESETS_AT_RE = re.compile(
 
 DEFAULT_COOLDOWN_S = 30 * 60  # no reset time in the message: re-probe soon (a probe is free)
 MAX_COOLDOWN_S = 8 * 24 * 3600
+
+
+BILLING_MODES = ("subscription", "api")
+_BILLING_PREFIX_RE = re.compile(r"^\s*/use-(api|subscription)(?=\s|$)[ \t]*\r?\n?", re.I)
+# The API (not the subscription) refused: bad/missing key or no credit left.
+_API_REFUSED_RE = re.compile(
+    r"credit balance is too low|invalid x-api-key|invalid api key|authentication_error"
+    r"|api key .{0,40}(?:invalid|revoked|disabled)",
+    re.I,
+)
+
+
+def parse_billing_prefix(prompt: str):
+    """``(mode, rest)`` for a leading ``/use-api`` / ``/use-subscription``.
+
+    ``(None, prompt)`` when absent or when nothing follows the token (a bare
+    token is not a turn).
+    """
+    text = prompt or ""
+    m = _BILLING_PREFIX_RE.match(text)
+    if not m:
+        return None, text
+    rest = text[m.end():]
+    if not rest.strip():
+        return None, text
+    return m.group(1).lower(), rest
+
+
+def is_api_refusal(text: str) -> bool:
+    return bool(_API_REFUSED_RE.search(text or ""))
 
 
 def is_subscription_limit(text: str) -> bool:
@@ -156,9 +193,94 @@ def settings() -> Dict[str, Any]:
 
 
 def enabled() -> bool:
-    if (os.environ.get("CUTTLE_CLAUDE_API_FALLBACK") or "").strip().lower() in ("0", "false", "off", "no"):
+    if killed():
         return False
     return bool(settings().get("enabled"))
+
+
+def killed() -> bool:
+    return (os.environ.get("CUTTLE_CLAUDE_API_FALLBACK") or "").strip().lower() in ("0", "false", "off", "no")
+
+
+def default_billing() -> str:
+    """Settings default: ``"api"`` only when ``prefer`` says so."""
+    return "api" if str(settings().get("prefer") or "").strip().lower() == "api" else "subscription"
+
+
+def resolve_billing(chat_session_id: Any = None, override: Optional[str] = None):
+    """``(mode, source)``: this message → this chat's pin → settings default."""
+    if override in BILLING_MODES:
+        return override, "message"
+    try:
+        from scripts.utilities.claude_cli_session_store import load_claude_billing
+
+        pin = load_claude_billing(chat_session_id)
+    except Exception:
+        pin = None
+    if pin in BILLING_MODES:
+        return pin, "chat"
+    return default_billing(), "default"
+
+
+def api_ready() -> str:
+    """'' when an API-first turn may run on the key, else why not.
+
+    Unlike :func:`available` this ignores the automatic-fallback toggle: an
+    explicit API-first choice is the consent. Budget and kill switch still apply.
+    """
+    if killed():
+        return "disabled"
+    if not api_key():
+        return "no_key"
+    if over_budget():
+        return "over_budget"
+    return ""
+
+
+def settings_view() -> Dict[str, Any]:
+    cfg = settings()
+    return {
+        "prefer": default_billing(),
+        "fallback_enabled": bool(cfg.get("enabled")),
+        "monthly_budget_usd": budget_usd(),
+        "has_key": bool(api_key()),
+        "killed": killed(),
+        "month_usd": month_spend()["usd"],
+    }
+
+
+def save_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate and merge a partial Claude billing block. Raises ``ValueError``."""
+    if not isinstance(patch, dict):
+        raise ValueError("Expected an object.")
+    from managers.settings_manager import get_settings_manager
+
+    mgr = get_settings_manager()
+    whole = mgr.get_setting("agent_billing_fallback", None)
+    whole = dict(whole) if isinstance(whole, dict) else {}
+    cfg = dict(whole.get("claude") or {}) if isinstance(whole.get("claude"), dict) else {}
+    if "prefer" in patch:
+        prefer = str(patch["prefer"] or "").strip().lower()
+        if prefer not in BILLING_MODES:
+            raise ValueError("prefer must be 'subscription' or 'api'.")
+        cfg["prefer"] = prefer
+    if "fallback_enabled" in patch:
+        cfg["enabled"] = bool(patch["fallback_enabled"])
+    if "monthly_budget_usd" in patch:
+        raw = patch["monthly_budget_usd"]
+        if raw in (None, ""):
+            cfg.pop("monthly_budget_usd", None)
+        else:
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                raise ValueError("monthly_budget_usd must be a number.") from None
+            if value < 0 or value > 1_000_000:
+                raise ValueError("monthly_budget_usd must be between 0 and 1,000,000.")
+            cfg["monthly_budget_usd"] = value
+    whole["claude"] = cfg
+    mgr.set_setting("agent_billing_fallback", whole)
+    return settings_view()
 
 
 def budget_usd() -> Optional[float]:

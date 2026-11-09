@@ -98,7 +98,12 @@ UNIT_STATE_TTL_SEC = 10.0
 _unit_state_cache: Dict[str, Any] = {}
 
 
-def _unit_sub_state(unit: str) -> str:
+def _unit_live(unit: str) -> Dict[str, Any]:
+    """``{"sub_state", "scheduled", "starts_at"}`` for one unit, cached briefly.
+
+    A unit waiting on its systemd timer (``systemd-run --on-calendar``) is
+    ``scheduled`` with the time it starts: the card says so instead of
+    "running" for a job that has not begun."""
     now = time.monotonic()
     with _lock:
         hit = _unit_state_cache.get(unit)
@@ -109,11 +114,12 @@ def _unit_sub_state(unit: str) -> str:
 
         st = unit_state(unit)
         sub = str(st.get("sub_state") or st.get("active_state") or "") if st.get("queried") else "status unavailable"
+        live = {"sub_state": sub, "scheduled": bool(st.get("scheduled")), "starts_at": st.get("starts_at")}
     except Exception:
-        sub = ""
+        live = {"sub_state": "", "scheduled": False, "starts_at": None}
     with _lock:
-        _unit_state_cache[unit] = (now, sub)
-    return sub
+        _unit_state_cache[unit] = (now, live)
+    return live
 
 
 def _unit_watches() -> Dict[str, List[Dict[str, Any]]]:
@@ -137,11 +143,13 @@ def _unit_watches() -> Dict[str, List[Dict[str, Any]]]:
         from api.job_watch import read_status
 
         status = read_status(rec["id"]) or {}
+        live = _unit_live(unit) if unit else {"sub_state": "running", "scheduled": False, "starts_at": None}
         out.setdefault(chat, []).append({
             "job_id": rec.get("id"), "kind": "unit",
             "label": str(rec.get("label") or (f"Running: {unit}" if unit else f"Running: pid {pid}"))[:200],
             "unit": unit, "pid": pid,
-            "sub_state": _unit_sub_state(unit) if unit else "running",
+            "sub_state": live["sub_state"],
+            "scheduled": live["scheduled"], "starts_at": live["starts_at"],
             "percent": None, "started_at": rec.get("created_ts"),
             "activity": status.get("activity"), "state": status.get("state", "running"),
             "resume_chat": _handle(chat), "handoff": "on_exit",
@@ -300,6 +308,7 @@ def index(*, max_age: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
 def invalidate() -> None:
     processes.invalidate()
     with _lock:
+        _unit_state_cache.clear()
         _index_cache["at"] = 0.0
         _subagent_cache["at"] = 0.0  # sub-agent parents are cached beside the index
 
@@ -471,6 +480,7 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
                    "agent": w.get("agent") or ""}
                   for w in e["waits"]],
         "watches": [{k: w[k] for k in ("job_id", "label", "percent", "started_at", "kind", "unit", "sub_state",
+                                       "scheduled", "starts_at",
                                        "activity", "state", "resume_chat", "handoff", "resume_note", "origin_query_id") if k in w}
                     for w in watches],
         "recent": recent,

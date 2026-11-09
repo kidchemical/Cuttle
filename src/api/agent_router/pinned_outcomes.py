@@ -159,6 +159,26 @@ def _turn_model_and_effort(agent: str, result: Dict[str, Any]) -> Tuple[str, Opt
     return base, (explicit or effort)
 
 
+def _note_account_usage(agent: str, model: str, kind: str, result: Dict[str, Any]) -> None:
+    """Keep the shared out-of-usage memory (api.agent_router.quota) honest from
+    pinned turns too: a turn that ran clears its account's stale cooldown, a
+    real out-of-usage failure records one. Never raises."""
+    try:
+        from api.agent_router import quota
+        from api.agent_router.policy import is_quota_failure
+        from api.agent_router.types import ExecutionTarget
+
+        target = ExecutionTarget(agent, model or "")
+        if kind == "none":
+            quota.note_success(target)
+        elif kind == "transport":
+            blob = f"{result.get('response') or ''}\n{result.get('error') or ''}"
+            if is_quota_failure(blob):
+                quota.mark_exhausted(target, blob)
+    except Exception:
+        pass
+
+
 def record_pinned_turn(
     agent_id: str,
     result: Optional[Dict[str, Any]],
@@ -179,6 +199,7 @@ def record_pinned_turn(
         return False
     kind, reason = classify_turn(result)
     model, effort = _turn_model_and_effort(agent, result)
+    _note_account_usage(agent, model, kind, result)
     return record_turn(
         decision_id=f"pin-{query_id}",
         target_agent=agent,

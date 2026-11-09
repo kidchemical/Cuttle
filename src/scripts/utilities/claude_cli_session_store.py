@@ -108,7 +108,7 @@ def resolve_claude_resume(
     for k, v in data.items():
         if not isinstance(k, str) or not k.endswith(suffix):
             continue
-        if k.startswith("model\x1f") or k.startswith("ctx\x1f") or k.startswith("effort\x1f"):
+        if k.startswith(("model\x1f", "ctx\x1f", "effort\x1f", "billing\x1f")):
             continue
         tid = _valid_session_id(v if isinstance(v, str) else None)
         if tid:
@@ -237,6 +237,39 @@ def save_claude_effort(
             return None
         _write_all(data)
     return e or None
+
+
+def _billing_key(cuttle_session_id: Any) -> str:
+    return f"billing\x1f{_normalize_session_id(cuttle_session_id)}"
+
+
+def load_claude_billing(cuttle_session_id: Optional[Any]) -> Optional[str]:
+    """This chat's billing order pin: ``subscription`` / ``api`` (None = default)."""
+    if not _normalize_session_id(cuttle_session_id):
+        return None
+    with _lock:
+        data = _load_all()
+    raw = data.get(_billing_key(cuttle_session_id))
+    return raw if raw in ("subscription", "api") else None
+
+
+def save_claude_billing(cuttle_session_id: Optional[Any], mode: Optional[str]) -> Optional[str]:
+    """Pin the billing order for one chat; anything else clears the pin."""
+    if not _normalize_session_id(cuttle_session_id):
+        return None
+    key = _billing_key(cuttle_session_id)
+    m = str(mode or "").strip().lower()
+    m = m if m in ("subscription", "api") else ""
+    with _lock:
+        data = _load_all()
+        if m:
+            data[key] = m
+        elif key in data:
+            del data[key]
+        else:
+            return None
+        _write_all(data)
+    return m or None
 
 
 _COMPACT_BOUNDARY = b'"subtype":"compact_boundary"'

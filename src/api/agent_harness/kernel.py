@@ -865,6 +865,17 @@ def run_agent_web_command(
         # Optional native meta-command hook runs on the raw prompt. This keeps
         # `/muse model …` / Cursor `/model` (and future agent controls) out of
         # Context Compiler. Pass cwd when the handler accepts it (Cursor prefs).
+        # Optional per-turn options the adapter peels off the front of the
+        # message (e.g. Claude `/use-api`) before the compiler wraps it; they
+        # reach ``execute()`` as kwargs. Adapter-owned; unknown keys dropped.
+        turn_options: Dict[str, Any] = {}
+        peel = getattr(adapter, "peel_turn_options", None)
+        if callable(peel):
+            try:
+                prompt, turn_options = peel(prompt)
+            except Exception as exc:
+                print(f"[agent_harness] {manifest.id} turn options ignored: {exc}", flush=True)
+                turn_options = {}
         meta_handler = getattr(adapter, "handle_meta", None)
         result: Optional[AgentResult] = None
         resume = None
@@ -993,7 +1004,7 @@ def run_agent_web_command(
                                 chat_session_id=sid,
                                 timeout=timeout,
                                 cancel_event=cancel_event,
-                                **(execute_kwargs or {}),
+                                **{**(turn_options or {}), **(execute_kwargs or {})},
                             ),
                         )
                     )

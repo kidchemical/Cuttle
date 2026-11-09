@@ -3066,6 +3066,7 @@
         return CuttleUsageLive.harnessUsageCommands({
             isActive: (agent) => hasActiveHarnessAgentChip(agent),
             usageTable: CuttleChatSlash.HARNESS_USAGE_SLASH_BY_AGENT,
+            extraTable: CuttleChatSlash.HARNESS_BILLING_SLASH_BY_AGENT,
             costCommand: harnessCostSlashCommand,
         });
     }
@@ -3746,7 +3747,7 @@
      * Other agents still attach when dirty so a pre-session pick is not lost.
      */
     function attachAgentIdentityToRequest(requestBody) {
-        return agentControls.attachAgentIdentityToRequest(requestBody);
+        agentControls.attachAgentIdentityToRequest(requestBody); agentBilling.attachToRequest(requestBody);
     }
 
     function persistCodexEffortSelection(effort) {
@@ -4370,8 +4371,10 @@
             claude: { build: () => agentControls.buildClaudeEffortPaletteItems('effort'), load: () => agentControls.loadClaudeEffortForPalette(), set: persistClaudeEffortSelection, current: () => String(S.claudeEffort || '').toLowerCase(), repaint: repaintClaudeUserBadges },
         }[id];
         if (!models && !efforts) return null;
-        return { models: models || null, efforts: efforts || null };
+        return { models: models || null, efforts: efforts || null, billing: agentBilling.spec(id) };
     }
+    // Per-chat subscription/API billing order — owned by chat_agent_billing.js.
+    const agentBilling = CuttleChatAgentBilling.create({ getSessionId: () => session.current(), toast: (msg, kind) => (window.showToast || function () {})(msg, kind) });
 
     // Chip config modal — DOM/IO owned by chat_chip_config.js; the page
     // supplies state, palette catalogs/setters, and chip rendering.

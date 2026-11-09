@@ -629,16 +629,35 @@
                 effortOpts = agentSettingOptions(spec, 'efforts');
                 fields += selectHtml('chipConfigEffort', 'Effort', effortOpts, spec.efforts.current());
             }
+            // Optional billing order (chat_agent_billing.js): `{label, load,
+            // options, current, set}` — fixed rows, so no catalog refill.
+            if (spec && spec.billing && !defaultsMode) {
+                fields += selectHtml('chipConfigBilling', spec.billing.label || 'Billing',
+                    spec.billing.options(), spec.billing.current());
+            }
             openModal(
                 h.agentPickerTitle || 'Agent',
                 h.agentPickerSubtitle || (defaultsMode
                     ? 'Choose the agent, model, and effort for new chats in this tab or group.'
-                    : 'Choose the agent, model, and effort for this chat.'),
+                    : (spec && spec.billing
+                        ? 'Choose the agent, model, effort, and billing for this chat.'
+                        : 'Choose the agent, model, and effort for this chat.')),
                 fields,
                 (el) => {
                     const agentSel = el.querySelector('#chipConfigAgent');
                     const modelSel = el.querySelector('#chipConfigModel');
                     const effortSel = el.querySelector('#chipConfigEffort');
+                    const billingSel = el.querySelector('#chipConfigBilling');
+                    if (billingSel && spec && spec.billing) {
+                        Promise.resolve(spec.billing.load()).then(() => {
+                            if (!el.classList.contains('active') || billingSel.dataset.touched) return;
+                            fillSelect(billingSel, spec.billing.options(), spec.billing.current());
+                        });
+                        billingSel.addEventListener('change', () => {
+                            billingSel.dataset.touched = '1';
+                            if (billingSel.value) spec.billing.set(billingSel.value);
+                        });
+                    }
                     const after = (setting) => {
                         if (setting && typeof setting.repaint === 'function') {
                             try { setting.repaint(); } catch (_) {}

@@ -347,14 +347,50 @@ class Adapter:
         from .helper import generate
         return generate(request)
 
-    async def _run_with_api_fallback(self, run, prompt: str, resume: Optional[str], status_queue: Any):
+    def peel_turn_options(self, prompt: str):
+        """Kernel hook: a leading ``/use-api`` / ``/use-subscription`` bills this message."""
+        from api.agent_harness.agents.claude import api_fallback
+
+        mode, rest = api_fallback.parse_billing_prefix(prompt)
+        return (rest, {"billing": mode}) if mode else (prompt, {})
+
+    async def _run_api_first(self, run, prompt: str, resume: Optional[str], status_queue: Any, source: str):
+        """API credit first; the subscription when the key cannot run this turn."""
+        from api.agent_harness.agents.claude import api_fallback
+        from scripts.utilities.claude_cli_tool import _status_put
+
+        why = api_fallback.api_ready()
+        if why:
+            reason = {
+                "no_key": "no Anthropic key is set in Settings → Providers",
+                "over_budget": f"the ${api_fallback.budget_usd() or 0:,.0f} monthly API budget is spent",
+                "disabled": "API billing is switched off (CUTTLE_CLAUDE_API_FALLBACK=0)",
+            }.get(why, why)
+            return await run(prompt, resume), False, f"_API first is set, but {reason}: ran on the Claude subscription._"
+        _status_put(status_queue, "Running on Claude API credit (API first)…")
+        raw = await run(prompt, resume, {"ANTHROPIC_API_KEY": api_fallback.api_key()})
+        fail_text = f"{raw.get('error') or ''}\n{raw.get('output') or ''}"
+        if (raw.get("success") or raw.get("cancelled") or raw.get("timed_out")
+                or not api_fallback.is_api_refusal(fail_text)
+                or int((raw.get("usage") or {}).get("completion_tokens") or 0) > 0):
+            return raw, True, ""
+        _status_put(status_queue, "Claude API refused the key — running on the subscription…")
+        return (await run(prompt, resume), False,
+                "_The Claude API refused this turn (key or credit): ran on the subscription instead._")
+
+    async def _run_with_api_fallback(self, run, prompt: str, resume: Optional[str], status_queue: Any,
+                                     billing: str = "subscription", billing_source: str = "default"):
         """Subscription first; on a usage-limit failure rerun once on API credit.
 
         Returns ``(raw, billed_api, note)``. While the subscription is known to
         be out (until the reset its error named) turns go straight to the key.
+        ``billing == "api"`` runs API first instead (:meth:`_run_api_first`).
         """
         from api.agent_harness.agents.claude import api_fallback
         from scripts.utilities.claude_cli_tool import _status_put
+
+        if billing == "api":
+            return await self._run_api_first(run, prompt, resume, status_queue, billing_source)
 
         def _key_env() -> dict:
             return {"ANTHROPIC_API_KEY": api_fallback.api_key()}
@@ -403,6 +439,7 @@ class Adapter:
         timeout: float = 3600.0,
         reasoning_effort: Optional[str] = None,
         cancel_event: Any = None,
+        billing: Optional[str] = None,
     ) -> AgentResult:
         from scripts.utilities.claude_cli_session_store import (
             load_claude_effort,
@@ -496,8 +533,11 @@ class Adapter:
                 steerable=steerable, background=background, extra_env=extra_env,
             )
 
+        from api.agent_harness.agents.claude import api_fallback as _billing
+
+        billing_mode, billing_source = _billing.resolve_billing(chat_session_id, billing)
         raw, billed_api, fallback_note = await self._run_with_api_fallback(
-            _run, prompt, resume, status_queue,
+            _run, prompt, resume, status_queue, billing_mode, billing_source,
         )
 
         ok = bool(raw.get("success"))
@@ -588,7 +628,8 @@ class Adapter:
             spent = api_fallback.month_spend()["usd"]
             until = api_fallback.exhausted_until()
             meta["billing"] = {"source": "anthropic_api", "cost_usd": cost, "month_usd": spent,
-                               "budget_usd": api_fallback.budget_usd(), "subscription_resets_at": until}
+                               "budget_usd": api_fallback.budget_usd(), "subscription_resets_at": until,
+                               "order": billing_mode, "order_source": billing_source}
             fallback_note = api_fallback.footer(cost, spent, api_fallback.budget_usd(), until)
         if fallback_note and not raw.get("detached"):
             display = f"{display}\n\n{fallback_note}".strip()

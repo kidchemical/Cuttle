@@ -8300,7 +8300,7 @@ html.cuttle-bg-paused .chat-restore-spinner {
     white-space: nowrap;
 }
 .chat-bg-open:hover { background: color-mix(in srgb, var(--accent-color, #667eea) 14%, transparent); }
-.chat-bg-stop {
+.chat-bg-stop, .chat-bg-start-now {
     font: inherit;
     font-size: 0.82em;
     font-weight: 600;
@@ -8312,7 +8312,11 @@ html.cuttle-bg-paused .chat-restore-spinner {
     cursor: pointer;
 }
 .chat-bg-stop:hover:not(:disabled) { border-color: #f87171; color: #f87171; }
-.chat-bg-stop:disabled { opacity: 0.6; cursor: default; }
+.chat-bg-stop:disabled, .chat-bg-start-now:disabled { opacity: 0.6; cursor: default; }
+.chat-bg-start-now:hover:not(:disabled) { border-color: var(--accent-color, #667eea); color: var(--accent-color, #667eea); }
+/* Timer-scheduled detached job (systemd-run --on-calendar): not started, so no ping and no progress stripe. */
+.chat-bg-work[data-state="scheduled"] { --bg-mark: var(--accent-color, #667eea); border-style: dashed; }
+.chat-bg-watch-starts { color: var(--text-secondary); font-size: 0.86em; font-variant-numeric: tabular-nums; flex-shrink: 0; white-space: nowrap; }
 @keyframes chat-bg-breathe { 50% { opacity: 0.4; } }
 .chat-bg-job { min-width: 0; display: grid; gap: 5px; margin: 4px 0 8px; font-size: 0.9em; }
 .chat-bg-work.has-jobs > .chat-bg-ring { display: none; }

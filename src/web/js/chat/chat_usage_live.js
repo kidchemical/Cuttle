@@ -106,6 +106,9 @@
                 }));
             }
             out.push(costCommand(agent));
+            // Optional per-agent one-message controls (e.g. Claude /use-api).
+            const extra = p.extraTable && Array.isArray(p.extraTable[agent]) ? p.extraTable[agent] : [];
+            extra.forEach((row) => out.push(Object.assign({}, row)));
             return out;
         };
         for (let i = 0; i < USAGE_CHECK_ORDER.length; i++) {
