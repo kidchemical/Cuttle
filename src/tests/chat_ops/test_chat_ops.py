@@ -998,6 +998,52 @@ def test_waiting_background_stall_reads_as_a_wait_and_backs_off(chats, monkeypat
     assert len(_tick(chats, sched, snap, monkeypatch)) == 3
 
 
+def _child_of(chats, text):
+    db, owner, _sup, target, _foreign = chats
+    child = db.create_chat_session(owner, "lane")
+    conn = db._get_connection()
+    conn.execute("UPDATE chat_sessions SET parent_session_id=? WHERE id=?", (target, child))
+    conn.commit()
+    conn.close()
+    db.add_message(child, "assistant", text)
+    return child
+
+
+def test_lane_finishing_wakes_the_supervisor_of_an_idle_orchestrator(chats, monkeypatch):
+    """CH-002006: idle with open Tasks, its lane finished, every check said "unchanged"."""
+    db = chats[0]
+    sched = _schedule(chats)
+    monkeypatch.setattr(worker, "_git_head", lambda path: "abc")
+    child = _child_of(chats, "lane running")
+    [first] = _tick(chats, sched, _snap("idle_with_work"), monkeypatch)
+    store.finish(first["id"], "done", {})
+    assert len(_tick(chats, sched, _snap("idle_with_work"), monkeypatch)) == 1  # seen: no new wake
+    db.add_message(child, "assistant", "lane done: REPORT.md")
+    assert len(_tick(chats, sched, _snap("idle_with_work"), monkeypatch)) == 2
+
+
+def test_idle_with_work_stall_wakes_the_supervisor_again_and_backs_off(chats, monkeypatch):
+    sched = _schedule(chats)
+    clock = [1000.0]
+    monkeypatch.setattr(worker.time, "time", lambda: clock[0])
+    monkeypatch.setattr(worker, "_git_head", lambda path: "abc")
+    snap = _snap("idle_with_work")
+    [first] = _tick(chats, sched, snap, monkeypatch)
+    store.finish(first["id"], "done", {})
+    clock[0] += worker.STALL_SEC - 60
+    assert len(_tick(chats, sched, snap, monkeypatch)) == 1  # unchanged, not yet stalled
+    clock[0] += 120
+    checkins = _tick(chats, sched, snap, monkeypatch)
+    assert len(checkins) == 2
+    text = checkins[0]["payload"]["text"]
+    assert "No progress for" in text and "Tasks items still open" in text and "retry loop" not in text
+    store.finish(checkins[0]["id"], "done", {})
+    clock[0] += worker.STALL_SEC + 60  # backoff: the next stall needs twice the window
+    assert len(_tick(chats, sched, snap, monkeypatch)) == 2
+    clock[0] += worker.STALL_SEC
+    assert len(_tick(chats, sched, snap, monkeypatch)) == 3
+
+
 # --- stop holds queued sends -------------------------------------------------
 
 
@@ -1080,6 +1126,15 @@ def test_supervision_digest_tells_both_chats_about_a_pause(chats):
     assert "auto-resumes" in service.supervision_digest(sup)
 
 
+def test_supervision_digest_tells_the_supervisor_how_to_change_its_model(chats):
+    """A supervisor once told the user the CLI could not change its check-in model."""
+    _db, _owner, sup, target, _foreign = chats
+    sched = _schedule(chats)
+    mine = service.supervision_digest(sup)
+    assert f"edit-operation {sched['id']} --model" in mine and f"--as {_ch(sup)}" in mine
+    assert "edit-operation" not in service.supervision_digest(target)
+
+
 def test_context_envelope_carries_the_pause(chats, monkeypatch):
     db, owner, sup, _target, _foreign = chats
     sched = _schedule(chats)
@@ -1153,3 +1208,38 @@ def test_route_and_cli_pause_durations(client, chats, monkeypatch):
     assert main(["pause-operation", sched["id"], "--indefinite", "--db", db_path,
                  "--as", _ch(sup), "--json"]) == 0
     assert store.get(sched["id"], sup)["result"]["paused_until"] is None
+
+
+def test_send_to_a_busy_chat_rotates_and_records_its_wait(chats, monkeypatch):
+    """A parked send keeps its place in line (oldest first would starve
+    check-ins) and says since when it waits."""
+    db, _owner, sup, target, _foreign = chats
+    op = _queued(chats)
+    original = service.context
+    monkeypatch.setattr(service, "context", lambda t, actor=None, **kw: original(t, actor, db=db))
+    before = time.time()
+    worker.dispatch(op, request=FakeHost(generating=True))
+    got = store.get(op["id"], sup)
+    assert got["state"] == "pending" and got["due"] >= before + worker.BUSY_RETRY_SEC - 1
+    since = got["result"]["waiting_since"]
+    assert since >= before and got["result"]["waiting_on"] == "target_turn"
+    worker.dispatch(got, request=FakeHost(generating=True))
+    assert store.get(op["id"], sup)["result"]["waiting_since"] == since  # the first skip, not the latest
+    [row] = service.undelivered(target, now=since + 120)
+    assert (row["from"], row["to"], row["waiting_sec"]) == (_ch(sup), _ch(target), 120)
+
+
+def test_undelivered_send_wakes_the_supervisor_once_even_mid_turn(chats, monkeypatch):
+    sched = _schedule(chats)
+    stuck = {"id": "op1", "from": "CH-000002", "to": "CH-000009", "waiting_on": "target_turn",
+             "waiting_sec": worker.STUCK_SEND_SEC + 60, "text": "redo the pistol walks"}
+    fresh = {**stuck, "id": "op0", "waiting_sec": 30}
+    assert _tick(chats, sched, {**_snap("busy"), "undelivered": [fresh]}, monkeypatch) == []
+    checkins = _tick(chats, sched, {**_snap("busy"), "undelivered": [stuck]}, monkeypatch)
+    assert len(checkins) == 1
+    text = checkins[0]["payload"]["text"]
+    assert "Not delivered (1)" in text and "CH-000002 → CH-000009" in text and "redo the pistol walks" in text
+    store.finish(checkins[0]["id"], "done", {})
+    again = _tick(chats, sched, {**_snap("busy"), "undelivered": [stuck]}, monkeypatch)
+    assert [c["id"] for c in again] == [checkins[0]["id"]]  # told once
+    assert store.checks(sched["id"])[1]["outcome"] == "undelivered"

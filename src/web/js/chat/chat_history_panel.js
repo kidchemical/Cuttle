@@ -1582,22 +1582,19 @@
             } catch (_) {}
         }
 
-        /** Default expand latest project (+ open/unread/queue); honor stored overrides. */
-        function isHistoryProjectSectionExpanded(group, groupIdx) {
+        /** Projects default to collapsed, except the one holding the open chat;
+            stored per-project overrides win. */
+        function isHistoryProjectSectionExpanded(group) {
             if (!group || !group.project) return true;
             const key = String(group.project.key);
             const prefs = readHistoryProjectCollapsePrefs();
             const pref = prefs[key];
             if (pref === 'expanded') return true;
             if (pref === 'collapsed') return false;
-            if (view.historyGroupContainsCurrent(group, {
+            return view.historyGroupContainsCurrent(group, {
                 currentSessionId: deps.currentSessionId(),
                 sessionIdsEqual: deps.sessionIdsEqual,
-            })) return true;
-            if (view.historyGroupHasUnread(group, { hasUnread: deps.sessionHasUnread })) return true;
-            if (view.historyGroupHasActiveFollowup(group, { hasActiveFollowup: deps.sessionHasActiveFollowup })) return true;
-            if (view.historyGroupHasPausedFollowup(group, { hasPausedFollowup: deps.sessionHasPausedFollowup })) return true;
-            return groupIdx === 0;
+            });
         }
 
         function getHistoryGroupVisibleLimit(groupKey, total) {
@@ -1836,7 +1833,7 @@
             });
             let html = '';
             groups.forEach((group, groupIdx) => {
-                const expanded = isHistoryProjectSectionExpanded(group, groupIdx);
+                const expanded = isHistoryProjectSectionExpanded(group);
                 const unread = view.historyGroupHasUnread(group, { hasUnread: deps.sessionHasUnread });
                 const unreadError = view.historyGroupHasUnreadError(group, { hasUnreadError: deps.sessionHasUnreadError });
                 const queuedAny = view.historyGroupHasActiveFollowup(group, { hasActiveFollowup: deps.sessionHasActiveFollowup });

@@ -369,6 +369,28 @@ def _settle(db: Any, entry: Dict[str, Any], *, status: str) -> None:
         db.update_message_content(entry['message_id'], content, metadata=meta)
     except Exception:
         log.exception('could not settle turn row %s', entry['message_id'])
+        return
+    _notify_mobile_card(entry, content, meta)
+
+
+def _notify_mobile_card(entry: Dict[str, Any], content: str, meta: Dict[str, Any]) -> None:
+    """A stopped/failed card is the turn's reply: tell the phone like a saved one.
+
+    The saver's ``notify_mobile`` only runs for a kept result, so a turn that
+    ended as this card (cancelled, failed, interrupted) never reached the
+    companion app. Never raises."""
+    try:
+        from api.mobile_companion import chat_complete_payload, emit_mobile_event
+
+        payload = chat_complete_payload(_bare(entry['session_id']), {
+            'response': content, 'query_id': meta.get('query_id'),
+            'report_url': meta.get('report_url')})
+        payload['error'] = True
+        status = (meta.get('interrupted_turn') or {}).get('status') or ''
+        payload['pipeline'] = 'Turn stopped' if status == 'cancelled' else 'Reply failed'
+        emit_mobile_event('chat_complete', payload)
+    except Exception:
+        log.debug('mobile notify for settled turn row failed', exc_info=True)
 
 
 def with_subagent_cards(db: Any, session_id: Any, message_id: int, meta: Dict[str, Any]) -> Dict[str, Any]:

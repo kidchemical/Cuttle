@@ -16,6 +16,13 @@
 
    `plan(background, subagents)` is pure; `create(host)` owns the DOM element,
    its Stop action and keeping it last in #chatMessages.
+
+   Look: one line per item, graphics over prose. A job row shows step pips, a
+   count and the step running now; a supervision row shows the chat, its last
+   seen state and a ring counting down to the next check (`nextCheck`); a
+   queued send shows how long it has waited, amber once stuck (`sendView`).
+   Steps, health, hand-off and output open from the row. When nothing is live
+   any more the card shrinks to one line (`settled`), like a locked form.
    Supervision schedules name the chat they drive; the card links to it
    ("Open CH-…", and a schedule-only card opens it on click).
    host: { win, currentSession(), sessionIdsEqual(a,b), isBusy(), openChat(bareId) } */
@@ -167,6 +174,29 @@
             if (text) meta.push(text);
         });
         const fallbackScheduleLabel = schedules.some((s) => bg.label === [s.label, s.detail].filter(Boolean).join(' · '));
+        // Schedules split by what they are: supervision (a row with the target's
+        // last seen state and a countdown to the next check) and queued sends
+        // (a row with how long the message has waited).
+        const sups = [];
+        const sends = [];
+        schedules.forEach((s) => {
+            if (!s || typeof s !== 'object') return;
+            const detail = String(s.detail || '');
+            const kind = s.kind || (/^Send\b/.test(String(s.label || '')) ? 'send' : 'supervise');
+            if (kind === 'supervise') {
+                const every = Number(s.every) || (Number((/every (\d+)m\b/.exec(detail) || [])[1]) || 0) * 60;
+                sups.push({ id: String(s.id || ''), target: handle(s.target), paused: s.status === 'paused',
+                    seen: String(s.seen || (/last seen (\w+)/.exec(detail) || [])[1] || ''),
+                    every: every || null, nextAt: epoch(s.next_at) });
+            } else {
+                sends.push({ id: String(s.id || ''), target: handle(s.target), text: detail,
+                    since: epoch(s.waiting_since) });
+            }
+        });
+        // What is left of `meta` once schedules have rows of their own.
+        const notes = [];
+        if (n && !processHeadline) notes.push(plural(n, 'process', 'processes') + (d ? ' (' + d + ' detached)' : ''));
+        if (waits.length > 1) notes.push(plural(waits.length, 'wait', 'waits'));
         const targets = [];
         schedules.forEach((s) => {
             const t = handle(s && s.target);
@@ -185,7 +215,9 @@
         const subagentWaitsOnly = allWaits.length && !waits.length;
         // What the status mark shows: something running now, a schedule
         // watching on its own, a paused schedule, or nothing live (results only).
-        const state = onlyScheduled ? 'scheduled' : working ? 'working' : schedules.length ? (schedulesPaused ? 'paused' : 'supervising') : 'idle';
+        const state = onlyScheduled ? 'scheduled' : working ? 'working'
+            : sups.length ? (schedulesPaused ? 'paused' : 'supervising')
+            : schedules.length ? 'queued' : 'idle';
         return {
             state,
             title: runAgent ? runAgent + ' still running' : waits.length ? 'Waiting in background' : bound.length ? 'Job running'
@@ -193,11 +225,17 @@
                     : 'Background job running')
                 : agents.length ? (agentsLive ? 'Sub-agents working' : 'Sub-agents')
                 : n ? processTitle
-                : recent.length ? 'Background job results' : schedulesPaused ? 'Supervision paused' : 'Supervising',
+                : recent.length ? 'Background job results'
+                : !sups.length && sends.length ? (sends.length > 1 ? 'Messages queued' : 'Message queued')
+                : schedulesPaused ? 'Supervision paused' : 'Supervising',
             label: (units.length && !bound.length && !waits.length) || subagentWaitsOnly
                 || fallbackProcessLabel || fallbackScheduleLabel || scheduleOnly ? '' : (bg.label || ''),
             agents,
             meta,
+            notes,
+            hint: runAgent ? 'Messages you send now go to this run' : '',
+            sups,
+            sends,
             watches: watches.map((w) => {
                 // Shared rule (js/shared/progress_model.js): measured → fill + %;
                 // not measured (null, or a unit that only knows "running") →
@@ -232,6 +270,51 @@
             feed: !!bg.feed,
             targets,
         };
+    }
+
+    // A send still undelivered after this long is flagged (matches the outbox's
+    // STUCK_SEND_SEC, which is when a supervisor is told).
+    const STUCK_AFTER_SEC = 15 * 60;
+
+    /** Queued-send row facts at `now`: how long it has waited and whether that is a problem. */
+    function sendView(send, now) {
+        now = now == null ? Date.now() / 1000 : now;
+        const age = send && send.since != null ? Math.max(0, now - send.since) : null;
+        return { age, stuck: age != null && age >= STUCK_AFTER_SEC,
+            text: age == null ? 'queued' : 'queued ' + elapsed(age) };
+    }
+
+    /** Supervision countdown at `now`: fraction of the interval left (0..1) and "9m". */
+    function nextCheck(sup, now) {
+        now = now == null ? Date.now() / 1000 : now;
+        if (!sup || sup.paused || !(sup.nextAt > 0)) return { fraction: null, text: '' };
+        const left = sup.nextAt - now;
+        if (left <= 0) return { fraction: 0, text: 'checking' };
+        return { fraction: sup.every > 0 ? Math.max(0, Math.min(1, left / sup.every)) : null, text: elapsed(left) };
+    }
+
+    const SEEN_TEXT = { busy: 'working', waiting_background: 'waiting on a job', idle_with_work: 'idle, tasks open',
+        idle: 'idle', awaiting_input: 'needs input', error: 'error', cancelled: 'stopped' };
+    // Which last-seen states want a person's eye.
+    const SEEN_TONE = { awaiting_input: 'warn', error: 'bad', idle_with_work: 'warn' };
+
+    /**
+     * Nothing is live any more (finished jobs / sub-agents only): the card
+     * shrinks to one line. `{ text, failed }`, or null while anything runs.
+     */
+    function settled(p) {
+        if (!p || p.state !== 'idle') return null;
+        const jobs = p.recent || [];
+        const agents = p.agents || [];
+        const failed = jobs.filter((w) => w.state === 'failed').length
+            + agents.filter((a) => a.outcome === 'failed' || a.outcome === 'lost').length;
+        const total = jobs.length + agents.length;
+        if (!total) return null;
+        const text = jobs.length === 1 && !agents.length ? String(jobs[0].label || 'Background job')
+            : !jobs.length ? plural(agents.length, 'sub-agent', 'sub-agents') + ' finished'
+            : !agents.length ? plural(jobs.length, 'job', 'jobs') + ' finished'
+            : plural(total, 'item', 'items') + ' finished';
+        return { text, failed, total };
     }
 
     function handle(sid) {
@@ -282,6 +365,26 @@
             });
             node.querySelectorAll('.chat-bg-watch-starts').forEach((span) => {
                 span.textContent = startsText(Number(span.getAttribute('data-starts')), now);
+            });
+            node.querySelectorAll('.chat-bg-age[data-since]').forEach((span) => {
+                const v = sendView({ since: Number(span.getAttribute('data-since')) }, now);
+                span.textContent = v.text;
+                span.classList.toggle('is-warn', v.stuck);
+                const row = span.closest('.chat-bg-send');
+                if (row) { row.classList.toggle('is-warn', v.stuck); row.classList.toggle('is-muted', !v.stuck); }
+            });
+            node.querySelectorAll('.chat-bg-next').forEach((span) => {
+                const v = nextCheck({ nextAt: Number(span.getAttribute('data-next')),
+                    every: Number(span.getAttribute('data-every')) || 0 }, now);
+                const arc = span.querySelector('.chat-bg-next-arc');
+                const C = 2 * Math.PI * 7;
+                if (arc) {
+                    arc.style.strokeDasharray = String(C);
+                    arc.style.strokeDashoffset = String(C * (v.fraction == null ? 0 : v.fraction));
+                }
+                const text = span.querySelector('.chat-bg-next-text');
+                if (text) text.textContent = v.text;
+                span.title = v.text === 'checking' ? 'Checking now' : 'Next check in ' + v.text;
             });
             node.querySelectorAll('.chat-bg-job-health').forEach((span) => {
                 const view = jobView(span.__job, now);
@@ -348,10 +451,26 @@
                 openTarget(btn.getAttribute('data-chat-handle'));
                 return;
             }
-            if (t && t.closest && t.closest('a, button, details')) return;
+            if (t && t.closest && t.closest('a, button, details, summary')) return;
             const p = current && current.plan;
             if (p && !p.working && !p.stop && p.targets.length === 1) openTarget(p.targets[0]);
         }
+
+        // Line icons (20×20, stroke = currentColor). Static markup only.
+        const ICONS = {
+            job: '<path d="M4.5 6.5l3.5 3.5-3.5 3.5M10.5 14h5"/>',
+            wait: '<circle cx="10" cy="10" r="6.5"/><path d="M10 6.5V10l2.4 1.6"/>',
+            check: '<path d="M5 10.5l3.2 3.2L15 7"/>',
+            cross: '<path d="M6 6l8 8M14 6l-8 8"/>',
+            send: '<path d="M4 10h11M11 6l4 4-4 4"/>',
+            eye: '<path d="M2.5 10s2.8-5 7.5-5 7.5 5 7.5 5-2.8 5-7.5 5-7.5-5-7.5-5z"/><circle cx="10" cy="10" r="2.2"/>',
+            pause: '<path d="M7.5 5.5v9M12.5 5.5v9"/>',
+            feed: '<path d="M9 5H5v10h10v-4M12 5h3v3M15 5l-6 6"/>',
+            chevron: '<path d="M8 6l4 4-4 4"/>',
+            alert: '<path d="M10 4.5l6 10.5H4z"/><path d="M10 9v2.6M10 13.4v.1"/>',
+            resume: '<path d="M15 6v4H6.5M9.5 13l-3-3 3-3"/>',
+            unknown: '<circle cx="10" cy="10" r="6.5"/><path d="M8.2 8.2a1.9 1.9 0 113 1.5c-.7.5-1.2.9-1.2 1.7M10 13.6v.1"/>',
+        };
 
         function render(sid, p) {
             let node = el();
@@ -370,129 +489,241 @@
                 node.setAttribute('role', 'status');
                 node.setAttribute('aria-live', 'polite');
             }
-            node.classList.toggle('is-scheduled', !p.working);
-            node.classList.toggle('has-jobs', p.watches.some((w) => w.unit != null) || p.recent.length > 0);
-            // Schedule-only card with one target: the whole card opens it.
-            const opensOnClick = !p.working && !p.stop && p.targets.length === 1;
-            node.classList.toggle('is-clickable', opensOnClick);
-            node.title = opensOnClick ? 'Open ' + p.targets[0] : '';
+            const now = Date.now() / 1000;
             const mk = (tag, cls, text) => {
                 const n = doc.createElement(tag);
                 n.className = cls;
                 if (text != null) n.textContent = text;
                 return n;
             };
+            const icon = (name, cls) => {
+                const span = mk('span', 'chat-bg-ico' + (cls ? ' ' + cls : ''));
+                span.setAttribute('aria-hidden', 'true');
+                span.innerHTML = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" '
+                    + 'stroke-linecap="round" stroke-linejoin="round">' + ICONS[name] + '</svg>';
+                return span;
+            };
+            const done = settled(p);
+            const cardKey = sid + '/card';
+            const open = !done || expanded.has(cardKey);
+            node.classList.toggle('is-scheduled', !p.working);
+            node.classList.toggle('is-settled', !!done);
+            node.classList.toggle('is-open', !!done && open);
+            node.classList.toggle('has-failed', !!(done && done.failed));
+            // Schedule-only card with one target: the whole card opens it.
+            const opensOnClick = !p.working && !p.stop && p.targets.length === 1 && !p.recent.length;
+            node.classList.toggle('is-clickable', opensOnClick);
+            node.title = opensOnClick ? 'Open ' + p.targets[0] : '';
+            node.setAttribute('data-state', p.state);
+
+            // ── header: status mark · title · elapsed · chips · actions ──
+            const head = mk(done ? 'button' : 'div', 'chat-bg-head');
             // Status mark (CSS draws it per data-state): a pinging dot while work
             // runs, a slower green ping while supervision watches, an amber pause
             // glyph when paused, a still ring when nothing is live.
             const ring = mk('span', 'chat-bg-ring');
             ring.setAttribute('aria-hidden', 'true');
             ring.append(mk('span', 'chat-bg-ring-core'));
-            node.setAttribute('data-state', p.state);
-            const body = mk('div', 'chat-bg-body');
-            const title = mk('div', 'chat-bg-title', p.title);
-            if (p.started != null) title.append(mk('span', 'chat-bg-elapsed', elapsed(Date.now() / 1000 - p.started)));
-            body.append(title);
-            if (p.label) body.append(mk('div', 'chat-bg-label', p.label));
+            if (done) {
+                head.type = 'button';
+                head.setAttribute('aria-expanded', String(open));
+                head.setAttribute('data-bg-toggle', '1');
+                head.title = open ? 'Hide details' : 'Show details';
+                head.append(icon(!done.failed ? 'check' : done.failed === done.total ? 'cross' : 'alert', 'chat-bg-settled-mark'));
+                head.append(mk('span', 'chat-bg-title', done.text));
+                head.append(mk('span', 'chat-bg-chip' + (done.failed ? ' is-bad' : ' is-ok'),
+                    done.failed ? done.failed + ' failed' : 'done'));
+                head.append(icon('chevron', 'chat-bg-caret'));
+                head.addEventListener('click', () => {
+                    if (expanded.has(cardKey)) expanded.delete(cardKey); else expanded.add(cardKey);
+                    render(sid, p);
+                });
+            } else {
+                head.append(ring);
+                const title = mk('span', 'chat-bg-title', p.title);
+                head.append(title);
+                if (p.started != null) head.append(mk('span', 'chat-bg-elapsed', elapsed(now - p.started)));
+                (p.notes || []).forEach((text) => head.append(mk('span', 'chat-bg-chip chat-bg-meta', text)));
+            }
+            const actions = mk('span', 'chat-bg-actions');
+            if (p.feed && !done) {
+                const a = mk('a', 'chat-bg-iconbtn chat-bg-details');
+                a.href = '/agent_feed.html?chat=' + encodeURIComponent(handle(sid));
+                a.title = 'Open the Running tree in Agent Feed';
+                a.setAttribute('aria-label', 'Agent Feed');
+                a.append(icon('feed'));
+                actions.append(a);
+            }
+            if (p.startNow && p.startNow.length) {
+                const b = mk('button', 'chat-bg-start-now', 'Start now');
+                b.type = 'button';
+                b.title = 'Start the scheduled job now instead of waiting for its timer';
+                b.addEventListener('click', () => startNow(b));
+                actions.append(b);
+            }
+            if (p.stop) {
+                const b = mk('button', 'chat-bg-stop', 'Stop');
+                b.type = 'button';
+                b.setAttribute('aria-label', p.stop === 'chat' ? 'Stop background work' : 'End background processes');
+                b.addEventListener('click', () => stop(b));
+                actions.append(b);
+            }
+            if (actions.childNodes.length) head.append(actions);
+
+            // ── rows: one line each; anything longer lives behind the row ──
+            const rows = mk('div', 'chat-bg-rows');
+            if (p.label) rows.append(mk('div', 'chat-bg-label', p.label));
+            if (p.hint) rows.append(mk('div', 'chat-bg-hint', p.hint));
+
             function timeline(view) {
                 const list = mk('ol', 'chat-bg-steps');
                 view.steps.forEach((s) => {
                     const li = mk('li', 'chat-bg-step is-' + s.state);
-                    const icon = mk('span', 'chat-bg-step-icon', ({ done: '✓', failed: '×', skipped: '−', cancelled: '−', unknown: '?' })[s.state] || '');
-                    icon.setAttribute('aria-label', STEP_LABELS[s.state]);
+                    const mark = mk('span', 'chat-bg-step-icon', ({ done: '✓', failed: '×', skipped: '−', cancelled: '−', unknown: '?' })[s.state] || '');
+                    mark.setAttribute('aria-label', STEP_LABELS[s.state]);
                     const text = mk('span', 'chat-bg-step-text', s.label);
                     if (s.detail) text.append(mk('small', 'chat-bg-step-detail', s.detail));
-                    li.append(icon, text);
+                    li.append(mark, text);
                     list.append(li);
                 });
                 return list;
             }
-            function jobInfo(w, parent, completed) {
+            /** Step pips: one segment per step, coloured by state; a count beside them. */
+            function pips(view) {
+                const wrap = mk('span', 'chat-bg-pips');
+                const finished = view.steps.filter((s) => ['done', 'failed', 'skipped', 'cancelled'].includes(s.state)).length;
+                wrap.setAttribute('role', 'img');
+                wrap.setAttribute('aria-label', finished + ' of ' + view.steps.length + ' steps finished');
+                view.steps.forEach((s) => {
+                    const pip = mk('span', 'chat-bg-pip is-' + s.state);
+                    pip.title = s.label + ' · ' + STEP_LABELS[s.state];
+                    wrap.append(pip);
+                });
+                return [wrap, mk('span', 'chat-bg-count', finished + '/' + view.steps.length)];
+            }
+            /** Everything a job row folds away: steps, health, hand-off, unit, links, output. */
+            function jobPanel(w, completed) {
                 const v = jobView(w);
                 const block = mk('div', 'chat-bg-job');
                 if (v.summary) block.append(mk('div', 'chat-bg-job-summary', v.summary));
+                if (v.steps.length) block.append(timeline(v));
                 if (!completed) {
-                    block.append(mk('div', 'chat-bg-job-owner', v.scheduled
-                        ? 'Scheduled by systemd · no agent active' : 'Job running independently · no agent active'));
-                    if (v.steps.length) block.append(timeline(v));
                     const health = mk('div', 'chat-bg-job-health', v.health);
                     health.__job = w;
                     health.classList.toggle('is-warning', v.warning);
                     block.append(health);
                 }
                 block.append(mk('div', 'chat-bg-handoff', v.handoff));
+                const facts = mk('div', 'chat-bg-facts');
+                if (completed && w.finished_at) facts.append(mk('span', '', 'Ended ' + new Date(w.finished_at * 1000).toLocaleString()));
+                if (v.deadline) facts.append(mk('span', '', 'Deadline ' + new Date(v.deadline * 1000).toLocaleString()));
+                if (w.unit) facts.append(mk('span', 'chat-bg-watch-unit', w.unit + (w.sub_state ? ' · ' + w.sub_state : '')));
+                function queryLink(id, label) {
+                    if (!/^[\w-]{1,80}$/.test(id || '')) return;
+                    const a = mk('a', 'chat-bg-details', label);
+                    a.href = '/query_log.html?id=' + encodeURIComponent(id);
+                    facts.append(a);
+                }
+                queryLink(w.origin_query_id, 'Started by');
+                queryLink(w.followup_query_id, 'Follow-up turn');
+                if (facts.childNodes.length) block.append(facts);
+                if (w.resume_note) block.append(mk('div', 'chat-bg-resume-note', w.resume_note));
+                if (v.output) block.append(mk('pre', 'chat-bg-output', v.output));
+                return block;
+            }
+            /** A job row that opens its panel: <details> keeps it keyboard-reachable. */
+            function jobRow(w, job, completed) {
                 const details = mk('details', 'chat-bg-job-details');
-                const key = sid + '/' + (w.job_id || w.unit);
+                const key = sid + '/' + (job.job_id || job.unit);
                 details.setAttribute('data-job-key', key);
                 details.open = expanded.has(key);
                 details.addEventListener('toggle', () => {
                     if (!details.isConnected) return;
                     if (details.open) expanded.add(key); else expanded.delete(key);
                 });
-                details.append(mk('summary', '', 'Details'));
-                if (completed && v.steps.length) details.append(timeline(v));
-                if (completed && w.finished_at) details.append(mk('div', '', 'Ended: ' + new Date(w.finished_at * 1000).toLocaleString()));
-                if (v.deadline) details.append(mk('div', '', 'Expected deadline: ' + new Date(v.deadline * 1000).toLocaleString()));
-                if (w.unit) details.append(mk('div', '', 'Process: ' + w.unit + (w.sub_state ? ' · ' + w.sub_state : '')));
-                if (w.resume_note) details.append(mk('div', 'chat-bg-resume-note', w.resume_note));
-                // Links share one row (they used to run together as
-                // "View originating turnView follow-up turn").
-                const links = mk('div', 'chat-bg-job-links');
-                function queryLink(id, label) {
-                    if (!/^[\w-]{1,80}$/.test(id || '')) return;
-                    const a = mk('a', 'chat-bg-details', label);
-                    a.href = '/query_log.html?id=' + encodeURIComponent(id);
-                    links.append(a);
+                const v = jobView(job);
+                const tone = completed ? (job.state === 'done' ? 'ok' : job.state === 'failed' ? 'bad' : 'muted')
+                    : v.warning ? 'warn' : 'live';
+                const line = mk('summary', 'chat-bg-row chat-bg-watch is-' + tone);
+                line.append(icon(completed ? (job.state === 'done' ? 'check' : job.state === 'failed' ? 'cross' : 'unknown') : 'job'));
+                line.append(mk('span', 'chat-bg-row-label chat-bg-watch-label', w.label || job.label || job.job_id));
+                const viz = mk('span', 'chat-bg-row-viz');
+                if (!completed && v.steps.length) {
+                    viz.append(...pips(v));
+                    const current = v.steps.find((s) => s.state === 'running');
+                    if (current) viz.append(mk('span', 'chat-bg-now', current.label));
+                } else if (!completed && w.scheduled) {
+                    const span = mk('span', 'chat-bg-watch-starts', startsText(w.startsAt));
+                    span.setAttribute('data-starts', String(w.startsAt || ''));
+                    viz.append(span);
+                } else if (!completed) {
+                    const bar = mk('span', 'chat-bg-bar');
+                    bar.setAttribute('data-progress', 'indeterminate');
+                    bar.setAttribute('role', 'progressbar');
+                    bar.setAttribute('aria-valuetext', 'In progress');
+                    bar.append(mk('span', 'chat-bg-fill'));
+                    viz.append(bar);
                 }
-                queryLink(w.origin_query_id, 'Started by');
-                queryLink(w.followup_query_id, 'Follow-up turn');
-                if (links.childNodes.length) details.append(links);
-                if (v.output) details.append(mk('pre', 'chat-bg-output', v.output));
-                else if (!completed) details.append(mk('div', '', 'No recent output published by this job.'));
-                block.append(details);
-                parent.append(block);
+                line.append(viz);
+                const aside = mk('span', 'chat-bg-row-aside');
+                if (!completed && v.warning) {
+                    const warn = mk('span', 'chat-bg-chip is-warn', v.deadline && now > v.deadline ? 'overdue' : 'quiet');
+                    warn.title = v.health;
+                    aside.append(warn);
+                }
+                if (completed) {
+                    const state = ({ done: 'done', failed: 'failed', unknown: 'unknown', gave_up: 'watch expired' })[job.state] || 'ended';
+                    aside.append(mk('span', 'chat-bg-chip is-' + tone, state));
+                    if (job.handoff && job.handoff !== 'on_exit') {
+                        const failedHandoff = job.handoff === 'failed' || job.handoff === 'turn_failed';
+                        const h = icon('resume', 'chat-bg-handoff-mark' + (failedHandoff ? ' is-bad' : job.handoff === 'delivered' ? ' is-ok' : ''));
+                        h.title = v.handoff;
+                        aside.append(h);
+                    }
+                } else if (!w.scheduled && w.started != null && p.watches.length > 1) {
+                    // A lone job's elapsed time is already in the header.
+                    const span = mk('span', 'chat-bg-watch-elapsed', elapsed(now - w.started));
+                    span.setAttribute('data-started', String(w.started));
+                    aside.append(span);
+                }
+                aside.append(icon('chevron', 'chat-bg-caret'));
+                line.append(aside);
+                if (job.unit != null) {
+                    line.title = (completed ? '' : 'Detached job: this chat resumes when it exits. ') + 'Click for details';
+                }
+                details.append(line, jobPanel(job, completed));
+                return details;
             }
+
             p.watches.forEach((w) => {
-                const row = mk('div', 'chat-bg-watch');
-                row.append(mk('span', 'chat-bg-watch-label', w.label));
-                if (w.unit != null) {
-                    row.title = 'Detached job' + (w.unit ? ' (systemd unit ' + w.unit + ')' : '')
-                        + ': this chat resumes when it exits';
-                }
+                if (w.unit != null) { rows.append(jobRow(w, w.job || w, false)); return; }
+                // A chat-bound watch job: label, measured bar (or stripe) and percent.
+                const row = mk('div', 'chat-bg-row chat-bg-watch is-live');
+                row.append(icon('job'), mk('span', 'chat-bg-row-label chat-bg-watch-label', w.label));
+                const viz = mk('span', 'chat-bg-row-viz');
                 const bar = mk('span', 'chat-bg-bar');
                 const fill = mk('span', 'chat-bg-fill');
                 bar.append(fill);
-                const hasSteps = w.job && jobView(w.job).steps.length;
-                if (w.scheduled) {
-                    // Not started: no progress bar, the start time (and a countdown) instead.
-                    const span = mk('span', 'chat-bg-watch-starts', startsText(w.startsAt));
-                    span.setAttribute('data-starts', String(w.startsAt || ''));
-                    row.append(span);
-                } else if (w.indeterminate) {
+                viz.append(bar);
+                const aside = mk('span', 'chat-bg-row-aside');
+                if (w.indeterminate) {
                     // Nothing measured: animated stripe (shared CSS), elapsed instead of "0%".
                     bar.setAttribute('data-progress', 'indeterminate');
                     bar.setAttribute('role', 'progressbar');
                     bar.setAttribute('aria-valuetext', 'In progress');
-                    if (!hasSteps) row.append(bar);
-                    if (w.started != null && !(w.unit != null && p.watches.length === 1)) {
-                        const span = mk('span', 'chat-bg-watch-elapsed', elapsed(Date.now() / 1000 - w.started));
+                    if (w.started != null) {
+                        const span = mk('span', 'chat-bg-watch-elapsed', elapsed(now - w.started));
                         span.setAttribute('data-started', String(w.started));
-                        row.append(span);
+                        aside.append(span);
                     }
                 } else {
                     fill.style.width = w.percent + '%';
-                    row.append(bar, mk('span', 'chat-bg-pct', w.percent + '%'));
+                    aside.append(mk('span', 'chat-bg-pct', w.percent + '%'));
                 }
-                body.append(row);
-                if (w.unit != null) jobInfo(w.job || w, body, false);
+                row.append(viz, aside);
+                rows.append(row);
             });
-            p.recent.forEach((w) => {
-                const result = mk('div', 'chat-bg-result');
-                result.append(mk('div', 'chat-bg-result-title', w.label + ' · '
-                    + ({ done: 'Finished', failed: 'Failed', unknown: 'Status unknown', gave_up: 'Watch expired' }[w.state] || 'Ended')));
-                jobInfo(w, result, true);
-                body.append(result);
-            });
+            p.recent.forEach((w) => rows.append(jobRow({ label: w.label }, w, true)));
             if (p.agents.length) {
                 // Fleet-style rows: avatar, name, live status line, outcome. A row opens the child.
                 const list = mk('div', 'chat-bg-agents');
@@ -511,40 +742,68 @@
                     row.append(av, text, mk('span', 'chat-bg-agent-outcome', a.outcomeLabel));
                     list.append(row);
                 });
-                body.append(list);
+                rows.append(list);
             }
-            if (p.meta.length) body.append(mk('div', 'chat-bg-meta', p.meta.join(' · ')));
-            const actions = mk('div', 'chat-bg-actions');
-            p.targets.forEach((t) => {
-                const b = mk('button', 'chat-bg-open', 'Open ' + t);
+            const chatChip = (target, title) => {
+                const b = mk('button', 'chat-bg-open', target);
                 b.type = 'button';
-                b.setAttribute('data-chat-handle', t);
-                b.title = 'Open the supervised chat ' + t;
-                actions.append(b);
+                b.setAttribute('data-chat-handle', target);
+                b.title = title;
+                return b;
+            };
+            // Queued sends: who it is for, the message in a few words, how long it has waited.
+            (p.sends || []).forEach((send) => {
+                const v = sendView(send, now);
+                const row = mk('div', 'chat-bg-row chat-bg-send' + (v.stuck ? ' is-warn' : ' is-muted'));
+                row.append(icon('send'), chatChip(send.target, 'Open ' + send.target));
+                const text = mk('span', 'chat-bg-row-label', send.text);
+                text.title = send.text;
+                row.append(text);
+                const aside = mk('span', 'chat-bg-row-aside');
+                const age = mk('span', 'chat-bg-chip chat-bg-age' + (v.stuck ? ' is-warn' : ''), v.text);
+                if (send.since != null) age.setAttribute('data-since', String(send.since));
+                age.title = v.stuck ? 'Not delivered yet: ' + send.target + ' is still in a turn. It is sent when that turn ends.'
+                    : 'Sent when ' + send.target + ' finishes its turn';
+                aside.append(age);
+                row.append(aside);
+                rows.append(row);
             });
-            if (p.feed) {
-                const a = mk('a', 'chat-bg-details', 'Agent Feed');
-                a.href = '/agent_feed.html?chat=' + encodeURIComponent(handle(sid));
-                a.title = 'Open the Running tree in Agent Feed';
-                actions.append(a);
-            }
-            if (p.startNow && p.startNow.length) {
-                const b = mk('button', 'chat-bg-start-now', 'Start now');
-                b.type = 'button';
-                b.title = 'Start the scheduled job now instead of waiting for its timer';
-                b.addEventListener('click', () => startNow(b));
-                actions.append(b);
-            }
-            if (p.stop) {
-                const b = mk('button', 'chat-bg-stop', 'Stop');
-                b.type = 'button';
-                b.setAttribute('aria-label', p.stop === 'chat' ? 'Stop background work' : 'End background processes');
-                b.addEventListener('click', () => stop(b));
-                actions.append(b);
-            }
-            node.replaceChildren(ring, body, actions);
+            // Supervision: the chat it watches, what it last saw, and a ring counting down to the next check.
+            // A lone schedule with nothing else to show sits in the header: one line in all.
+            const lone = !done && (p.sups || []).length === 1 && !rows.childNodes.length;
+            (p.sups || []).forEach((sup) => {
+                const tone = sup.paused ? 'warn' : SEEN_TONE[sup.seen] || 'ok';
+                const row = lone ? head : mk('div', 'chat-bg-row chat-bg-sup is-' + tone);
+                if (lone) head.classList.add('chat-bg-sup', 'is-' + tone);
+                else row.append(icon(sup.paused ? 'pause' : 'eye'));
+                const chip = chatChip(sup.target, 'Open the supervised chat ' + sup.target);
+                const seen = sup.paused ? (lone ? '' : 'paused') : SEEN_TEXT[sup.seen] || String(sup.seen || '').replace(/_/g, ' ');
+                const label = mk('span', 'chat-bg-row-label chat-bg-seen', seen);
+                label.title = sup.paused ? 'No check-ins until resumed' : seen ? 'Last check saw it ' + seen : 'Not checked yet';
+                const aside = mk('span', 'chat-bg-row-aside');
+                if (lone) head.insertBefore(aside, actions.parentNode === head ? actions : null);
+                row.insertBefore(chip, lone ? aside : null);
+                row.insertBefore(label, lone ? aside : null);
+                if (!sup.paused && sup.nextAt) {
+                    const next = mk('span', 'chat-bg-next');
+                    next.setAttribute('data-next', String(sup.nextAt));
+                    next.setAttribute('data-every', String(sup.every || ''));
+                    next.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><circle class="chat-bg-next-track" cx="10" cy="10" r="7"/>'
+                        + '<circle class="chat-bg-next-arc" cx="10" cy="10" r="7" transform="rotate(-90 10 10)"/></svg>';
+                    next.append(mk('span', 'chat-bg-next-text'));
+                    aside.append(next);
+                } else if (!sup.paused && sup.every) {
+                    aside.append(mk('span', 'chat-bg-chip', 'every ' + elapsed(sup.every)));
+                }
+                if (!lone) { row.append(aside); rows.append(row); }
+            });
+
+            const parts = [head];
+            if (open && rows.childNodes.length) parts.push(rows);
+            node.replaceChildren(...parts);
             if (node.parentNode !== box) box.appendChild(node);
             keepLast();
+            tick();
             if (!node.__bgOpenBound) {
                 node.__bgOpenBound = true;
                 node.addEventListener('click', onCardClick);
@@ -580,5 +839,6 @@
         return { sync, remove };
     }
 
-    root.CuttleChatBackgroundWork = { ID, plan, jobView, elapsed, startsText, create };
+    root.CuttleChatBackgroundWork = { ID, plan, jobView, elapsed, startsText, sendView, nextCheck, settled,
+        SEEN_TEXT, STUCK_AFTER_SEC, create };
 })(typeof window === 'undefined' ? globalThis : window);

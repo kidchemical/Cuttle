@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration for Cuttle Windows releases.
+  Paste this into the SignPath project (slug: installers) — SignPath reads it
+  from its own UI, not from this repository; this copy is the reviewed source.
+
+  Input: the ZIP that packaged-host.yml uploads (unsigned-windows-exe), holding
+  the NSIS installer and the portable exe at its root. NSIS is not a composite
+  format SignPath can open, so the Cuttle.exe inside is not deep-signed; the
+  downloaded files (the ones SmartScreen checks) are.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file-set product-name="Cuttle">
+      <include path="Cuttle-*-x64.exe" />
+      <include path="Cuttle-*-portable.exe" />
+      <for-each>
+        <authenticode-sign />
+      </for-each>
+    </pe-file-set>
+  </zip-file>
+</artifact-configuration>

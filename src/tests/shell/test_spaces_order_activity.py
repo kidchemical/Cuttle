@@ -244,3 +244,24 @@ def test_count_unread_sessions():
     assert res["visibleExcluded"] == 0  # 1 and 2 are visible right now
     assert res["serverAttention"] == 1  # server attention counts too
     assert res["runningOnly"] == 0      # busy chats are not awaiting attention
+
+
+@node_only
+def test_note_new_replies_flags_only_fresh_unread_replies():
+    script = """
+const A = require(process.env.SPACES_DIR + '/spaces_activity.js');
+A.resetActivity();
+const att = (reply_id, hasUnread, err) => ({ reply_id, hasUnread, unreadIsError: !!err, revision: reply_id });
+const seed = A.noteNewReplies([{ id: '5', attention: att(10, true, true) }]);
+const same = A.noteNewReplies([{ id: 'db_session_5', attention: att(10, true, true) }]);
+const err = A.noteNewReplies([{ id: '5', attention: att(12, true, true) }]);
+const read = A.noteNewReplies([{ id: '5', attention: att(14, false) }]);
+const ok = A.noteNewReplies([{ id: '5', attention: att(15, true) }, { id: '6' }]);
+process.stdout.write(JSON.stringify({ seed, same, err, read, ok }));
+"""
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True,
+                         env={"SPACES_DIR": str(SPACES_DIR), "PATH": __import__("os").environ["PATH"]})
+    got = json.loads(out.stdout)
+    assert got["seed"] == [] and got["same"] == [] and got["read"] == []
+    assert got["err"] == [{"bare": "5", "isError": True, "awaitingInput": False}]
+    assert got["ok"] == [{"bare": "5", "isError": False, "awaitingInput": False}]

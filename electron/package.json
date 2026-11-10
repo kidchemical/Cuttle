@@ -172,6 +172,9 @@
                                "shortcutName":  "Cuttle",
                                "installerIcon":  "../src/img/cuttle_logo.ico",
                                "uninstallerIcon":  "../src/img/cuttle_logo.ico",
+                               "installerSidebar":  "installer/installerSidebar.bmp",
+                               "uninstallerSidebar":  "installer/uninstallerSidebar.bmp",
+                               "installerHeader":  "installer/installerHeader.bmp",
                                "license":  "../LICENSE.txt"
                            },
                   "portable":  {

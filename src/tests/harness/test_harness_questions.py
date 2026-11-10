@@ -282,7 +282,7 @@ def test_claude_disables_native_picker_and_recovers_denied_question(tmp_path, mo
     result = {"type": "result", "subtype": "success", "result": "Need your input", "session_id": "saved-session",
               "permission_denials": [{"tool_name": "AskUserQuestion", "tool_input": PAYLOAD}]}
     path.write_text(f"#!{sys.executable}\nimport json,sys\n"
-                    "assert sys.argv[sys.argv.index('--disallowedTools')+1] == 'AskUserQuestion'\n"
+                    "assert 'AskUserQuestion' in sys.argv[sys.argv.index('--disallowedTools')+1].split(',')\n"
                     "assert sys.argv[sys.argv.index('--disallowedTools')+2] == '--permission-mode'\n"
                     "assert sys.argv[-1] == 'go'\n"
                     f"print(json.dumps({result!r}), flush=True)\n", encoding="utf-8")

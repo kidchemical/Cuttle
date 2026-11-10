@@ -11091,7 +11091,7 @@
             project = currentProject;
         }
         let headerChip = '';
-        let suppressInlineSlashChips = false;
+        let suppressInlineSlashChips = false, opBadge = null;
         if (role === 'assistant') {
             // Re-derive badge from cursor_run when present so history doesn't keep
             // stale CLI "200K" labels that disagree with the palette "1M" name.
@@ -11137,7 +11137,7 @@
                 : [];
             headerChip = messageHeaderBadgesHtml(chips, false, project);
             if (opts.steered) headerChip += steerBadgeHtml(opts.steered_agent);
-            const opBadge = parentSpeaker && window.CuttleChatSupervisionModel ? window.CuttleChatSupervisionModel.chatOpBadge(opts) : null;
+            opBadge = parentSpeaker && window.CuttleChatSupervisionModel ? window.CuttleChatSupervisionModel.chatOpBadge(opts) : null;
             if (opBadge) { headerChip += slashCommandChipHeaderHtml(opBadge.label, opBadge.title, 'command', false); messageDiv.dataset.chatOp = opBadge.kind; }
             if (chips.length) suppressInlineSlashChips = true;
         } else {
@@ -11158,7 +11158,7 @@
                     </span>
                     <span class="message-timestamp" data-ts="${ts}">${timeLabel}</span>
                 </div>
-                <div class="message-content">${role === 'user' ? formatUserMessageForDisplay(displayContent, { ...opts, suppressInlineSlashChips }) : formatMessage(displayContent)}</div>
+                <div class="message-content">${role === 'user' ? CuttleChatSupervisionModel.userBubbleHtml(opBadge, displayContent, (t) => formatUserMessageForDisplay(t, { ...opts, suppressInlineSlashChips }), formatMessage) : formatMessage(displayContent)}</div>
                 ${messageFooter}
             </div>
         `;

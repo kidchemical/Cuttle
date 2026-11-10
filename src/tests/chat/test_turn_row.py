@@ -408,3 +408,26 @@ def test_answered_card_keeps_the_bubbles_query_id(authed):
     mid = db.add_message(sid, "assistant", content, metadata={"query_id": "q1234567", "project_path": "/p"})
     meta = action_forms._message_meta(db.get_message_by_id(mid))
     assert meta == {"query_id": "q1234567", "project_path": "/p", "turn_id": "q1234567"}
+
+
+def test_settled_card_notifies_the_phone_but_a_dropped_row_does_not(authed, monkeypatch):
+    """A turn that ends as the stopped/failed card is the turn's reply: the
+    companion app gets ``chat_complete`` like a saved reply (the saver's
+    notify only ran for kept results, so error cards never reached the phone)."""
+    from api import chat_turn_row, mobile_companion
+
+    _client, db, owner = authed
+    sent = []
+    monkeypatch.setattr(mobile_companion, "emit_mobile_event",
+                        lambda kind, payload=None, device_id=None: sent.append((kind, payload)))
+    sid = db.create_chat_session(owner)
+    chat_turn_row.open_row(db, sid, turn=1)
+    db.add_message(sid, "user", "later", metadata=None)  # row not newest: skipped -> card
+    chat_turn_row.close(db, sid, status="failed", turn=1)
+    [(kind, payload)] = sent
+    assert kind == "chat_complete" and payload["error"] is True
+    assert payload["session_id"] == str(sid) and payload["pipeline"] == "Reply failed"
+    assert "failed before completion" in payload["response"]
+    chat_turn_row.open_row(db, sid, turn=2)
+    chat_turn_row.close(db, sid, status="skipped", turn=2)  # newest skipped row is dropped
+    assert len(sent) == 1

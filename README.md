@@ -316,6 +316,17 @@ Captures use the Light theme at 2x and are framed by [`readme_promo.py`](src/scr
 - Keep secrets in `<home>/.env` and `<home>/secrets/`, outside the repository. Never commit certs, `*.db`, or Playwright profiles.
 - Found a vulnerability? Report it privately; see [`SECURITY.md`](SECURITY.md).
 
+## Code signing policy
+
+Windows release executables (`Cuttle-<version>-x64.exe`, `Cuttle-<version>-portable.exe`) are built by [GitHub Actions](.github/workflows/release.yml) from this repository and signed through SignPath's open-source program. Releases published before signing was approved are unsigned; verify those with `SHA256SUMS`.
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- Committers and reviewers: [kidchemical](https://github.com/kidchemical)
+- Approvers: [kidchemical](https://github.com/kidchemical)
+
+Privacy: Cuttle does not transfer information to other networked systems unless you configure it to (agent CLIs, model providers, Discord, LAN workers). The one automatic connection is a packaged install checking GitHub Releases for a newer version.
+
 ## License
 
 MIT. See [`LICENSE.txt`](LICENSE.txt).

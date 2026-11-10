@@ -655,6 +655,36 @@
         return missing ? visible.concat([missing]) : visible;
     }
 
+    /**
+     * First `visibleLimit` sub-agent children of one parent, plus the child on
+     * the current chat's branch (the current chat or one of its ancestors) when
+     * paging would hide it.
+     */
+    function visibleHistoryChildren(kids, visibleLimit, nested, opts) {
+        const list = Array.isArray(kids) ? kids : [];
+        const limit = Math.max(0, Number(visibleLimit) || 0);
+        const visible = list.slice(0, limit);
+        const current = opts && opts.currentSessionId;
+        if (current == null || current === '' || visible.length === list.length) return visible;
+        const eq = (opts && typeof opts.sessionIdsEqual === 'function')
+            ? opts.sessionIdsEqual
+            : function (a, b) { return String(a) === String(b); };
+        const branch = [String(current)].concat(historySessionAncestorIds(current, nested, opts));
+        const onBranch = (e) => {
+            const id = e && e.sessionId;
+            if (id == null) return false;
+            return branch.some((b) => String(b) === String(id) || eq(b, id));
+        };
+        if (visible.some(onBranch)) return visible;
+        const missing = list.find(onBranch);
+        return missing ? visible.concat([missing]) : visible;
+    }
+
+    /** Reveal key for one parent's sub-agent list (shares the project reveal map). */
+    function historySubagentRevealKey(parentId) {
+        return 'subagents:' + String(parentId == null ? '' : parentId);
+    }
+
     function historySubagentNoun(count) {
         const n = Math.max(0, Number(count) || 0);
         return n === 1 ? 'sub-agent' : 'sub-agents';
@@ -733,9 +763,19 @@
             html += itemHtml;
             html += '<div class="history-subagent-children" id="history-subagents-'
                 + safePid + '-kids" role="group">';
-            kids.forEach((child) => {
+            // Page long sub-agent lists like project groups: first 5, then
+            // "Show 5 more"; rows past the limit are not rendered at all.
+            const kidsKey = historySubagentRevealKey(pid);
+            const kidsLimit = typeof opts.getVisibleLimit === 'function'
+                ? opts.getVisibleLimit(kidsKey, kids.length)
+                : Math.min(HISTORY_GROUP_PREVIEW_LIMIT, kids.length);
+            visibleHistoryChildren(kids, kidsLimit, nested, {
+                currentSessionId: opts.currentSessionId,
+                sessionIdsEqual: opts.sessionIdsEqual,
+            }).forEach((child) => {
                 html += renderTree(child);
             });
+            html += historyGroupToggleHTML(kidsKey, kids.length, kidsLimit, opts.escapeHtml);
             html += '</div></div>';
             return html;
         }
@@ -838,6 +878,8 @@
         historySessionAncestorIds,
         isHistorySubagentGroupExpanded,
         visibleHistoryRoots,
+        visibleHistoryChildren,
+        historySubagentRevealKey,
         historySubagentNoun,
         historySubagentToggleTitle,
         renderHistoryGroupBody,

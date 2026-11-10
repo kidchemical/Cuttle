@@ -1057,6 +1057,31 @@ def note_external_round(session_id: int, *, turn_id: Optional[str] = None, db=No
     return True
 
 
+def external_round_undelivered(session_id, *, db=None) -> bool:
+    """Whether a sub-agent child only *looks* busy: its external round is marked
+    running (``note_external_round``, at send time) but no turn runs behind it.
+
+    The chat-ops outbox asks this before treating the child as busy. Without it
+    the send that opened the round waits for the round to end, and the round
+    waits for the send — a chat that says "running" for hours with nothing
+    behind it (incident 2026-11-10, CH-002385). Flask process only: turn
+    ownership (``chat_delivery``, live status) is in-process state."""
+    try:
+        sid = int(_bare_sid(session_id))
+        child = store.get_child_by_session(_open_db(db), sid)
+    except Exception:
+        return False
+    if not child or child.status != STATUS_RUNNING or child.live_turn_id != store.EXTERNAL_ROUND:
+        return False
+    try:
+        from api import chat_delivery
+        from api.chat_live_status import get_live_status
+
+        return not chat_delivery.is_busy(sid) and not get_live_status(sid).get("active")
+    except Exception:
+        return False
+
+
 def on_child_turns_ended(session_ids, *, db=None) -> List[str]:
     """Close external rounds (``note_external_round``) whose child turn just ended.
 

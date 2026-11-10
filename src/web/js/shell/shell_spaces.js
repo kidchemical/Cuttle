@@ -1023,6 +1023,39 @@
             });
         }
 
+        /** Server attention moved to a new unread reply in a chat no visible pane
+         *  shows (finished answer, error, or stopped card): raise a notification
+         *  that opens that chat. A chat frame that ran the turn itself already
+         *  posted "Reply ready/failed" — skip when one for that chat just landed. */
+        function notifyNewServerReplies(rows, sessions) {
+            let fresh = [];
+            try { fresh = CuttleSpaces.noteNewReplies(rows); } catch (_) { return; }
+            if (!fresh.length) return;
+            const visible = new Set([...visibleActiveSpaceChatIds()].map((s) => CuttleSpaces.bareSid(s)));
+            const titleByBare = new Map();
+            (Array.isArray(sessions) ? sessions : []).forEach((s) => {
+                const title = s && (s.title || s.session_name);
+                if (s && s.id != null && title) titleByBare.set(CuttleSpaces.bareSid(s.id), String(title));
+            });
+            let recent = [];
+            try {
+                const hist = typeof win.getCuttleNotificationHistory === 'function' ? win.getCuttleNotificationHistory() : [];
+                const cutoff = Date.now() - 120000;
+                recent = (hist || []).filter((n) => n && n.kind === 'chat-response' && n.time >= cutoff)
+                    .map((n) => CuttleSpaces.bareSid(n.sessionId));
+            } catch (_) {}
+            fresh.forEach(({ bare, isError, awaitingInput }) => {
+                if (visible.has(bare) || recent.includes(bare)) return;
+                const label = titleByBare.get(bare) || formatBareChatLabel(bare);
+                const lead = isError ? 'Reply failed — ' : (awaitingInput ? 'Needs your input — ' : 'Reply ready — ');
+                try {
+                    (win.showToast || function () {})(lead + label,
+                        isError ? 'error' : (awaitingInput ? 'warning' : 'success'),
+                        { unread: true, sessionId: bare, kind: 'chat-response' });
+                } catch (_) {}
+            });
+        }
+
         async function fetchSpaceSessionsList() {
             try { return await activityBroker.sessions(); } catch (_) { return null; }
         }
@@ -1128,6 +1161,7 @@
                 }
                 const finished = CuttleSpaces.noteServerSnapshot(rows, startedAt);
                 if (!rows.some(row => row.attention)) reconcileFinishedBackgroundChats(finished, sessions);
+                else notifyNewServerReplies(rows, sessions);
                 refreshSpaceActivityLocalState();
             } finally {
                 spaceActivityPollInFlight = false;
@@ -1166,6 +1200,7 @@
                     queue: CuttleSpaces.followupKind(parseSpaceFollowupQueue(s.followup_queue))}));
                 const finished = CuttleSpaces.noteServerSnapshot(rows, Date.now());
                 if (!rows.some(r => r.attention)) reconcileFinishedBackgroundChats(finished, sessions);
+                else notifyNewServerReplies(rows, sessions);
                 syncSpaceActivityTabs();
             },
             openStream: wake => {

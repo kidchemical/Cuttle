@@ -178,6 +178,10 @@ def _schedules() -> Dict[str, List[Dict[str, Any]]]:
             "id": job["id"], "label": job.get("label") or "", "status": job.get("status"),
             "target": job.get("target") or "", "detail": (job.get("meta") or {}).get("detail") or "",
             "cancellable": "cancel" in (job.get("actions") or []),
+            "kind": (job.get("meta") or {}).get("op_kind") or "",
+            "every": (job.get("meta") or {}).get("every"), "next_at": (job.get("meta") or {}).get("next_at"),
+            "seen": (job.get("meta") or {}).get("seen") or "",
+            "waiting_since": (job.get("meta") or {}).get("waiting_since"),
         })
     return out
 
@@ -484,7 +488,8 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
                                        "activity", "state", "resume_chat", "handoff", "resume_note", "origin_query_id") if k in w}
                     for w in watches],
         "recent": recent,
-        "schedules": [{k: s.get(k) for k in ("id", "label", "detail", "status", "target")} for s in e["schedules"]],
+        "schedules": [{k: s.get(k) for k in ("id", "label", "detail", "status", "target", "kind", "every",
+                                             "next_at", "seen", "waiting_since")} for s in e["schedules"]],
         "process_count": int(e.get("process_count") or 0),
         "detached_count": int(e.get("detached_count") or 0),
         "started_at": _earliest_start(e),

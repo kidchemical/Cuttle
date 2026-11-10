@@ -122,7 +122,10 @@ def test_supervising_card_opens_the_supervised_chat(browser, static_server):
         card = page.locator('#chat-background-work')
         expect(card.locator('.chat-bg-title')).to_contain_text('Supervising')
         expect(card.locator('.chat-bg-label')).to_have_count(0)
-        expect(card.locator('.chat-bg-meta')).to_have_text('Every 15 min')
+        # One line: the chat it watches as a chip, the interval as a chip, no prose.
+        expect(card.locator('.chat-bg-open')).to_have_text('CH-001821')
+        expect(card.locator('.chat-bg-row-aside .chat-bg-chip')).to_have_text('every 15m')
+        expect(card.locator('.chat-bg-rows')).to_have_count(0)
         expect(card.locator('.chat-bg-supervising')).to_have_count(0)
         expect(card).to_have_class(re.compile(r'\bis-clickable\b'))
         # Active supervision is alive (green ping), not a dimmed still ring.
@@ -131,7 +134,7 @@ def test_supervising_card_opens_the_supervised_chat(browser, static_server):
             "e => getComputedStyle(e, '::before').animationName") == 'chat-bg-ping'
         card.screenshot(path=os.environ.get('BG_CARD_SHOT_SUPERVISING', '/tmp/bg_supervising.png'))
         card.locator('.chat-bg-open').click()
-        card.locator('.chat-bg-meta').click()
+        card.locator('.chat-bg-title').click()
         assert page.evaluate('() => window.opened') == ['1821', '1821']
         paused = json.loads(json.dumps(SCHEDULED))
         paused['background']['schedules'][0].update(status='paused', detail='every 15m · last seen waiting_background')
@@ -142,13 +145,28 @@ def test_supervising_card_opens_the_supervised_chat(browser, static_server):
         assert card.locator('.chat-bg-ring').evaluate(
             "e => getComputedStyle(e, '::before').animationName") == 'none'
         card.screenshot(path=os.environ.get('BG_CARD_SHOT_PAUSED', '/tmp/bg_paused.png'))
-        expect(card.locator('.chat-bg-meta')).to_have_text('No check-ins until resumed.')
+        assert card.locator('.chat-bg-seen').get_attribute('title') == 'No check-ins until resumed'
         expect(card.locator('.chat-bg-label')).to_have_count(0)
         expect(card.locator('.chat-bg-supervising')).to_have_count(0)
-        expect(card.locator('.chat-bg-open')).to_have_text('Open CH-001821')
-        paused['background']['schedules'][0]['status'] = 'running'
+        expect(card.locator('.chat-bg-open')).to_have_text('CH-001821')
+        # Running again, with the structured facts the host sends: last seen state
+        # in two words and a ring counting down to the next check.
+        paused['background']['schedules'][0].update(status='running', kind='supervise', every=900,
+                                                    seen='waiting_background',
+                                                    next_at=page.evaluate('() => Date.now() / 1000 + 450'))
         page.evaluate('live => bw.sync(live, "1822")', paused)
-        expect(card.locator('.chat-bg-meta')).to_have_text('Every 15 min · Last checked: waiting for background work')
+        expect(card.locator('.chat-bg-seen')).to_have_text('waiting on a job')
+        expect(card.locator('.chat-bg-next-text')).to_have_text('7m')
+        assert card.locator('.chat-bg-next').get_attribute('title') == 'Next check in 7m'
+        # A send that has waited past the stuck threshold is flagged, with its age.
+        paused['background']['schedules'].append({
+            'id': 'op2', 'kind': 'send', 'label': 'Send → CH-002365', 'detail': 'Recheck please', 'status': 'queued',
+            'target': 'CH-002365', 'waiting_since': page.evaluate('() => Date.now() / 1000 - 4 * 3600 - 40 * 60')})
+        page.evaluate('live => bw.sync(live, "1822")', paused)
+        send = card.locator('.chat-bg-send')
+        expect(send).to_have_class(re.compile(r'\bis-warn\b'))
+        expect(send.locator('.chat-bg-age')).to_have_text('queued 4h 40m')
+        expect(send.locator('.chat-bg-open')).to_have_text('CH-002365')
         assert not errors
     finally:
         page.close()
@@ -179,8 +197,8 @@ def test_detached_unit_watch_shows_unit_state_and_elapsed(browser, static_server
         page.evaluate('live => bw.sync(live, "1821")', live)
         card = page.locator('#chat-background-work')
         expect(card.locator('.chat-bg-title')).to_contain_text('Background job running')
-        expect(card.locator('.chat-bg-title .chat-bg-elapsed')).to_have_text('14m')
-        row = card.locator('.chat-bg-watch')
+        expect(card.locator('.chat-bg-head .chat-bg-elapsed')).to_have_text('14m')
+        row = card.locator('summary.chat-bg-watch')
         expect(row.locator('.chat-bg-watch-label')).to_have_text('Running: ch1821-rig-build')
         assert row.locator('.chat-bg-watch-state').count() == 0  # technical state lives in Details
         assert row.locator('.chat-bg-watch-elapsed').count() == 0  # elapsed already in title
@@ -278,7 +296,7 @@ def test_watch_rows_fit_the_card_on_a_phone(browser, static_server):
         page.wait_for_selector('#chat-background-work .chat-bg-watch')
         boxes = page.evaluate("""() => {
             const card = document.getElementById('chat-background-work').getBoundingClientRect();
-            const body = document.querySelector('#chat-background-work .chat-bg-body').getBoundingClientRect();
+            const body = document.querySelector('#chat-background-work .chat-bg-rows').getBoundingClientRect();
             return { card: [card.left, card.right], body: [body.left, body.right],
                      rows: [...document.querySelectorAll('#chat-background-work .chat-bg-watch')].map((r) => {
                          const b = r.getBoundingClientRect();
@@ -384,7 +402,7 @@ def test_pinned_card_shows_subagents_as_fleet_rows(browser, static_server):
         expect(rows.nth(1).locator('.chat-bg-agent-avatar')).to_have_text('⚖️')
         expect(rows.nth(1).locator('.chat-bg-agent-outcome')).to_have_text('Done')
         assert card.locator('.chat-bg-label').count() == 0      # the spawn command wait is folded in
-        assert card.locator('.chat-bg-open').all_inner_texts() == ['Open CH-001821']  # supervision only
+        assert card.locator('.chat-bg-open').all_inner_texts() == ['CH-001821']  # supervision only
         expect(card.locator('.chat-bg-supervising')).to_have_count(0)
         assert card.locator('.chat-bg-stop').count() == 1       # the background wait still stops
         fits = card.evaluate("""el => { const c = el.getBoundingClientRect();
@@ -477,6 +495,16 @@ def test_job_steps_details_staleness_and_completion_on_phone(browser, static_ser
         bg = {'watches': [job], 'waits': [], 'schedules': [], 'working': True}
         page.evaluate('bg => bw.sync({background: bg}, "7")', bg)
         card = page.locator('#chat-background-work')
+        # Closed, the row says it with graphics: one pip per step, a count, the
+        # step running now, and a "quiet" chip instead of a sentence.
+        row = card.locator('summary.chat-bg-watch')
+        expect(row.locator('.chat-bg-pip')).to_have_count(4)
+        assert [row.locator('.chat-bg-pip').nth(i).get_attribute('class').split('is-')[1] for i in range(4)] == [
+            'done', 'failed', 'running', 'pending']
+        expect(row.locator('.chat-bg-count')).to_have_text('2/4')
+        expect(row.locator('.chat-bg-now')).to_have_text('Check player facing')
+        expect(row.locator('.chat-bg-chip.is-warn')).to_have_text('quiet')
+        expect(card.locator('.chat-bg-job')).to_be_hidden()
         expect(card.locator('.chat-bg-step')).to_have_count(4)
         expect(card.locator('.chat-bg-job-summary')).to_have_text('2 of 4 steps finished · 1 failed')
         expect(card.locator('.chat-bg-job-health')).to_contain_text('No update for 15m')
@@ -498,7 +526,14 @@ def test_job_steps_details_staleness_and_completion_on_phone(browser, static_ser
         # Completion preserves the readable result and delivery receipt, without a running spinner.
         job.update(state='failed', handoff='failed', followup_query_id='follow7')
         page.evaluate('job => bw.sync({background: {watches: [], recent: [job]}}, "7")', job)
-        expect(card.locator('.chat-bg-title')).to_have_text('Background job results')
+        # Nothing live any more: the card shrinks to one line, like a locked form.
+        expect(card).to_have_class(re.compile(r'\bis-settled\b'))
+        expect(card.locator('.chat-bg-title')).to_have_text('Laptop build and multiplayer checks')
+        expect(card.locator('.chat-bg-head .chat-bg-chip')).to_have_text('1 failed')
+        expect(card.locator('.chat-bg-rows')).to_have_count(0)
+        assert card.evaluate('el => el.getBoundingClientRect().height') < 40
+        card.locator('.chat-bg-head').click()
+        expect(card.locator('summary.chat-bg-watch .chat-bg-chip')).to_have_text('failed')
         expect(card.locator('.chat-bg-handoff')).to_have_text('Follow-up delivery failed for CH-000007')
         expect(card.locator('.chat-bg-job-health')).to_have_count(0)
         expect(card.locator('.chat-bg-step.is-running')).to_have_count(0)  # ended without a step result

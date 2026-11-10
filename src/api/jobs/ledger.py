@@ -158,10 +158,17 @@ def _chat_op_to_job(op: Dict[str, Any]) -> Dict[str, Any]:
         seen = (op.get("result") or {}).get("last_seen") or {}
         if seen.get("state"):
             detail += f" · last seen {seen['state']}"
+        # Structured copies of the same facts, so cards draw them instead of parsing text.
+        sup = {"every": every or None, "seen": seen.get("state") or "",
+               "next_at": op.get("due") if op["state"] == "pending" else None}
     else:
         status = _CHAT_OP_STATUS.get(op["state"], op["state"])
         label = f"Send → {target}"
         detail = str((op.get("payload") or {}).get("text") or "")[:120]
+    result = op.get("result") or {}
+    # Since when an undelivered send has waited (set by the outbox on a busy target).
+    waiting_since = result.get("waiting_since") if op["kind"] != "supervise" and op["state"] in (
+        "pending", "verifying") else None
     actions = ["cancel"] if op["state"] in ("pending", "paused", "verifying") or (
         op["kind"] == "supervise" and op["state"] == "dispatching") else []
     return {
@@ -175,8 +182,9 @@ def _chat_op_to_job(op: Dict[str, Any]) -> Dict[str, Any]:
         "duration_s": None,
         "origin": {"chat_session_id": str(actor), "project_root": ""},
         "target": target,
-        "meta": {"op_kind": op["kind"], "detail": detail,
-                 "error": str((op.get("result") or {}).get("error") or "")},
+        "meta": {"op_kind": op["kind"], "detail": detail, **(sup if op["kind"] == "supervise" else {}),
+                 "error": str(result.get("error") or ""),
+                 "waiting_since": waiting_since, "waiting_on": result.get("waiting_on") if waiting_since else None},
         "links": {"chat": f"/chat_page.html?session={actor}"},
         "actions": actions,
     }

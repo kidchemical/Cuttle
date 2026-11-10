@@ -168,6 +168,7 @@
         resumed: 'timed pause expired, resumed',
         nudged: 'sent the next Tasks item (no supervisor turn)',
         paused_alert: 'paused too long, user notified',
+        undelivered: 'messages not delivered, woke supervisor',
     };
 
     /** One history line: "2:28 skipped, busy" / "2:43 woke supervisor (idle_with_work)". */
@@ -189,6 +190,7 @@
             time: fmtClock(check.at, opts),
             text: text,
             tone: check.outcome === 'violation' || check.outcome === 'error' ? 'warn'
+                : check.outcome === 'undelivered' ? 'warn'
                 : check.outcome === 'woke' || check.outcome === 'stalled' ? 'active' : 'muted',
             violations: Array.isArray(d.violations) ? d.violations : [],
         };
@@ -516,8 +518,150 @@
         return { kind, label: spec.label || text || 'Cuttle', title: spec.title };
     }
 
+    /**
+     * A supervision check-in row split for display: `head` (its first line, the
+     * one-line status) stays visible; `body` (the briefing written for the
+     * supervisor agent) folds away collapsed. The stored text is untouched — the
+     * agent always gets all of it. Returns null when there is nothing to fold.
+     */
+    function checkinParts(text) {
+        const raw = String(text || '').replace(/\r\n/g, '\n');
+        const nl = raw.indexOf('\n');
+        if (nl < 0) return null;
+        const head = raw.slice(0, nl).trim();
+        const body = raw.slice(nl + 1).replace(/^\s+/, '').replace(/\s+$/, '');
+        if (!head || !body) return null;
+        return { head, body };
+    }
+
+    function esc(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    // The check-in's opening sentence (api.chat_ops.worker._STATE_TEXT) in a
+    // word or two, with the tone its chip takes.
+    const CHECKIN_STATES = [
+        [/^working/i, 'working', 'live'],
+        [/^waiting on its own background/i, 'waiting on a job', 'live'],
+        [/^idle with open/i, 'idle, tasks open', 'warn'],
+        [/^idle/i, 'idle', 'muted'],
+        [/^waiting on a question/i, 'needs input', 'warn'],
+        [/^stopped on an error/i, 'error', 'bad'],
+        [/^stopped/i, 'stopped', 'muted'],
+    ];
+
+    /**
+     * What a check-in says, as facts a card can draw: the supervised chat, its
+     * state, Tasks progress and what needs attention. Read from the check-in's
+     * own markdown (api.chat_ops.worker.checkin_text); null when it is not one.
+     */
+    function checkinFacts(text) {
+        const raw = String(text || '').replace(/\r\n/g, '\n');
+        const m = /Supervision check-in for (CH-\d+)\*{0,2}:\s*([^\n]*)/.exec(raw);
+        if (!m) return null;
+        const said = m[2].replace(/\.\s*$/, '').trim();
+        const known = CHECKIN_STATES.filter((row) => row[0].test(said))[0];
+        const section = (title) => {
+            const at = raw.indexOf('**' + title);
+            if (at < 0) return [];
+            const lines = raw.slice(at).split('\n').slice(1);
+            const out = [];
+            for (const line of lines) {
+                if (!/^- /.test(line)) break;
+                out.push(line.slice(2));
+            }
+            return out;
+        };
+        let done = 0;
+        let total = 0;
+        section('Tasks:').forEach((line) => {
+            const t = /: (\d+)\/(\d+) done\s*$/.exec(line);
+            if (t) { done += Number(t[1]); total += Number(t[2]); }
+        });
+        const stalled = /\*\*No progress for (\d+) min/.exec(raw);
+        const undelivered = /\*\*Not delivered \((\d+)\)/.exec(raw);
+        const context = /\*\*Context (\d+)% full/.exec(raw);
+        const alerts = [];
+        const violations = section('Rule violations:').length;
+        if (violations) alerts.push({ tone: 'bad', text: violations + (violations === 1 ? ' rule broken' : ' rules broken') });
+        if (stalled) alerts.push({ tone: 'warn', text: 'no progress ' + stalled[1] + 'm' });
+        if (undelivered) alerts.push({ tone: 'warn', text: undelivered[1] + ' not delivered' });
+        if (context) alerts.push({ tone: 'warn', text: 'context ' + context[1] + '%' });
+        return {
+            handle: m[1], state: known ? known[1] : said, tone: known ? known[2] : 'muted',
+            tasks: total ? { done, total, percent: Math.round((done / total) * 100) } : null,
+            alerts,
+        };
+    }
+
+    const EYE_ICON = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" '
+        + 'stroke-linejoin="round" aria-hidden="true"><path d="M2.5 10s2.8-5 7.5-5 7.5 5 7.5 5-2.8 5-7.5 5-7.5-5-7.5-5z"/>'
+        + '<circle cx="10" cy="10" r="2.2"/></svg>';
+    const CARET_ICON = '<svg class="chat-op-caret" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" '
+        + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6l4 4-4 4"/></svg>';
+
+    /**
+     * Bubble HTML for a check-in: one line of facts (chat, state, alerts, a Tasks
+     * bar); the briefing written for the supervisor agent opens from it. `fmtHead`
+     * / `fmtBody` are the page's own user/markdown formatters (injected, so this
+     * stays pure). null → render the row as usual.
+     */
+    function checkinHtml(text, fmtHead, fmtBody) {
+        const parts = checkinParts(text);
+        if (!parts) return null;
+        const facts = checkinFacts(text);
+        if (!facts) {
+            return fmtHead(parts.head)
+                + '<details class="chat-checkin-details"><summary>Supervisor briefing</summary>'
+                + '<div class="chat-checkin-body">' + fmtBody(parts.body) + '</div></details>';
+        }
+        const tasks = facts.tasks
+            ? '<span class="chat-checkin-tasks" title="Tasks: ' + facts.tasks.done + ' of ' + facts.tasks.total + ' done">'
+                + '<span class="chat-checkin-bar"><span style="width:' + facts.tasks.percent + '%"></span></span>'
+                + facts.tasks.done + '/' + facts.tasks.total + '</span>'
+            : '';
+        return '<details class="chat-checkin-details chat-checkin-card">'
+            + '<summary class="chat-checkin-row" title="Supervision check-in. Click for the briefing the supervisor got">'
+            + '<span class="chat-checkin-ico">' + EYE_ICON + '</span>'
+            + '<span class="chat-checkin-target">' + esc(facts.handle) + '</span>'
+            + '<span class="chat-checkin-state is-' + facts.tone + '">' + esc(facts.state) + '</span>'
+            + facts.alerts.map((a) => '<span class="chat-checkin-alert is-' + a.tone + '">' + esc(a.text) + '</span>').join('')
+            + tasks + CARET_ICON + '</summary>'
+            + '<div class="chat-checkin-body">' + fmtBody(parts.body) + '</div></details>';
+    }
+
+    // A relayed message longer than this folds to a preview.
+    const FOLD_CHARS = 280;
+    const FOLD_LINES = 4;
+
+    /** The first words of a long relayed message, on one line; null when it is short enough to show whole. */
+    function foldPreview(text) {
+        const raw = String(text || '').replace(/\r\n/g, '\n').trim();
+        if (raw.length <= FOLD_CHARS && raw.split('\n').length <= FOLD_LINES) return null;
+        const flat = raw.split(/\n\s*\n/)[0].replace(/\s+/g, ' ').trim();
+        return flat.length > 200 ? flat.slice(0, 200).replace(/\s+\S*$/, '') + '…' : flat;
+    }
+
+    /** A long send/notice row: a preview line that opens the whole message. */
+    function foldHtml(text, fmt) {
+        const preview = foldPreview(text);
+        if (preview == null) return null;
+        return '<details class="chat-op-fold"><summary>'
+            + '<span class="chat-op-fold-preview">' + esc(preview) + '</span>'
+            + '<span class="chat-op-fold-more">Show all' + CARET_ICON + '</span></summary>'
+            + '<div class="chat-op-fold-body">' + fmt(text) + '</div></details>';
+    }
+
+    /** A user-row bubble: check-ins show as a fact line, long relayed messages fold, the rest renders as usual. */
+    function userBubbleHtml(badge, text, fmtHead, fmtBody) {
+        if (badge && badge.kind === 'checkin') return checkinHtml(text, fmtHead, fmtBody) || fmtHead(text);
+        if (badge && (badge.kind === 'send' || badge.kind === 'notice')) return foldHtml(text, fmtHead) || fmtHead(text);
+        return fmtHead(text);
+    }
+
     const api = {
-        chatOpBadge, stateText, wakesText,
+        chatOpBadge, checkinParts, checkinFacts, checkinHtml, foldPreview, foldHtml, userBubbleHtml, stateText, wakesText,
         SCHEMA_VERSION, INTERVALS, PAUSE_CHOICES, fmtInterval, fmtClock, fmtWhen, nextLabel,
         chipText, badgeText, pausedText, pauseBody,
         historyRow, view, isSupervised, supervisorOf, dialogDefaults, supervisePayload, pinChoices, scheduleById,

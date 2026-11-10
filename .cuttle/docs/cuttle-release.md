@@ -107,10 +107,30 @@ branch protection): `Quality / python (ubuntu-latest)`, `Quality / python
 matrix jobs. Desktop smoke has no path filter so required checks never wait on
 a skipped workflow.
 
-**Windows signing.** Set repository secrets `WIN_CSC_LINK` (base64 `.pfx` or
-URL) and `WIN_CSC_KEY_PASSWORD`; electron-builder then Authenticode-signs the
-Windows artifacts. Without them the artifacts are unsigned and the checksums
-are the only verification — say so in the release notes.
+**Windows signing (SignPath Foundation, free for OSS).** `packaged-host.yml`
+uploads the NSIS installer + portable exe as `unsigned-windows-exe`, submits one
+SignPath signing request, waits (up to 4 h) for the maintainer to approve it in
+SignPath, verifies the signatures and swaps the signed exes in before the
+install E2E and checksums. It runs only on release builds (`upload: true`) once
+these exist:
+
+- secret `SIGNPATH_API_TOKEN` (CI submitter user's API token);
+- variable `SIGNPATH_ORGANIZATION_ID`; optional `SIGNPATH_PROJECT_SLUG`
+  (default `cuttle`), `SIGNPATH_SIGNING_POLICY_SLUG` (`release-signing`),
+  `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` (`installers`).
+
+The artifact configuration lives in SignPath; its reviewed source is
+`.github/signpath/artifact-configuration.xml`. The SignPath project must link the
+predefined **GitHub.com** trusted build system. Foundation terms the repo must
+keep: README **Code signing policy** section (roles, attribution, privacy), MFA
+on GitHub and SignPath, manual approval of every release. NSIS cannot be
+deep-signed, so the installed `Cuttle.exe` and the uninstaller stay unsigned;
+the downloaded exes (what SmartScreen checks) are signed.
+
+Fallback: repository secrets `WIN_CSC_LINK` (base64 `.pfx` or URL) and
+`WIN_CSC_KEY_PASSWORD` make electron-builder sign with your own certificate.
+With neither, artifacts are unsigned and the checksums are the only
+verification — say so in the release notes.
 
 **Desktop updates.** Packaged Hosts report `updateSource: "release"` and do not
 build Client updates; update every device from the release. Source-checkout

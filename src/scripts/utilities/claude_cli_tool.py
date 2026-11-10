@@ -43,6 +43,12 @@ if TYPE_CHECKING:
 _MAX_PROMPT_FOR_ARGV = 2800 if os.name == "nt" else 12000
 _STDOUT_LIMIT = 16 * 1024 * 1024
 
+# Cuttle owns durable child chats. Enforce this at every process launch rather
+# than relying on an older user-message briefing surviving resume/compaction.
+# Task is Agent's legacy name; TeamCreate is the native team setup path.
+# TaskStop/TaskOutput and Bash background jobs remain available.
+_DISALLOWED_TOOLS = ("AskUserQuestion", "Agent", "Task", "TeamCreate")
+
 
 def claude_executable() -> Optional[str]:
     override = (os.getenv("CLAUDE_CLI_PATH") or "").strip()
@@ -632,7 +638,7 @@ class ClaudeCliTool:
             "--verbose",
             "--include-partial-messages",
             "--disallowedTools",
-            "AskUserQuestion",
+            ",".join(_DISALLOWED_TOOLS),
             "--permission-mode",
             permission_mode or "bypassPermissions",
         ]
@@ -656,6 +662,16 @@ class ClaudeCliTool:
                 cmd.append(prompt)
 
         _status_put(status_queue, "Calling Claude Code…")
+        from api.query_events import add_event
+
+        add_event(
+            "harness_policy",
+            summary="Claude native subagents disabled; delegation uses Cuttle",
+            policy_version=1,
+            delegation="cuttle",
+            disallowed_tools=list(_DISALLOWED_TOOLS),
+            resume=bool(rid),
+        )
         env = agent_cli_env()
         if extra_env:
             # Explicit per-run additions (the API-credit fallback's key); the

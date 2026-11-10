@@ -59,14 +59,69 @@ You can share images/video in replies via markdown `![alt](/output/shared/…)`
 """.strip()
 
 
-def cuttle_ui_capabilities_block(*, project_path: Optional[str] = None) -> str:
+# Unattended chats (``api.chat_ops.git_hook.supervised_reason``): another chat
+# drives them and nobody clicks cards there, so user-gated card / Discord
+# guidance is a dead end (incident 2026-11-10: a supervised orchestrator emitted
+# a Discord card and its supervisor told the user to go click it).
+_UNATTENDED_DROP_RUNBOOKS = {
+    "subagent": ("action-forms.md", "discord.md"),
+    "supervised": ("discord.md",),
+}
+
+UNATTENDED_NOTES = {
+    "subagent": (
+        "## Unattended chat (sub-agent)\n"
+        "This is a sub-agent child chat. Its parent chat drives it; nobody watches it live or "
+        "clicks cards here. Do not emit `cuttle_action_form` / `cuttle_confirm` cards of any kind "
+        "and do not post to Discord (`discord.post`, feature-update cards), even when a global or "
+        "project rule says a turn must end with one. Ask questions, and name anything that needs a "
+        "person (a post, push, restart, login), in plain text in your reply; the parent reads it "
+        "and decides."
+    ),
+    "supervised": (
+        "## Unattended chat (supervised)\n"
+        "A live supervision schedule drives this chat; nobody watches it live. Do not post to "
+        "Discord and do not emit cards only a person can act on (`discord.post` / feature-update "
+        "cards, `git.push`, `flask.restart`, other side-effect `action` cards), even when a global "
+        "or project rule says a turn must end with one. Name the need in one line of your reply; "
+        "the supervisor decides. Questions still go in one Q&A card with `\"resume\": true`: the "
+        "supervisor answers those."
+    ),
+}
+
+
+def unattended_note(reason: str) -> str:
+    """Context section for an unattended chat (``subagent`` / ``supervised``), else ''."""
+    return UNATTENDED_NOTES.get(reason or "", "")
+
+
+def unattended_dropped_runbooks(reason: str) -> tuple:
+    """Global runbooks not advertised to an unattended chat of this kind."""
+    return _UNATTENDED_DROP_RUNBOOKS.get(reason or "", ())
+
+
+def _capabilities_text(unattended: str) -> str:
+    drop = unattended_dropped_runbooks(unattended)
+    if not drop:
+        return CUTTLE_UI_CAPABILITIES_TEXT
+    lines = [ln for ln in CUTTLE_UI_CAPABILITIES_TEXT.splitlines()
+             if not any(ln.strip().startswith(name) for name in drop)]
+    text = "\n".join(lines)
+    if "action-forms.md" in drop:
+        text = text.replace(" Prefer clickable forms over prose questions.", "")
+    return text
+
+
+def cuttle_ui_capabilities_block(*, project_path: Optional[str] = None, unattended: str = "") -> str:
+    """Capability directory; ``unattended`` (``subagent`` / ``supervised``) drops the
+    card / Discord runbooks such a chat must not act on."""
     from api.cuttle_brain.global_layers import (
         INTEGRATION_DOCS,
         integration_guidance_enabled,
         load_global_layers,
     )
 
-    text = CUTTLE_UI_CAPABILITIES_TEXT
+    text = _capabilities_text(unattended)
     from api.experimental.context_bundles import markdown
     docs = [ref for ref, _ in markdown("docs", project_path)]
     if docs:

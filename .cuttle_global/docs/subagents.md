@@ -8,6 +8,15 @@ and die with it, so they never become openable child chats).
 
 Library: `api.subagents`. CLI: `python -m api.subagents`.
 
+Claude chat launches enforce this boundary with `--disallowedTools` for
+`Agent`, its legacy name `Task`, and `TeamCreate` (alongside the native question
+picker). This applies on fresh sessions, resumes and API-credit retries; it
+does not depend on Brain repeating an unchanged rule. Background `Bash`,
+`Monitor`, `TaskStop` and `TaskOutput` remain available for OS jobs and Cuttle
+`spawn --wait` commands. The trajectory's `harness_policy` event records the
+launch policy and deny list. Already running Claude processes retain their
+original tools until they finish; a Flask restart does not retrofit a live run.
+
 To message, check on, or supervise a chat this CLI did not spawn (a parent,
 sibling, or any existing chat), use `python -m api.chat_cli send|status|snapshot|supervise`
 (`chat-history.md`).

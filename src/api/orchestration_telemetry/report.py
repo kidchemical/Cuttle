@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from api.orchestration_telemetry import store
 
 RANGES = [("7d", "7 days", 7), ("30d", "30 days", 30), ("90d", "90 days", 90), ("all", "All time", 0)]
-WAKE_OUTCOMES = ("woke", "violation", "stalled", "checkpoint")
+WAKE_OUTCOMES = ("woke", "violation", "stalled", "checkpoint", "undelivered")
 _META_MODEL = re.compile(r"\bmodel\s+([^\s·]+)")
 _META_EFFORT = re.compile(r"\beffort\s+([^\s·]+)")
 

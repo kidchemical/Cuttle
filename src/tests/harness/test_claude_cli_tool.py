@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import asyncio
+import os
+import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -149,3 +153,52 @@ def test_execute_prompt_missing_cli(monkeypatch):
     result = asyncio.run(_run())
     assert result["success"] is False
     assert "not found" in (result.get("error") or "").lower()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fake executable uses a POSIX shebang")
+@pytest.mark.parametrize("resume", [None, "old-session-with-native-agent-history"])
+@pytest.mark.parametrize("steerable", [False, True])
+@pytest.mark.parametrize("long_prompt", [False, True])
+def test_every_claude_launch_enforces_cuttle_delegation(
+    tmp_path, monkeypatch, resume, steerable, long_prompt,
+):
+    """Check the process boundary, including stdin, resume and bypass mode.
+
+    No native CLI/model runs. An old transcript or a bare Brain resume must
+    never make native delegation available again; background shell controls
+    must remain usable.
+    """
+    from scripts.utilities import claude_cli_tool as mod
+
+    prompt = "investigate" * (2000 if long_prompt else 1)
+    path = tmp_path / "claude"
+    path.write_text(
+        f"#!{sys.executable}\n"
+        "import json,sys\n"
+        "args=sys.argv[1:]\n"
+        "denied=set(args[args.index('--disallowedTools')+1].split(','))\n"
+        "assert {'AskUserQuestion','Agent','Task','TeamCreate'} <= denied\n"
+        "assert not {'Bash','Monitor','TaskStop','TaskOutput'} & denied\n"
+        "assert args[args.index('--permission-mode')+1] == 'bypassPermissions'\n"
+        f"assert ('--resume' in args) == {bool(resume)!r}\n"
+        + (f"assert args[args.index('--resume')+1] == {resume!r}\n" if resume else "")
+        + ("text=json.loads(sys.stdin.readline())['message']['content']\n" if steerable
+           else "text=sys.stdin.read() if args[-1] == '-' else args[-1]\n")
+        + f"assert text == {prompt!r}\n"
+        "print(json.dumps({'type':'result','subtype':'success','result':'Cuttle delegation',"
+        "'session_id':'policy-session'}),flush=True)\n",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setattr(mod, "claude_executable", lambda: str(path))
+    events = []
+    monkeypatch.setattr("api.query_events.add_event", lambda kind, **kw: events.append((kind, kw)))
+    output = asyncio.run(mod.ClaudeCliTool().execute_prompt(
+        prompt, cwd=str(tmp_path), resume=resume, steerable=steerable, timeout=5,
+    ))
+    assert output["success"], output
+    assert output["output"] == "Cuttle delegation"
+    policy = next(payload for kind, payload in events if kind == "harness_policy")
+    assert policy["delegation"] == "cuttle" and policy["policy_version"] == 1
+    assert policy["resume"] == bool(resume)
+    assert {"Agent", "Task", "TeamCreate"} <= set(policy["disallowed_tools"])
