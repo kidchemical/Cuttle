@@ -245,7 +245,7 @@
                 sessionStorage.setItem(storagePageKey, page);
                 try {
                     const pageUrl = new URL(page, window.location.origin);
-                    const isChat = pageUrl.pathname === '/chat_page.html' || pageUrl.pathname === '/terminal_page.html';
+                    const isChat = pageUrl.pathname === '/chat_page.html';
                     const cid = isChat ? (pageUrl.searchParams.get('chat') || pageUrl.searchParams.get('session')) : null;
                     const histMode = (opts && opts.history) || (applyingShellHistory ? 'none' : 'replace');
                     syncShellChatUrl(cid, { mode: histMode, page });
@@ -293,7 +293,7 @@
                     page = (state && state.page) || shellPageFromChatId(chatId);
                     if (chatId) {
                         const u = new URL(page, window.location.origin);
-                        if (u.pathname === '/chat_page.html' || u.pathname === '/terminal_page.html') {
+                        if (u.pathname === '/chat_page.html') {
                             u.searchParams.set('chat', String(chatId)); u.searchParams.delete('session'); u.searchParams.delete('new');
                             page = u.pathname + u.search + u.hash;
                         }

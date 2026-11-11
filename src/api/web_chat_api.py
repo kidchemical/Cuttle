@@ -230,6 +230,7 @@ from api.http_authz import (
     is_owner_user,
     loopback_or_authenticated,
     loopback_or_owner,
+    output_file_denied,
     owner_required,
     request_is_loopback,
     require_authenticated,
@@ -1418,13 +1419,13 @@ def serve_phone_landing():
         )
         ip = get_lan_ipv4() or request.host.split(':')[0]
         base = lan_phone_portal_url(get_phone_https_port(), ip) or f'https://{ip}:{get_phone_https_port()}'
-        http_fb = lan_phone_http_fallback_url(ip) or f'http://{ip}:{get_http_fallback_port()}'
+        http_fb = lan_phone_http_fallback_url(ip)
         pc_url = f'https://127.0.0.1:{get_primary_https_port()}'
         phone_port_label = str(get_phone_https_port())
         http_port_label = str(get_http_fallback_port())
     except Exception:
         base = request.url_root.rstrip('/')
-        http_fb = base
+        http_fb = None
         pc_url = base
         ip = request.host.split(':')[0]
         _req_port = request.host.split(':')[1] if ':' in request.host else 'configured port'
@@ -1456,11 +1457,11 @@ p,li{{line-height:1.5;color:#aaa}} .ok{{color:#4ade80}} .warn{{color:#fbbf24}}</
 <li>Tap <strong>Advanced</strong></li>
 <li>Tap <strong>Proceed to {ip}</strong> (unsafe)</li>
 </ol>
-<p>Or use plain HTTP fallback: <a href="{http_fb}/api/lan-ping" style="display:inline;background:none;padding:0;color:#60a5fa">{http_fb}/api/lan-ping</a></p>
+{f'<p>Or use plain HTTP (unencrypted): <a href="{http_fb}/api/lan-ping" style="display:inline;background:none;padding:0;color:#60a5fa">{http_fb}/api/lan-ping</a></p>' if http_fb else ''}
 <h2>If it still does not load</h2>
 <ul>
 <li>Phone on <strong>same Wi‑Fi</strong> as this PC (mobile data off)</li>
-<li>Try <strong>{http_fb}/api/lan-ping</strong> (port {http_port_label}, plain HTTP)</li>
+{f'<li>Try <strong>{http_fb}/api/lan-ping</strong> (port {http_port_label}, plain HTTP)</li>' if http_fb else ''}
 <li>Run <strong>Enable Cuttle LAN Firewall</strong> as Administrator on PC</li>
 </ul>
 <p>PC only: <a href="{pc_url}" style="display:inline;background:none;padding:0;color:#60a5fa">{pc_url}</a></p>
@@ -2053,19 +2054,16 @@ def _normalize_shell_workspace_columns(columns):
                 page = '/chat_page.html'
         flex = str(col.get('flex') or '')[:80]
         chat = str(col.get('chat') or '').strip()[:64]
-        terminal = str(col.get('terminal') or '').strip()[:64]
         entry = {'page': page, 'flex': flex}
         if chat:
             entry['chat'] = chat
-        if terminal:
-            entry['terminal'] = terminal
         cleaned.append(entry)
     return cleaned or [{'page': '/chat_page.html', 'flex': ''}]
 
 
 def _workspace_column_summary(col: dict) -> str:
     page = str((col or {}).get('page') or '')
-    sid = _parse_chat_id_from_page(page) or (col or {}).get('chat') or (col or {}).get('terminal')
+    sid = _parse_chat_id_from_page(page) or (col or {}).get('chat')
     kind = 'Pane'
     try:
         from urllib.parse import urlparse
@@ -2073,8 +2071,6 @@ def _workspace_column_summary(col: dict) -> str:
         path = urlparse(raw).path or ''
         if 'chat_page' in path:
             kind = 'Chat'
-        elif 'terminal_page' in path:
-            kind = 'Terminal'
         elif path:
             kind = Path(path).stem.replace('_', ' ').replace('-', ' ').title() or 'Pane'
     except Exception:
@@ -2164,8 +2160,6 @@ def _shell_panes_snapshot():
             path = urlparse(raw).path or ''
             if 'chat_page' in path:
                 kind = 'chat'
-            elif 'terminal_page' in path:
-                kind = 'terminal'
         except Exception:
             pass
         if sid and kind == 'chat':
@@ -2245,8 +2239,6 @@ def _format_pane_messages_for_prompt(pane_number: int, limit: int = 40):
     header = f'### Pane {pane_number} — {pane.get("kind")} session `{sid}` — {title}'
     if not sid:
         return header, '(No chat session open in this pane.)'
-    if pane.get('kind') == 'terminal':
-        return header, '(Terminal pane — no chat message history.)'
     db_sid = _parse_auth_db_session_id(sid)
     messages = []
     if db_sid is not None:
@@ -2392,6 +2384,9 @@ def serve_sounds(filename):
 @app.route('/output/<path:filename>')
 def serve_output(filename):
     """Serve files from the output directory"""
+    denied = output_file_denied(filename)
+    if denied:
+        return denied
     if filename.endswith('-status.json'):
         job_id = filename[: -len('-status.json')]
         try:
@@ -2429,11 +2424,13 @@ def serve_output(filename):
 
 
 @app.route('/logs/')
+@owner_required
 def serve_logs_directory():
     """Serve the logs directory listing"""
     return send_from_directory(_query_logs_dir(), 'index.html')
 
 @app.route('/logs/<path:filename>')
+@owner_required
 def serve_logs(filename):
     """Serve files from the query logs directory (<home>/logs/queries)"""
     if filename.startswith('query_report_') and filename.endswith('.html'):
@@ -4976,7 +4973,7 @@ def _cuttle_req_timer_end(response):
 
 
 def start_listener_servers(app, ports, *, lan_enabled, lan_ip, bind_host, mdns_enabled,
-                           cert_files, use_reloader=True,
+                           cert_files, use_reloader=True, lan_http_enabled=False,
                            make_server_factory=None, mdns_starter=None,
                            primary_runner=None, log=print):
     """Bring up companion listeners, advertise mDNS, then serve primary HTTPS.
@@ -5019,8 +5016,8 @@ def start_listener_servers(app, ports, *, lan_enabled, lan_ip, bind_host, mdns_e
         phone_url = lan_phone_portal_url(ports.phone_https, lan_ip)
         fb_url = lan_phone_http_fallback_url(lan_ip)
         log(f"[LAN] Phone portal (HTTPS): {phone_url}")
-        log(f"[LAN] Phone fallback (HTTP): {fb_url}")
-        log(f"[LAN] Accept cert warning on phone once, or use HTTP port {ports.http}")
+        if lan_http_enabled:
+            log(f"[LAN] Phone fallback (HTTP, unencrypted): {fb_url}")
         try:
             phone_https_srv = make_server_factory(
                 '0.0.0.0',
@@ -5035,28 +5032,18 @@ def start_listener_servers(app, ports, *, lan_enabled, lan_ip, bind_host, mdns_e
                 daemon=True,
             ).start()
             log(f"[LAN] Phone HTTPS listening on https://0.0.0.0:{ports.phone_https}")
-            http_fb_srv = make_server_factory('0.0.0.0', ports.http, app, threaded=True)
-            threading.Thread(
-                target=http_fb_srv.serve_forever,
-                name='cuttle-lan-http-fallback',
-                daemon=True,
-            ).start()
-            log(f"[LAN] HTTP fallback listening on http://0.0.0.0:{ports.http}")
         except Exception as e:
-            log(f"[LAN] Phone LAN servers failed: {e}")
-    else:
-        # Electron (and local HTTP tooling) need plain HTTP even when LAN is off.
-        # Binding loopback-only keeps the portal off the network.
-        try:
-            http_local_srv = make_server_factory('127.0.0.1', ports.http, app, threaded=True)
-            threading.Thread(
-                target=http_local_srv.serve_forever,
-                name='cuttle-loopback-http',
-                daemon=True,
-            ).start()
-            log(f"[HTTP] Loopback portal listening on http://127.0.0.1:{ports.http}")
-        except Exception as e:
-            log(f"[HTTP] Loopback portal failed: {e}")
+            log(f"[LAN] Phone LAN server failed: {e}")
+
+    # Electron and local tooling always need plain HTTP on this PC. It carries
+    # logins unencrypted, so it reaches the network only when opted in.
+    http_host = '0.0.0.0' if lan_enabled and lan_ip and lan_http_enabled else '127.0.0.1'
+    try:
+        http_srv = make_server_factory(http_host, ports.http, app, threaded=True)
+        threading.Thread(target=http_srv.serve_forever, name='cuttle-http', daemon=True).start()
+        log(f"[HTTP] Listening on http://{http_host}:{ports.http}")
+    except Exception as e:
+        log(f"[HTTP] Listener failed: {e}")
 
     runner = primary_runner
     if runner is None:
@@ -5126,6 +5113,7 @@ if __name__ == '__main__':
         from managers.settings_manager import get_settings_manager
         from api.lan_access import (
             is_lan_access_enabled,
+            is_lan_http_enabled,
             get_lan_ipv4,
             resolve_bind_host,
             ensure_all_lan_firewall_rules,
@@ -5181,6 +5169,7 @@ if __name__ == '__main__':
             mdns_enabled=bool(discovery.get('mdns_enabled')),
             cert_files=(cert_file, key_file),
             use_reloader=use_reloader,
+            lan_http_enabled=is_lan_http_enabled(),
         )
     except KeyboardInterrupt:
         print("\n\nWeb Chat API server stopped by user")

@@ -20,8 +20,7 @@ REPO = Path(__file__).resolve().parents[3]
 WEB = REPO / 'src/web'
 
 # Full shell pages with headers. Excluded on purpose: chat_page (own
-# header by design), terminal_page (PTY tool surface, no header),
-# query_log (standalone inspector, no header), achievements_preview
+# header by design), query_log (standalone inspector, no header), achievements_preview
 # (dev probe, not a product page).
 PAGES = [
     'jobs_page.html',

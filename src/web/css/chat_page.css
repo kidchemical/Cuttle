@@ -1404,10 +1404,6 @@ body.history-hide-commands .chat-history .history-agent-chip.is-command-chip { d
     opacity: 0.7;
 }
 
-.chat-history-item.is-terminal .chat-icon {
-    opacity: 0.9;
-}
-
 .history-kind-badge {
     flex-shrink: 0;
     padding: 1px 5px;

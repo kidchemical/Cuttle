@@ -42,6 +42,7 @@ Roles used by tests and routes:
 from __future__ import annotations
 
 import os
+import posixpath
 from functools import wraps
 from typing import Any, Callable, Dict, Optional, Tuple, TypeVar
 
@@ -204,6 +205,19 @@ def require_session_actor(
     if err:
         return None, None, err
     return user, session_id, None
+
+
+def output_file_denied(filename: str) -> Optional[JsonError]:
+    """Who may read ``<home>/output/<filename>``, or None when this caller may.
+
+    Chat uploads belong to their chat; everything else (shared media, avatars,
+    job status) needs any signed-in account. The path is normalized first so a
+    ``x/../uploads/…`` spelling cannot dodge the per-chat check.
+    """
+    parts = posixpath.normpath(str(filename).replace("\\", "/")).split("/")
+    if len(parts) >= 3 and parts[0] == "uploads":
+        return require_session_actor(parts[1])[2]
+    return require_authenticated()[1]
 
 
 def require_loopback() -> Optional[JsonError]:

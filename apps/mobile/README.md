@@ -126,11 +126,13 @@ The default serves verified published artifacts without building on update
 checks. Source changes without a matching APK report that the artifact is not
 ready rather than offering a stale APK.
 
-Use HTTP port **8000** and your PC IP from Settings → Phone / LAN access.
-HTTP sends credentials and chat traffic in cleartext; this client is for a trusted
-LAN. Android rejects untrusted, expired, or mismatched HTTPS certificates in both
-the WebView and native probes, notifications, and update downloads. The default
-Cuttle self-signed certificate is not automatically trusted. For HTTPS, use an
+Use HTTPS port **8888** and your PC IP from Settings → Phone / LAN access. The
+first connection shows the PC's certificate fingerprint; compare it with that
+settings section and confirm. The app then trusts that exact key for that
+host:port (`com.cuttle.mobile.tls`) in the WebView and in native probes,
+notifications, updates, and voice; a changed key is refused until reviewed.
+Other untrusted, expired, or mismatched certificates are rejected. HTTP port
+8000 is unencrypted and needs the opt-in on the PC. Alternatively, for HTTPS, use an
 endpoint with a certificate trusted by Android and a matching hostname (for
 example, a private HTTPS proxy). Accepting a browser warning does not establish
 app trust. Failed HTTPS connections never change the saved server to HTTP;

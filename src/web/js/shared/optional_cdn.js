@@ -165,8 +165,8 @@
 
     function boot() {
         var path = (location.pathname || '').toLowerCase();
-        if (path.indexOf('terminal_page') !== -1 || path.indexOf('ide_page') !== -1) {
-            // Terminal and IDE pages load their own extras on demand.
+        if (path.indexOf('ide_page') !== -1) {
+            // The IDE page loads its own extras on demand.
             return;
         }
         if (path.indexOf('dashboards_page') !== -1) {

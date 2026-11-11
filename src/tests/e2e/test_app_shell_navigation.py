@@ -340,13 +340,11 @@ def test_chat_handle_restore_respects_explicit_targets(page):
     result = page.evaluate(
         """() => {
             rememberChatHandle(0, 'chat', '123');
-            rememberChatHandle(0, 'terminal', 'T-7');
             const r = {
                 bare: withRememberedChat(0, '/chat_page.html'),
                 deep: withRememberedChat(0, '/chat_page.html?chat=999'),
                 signin: withRememberedChat(0, '/chat_page.html?signin=1'),
                 other: withRememberedChat(0, '/settings_page.html'),
-                terminal: withRememberedChat(0, '/terminal_page.html'),
             };
             // New chat reports a null handle; the splash must stay reachable.
             rememberChatHandle(0, 'chat', null);
@@ -358,7 +356,6 @@ def test_chat_handle_restore_respects_explicit_targets(page):
     assert result["deep"] == "/chat_page.html?chat=999"
     assert result["signin"] == "/chat_page.html?signin=1"
     assert result["other"] == "/settings_page.html"
-    assert result["terminal"] == "/terminal_page.html?chat=T-7"
     assert result["afterNewChat"] == "/chat_page.html"
 
 

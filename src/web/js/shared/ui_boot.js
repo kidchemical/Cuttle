@@ -542,7 +542,7 @@
 
     /* Wallpaper state: prefer localStorage when framed. Sync parent.document
        access from an iframe can deadlock Electron's shared renderer (seen when
-       loading terminal_page inside the app shell). The shell still broadcasts
+       loading a framed page inside the app shell). The shell still broadcasts
        cuttle-video-state after load for any race. */
     function detectWallpaper() {
         if (!wallpaperEnabled()) {

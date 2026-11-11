@@ -313,6 +313,7 @@ Captures use the Light theme at 2x and are framed by [`readme_promo.py`](src/scr
 - The first account must be created on the host itself and becomes the owner; self-registration then closes (`settings.json` → `auth.allow_registration` reopens it for non-owner accounts).
 - Worker tokens are bound to the device they were issued to. A LAN peer cannot re-enroll an existing worker id; remove the device in **Jobs → Devices** to re-pair it.
 - Auth uses bcrypt passwords, a CORS origin allowlist, and rate limits on login and pairing.
+- Plain HTTP stays on the host unless you opt in; LAN devices use HTTPS and trust the host's key once. Uploaded and generated files need a login, and the IDE terminal needs the owner's login from the host itself.
 - Keep secrets in `<home>/.env` and `<home>/secrets/`, outside the repository. Never commit certs, `*.db`, or Playwright profiles.
 - Found a vulnerability? Report it privately; see [`SECURITY.md`](SECURITY.md).
 

@@ -300,6 +300,7 @@ def test_cors_origins_follow_env(monkeypatch):
 
 
 def test_cors_lan_entries_follow_env(monkeypatch):
+    monkeypatch.setenv("CUTTLE_LAN_HTTP", "1")
     from api import lan_access
 
     _set_custom(monkeypatch)
@@ -610,9 +611,9 @@ def test_terminal_and_oauth_urls_follow_env(monkeypatch):
     from api import web_terminal
     from api.auth_api import _oauth_public_base
 
-    assert web_terminal._terminal_local_url() == "https://127.0.0.1:8080/terminal_page.html"
+    assert web_terminal._terminal_local_url() == "https://127.0.0.1:8080/ide_page.html"
     _set_custom(monkeypatch)
-    assert web_terminal._terminal_local_url() == "https://127.0.0.1:8443/terminal_page.html"
+    assert web_terminal._terminal_local_url() == "https://127.0.0.1:8443/ide_page.html"
     assert _oauth_public_base() == "https://localhost:8443"
     monkeypatch.setenv("CUTTLE_API_URL", "https://10.0.0.2:9443")
     assert _oauth_public_base() == "https://10.0.0.2:9443"
@@ -680,6 +681,7 @@ def test_listener_seam_lan_branch_exact_args(monkeypatch):
         mdns_enabled=True,
         cert_files=("cert.pem", "key.pem"),
         use_reloader=False,
+        lan_http_enabled=True,
         make_server_factory=factory,
         mdns_starter=mdns,
         primary_runner=runner,
@@ -700,6 +702,30 @@ def test_listener_seam_lan_branch_exact_args(monkeypatch):
     assert calls["runner"] == [{"host": "0.0.0.0", "port": 8443}]
     assert any("https://0.0.0.0:8890" in line for line in calls["logs"])
     assert any("http://0.0.0.0:8001" in line for line in calls["logs"])
+
+
+def test_listener_seam_lan_keeps_http_on_this_pc_by_default(monkeypatch):
+    """LAN on without the opt-in: HTTPS on the network, plain HTTP loopback only."""
+    from api.web_chat_api import start_listener_servers
+
+    _set_custom(monkeypatch)
+    _patch_lan_for_seam(monkeypatch)
+    app, calls, factory, mdns, runner = _seam_fakes()
+    start_listener_servers(
+        app,
+        _custom_ports(),
+        lan_enabled=True,
+        lan_ip="192.168.1.5",
+        bind_host="0.0.0.0",
+        mdns_enabled=False,
+        cert_files=("cert.pem", "key.pem"),
+        use_reloader=False,
+        make_server_factory=factory,
+        mdns_starter=mdns,
+        primary_runner=runner,
+        log=calls["logs"].append,
+    )
+    assert [(s["host"], s["port"]) for s in calls["servers"]] == [("0.0.0.0", 8890), ("127.0.0.1", 8001)]
 
 
 def test_listener_seam_default_runner_app_run_args(monkeypatch):
@@ -782,4 +808,4 @@ def test_listener_seam_companion_failure_never_aborts(monkeypatch):
     )
     assert plan["primary_port"] == 8443
     assert calls["runner"] == [{"host": "0.0.0.0", "port": 8443}]
-    assert any("Phone LAN servers failed" in line for line in calls["logs"])
+    assert any("Phone LAN server failed" in line for line in calls["logs"])

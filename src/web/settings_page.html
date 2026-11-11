@@ -804,12 +804,25 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
+                        <strong>Allow unencrypted HTTP on the network</strong><button type="button" class="cuttle-info" data-tooltip="Only for older phone apps. Passwords and chats cross the network unencrypted. Cuttle on this PC keeps working with this off. Toggle requires a Flask restart." aria-label="About unencrypted HTTP">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch" id="lanHttpToggle" onclick="toggleLanHttp(event)">
+                            <input type="checkbox" id="lanHttpEnabled" style="display: none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
                         <strong>Connect another device</strong>
                         <div class="setting-description" id="lanAccessStatus">Loading…</div>
                     </div>
                     <div class="setting-control setting-control--column">
                         <code id="lanHttpUrl" style="font-size:12px;word-break:break-all">—</code>
                         <code id="lanHttpsUrl" style="font-size:12px;word-break:break-all">—</code>
+                        <div class="setting-description">Certificate fingerprint (compare when a device asks to trust this PC)</div>
+                        <code id="lanTlsFingerprint" style="font-size:12px;word-break:break-all">—</code>
                         <button type="button" class="control-button btn-info" onclick="loadLanAccessSettings()">Refresh</button>
                     </div>
                 </div>
@@ -2280,9 +2293,15 @@
                             : 'Disabled — phone apps and LAN browsers cannot reach Cuttle');
                 }
                 if (httpEl) {
+                    httpEl.hidden = !d.lan_http_enabled;
                     httpEl.textContent = d.portal_url_http_fallback
                         || (d.lan_ip ? `http://${d.lan_ip}:${d.http_port}` : `http://<pc-ip>:${d.http_port || 8000}`);
                 }
+                const httpBox = document.getElementById('lanHttpEnabled');
+                if (httpBox) httpBox.checked = !!d.lan_http_enabled;
+                document.getElementById('lanHttpToggle')?.classList.toggle('active', !!d.lan_http_enabled);
+                const fingerprintEl = document.getElementById('lanTlsFingerprint');
+                if (fingerprintEl) fingerprintEl.textContent = d.tls_fingerprint || '—';
                 if (httpsEl) {
                     httpsEl.textContent = d.portal_url_phone
                         || (d.lan_ip ? `https://${d.lan_ip}:${d.https_port}` : `https://<pc-ip>:${d.https_port || 8888}`);
@@ -2425,6 +2444,24 @@
             } catch (e) {
                 if (statusEl) statusEl.textContent = e.message || String(e);
                 (window.showToast || alert)('Failed to save timeouts: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function toggleLanHttp(event) {
+            event?.preventDefault?.();
+            const next = !document.getElementById('lanHttpEnabled')?.checked;
+            try {
+                const r = await fetch('/api/settings/lan-access', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ lan_http_enabled: next }),
+                });
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Save failed');
+                await loadLanAccessSettings();
+                (window.showToast || alert)('Saved — restart Flask to apply', 'info');
+            } catch (e) {
+                (window.showToast || alert)('Failed to update HTTP access: ' + (e.message || e), 'error');
             }
         }
 

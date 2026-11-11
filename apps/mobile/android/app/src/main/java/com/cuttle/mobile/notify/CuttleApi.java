@@ -1,6 +1,8 @@
 package com.cuttle.mobile.notify;
 
 import android.content.Context;
+import com.cuttle.mobile.tls.HostPins;
+import com.cuttle.mobile.tls.PinnedTls;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.util.concurrent.TimeUnit;
@@ -13,7 +15,7 @@ import org.json.JSONObject;
 
 /**
  * LAN Cuttle API for probes, notifications, and APK downloads. Uses platform
- * certificate trust and OkHttp hostname validation, like the WebView.
+ * certificate trust plus the host keys the user trusted, like the WebView.
  */
 public final class CuttleApi {
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
@@ -190,7 +192,7 @@ public final class CuttleApi {
     }
 
     private static OkHttpClient buildClient() {
-        return new OkHttpClient.Builder()
+        return PinnedTls.apply(new OkHttpClient.Builder(), HostPins::get)
             .retryOnConnectionFailure(true)
             .readTimeout(180, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)

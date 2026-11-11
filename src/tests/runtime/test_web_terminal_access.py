@@ -31,6 +31,16 @@ def _clear_pty_registry():
         web_terminal._PTY_REGISTRY.clear()
 
 
+OWNER = {'id': 1, 'auth_provider': 'local'}
+
+
+@pytest.fixture
+def signed_in_owner():
+    with patch.object(web_terminal, 'current_user', return_value=OWNER), \
+            patch.object(web_terminal, 'is_owner_user', return_value=True):
+        yield
+
+
 @pytest.fixture
 def terminal_app():
     app = Flask(__name__)
@@ -62,7 +72,7 @@ def test_is_local_request_remote_lan_client():
             assert _is_local_request() is False
 
 
-def test_terminal_status_local(terminal_app):
+def test_terminal_status_local(terminal_app, signed_in_owner):
     with terminal_app.test_client() as client:
         resp = client.get('/api/terminal/status', environ_overrides={'REMOTE_ADDR': '127.0.0.1'})
         assert resp.status_code == 200
@@ -78,6 +88,47 @@ def test_terminal_status_remote(terminal_app):
         data = resp.get_json()
         assert data['success'] is False
         assert 'localhost_url' in data
+
+
+def _denied(headers=None, addr='127.0.0.1', host='127.0.0.1:8000'):
+    app = Flask(__name__)
+    with app.test_request_context('/api/terminal/ws', headers=headers or {}, base_url=f'http://{host}',
+                                  environ_overrides={'REMOTE_ADDR': addr}):
+        return web_terminal._terminal_denied()
+
+
+def test_terminal_allows_owner_from_same_site(signed_in_owner):
+    assert _denied({'Origin': 'http://127.0.0.1:8000'}) is None
+
+
+@pytest.mark.parametrize('origin', ['https://evil.example', 'http://127.0.0.1:9999', 'null'])
+def test_terminal_refuses_other_sites_even_when_signed_in(signed_in_owner, origin):
+    denied = _denied({'Origin': origin})
+    assert denied is not None and denied[1] == 403
+
+
+def test_terminal_requires_login_on_this_pc():
+    with patch.object(web_terminal, 'current_user', return_value=None):
+        denied = _denied({'Origin': 'http://127.0.0.1:8000'})
+    assert denied is not None and denied[1] == 401
+
+
+def test_terminal_requires_owner_not_just_any_account():
+    with patch.object(web_terminal, 'current_user', return_value={'id': 2}), \
+            patch.object(web_terminal, 'is_owner_user', return_value=False):
+        denied = _denied()
+    assert denied is not None and denied[1] == 401
+
+
+def test_socket_refused_before_any_shell_starts():
+    ws = MagicMock()
+    app = Flask(__name__)
+    with patch.object(web_terminal, '_attach_or_create_session') as attach, \
+            patch.object(web_terminal, 'current_user', return_value=None), \
+            app.test_request_context('/api/terminal/ws', environ_overrides={'REMOTE_ADDR': '127.0.0.1'}):
+        web_terminal._handle_ws_connection(ws)
+    ws.receive.assert_not_called()
+    attach.assert_not_called()
 
 
 def test_attach_or_create_resumes_same_shell():

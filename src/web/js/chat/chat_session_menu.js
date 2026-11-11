@@ -28,7 +28,7 @@
 
     /**
      * model: { sessionId|null, displayId, starred, includeRename, includeDelete,
-     *          subagents: null|{collapsed}, extraHtml: [html], terminal, archive: null|{archived} }
+     *          subagents: null|{collapsed}, extraHtml: [html], archive: null|{archived} }
      */
     function itemsHtml(model, icons, esc) {
         const m = model || {};
@@ -59,9 +59,6 @@
             parts.push(item('', subLabel, call('toggleHistorySubagentGroup'), icons.subagents, subLabel));
         }
         (m.extraHtml || []).forEach((html) => { if (html) parts.push(html); });
-        if (m.terminal) {
-            parts.push(item('', 'Open terminal', 'window.chatPageOpenTerminalFromMenu(event)', icons.terminal, 'Terminal'));
-        }
         parts.push(item('', 'Voice mode', 'window.chatPageEnterVoiceMode(event)', icons.voice, 'Voice'));
         if (has && m.archive) {
             const archiveLabel = m.archive.archived ? 'Unarchive' : 'Archive';
@@ -74,10 +71,6 @@
         return parts.join('');
     }
 
-    function isLoopbackHost(hostname) {
-        const h = String(hostname || '').toLowerCase();
-        return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1';
-    }
 
     /**
      * host: { win, icons(), escapeHtml, facts(sid) → {displayId, starred, archived, canArchive, subagentGroup},
@@ -86,7 +79,6 @@
     function create(host) {
         const win = host.win;
         const doc = win.document;
-        let terminalAvailable = true;
 
         /** Items for one chat; shared by the header dropdown and history-row menus. */
         function html(sessionId, opts) {
@@ -103,7 +95,6 @@
                 includeDelete: has && o.includeDelete !== false,
                 subagents: group ? { collapsed: group.classList.contains('is-collapsed') } : null,
                 extraHtml: host.extraItems(sessionId, icons),
-                terminal: terminalAvailable,
                 archive: has && f.canArchive ? { archived: !!(o.archived || f.archived) } : null,
             }, icons, host.escapeHtml);
         }
@@ -139,11 +130,6 @@
             b.setAttribute('aria-expanded', open ? 'true' : 'false');
         }
 
-        // Terminal needs /api/terminal/status; off-host clients without it hide the item.
-        win.fetch('/api/terminal/status', { credentials: 'same-origin' })
-            .then((resp) => { if (!resp.ok) terminalAvailable = false; })
-            .catch(() => { if (!isLoopbackHost(win.location.hostname)) terminalAvailable = false; });
-
         const btn = button();
         if (btn) {
             btn.addEventListener('click', (e) => {
@@ -165,7 +151,7 @@
         return { html, isOpen, close, toggle };
     }
 
-    const api = { itemsHtml, isLoopbackHost, create };
+    const api = { itemsHtml, create };
     if (typeof module === 'object' && module.exports) module.exports = api;
     root.CuttleChatSessionMenu = api;
 })(typeof window !== 'undefined' ? window : globalThis);

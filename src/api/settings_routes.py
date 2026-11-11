@@ -153,8 +153,8 @@ def validate_ui_layout_update(data: dict) -> dict:
 
 
 def validate_lan_access_update(data: dict) -> tuple[bool, str]:
-    """LAN writes require the master flag; mdns is optional."""
-    if 'lan_access_enabled' not in data:
+    """LAN writes name the master flag or the plain-HTTP opt-in; mdns is optional."""
+    if 'lan_access_enabled' not in data and 'lan_http_enabled' not in data:
         return False, 'lan_access_enabled required'
     return True, ''
 
@@ -305,8 +305,10 @@ def api_settings_lan_access():
     """Read/update discovery.lan_access_enabled (phone/LAN portal). Restart Flask after changes."""
     try:
         from managers.settings_manager import get_settings_manager
+        from api.tls_cert import current_fingerprint
         from api.lan_access import (
             is_lan_access_enabled,
+            is_lan_http_enabled,
             get_lan_ipv4,
             lan_phone_portal_url,
             lan_phone_http_fallback_url,
@@ -322,9 +324,8 @@ def api_settings_lan_access():
             ok, err = validate_lan_access_update(data)
             if not ok:
                 return jsonify({'success': False, 'error': err}), 400
-            patch = {'lan_access_enabled': bool(data['lan_access_enabled'])}
-            if 'mdns_enabled' in data:
-                patch['mdns_enabled'] = bool(data['mdns_enabled'])
+            patch = {key: bool(data[key]) for key in
+                     ('lan_access_enabled', 'lan_http_enabled', 'mdns_enabled') if key in data}
             if not sm.update_setting('discovery', lambda current: {**(current or {}), **patch}):
                 return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
             discovery = sm.get_setting('discovery')
@@ -336,6 +337,9 @@ def api_settings_lan_access():
         return jsonify({
             'success': True,
             'lan_access_enabled': enabled,
+            'lan_http_enabled': bool(discovery.get('lan_http_enabled')),
+            'lan_http_live': is_lan_http_enabled(),
+            'tls_fingerprint': (current_fingerprint() or {}).get('fingerprint'),
             'live_enabled': live,
             'mdns_enabled': bool(discovery.get('mdns_enabled')),
             'lan_ip': lan_ip,

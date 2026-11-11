@@ -172,98 +172,8 @@
     /** New anonymous (localStorage) chat ids — CH-XXXXXX. */
     function generateLocalChatId() {
         const mod = Math.pow(36, 6);
-        let id;
-        do {
-            const mixed = (Date.now() + Math.floor(Math.random() * 46656)) % mod;
-            id = 'CH-' + mixed.toString(36).toUpperCase().padStart(6, '0');
-        } while (readTerminalSessionRegistry()[id]);
-        return id;
-    }
-
-    /** Shared with terminal_page.js — durable terminal chat handles. */
-    const TERMINAL_SESSIONS_KEY = 'cuttle_terminal_sessions_v1';
-    const TERMINAL_LAYOUT_KEY = 'cuttle_terminal_layout_v1';
-
-    function readTerminalSessionRegistry() {
-        try {
-            const map = JSON.parse(localStorage.getItem(TERMINAL_SESSIONS_KEY) || '{}');
-            return map && typeof map === 'object' ? map : {};
-        } catch (_) {
-            return {};
-        }
-    }
-
-    function writeTerminalSessionRegistry(map) {
-        try {
-            localStorage.setItem(TERMINAL_SESSIONS_KEY, JSON.stringify(map || {}));
-        } catch (_) {}
-    }
-
-    function isTerminalSessionId(sessionId) {
-        if (sessionId == null || sessionId === '') return false;
-        const map = readTerminalSessionRegistry();
-        return !!map[String(sessionId)];
-    }
-
-    function getTerminalHistoryEntries() {
-        const map = readTerminalSessionRegistry();
-        return Object.values(map)
-            .filter((s) => s && s.id)
-            .map((s) => ({
-                sessionId: s.id,
-                session: {
-                    ...s,
-                    type: 'terminal',
-                    projectId: s.projectId != null ? s.projectId : '__terminal__',
-                    projectName: s.projectName || 'Terminal',
-                    projectPath: s.projectPath || '',
-                    title: s.title || s.shell || 'Terminal',
-                },
-                updated: Number(s.updated) || Number(s.created) || 0,
-                isTerminal: true,
-            }));
-    }
-
-    function removeTerminalSessionFromStorage(sessionId) {
-        const id = String(sessionId);
-        const map = readTerminalSessionRegistry();
-        if (map[id]) {
-            delete map[id];
-            writeTerminalSessionRegistry(map);
-        }
-        // Drop from open-tabs layout if present.
-        try {
-            const raw = localStorage.getItem(TERMINAL_LAYOUT_KEY);
-            if (!raw) return;
-            const layout = JSON.parse(raw);
-            if (!layout || !Array.isArray(layout.tabs)) return;
-            layout.tabs = layout.tabs.filter((t) => t && String(t.id) !== id);
-            if (String(layout.active) === id) {
-                layout.active = layout.tabs.length ? layout.tabs[layout.tabs.length - 1].id : null;
-            }
-            localStorage.setItem(TERMINAL_LAYOUT_KEY, JSON.stringify(layout));
-        } catch (_) {}
-    }
-
-    function openTerminalSession(sessionId) {
-        if (sessionId == null || sessionId === '') return;
-        const page = '/terminal_page.html?chat=' + encodeURIComponent(String(sessionId));
-        try {
-            if (typeof closeChatHistoryPanel === 'function') closeChatHistoryPanel();
-        } catch (_) {}
-        const shell = window.parent;
-        if (shell && shell !== window && typeof shell.navigateFromSource === 'function') {
-            shell.navigateFromSource(window, page);
-            return;
-        }
-        if (shell && shell !== window && typeof shell.navigate === 'function') {
-            const colIdx = typeof shell.findColumnIndexForSource === 'function'
-                ? shell.findColumnIndexForSource(window)
-                : 0;
-            shell.navigate(colIdx, page);
-            return;
-        }
-        window.location.href = page;
+        const mixed = (Date.now() + Math.floor(Math.random() * 46656)) % mod;
+        return 'CH-' + mixed.toString(36).toUpperCase().padStart(6, '0');
     }
 
     function updateChatIdBadge(sessionId) {
@@ -433,7 +343,7 @@
     const sessionMenu = CuttleChatSessionMenu.create({
         win: window, icons: () => CuttleChatHistoryView.historyActionIcons(), escapeHtml: escapeHtmlInline,
         facts: (sid) => ({ displayId: formatChatDisplayId(sid) || '', starred: isChatSessionStarred(sid),
-            archived: isChatSessionArchived(sid), canArchive: isAuthMode() && !isTerminalSessionId(sid),
+            archived: isChatSessionArchived(sid), canArchive: isAuthMode(),
             subagentGroup: historyPanel.historySubagentGroupOwnedBy(sid) }),
         extraItems: (sid, icons) => [gitPush.menuHtml(icons), supervision.menuHtml(sid, icons.subagents),
             orchestration.menuHtml(sid, icons.subagents), composerLock.menuHtml(sid)],
@@ -2192,10 +2102,6 @@
 
     function isChatSessionStarred(sessionId) {
         if (sessionId == null) return false;
-        if (isTerminalSessionId(sessionId)) {
-            const map = readTerminalSessionRegistry();
-            return !!(map[String(sessionId)] && map[String(sessionId)].starred);
-        }
         if (isAuthMode()) {
             const serverSessions = (window.CuttleAuth.getSessions && window.CuttleAuth.getSessions()) || [];
             const s = CuttleChatActivity.findSessionById(serverSessions, sessionId);
@@ -3883,10 +3789,8 @@
         getAuthSessions: () => ((window.CuttleAuth && window.CuttleAuth.getSessions && window.CuttleAuth.getSessions()) || []),
         applyGeneratingFlagsFromSessions,
         isChatSessionDeleted,
-        getTerminalHistoryEntries,
         createAuthHistoryItemHTML: historyView.createAuthHistoryItemHTML,
         createHistoryItemHTML: historyView.createHistoryItemHTML,
-        createTerminalHistoryItemHTML: historyView.createTerminalHistoryItemHTML,
         createHistorySectionHeaderHTML: historyView.createHistorySectionHeaderHTML,
         scheduleSlashChipCompactLabels,
         renderArchivedSection,
@@ -3904,10 +3808,7 @@
         buildSessionMenuHTML: sessionMenu.html,
         refreshGitPushMenuMode: gitPush.refreshMenuMode,
         closeChatChromeMenu: sessionMenu.close,
-        isTerminalSessionId,
         getChatSessionDisplayTitle,
-        readTerminalSessionRegistry,
-        writeTerminalSessionRegistry,
         fetchWithTimeout,
         currentSessionId: () => session.current(),
         sessionIdsEqual,
@@ -5349,7 +5250,6 @@
     function refreshHistoryAgentChips() {
         if (typeof document === 'undefined' || !document.querySelectorAll) return;
         document.querySelectorAll('.chat-history-item[data-session-id]').forEach((item) => {
-            if (item.classList.contains('is-terminal')) return;
             const sid = item.getAttribute('data-session-id');
             if (sid == null || sid === '') return;
             const rawTitle = String(
@@ -8775,17 +8675,6 @@
 
         const next = !isChatSessionStarred(sessionId);
 
-        if (isTerminalSessionId(sessionId)) {
-            const map = readTerminalSessionRegistry();
-            const id = String(sessionId);
-            if (!map[id]) return;
-            map[id].starred = next;
-            writeTerminalSessionRegistry(map);
-            historyPanel.reloadKeepingSearch();
-            if (sessionIdsEqual(sessionId, session.current())) updateChatSessionStarButton(session.current());
-            return;
-        }
-
         if (isAuthMode()) {
             const authSid = toAuthDbSessionId(sessionId);
             if (authSid == null) return;
@@ -8880,7 +8769,7 @@
         }
         if (sessionId == null || sessionId === '') return;
         closeAllSessionMenus();
-        if (!isAuthMode() || isTerminalSessionId(sessionId)) return;
+        if (!isAuthMode()) return;
         const authSid = toAuthDbSessionId(sessionId);
         if (authSid == null) return;
         const next = !isChatSessionArchived(sessionId);
@@ -8908,21 +8797,6 @@
     }
 
     async function deleteChatSession(sessionId) {
-        if (isTerminalSessionId(sessionId)) {
-            removeTerminalSessionFromStorage(sessionId);
-            // If a terminal iframe is open in the shell, ask it to close the live tab.
-            try {
-                if (window.parent && window.parent !== window) {
-                    window.parent.postMessage({
-                        type: 'cuttle-terminal-delete',
-                        sessionId: String(sessionId),
-                    }, '*');
-                }
-            } catch (_) {}
-            historyPanel.load();
-            return;
-        }
-
         // If this chat is actively generating, abort the local stream immediately.
         if (sessionIdsEqual(session.current(), sessionId) && generation.loading) {
             try {
@@ -8989,34 +8863,11 @@
     }
     
 
-    // Rename persistence effect (panel owns the modal; the page owns the API and
-    // the terminal shell postMessage contract). `renameKind` comes from the panel.
+    // Rename persistence effect (panel owns the modal; the page owns the API).
+    // `renameKind` comes from the panel.
     async function persistRenamedTitle(sessionId, newTitle, renameKind) {
         const title = String(newTitle || '').trim();
         if (!title) return false;
-
-        if (isTerminalSessionId(sessionId) || renameKind === 'terminal') {
-            const map = readTerminalSessionRegistry();
-            const session = map[String(sessionId)];
-            if (!session) return false;
-            map[String(sessionId)] = {
-                ...session,
-                title,
-                titleCustom: true,
-                updated: Date.now(),
-            };
-            writeTerminalSessionRegistry(map);
-            try {
-                if (window.parent && window.parent !== window) {
-                    window.parent.postMessage({
-                        type: 'cuttle-terminal-rename',
-                        sessionId: String(sessionId),
-                        title,
-                    }, '*');
-                }
-            } catch (_) {}
-            return true;
-        }
 
         if (isAuthMode() && toAuthDbSessionId(sessionId) != null) {
             const authSid = toAuthDbSessionId(sessionId);
@@ -12893,14 +12744,12 @@
     window.createNewChat = createNewChat;
     window.copyChatIdBadge = copyChatIdBadge;
     window.copyChatSessionId = copyChatSessionId;
-    window.chatPageOpenTerminalFromMenu = openTerminalFromMenu;
     window.sendWelcomeMessage = sendWelcomeMessage;
     window.handleWelcomeInputKeyDown = handleWelcomeInputKeyDown;
     window.autoResizeWelcomeTextarea = autoResizeWelcomeTextarea;
     window.chatPageLoadSession = loadChatSession;
     window.loadChatSession = loadChatSession;
     window.chatPageNavigateToChatHandle = navigateToChatHandle;
-    window.chatPageOpenTerminalSession = openTerminalSession;
     window.chatPageToggleArchiveSession = toggleArchiveChatSession;
     window.chatPageToggleArchiveSection = toggleArchiveSection;
     window.chatPageToggleArchiveSectionKey = toggleArchiveSectionKey;
@@ -13031,49 +12880,6 @@
             setTimeout(() => { btn.title = 'Copy to clipboard'; }, 2500);
         }
     };
-
-    function resolveTerminalOpenPage() {
-        try {
-            const layout = JSON.parse(localStorage.getItem(TERMINAL_LAYOUT_KEY) || 'null');
-            const active = layout && layout.active ? String(layout.active) : '';
-            if (active) {
-                return '/terminal_page.html?chat=' + encodeURIComponent(active);
-            }
-            if (layout && Array.isArray(layout.tabs) && layout.tabs.length && layout.tabs[0].id) {
-                return '/terminal_page.html?chat=' + encodeURIComponent(String(layout.tabs[0].id));
-            }
-            const map = readTerminalSessionRegistry();
-            const latest = Object.values(map)
-                .filter((e) => e && e.id)
-                .sort((a, b) => (b.updated || 0) - (a.updated || 0))[0];
-            if (latest && latest.id) {
-                return '/terminal_page.html?chat=' + encodeURIComponent(String(latest.id));
-            }
-        } catch (_) {}
-        return '/terminal_page.html';
-    }
-
-    function openTerminalFromMenu(event) {
-        if (event) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
-        closeAllSessionMenus();
-        const page = resolveTerminalOpenPage();
-        const shell = window.parent;
-        if (shell && shell !== window && typeof shell.navigateFromSource === 'function') {
-            shell.navigateFromSource(window, page);
-            return;
-        }
-        if (shell && shell !== window && typeof shell.navigate === 'function') {
-            const colIdx = typeof shell.findColumnIndexForSource === 'function'
-                ? shell.findColumnIndexForSource(window)
-                : 0;
-            shell.navigate(colIdx, page);
-            return;
-        }
-        window.location.href = page;
-    }
 
     // Expose for headless e2e verification (history nav + badge)
     try {
