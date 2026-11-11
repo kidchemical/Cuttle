@@ -99,3 +99,37 @@ def test_writer_drains_surrogate_pending_batch(tmp_path):
         assert not list(pending.glob('*.json.gz'))
         assert {e['block_id'] for e in EventStore(tmp_path).events('q',full=True)}=={'a','b'}
     finally:writer.close()
+
+
+def test_locked_database_never_quarantines_a_pending_batch(tmp_path,monkeypatch):
+    """A lock held by maintenance fails a replay twice within seconds. The
+    batch is valid: it must stay pending and land once the lock is gone."""
+    import gzip,json,sqlite3
+    import pytest
+    from api.agent_events.writer import EventWriter
+    pending=tmp_path/'pending';pending.mkdir()
+    payload=[['event','held',{'kind':'tool','block_id':'a','text':'kept through the lock'}]]
+    (pending/'1-held.json.gz').write_bytes(gzip.compress(json.dumps(payload).encode()))
+    locked={'on':True}
+    original=EventStore.write_batch
+    def write(store,messages):
+        if locked['on']:
+            raise sqlite3.OperationalError('database is locked')
+        return original(store,messages)
+    monkeypatch.setattr(EventStore,'write_batch',write)
+    writer=EventWriter(tmp_path)
+    try:
+        for index in range(4):          # well past the retry-once-then-quarantine limit
+            writer.submit('event','held',{'kind':'tool','block_id':f'n{index}','text':'new'})
+            with pytest.raises(RuntimeError):
+                writer.flush()
+        assert not (tmp_path/'pending_failed').exists()
+        assert (pending/'1-held.json.gz').exists()
+        locked['on']=False
+        writer.submit('event','held',{'kind':'tool','block_id':'last','text':'new'})
+        try:writer.flush()
+        except RuntimeError:writer.flush()
+        blocks={e['block_id'] for e in EventStore(tmp_path).events('held')}
+        assert {'a','n0','n3','last'}<=blocks
+        assert not list(pending.glob('*.json.gz'))
+    finally:writer.close()

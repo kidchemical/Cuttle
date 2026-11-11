@@ -130,3 +130,36 @@ def test_maintenance_reads_payloads_only_for_rows_it_compacts(tmp_path,monkeypat
     assert decoded==['a']
     events={e['block_id']:e for e in store.events('old',full=True)}
     assert events['a']['compacted']=='retention' and events['b']['text']=='fresh'
+
+
+def test_daily_maintenance_is_not_repeated_by_a_restart(tmp_path):
+    from api.agent_events import maintenance
+    now=1_800_000_000.0
+    assert maintenance.seconds_until_due(tmp_path,now)==maintenance.MAINTENANCE_START_DELAY_SEC
+    maintenance.mark_done(tmp_path,now)
+    assert maintenance.seconds_until_due(tmp_path,now+3600)==pytest.approx(86400-3600)
+    assert maintenance.seconds_until_due(tmp_path,now+90000)==maintenance.MAINTENANCE_START_DELAY_SEC
+    # A clock that moved backwards must not postpone maintenance forever.
+    assert maintenance.seconds_until_due(tmp_path,now-10)==maintenance.MAINTENANCE_START_DELAY_SEC
+
+
+def test_scheduled_maintenance_settles_edits_off_the_calling_thread(tmp_path,monkeypatch):
+    import threading
+    from api.agent_events import maintenance
+    from api.edit_attribution import journal
+    store=EventStore(tmp_path)
+    release=threading.Event();ran=[]
+    def slow(path):
+        ran.append(threading.current_thread().name)
+        release.wait(5)
+    monkeypatch.setattr(journal,'reconcile_commits',slow)
+    monkeypatch.setattr(maintenance,'starred_sessions',lambda store:[])
+    monkeypatch.setattr(maintenance,'release_refs',lambda store,all_completed=False:None)
+    result=maintenance.scheduled(store)      # returns while settlement is still blocked
+    assert result['settlement'] is None
+    assert (tmp_path/'maintenance_at').exists()
+    release.set()
+    for _ in range(100):
+        if ran:break
+        time.sleep(0.02)
+    assert ran==['agent-events-settlement']

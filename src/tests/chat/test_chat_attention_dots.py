@@ -66,7 +66,9 @@ def test_unread_error_is_red():
     css = CHAT_CSS.read_text(encoding="utf-8")
     assert ".history-unread-icon.is-error" in css
     assert "#ef4444" in css
-    assert "chat-unread-error-glow" in css
+    # The red pulse is the shared opacity-only glow layer tinted by --unread-glow.
+    error = css.split(".history-unread-icon.is-error,", 1)[1].split("}", 1)[0]
+    assert "--unread-glow: #ef4444" in error
     assert ".chat-jump-bottom.has-unseen-error" in css
     html = CHAT_HTML.read_text(encoding="utf-8")
     assert 'id="chatSessionQueuedIcon"' in html

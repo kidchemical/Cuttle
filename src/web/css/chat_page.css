@@ -245,6 +245,15 @@ body {
     transform: translateX(0);
 }
 
+/* The closed panel stays laid out off-canvas with every history row in it.
+   Its spinners and unread glows kept animating there, in every pane, and cost
+   more renderer time than the visible page. Nothing in a closed panel moves. */
+.chat-history-panel:not(.open):not(.mobile-open):not(.hist-slide) *,
+.chat-history-panel:not(.open):not(.mobile-open):not(.hist-slide) *::before,
+.chat-history-panel:not(.open):not(.mobile-open):not(.hist-slide) *::after {
+    animation-play-state: paused !important;
+}
+
 .chat-history-panel.hist-slide {
     transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -1265,19 +1274,20 @@ body.history-hide-commands .chat-history .history-agent-chip.is-command-chip { d
 }
 
 .history-section-unread-dot {
+    --unread-glow: #22c55e;
+    position: relative;
     background: #22c55e;
     box-shadow:
-        0 0 0 2px color-mix(in srgb, #22c55e 32%, transparent),
-        0 0 8px color-mix(in srgb, #22c55e 55%, transparent);
-    animation: chat-unread-glow 1.8s ease-in-out infinite;
+        0 0 0 2px color-mix(in srgb, #22c55e 28%, transparent),
+        0 0 6px color-mix(in srgb, #22c55e 45%, transparent);
 }
 
 .history-section-unread-dot.is-error {
+    --unread-glow: #ef4444;
     background: #ef4444;
     box-shadow:
-        0 0 0 2px color-mix(in srgb, #ef4444 32%, transparent),
-        0 0 8px color-mix(in srgb, #ef4444 55%, transparent);
-    animation: chat-unread-error-glow 1.8s ease-in-out infinite;
+        0 0 0 2px color-mix(in srgb, #ef4444 28%, transparent),
+        0 0 6px color-mix(in srgb, #ef4444 45%, transparent);
 }
 
 .history-section-queued-dot {
@@ -1651,20 +1661,44 @@ html.cuttle-bg-paused .chat-session-background-icon {
     width: 8px;
     height: 8px;
     border-radius: 50%;
+    --unread-glow: #22c55e;
     background: #22c55e;
     box-shadow:
-        0 0 0 2px color-mix(in srgb, #22c55e 32%, transparent),
-        0 0 8px color-mix(in srgb, #22c55e 55%, transparent);
-    animation: chat-unread-glow 1.8s ease-in-out infinite;
+        0 0 0 2px color-mix(in srgb, #22c55e 28%, transparent),
+        0 0 6px color-mix(in srgb, #22c55e 45%, transparent);
+}
+
+.chat-session-unread-icon {
+    position: relative;
 }
 
 .history-unread-icon.is-error,
 .chat-session-unread-icon.is-error {
+    --unread-glow: #ef4444;
     background: #ef4444;
     box-shadow:
-        0 0 0 2px color-mix(in srgb, #ef4444 32%, transparent),
-        0 0 8px color-mix(in srgb, #ef4444 55%, transparent);
-    animation: chat-unread-error-glow 1.8s ease-in-out infinite;
+        0 0 0 2px color-mix(in srgb, #ef4444 28%, transparent),
+        0 0 6px color-mix(in srgb, #ef4444 45%, transparent);
+}
+
+/* Unread pulse on its own layer (opacity only), like the running icon above.
+   Animating the dot's box-shadow restyled and repainted on the main thread
+   every frame for every unread dot in every pane. The dot keeps the resting
+   glow; this layer fades the stronger one in and out over it. */
+.history-section-unread-dot::after,
+.history-unread-icon::after,
+.chat-session-unread-icon::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    box-shadow:
+        0 0 0 3px color-mix(in srgb, var(--unread-glow) 48%, transparent),
+        0 0 14px color-mix(in srgb, var(--unread-glow) 75%, transparent);
+    opacity: 0;
+    pointer-events: none;
+    will-change: opacity;
+    animation: chat-unread-glow 1.8s ease-in-out infinite;
 }
 
 .history-queued-icon,
@@ -1724,29 +1758,8 @@ html.cuttle-bg-paused .chat-session-background-icon {
 }
 
 @keyframes chat-unread-glow {
-    0%, 100% {
-        box-shadow:
-            0 0 0 2px color-mix(in srgb, #22c55e 28%, transparent),
-            0 0 6px color-mix(in srgb, #22c55e 45%, transparent);
-    }
-    50% {
-        box-shadow:
-            0 0 0 3px color-mix(in srgb, #22c55e 48%, transparent),
-            0 0 14px color-mix(in srgb, #22c55e 75%, transparent);
-    }
-}
-
-@keyframes chat-unread-error-glow {
-    0%, 100% {
-        box-shadow:
-            0 0 0 2px color-mix(in srgb, #ef4444 28%, transparent),
-            0 0 6px color-mix(in srgb, #ef4444 45%, transparent);
-    }
-    50% {
-        box-shadow:
-            0 0 0 3px color-mix(in srgb, #ef4444 48%, transparent),
-            0 0 14px color-mix(in srgb, #ef4444 75%, transparent);
-    }
+    0%, 100% { opacity: 0; }
+    50% { opacity: 1; }
 }
 
 @keyframes chat-queued-glow {
@@ -7973,12 +7986,15 @@ button.cuttle-button.is-unselected {
 html.cuttle-bg-paused .history-running-icon,
 html.cuttle-bg-paused .history-running-icon::after,
 html.cuttle-bg-paused .history-unread-icon,
+html.cuttle-bg-paused .history-unread-icon::after,
 html.cuttle-bg-paused .history-queued-icon,
 html.cuttle-bg-paused .history-paused-icon,
 html.cuttle-bg-paused .chat-session-unread-icon,
+html.cuttle-bg-paused .chat-session-unread-icon::after,
 html.cuttle-bg-paused .chat-session-queued-icon,
 html.cuttle-bg-paused .chat-session-paused-icon,
 html.cuttle-bg-paused .history-section-unread-dot,
+html.cuttle-bg-paused .history-section-unread-dot::after,
 html.cuttle-bg-paused .history-section-queued-dot,
 html.cuttle-bg-paused .history-section-paused-dot,
 html.cuttle-bg-paused .chat-session-running-icon,
@@ -7999,12 +8015,15 @@ html.cuttle-bg-paused .chat-restore-spinner {
     .history-running-icon,
     .history-running-icon::after,
     .history-unread-icon,
+    .history-unread-icon::after,
     .history-queued-icon,
     .history-paused-icon,
     .chat-session-unread-icon,
+    .chat-session-unread-icon::after,
     .chat-session-queued-icon,
     .chat-session-paused-icon,
     .history-section-unread-dot,
+    .history-section-unread-dot::after,
     .history-section-queued-dot,
     .history-section-paused-dot,
     .chat-session-running-icon,
@@ -8184,7 +8203,7 @@ html.cuttle-bg-paused .chat-restore-spinner {
 .history-input-icon { position: absolute; left: 5px; top: 50%; transform: translateY(-50%); }
 .chat-session-input-icon[hidden] { display: none !important; }
 
-.history-section-unread-dot.is-input { background: #3b82f6; box-shadow: 0 0 8px #3b82f688; }
+.history-section-unread-dot.is-input { --unread-glow: #3b82f6; background: #3b82f6; box-shadow: 0 0 8px #3b82f688; }
 .history-section-count.has-input, .history-subagent-count-badge.has-input {
     background: color-mix(in srgb, #3b82f6 28%, transparent); color: #60a5fa;
 }

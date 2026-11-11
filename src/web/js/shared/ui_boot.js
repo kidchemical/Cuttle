@@ -627,6 +627,13 @@
         document.addEventListener('DOMContentLoaded', function () { applyTo(document.body); });
     }
 
+    var shellHidden = false;
+    /* True for a framed page laid out with zero width or height. */
+    function paneHasNoArea() {
+        return framed && (window.innerWidth === 0 || window.innerHeight === 0);
+    }
+    window.cuttlePaneHasNoArea = paneHasNoArea;
+
     window.addEventListener('message', function (e) {
         var data = e && e.data;
         if (!data || typeof data !== 'object') return;
@@ -644,8 +651,8 @@
         } else if (data.type === 'cuttle-ui-anim-change') {
             apply();
         } else if (data.type === 'cuttle-shell-visibility' && typeof data.hidden === 'boolean') {
-            root.classList.toggle('cuttle-bg-paused', !!data.hidden);
-            if (document.body) document.body.classList.toggle('cuttle-bg-paused', !!data.hidden);
+            shellHidden = !!data.hidden;
+            syncBgPaused();
         } else if (data.type === 'cuttle-safe-area' && data.insets && typeof data.insets === 'object') {
             applySafeAreaInsets(data.insets);
         }
@@ -682,12 +689,19 @@
         }
     }
 
-    /* Pause decorative infinite CSS while the shell window is backgrounded. */
+    /* Pause decorative infinite CSS while the shell window is backgrounded, or
+       while this pane has no visible area (collapsed pane, inactive space):
+       the browser keeps animating a zero-size frame of a visible window. */
     function applyBgPaused(hidden) {
         root.classList.toggle('cuttle-bg-paused', !!hidden);
         if (document.body) document.body.classList.toggle('cuttle-bg-paused', !!hidden);
     }
+    function syncBgPaused() {
+        applyBgPaused(shellHidden || paneHasNoArea());
+    }
     if (framed) {
+        syncBgPaused();
+        window.addEventListener('resize', syncBgPaused, { passive: true });
         try { window.parent.postMessage({ type: 'cuttle-shell-visibility-request' }, '*'); } catch (_) {}
     } else {
         applyBgPaused(document.hidden);

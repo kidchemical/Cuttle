@@ -223,3 +223,21 @@ def test_parse_catalog_from_fixture():
     entries = mp._parse_catalog(catalog)
     assert len(entries) > 100
     assert any(e["model_id"] == "claude-sonnet-4-6" for e in entries)
+
+
+def test_unchanged_cache_file_is_not_reparsed_on_every_lookup(pricing_cache, monkeypatch):
+    monkeypatch.setattr(mp, "_loaded_cache_stamp", None)
+    reads = []
+    real = mp._read_cache
+    monkeypatch.setattr(mp, "_read_cache", lambda: reads.append(1) or real())
+    assert mp.ensure_models_dev_pricing(refresh_if_stale=False)
+    for _ in range(5):
+        assert mp.ensure_models_dev_pricing(refresh_if_stale=False)
+    assert len(reads) == 1
+    # A rewritten cache file (background refresh, another process) is picked up.
+    data = json.loads(pricing_cache.read_text(encoding="utf-8"))
+    data["entries"].append({"provider": "openai", "model_id": "gpt-new-model", "name": "New", "input": 1.0, "output": 2.0})
+    pricing_cache.write_text(json.dumps(data), encoding="utf-8")
+    assert mp.ensure_models_dev_pricing(refresh_if_stale=False)
+    assert len(reads) == 2
+    assert mp._normalize_key("gpt-new-model") in mp._index

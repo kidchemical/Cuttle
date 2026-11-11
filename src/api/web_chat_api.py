@@ -4975,7 +4975,8 @@ def _cuttle_req_timer_end(response):
 def start_listener_servers(app, ports, *, lan_enabled, lan_ip, bind_host, mdns_enabled,
                            cert_files, use_reloader=True, lan_http_enabled=False,
                            make_server_factory=None, mdns_starter=None,
-                           primary_runner=None, log=print, tls_context_factory=None):
+                           primary_runner=None, log=print, tls_context_factory=None,
+                           tls_request_handler=None):
     """Bring up companion listeners, advertise mDNS, then serve primary HTTPS.
 
     ``ports`` is an ``api.server_ports.ServerPorts`` triple resolved once by
@@ -5003,6 +5004,8 @@ def start_listener_servers(app, ports, *, lan_enabled, lan_ip, bind_host, mdns_e
     tls = (str(cert_files[0]), str(cert_files[1]))
     if tls_context_factory is not None:
         tls = tls_context_factory(*tls)
+    # HTTPS clients reuse connections (api.keepalive_serving); loopback HTTP does not need to.
+    tls_extra = {'request_handler': tls_request_handler} if tls_request_handler else {}
 
     plan = {
         "primary_port": ports.https,
@@ -5029,7 +5032,7 @@ def start_listener_servers(app, ports, *, lan_enabled, lan_ip, bind_host, mdns_e
                 ports.phone_https,
                 app,
                 threaded=True,
-                ssl_context=tls,
+                ssl_context=tls, **tls_extra,
             )
             threading.Thread(
                 target=phone_https_srv.serve_forever,
@@ -5060,7 +5063,7 @@ def start_listener_servers(app, ports, *, lan_enabled, lan_ip, bind_host, mdns_e
                 port=port,
                 use_reloader=use_reloader,
                 threaded=True,
-                ssl_context=tls,
+                ssl_context=tls, **tls_extra,
             )
     log(f"[HTTPS] Serving on https://{bind_host}:{ports.https}")
     runner(host=bind_host, port=ports.https)
@@ -5163,6 +5166,7 @@ if __name__ == '__main__':
 
         cert_file, key_file = generate_self_signed_cert(lan_ip=lan_ip)
         from api.tls_serving import server_ssl_context
+        from api.keepalive_serving import request_handler as keepalive_handler
 
         # Flask started directly resolves the triple once here; the daemon
         # path instead pins the child env to its own boot snapshot.
@@ -5176,7 +5180,7 @@ if __name__ == '__main__':
             cert_files=(cert_file, key_file),
             use_reloader=use_reloader,
             lan_http_enabled=is_lan_http_enabled(),
-            tls_context_factory=server_ssl_context,
+            tls_context_factory=server_ssl_context, tls_request_handler=keepalive_handler(),
         )
     except KeyboardInterrupt:
         print("\n\nWeb Chat API server stopped by user")

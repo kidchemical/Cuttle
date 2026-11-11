@@ -1,4 +1,7 @@
 """Coordinate owner-specific maintenance without changing execution lifetime."""
+import logging
+import threading
+import time
 from pathlib import Path
 from .store import EventStore,state_dir
 from .snapshots import git
@@ -13,10 +16,69 @@ def starred_sessions(store):
     return [s for s in ids if (db.get_chat_session_by_id(int(s)) or {}).get('starred')]
 
 
-def prune(store=None):
+log=logging.getLogger(__name__)
+MAINTENANCE_INTERVAL_SEC=86400
+MAINTENANCE_START_DELAY_SEC=300
+_settling=threading.Lock()
+
+
+def _stamp(root):
+    return Path(root)/'maintenance_at'
+
+
+def seconds_until_due(root,now=None):
+    """Delay before the next daily run. The last run is recorded on disk, so
+    restarting the process does not repeat a run that is less than a day old."""
+    now=time.time() if now is None else now
+    try:
+        last=float(_stamp(root).read_text().strip())
+    except (OSError,ValueError):
+        last=0.0
+    if last>now:
+        last=0.0
+    return max(MAINTENANCE_START_DELAY_SEC,last+MAINTENANCE_INTERVAL_SEC-now)
+
+
+def mark_done(root,now=None):
+    try:
+        _stamp(root).write_text(str(time.time() if now is None else now))
+    except OSError:
+        log.warning('Could not record the agent-events maintenance time',exc_info=True)
+
+
+def settle_in_background(path):
+    """Edit settlement reads git history; run it beside the writer, not on it,
+    so event capture never waits for git. One run at a time."""
+    def run():
+        if not _settling.acquire(blocking=False):
+            return
+        try:
+            from api.edit_attribution.journal import reconcile_commits
+            reconcile_commits(path)
+        except Exception:
+            log.exception('Edit settlement failed')
+        finally:
+            _settling.release()
+    thread=threading.Thread(target=run,name='agent-events-settlement',daemon=True)
+    thread.start()
+    return thread
+
+
+def scheduled(store):
+    """The daily run, called on the writer thread."""
+    settle_in_background(store.path)
+    try:
+        return prune(store,settle=False)
+    finally:
+        mark_done(store.root)
+
+
+def prune(store=None,settle=True):
     store=store or EventStore(state_dir())
-    from api.edit_attribution.journal import reconcile_commits
-    settlement=reconcile_commits(store.path)
+    settlement=None
+    if settle:
+        from api.edit_attribution.journal import reconcile_commits
+        settlement=reconcile_commits(store.path)
     result=store.maintain(policy(),starred=starred_sessions(store))
     result['settlement']=settlement
     release_refs(store)

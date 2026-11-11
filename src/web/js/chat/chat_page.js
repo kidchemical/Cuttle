@@ -440,7 +440,7 @@
     const session = CuttleChatSession.create();
     if (window.CuttleChatVfx) {
         const vfxController = window.CuttleChatVfx.create({
-            getSessionId: () => session.current(),
+            getSessionId: () => session.current(), isBackgrounded: () => pageIsBackgrounded(),
             fetch: window.fetch.bind(window), now: Date.now,
             setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window),
             confetti: window.CuttleChatVfx.confetti,
@@ -935,6 +935,8 @@
      * used to freeze message-sync and leave follow-ups queued forever.
      */
     function pageIsBackgrounded() {
+        // A collapsed pane or one in an inactive space has no visible area.
+        if (window.cuttlePaneHasNoArea && window.cuttlePaneHasNoArea()) return true;
         try {
             if (window.parent && window.parent !== window) {
                 return !!window.parent.document.hidden;
@@ -7037,6 +7039,7 @@
         }
 
         const stillGoing = liveStatusLooksActive(live);
+        const liveChanged = CuttleChatGeneration.liveStatusChanged(messageSync, sessionId, live, stillGoing);
         if (isLoadingThisSession() && turnAlreadyShowsAssistantReply() && !activeEventSource) {
             healStaleGeneratingState();
         }
@@ -7079,7 +7082,9 @@
             updateRemoteWaitingFromMessages([], live);
             if (startedElsewhere) {
                 try { await syncSessionMessagesFromServer(); } catch (_) {}
-            } else if (!stillGoing) {
+            } else if (!stillGoing && (liveChanged || document.getElementById('typing-indicator-remote'))) {
+                // Idle ticks repeat every few seconds; sync only when the
+                // status changed. The cadence timer covers a quiet chat.
                 try {
                     await syncSessionMessagesFromServer();
                 } catch (_) {}

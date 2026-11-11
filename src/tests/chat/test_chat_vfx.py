@@ -70,6 +70,25 @@ const V = require(process.argv[1]);
 '''
     subprocess.run(['node', '-e', script, str(js)], check=True)
 
+def test_hidden_page_does_not_poll_for_effects():
+    js = Path(__file__).resolve().parents[2] / 'web/js/chat/chat_vfx.js'
+    script = r'''
+const assert = require('assert');
+const V = require(process.argv[1]);
+let hidden = true, fetched = 0, tick;
+const host = {getSessionId:()=>'927', isBackgrounded:()=>hidden, now:()=>1000,
+ fetch:async()=>{fetched++;return {ok:true,json:async()=>({events:[]})}}, confetti:()=>{}, toast:()=>{},
+ setTimeout:f=>{tick=f;return 1},clearTimeout:()=>{}};
+(async () => {
+ const c = V.create(host);
+ await new Promise(r=>setImmediate(r));assert.equal(fetched,0);
+ tick();await new Promise(r=>setImmediate(r));assert.equal(fetched,0);
+ hidden=false;tick();await new Promise(r=>setImmediate(r));assert.equal(fetched,1);
+ c.dispose();
+})().catch(e=>{console.error(e);process.exit(1)});
+'''
+    subprocess.run(['node', '-e', script, str(js)], check=True)
+
 def test_real_session_authorization(tmp_path, monkeypatch):
     from tests.auth.test_http_authz import _auth_client
     ctx = _auth_client(tmp_path, monkeypatch)

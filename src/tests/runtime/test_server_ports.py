@@ -704,6 +704,38 @@ def test_listener_seam_lan_branch_exact_args(monkeypatch):
     assert any("http://0.0.0.0:8001" in line for line in calls["logs"])
 
 
+def test_listener_seam_reuses_connections_on_https_only(monkeypatch):
+    """Connection reuse goes to the network-facing HTTPS listeners; the
+    loopback HTTP listener keeps Werkzeug's own handler."""
+    from api.web_chat_api import start_listener_servers
+
+    _set_custom(monkeypatch)
+    _patch_lan_for_seam(monkeypatch)
+    app, calls, factory, mdns, runner = _seam_fakes()
+    handler = object()
+    start_listener_servers(
+        app,
+        _custom_ports(),
+        lan_enabled=True,
+        lan_ip="192.168.1.5",
+        bind_host="0.0.0.0",
+        mdns_enabled=False,
+        cert_files=("cert.pem", "key.pem"),
+        use_reloader=False,
+        make_server_factory=factory,
+        mdns_starter=mdns,
+        primary_runner=runner,
+        log=calls["logs"].append,
+        tls_request_handler=handler,
+    )
+    phone, fallback = calls["servers"]
+    assert phone["kwargs"]["request_handler"] is handler
+    assert "request_handler" not in fallback["kwargs"]
+    source = (Path(__file__).resolve().parents[2] / "api" / "web_chat_api.py").read_text(encoding="utf-8")
+    assert source.count("ssl_context=tls, **tls_extra") == 2
+    assert "tls_request_handler=keepalive_handler()" in source
+
+
 def test_listener_seam_lan_keeps_http_on_this_pc_by_default(monkeypatch):
     """LAN on without the opt-in: HTTPS on the network, plain HTTP loopback only."""
     from api.web_chat_api import start_listener_servers

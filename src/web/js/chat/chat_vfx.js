@@ -79,7 +79,8 @@
         let stopped = false, timer = null, controller = null;
         async function tick() {
             if (stopped) return;
-            const session = host.getSessionId();
+            // Effects are for a chat on screen; they expire, so a hidden page skips the poll.
+            const session = !(host.isBackgrounded && host.isBackgrounded()) && host.getSessionId();
             if (session) {
                 const key = String(session);
                 controller = new AbortController();

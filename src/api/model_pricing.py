@@ -195,22 +195,47 @@ def refresh_models_dev_pricing(*, force: bool = True) -> Dict[str, Any]:
         }
 
 
+# (path, mtime_ns, size) of the cache file the in-memory index was built from,
+# and that file's ``fetched_at``. Every lookup calls ``ensure``; parsing the
+# file and rebuilding the index each time cost ~50 ms per lookup.
+_loaded_cache_stamp: Optional[Tuple[str, int, int]] = None
+_loaded_cache_fetched_at: float = 0.0
+
+
+def _cache_stamp() -> Optional[Tuple[str, int, int]]:
+    path = _cache_path()
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (str(path), st.st_mtime_ns, st.st_size)
+
+
 def ensure_models_dev_pricing(*, refresh_if_stale: bool = True) -> bool:
     """Load cache into memory; optionally kick a background refresh if stale."""
-    data = _read_cache()
+    global _loaded_cache_stamp, _loaded_cache_fetched_at
     now = time.time()
     stale = True
-    if data:
-        try:
-            fetched = float(data.get("fetched_at") or 0)
-        except (TypeError, ValueError):
-            fetched = 0.0
-        stale = (now - fetched) > _CACHE_TTL_SEC
-        entries = data.get("entries")
-        if isinstance(entries, list) and entries:
-            _rebuild_index(entries)
-            if not stale:
-                return True
+    stamp = _cache_stamp()
+    if stamp is not None and stamp == _loaded_cache_stamp and _index:
+        # Unchanged file already indexed: only the age check remains.
+        stale = (now - _loaded_cache_fetched_at) > _CACHE_TTL_SEC
+        if not stale:
+            return True
+    else:
+        data = _read_cache()
+        if data:
+            try:
+                fetched = float(data.get("fetched_at") or 0)
+            except (TypeError, ValueError):
+                fetched = 0.0
+            stale = (now - fetched) > _CACHE_TTL_SEC
+            entries = data.get("entries")
+            if isinstance(entries, list) and entries:
+                _rebuild_index(entries)
+                _loaded_cache_stamp, _loaded_cache_fetched_at = stamp, fetched
+                if not stale:
+                    return True
     if refresh_if_stale:
         _schedule_background_refresh(blocking_if_empty=not bool(_index))
     return bool(_index)

@@ -393,3 +393,60 @@ def test_overlapping_duplicate_observations_do_not_supersede(journal_db,tmp_path
     subprocess.run(['git','commit','-qm','B','--date',str(int(time.time())+10)],cwd=repo,check=True,capture_output=True,
                    env={**os.environ,'GIT_COMMITTER_DATE':str(int(time.time())+10)})
     assert reconcile_commits(_db_path())['settled']==2
+
+
+def test_reconcile_walks_history_once_per_repository(journal_db,tmp_path,monkeypatch):
+    """Settling many paths must not start a git process per path or per commit."""
+    from api.edit_attribution.journal import append_events,reconcile_commits,_db_path
+    repo=tmp_path/'many';repo.mkdir();_git_init(repo)
+    (repo/'seed.txt').write_text('seed');_commit(repo,'seed')
+    names=[f'dir {i}/file {i}.txt' for i in range(40)]
+    for name in names:
+        (repo/name).parent.mkdir(exist_ok=True)
+        (repo/name).write_text('agent '+name)
+    append_events([{'repo_root':str(repo),'rel_path':name,'agent_id':'codex','query_id':name,
+                    'digest_after':_sha('agent '+name)} for name in names])
+    _commit(repo,'forty files')
+    started=[]
+    real=subprocess.Popen
+    class Spy(real):
+        def __init__(self,args,*a,**k):
+            started.append(list(args));super().__init__(args,*a,**k)
+    monkeypatch.setattr(subprocess,'Popen',Spy)
+    assert reconcile_commits(_db_path())['settled']==40
+    assert len(started)<=3,started
+
+
+def test_renamed_away_path_settles_as_deleted(journal_db,tmp_path):
+    from api.edit_attribution.journal import append_events,reconcile_commits,_db_path
+    repo=tmp_path/'rename';repo.mkdir();_git_init(repo)
+    (repo/'old.txt').write_text('same content\n'*20);_commit(repo,'base')
+    append_events([{'repo_root':str(repo),'rel_path':'old.txt','agent_id':'codex',
+                    'digest_before':_sha('same content\n'*20),'digest_after':None}])
+    subprocess.run(['git','mv','old.txt','new.txt'],cwd=repo,check=True,capture_output=True)
+    _commit(repo,'rename')
+    assert reconcile_commits(_db_path())['settled']==1
+
+
+def test_reconcile_keeps_finished_repositories_when_a_later_one_fails(journal_db,tmp_path,monkeypatch):
+    """Progress is committed per repository, so an interrupted run is not lost."""
+    import sqlite3
+    from api.edit_attribution import journal
+    good=tmp_path/'good';good.mkdir();_git_init(good)
+    (good/'file.txt').write_text('agent change')
+    journal.append_events([{'repo_root':str(good),'rel_path':'file.txt','agent_id':'codex','query_id':'g',
+                            'digest_after':_sha('agent change'),'ts':2000}])
+    _commit(good,'good')
+    bad=tmp_path/'bad';bad.mkdir();_git_init(bad)
+    (bad/'file.txt').write_text('x');_commit(bad,'bad')
+    journal.append_events([{'repo_root':str(bad),'rel_path':'file.txt','agent_id':'codex','query_id':'b',
+                            'digest_after':_sha('other'),'ts':1000}])
+    real=journal._commits_by_path
+    def walk(root,since,wanted):
+        if Path(root).name=='bad':
+            raise RuntimeError('interrupted')
+        return real(root,since,wanted)
+    monkeypatch.setattr(journal,'_commits_by_path',walk)
+    with pytest.raises(RuntimeError):
+        journal.reconcile_commits(journal._db_path())
+    assert _settlements(good)['g'][0]=='settled'

@@ -818,6 +818,24 @@ class AuthDatabase:
         
         return session_token
     
+    # ``last_activity`` is minute-grained. Every request used to write and
+    # commit it, so an open UI polling a few times a second kept a writer on
+    # the database and a checkpoint running behind it.
+    ACTIVITY_WRITE_INTERVAL_SEC = 60.0
+    _activity_lock = threading.Lock()
+
+    def _activity_write_due(self, session_token: str) -> bool:
+        now = time.monotonic()
+        with self._activity_lock:
+            written = self.__dict__.setdefault('_activity_written', {})
+            last = written.get(session_token)
+            if last is not None and now - last < self.ACTIVITY_WRITE_INTERVAL_SEC:
+                return False
+            if len(written) > 2000:
+                written.clear()
+            written[session_token] = now
+            return True
+
     def verify_auth_session(self, session_token: str) -> Optional[Dict[str, Any]]:
         """Verify auth session and return user info if valid"""
         if session_token.startswith('cuttle-chat-op.'):
@@ -835,7 +853,7 @@ class AuthDatabase:
         
         row = cursor.fetchone()
         
-        if row:
+        if row and self._activity_write_due(session_token):
             # Update last activity, and slide a long-lived login forward once it
             # is in the back half of its life. The expiry used to be fixed at
             # login + 30 days, so a desktop app in constant use was signed out
