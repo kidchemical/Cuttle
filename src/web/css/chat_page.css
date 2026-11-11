@@ -4966,6 +4966,13 @@ pre.has-code-copy:hover .code-copy-btn,
     max-width: min(100%, 12rem);
 }
 
+/* Agent identity (harness | model | effort) must read in full at normal widths:
+   12rem clipped "Claude Code | Opus 5.5 | medium" to "Opus 5." on every
+   medium/xhigh chip. Status chips keep the tighter cap (long messages ellipsize). */
+.slash-command-chip--segmented.slash-command-chip--header[data-agent-chip] {
+    max-width: min(100%, 18rem);
+}
+
 .slash-command-chip--segmented.slash-command-chip--history {
     max-width: min(100%, 9rem);
 }
@@ -8197,6 +8204,9 @@ html.cuttle-bg-paused .chat-restore-spinner {
    countdown ring), words stay short, and anything longer opens from its row.
    Once nothing is live the card shrinks to a single line (.is-settled). */
 .chat-bg-work {
+    /* The transcript is a column flex scroller. Keep the card at its content
+       height so a long history cannot squeeze it down to a border. */
+    flex: 0 0 auto;
     --bg-mark: var(--accent-color, #667eea);
     --bg-ok: var(--success-color, #3fbf7f);
     --bg-warn: var(--warning-color, #e0a63a);
@@ -8434,6 +8444,17 @@ a.chat-bg-details:hover { text-decoration: underline; }
     .chat-bg-head .chat-bg-meta { order: 9; }
     .chat-bg-send .chat-bg-row-label { flex-basis: 30px; }
     .chat-bg-row-label { flex-basis: 40%; }
+    /* A lone supervision lives in the header: keep it one line. The "last seen"
+       words take only the room left over (an empty one, as when paused, takes
+       none), the title shortens last, and the Feed icon stays at the right end. */
+    .chat-bg-head.chat-bg-sup { flex-wrap: nowrap; gap: 6px; }
+    .chat-bg-head.chat-bg-sup > .chat-bg-title { flex: 0 1 auto; }
+    .chat-bg-head.chat-bg-sup > .chat-bg-open,
+    .chat-bg-head.chat-bg-sup > .chat-bg-row-aside { flex-shrink: 0; }
+    .chat-bg-head.chat-bg-sup > .chat-bg-seen { flex: 1 1 0; min-width: 0; }
+    .chat-bg-head.chat-bg-sup > .chat-bg-seen:empty,
+    .chat-bg-head.chat-bg-sup > .chat-bg-row-aside:empty { display: none; }
+    .chat-bg-head.chat-bg-sup > .chat-bg-seen:empty ~ .chat-bg-actions { margin-left: auto; }
     .chat-bg-watch > .chat-bg-row-viz { order: 5; flex-basis: 100%; padding-left: 24px; box-sizing: border-box; }
     .chat-bg-now { max-width: none; flex: 1 1 0; }
     .chat-bg-agent-text { display: grid; gap: 0; }

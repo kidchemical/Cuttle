@@ -681,7 +681,7 @@ def _public_live_generating(session_id, live=None):
             # touches this process's live-status store. Carry the id the child
             # row captured at query_started (and its reply row), else the child
             # pane's query-log button stays inert for the whole turn.
-            for key in ('report_url', 'query_id', 'message_id'):
+            for key in ('report_url', 'query_id', 'message_id', 'slash_command'):
                 if not live.get(key) and overlay.get(key):
                     live[key] = overlay[key]
     except Exception:

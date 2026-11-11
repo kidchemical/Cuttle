@@ -1351,8 +1351,21 @@ def child_live_status(session_id: Any, *, db=None) -> Optional[Dict[str, Any]]:
             message_id = int(rows[-1]["id"]) if rows else None
         except Exception:
             message_id = None
+    # The child chat's only user row is the parent's brief (speaker_kind
+    # parent), which the working bubble rightly ignores, so without this the
+    # live bubble had no agent chip until the reply landed. Same chip the
+    # finished reply gets (spec/record pins; never live session pins).
+    slash_command = None
+    if generating:
+        try:
+            from api.subagents.identity import child_slash_command
+
+            slash_command = child_slash_command(child=child, session_id=int(sid))
+        except Exception:
+            slash_command = None
     return {
         "generating": generating,
+        "slash_command": slash_command,
         "status": (child.live_status if child.status == STATUS_RUNNING and child.live_status
                    else f"{child.label or 'Subagent'} — {child.status}"),
         "subagent": child.public(),

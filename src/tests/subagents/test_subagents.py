@@ -832,6 +832,32 @@ def test_child_query_log_id_reaches_the_live_overlay(tmp_path: Path):
     assert service.child_live_status(child["session_id"], db=db)["report_url"] is None
 
 
+def test_running_child_overlay_carries_its_agent_chip(tmp_path: Path):
+    """The child pane's working bubble badges the child's harness.
+
+    A child chat's only user row is the parent brief (speaker_kind parent),
+    which the client deliberately skips, so the live overlay is the only
+    source of the running turn's chip (CH-002472 showed no agent chip).
+    """
+    import os
+
+    from api.subagents import store
+    from api.subagents.types import ChildSpec
+
+    db, _db_path, owner, parent = _seed(tmp_path)
+    batch = store.insert_batch(db, parent_session_id=parent, user_id=owner,
+                               collect="all", lifetime="one_shot")
+    spec = ChildSpec(title="Lane", message="go", agent="claude", model="haiku", effort="high")
+    child = store.insert_child(db, batch_id=batch.id, session_id=parent, sort_index=0,
+                               spec=spec, prompt="go")
+    store.update_child(db, child.id, status="running", started=True, owner_pid=os.getpid())
+    chips = service.child_live_status(child.session_id, db=db)["slash_command"]["chips"]
+    assert chips[0]["category"] == "claude"
+    assert "model haiku" in chips[0]["meta"] and "effort high" in chips[0]["meta"]
+    store.update_child(db, child.id, status="done", finished=True)
+    assert service.child_live_status(child.session_id, db=db)["slash_command"] is None
+
+
 def test_child_status_sink_persists_query_started(tmp_path: Path):
     """The kernel only emits `query_started` when a status_queue is supplied.
 

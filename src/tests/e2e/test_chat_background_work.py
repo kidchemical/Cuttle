@@ -75,6 +75,33 @@ SCHEDULED = {'success': True, 'generating': False, 'active': False, 'background'
                    'status': 'running', 'target': 'CH-001821'}]}}
 
 
+def test_card_keeps_its_height_in_a_crowded_transcript(browser, static_server):
+    page = browser.new_page(viewport={'width': 390, 'height': 500})
+    try:
+        page.goto(static_server + '/agent_feed.html')
+        page.set_content('<link rel="stylesheet" href="' + static_server + '/css/chat_page.css">'
+                         '<div id="chatMessages" class="chat-messages" style="height:200px">'
+                         '<div style="flex:none;height:600px">Long transcript</div></div>')
+        page.add_script_tag(url=static_server + '/js/chat/chat_background_work.js')
+        page.evaluate('''() => { window.bw = CuttleChatBackgroundWork.create({win: window,
+            currentSession: () => '1822', sessionIdsEqual: (a, b) => a === b, isBusy: () => false}); }''')
+        page.evaluate('live => bw.sync(live, "1822")', SCHEDULED)
+        card = page.locator('#chat-background-work')
+        head = card.locator('.chat-bg-head')
+        expect(head).to_be_visible()
+        sizes = card.evaluate('(el) => ({card: el.getBoundingClientRect().height, head: el.firstElementChild.getBoundingClientRect().height})')
+        assert sizes['head'] > 20
+        assert sizes['card'] >= sizes['head']
+        # The old default flex shrink collapses this same card to its border.
+        collapsed = card.evaluate('''el => {
+            el.style.flexShrink = '1';
+            return el.getBoundingClientRect().height;
+        }''')
+        assert collapsed < sizes['head']
+    finally:
+        page.close()
+
+
 def test_loose_process_count_is_shown_once(browser, static_server):
     page = browser.new_page()
     try:
