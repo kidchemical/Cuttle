@@ -22,6 +22,7 @@ chat background-work bubble (``background_summary`` → live-status
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -114,12 +115,49 @@ def _unit_live(unit: str) -> Dict[str, Any]:
 
         st = unit_state(unit)
         sub = str(st.get("sub_state") or st.get("active_state") or "") if st.get("queried") else "status unavailable"
-        live = {"sub_state": sub, "scheduled": bool(st.get("scheduled")), "starts_at": st.get("starts_at")}
+        live = {"sub_state": sub, "scheduled": bool(st.get("scheduled")), "starts_at": st.get("starts_at"),
+                "subagents": _runs_subagents(int(st.get("pid") or 0))}
     except Exception:
         live = {"sub_state": "", "scheduled": False, "starts_at": None}
     with _lock:
         _unit_state_cache[unit] = (now, live)
     return live
+
+
+_SUBAGENT_CMD = re.compile(r"\bapi\.subagents\b")
+
+
+def _runs_subagents(pid: int) -> bool:
+    """True when a detached job's process tree runs ``python -m api.subagents``.
+
+    Such a job is a sub-agent run: its children's transcript cards show it, so
+    the chat's background card does not list it a second time."""
+    if pid <= 0:
+        return False
+    try:
+        import psutil
+
+        root = psutil.Process(pid)
+        for proc in [root, *root.children(recursive=True)]:
+            try:
+                if _SUBAGENT_CMD.search(" ".join(proc.cmdline())):
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    except Exception:
+        return False
+    return False
+
+
+def _unit_label(rec: Dict[str, Any], unit: str, pid: int) -> str:
+    """The job's name for people: its title when the label is only the default "Running: <unit>"."""
+    label = str(rec.get("label") or "")
+    title = str(rec.get("title") or "")
+    if title.startswith("Detached job — "):
+        title = ""  # job_watch's default title names the unit again
+    if title and (not label or label in (f"Running: {unit}", f"Running: pid {pid}", unit)):
+        return title[:200]
+    return (label or (f"Running: {unit}" if unit else f"Running: pid {pid}"))[:200]
 
 
 def _unit_watches() -> Dict[str, List[Dict[str, Any]]]:
@@ -146,9 +184,10 @@ def _unit_watches() -> Dict[str, List[Dict[str, Any]]]:
         live = _unit_live(unit) if unit else {"sub_state": "running", "scheduled": False, "starts_at": None}
         out.setdefault(chat, []).append({
             "job_id": rec.get("id"), "kind": "unit",
-            "label": str(rec.get("label") or (f"Running: {unit}" if unit else f"Running: pid {pid}"))[:200],
+            "label": _unit_label(rec, unit, pid),
             "unit": unit, "pid": pid,
             "sub_state": live["sub_state"],
+            "subagents": bool(live.get("subagents")),
             "scheduled": live["scheduled"], "starts_at": live["starts_at"],
             "percent": None, "started_at": rec.get("created_ts"),
             "activity": status.get("activity"), "state": status.get("state", "running"),
@@ -463,7 +502,7 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
     except Exception:
         receipts = []
     recent = [{"job_id": r["id"], "kind": "unit", "unit": r.get("unit", ""),
-               "label": _finished_label(r.get("label") or r["id"]), "state": r["outcome"].get("state", "unknown"),
+               "label": _finished_label(_unit_label(r, str(r.get("unit") or ""), int(r.get("pid") or 0)) or r["id"]), "state": r["outcome"].get("state", "unknown"),
                "started_at": r.get("created_ts"), "finished_at": r.get("finished_ts"),
                "handoff": r["handoff"], "resume_chat": _handle(chat),
                "resume_note": str(r.get("resume_message") or "")[:400],
@@ -484,7 +523,7 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
                    "agent": w.get("agent") or ""}
                   for w in e["waits"]],
         "watches": [{k: w[k] for k in ("job_id", "label", "percent", "started_at", "kind", "unit", "sub_state",
-                                       "scheduled", "starts_at",
+                                       "scheduled", "starts_at", "subagents",
                                        "activity", "state", "resume_chat", "handoff", "resume_note", "origin_query_id") if k in w}
                     for w in watches],
         "recent": recent,

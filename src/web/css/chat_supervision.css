@@ -375,6 +375,13 @@ details[open] > summary .chat-op-caret { transform: rotate(90deg); }
 .message.user .chat-checkin-card[open] > summary { margin-bottom: 8px; padding-bottom: 6px;
     border-bottom: 1px solid color-mix(in srgb, var(--text-secondary) 18%, transparent); }
 .message.user .chat-checkin-body { opacity: 0.92; font-size: 1.08em; }
+/* Sub-agent hand-back notice (CuttleChatSupervisionModel.noticeHtml): each child's
+   handle + status, then why it is its own turn. */
+.chat-checkin-state.is-ok { color: var(--success-color, #3fbf7f); background: color-mix(in srgb, var(--success-color, #3fbf7f) 14%, transparent); }
+.chat-notice-ico.is-warn { color: var(--warning-color, #e0a63a); }
+.chat-notice-child { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.chat-notice-more { color: var(--text-secondary); font-size: 0.9em; font-variant-numeric: tabular-nums; }
+.chat-notice-why { color: var(--text-secondary); font-size: 0.9em; min-width: 0; }
 
 /* A long message relayed from another chat (or a Cuttle notice): a preview
    line that opens the whole text (CuttleChatSupervisionModel.foldHtml). */

@@ -221,3 +221,36 @@ def test_subagent_parents_and_owned_work_both_count(sources):
                                "started_at": 1.0}]}
     sources["busy_parents"] = {"7"}
     assert work_tree.background_session_ids() == {"5", "6", "7"}
+
+
+def test_unit_label_prefers_a_real_title_over_the_default_label():
+    rec = {"label": "Running: ch1821-p9l5", "title": "Bots P9 L5 lane (bot-farmstead-cycle)"}
+    assert work_tree._unit_label(rec, "ch1821-p9l5", 0) == "Bots P9 L5 lane (bot-farmstead-cycle)"
+    # job_watch's default title only names the unit again; a custom label always wins.
+    assert work_tree._unit_label({"label": "Running: u1", "title": "Detached job — u1"}, "u1", 0) == "Running: u1"
+    assert work_tree._unit_label({"label": "Nightly build", "title": "Other"}, "u1", 0) == "Nightly build"
+
+
+def test_a_unit_whose_process_tree_runs_api_subagents_is_flagged():
+    import subprocess
+    import sys
+
+    code = "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)','api.subagents','spawn']); time.sleep(30)"
+    root = subprocess.Popen([sys.executable, "-c", code])
+    plain = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        import time
+
+        deadline = time.time() + 5
+        while time.time() < deadline and not work_tree._runs_subagents(root.pid):
+            time.sleep(0.05)
+        assert work_tree._runs_subagents(root.pid)
+        assert not work_tree._runs_subagents(plain.pid)
+        assert not work_tree._runs_subagents(0)
+    finally:
+        import psutil
+
+        for p in (root, plain):
+            for child in psutil.Process(p.pid).children(recursive=True):
+                child.kill()
+            p.kill()

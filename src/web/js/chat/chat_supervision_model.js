@@ -631,13 +631,68 @@
             + '<div class="chat-checkin-body">' + fmtBody(parts.body) + '</div></details>';
     }
 
+    // The text a sub-agent hand-back notice carries (api.subagents.handback.notice_text).
+    const NOTICE_HEAD = /Sub-agent batch (\w+) \(`subagents (\w+) --wait`\) (finished|hit its --timeout) after your turn stopped listening/;
+    const NOTICE_CHILD = /^- (CH-\d+) (.*?)(?: \(([^)]*)\))?: (\w+)\s*$/;
+    const CHILD_TONE = { done: 'ok', failed: 'bad', lost: 'bad', cancelled: 'muted', running: 'live', queued: 'live' };
+
+    /** The leading `/agent ` a Cuttle-sent turn carries for routing; the header chip already names the agent. */
+    function stripRoutePrefix(text) {
+        return String(text || '').replace(/^\s*\/[a-z][\w-]*\s+(?=\S)/i, '');
+    }
+
+    /**
+     * A sub-agent hand-back notice as facts: each child's handle, name and
+     * status, and whether the batch timed out. null when the text is not one.
+     */
+    function noticeFacts(text) {
+        const raw = stripRoutePrefix(text).replace(/\r\n/g, '\n');
+        const head = NOTICE_HEAD.exec(raw);
+        if (!head) return null;
+        const children = [];
+        raw.split('\n').forEach((line) => {
+            const m = NOTICE_CHILD.exec(line);
+            if (m) children.push({ handle: m[1], label: m[2].trim(), agent: (m[3] || '').trim(), status: m[4],
+                tone: CHILD_TONE[m[4]] || 'muted' });
+        });
+        return { batch: head[1], timedOut: head[3] !== 'finished', children };
+    }
+
+    const NOTICE_ICON = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" '
+        + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 10.5l3.2 3.2L15 7"/></svg>';
+    const NOTICE_MAX_CHILDREN = 3;
+
+    /**
+     * Bubble HTML for a sub-agent hand-back: one line (each child's handle and
+     * status, and why it arrived as its own turn); the full text the agent got
+     * opens from it. null → not a hand-back.
+     */
+    function noticeHtml(text, fmtBody) {
+        const facts = noticeFacts(text);
+        if (!facts) return null;
+        const shown = facts.children.slice(0, NOTICE_MAX_CHILDREN);
+        const more = facts.children.length - shown.length;
+        const why = facts.timedOut ? 'timed out after the turn ended' : 'arrived after the turn ended';
+        return '<details class="chat-checkin-details chat-checkin-card chat-notice-card">'
+            + '<summary class="chat-checkin-row" title="These sub-agents finished after the turn that started them had ended, '
+            + 'so Cuttle delivered their results as a new turn. Click for what the agent got">'
+            + '<span class="chat-checkin-ico chat-notice-ico' + (facts.timedOut ? ' is-warn' : '') + '">' + NOTICE_ICON + '</span>'
+            + shown.map((c) => '<span class="chat-notice-child" title="' + esc(c.label + (c.agent ? ' · ' + c.agent : '')) + '">'
+                + '<span class="chat-checkin-target">' + esc(c.handle) + '</span>'
+                + '<span class="chat-checkin-state is-' + c.tone + '">' + esc(c.status) + '</span></span>').join('')
+            + (more > 0 ? '<span class="chat-notice-more">+' + more + '</span>' : '')
+            + '<span class="chat-notice-why">' + esc(why) + '</span>'
+            + CARET_ICON + '</summary>'
+            + '<div class="chat-checkin-body">' + fmtBody(stripRoutePrefix(text)) + '</div></details>';
+    }
+
     // A relayed message longer than this folds to a preview.
     const FOLD_CHARS = 280;
     const FOLD_LINES = 4;
 
     /** The first words of a long relayed message, on one line; null when it is short enough to show whole. */
     function foldPreview(text) {
-        const raw = String(text || '').replace(/\r\n/g, '\n').trim();
+        const raw = stripRoutePrefix(text).replace(/\r\n/g, '\n').trim();
         if (raw.length <= FOLD_CHARS && raw.split('\n').length <= FOLD_LINES) return null;
         const flat = raw.split(/\n\s*\n/)[0].replace(/\s+/g, ' ').trim();
         return flat.length > 200 ? flat.slice(0, 200).replace(/\s+\S*$/, '') + '…' : flat;
@@ -656,12 +711,13 @@
     /** A user-row bubble: check-ins show as a fact line, long relayed messages fold, the rest renders as usual. */
     function userBubbleHtml(badge, text, fmtHead, fmtBody) {
         if (badge && badge.kind === 'checkin') return checkinHtml(text, fmtHead, fmtBody) || fmtHead(text);
-        if (badge && (badge.kind === 'send' || badge.kind === 'notice')) return foldHtml(text, fmtHead) || fmtHead(text);
+        if (badge && badge.kind === 'notice') return noticeHtml(text, fmtBody) || foldHtml(text, fmtHead) || fmtHead(text);
+        if (badge && badge.kind === 'send') return foldHtml(text, fmtHead) || fmtHead(text);
         return fmtHead(text);
     }
 
     const api = {
-        chatOpBadge, checkinParts, checkinFacts, checkinHtml, foldPreview, foldHtml, userBubbleHtml, stateText, wakesText,
+        chatOpBadge, checkinParts, checkinFacts, checkinHtml, noticeFacts, noticeHtml, foldPreview, foldHtml, userBubbleHtml, stateText, wakesText,
         SCHEMA_VERSION, INTERVALS, PAUSE_CHOICES, fmtInterval, fmtClock, fmtWhen, nextLabel,
         chipText, badgeText, pausedText, pauseBody,
         historyRow, view, isSupervised, supervisorOf, dialogDefaults, supervisePayload, pinChoices, scheduleById,

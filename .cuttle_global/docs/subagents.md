@@ -179,11 +179,12 @@ If that turn's reply was already saved when `spawn` ran (an agent still working 
 the background after its reply), the card goes on the first reply of that turn
 saved after the spawn, never back onto the earlier one.
 
-While the children work, the parent's pinned **background card** (the one that
-shows "Waiting in background") lists them as fleet-style rows: avatar, name,
-live status line and outcome, each opening its child chat. It also folds in the
-agent's own background task that runs the `api.subagents` command. Supervised
-chats stay as "Open CH-…" buttons under "Supervising".
+Sub-agents are not background jobs: the parent's pinned **background card**
+does not list them; their transcript cards are their only place. While children
+are live, the card also leaves out the run that waits on them — the agent's own
+background task or detached unit that runs the `api.subagents` command — so the
+same work is never shown twice. If that run returns after its turn ended, the
+result arrives as a Cuttle notice turn (one line: each child and its status).
 
 A follow-up to a child — `subagents message` or `chat_cli send CH-<child>` —
 starts a new card round the same way, bound to the turn that sent it, and the

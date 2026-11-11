@@ -10,9 +10,11 @@
    while a turn is generating (the typing bubble owns that), and never counted
    as a transcript record (no `.message` class).
 
-   Live sub-agent children (live-status `subagents`, any harness) show as
-   fleet-style rows; the harness's own background task that runs the
-   `api.subagents` command is folded into them.
+   Sub-agents are not background jobs: their transcript cards (bound to the
+   turn that spawned them, or the page's live strip) own them. While children
+   of this chat are live (live-status `subagents`, any harness), a harness
+   background task or detached unit that only runs the `api.subagents` command
+   is left out here too, so the same run is never listed twice.
 
    `plan(background, subagents)` is pure; `create(host)` owns the DOM element,
    its Stop action and keeping it last in #chatMessages.
@@ -64,12 +66,8 @@
         throw new Error('progress_model.js must load before chat_background_work.js');
     }
 
-    const AGENT_OUTCOMES = {
-        queued: 'Queued', running: 'Running', done: 'Done', failed: 'Failed',
-        cancelled: 'Cancelled', lost: 'Lost', unknown: 'Unknown',
-    };
     // A harness's own background task that IS a sub-agent run (any agent):
-    // its child rows say more than the command line does.
+    // the children's transcript cards say more than the command line does.
     const SUBAGENT_CMD = /\bapi\.subagents\b|\bsubagents\s+(spawn|message|wait)\b/;
 
     function scheduleSummary(s, standalone, single) {
@@ -104,7 +102,7 @@
             : overdue ? 'Expected deadline passed; check recent output.'
             : stale ? 'No update for ' + elapsed(age) + '; the process may still be working.'
             : age != null ? 'Updated ' + elapsed(age) + ' ago'
-            : 'Step progress unavailable; only process status is known.';
+            : ''; // no progress reported: the row's bar and elapsed time say it is running
         const target = w.resume_chat || 'this chat';
         const handoff = ({ queued: 'Follow-up queued for ', sending: 'Sending follow-up to ',
             verifying: 'Checking follow-up delivery to ', delivered: 'Follow-up delivered to ',
@@ -114,48 +112,34 @@
         return { steps, terminal, scheduled, health, warning: !scheduled && !!(stale || overdue),
             summary: a.summary || (steps.length ? finished + ' of ' + steps.length + ' steps finished'
                 + (failed ? ' · ' + failed + ' failed' : '') : ''),
-            handoff: handoff ? handoff + target : 'When finished, an agent will resume ' + target + ' to review the result.',
+            handoff: handoff ? handoff + target : target + ' resumes when it ends',
             output: String(a.output || '').slice(-4000), deadline: a.deadline_ts || null };
     }
 
-    /** Live sub-agent children of this chat (live-status `subagents`) as rows. */
-    function agentRows(list) {
-        return (Array.isArray(list) ? list : []).filter((s) => s && typeof s === 'object').map((s) => {
-            const sid = s.session_id != null ? String(s.session_id) : '';
-            const h = String(s.handle || '') || (sid ? handle(sid) : '');
-            const outcome = AGENT_OUTCOMES[s.outcome] ? s.outcome : (s.generating ? 'running' : 'unknown');
-            const name = String(s.display_name || s.label || s.title || h);
-            const avatar = String(s.avatar || '').trim();
-            return {
-                handle: h, name, outcome, outcomeLabel: AGENT_OUTCOMES[outcome],
-                status: String(s.summary || (outcome === 'running' ? 'Working…' : '')).slice(0, 160),
-                agent: String(s.agent || ''),
-                avatar: avatar && avatar.toLowerCase() !== 'cuttle' && avatar.length <= 4 ? avatar : '',
-                initial: (name.replace(/[^\p{L}\p{N}]/gu, '')[0] || '?').toUpperCase(),
-            };
-        }).filter((r) => /^CH-\d+$/.test(r.handle));
+    /** Whether any sub-agent child of this chat (live-status `subagents`) is still queued or running. */
+    function childrenLive(list) {
+        return (Array.isArray(list) ? list : []).some((s) => s && typeof s === 'object'
+            && (s.outcome === 'running' || s.outcome === 'queued' || (!s.outcome && s.generating)));
     }
 
     /** Presentation for one summary (+ live sub-agents), or null when there is nothing to show. */
     function plan(bg, subagents) {
-        const agents = agentRows(subagents);
-        if ((!bg || typeof bg !== 'object') && !agents.length) return null;
-        bg = bg && typeof bg === 'object' ? bg : {};
+        if (!bg || typeof bg !== 'object') return null;
+        // Live children are shown by their transcript cards; only the wait or
+        // detached job that runs their `api.subagents` command is folded away.
+        const folding = childrenLive(subagents);
         const allWaits = bg.waits || [];
-        // A background task running `python -m api.subagents spawn/message --wait`
-        // is shown by its children's rows, not as a bare command wait.
-        const waits = agents.length ? allWaits.filter((w) => !SUBAGENT_CMD.test(String((w && w.label) || ''))) : allWaits;
-        const watches = bg.watches || [];
+        const waits = folding ? allWaits.filter((w) => !SUBAGENT_CMD.test(String((w && w.label) || ''))) : allWaits;
+        const watches = (bg.watches || []).filter((w) => !(folding && w && w.subagents));
         const recent = bg.recent || [];
         const schedules = bg.schedules || [];
         const n = Number(bg.process_count) || 0;
         const d = Number(bg.detached_count) || 0;
-        if (!waits.length && !watches.length && !recent.length && !schedules.length && !n && !agents.length) return null;
-        const agentsLive = agents.some((a) => a.outcome === 'running' || a.outcome === 'queued');
-        const working = !!(waits.length || watches.length || n || agentsLive);
-        const scheduleOnly = !working && !agents.length && !recent.length;
+        if (!waits.length && !watches.length && !recent.length && !schedules.length && !n) return null;
+        const working = !!(waits.length || watches.length || n);
+        const scheduleOnly = !working && !recent.length;
         const schedulesPaused = schedules.length > 0 && schedules.every((s) => s.status === 'paused');
-        const processHeadline = n && !waits.length && !watches.length && !agents.length;
+        const processHeadline = n && !waits.length && !watches.length;
         const processTitle = plural(n, d === n ? 'detached process' : 'process',
             d === n ? 'detached processes' : 'processes') + ' running'
             + (d && d !== n ? ' (' + d + ' detached)' : '');
@@ -209,10 +193,12 @@
         // Units waiting on their systemd timer have not started: "scheduled", not "running".
         const scheduledUnits = units.filter((w) => w.scheduled);
         const onlyScheduled = scheduledUnits.length > 0 && scheduledUnits.length === units.length
-            && !bound.length && !waits.length && !n && !agentsLive;
+            && !bound.length && !waits.length && !n;
         const starts = onlyScheduled ? [] : waits.map((w) => epoch(w.started_at)).concat([epoch(bg.started_at)])
             .concat(units.filter((w) => !w.scheduled).map((w) => epoch(w.started_at))).filter((t) => t != null);
-        const subagentWaitsOnly = allWaits.length && !waits.length;
+        // The summary label may name a run folded away above (sub-agent command wait or unit).
+        const foldedLabel = (allWaits.length && !waits.length)
+            || (bg.watches || []).some((w) => w && !watches.includes(w) && w.label === bg.label);
         // What the status mark shows: something running now, a schedule
         // watching on its own, a paused schedule, or nothing live (results only).
         const state = onlyScheduled ? 'scheduled' : working ? 'working'
@@ -223,14 +209,12 @@
             title: runAgent ? runAgent + ' still running' : waits.length ? 'Waiting in background' : bound.length ? 'Job running'
                 : units.length ? (onlyScheduled ? (units.length > 1 ? 'Background jobs scheduled' : 'Background job scheduled')
                     : 'Background job running')
-                : agents.length ? (agentsLive ? 'Sub-agents working' : 'Sub-agents')
                 : n ? processTitle
                 : recent.length ? 'Background job results'
                 : !sups.length && sends.length ? (sends.length > 1 ? 'Messages queued' : 'Message queued')
                 : schedulesPaused ? 'Supervision paused' : 'Supervising',
-            label: (units.length && !bound.length && !waits.length) || subagentWaitsOnly
+            label: (units.length && !bound.length && !waits.length) || foldedLabel
                 || fallbackProcessLabel || fallbackScheduleLabel || scheduleOnly ? '' : (bg.label || ''),
-            agents,
             meta,
             notes,
             hint: runAgent ? 'Messages you send now go to this run' : '',
@@ -262,8 +246,8 @@
             working,
             // Waits and bound watches stop through the chat's Stop path; loose
             // processes end through the process owner. Schedules: Jobs/Feed.
-            // Sub-agents stop from their own chats (a row opens it).
-            stop: (allWaits.length || bound.length) ? 'chat' : (n ? 'processes' : null),
+            // Sub-agents stop from their own chats (their transcript cards).
+            stop: (waits.length || bound.length) ? 'chat' : (n ? 'processes' : null),
             // Timer-scheduled unit watches the user can start early (POST …/start-now).
             startNow: scheduledUnits.map((w) => String(w.job_id || '')).filter(Boolean),
             processCount: n,
@@ -299,21 +283,16 @@
     const SEEN_TONE = { awaiting_input: 'warn', error: 'bad', idle_with_work: 'warn' };
 
     /**
-     * Nothing is live any more (finished jobs / sub-agents only): the card
-     * shrinks to one line. `{ text, failed }`, or null while anything runs.
+     * Nothing is live any more (finished jobs only): the card shrinks to one
+     * line. `{ text, failed }`, or null while anything runs.
      */
     function settled(p) {
         if (!p || p.state !== 'idle') return null;
         const jobs = p.recent || [];
-        const agents = p.agents || [];
-        const failed = jobs.filter((w) => w.state === 'failed').length
-            + agents.filter((a) => a.outcome === 'failed' || a.outcome === 'lost').length;
-        const total = jobs.length + agents.length;
+        const failed = jobs.filter((w) => w.state === 'failed').length;
+        const total = jobs.length;
         if (!total) return null;
-        const text = jobs.length === 1 && !agents.length ? String(jobs[0].label || 'Background job')
-            : !jobs.length ? plural(agents.length, 'sub-agent', 'sub-agents') + ' finished'
-            : !agents.length ? plural(jobs.length, 'job', 'jobs') + ' finished'
-            : plural(total, 'item', 'items') + ' finished';
+        const text = total === 1 ? String(jobs[0].label || 'Background job') : plural(total, 'job', 'jobs') + ' finished';
         return { text, failed, total };
     }
 
@@ -445,7 +424,7 @@
 
         function onCardClick(ev) {
             const t = ev.target;
-            const btn = t && t.closest && t.closest('.chat-bg-open, .chat-bg-agent');
+            const btn = t && t.closest && t.closest('.chat-bg-open');
             if (btn) {
                 ev.preventDefault();
                 openTarget(btn.getAttribute('data-chat-handle'));
@@ -607,7 +586,7 @@
                 const block = mk('div', 'chat-bg-job');
                 if (v.summary) block.append(mk('div', 'chat-bg-job-summary', v.summary));
                 if (v.steps.length) block.append(timeline(v));
-                if (!completed) {
+                if (!completed && v.health) {
                     const health = mk('div', 'chat-bg-job-health', v.health);
                     health.__job = w;
                     health.classList.toggle('is-warning', v.warning);
@@ -624,10 +603,10 @@
                     a.href = '/query_log.html?id=' + encodeURIComponent(id);
                     facts.append(a);
                 }
-                queryLink(w.origin_query_id, 'Started by');
+                queryLink(w.origin_query_id, 'Started by turn');
                 queryLink(w.followup_query_id, 'Follow-up turn');
                 if (facts.childNodes.length) block.append(facts);
-                if (w.resume_note) block.append(mk('div', 'chat-bg-resume-note', w.resume_note));
+                // `resume_note` is the agent's own instruction for its follow-up turn: not shown here.
                 if (v.output) block.append(mk('pre', 'chat-bg-output', v.output));
                 return block;
             }
@@ -724,26 +703,6 @@
                 rows.append(row);
             });
             p.recent.forEach((w) => rows.append(jobRow({ label: w.label }, w, true)));
-            if (p.agents.length) {
-                // Fleet-style rows: avatar, name, live status line, outcome. A row opens the child.
-                const list = mk('div', 'chat-bg-agents');
-                list.setAttribute('role', 'list');
-                p.agents.forEach((a) => {
-                    const row = mk('button', 'chat-bg-agent is-' + a.outcome);
-                    row.type = 'button';
-                    row.setAttribute('role', 'listitem');
-                    row.setAttribute('data-chat-handle', a.handle);
-                    row.title = 'Open ' + a.name + ' (' + a.handle + (a.agent ? ' · ' + a.agent : '') + ')';
-                    const av = mk('span', 'chat-bg-agent-avatar', a.avatar || a.initial);
-                    av.setAttribute('aria-hidden', 'true');
-                    const text = mk('span', 'chat-bg-agent-text');
-                    text.append(mk('span', 'chat-bg-agent-name', a.name));
-                    if (a.status) text.append(mk('span', 'chat-bg-agent-status', a.status));
-                    row.append(av, text, mk('span', 'chat-bg-agent-outcome', a.outcomeLabel));
-                    list.append(row);
-                });
-                rows.append(list);
-            }
             const chatChip = (target, title) => {
                 const b = mk('button', 'chat-bg-open', target);
                 b.type = 'button';
