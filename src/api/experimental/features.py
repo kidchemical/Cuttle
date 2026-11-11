@@ -209,7 +209,7 @@ register_flag(FlagSpec(
 
 register_flag(FlagSpec(
     id="worktrees", label="Worktrees",
-    description="Run a chat in its own git worktree and branch instead of the shared checkout, so parallel chats cannot fight over one working tree. Default worktrees live under the Cuttle home; creating and removing one is a deliberate action.",
+    description="Run a chat in its own git worktree and branch instead of the shared checkout, so parallel chats cannot fight over one working tree. Worktrees live under the Cuttle home unless you choose a folder (Settings → Agents → Worktrees, also per project); Cuttle refuses to create one that would leave the drive short of free space.",
     # Default on: only offers the option; each worktree is still created on purpose.
     default=True, category="agents", risk="medium", since="0.0.0", needs_restart=False,
 ))

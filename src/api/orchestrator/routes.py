@@ -146,6 +146,38 @@ def rebind_route(session: str):
     return jsonify(success=True, **out)
 
 
+@orchestrator_bp.post("/bindings/<session>/hold")
+@owner_required
+def hold_route(session: str):
+    """Pause the whole orchestration; ``{"stop": true}`` also ends its jobs and drops its wake-ups."""
+    disabled = _disabled()
+    if disabled:
+        return disabled
+    from api.orchestrator import control
+
+    body = request.get_json(silent=True) or {}
+    try:
+        return jsonify(success=True, **control.hold(session, stop=bool(body.get("stop")),
+                                                    user_id=_uid(), source="ui"))
+    except service.OrchestratorError as exc:
+        return _error(exc)
+
+
+@orchestrator_bp.post("/bindings/<session>/resume")
+@owner_required
+def resume_route(session: str):
+    """Lift the hold: supervision it paused resumes and waiting wake-ups are delivered."""
+    disabled = _disabled()
+    if disabled:
+        return disabled
+    from api.orchestrator import control
+
+    try:
+        return jsonify(success=True, **control.resume(session, user_id=_uid(), source="ui"))
+    except service.OrchestratorError as exc:
+        return _error(exc)
+
+
 @orchestrator_bp.delete("/bindings/<session>")
 @owner_required
 def unbind_route(session: str):

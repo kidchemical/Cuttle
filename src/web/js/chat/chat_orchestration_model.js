@@ -14,8 +14,13 @@
         const b = binding || {};
         if (!b.bound) return null;
         const name = String(b.playbook_name || b.playbook_id || 'playbook');
+        const hold = HOLD[b.hold] ? String(b.hold) : '';
         return {
-            text: 'Orchestrating · ' + name,
+            text: (hold ? HOLD[hold].label : 'Orchestrating') + ' · ' + name,
+            hold,
+            stateLabel: hold ? HOLD[hold].label : 'Orchestrating',
+            holdNote: hold ? HOLD[hold].note : '',
+            actions: actions(hold),
             playbookId: String(b.playbook_id || ''),
             playbookName: name,
             goal: String(b.goal || ''),
@@ -23,6 +28,33 @@
             boundAt: Number(b.bound_at) || 0,
             agents: agentChips(b.agents),
         };
+    }
+
+    const HOLD = {
+        paused: { label: 'Paused', note: 'Nothing new starts. Jobs already running finish, and their results wait for Resume.' },
+        stopped: { label: 'Stopped', note: 'Its agents and jobs were ended and its wake-ups dropped. Resume lets it work again.' },
+    };
+
+    /** The panel's control buttons for a hold state, in order. */
+    function actions(hold) {
+        if (hold === 'paused') return ['resume', 'halt'];
+        if (hold === 'stopped') return ['resume'];
+        return ['pause', 'halt'];
+    }
+
+    /** What a Pause / Stop / Resume did, as one toast line. */
+    function actionSummary(verb, result) {
+        const a = (result && result.actions) || {};
+        const parts = [];
+        if (a.agents_stopped) parts.push(a.agents_stopped + ' agent batch' + (a.agents_stopped === 1 ? '' : 'es') + ' stopped');
+        if ((a.jobs_stopped || []).length) parts.push(a.jobs_stopped.length + ' job' + (a.jobs_stopped.length === 1 ? '' : 's') + ' stopped');
+        if (a.deliveries_dropped) parts.push(a.deliveries_dropped + ' wake-up' + (a.deliveries_dropped === 1 ? '' : 's') + ' dropped');
+        if ((a.supervision_paused || []).length) parts.push('supervision paused');
+        if ((a.supervision_resumed || []).length) parts.push('supervision resumed');
+        if (a.deliveries_released) parts.push(a.deliveries_released + ' waiting wake-up' + (a.deliveries_released === 1 ? '' : 's') + ' delivered');
+        const head = { pause: 'Orchestration paused', halt: 'Orchestration stopped', resume: 'Orchestration resumed' }[verb] || 'Done';
+        const problems = (a.errors || []).length ? ' (' + a.errors.length + ' step' + (a.errors.length === 1 ? '' : 's') + ' failed)' : '';
+        return head + (parts.length ? ': ' + parts.join(', ') : '') + problems;
     }
 
     const STATUS = { pending: 'Queued', running: 'Running', done: 'Done', failed: 'Failed',
@@ -89,7 +121,7 @@
         return { ok: true, kind: Object.keys(body).length ? 'put' : 'none', body };
     }
 
-    const api = { chip, agentChips, dialogDefaults, submitPlan };
+    const api = { chip, agentChips, dialogDefaults, submitPlan, actions, actionSummary };
     if (typeof module === 'object' && module.exports) module.exports = api;
     root.CuttleChatOrchestrationModel = api;
 })(typeof window !== 'undefined' ? window : globalThis);

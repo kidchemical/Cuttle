@@ -503,6 +503,16 @@ def spawn(
     runs with no turn: ``--anchor CH-…-N``)."""
     db = _open_db(db)
     parent = _parent_row(db, int(parent_session_id))
+    try:
+        from api.orchestrator.control import held as _held
+        hold = _held(int(parent_session_id))
+    except Exception:
+        hold = ""
+    if hold:
+        raise SubagentError(
+            f"this orchestration is {hold} by the user: no sub-agents are started until they resume it. "
+            "Do not retry; report and wait."
+        )
     from api.chat_turn_id import for_spawn, origin
 
     calling = origin(int(parent_session_id))

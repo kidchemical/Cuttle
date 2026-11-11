@@ -58,6 +58,7 @@
             const c = enabled ? M.chip(binding) : null;
             if (!c) { el.hidden = true; el.innerHTML = ''; closePopover(); return; }
             el.innerHTML = '<button type="button" class="chat-supervision-pill is-orchestrator' + (c.missing ? ' is-warn' : '')
+                + (c.hold ? ' is-paused' : '')
                 + '" data-orch-open="1" title="' + esc(c.goal ? 'Goal: ' + c.goal : 'Orchestrator playbook')
                 + '" aria-haspopup="dialog">' + (c.missing ? '⚠ ' : '') + esc(c.text) + '</button>';
             el.hidden = false;
@@ -67,6 +68,12 @@
         // Kept out of the panel body: a hover tip, like the settings pages' (i) buttons.
         const BRIEF_INFO = 'A changed playbook or goal reaches the agent at its next turn; a turn already '
             + 'running keeps the old brief. Supervision on this chat follows a playbook switch.';
+
+        const CONTROL = {
+            pause: { label: 'Pause', tip: 'Stop the current turn and the sub-agents, pause supervision, and hold wake-ups until Resume. Jobs already running finish.' },
+            halt: { label: 'Stop all work', tip: 'Pause, and also stop the running jobs and drop the waiting wake-ups.' },
+            resume: { label: 'Resume', tip: 'Let the orchestrator work again. Supervision this paused resumes and waiting wake-ups are delivered.' },
+        };
 
         function agentsHtml(agents) {
             if (!agents.length) return '<div class="chat-supervision-empty">No sub-agents yet.</div>';
@@ -86,7 +93,9 @@
                 + '<span class="chat-supervision-title">' + esc(c.playbookName) + '</span>'
                 + '<button type="button" class="cuttle-info" data-tooltip="' + esc(BRIEF_INFO)
                 + '" aria-label="About playbook changes">i</button>'
-                + '<span class="chat-supervision-state is-orchestrating">Orchestrating</span></div>'
+                + '<span class="chat-supervision-state ' + (c.hold ? 'is-paused' : 'is-orchestrating') + '">'
+                + esc(c.stateLabel) + '</span></div>'
+                + (c.hold ? '<div class="chat-supervision-hint">' + esc(c.holdNote) + '</div>' : '')
                 + (c.missing ? '<div class="chat-supervision-violation">⚠ Playbook “' + esc(c.playbookId)
                     + '” no longer exists; pick another with Edit….</div>' : '')
                 + '<div class="chat-supervision-section">Goal</div>'
@@ -95,9 +104,13 @@
                     + (live ? ', ' + live + ' running' : '') : '') + '</div>'
                 + agentsHtml(c.agents)
                 + '<div class="chat-supervision-actions">'
+                + c.actions.map((a) => '<button type="button"' + (a === 'halt' ? ' class="is-danger"' : '')
+                    + ' data-orch-act="' + a + '" title="' + esc(CONTROL[a].tip) + '">' + CONTROL[a].label + '</button>').join('')
+                + '</div>'
+                + '<div class="chat-supervision-actions">'
                 + '<button type="button" data-orch-act="edit">Edit…</button>'
                 + '<button type="button" data-orch-act="playbooks">Open playbooks</button>'
-                + '<button type="button" class="is-danger" data-orch-act="stop">Stop orchestrating</button>'
+                + '<button type="button" data-orch-act="stop" title="Drop the playbook from this chat. Running work is not stopped.">End orchestration</button>'
                 + '</div>';
         }
 
@@ -125,8 +138,20 @@
             if (!sid) return;
             if (verb === 'edit') { closePopover(); openDialog(sid); return; }
             if (verb === 'playbooks') { closePopover(); host.navigate('/orchestrator_page.html'); return; }
+            if (verb === 'pause' || verb === 'halt' || verb === 'resume') {
+                if (verb === 'halt' && !host.confirm('Stop all work of this orchestration? Its sub-agents and running jobs are ended and its waiting wake-ups are dropped.')) return;
+                try {
+                    const out = await call('POST', '/api/orchestrator/bindings/' + sid + (verb === 'resume' ? '/resume' : '/hold'),
+                        verb === 'resume' ? {} : { stop: verb === 'halt' });
+                    host.toast(M.actionSummary(verb, out), 'success');
+                } catch (e) {
+                    host.toast(String(e.message || e), 'error');
+                }
+                refresh();
+                return;
+            }
             if (verb === 'stop') {
-                if (!host.confirm('Stop orchestrating this chat? The playbook brief is dropped from its next turn.')) return;
+                if (!host.confirm('End orchestration on this chat? The playbook brief is dropped from its next turn. Running work is not stopped: use Stop all work first.')) return;
                 try {
                     await call('DELETE', '/api/orchestrator/bindings/' + sid);
                     host.toast('Orchestration stopped', 'success');

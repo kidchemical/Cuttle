@@ -121,6 +121,9 @@ class SettingsManager:
             "worktrees": {
                 "root": "",
                 "project_roots": {},
+                # GB kept free on the target drive after a new worktree
+                # (0 = no check). Owner: api.worktrees.space.
+                "min_free_gb": 10,
                 "previous_roots": [],
                 "setup_hook_requires_auth": True,
                 "cleanup": "off",

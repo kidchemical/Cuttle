@@ -30,7 +30,7 @@ import secrets
 import sys
 from typing import Any, Dict, Optional, Tuple
 
-from api.worktrees import chat_binding, cleanup, registry, roots, service
+from api.worktrees import chat_binding, cleanup, registry, roots, service, space
 
 
 def _resolve_project(project_id) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
@@ -214,25 +214,10 @@ def _cmd_root(args) -> Dict[str, Any]:
         if err:
             return {"success": False, "error": err}
 
+    patch = {"project_roots": {pid: new_root}} if pid is not None else {"root": new_root}
+
     def _apply(block):
-        block = dict(block) if isinstance(block, dict) else {}
-        previous = [str(p) for p in (block.get("previous_roots") or []) if str(p or "").strip()]
-        if pid is not None:
-            table = dict(block.get("project_roots") or {})
-            old = str(table.get(pid) or "").strip()
-            if new_root:
-                table[pid] = new_root
-            else:
-                table.pop(pid, None)
-            block["project_roots"] = table
-        else:
-            old = str(block.get("root") or "").strip()
-            block["root"] = new_root
-        # Worktrees already under the old folder stay managed.
-        if old and old != new_root and old not in previous:
-            previous.append(old)
-        block["previous_roots"] = previous
-        return block
+        return space.apply_patch(block, patch)
 
     from managers.settings_manager import get_settings_manager
     if not get_settings_manager().update_setting("worktrees", _apply):

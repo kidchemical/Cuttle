@@ -132,16 +132,18 @@ def cancel(oid, actor):
     return op
 
 
-def cancel_sends_to(target):
+def cancel_sends_to(target, *, kinds=('send',)):
     """Cancel every queued send to a chat; returns the cancelled operations.
 
     A stopped chat must stay stopped: a send still in the outbox would start a
-    new turn the moment the chat goes idle."""
+    new turn the moment the chat goes idle. ``kinds`` adds ``'notice'`` (job
+    wake-ups) for a stopped orchestration."""
     now = time.time()
+    kinds = [k for k in kinds if k in ('send', 'notice')] or ['send']
     with connection() as conn:
         rows = [public(r) for r in conn.execute(
-            "SELECT * FROM operations WHERE kind='send' AND target=? AND state IN ('pending','verifying')",
-            (int(target),))]
+            f"SELECT * FROM operations WHERE kind IN ({','.join('?' * len(kinds))}) AND target=? "
+            "AND state IN ('pending','verifying')", (*kinds, int(target)))]
         if rows:
             marks = ','.join('?' * len(rows))
             conn.execute(f"UPDATE operations SET state='cancelled', updated=? WHERE id IN ({marks})",
@@ -312,6 +314,26 @@ def defer(oid, *, due, reason='', blocked_by=None):
             result['blocked_by'] = blocked_by
         conn.execute('UPDATE operations SET result=?, due=? WHERE id=?', (json.dumps(result), float(due), oid))
         return True
+
+
+HELD_REASON = 'orchestration_paused'
+
+
+def release_held(target):
+    """Make deliveries that waited on a paused orchestration due now; how many."""
+    now = time.time()
+    released = 0
+    with connection() as conn:
+        for row in conn.execute("SELECT id, result FROM operations WHERE target=? AND state='pending' "
+                                "AND kind IN ('send','notice')", (int(target),)).fetchall():
+            try:
+                waiting = json.loads(row['result'] or '{}').get('waiting_on')
+            except ValueError:
+                waiting = None
+            if waiting == HELD_REASON:
+                conn.execute('UPDATE operations SET due=?, updated=? WHERE id=?', (now, now, row['id']))
+                released += 1
+    return released
 
 
 def waiting_sends(session_id, *, older_than=0.0, now=None):

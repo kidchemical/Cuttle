@@ -278,7 +278,8 @@ def get_binding(session: Any, *, user_id: Optional[int] = None, db=None) -> Dict
         name, missing = row["playbook_id"], True
     return {"session": _handle(sid), "bound": True, "playbook_id": row["playbook_id"],
             "playbook_name": name, "playbook_missing": missing, "goal": row["goal"],
-            "bound_at": row["bound_at"], "agents": team(sid, db=db)}
+            "bound_at": row["bound_at"], "agents": team(sid, db=db),
+            "hold": row.get("hold") or "", "hold_at": row.get("hold_at")}
 
 
 TEAM_LIMIT = 12
@@ -574,6 +575,9 @@ def brief_block(chat_session_id: Any) -> str:
         sid = parse_session(chat_session_id)
         if store.binding(sid) is None:
             return ""
-        return brief(sid)["brief"].strip()
+        text = brief(sid)["brief"].strip()
+        from api.orchestrator.control import hold_note
+        note = hold_note(sid)
+        return f"{note}\n\n{text}" if note else text
     except Exception:
         return ""

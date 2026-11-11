@@ -66,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
     sw.add_argument("--playbook", default=None)
     sw.add_argument("--goal", default=None)
     sub.add_parser("stop", parents=[common], help="Unbind this chat")
+    sub.add_parser("pause", parents=[common],
+                   help="Pause the whole orchestration: stop its turn and sub-agents, hold its wake-ups")
+    sub.add_parser("halt", parents=[common],
+                   help="Pause, and also stop its running jobs and drop its wake-ups")
+    sub.add_parser("resume", parents=[common],
+                   help="Lift a pause/halt (needs --session; a chat cannot resume itself)")
     b = sub.add_parser("brief", parents=[common], help="Print the brief for this chat (or --playbook preview)")
     b.add_argument("--playbook", default="")
     sv = sub.add_parser("supervise-command", parents=[common],
@@ -128,6 +134,24 @@ def main(argv=None) -> int:
             if not session:
                 return _fail("stop needs --session outside a Cuttle turn", as_json)
             _emit({"ok": True, "unbound": service.unbind(session, db=db)}, as_json, "unbound")
+        elif args.verb in ("pause", "halt", "resume"):
+            session = _session(args)
+            if not session:
+                return _fail(f"{args.verb} needs --session outside a Cuttle turn", as_json)
+            from api.orchestrator import control
+
+            if args.verb == "resume":
+                caller = os.environ.get("CUTTLE_CHAT_SESSION_ID") or ""
+                if not getattr(args, "session", None) or (
+                        caller and service.parse_session(caller) == service.parse_session(session)):
+                    # The hold is the user's: the held agent must not lift it.
+                    return _fail("resume needs --session, and a chat cannot resume its own orchestration; "
+                                 "the user resumes it from the chat's Orchestrating chip", as_json)
+                out = control.resume(session, db=db, source="cli")
+            else:
+                out = control.hold(session, stop=args.verb == "halt", db=db, source="cli")
+            _emit({"ok": True, **out}, as_json,
+                  f"{out['session']}: {out.get('hold') or 'running'}  {json.dumps(out.get('actions') or {})}")
         elif args.verb == "brief":
             session = _session(args)
             out = service.brief(session, playbook_id=args.playbook,

@@ -98,6 +98,9 @@ SETTING_FAMILIES = (
     {"name": "auto-compact", "routes": ["GET/POST /settings/auto-compact"],
      "backend": "api.auto_compact.service (settings-manager key 'auto_compact')",
      "validator": "api.auto_compact.policy.validate_patch", "read": "authenticated", "write": "owner"},
+    {"name": "worktrees", "routes": ["GET/POST /settings/worktrees"],
+     "backend": "api.worktrees.space (settings-manager key 'worktrees': folders + free-space reserve)",
+     "validator": "api.worktrees.space.validate_patch", "read": "authenticated", "write": "owner"},
     {"name": "agent-billing", "routes": ["GET/POST /settings/agent-billing"],
      "backend": "api.agent_harness.agents.claude.api_fallback (settings-manager key 'agent_billing_fallback')",
      "validator": "api_fallback.save_settings", "read": "authenticated", "write": "owner"},
@@ -615,6 +618,48 @@ def update_auto_compact_setting():
     except policy.PolicyError as e:
         return jsonify({'success': False, 'error': str(e)}), 400
     return jsonify(_auto_compact_body())
+
+
+# --- worktrees (backend: api.worktrees.space) --------------------------------
+
+def _worktrees_body():
+    from api.experimental import is_enabled
+    if not is_enabled('worktrees'):
+        return {'success': True, 'available': False}
+    from api.worktrees import space
+    block = get_settings_manager().get_setting('worktrees', {})
+    projects = []
+    try:
+        from managers.project_manager import project_manager
+        projects = [{'id': p.get('id'), 'name': p.get('name')}
+                    for p in (project_manager.get_projects() if project_manager is not None else [])]
+    except Exception:
+        projects = []
+    return {'success': True, 'available': True, **space.describe(block, projects)}
+
+
+@settings_bp.route('/settings/worktrees', methods=['GET'])
+@authenticated_required
+def get_worktrees_setting():
+    """Where agent worktrees go (global + per project) and the free-space reserve."""
+    return jsonify(_worktrees_body())
+
+
+@settings_bp.route('/settings/worktrees', methods=['POST'])
+@owner_required
+def update_worktrees_setting():
+    """Body: { root?, min_free_gb?, project_roots?: { "<project id>": "<folder or empty>" } }."""
+    from api.experimental import is_enabled
+    if not is_enabled('worktrees'):
+        return jsonify({'success': True, 'available': False})
+    from api.worktrees import space
+    try:
+        patch = space.validate_patch(request.get_json(silent=True) or {})
+    except space.SpaceError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    if not get_settings_manager().update_setting('worktrees', lambda block: space.apply_patch(block, patch)):
+        return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+    return jsonify(_worktrees_body())
 
 
 # --- agent billing (backend: claude api_fallback) ----------------------------

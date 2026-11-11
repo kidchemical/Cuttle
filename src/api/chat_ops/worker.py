@@ -75,12 +75,27 @@ def _awaiting_this_delivery(sid, db):
         return False
 
 
+HELD_RETRY_SEC = 60.0
+
+
+def _orchestration_held(sid):
+    try:
+        from api.orchestrator.control import held
+        return bool(held(sid))
+    except Exception:
+        return False
+
+
 def dispatch(op, *, request=None):
     """One outbox attempt. A send whose outcome is lost is verified against the
     target's history before any resend, so a turn never runs twice."""
     request = request or transport.request
     db, actor, row = service.context(op['target'], op['actor'])
     uid, sid = row['user_id'], row['id']
+    if op['kind'] != 'supervise' and op.get('state') != 'verifying' and _orchestration_held(sid):
+        # The user paused this orchestration: wake-ups and messages wait for Resume.
+        store.defer(op['id'], due=time.time() + HELD_RETRY_SEC, reason=store.HELD_REASON)
+        return
     live = request(uid, sid, 'GET', '/api/chat-live-status')
     if live.get('generating') and op['kind'] != 'supervise' and not _awaiting_this_delivery(sid, db):
         # Still undelivered; no busy-loop or second harness. Rotated to the back

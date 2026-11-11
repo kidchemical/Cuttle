@@ -21,7 +21,8 @@ The binding (chat → playbook + goal) is **host state**; agents never set it.
   itself (no agent turn); with no goal on a bound chat it switches playbook and
   keeps the goal. In the composer the command is a chip (`Orchestrate · <playbook>`).
 - A bound chat shows **Orchestrating · \<playbook\>** in its header: Edit…
-  (switch playbook / edit goal), Open playbooks, Stop orchestrating. A switch is
+  (switch playbook / edit goal), Open playbooks, End orchestration (unbind), and
+  Pause / Stop all work / Resume ([Pause, stop, resume](#pause-stop-resume)). A switch is
   not an agent turn: the brief changes at the next turn (resume delta), and each
   supervision schedule on the chat takes the new playbook's supervisor settings
   with one **Supervision update** check-in, as for a playbook edit.
@@ -38,11 +39,46 @@ PYTHONPATH=src .venv/bin/python -m api.orchestrator start [--playbook ID] --goal
 ```
 
 REST: `GET|PUT|DELETE /api/orchestrator/bindings/<session>` (PUT
-`{playbook_id?, goal?}`; omitted fields are kept).
+`{playbook_id?, goal?}`; omitted fields are kept). `POST …/bindings/<session>/hold`
+(`{stop?: bool}`) and `POST …/bindings/<session>/resume` set and lift the hold.
 
 Inside a Cuttle turn `--session` defaults to the current chat. A bound chat's
 brief is part of its compiled context, so a new harness joining the chat gets
 it too. Treat it as standing instructions.
+
+## Pause, stop, resume
+
+An orchestrator keeps itself going: each job or sub-agent it starts registers a
+wake-up, so ending one piece only wakes it to start the next, and pausing its
+supervisor changes nothing. The **hold** is the one switch over the whole
+orchestration. It belongs to the user; it is set from the chat's Orchestrating
+chip, or by a supervisor:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.orchestrator pause  --session CH-…   # hold
+PYTHONPATH=src .venv/bin/python -m api.orchestrator halt   --session CH-…   # hold + end its jobs
+PYTHONPATH=src .venv/bin/python -m api.orchestrator resume --session CH-…   # never on yourself
+```
+
+| | Pause | Stop all work (`halt`) |
+|---|---|---|
+| Running turn, running sub-agents | stopped | stopped |
+| Supervision of the chat | paused | paused |
+| New sub-agent spawns from the chat | refused | refused |
+| Running watched jobs (`watch-unit`) | finish | stopped |
+| Wake-ups and queued messages | wait for Resume | dropped |
+
+- Resume lifts the hold, resumes only the supervision the hold paused (one the
+  user paused before stays paused) and delivers what waited.
+- **If your brief starts with "This orchestration is PAUSED / STOPPED by the
+  user"**: do not start or restart jobs, builds or sub-agents and do not carry
+  on with the plan. Answer what the user asks and wait. Never run `resume` on
+  your own chat; the CLI refuses it.
+- A message the user types into a held chat still runs a turn.
+- End orchestration (unbind) drops the brief only; it stops nothing. Use Stop
+  all work first.
+
+Owner: `api.orchestrator.control`.
 
 ## Delegating
 

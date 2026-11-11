@@ -47,6 +47,15 @@ def _connect() -> sqlite3.Connection:
         at REAL NOT NULL
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS binding_events_session ON binding_events(session_id, at)")
+    # Hold: '' (running) / 'paused' / 'stopped'. Owner: api.orchestrator.control.
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(bindings)")}
+    for column, ddl in (("hold", "TEXT NOT NULL DEFAULT ''"), ("hold_at", "REAL"),
+                        ("hold_ops", "TEXT NOT NULL DEFAULT '[]'")):
+        if column not in have:
+            try:
+                conn.execute(f"ALTER TABLE bindings ADD COLUMN {column} {ddl}")
+            except sqlite3.OperationalError:
+                pass  # another process added it first
     conn.execute("""CREATE TABLE IF NOT EXISTS prefs (
         user_id INTEGER PRIMARY KEY,
         default_playbook TEXT NOT NULL DEFAULT ''
@@ -160,6 +169,29 @@ def unbind(session_id: int, *, source: str = "") -> bool:
         return cur.rowcount > 0
 
 
+def set_hold(session_id: int, hold: str, *, ops: Optional[List[str]] = None, source: str = "") -> bool:
+    """Record the chat's hold (``''`` = running, ``paused``, ``stopped``) and log it.
+
+    ``ops`` are the supervision schedules the hold paused, so resume brings back
+    exactly those. False when the chat is not orchestrating."""
+    now = time.time()
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT user_id, playbook_id, goal FROM bindings WHERE session_id = ?",
+                           (int(session_id),)).fetchone()
+        if not row:
+            return False
+        conn.execute("UPDATE bindings SET hold = ?, hold_at = ?, hold_ops = ? WHERE session_id = ?",
+                     (hold, now if hold else None, json.dumps(list(ops or [])), int(session_id)))
+        conn.execute(
+            "INSERT INTO binding_events (session_id, user_id, action, playbook_id, goal, source, at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (int(session_id), int(row["user_id"]), {"paused": "pause", "stopped": "halt"}.get(hold, "resume"),
+             row["playbook_id"], row["goal"], source, now),
+        )
+        conn.commit()
+    return True
+
+
 def binding_events(*, user_id: Optional[int] = None, session_id: Optional[int] = None,
                    since: float = 0.0, limit: int = 5000) -> List[Dict[str, Any]]:
     """Binding history, oldest first (telemetry and "which playbook at time T")."""
@@ -181,7 +213,8 @@ def binding_events(*, user_id: Optional[int] = None, session_id: Optional[int] =
 def binding(session_id: int) -> Optional[Dict[str, Any]]:
     with closing(_connect()) as conn:
         row = conn.execute(
-            "SELECT session_id, user_id, playbook_id, goal, bound_at FROM bindings WHERE session_id = ?",
+            "SELECT session_id, user_id, playbook_id, goal, bound_at, hold, hold_at, hold_ops "
+            "FROM bindings WHERE session_id = ?",
             (int(session_id),),
         ).fetchone()
     return dict(row) if row else None
@@ -190,7 +223,7 @@ def binding(session_id: int) -> Optional[Dict[str, Any]]:
 def list_bindings(user_id: int) -> List[Dict[str, Any]]:
     with closing(_connect()) as conn:
         rows = conn.execute(
-            "SELECT session_id, user_id, playbook_id, goal, bound_at FROM bindings "
+            "SELECT session_id, user_id, playbook_id, goal, bound_at, hold, hold_at FROM bindings "
             "WHERE user_id = ? ORDER BY bound_at DESC LIMIT 200",
             (int(user_id),),
         ).fetchall()

@@ -24,7 +24,7 @@ from core.git_refs import validate_branch_name
 
 from api import git_service
 from api.git_service import GitError
-from api.worktrees import registry
+from api.worktrees import registry, space
 from api.worktrees.identity import new_worktree_id, worktree_dir
 from api.worktrees.models import Checkout
 from api.worktrees.roots import (
@@ -61,6 +61,12 @@ def create_worktree(
         raise WorktreeError("Resolved worktree path is outside the managed root.")
 
     git_service.repo_work_tree(primary_path)  # NotARepositoryError if not a repo
+    short = space.shortfall(
+        target=str(target), settings=settings,
+        needed_bytes=git_service.tracked_size(primary_path, base_branch or "HEAD"),
+    )
+    if short:
+        raise WorktreeError(short)
     try:
         git_service.worktree_add(
             primary_path, path=str(target), new_branch=branch,
@@ -214,6 +220,12 @@ def move_worktree(
         return {"checkout_uid": checkout_uid, "path": str(source), "moved": False}
     if registry.checkout_for_path(str(target), db_path_override=db_path_override):
         raise WorktreeError("Another checkout is already registered at the target.")
+    short = None if space.same_drive(str(source), str(target)) else space.shortfall(
+        target=str(target), settings=settings,
+        needed_bytes=git_service.tracked_size(str(source), "HEAD"),
+    )
+    if short:
+        raise WorktreeError(short)
     try:
         moved = git_service.worktree_move(primary_path, str(source), str(target))
     except GitError as exc:

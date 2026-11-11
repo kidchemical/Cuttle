@@ -695,6 +695,23 @@ def worktree_remove(cwd: str, path: str, *, force: bool = False) -> Dict[str, An
     return {'path': str(target), 'removed': True, 'forced': bool(force)}
 
 
+def tracked_size(cwd: str, ref: str = "HEAD") -> Optional[int]:
+    """Bytes a checkout of ``ref`` writes (sum of its tracked blobs); None if unknown.
+
+    An estimate: Git LFS files count as their small pointers, and build caches
+    a tool creates later are not in it.
+    """
+    proc = _run(['ls-tree', '-r', '-l', '--full-tree', ref or 'HEAD'], cwd)
+    if proc.returncode != 0:
+        return None
+    total = 0
+    for line in proc.stdout.splitlines():
+        meta = line.split('\t', 1)[0].split()
+        if len(meta) >= 4 and meta[3].isdigit():
+            total += int(meta[3])
+    return total
+
+
 def _same_device(source: Path, target_parent: Path) -> bool:
     try:
         return os.stat(source).st_dev == os.stat(target_parent).st_dev

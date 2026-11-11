@@ -132,6 +132,12 @@ PYTHONPATH=src .venv/bin/python -m api.worktrees move CHECKOUT_UID [--to DIR]   
   folder that is unusable on this machine is refused; nothing falls back to
   another drive.
 - Changing a folder does not move existing worktrees; run `move` for each.
+- **Free-space check.** `create` (and a `move` to another drive) is refused when
+  the target drive would be left with less than the reserve (`worktrees.min_free_gb`,
+  default 10 GB; 0 = off). The size is the tracked files of the base branch, an
+  estimate. When refused, tell the user; do not pick another drive or lower the
+  reserve yourself. The user sets the folders and the reserve in Settings →
+  Agents → Worktrees.
 
 ## Projects registry
 
