@@ -49,6 +49,23 @@ CREATE TABLE IF NOT EXISTS snapshots (
 '''
 
 
+# Search indexes the head of each event. Uncapped, single edit events put
+# hundreds of MB into FTS and the index outgrew the events themselves.
+FTS_TEXT_CAP = 20_000
+# VACUUM rewrites the whole file under an exclusive lock, so it only runs
+# when it would give back a meaningful share of it.
+VACUUM_MIN_BYTES = 64_000_000
+VACUUM_MIN_SHARE = 0.10
+QUOTA_BATCH = 500
+
+
+def fts_text(body) -> str:
+    text = str(body.get('text') or '')[:FTS_TEXT_CAP]
+    if len(text) < FTS_TEXT_CAP:
+        text += ' ' + json.dumps(body.get('args') or {}, ensure_ascii=False)
+    return text[:FTS_TEXT_CAP]
+
+
 def state_dir() -> Path:
     override = os.environ.get('CUTTLE_AGENT_EVENTS_DIR')
     if os.environ.get('PYTEST_CURRENT_TEST') and not override:
@@ -163,7 +180,7 @@ class EventStore:
                     conn.execute('INSERT INTO event_changes(event_id) VALUES(?)',(row['id'],))
                     conn.execute('DELETE FROM events_fts WHERE rowid=?',(row['id'],))
                     conn.execute('INSERT INTO events_fts(rowid,summary,text) VALUES(?,?,?)',
-                                 (row['id'],summary,str(merged.get('text') or '')+' '+json.dumps(merged.get('args') or {},ensure_ascii=False)))
+                                 (row['id'],summary,fts_text(merged)))
 
     def events(self, qid=None, *, after=0, limit=100, agent=None, kind=None, search=None, full=False, descending=False, before=0, model=None, project=None, chat=None, event_ids=None):
         clauses, args = ['e.id>?'], [after]
@@ -297,35 +314,38 @@ class EventStore:
         now=time.time() if now is None else now
         starred=set(str(s) for s in starred)
         changed=0
+        def days_for(chat):
+            days=policy['starred_retention_days'] if chat in starred else policy['retention_days']
+            return policy['retention_days'] if days==-1 else days
         with self.connection() as conn:
-            rows=conn.execute('''SELECT e.*,r.chat_session_id FROM events e JOIN runs r USING(query_id)
-                WHERE r.status!='running' ORDER BY e.ts_end,e.id''').fetchall()
-            for row in rows:
+            # Light columns only: payloads stay on disk until a row is compacted.
+            due=[]
+            for row in conn.execute("""SELECT e.id,e.kind,e.ts_end,r.chat_session_id FROM events e JOIN runs r USING(query_id)
+                    WHERE r.status!='running' AND (e.compacted IS NULL OR e.compacted='') ORDER BY e.ts_end,e.id"""):
                 age=(now-row['ts_end'])/86400
-                days=policy['starred_retention_days'] if row['chat_session_id'] in starred else policy['retention_days']
-                if days==-1:days=policy['retention_days']
+                days=days_for(row['chat_session_id'])
                 reason='retention' if days and age>days else None
                 thinking=row['kind']=='thinking' and (policy['thinking_mode']=='summary_only' or age>policy['thinking_full_days'])
-                if (reason or thinking) and not row['compacted']:
-                    self._compact(conn,row,reason or 'thinking_expired')
+                if reason or thinking:
+                    due.append((row['id'],reason or 'thinking_expired'))
+            for ident,reason in due:
+                row=conn.execute('SELECT * FROM events WHERE id=?',(ident,)).fetchone()
+                if row is not None and not row['compacted']:
+                    self._compact(conn,row,reason)
                     changed+=1
-            runs=conn.execute("SELECT * FROM runs WHERE status!='running'").fetchall()
-            for run in runs:
-                days=policy['starred_retention_days'] if run['chat_session_id'] in starred else policy['retention_days']
-                if days==-1:days=policy['retention_days']
+            for run in conn.execute("SELECT query_id,chat_session_id,finished_at FROM runs WHERE status!='running'").fetchall():
+                days=days_for(run['chat_session_id'])
                 if days and run['finished_at'] and now-run['finished_at']>days*86400:
                     self._compact_run(conn,run['query_id'])
-            # Physical DB pages are reclaimed by vacuum separately. Use current
-            # referenced payload size rather than repeatedly measuring stale blobs.
         self.collect_blobs()
         quota=policy['quota_mb']*1_000_000
-        if self.stats()['bytes']>quota:
-            self.vacuum()
-        while self.stats()['bytes']>quota:
+        # Over quota: compact oldest-first against the live size (free pages
+        # do not count), then give the space back with one vacuum at the end.
+        while self.live_bytes()>quota:
             with self.connection() as conn:
                 rows=conn.execute("""SELECT e.* FROM events e JOIN runs r USING(query_id)
                     WHERE r.status!='running' AND (e.compacted IS NULL OR e.compacted='thinking_expired')
-                    ORDER BY e.ts_end,e.id LIMIT 100""").fetchall()
+                    ORDER BY e.ts_end,e.id LIMIT ?""",(QUOTA_BATCH,)).fetchall()
                 for row in rows:
                     self._compact(conn,row,'quota')
                     self._compact_run(conn,row['query_id'])
@@ -333,8 +353,31 @@ class EventStore:
             if not rows:
                 break
             self.collect_blobs()
-            self.vacuum()
+        self.vacuum(force=False)
         return {'compacted':changed,**self.stats()}
+
+    def free_bytes(self):
+        with self.connection() as conn:
+            return conn.execute('PRAGMA freelist_count').fetchone()[0]*conn.execute('PRAGMA page_size').fetchone()[0]
+
+    def live_bytes(self):
+        """Store size not counting database pages a vacuum would return."""
+        size=sum(p.stat().st_size for p in self.root.rglob('*') if p.is_file())
+        return size-self.free_bytes()
+
+    def shrink_search_index(self, batch=200):
+        """Trim search text indexed before FTS_TEXT_CAP existed. Idempotent."""
+        trimmed=0
+        while True:
+            with self.connection() as conn:
+                ids=[r[0] for r in conn.execute('SELECT rowid FROM events_fts WHERE length(text)>? LIMIT ?',(FTS_TEXT_CAP,batch))]
+                for ident in ids:
+                    row=conn.execute('SELECT summary,substr(text,1,?) FROM events_fts WHERE rowid=?',(FTS_TEXT_CAP,ident)).fetchone()
+                    conn.execute('DELETE FROM events_fts WHERE rowid=?',(ident,))
+                    conn.execute('INSERT INTO events_fts(rowid,summary,text) VALUES(?,?,?)',(ident,row[0],row[1]))
+            trimmed+=len(ids)
+            if len(ids)<batch:
+                return trimmed
 
     def _compact(self,conn,row,reason):
         payload=self.decode(row)
@@ -362,7 +405,17 @@ class EventStore:
             if path.parent.name+path.stem not in refs:
                 path.unlink(missing_ok=True)
 
-    def vacuum(self):
+    def vacuum(self, force=True):
+        """Return free pages to the filesystem. ``force=False`` (maintenance)
+        skips the rewrite unless it reclaims a meaningful share of the file."""
+        if not force:
+            free=self.free_bytes()
+            try:
+                total=self.path.stat().st_size
+            except OSError:
+                total=0
+            if free<VACUUM_MIN_BYTES and free<total*VACUUM_MIN_SHARE:
+                return self.stats()
         conn=sqlite3.connect(self.path,timeout=10)
         try:
             conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')

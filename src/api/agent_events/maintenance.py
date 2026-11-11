@@ -20,7 +20,8 @@ def prune(store=None):
     result=store.maintain(policy(),starred=starred_sessions(store))
     result['settlement']=settlement
     release_refs(store)
-    result.update(store.vacuum())
+    result['search_trimmed']=store.shrink_search_index()
+    result.update(store.vacuum(force=False))
     result['over_quota']=result['bytes']>policy()['quota_mb']*1_000_000
     return result
 

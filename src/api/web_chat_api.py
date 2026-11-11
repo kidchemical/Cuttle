@@ -4975,7 +4975,7 @@ def _cuttle_req_timer_end(response):
 def start_listener_servers(app, ports, *, lan_enabled, lan_ip, bind_host, mdns_enabled,
                            cert_files, use_reloader=True, lan_http_enabled=False,
                            make_server_factory=None, mdns_starter=None,
-                           primary_runner=None, log=print):
+                           primary_runner=None, log=print, tls_context_factory=None):
     """Bring up companion listeners, advertise mDNS, then serve primary HTTPS.
 
     ``ports`` is an ``api.server_ports.ServerPorts`` triple resolved once by
@@ -4998,6 +4998,11 @@ def start_listener_servers(app, ports, *, lan_enabled, lan_ip, bind_host, mdns_e
         def make_server_factory(host, port, wsgi_app, **kwargs):
             from werkzeug.serving import make_server
             return make_server(host, port, wsgi_app, **kwargs)
+
+    # One stalled TLS client must not block the listener (api.tls_serving).
+    tls = (str(cert_files[0]), str(cert_files[1]))
+    if tls_context_factory is not None:
+        tls = tls_context_factory(*tls)
 
     plan = {
         "primary_port": ports.https,
@@ -5024,7 +5029,7 @@ def start_listener_servers(app, ports, *, lan_enabled, lan_ip, bind_host, mdns_e
                 ports.phone_https,
                 app,
                 threaded=True,
-                ssl_context=(str(cert_files[0]), str(cert_files[1])),
+                ssl_context=tls,
             )
             threading.Thread(
                 target=phone_https_srv.serve_forever,
@@ -5055,7 +5060,7 @@ def start_listener_servers(app, ports, *, lan_enabled, lan_ip, bind_host, mdns_e
                 port=port,
                 use_reloader=use_reloader,
                 threaded=True,
-                ssl_context=(cert_files[0], cert_files[1]),
+                ssl_context=tls,
             )
     log(f"[HTTPS] Serving on https://{bind_host}:{ports.https}")
     runner(host=bind_host, port=ports.https)
@@ -5157,6 +5162,7 @@ if __name__ == '__main__':
             print(f"[SHARED-MEDIA] purge skipped: {_pe}", flush=True)
 
         cert_file, key_file = generate_self_signed_cert(lan_ip=lan_ip)
+        from api.tls_serving import server_ssl_context
 
         # Flask started directly resolves the triple once here; the daemon
         # path instead pins the child env to its own boot snapshot.
@@ -5170,6 +5176,7 @@ if __name__ == '__main__':
             cert_files=(cert_file, key_file),
             use_reloader=use_reloader,
             lan_http_enabled=is_lan_http_enabled(),
+            tls_context_factory=server_ssl_context,
         )
     except KeyboardInterrupt:
         print("\n\nWeb Chat API server stopped by user")

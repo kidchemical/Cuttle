@@ -67,3 +67,66 @@ def test_quota_compacts_oldest_completed_payload_and_protects_active(tmp_path):
     assert result['bytes']<1_000_000
     assert store.events('old',full=True)[0]['compacted']=='quota'
     assert store.events('active',full=True)[0]['text']=='still working'
+
+
+def test_search_index_text_is_capped_and_still_searchable(tmp_path):
+    from api.agent_events.store import FTS_TEXT_CAP
+    store=EventStore(tmp_path)
+    store.write_batch([('event','q',{'kind':'edit','block_id':'a','text':'needle '+'x'*200_000,'args':{'big':'y'*500_000}})])
+    with store.connection() as conn:
+        assert conn.execute('SELECT length(text) FROM events_fts').fetchone()[0]<=FTS_TEXT_CAP
+    assert store.events(search='needle')[0]['block_id']=='a'
+    assert len(store.events('q',full=True)[0]['text'])>200_000  # the payload itself is untouched
+
+
+def test_shrink_search_index_trims_rows_written_before_the_cap(tmp_path):
+    from api.agent_events.store import FTS_TEXT_CAP
+    store=EventStore(tmp_path)
+    store.write_batch([('event','q',{'kind':'tool','block_id':'a','text':'needle'}),
+                       ('event','q',{'kind':'tool','block_id':'b','text':'small'})])
+    with store.connection() as conn:
+        ident=conn.execute("SELECT id FROM events WHERE block_id='a'").fetchone()[0]
+        conn.execute('DELETE FROM events_fts WHERE rowid=?',(ident,))
+        conn.execute('INSERT INTO events_fts(rowid,summary,text) VALUES(?,?,?)',(ident,'needle','needle '+'z'*(FTS_TEXT_CAP*3)))
+    assert store.shrink_search_index(batch=1)==1
+    assert store.shrink_search_index()==0
+    with store.connection() as conn:
+        assert conn.execute('SELECT max(length(text)) FROM events_fts').fetchone()[0]<=FTS_TEXT_CAP
+    assert [e['block_id'] for e in store.events(search='needle')]==['a']
+
+
+def test_maintenance_does_not_rewrite_the_file_without_space_to_reclaim(tmp_path,monkeypatch):
+    import sqlite3
+    store=EventStore(tmp_path)
+    store.write_batch([('event','done',{'kind':'tool','block_id':'a','text':'kept'}),
+                       ('run','done',{'finished_at':time.time(),'success':True})])
+    statements=[]
+    real=sqlite3.connect
+    def spy(*args,**kwargs):
+        conn=real(*args,**kwargs)
+        conn.set_trace_callback(statements.append)
+        return conn
+    monkeypatch.setattr(sqlite3,'connect',spy)
+    store.maintain(DEFAULTS)
+    assert not [s for s in statements if s.strip().upper().startswith('VACUUM')]
+    assert store.vacuum(force=False)['events']==1
+    assert not [s for s in statements if s.strip().upper().startswith('VACUUM')]
+    store.vacuum()
+    assert [s for s in statements if s.strip().upper().startswith('VACUUM')]
+
+
+def test_maintenance_reads_payloads_only_for_rows_it_compacts(tmp_path,monkeypatch):
+    store=EventStore(tmp_path)
+    old=time.time()-200*86400
+    store.write_batch([('event','old',{'kind':'tool','block_id':'a','text':'expired','t':old}),
+                       ('event','old',{'kind':'tool','block_id':'b','text':'fresh'}),
+                       ('run','old',{'finished_at':old,'success':True})])
+    with store.connection() as conn:
+        conn.execute("UPDATE events SET ts_end=? WHERE block_id='a'",(old,))
+    decoded=[]
+    real=store.decode
+    monkeypatch.setattr(store,'decode',lambda row:(decoded.append(row['block_id']),real(row))[1])
+    assert store.maintain(DEFAULTS)['compacted']==1
+    assert decoded==['a']
+    events={e['block_id']:e for e in store.events('old',full=True)}
+    assert events['a']['compacted']=='retention' and events['b']['text']=='fresh'
