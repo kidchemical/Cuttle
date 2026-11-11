@@ -115,10 +115,12 @@ class SettingsManager:
             },
             # Per-chat git worktrees (experimental). ``root`` empty means the
             # built-in ``<home>/worktrees``; a configured root must be an
-            # absolute path on this host. ``previous_roots`` keeps old locations
-            # managed after the setting changes. Owner: api.worktrees.
+            # absolute path on this host. ``project_roots`` maps a project id
+            # to its own root (wins over ``root``). ``previous_roots`` keeps old
+            # locations managed after the setting changes. Owner: api.worktrees.
             "worktrees": {
                 "root": "",
+                "project_roots": {},
                 "previous_roots": [],
                 "setup_hook_requires_auth": True,
                 "cleanup": "off",

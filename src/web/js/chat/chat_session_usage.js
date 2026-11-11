@@ -28,7 +28,7 @@
             agentLoading=entries===undefined;agents=Array.isArray(entries)?entries:null;paint();
             // Called on every history sync: voice usage refetches on a session
             // change, on the 15 s timer and on voice events, not per sync.
-            if(switched||agents===null||Date.now()-refreshedAt>=REFRESH_MS)void refresh();
+            if(switched||Date.now()-refreshedAt>=REFRESH_MS)void refresh();
         }
         async function refresh(){
             const raw=host.sessionId(), match=String(raw||'').match(/^(?:db_session_|CH-0*)?(\d+)$/),sid=match&&Number(match[1]);

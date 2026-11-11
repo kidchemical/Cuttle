@@ -207,6 +207,33 @@ def mark_state(
         )
 
 
+def update_path(
+    checkout_uid: str,
+    path: str,
+    *,
+    db_path_override: Optional[Path] = None,
+) -> Optional[Checkout]:
+    """Point a checkout row at its new location (same uid, so bindings follow)."""
+    resolved = _abs(path)
+    with _connect(db_path_override) as conn:
+        row = conn.execute(
+            "SELECT project_id, path FROM checkouts WHERE checkout_uid = ?",
+            (str(checkout_uid),),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute(
+            "UPDATE checkouts SET path = ?, updated_at = ? WHERE checkout_uid = ?",
+            (resolved, _now(), str(checkout_uid)),
+        )
+        _log_history(conn, int(row["project_id"]), "checkout_moved",
+                     {"checkout_uid": str(checkout_uid), "from": row["path"], "path": resolved})
+        out = conn.execute(
+            "SELECT * FROM checkouts WHERE checkout_uid = ?", (str(checkout_uid),)
+        ).fetchone()
+    return _row(out)
+
+
 def touch_checkout(checkout_uid: str, *, db_path_override: Optional[Path] = None) -> None:
     """Record use (drives future non-destructive cleanup ordering)."""
     now = _now()

@@ -11,6 +11,8 @@ JSON.
     python -m api.worktrees bind (CHECKOUT_UID | --local) [--chat CH-…] [--as CH-…]
     python -m api.worktrees show [--chat CH-…]
     python -m api.worktrees remove CHECKOUT_UID [--force]
+    python -m api.worktrees move CHECKOUT_UID [--to DIR]
+    python -m api.worktrees root [--project-id N] [--set DIR | --clear]
     python -m api.worktrees orphans --project-id N
     python -m api.worktrees reconcile [--project-id N]
 
@@ -28,7 +30,7 @@ import secrets
 import sys
 from typing import Any, Dict, Optional, Tuple
 
-from api.worktrees import chat_binding, cleanup, registry, service
+from api.worktrees import chat_binding, cleanup, registry, roots, service
 
 
 def _resolve_project(project_id) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
@@ -165,6 +167,79 @@ def _cmd_remove(args) -> Dict[str, Any]:
     return {"success": True, **result}
 
 
+def _cmd_move(args) -> Dict[str, Any]:
+    checkout = registry.get_checkout(args.checkout_uid)
+    if checkout is None:
+        return {"success": False, "error": "Unknown checkout"}
+    proj, primary, err = _resolve_project(checkout.project_id)
+    if err:
+        return {"success": False, "error": err}
+    try:
+        result = service.move_worktree(
+            args.checkout_uid, project_name=str(proj.get("name") or ""),
+            primary_path=primary, to_path=args.to or None, settings=_settings_block(),
+        )
+    except service.WorktreeError as exc:
+        return {"success": False, "error": str(exc)}
+    return {"success": True, **result}
+
+
+def _root_report(settings: Dict[str, Any], project_id: Optional[str]) -> Dict[str, Any]:
+    active = roots.resolve_worktrees_root(settings, project_id=project_id)
+    table = settings.get("project_roots")
+    return {
+        "success": True,
+        "project_id": project_id,
+        "root": active.root if active else None,
+        "is_default": bool(active and active.is_default),
+        "usable": active is not None,
+        "global_root": str(settings.get("root") or ""),
+        "project_roots": dict(table) if isinstance(table, dict) else {},
+    }
+
+
+def _cmd_root(args) -> Dict[str, Any]:
+    """Show or set where new worktrees go: one project's folder or the global one."""
+    pid = str(args.project_id).strip() if args.project_id not in (None, "") else None
+    if args.set is None and not args.clear:
+        return _root_report(_settings_block(), pid)
+    new_root = ""
+    if args.set is not None:
+        new_root = roots.validate_root(args.set) or ""
+        if not new_root:
+            return {"success": False,
+                    "error": "The folder must be an absolute path on this machine (not a drive root)."}
+    if pid is not None:
+        _proj, _primary, err = _resolve_project(pid)
+        if err:
+            return {"success": False, "error": err}
+
+    def _apply(block):
+        block = dict(block) if isinstance(block, dict) else {}
+        previous = [str(p) for p in (block.get("previous_roots") or []) if str(p or "").strip()]
+        if pid is not None:
+            table = dict(block.get("project_roots") or {})
+            old = str(table.get(pid) or "").strip()
+            if new_root:
+                table[pid] = new_root
+            else:
+                table.pop(pid, None)
+            block["project_roots"] = table
+        else:
+            old = str(block.get("root") or "").strip()
+            block["root"] = new_root
+        # Worktrees already under the old folder stay managed.
+        if old and old != new_root and old not in previous:
+            previous.append(old)
+        block["previous_roots"] = previous
+        return block
+
+    from managers.settings_manager import get_settings_manager
+    if not get_settings_manager().update_setting("worktrees", _apply):
+        return {"success": False, "error": "Could not save the setting."}
+    return _root_report(_settings_block(), pid)
+
+
 def _cmd_orphans(args) -> Dict[str, Any]:
     _proj, primary, err = _resolve_project(args.project_id)
     if err:
@@ -229,6 +304,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("checkout_uid")
     p.add_argument("--force", action="store_true", help="remove even if dirty")
     p.set_defaults(fn=_cmd_remove)
+
+    p = sub.add_parser("move", help="move a registered worktree (default: to the configured root)")
+    p.add_argument("checkout_uid")
+    p.add_argument("--to", default="", help="new directory (absolute); default <root>/<repo-id>/<worktree-id>")
+    p.set_defaults(fn=_cmd_move)
+
+    p = sub.add_parser("root", help="show or set the folder new worktrees go in")
+    p.add_argument("--project-id", help="one project's folder (omit for the global one)")
+    p.add_argument("--set", default=None, metavar="DIR", help="absolute folder on this machine")
+    p.add_argument("--clear", action="store_true", help="back to the global / built-in folder")
+    p.set_defaults(fn=_cmd_root)
 
     p = sub.add_parser("orphans", help="managed-root git worktrees missing from the registry")
     p.add_argument("--project-id", required=True)

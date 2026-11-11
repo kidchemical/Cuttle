@@ -49,7 +49,7 @@ def create_worktree(
     db_path_override: Optional[Path] = None,
 ) -> Checkout:
     """Create a registered worktree on a fresh ``branch`` off ``base_branch``."""
-    root = resolve_worktrees_root(settings)
+    root = resolve_worktrees_root(settings, project_id=project_id)
     if root is None:
         raise WorktreeError("The configured worktree root is not usable on this host.")
     branch = validate_branch_name(branch)
@@ -173,6 +173,56 @@ def remove_worktree(
         except GitError:
             pass
     return {"checkout_uid": checkout_uid, "branch_deleted": branch_deleted, **result}
+
+
+def move_worktree(
+    checkout_uid: str,
+    *,
+    project_name: str,
+    primary_path: str,
+    to_path: Optional[str] = None,
+    settings: Optional[Mapping] = None,
+    db_path_override: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Move a registered worktree; its uid, branch and uncommitted files stay.
+
+    Without ``to_path`` the target is the project's configured root
+    (``<root>/<repo-id>/<worktree-id>``), which is how existing worktrees
+    follow a changed root. ``to_path`` names the new directory itself.
+    """
+    checkout = registry.get_checkout(checkout_uid, db_path_override=db_path_override)
+    if checkout is None:
+        raise WorktreeError("Unknown checkout.")
+    if checkout.kind != "worktree":
+        raise WorktreeError("Only worktrees can be moved.")
+    if to_path:
+        expanded = os.path.expanduser(str(to_path))
+        if not os.path.isabs(expanded):
+            raise WorktreeError("The target must be an absolute path.")
+        target = Path(os.path.abspath(expanded))
+    else:
+        root = resolve_worktrees_root(settings, project_id=checkout.project_id)
+        if root is None:
+            raise WorktreeError("The configured worktree root is not usable on this host.")
+        target = worktree_dir(
+            project_name,
+            worktree_id=checkout.git_worktree_name or Path(checkout.path).name,
+            project_id=checkout.project_id, root=root.root,
+        )
+    source = Path(checkout.path)
+    if os.path.normcase(str(target)) == os.path.normcase(str(source)):
+        return {"checkout_uid": checkout_uid, "path": str(source), "moved": False}
+    if registry.checkout_for_path(str(target), db_path_override=db_path_override):
+        raise WorktreeError("Another checkout is already registered at the target.")
+    try:
+        moved = git_service.worktree_move(primary_path, str(source), str(target))
+    except GitError as exc:
+        raise WorktreeError(str(exc)) from exc
+    registry.update_path(checkout_uid, str(target), db_path_override=db_path_override)
+    return {"checkout_uid": checkout_uid, "path": str(target),
+            "previous_path": str(source), "moved": True,
+            "copied": bool(moved.get("copied")),
+            "source_left_behind": bool(moved.get("source_left_behind"))}
 
 
 def discover_worktrees(

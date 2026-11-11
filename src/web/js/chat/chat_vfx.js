@@ -102,7 +102,8 @@
                 } catch (_) { /* transient transport error; retry next tick */ }
                 finally { controller = null; }
             }
-            if (!stopped) timer = host.setTimeout(tick, 2000);
+            // Events live 30 s server-side, so a 5 s poll never misses one.
+            if (!stopped) timer = host.setTimeout(tick, 5000);
         }
         tick();
         return {dispose: function () {

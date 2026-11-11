@@ -63,6 +63,11 @@ PYTHONPATH=src .venv/bin/python -m api.job_watch watch-unit --unit ep-build-linu
   `live.background.watches` (`kind: "unit"`) and reports the chat as
   `waiting_background`, so supervision does not nudge it. Finished jobs retain up to
   three receipts per chat for seven days, including follow-up delivery status.
+- **Stop means stop.** Stop on the card (or `python -m api.job_watch cancel --id <id>`)
+  stops the unit and cancels its follow-up: the chat is not resumed for a job that
+  was ended on purpose. The receipt shows the handoff as `cancelled`. A unit that is
+  stopped any other way (`systemctl --user stop`, a crash, a reboot) still counts as
+  an exit and resumes the chat, so stop watched jobs through the card or `cancel`.
 - Pass `--remain-after-exit` to `systemd-run` so the unit keeps its exit status;
   without it the resume turn has to say "exit status not available".
 - `--chat CH-…` names the chat to resume (default `CUTTLE_CHAT_SESSION_ID`).

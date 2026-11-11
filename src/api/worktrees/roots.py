@@ -58,17 +58,29 @@ def validate_root(raw: str, *, home: Optional[str] = None) -> Optional[str]:
     return resolved
 
 
+def _project_root_raw(cfg: Mapping[str, object], project_id: object) -> str:
+    """The raw ``project_roots`` entry for a project (``""`` when unset)."""
+    table = cfg.get("project_roots")
+    if project_id is None or not isinstance(table, Mapping):
+        return ""
+    return str(table.get(str(project_id)) or "").strip()
+
+
 def resolve_worktrees_root(
     settings: Optional[Mapping[str, object]],
     *,
     home: Optional[str] = None,
+    project_id: object = None,
 ) -> Optional[WorktreeRoot]:
-    """The active worktree root: configured, else the built-in default.
+    """The active worktree root: per-project, else configured, else default.
 
-    ``None`` when a non-empty configured root is unusable on this host.
+    ``project_roots`` maps a project id (string key) to the folder that
+    project's worktrees go in; it wins over the global ``root``. ``None`` when
+    the chosen non-empty root is unusable on this host: an unusable project
+    root never falls back to another drive.
     """
     cfg = settings if isinstance(settings, Mapping) else {}
-    raw = str(cfg.get("root") or "").strip()
+    raw = _project_root_raw(cfg, project_id) or str(cfg.get("root") or "").strip()
     if not raw:
         return WorktreeRoot(default_worktrees_dir(), True)
     resolved = validate_root(raw, home=home)
@@ -84,7 +96,8 @@ def managed_worktree_roots(
 ) -> tuple[str, ...]:
     """Every root that may hold T3-style managed worktrees on this host.
 
-    Default first, then the configured root, then each valid previous root.
+    Default first, then the configured root, each per-project root, then each
+    valid previous root.
     Order-stable and de-duplicated (case-insensitive on Windows).
     """
     cfg = settings if isinstance(settings, Mapping) else {}
@@ -92,6 +105,12 @@ def managed_worktree_roots(
     configured = validate_root(str(cfg.get("root") or ""), home=home)
     if configured is not None:
         candidates.append(configured)
+    project_roots = cfg.get("project_roots")
+    if isinstance(project_roots, Mapping):
+        for entry in project_roots.values():
+            resolved = validate_root(str(entry or ""), home=home)
+            if resolved is not None:
+                candidates.append(resolved)
     previous = cfg.get("previous_roots")
     if isinstance(previous, (list, tuple)):
         for entry in previous:
