@@ -2756,6 +2756,13 @@
                 if (!handle) return;
                 e.preventDefault();
                 e.stopPropagation();
+                // Fleet cards peek the child in a drawer over this pane (chat_subagent_peek.js).
+                if (launcher.classList.contains('subagent-fleet-card') && subagentPeek()) {
+                    const name = launcher.querySelector('.subagent-fleet-name');
+                    const state = launcher.querySelector('.subagent-fleet-outcome');
+                    subagentPeek().open(handle, { title: name && name.textContent, status: state && (state.getAttribute('title') || state.getAttribute('data-tooltip')) });
+                    return;
+                }
                 navigateToChatHandle(handle);
                 return;
             }
@@ -2813,6 +2820,12 @@
         avatarHtml: profileAvatarInnerHtml,
         chipCategoryClass: slashCommandChipCategoryClass,
     });
+
+    // Fleet-card peek drawer; off inside a peek frame so drawers never nest.
+    let peekCtl = null;
+    const subagentPeek = () => (window.CuttleChatSubagentPeek && !new URLSearchParams(location.search).has('peek')
+        ? (peekCtl = peekCtl || CuttleChatSubagentPeek.create({ win: window, doc: document, parseChatHandleToken, navigate: navigateToChatHandle }))
+        : null);
 
     // Idle chat's background work (waits, watches, schedules, owned processes): chat_background_work.js.
     const backgroundWork = CuttleChatBackgroundWork.create({ win: window, currentSession: () => session.current(), sessionIdsEqual, isBusy: () => isLoadingThisSession(), openChat: (sid) => loadChatSession(sid) });

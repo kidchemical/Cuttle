@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="/css/pending_changes.css?v=20261025narrow">
     <link rel="stylesheet" href="/css/diff_modal.css?v=20261017ideEdit">
     <link rel="stylesheet" href="/css/agent_review.css?v=20261018review">
-    <link rel="stylesheet" href="/css/ide_page.css?v=20261018unified">
+    <link rel="stylesheet" href="/css/ide_page.css?v=20261112mascot">
 </head>
 <body class="ide-body" data-page="ide">
     <div class="ide-notice" id="ideNotice" role="status" aria-live="polite" hidden></div>
@@ -29,6 +29,7 @@
                 <span id="ideCommandCenterLabel">Search files</span>
                 <kbd>Ctrl P</kbd>
             </button>
+            <div class="ide-title-end">
             <nav class="ide-activity" aria-label="Views">
                 <button type="button" class="ide-activity-btn" data-view="explorer" title="Explorer (Ctrl+Shift+E)" aria-label="Explorer">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg></button>
@@ -45,6 +46,7 @@
                     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 14h18"/></svg></button>
                 <button type="button" class="ide-icon-btn ide-ai-btn" data-cmd="view.chat" title="Toggle AI chat (Ctrl+I)" aria-label="Toggle AI chat">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></button>
+            </div>
             </div>
         </header>
 
@@ -113,7 +115,7 @@
                     <div class="ide-preview" id="idePreview" hidden></div>
                     <div class="ide-welcome" id="ideWelcome">
                         <div class="ide-welcome-inner">
-                            <span class="ide-welcome-mark" aria-hidden="true">⌘</span>
+                            <img class="ide-welcome-mark" src="/img/cuttle-mascot.png" alt="" aria-hidden="true">
                             <h2>Your project, in Cuttle</h2>
                             <p>Open a file to start. Your agents are right here when you need them.</p>
                             <dl class="ide-shortcuts">

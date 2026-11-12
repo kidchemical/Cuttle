@@ -8220,6 +8220,23 @@ html.cuttle-bg-paused .chat-restore-spinner {
 .subagent-fleet-card.is-failed { --fleet-accent:#e57575; }
 .subagent-fleet-card.is-lost { --fleet-accent:#d9aa45; }
 .subagent-fleet-card.is-cancelled, .subagent-fleet-card.is-queued, .subagent-fleet-card.is-unknown { --fleet-accent:#8a96a3; }
+/* Fleet-card peek drawer (chat_subagent_peek.js): the child chat over this pane. */
+.subagent-peek { position:fixed; inset:0; z-index:9000; display:flex; justify-content:flex-end; }
+.subagent-peek[hidden] { display:none; }
+.subagent-peek-backdrop { position:absolute; inset:0; background:rgba(0,0,0,.38); }
+.subagent-peek-panel { position:relative; display:flex; flex-direction:column; width:min(760px, 92%); height:100%; background:var(--bg-primary, #10151f); border-left:1px solid var(--bubble-border); box-shadow:-8px 0 28px rgba(0,0,0,.35); animation:subagent-peek-in .16s ease-out; }
+@media (max-width: 640px) { .subagent-peek-panel { width:100%; } }
+@keyframes subagent-peek-in { from { transform:translateX(24px); opacity:0; } to { transform:none; opacity:1; } }
+@media (prefers-reduced-motion: reduce) { .subagent-peek-panel { animation:none; } }
+.subagent-peek-head { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--bubble-border); color:var(--text-primary); font-size:13px; min-width:0; }
+.subagent-peek-title { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.subagent-peek-handle, .subagent-peek-status { color:var(--text-secondary, #9aa4b2); font-size:12px; white-space:nowrap; }
+.subagent-peek-handle:empty { display:none; }
+.subagent-peek-spacer { flex:1 1 auto; }
+.subagent-peek-open, .subagent-peek-close { flex:none; border:1px solid var(--bubble-border); border-radius:6px; background:var(--message-assistant-bg); color:var(--text-primary); font:inherit; font-size:12px; padding:4px 10px; cursor:pointer; }
+.subagent-peek-open { border-color:var(--accent-color); }
+.subagent-peek-open:hover, .subagent-peek-close:hover { background:color-mix(in srgb, var(--accent-color) 18%, var(--message-assistant-bg)); }
+.subagent-peek-frame { flex:1 1 auto; width:100%; border:0; background:transparent; }
 @media (prefers-reduced-motion: reduce) {
     .subagent-fleet-card .typing-orbit--fleet, .subagent-fleet-card .typing-orbit--fleet * { animation:none; }
     .subagent-fleet-card .subagent-fleet-summary--live { animation:none; background:none; color:var(--text-primary); }
