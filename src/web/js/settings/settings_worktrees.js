@@ -67,7 +67,7 @@
     function build(data) {
         const form = el('form', '', 'worktrees-settings');
 
-        const folder = row('Worktree folder', 'Where agents create git worktrees. Each one is a full copy of the project, so pick a drive with room. Empty uses the built-in folder in the Cuttle home.');
+        const folder = row('Cuttle default worktree folder', 'Where agents create git worktrees for every project that has no folder of its own. Each one is a full copy of the project, so pick a drive with room. Empty uses the built-in folder in the Cuttle home.');
         const rootInput = textInput('Worktree folder', data.root, data.default_root);
         const rootNote = el('div', folderNote(data.effective), 'setting-description');
         folder.control.append(rootInput, rootNote);
@@ -91,11 +91,11 @@
 
         const projectInputs = {};
         if ((data.projects || []).length) {
-            const head = row('Per project', 'A project with its own folder ignores the folder above. Leave empty to use it.');
+            const head = row('Per project', 'A project with its own folder ignores the default above. Leave empty to use the Cuttle default. Also editable in Projects → Locations.');
             form.append(head.item);
             for (const p of data.projects) {
                 const r = row(p.name);
-                const input = textInput('Worktree folder for ' + p.name, p.root, 'Same as above');
+                const input = textInput('Worktree folder for ' + p.name, p.root, 'Use Cuttle default');
                 r.control.append(input, el('div', folderNote(p.effective), 'setting-description'));
                 projectInputs[p.id] = input;
                 form.append(r.item);

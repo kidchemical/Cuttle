@@ -127,6 +127,8 @@ PYTHONPATH=src .venv/bin/python -m api.worktrees move CHECKOUT_UID [--to DIR]   
 
 - Set a folder only when the user named it. It is stored per machine in
   `settings.json` (`worktrees.project_roots`), never in a tracked `.cuttle/`.
+  Users edit the same value in Projects → Locations (per project; empty = Cuttle
+  default) and Settings → Agents → Worktrees (the Cuttle default).
 - `move` keeps the checkout id, branch and uncommitted files (`git worktree
   move`), so bound chats follow. Stop agents working in the worktree first. A
   folder that is unusable on this machine is refused; nothing falls back to

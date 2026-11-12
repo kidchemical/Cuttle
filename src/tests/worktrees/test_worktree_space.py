@@ -128,3 +128,34 @@ def test_settings_client_patch_sends_only_changed_projects():
     assert out["patch"] == {"root": "/big", "min_free_gb": 15, "project_roots": {"8": "/b"}}
     assert out["same"] == {"root": "", "min_free_gb": 10}
     assert out["note"] == "/big · 12.5 GB free" and "cannot be used" in out["bad"]
+
+
+PROJECTS_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "projects" / "projects_worktree_folder.js"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_projects_page_folder_defaults_to_cuttle_default_and_patches_one_project():
+    script = (
+        "const W = require(process.argv[1]);"
+        "const data = { available: true, effective: { path: '/galaxy/wt', usable: true, free_gb: 900 },"
+        " projects: [{ id: '14', root: '/galaxy/Game Dev', effective: { path: '/galaxy/Game Dev', usable: true, free_gb: 900 } },"
+        "            { id: '3', root: '', effective: { path: '/galaxy/wt', usable: true, free_gb: 900 } }] };"
+        "console.log(JSON.stringify({"
+        " own: W.view(data, 14), def: W.view(data, 3), unknown: W.view(data, 99), off: W.view({ available: false }, 3),"
+        " set: W.patchFor(14, ' /x '), clear: W.patchFor('3', '') }));"
+    )
+    out = json.loads(subprocess.run(["node", "-e", script, str(PROJECTS_JS)], capture_output=True, text=True,
+                                    encoding="utf-8", timeout=60, check=True).stdout)
+    assert out["own"]["override"] == "/galaxy/Game Dev" and not out["own"]["usesDefault"]
+    assert out["def"]["usesDefault"] and out["def"]["effectiveText"].startswith("/galaxy/wt")
+    assert out["unknown"]["usesDefault"] and out["unknown"]["defaultText"].startswith("/galaxy/wt")
+    assert out["off"] == {"available": False}
+    assert out["set"] == {"project_roots": {"14": "/x"}}
+    assert out["clear"] == {"project_roots": {"3": ""}}
+
+
+def test_projects_page_loads_the_worktree_folder_section():
+    page = (Path(__file__).resolve().parents[2] / "web" / "projects_page.html").read_text(encoding="utf-8")
+    js = (Path(__file__).resolve().parents[2] / "web" / "js" / "projects" / "projects_page.js").read_text(encoding="utf-8")
+    assert page.index("projects_worktree_folder.js") < page.index("projects_page.js")
+    assert "CuttleProjectsWorktreeFolder.mount(" in js

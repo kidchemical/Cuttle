@@ -94,6 +94,7 @@ code, .path-text { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Re
 .branch-form-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: end; }
 .branch-form-row label { margin: 0; }
 .branch-form-row button { min-height: 42px; }
+.worktree-folder-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .branch-help { margin: 10px 0 18px; font-size: 12px; color: var(--project-muted); }
 .branch-checkout { display: flex; justify-content: space-between; align-items: center; gap: 16px; border-top: 1px solid var(--project-border); padding-top: 18px; }
 .branch-checkout p { margin: 0; font-size: 12px; color: var(--project-muted); }
