@@ -24,16 +24,16 @@
   },
   "dependencies": {
     "@capacitor-community/safe-area": "^8.0.1",
-    "@capacitor/android": "^8.5.2",
+    "@capacitor/android": "^8.6.0",
     "@capacitor/app": "^8.1.2",
     "@capacitor/core": "^8.5.2",
-    "@capacitor/ios": "^8.5.2",
+    "@capacitor/ios": "^8.6.0",
     "@capacitor/preferences": "^8.0.1"
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.5.2",
+    "@capacitor/cli": "^8.6.0",
     "typescript": "^7.0.2",
-    "vite": "^8.3.2"
+    "vite": "^8.3.5"
   },
   "engines": {
     "node": ">=22.12.0"
