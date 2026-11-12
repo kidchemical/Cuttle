@@ -8,11 +8,14 @@ harness's own background watch both die with their process, a detached
 
 from __future__ import annotations
 
+import importlib.util
 import json
 
 import pytest
 
 from api import job_watch as jw
+
+_HAS_FLOCK = importlib.util.find_spec("fcntl") is not None
 
 
 @pytest.fixture(autouse=True)
@@ -226,7 +229,8 @@ def test_two_concurrent_pollers_resume_the_chat_exactly_once(monkeypatch):
 
     monkeypatch.setattr(jw, "unit_state", slow_exit)
     results = _concurrently(2, jw.poll_unit_watches)
-    assert sorted(len(r) for r in results) == [0, 1]  # one pass fired, the other found the lock held
+    if _HAS_FLOCK:  # one pass fired, the other found the lock held (Windows: no lock, the claim decides)
+        assert sorted(len(r) for r in results) == [0, 1]
     assert len(_notices()) == 1
     assert jw.unit_watch_records() == []
     assert jw.read_status(info["id"])["state"] == "done"

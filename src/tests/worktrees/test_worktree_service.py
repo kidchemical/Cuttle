@@ -184,5 +184,5 @@ def test_move_to_another_drive_copies_then_repairs(tmp_path, monkeypatch):
     assert result["copied"] and not result["source_left_behind"] and not old.exists()
     assert _git("status", "--porcelain", cwd=target).stdout.strip() == "?? wip.txt"
     assert _git("rev-parse", "--abbrev-ref", "HEAD", cwd=target).stdout.strip() == "cuttle/abc"
-    listed = _git("worktree", "list", "--porcelain", cwd=repo).stdout
-    assert str(target) in listed and str(old) not in listed
+    listed = _git("worktree", "list", "--porcelain", cwd=repo).stdout.replace("\\", "/")
+    assert target.as_posix() in listed and old.as_posix() not in listed  # git prints / on Windows

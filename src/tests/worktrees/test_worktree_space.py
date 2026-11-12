@@ -124,7 +124,7 @@ def test_settings_client_patch_sends_only_changed_projects():
         " bad: S.folderNote({ usable: false }) }));"
     )
     out = json.loads(subprocess.run(["node", "-e", script, str(JS)], capture_output=True, text=True,
-                                    timeout=60, check=True).stdout)
+                                    encoding="utf-8", timeout=60, check=True).stdout)
     assert out["patch"] == {"root": "/big", "min_free_gb": 15, "project_roots": {"8": "/b"}}
     assert out["same"] == {"root": "", "min_free_gb": 10}
     assert out["note"] == "/big · 12.5 GB free" and "cannot be used" in out["bad"]

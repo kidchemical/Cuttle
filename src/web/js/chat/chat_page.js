@@ -3655,7 +3655,8 @@
      * Other agents still attach when dirty so a pre-session pick is not lost.
      */
     function attachAgentIdentityToRequest(requestBody) {
-        agentControls.attachAgentIdentityToRequest(requestBody); agentBilling.attachToRequest(requestBody);
+        agentBilling.attachToRequest(requestBody);
+        return agentControls.attachAgentIdentityToRequest(requestBody);
     }
 
     function persistCodexEffortSelection(effort) {

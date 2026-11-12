@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -64,9 +65,11 @@ def result():
     node = shutil.which("node")
     if not node:
         pytest.skip("node not installed")
-    env = {"BILLING": str(WEB / "js/chat/chat_agent_billing.js"),
-           "SETTINGS": str(WEB / "js/settings/settings_agent_billing.js"), "PATH": "/usr/bin:/bin"}
-    proc = subprocess.run([node, "-e", HARNESS], capture_output=True, text=True, env=env, timeout=30)
+    # Keep the inherited environment: Windows node aborts without SystemRoot.
+    env = dict(os.environ, BILLING=str(WEB / "js/chat/chat_agent_billing.js"),
+               SETTINGS=str(WEB / "js/settings/settings_agent_billing.js"))
+    proc = subprocess.run([node, "-e", HARNESS], capture_output=True, text=True, encoding="utf-8",
+                          env=env, timeout=30)
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
