@@ -8355,6 +8355,8 @@ button.chat-bg-head:hover .chat-bg-title { color: var(--text-primary); }
 .chat-bg-row-viz { display: inline-flex; align-items: center; gap: 7px; min-width: 0; flex: 0 1 auto; }
 .chat-bg-row-viz:empty { display: none; }
 .chat-bg-row-aside { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: auto; }
+/* Wake line: a full sentence, so it wraps instead of ending in an ellipsis. */
+.chat-bg-wake .chat-bg-row-label { white-space: normal; overflow: visible; }
 .chat-bg-label, .chat-bg-hint {
     padding: 5px 12px; color: var(--text-secondary); font-size: 0.92em;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

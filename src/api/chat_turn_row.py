@@ -307,6 +307,9 @@ def _finalize(db: Any, entry: Dict[str, Any], content: str, metadata: Optional[d
     if meta.get('query_id') != entry['query_id']:
         meta.setdefault('turn_query_id', entry['query_id'])
     meta['turn_id'] = entry['query_id']  # the turn's anchor (api.chat_turn_id), whatever ran in it
+    # The row's own timestamp is the turn's start (it was opened then); readers
+    # show when the reply landed, so a 2 h turn's answer does not read 2 h old.
+    meta.setdefault('completed_at', time.time())
     try:
         ok = db.update_message_content(entry['message_id'], content or '', metadata=meta)
     except Exception:

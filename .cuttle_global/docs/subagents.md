@@ -103,6 +103,19 @@ reply, and the parent continues from there. Running `spawn --wait` as a
 background command is therefore safe for long children: you are told when it
 finishes either way. While the launcher is still alive nothing extra is posted.
 
+Prefer that ordinary background command over a separate systemd service for
+child chats. Use a service only when the spawn supervisor must survive its
+launching process (for example, a planned Flask restart). `systemd-run` does
+not inherit Cuttle's environment. Append `--turn "$CUTTLE_TURN_ID"` to the
+`spawn` / `message` command in the **launching shell**, expanding it before
+crossing the service boundary; alternatively pass
+`--setenv=CUTTLE_TURN_ID="$CUTTLE_TURN_ID"` and
+`--setenv=CUTTLE_CHAT_SESSION_ID="$CUTTLE_CHAT_SESSION_ID"` to `systemd-run`.
+Preserve the other ownership variables too (`CUTTLE_AGENT_RUN_ID`,
+`CUTTLE_AGENT_ID`, `CUTTLE_AGENT_PROJECT_PATH`, and `CUTTLE_HOME` if set).
+Register completion with `watch-unit` ([headless-turns.md](headless-turns.md)).
+Do not start a second spawn to fix card placement.
+
 `--route` asks the existing Cuttle router to pick `agent`+`model` for children
 that omitted them (or set `"route": true`).
 
@@ -194,6 +207,14 @@ A manual run from a plain terminal has no turn env: pass `--anchor CH-<chat>-<N>
 (spawn and message) to pin the cards to that parent bubble, else they go on the
 parent's latest bubble. If the parent has no bubble at all yet, the background
 card shows them until one exists.
+
+Without turn identity, a newer outstanding user request or in-progress reply
+blocks the old-bubble fallback: cards stay on the live strip instead of being
+filed on an earlier answer. Cuttle does not guess ownership from whichever turn
+is active. After verifying a detached batch's originating turn in the query log,
+repair it with `python -m api.subagents repair-cards --batch <batch-id> --turn <parent-turn-id> --json`.
+This moves the original cards without restarting children, preserves unrelated
+cards, and refuses conflicting known identities or follow-up card rounds.
 
 Running fleet cards show the harness's latest status (reading files, running
 commands/tests, writing, etc.) rather than a fixed "Working…". The child CLI

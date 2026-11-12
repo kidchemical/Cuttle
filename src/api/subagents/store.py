@@ -447,9 +447,13 @@ def update_batch(
     finished: bool = False,
     watch_id: Optional[str] = None,
     widget_id: Optional[str] = None,
+    turn_id: Optional[str] = None,
 ) -> None:
     sets = []
     args: List[Any] = []
+    if turn_id is not None:
+        sets.append("turn_id = ?")
+        args.append(turn_id or None)
     if status is not None:
         sets.append("status = ?")
         args.append(status)

@@ -34,8 +34,7 @@ _ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9._/@+-]{1,200}$")
 
 DEFAULT_LIMITS: Dict[str, int] = {
-    # Attempts / minutes the orchestrator may spend on one problem in its own
-    # turn before it must delegate.
+    # Attempts / minutes a delegated tier may spend before escalation.
     "solo_attempts": 2,
     "solo_minutes": 40,
     # Sharper-brief retries on the same tier before escalating a child task.
@@ -487,28 +486,28 @@ def render_brief(
         f"1. **Default down.** Every task starts at the {worker['label']} tier unless it is planning or "
         "review that needs expert judgment. A tier's agents are in preference order; a `tier` spawn "
         "takes the first one with budget, the rest are alternates (parallel lanes).",
-        f"2. **Escalate on evidence, one tier at a time.** Retry a failed child task "
-        f"{limits['child_retries']}× on the same tier with a sharper brief, then move to the next tier. "
-        "Say why in one line when you escalate.",
-        f"3. **Don't grind it yourself.** After {limits['solo_attempts']} failed attempts or about "
-        f"{limits['solo_minutes']} minutes on one problem in your own turn, delegate it to the worker "
-        "tier with what you tried, then escalate if that child fails.",
-        "4. **Never resend an identical failing spawn.** A setup error (\"was not started\", unsupported "
+        f"2. **Delegate and escalate on evidence.** Delegate hands-on implementation, investigation and "
+        f"tests from the start; the orchestrator plans, coordinates, reviews and integrates. At each "
+        f"tier, escalate after {limits['solo_attempts']} failed attempts or about {limits['solo_minutes']} "
+        f"minutes without progress. Retry a failed child up to {limits['child_retries']} times at the "
+        "same tier with a sharper brief within those limits, then move one tier up and say why. "
+        "These limits apply to delegated work, never to work done by the orchestrator.",
+        "3. **Never resend an identical failing spawn.** A setup error (\"was not started\", unsupported "
         "model/effort, missing CLI) means fix the spec or switch to the tier's next agent. \"Out of budget\" "
         "or \"every agent in the … tier is out of budget\" comes back before any chat exists: follow its "
         "hint (spawn by tier, or escalate one tier) — it is not a task failure. After "
         f"{limits['setup_retries']} setup failures on one task, report it instead of looping.",
-        "5. **Experts plan and review; they do not grind.** Send them the plan, the diff, or a specific "
+        "4. **Experts plan and review; they do not grind.** Send them the plan, the diff, or a specific "
         "question. For high-stakes plans or merges, ask every expert agent (`--collect all`) and reconcile.",
-        "6. **Self-contained briefs.** Children start cold: give the goal, file paths, constraints (branch, "
+        "5. **Self-contained briefs.** Children start cold: give the goal, file paths, constraints (branch, "
         "owner module, tests to run) and the exact deliverable.",
-        "7. **Verify before you trust.** Run the tests or read the diff before marking work done.",
-        "8. **Parallelize independent lanes** (`--collect all`); use `--collect serial` when lanes touch the "
+        "6. **Verify before you trust.** Review evidence and diffs, and delegate tests before marking work done.",
+        "7. **Parallelize independent lanes** (`--collect all`); use `--collect serial` when lanes touch the "
         "same files; `--lifetime conversational` when iterating with one child.",
-        "9. **No silent stops.** Keep a Tasks gizmo with the high-level plan and patch it with "
+        "8. **No silent stops.** Keep a Tasks gizmo with the high-level plan and patch it with "
         "`set_done`/`set_undone`/`set_text`/`add`/`remove`/`description` only — never send `items`, which "
         "replaces the whole list. If blocked, ask with one Q&A action form and leave open items with a reason.",
-        "10. A supervisor chat may steer or queue messages into this chat; treat them as the user's "
+        "9. A supervisor chat may steer or queue messages into this chat; treat them as the user's "
         "standing nudges, not new scope.",
     ]
     notes = str(playbook.get("notes") or "").strip()

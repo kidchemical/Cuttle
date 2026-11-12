@@ -183,10 +183,16 @@ def _write_cards(db, message_id: int, children: List[ChildRecord], *, batch_id: 
 
 def _latest_parent_bubble(db, parent_session_id: int) -> Optional[int]:
     try:
-        recent = db.get_messages(int(parent_session_id), limit=40)  # saved rows only
+        recent = db.get_messages(int(parent_session_id), limit=40, include_in_progress=True)
     except Exception:
         return None
-    last = next((m for m in reversed(recent or []) if m.get("role") == "assistant"), None)
+    # A missing environment is not evidence that this is an idle manual run.
+    # systemd-run drops the caller's environment: never hide its cards on an
+    # older reply while a newer user request / in-progress reply is outstanding.
+    conversation = [m for m in recent or [] if m.get("role") in ("user", "assistant")]
+    last = conversation[-1] if conversation else None
+    if last and (last.get("role") != "assistant" or (last.get("metadata") or {}).get("in_progress")):
+        return None
     return int(last["id"]) if last else None
 
 
@@ -206,6 +212,40 @@ def _card_target(db, parent_session_id: int, *, turn_id: str = "",
         row = find_turn_row(db, int(parent_session_id), turn_id)
         return int(row["id"]) if row and row["metadata"].get("in_progress") else None
     return _latest_parent_bubble(db, int(parent_session_id))
+
+
+def repair_batch_cards(batch_id: str, turn_id: str, *, db=None) -> Dict[str, Any]:
+    """Explicitly recover a detached launch's lost parent identity, without rerunning work.
+
+    The caller must supply the evidenced originating turn. Never infer it from
+    the currently running turn, which may have started after this batch.
+    """
+    db = _open_db(db)
+    batch = store.get_batch(db, batch_id)
+    if not batch:
+        raise SubagentError("batch not found")
+    row = find_turn_row(db, batch.parent_session_id, turn_id)
+    if not row:
+        raise SubagentError("turn has no assistant row in this parent chat")
+    if batch.turn_id and batch.turn_id != turn_id:
+        raise SubagentError("batch already belongs to a different turn")
+    if any(c.card_message_id or c.card_pending or c.card_turn_id for c in batch.children):
+        raise SubagentError("batch has follow-up card rounds; repair those separately")
+    target = int(row["id"])
+    # Write the new location before removing the old snapshot.
+    _write_cards(db, target, batch.children, batch_id=batch.id)
+    old_id = batch.attach_message_id
+    store.update_batch(db, batch.id, attach_message_id=target, turn_id=turn_id)
+    if old_id and int(old_id) != target:
+        old = db.get_message_by_id(int(old_id)) or {}
+        meta = old.get("metadata") or {}
+        meta = json.loads(meta) if isinstance(meta, str) else dict(meta)
+        ids = {c.id for c in batch.children}
+        meta["subagents"] = [c for c in meta.get("subagents", []) if c.get("id") not in ids]
+        if meta.get("subagent_batch_id") == batch.id:
+            meta.pop("subagent_batch_id", None)
+        db.update_message_content(int(old_id), old.get("content") or "", metadata=meta)
+    return {"ok": True, "batch": batch.id, "turn_id": turn_id, "message_id": target}
 
 
 def bind_new_batch(db, batch: BatchRecord, *, anchor_message_id: Optional[int] = None) -> Optional[int]:
@@ -270,14 +310,13 @@ def leave_cards_on_last_bubble(db, batch: BatchRecord) -> Optional[int]:
     saved assistant bubble and write the cards there, so history keeps them."""
     if batch.attach_message_id:
         return None
-    try:
-        recent = db.get_messages(int(batch.parent_session_id), limit=40)
-    except Exception:
+    if batch.turn_id:
+        # Only that turn's saver may bind these; completion is not permission
+        # to move them to another turn's reply.
         return None
-    last = next((m for m in reversed(recent or []) if m.get("role") == "assistant"), None)
-    if not last:
+    mid = _latest_parent_bubble(db, int(batch.parent_session_id))
+    if not mid:
         return None
-    mid = int(last["id"])
     store.update_batch(db, batch.id, attach_message_id=mid)
     batch.attach_message_id = mid
     try:

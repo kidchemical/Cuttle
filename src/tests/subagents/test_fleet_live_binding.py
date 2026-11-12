@@ -150,3 +150,43 @@ def test_page_places_each_live_card_once_keyed_to_its_turn():
     assert handles(r["idle"]["strip"]) == ["CH-000011", "CH-000012", "CH-000014"]
     # Turn A's reply (row 40) is saved and on screen: it carries its card; the strip hands over.
     assert handles(r["afterReply"]["strip"]) == ["CH-000011", "CH-000014"]
+
+
+@pytest.mark.parametrize("live_row", [False, True])
+def test_detached_launch_without_identity_never_binds_to_older_reply(tmp_path, monkeypatch, live_row):
+    db, _p, _o, parent = _seed(tmp_path)
+    old = db.add_message(parent, "assistant", "Yesterday's answer", metadata={"turn_id": "old"})
+    db.add_message(parent, "user", "New work")
+    if live_row:
+        chat_turn_row.open_row(db, parent, turn=1)
+    # A separate systemd process has neither the in-process turn context nor env.
+    monkeypatch.setattr("api.chat_turn_id.ambient", lambda sid: "")
+    _spawn(db, parent, wait=True)
+    [batch] = store.list_batches_for_parent(db, parent)
+    assert not batch.turn_id and batch.attach_message_id is None
+    assert not json.loads(db.get_message_by_id(old)["metadata"]).get("subagents")
+    [entry] = service.public_parent_subagents(parent, db=db)
+    assert entry["bound_message_id"] is None  # visible on the strip, including after completion
+
+
+def test_repair_detached_cards_moves_only_that_batch_and_is_idempotent(tmp_path, monkeypatch):
+    db, _p, _o, parent = _seed(tmp_path)
+    old = db.add_message(parent, "assistant", "Old reply", metadata={"turn_id": "old", "keep": True})
+    monkeypatch.setattr("api.chat_turn_id.ambient", lambda sid: "")
+    _spawn(db, parent, wait=True)
+    [batch] = store.list_batches_for_parent(db, parent)
+    assert batch.attach_message_id == old
+    target = db.add_message(parent, "assistant", "Originating turn", metadata={"turn_id": "origin"})
+    later = db.add_message(parent, "assistant", "Unrelated later turn", metadata={"turn_id": "later"})
+    for _ in range(2):
+        assert service.repair_batch_cards(batch.id, "origin", db=db)["message_id"] == target
+    repaired = store.get_batch(db, batch.id)
+    assert repaired.turn_id == "origin" and repaired.attach_message_id == target
+    assert json.loads(db.get_message_by_id(old)["metadata"])["keep"] is True
+    assert not json.loads(db.get_message_by_id(old)["metadata"]).get("subagents")
+    assert len(json.loads(db.get_message_by_id(target)["metadata"])["subagents"]) == 1
+    assert not json.loads(db.get_message_by_id(later)["metadata"]).get("subagents")
+    with pytest.raises(service.SubagentError, match="different turn"):
+        service.repair_batch_cards(batch.id, "later", db=db)
+    with pytest.raises(service.SubagentError, match="no assistant row"):
+        service.repair_batch_cards(batch.id, "unknown", db=db)

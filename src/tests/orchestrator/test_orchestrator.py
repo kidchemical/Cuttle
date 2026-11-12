@@ -97,7 +97,7 @@ def test_render_brief_carries_limits_rules_and_pins():
                 "expert-claude": {"agent": "claude", "model": "claude-opus-5-5", "effort": "high"}}
     text = model.render_brief(pb, profiles, chat_handle="CH-000042", goal="ship it")
     assert "CH-000042" in text and "Goal: ship it" in text
-    assert "After 3 failed attempts or about 25 minutes" in text
+    assert "after 3 failed attempts or about 25 minutes without progress" in text
     assert "After 1 setup failures" in text
     assert "never send `items`" in text
     assert "`grunt`: cursor auto" in text and "claude claude-opus-5-5 (high)" in text
@@ -217,6 +217,10 @@ def test_bind_brief_and_context_block(tmp_path, orch, monkeypatch):
     assert f"CH-{sid:06d}" in out["brief"] and "--agent" not in out["supervisor_argv"]
     block = service.brief_block(f"db_session_{sid}")
     assert block.startswith("## Orchestrator playbook") and "finish the slice" in block
+    assert "Delegate hands-on implementation, investigation and tests from the start" in block
+    assert "2 failed attempts or about 40 minutes without progress" in block
+    assert "These limits apply to delegated work" in block
+    assert "in your own turn" not in block
     assert service.brief_block(other_sid) == ""  # unbound
     with pytest.raises(service.OrchestratorError, match="another account"):
         service.bind(other_sid, "default", db=db, user_id=owner)

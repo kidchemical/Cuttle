@@ -8,6 +8,10 @@ each chat's payload:
   waits, watch jobs, supervision schedules and processes its agents left
   running (``api.jobs.work_tree.background_summary``), or ``None``
 
+- ``orchestration``: ``''``, or ``'active'`` / ``'paused'`` / ``'stopped'`` for a
+  chat bound to an orchestration (``api.orchestrator.control.state``); with
+  ``background.watchers`` it lets the chat say what will wake it next
+
 Each owner failing degrades to its empty value; live-status never fails on it.
 """
 
@@ -29,4 +33,10 @@ def live_status_extras(session_id: Any) -> Dict[str, Any]:
         background = background_summary(session_id)
     except Exception:
         background = None
-    return {"subagents": subagents, "background": background}
+    try:
+        from api.orchestrator.control import state
+
+        orchestration = state(session_id)
+    except Exception:
+        orchestration = ""
+    return {"subagents": subagents, "background": background, "orchestration": orchestration}

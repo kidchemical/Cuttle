@@ -23,7 +23,9 @@ def sources(monkeypatch):
     monkeypatch.setattr(work_tree, "_watches", lambda skip: {c: [w for w in rows if w["job_id"] not in skip]
                                                              for c, rows in state["watches"].items()})
     monkeypatch.setattr(work_tree, "_unit_watches", lambda: state["units"])
-    monkeypatch.setattr(work_tree, "_schedules", lambda: state["schedules"])
+    monkeypatch.setattr(work_tree, "_schedules", lambda jobs=None: state["schedules"])
+    state["chat_ops"] = []
+    monkeypatch.setattr(work_tree, "_chat_op_jobs", lambda: state["chat_ops"])
     monkeypatch.setattr(work_tree, "_active_runs", lambda: state["runs"])
     monkeypatch.setattr(work_tree, "_chat_meta", lambda chats: state["meta"])
     monkeypatch.setattr(work_tree, "_subagent_parents", lambda chats: state["parents"])
@@ -148,9 +150,29 @@ def test_live_status_extras_carries_background(sources):
 
     sources["waits"] = [{"job_id": "j", "label": "Waiting on: build", "chat_session_id": "7"}]
     extras = live_status_extras("7")
-    assert set(extras) == {"subagents", "background"}
+    assert set(extras) == {"subagents", "background", "orchestration"}
     assert extras["background"]["label"] == "Waiting on: build"
     assert live_status_extras("8")["background"] is None
+
+
+def test_supervised_chat_summary_names_its_watchers(sources):
+    """An idle supervised chat with no work of its own still gets a summary: its
+    supervisor's next check is what will wake it (paused: nothing will)."""
+    def op(oid, actor, target, status, next_at):
+        return {"id": oid, "status": status, "target": f"CH-{target:06d}", "origin": {"chat_session_id": str(actor)},
+                "meta": {"op_kind": "supervise", "every": 1800, "next_at": next_at}}
+
+    sources["chat_ops"] = [op("a", 2404, 2353, "running", 5000.0), op("b", 2404, 2360, "paused", None),
+                           {"id": "c", "status": "queued", "target": "CH-002353", "origin": {"chat_session_id": "9"},
+                            "meta": {"op_kind": "send"}},
+                           op("d", 2404, 2361, "cancelled", None)]
+    bg = work_tree.background_summary("2353")
+    assert bg["working"] is False
+    assert bg["watchers"] == [{"id": "a", "status": "running", "supervisor": "CH-002404", "every": 1800, "next_at": 5000.0}]
+    assert work_tree.background_summary("2360")["watchers"][0]["status"] == "paused"
+    assert work_tree.background_summary("2361") is None
+    # Being watched is not background work: no chat-list badge.
+    assert "2353" not in work_tree.background_session_ids()
 
 
 @pytest.fixture

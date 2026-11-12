@@ -14,8 +14,8 @@
     const content = $('orchContent');
     const sup = $('orchSupervisor');
     const LIMIT_HELP = {
-        solo_attempts: 'Failed attempts on one problem in its own turn before it must hand the problem to a worker.',
-        solo_minutes: 'Minutes on one problem in its own turn before it must delegate, even without a clear failure.',
+        solo_attempts: 'Failed attempts on delegated work at a tier before escalation.',
+        solo_minutes: 'Minutes without progress on delegated work at a tier before escalation.',
         child_retries: 'Retries on the same tier, with a sharper brief, before a task moves down the ladder.',
         setup_retries: 'Spawns that fail to start (bad pin, quota, missing CLI) before it reports instead of looping.',
     };
