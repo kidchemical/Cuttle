@@ -92,7 +92,7 @@ def _hand_back(listener: Any, batch: Any, verb: str, **kwargs: Any) -> None:
         from api.subagents.handback import hand_back
 
         if hand_back(listener, batch, verb=verb, **kwargs):
-            sys.stderr.write("note: the launching agent is gone; result queued to the parent chat\n")
+            sys.stderr.write("note: no agent is listening to this run; result queued to the parent chat\n")
     except Exception as exc:  # never fail the CLI over the courtesy notice
         sys.stderr.write(f"warning: could not hand the result back to the parent chat: {exc}\n")
 

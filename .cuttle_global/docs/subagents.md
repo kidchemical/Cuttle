@@ -113,7 +113,14 @@ crossing the service boundary; alternatively pass
 `--setenv=CUTTLE_CHAT_SESSION_ID="$CUTTLE_CHAT_SESSION_ID"` to `systemd-run`.
 Preserve the other ownership variables too (`CUTTLE_AGENT_RUN_ID`,
 `CUTTLE_AGENT_ID`, `CUTTLE_AGENT_PROJECT_PATH`, and `CUTTLE_HOME` if set).
-Register completion with `watch-unit` ([headless-turns.md](headless-turns.md)).
+A `--wait` CLI started by a service manager (a `systemd-run` unit, or one
+re-parented to init) has no listening agent, so it always queues the notice turn
+on the parent chat when the round ends or hits `--timeout`: a detached spawn wakes
+its parent by itself. `watch-unit` ([headless-turns.md](headless-turns.md)) on that
+unit is optional (it adds the background card and makes `chat_cli status` report
+`waiting_background`); when one is registered, its resume turn replaces the notice,
+so the chat is woken once. A unit that is killed outright (OOM, `systemctl stop`)
+posts nothing; only `watch-unit` covers that.
 Do not start a second spawn to fix card placement.
 
 `--route` asks the existing Cuttle router to pick `agent`+`model` for children

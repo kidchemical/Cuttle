@@ -968,6 +968,38 @@ def test_new_reply_or_subagent_reply_counts_as_progress(chats, monkeypatch):
     assert len(_tick(chats, sched, _snap("busy", reply_id=2), monkeypatch)) == 1
 
 
+def test_subagent_ending_is_news_at_the_next_check(chats, monkeypatch):
+    """A child's reply row exists from its turn's start, so its end adds no message
+    id: the status change itself must reach the supervisor (CH-002353: a lane
+    cancelled at its time limit sat unseen until the 45 min stall window)."""
+    db, owner, sup, target, _foreign = chats
+    child = db.create_chat_session(owner, "lane")
+    conn = db._get_connection()
+    conn.execute("UPDATE chat_sessions SET parent_session_id=? WHERE id=?", (target, child))
+    conn.execute("INSERT INTO subagent_batches (id, parent_session_id, user_id) VALUES ('b1', ?, ?)", (target, owner))
+    conn.execute("INSERT INTO subagent_children (id, batch_id, session_id, status) VALUES ('c1', 'b1', ?, 'running')",
+                 (child,))
+    conn.commit()
+    conn.close()
+    db.add_message(child, "assistant", "")  # the turn's reply row, filled in place later
+    sched = _schedule(chats)
+    monkeypatch.setattr(worker, "_git_head", lambda path: "abc")
+    snap = _snap("idle_with_work")
+    first = _tick(chats, sched, snap, monkeypatch)  # the supervisor has seen this picture
+    for c in first:
+        store.finish(c["id"], "done", {})
+    assert len(_tick(chats, sched, snap, monkeypatch)) == len(first)  # unchanged: no wake
+    before = worker._children_progress(db, target)
+    conn = db._get_connection()
+    conn.execute("UPDATE subagent_children SET status='cancelled' WHERE id='c1'")
+    conn.commit()
+    conn.close()
+    after = worker._children_progress(db, target)
+    assert before == [(child, before[0][1], "running")] and after == [(child, before[0][1], "cancelled")]
+    assert len(_tick(chats, sched, snap, monkeypatch)) == len(first) + 1  # woken at once, not after STALL_SEC
+    assert worker._children_status(None, [child]) == {}  # a broken lookup never hides message progress
+
+
 def test_waiting_background_stall_reads_as_a_wait_and_backs_off(chats, monkeypatch):
     sched = _schedule(chats)
     clock = [1000.0]
