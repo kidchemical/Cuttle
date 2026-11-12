@@ -243,3 +243,24 @@ def test_new_tag_on_unpushed_secret_commit_is_still_blocked(tmp_path):
     result = _run_hook_ref(repo, "refs/tags/v1.0.1", _head(repo))
     assert result.returncode != 0
     assert "more.py" in result.stdout and "config.py" not in result.stdout
+
+
+def _annotated_tag(repo: Path, name: str) -> str:
+    assert _git("tag", "-a", name, "-m", name, cwd=repo).returncode == 0
+    return _git("rev-parse", name, cwd=repo).stdout.strip()  # the tag object, as git push sends it
+
+
+def test_annotated_tag_on_already_pushed_commit_passes(tmp_path):
+    repo = _repo_with_published_secret(tmp_path)
+    result = _run_hook_ref(repo, "refs/tags/v1.0.0", _annotated_tag(repo, "v1.0.0"))
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_annotated_tag_on_unpushed_secret_commit_is_blocked(tmp_path):
+    repo = _repo_with_published_secret(tmp_path)
+    (repo / "more.py").write_text(f'KEY2 = "{_synthetic_aws_key()}"\n', encoding="utf-8")
+    _git("add", ".", cwd=repo)
+    _git("commit", "-m", "new secret", cwd=repo)
+    result = _run_hook_ref(repo, "refs/tags/v1.0.1", _annotated_tag(repo, "v1.0.1"))
+    assert result.returncode != 0
+    assert "more.py" in result.stdout and "config.py" not in result.stdout
