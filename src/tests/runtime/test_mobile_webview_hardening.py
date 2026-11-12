@@ -61,24 +61,39 @@ def test_webview_certificate_and_handshake_errors_fail_closed():
     src = MAIN.read_text(encoding="utf-8")
     callback = src.split("public void onReceivedSslError(", 1)[1].split("@Override", 1)[0]
     assert "handler.cancel();" in callback
-    assert "handler.proceed(" not in src
+    # The only way through is the exact key the user trusted for this host:port.
+    assert src.count("handler.proceed(") == 1
+    assert callback.index("if (isPinnedCertificate(error))") < callback.index("handler.proceed(")
     assert "removeCallbacks(connectionWatchdog)" in callback
     assert "showError(" in callback
     assert "ERROR_FAILED_SSL_HANDSHAKE" in src
 
 
-def test_native_api_uses_default_certificate_and_hostname_validation():
+def test_native_clients_validate_through_the_pin_owner():
     api = (MAIN.parent / "notify" / "CuttleApi.java").read_text(encoding="utf-8")
-    assert "new OkHttpClient.Builder()" in api
-    assert "sslSocketFactory(" not in api
-    assert "hostnameVerifier(" not in api
-    assert "X509TrustManager" not in api
+    voice = (MAIN.parent / "voice" / "LiveVoiceAudio.java").read_text(encoding="utf-8")
+    for src in (api, voice):
+        assert "PinnedTls.apply(new OkHttpClient.Builder(), HostPins::get)" in src
+        assert "sslSocketFactory(" not in src
+        assert "hostnameVerifier(" not in src
+        assert "X509TrustManager" not in src
+
+
+def test_only_the_setup_screen_can_trust_a_certificate():
+    src = MAIN.read_text(encoding="utf-8")
+    trust = src.split("public boolean trustCertificate(", 1)[1].split("@JavascriptInterface", 1)[0]
+    assert "!onLocalSetupPage" in trust
+    assert "lastProbedKey" in trust
+    probe = src.split("public String probeCertificate(", 1)[1].split("@JavascriptInterface", 1)[0]
+    assert "!onLocalSetupPage" in probe
+    assert 'url.startsWith("https://localhost/")' in src
 
 
 def test_setup_does_not_promise_android_certificate_bypass():
     js = (REPO / "apps" / "mobile" / "src" / "main.js").read_text(encoding="utf-8")
     assert "self-signed cert is accepted" not in js
-    assert "trusted certificate matching the server address" in js
+    assert "first connection asks you to confirm this PC" in js
+    assert "ensureCertificateTrusted" in js
 
 
 def test_foreground_skips_notification_long_poll():

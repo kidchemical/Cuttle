@@ -518,15 +518,19 @@ def run_agent_stream_turn(
         # Publish before the worker starts, after claim + persist. The wire
         # marker preserves event order; live status belongs to this worker.
         events.publish("status", "Connecting...")
-        yield ("connecting", None)
         # The turn's row + inspector exist from here (api.chat_turn_row); the
         # live bubble gets their ids before any harness reports in.
         row_event = turn_row_event(open_turn_row(session_id, token))
         if row_event:
             events.publish(*row_event)
+        # Start the worker before the first yield. The user's message is
+        # already saved, so a subscriber that drops here (page reload, lost
+        # connection) must leave a running turn, not a saved message that
+        # nothing ever answers.
         _thread = _threads.Thread(target=_worker, daemon=True)
         _thread.start()
         worker_started = True
+        yield ("connecting", None)
         if row_event:
             yield row_event
         while True:

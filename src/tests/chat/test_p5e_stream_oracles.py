@@ -370,18 +370,26 @@ def test_slow_sse_reader_cannot_republish_terminal_status(
         live.clear_live_status(sid)
 
 
-def test_http_close_before_worker_start_releases_claim(authed_client, fake_harness):
+def test_http_close_at_head_still_answers_the_saved_message(authed_client, fake_harness):
+    """A request closed right after the head (page reload, lost connection)
+    has already saved the user's message, so the turn must still run."""
+    import time
     from api import chat_live_status as live
 
     client, db, uid = authed_client
     sid = db.create_chat_session(uid)
     res = client.post("/api/chat", json={"message": "/cursor test", "session_id": sid})
-    # test_client has read just the head's session event, before worker start.
-    assert chat_delivery.is_busy(sid)
+    # test_client has read just the head's session event.
     res.close()
-    assert not fake_harness
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and chat_delivery.is_busy(sid):
+        time.sleep(0.01)
+    assert len(fake_harness) == 1
     assert not chat_delivery.is_busy(sid)
     assert not live.get_live_status(sid)["active"]
+    roles = [m["role"] for m in db.get_messages(sid)]
+    assert roles == ["user", "assistant"]
+    chat_delivery.clear_result(sid)
 
 
 def test_oracle_stream_busy_shape(authed_client, fake_harness):

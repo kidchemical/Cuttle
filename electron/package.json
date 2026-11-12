@@ -1,6 +1,6 @@
 {
     "name":  "cuttle-desktop",
-    "version":  "0.6.0",
+    "version":  "0.7.0",
     "description":  "Cuttle - AI Agent Framework Desktop Application",
     "main":  "main.js",
     "desktopName":  "cuttle-desktop.desktop",
@@ -172,6 +172,9 @@
                                "shortcutName":  "Cuttle",
                                "installerIcon":  "../src/img/cuttle_logo.ico",
                                "uninstallerIcon":  "../src/img/cuttle_logo.ico",
+                               "installerSidebar":  "installer/installerSidebar.bmp",
+                               "uninstallerSidebar":  "installer/uninstallerSidebar.bmp",
+                               "installerHeader":  "installer/installerHeader.bmp",
                                "license":  "../LICENSE.txt"
                            },
                   "portable":  {

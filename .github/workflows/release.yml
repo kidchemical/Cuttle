@@ -60,5 +60,5 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
             --title "Cuttle $GITHUB_REF_NAME" \
-            --notes "Draft built from $GITHUB_SHA. Verify downloads against SHA256SUMS. Windows artifacts are Authenticode-signed only when signing secrets are configured." \
+            --notes "Draft built from $GITHUB_SHA. Verify downloads against SHA256SUMS. Windows artifacts are Authenticode-signed only when signing (SignPath or WIN_CSC_* secrets) is configured." \
             artifacts/*

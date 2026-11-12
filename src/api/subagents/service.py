@@ -503,6 +503,16 @@ def spawn(
     runs with no turn: ``--anchor CH-…-N``)."""
     db = _open_db(db)
     parent = _parent_row(db, int(parent_session_id))
+    try:
+        from api.orchestrator.control import held as _held
+        hold = _held(int(parent_session_id))
+    except Exception:
+        hold = ""
+    if hold:
+        raise SubagentError(
+            f"this orchestration is {hold} by the user: no sub-agents are started until they resume it. "
+            "Do not retry; report and wait."
+        )
     from api.chat_turn_id import for_spawn, origin
 
     calling = origin(int(parent_session_id))
@@ -1057,6 +1067,31 @@ def note_external_round(session_id: int, *, turn_id: Optional[str] = None, db=No
     return True
 
 
+def external_round_undelivered(session_id, *, db=None) -> bool:
+    """Whether a sub-agent child only *looks* busy: its external round is marked
+    running (``note_external_round``, at send time) but no turn runs behind it.
+
+    The chat-ops outbox asks this before treating the child as busy. Without it
+    the send that opened the round waits for the round to end, and the round
+    waits for the send — a chat that says "running" for hours with nothing
+    behind it (incident 2026-11-10, CH-002385). Flask process only: turn
+    ownership (``chat_delivery``, live status) is in-process state."""
+    try:
+        sid = int(_bare_sid(session_id))
+        child = store.get_child_by_session(_open_db(db), sid)
+    except Exception:
+        return False
+    if not child or child.status != STATUS_RUNNING or child.live_turn_id != store.EXTERNAL_ROUND:
+        return False
+    try:
+        from api import chat_delivery
+        from api.chat_live_status import get_live_status
+
+        return not chat_delivery.is_busy(sid) and not get_live_status(sid).get("active")
+    except Exception:
+        return False
+
+
 def on_child_turns_ended(session_ids, *, db=None) -> List[str]:
     """Close external rounds (``note_external_round``) whose child turn just ended.
 
@@ -1326,8 +1361,21 @@ def child_live_status(session_id: Any, *, db=None) -> Optional[Dict[str, Any]]:
             message_id = int(rows[-1]["id"]) if rows else None
         except Exception:
             message_id = None
+    # The child chat's only user row is the parent's brief (speaker_kind
+    # parent), which the working bubble rightly ignores, so without this the
+    # live bubble had no agent chip until the reply landed. Same chip the
+    # finished reply gets (spec/record pins; never live session pins).
+    slash_command = None
+    if generating:
+        try:
+            from api.subagents.identity import child_slash_command
+
+            slash_command = child_slash_command(child=child, session_id=int(sid))
+        except Exception:
+            slash_command = None
     return {
         "generating": generating,
+        "slash_command": slash_command,
         "status": (child.live_status if child.status == STATUS_RUNNING and child.live_status
                    else f"{child.label or 'Subagent'} — {child.status}"),
         "subagent": child.public(),

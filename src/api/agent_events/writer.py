@@ -16,12 +16,18 @@ from .store import EventStore, state_dir
 log = logging.getLogger(__name__)
 
 
+def _database_busy(exc):
+    import sqlite3
+    return isinstance(exc,sqlite3.OperationalError) and any(word in str(exc).lower() for word in ('locked','busy'))
+
+
 class EventWriter:
     def __init__(self, root):
         self.root=Path(root)
         self.queue=queue.Queue()
         self.error=None
-        self.next_maintenance=time.monotonic()+300
+        from .maintenance import seconds_until_due
+        self.next_maintenance=time.monotonic()+seconds_until_due(self.root)
         self.dropped_status=0
         self.bad_pending=set()
         from .lifecycle import process_owner
@@ -97,9 +103,9 @@ class EventWriter:
                     log.exception('Agent event lifecycle recovery unavailable')
                 if not os.environ.get('CUTTLE_AGENT_EVENTS_DIR') and time.monotonic()>=self.next_maintenance:
                     try:
-                        from .maintenance import prune
+                        from .maintenance import scheduled
                         store=store or EventStore(self.root)
-                        prune(store)
+                        scheduled(store)
                     except Exception:
                         log.exception('Agent events daily maintenance failed')
                     self.next_maintenance=time.monotonic()+86400
@@ -176,8 +182,8 @@ class EventWriter:
                 marker.set()
             if not os.environ.get('CUTTLE_AGENT_EVENTS_DIR') and time.monotonic()>=self.next_maintenance:
                 try:
-                    from .maintenance import prune
-                    prune(store)
+                    from .maintenance import scheduled
+                    scheduled(store)
                 except Exception:
                     log.exception('Agent events daily maintenance failed')
                 self.next_maintenance=time.monotonic()+86400
@@ -199,7 +205,12 @@ class EventWriter:
         for path in sorted((self.root/'pending').glob('*.json.gz')):
             try:
                 store.write_batch(json.loads(gzip.decompress(path.read_bytes())))
-            except Exception:
+            except Exception as exc:
+                # A locked database says nothing about the batch: keep it and
+                # try again later. Quarantining on a lock dropped valid events
+                # from run logs whenever maintenance held the file.
+                if _database_busy(exc):
+                    raise
                 # A batch that keeps failing must never block the queue behind
                 # it (head-of-line poison pill). Retry once, then quarantine.
                 if path.name in self.bad_pending:

@@ -8,6 +8,15 @@ and die with it, so they never become openable child chats).
 
 Library: `api.subagents`. CLI: `python -m api.subagents`.
 
+Claude chat launches enforce this boundary with `--disallowedTools` for
+`Agent`, its legacy name `Task`, and `TeamCreate` (alongside the native question
+picker). This applies on fresh sessions, resumes and API-credit retries; it
+does not depend on Brain repeating an unchanged rule. Background `Bash`,
+`Monitor`, `TaskStop` and `TaskOutput` remain available for OS jobs and Cuttle
+`spawn --wait` commands. The trajectory's `harness_policy` event records the
+launch policy and deny list. Already running Claude processes retain their
+original tools until they finish; a Flask restart does not retrofit a live run.
+
 To message, check on, or supervise a chat this CLI did not spawn (a parent,
 sibling, or any existing chat), use `python -m api.chat_cli send|status|snapshot|supervise`
 (`chat-history.md`).
@@ -32,7 +41,12 @@ left — `features/orchestrator/docs/orchestrator.md`).
 A pinned child whose account is out of usage (a recent quota failure, or the
 cached `/usage` plan windows at their limit) is refused before any chat is
 created; a child that fails on quota marks its account for later spawns and
-routed turns.
+routed turns. Only a *failed* run can mark an account (a successful reply that
+mentions "budget" or a number like `1.402` never does). A mark whose error named
+the vendor's reset holds until then; one with a guessed reset ("the reset was not
+named") yields to a newer live `/usage` snapshot that shows the account usable,
+and any later successful turn on that agent clears it. Don't park work for hours
+on a budget block without checking `python -m api.gizmos usage <agent>`.
 
 `model` must be an id the named harness's own CLI accepts — pass it exactly as
 that harness spells it (some qualify with a provider prefix, some are bare); do
@@ -165,11 +179,12 @@ If that turn's reply was already saved when `spawn` ran (an agent still working 
 the background after its reply), the card goes on the first reply of that turn
 saved after the spawn, never back onto the earlier one.
 
-While the children work, the parent's pinned **background card** (the one that
-shows "Waiting in background") lists them as fleet-style rows: avatar, name,
-live status line and outcome, each opening its child chat. It also folds in the
-agent's own background task that runs the `api.subagents` command. Supervised
-chats stay as "Open CH-…" buttons under "Supervising".
+Sub-agents are not background jobs: the parent's pinned **background card**
+does not list them; their transcript cards are their only place. While children
+are live, the card also leaves out the run that waits on them — the agent's own
+background task or detached unit that runs the `api.subagents` command — so the
+same work is never shown twice. If that run returns after its turn ended, the
+result arrives as a Cuttle notice turn (one line: each child and its status).
 
 A follow-up to a child — `subagents message` or `chat_cli send CH-<child>` —
 starts a new card round the same way, bound to the turn that sent it, and the

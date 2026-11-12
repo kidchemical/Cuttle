@@ -49,8 +49,8 @@
         <label class="field">
           <span>Port</span>
           <select id="port-preset" name="portPreset">
-            <option value="8000">8000 · HTTP (recommended)</option>
-            <option value="8888">8888 · HTTPS (phone portal)</option>
+            <option value="8888">8888 · HTTPS (recommended)</option>
+            <option value="8000">8000 · HTTP (unencrypted)</option>
             <option value="custom">Custom…</option>
           </select>
         </label>
@@ -69,7 +69,7 @@
         <input id="use-https" name="useHttps" type="checkbox" role="switch">
       </label>
 
-      <p class="hint" id="scheme-hint">Using <strong>http</strong> on your home LAN.</p>
+      <p class="hint" id="scheme-hint">Using <strong>https</strong> — the first connection asks you to confirm this PC.</p>
 
       <details class="advanced">
         <summary>Notifications &amp; token</summary>

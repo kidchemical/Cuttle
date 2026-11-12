@@ -226,6 +226,26 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         },
     };
 
+    /** One-message billing order for agents that bill either way (api_fallback). */
+    const HARNESS_BILLING_SLASH_BY_AGENT = {
+        claude: [
+            {
+                prefix: '/use-api ',
+                label: 'Use API credit',
+                hint: 'Bill this message to Anthropic API credit first (subscription if no key / budget spent)',
+                category: 'claude-cmd',
+                keywords: 'claude billing api credit key use-api pay',
+            },
+            {
+                prefix: '/use-subscription ',
+                label: 'Use subscription',
+                hint: 'Bill this message to the Claude subscription first',
+                category: 'claude-cmd',
+                keywords: 'claude billing subscription plan use-subscription',
+            },
+        ],
+    };
+
     /** Nested ``/cost`` (per-model token prices) for every non-Cursor harness. */
     const HARNESS_COST_AGENT_LABELS = {
         muse: 'Muse Code',
@@ -326,15 +346,28 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         // (and so we can collapse to a single Cursor badge).
         // Ids are ASCII slugs (`gpt-5`, `openai/gpt-4o`, `model:tag`); a renamed
         // title like `/model 🦘 jump bug` keeps the emoji in the name.
+        // Nested `/model …` belongs to the agent named before it (`/claude /model
+        // refresh`); bare `/model` is Cursor Agent's legacy form.
+        const owner = String(d.agent || 'cursor').toLowerCase();
+        // `/model refresh|reload|sync` reloads the catalog — a "Refresh" command
+        // chip, never a model pick (it used to render "Cursor | refresh").
+        const refreshM = str.match(/^\/model\s+(refresh|reload|sync)(?=\s|$)\s*(.*)$/is);
+        if (refreshM) {
+            return {
+                chips: [{ label: 'Refresh', meta: '/model refresh', category: owner + '-cmd' }],
+                body: (refreshM[2] || '').trim(),
+            };
+        }
         const modelSetM = str.match(/^\/model\s+([A-Za-z0-9][\w.:/@+-]*)(?=\s|$)\s*(.*)$/s);
         if (modelSetM) {
             const mid = modelSetM[1];
             const body = (modelSetM[2] || '').trim();
+            const cursorOwned = owner === 'cursor';
             return {
                 chips: [{
-                    label: d.modelLabel ? d.modelLabel(mid) : mid,
+                    label: cursorOwned && d.modelLabel ? d.modelLabel(mid) : mid,
                     meta: '/model ' + mid,
-                    category: 'cursor-model',
+                    category: owner + '-model',
                     modelId: mid,
                 }],
                 body,
@@ -351,7 +384,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
             if (p === '/model ') {
                 if (str === '/model' || str.startsWith('/model ')) {
                     return {
-                        chips: [{ label: cmd.label, meta: '/model', category: cat }],
+                        chips: [{ label: cmd.label, meta: '/model', category: owner + '-cmd' }],
                         body: str.slice('/model'.length).trim(),
                     };
                 }
@@ -399,19 +432,26 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         return null;
     }
 
+    const STORED_AGENT_HEAD_RE = /^\/(cursor|muse|hermes|codex|opencode|claude|deepseek|antigravity)(?:\s|$)/i;
+
     /** Full message: first command(s), then optional freeform body. Supports multiple consecutive commands. */
     function parseStoredSlashCommandMessage(raw, deps) {
         const s = String(raw ?? '').trim();
         if (!s.startsWith('/') && !/^\[Skill\s/i.test(s)) return null;
         const chips = [];
         let rest = s;
+        let agent = null;
         for (let i = 0; i < 24; i++) {
-            const step = parseStoredSlashCommandHead(rest, deps);
+            const step = parseStoredSlashCommandHead(rest, Object.assign({}, deps, { agent }));
             if (!step) {
                 if (i === 0) return null;
                 break;
             }
             chips.push(...step.chips);
+            for (const c of step.chips) {
+                const am = String((c && c.meta) || '').match(STORED_AGENT_HEAD_RE);
+                if (am) agent = am[1].toLowerCase();
+            }
             rest = step.body.trim();
             if (!rest) break;
             if (!rest.startsWith('/') && !/^\[Skill\s/i.test(rest)) break;
@@ -1069,6 +1109,8 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         // the Cursor agent badge).
         if (cat === 'cursor-cmd' || isCursorNestedCommandChip(c)) return false;
         if (cat === 'cursor' || cat === 'cursor-model') return true;
+        // Another agent's nested `/model …` (`/claude /model opus`) is not Cursor's.
+        if (/^[a-z]+-(model|effort|cmd)$/.test(cat)) return false;
         if (meta.toLowerCase().startsWith('/cursor')) return true;
         if (/^\/model\s+refresh\b/i.test(meta)) return false;
         if (/^\/model\b/i.test(meta)) return true;
@@ -1091,6 +1133,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         SLASH_COMMANDS,
         CURSOR_AGENT_SLASH_COMMANDS,
         HARNESS_USAGE_SLASH_BY_AGENT,
+        HARNESS_BILLING_SLASH_BY_AGENT,
         HARNESS_COST_AGENT_LABELS,
         TITLE_SLASH_SKIP,
         harnessCostSlashCommand,

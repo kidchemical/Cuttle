@@ -17,6 +17,7 @@ import os
 import queue
 import re
 import secrets
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -175,9 +176,9 @@ def emit_mobile_event(event_type: str, payload: Optional[Dict[str, Any]] = None,
     with _device_lock:
         items = list(_device_queues.items())
     if not items:
-        print(f"[MOBILE] emit {event_type} — no phone connected", flush=True)
+        print(f"[MOBILE] emit {event_type} — no phone connected", file=sys.stderr, flush=True)
     else:
-        print(f"[MOBILE] emit {event_type} → {len(items)} device(s)", flush=True)
+        print(f"[MOBILE] emit {event_type} → {len(items)} device(s)", file=sys.stderr, flush=True)
     for did, q in items:
         if device_id and did != device_id:
             continue

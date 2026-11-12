@@ -104,7 +104,6 @@
             starFilled: '<svg class="chat-star-menu-icon chat-star-menu-icon--filled" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.2 4.1 1 5.8L12 16.8 6.7 19.6l1-5.8-4.2-4.1 5.9-.9L12 3.5z"/></svg>',
             unread: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="5" fill="currentColor" opacity="0.9"/><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.6" opacity="0.45"/></svg>',
             gitPush: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 19V5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 12l7-7 7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-            terminal: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><polyline points="4 17 10 11 4 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="19" x2="20" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
             voice: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
             subagents: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="2.2" stroke="currentColor" stroke-width="2"/><circle cx="6" cy="18" r="2.2" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="12" r="2.2" stroke="currentColor" stroke-width="2"/><path d="M8.3 7.2c2.1 2 2.1 7.6 0 9.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8.4 12H15.6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
         };
@@ -399,40 +398,11 @@
         `;
         }
 
-        function createTerminalHistoryItemHTML(session) {
-            const sid = String(session.id).replace(/'/g, "\\'");
-            const displayId = ctx.formatChatDisplayId(session.id) || '';
-            const title = session.title || session.shell || 'Terminal';
-            const starred = !!session.starred;
-            const openClass = ctx.openPaneEntriesForSession(session.id).length ? ' is-open-pane' : '';
-            const meta = historyItemMetaHTML([
-                '<span class="chat-icon" aria-hidden="true">⌨️</span>',
-                '<span class="history-kind-badge" title="Terminal session">Terminal</span>',
-                displayId
-                    ? `<span class="history-chat-handle" title="${escapeHtml(displayId)}">${escapeHtml(displayId)}</span>`
-                    : '',
-                starred ? historyStarredIconHTML() : '',
-            ]);
-            return `
-            <div class="chat-history-item is-terminal${starred ? ' is-starred' : ''}${openClass}"
-                 data-session-id="${escapeHtml(String(session.id))}"
-                 data-kind="terminal"
-                 onclick="window.chatPageOpenTerminalSession('${sid}')">
-                <div class="history-item-body">
-                    ${meta}
-                    <div class="chat-title">${escapeHtml(title)}</div>
-                </div>
-                ${createHistoryDeleteActionsHTML(session.id, { includeRename: true, starred, lastMessageMs: ctx.resolveHistoryLastMessageMs(session) })}
-            </div>
-        `;
-        }
-
         return {
             createHistoryDeleteActionsHTML,
             createHistorySectionHeaderHTML,
             createAuthHistoryItemHTML,
             createHistoryItemHTML,
-            createTerminalHistoryItemHTML,
         };
     }
 
@@ -655,6 +625,36 @@
         return missing ? visible.concat([missing]) : visible;
     }
 
+    /**
+     * First `visibleLimit` sub-agent children of one parent, plus the child on
+     * the current chat's branch (the current chat or one of its ancestors) when
+     * paging would hide it.
+     */
+    function visibleHistoryChildren(kids, visibleLimit, nested, opts) {
+        const list = Array.isArray(kids) ? kids : [];
+        const limit = Math.max(0, Number(visibleLimit) || 0);
+        const visible = list.slice(0, limit);
+        const current = opts && opts.currentSessionId;
+        if (current == null || current === '' || visible.length === list.length) return visible;
+        const eq = (opts && typeof opts.sessionIdsEqual === 'function')
+            ? opts.sessionIdsEqual
+            : function (a, b) { return String(a) === String(b); };
+        const branch = [String(current)].concat(historySessionAncestorIds(current, nested, opts));
+        const onBranch = (e) => {
+            const id = e && e.sessionId;
+            if (id == null) return false;
+            return branch.some((b) => String(b) === String(id) || eq(b, id));
+        };
+        if (visible.some(onBranch)) return visible;
+        const missing = list.find(onBranch);
+        return missing ? visible.concat([missing]) : visible;
+    }
+
+    /** Reveal key for one parent's sub-agent list (shares the project reveal map). */
+    function historySubagentRevealKey(parentId) {
+        return 'subagents:' + String(parentId == null ? '' : parentId);
+    }
+
     function historySubagentNoun(count) {
         const n = Math.max(0, Number(count) || 0);
         return n === 1 ? 'sub-agent' : 'sub-agents';
@@ -733,9 +733,19 @@
             html += itemHtml;
             html += '<div class="history-subagent-children" id="history-subagents-'
                 + safePid + '-kids" role="group">';
-            kids.forEach((child) => {
+            // Page long sub-agent lists like project groups: first 5, then
+            // "Show 5 more"; rows past the limit are not rendered at all.
+            const kidsKey = historySubagentRevealKey(pid);
+            const kidsLimit = typeof opts.getVisibleLimit === 'function'
+                ? opts.getVisibleLimit(kidsKey, kids.length)
+                : Math.min(HISTORY_GROUP_PREVIEW_LIMIT, kids.length);
+            visibleHistoryChildren(kids, kidsLimit, nested, {
+                currentSessionId: opts.currentSessionId,
+                sessionIdsEqual: opts.sessionIdsEqual,
+            }).forEach((child) => {
                 html += renderTree(child);
             });
+            html += historyGroupToggleHTML(kidsKey, kids.length, kidsLimit, opts.escapeHtml);
             html += '</div></div>';
             return html;
         }
@@ -838,6 +848,8 @@
         historySessionAncestorIds,
         isHistorySubagentGroupExpanded,
         visibleHistoryRoots,
+        visibleHistoryChildren,
+        historySubagentRevealKey,
         historySubagentNoun,
         historySubagentToggleTitle,
         renderHistoryGroupBody,

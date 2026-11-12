@@ -75,6 +75,33 @@ SCHEDULED = {'success': True, 'generating': False, 'active': False, 'background'
                    'status': 'running', 'target': 'CH-001821'}]}}
 
 
+def test_card_keeps_its_height_in_a_crowded_transcript(browser, static_server):
+    page = browser.new_page(viewport={'width': 390, 'height': 500})
+    try:
+        page.goto(static_server + '/agent_feed.html')
+        page.set_content('<link rel="stylesheet" href="' + static_server + '/css/chat_page.css">'
+                         '<div id="chatMessages" class="chat-messages" style="height:200px">'
+                         '<div style="flex:none;height:600px">Long transcript</div></div>')
+        page.add_script_tag(url=static_server + '/js/chat/chat_background_work.js')
+        page.evaluate('''() => { window.bw = CuttleChatBackgroundWork.create({win: window,
+            currentSession: () => '1822', sessionIdsEqual: (a, b) => a === b, isBusy: () => false}); }''')
+        page.evaluate('live => bw.sync(live, "1822")', SCHEDULED)
+        card = page.locator('#chat-background-work')
+        head = card.locator('.chat-bg-head')
+        expect(head).to_be_visible()
+        sizes = card.evaluate('(el) => ({card: el.getBoundingClientRect().height, head: el.firstElementChild.getBoundingClientRect().height})')
+        assert sizes['head'] > 20
+        assert sizes['card'] >= sizes['head']
+        # The old default flex shrink collapses this same card to its border.
+        collapsed = card.evaluate('''el => {
+            el.style.flexShrink = '1';
+            return el.getBoundingClientRect().height;
+        }''')
+        assert collapsed < sizes['head']
+    finally:
+        page.close()
+
+
 def test_loose_process_count_is_shown_once(browser, static_server):
     page = browser.new_page()
     try:
@@ -122,7 +149,10 @@ def test_supervising_card_opens_the_supervised_chat(browser, static_server):
         card = page.locator('#chat-background-work')
         expect(card.locator('.chat-bg-title')).to_contain_text('Supervising')
         expect(card.locator('.chat-bg-label')).to_have_count(0)
-        expect(card.locator('.chat-bg-meta')).to_have_text('Every 15 min')
+        # One line: the chat it watches as a chip, the interval as a chip, no prose.
+        expect(card.locator('.chat-bg-open')).to_have_text('CH-001821')
+        expect(card.locator('.chat-bg-row-aside .chat-bg-chip')).to_have_text('every 15m')
+        expect(card.locator('.chat-bg-rows')).to_have_count(0)
         expect(card.locator('.chat-bg-supervising')).to_have_count(0)
         expect(card).to_have_class(re.compile(r'\bis-clickable\b'))
         # Active supervision is alive (green ping), not a dimmed still ring.
@@ -131,7 +161,7 @@ def test_supervising_card_opens_the_supervised_chat(browser, static_server):
             "e => getComputedStyle(e, '::before').animationName") == 'chat-bg-ping'
         card.screenshot(path=os.environ.get('BG_CARD_SHOT_SUPERVISING', '/tmp/bg_supervising.png'))
         card.locator('.chat-bg-open').click()
-        card.locator('.chat-bg-meta').click()
+        card.locator('.chat-bg-title').click()
         assert page.evaluate('() => window.opened') == ['1821', '1821']
         paused = json.loads(json.dumps(SCHEDULED))
         paused['background']['schedules'][0].update(status='paused', detail='every 15m · last seen waiting_background')
@@ -142,13 +172,28 @@ def test_supervising_card_opens_the_supervised_chat(browser, static_server):
         assert card.locator('.chat-bg-ring').evaluate(
             "e => getComputedStyle(e, '::before').animationName") == 'none'
         card.screenshot(path=os.environ.get('BG_CARD_SHOT_PAUSED', '/tmp/bg_paused.png'))
-        expect(card.locator('.chat-bg-meta')).to_have_text('No check-ins until resumed.')
+        assert card.locator('.chat-bg-seen').get_attribute('title') == 'No check-ins until resumed'
         expect(card.locator('.chat-bg-label')).to_have_count(0)
         expect(card.locator('.chat-bg-supervising')).to_have_count(0)
-        expect(card.locator('.chat-bg-open')).to_have_text('Open CH-001821')
-        paused['background']['schedules'][0]['status'] = 'running'
+        expect(card.locator('.chat-bg-open')).to_have_text('CH-001821')
+        # Running again, with the structured facts the host sends: last seen state
+        # in two words and a ring counting down to the next check.
+        paused['background']['schedules'][0].update(status='running', kind='supervise', every=900,
+                                                    seen='waiting_background',
+                                                    next_at=page.evaluate('() => Date.now() / 1000 + 450'))
         page.evaluate('live => bw.sync(live, "1822")', paused)
-        expect(card.locator('.chat-bg-meta')).to_have_text('Every 15 min · Last checked: waiting for background work')
+        expect(card.locator('.chat-bg-seen')).to_have_text('waiting on a job')
+        expect(card.locator('.chat-bg-next-text')).to_have_text('7m')
+        assert card.locator('.chat-bg-next').get_attribute('title') == 'Next check in 7m'
+        # A send that has waited past the stuck threshold is flagged, with its age.
+        paused['background']['schedules'].append({
+            'id': 'op2', 'kind': 'send', 'label': 'Send → CH-002365', 'detail': 'Recheck please', 'status': 'queued',
+            'target': 'CH-002365', 'waiting_since': page.evaluate('() => Date.now() / 1000 - 4 * 3600 - 40 * 60')})
+        page.evaluate('live => bw.sync(live, "1822")', paused)
+        send = card.locator('.chat-bg-send')
+        expect(send).to_have_class(re.compile(r'\bis-warn\b'))
+        expect(send.locator('.chat-bg-age')).to_have_text('queued 4h 40m')
+        expect(send.locator('.chat-bg-open')).to_have_text('CH-002365')
         assert not errors
     finally:
         page.close()
@@ -179,8 +224,8 @@ def test_detached_unit_watch_shows_unit_state_and_elapsed(browser, static_server
         page.evaluate('live => bw.sync(live, "1821")', live)
         card = page.locator('#chat-background-work')
         expect(card.locator('.chat-bg-title')).to_contain_text('Background job running')
-        expect(card.locator('.chat-bg-title .chat-bg-elapsed')).to_have_text('14m')
-        row = card.locator('.chat-bg-watch')
+        expect(card.locator('.chat-bg-head .chat-bg-elapsed')).to_have_text('14m')
+        row = card.locator('summary.chat-bg-watch')
         expect(row.locator('.chat-bg-watch-label')).to_have_text('Running: ch1821-rig-build')
         assert row.locator('.chat-bg-watch-state').count() == 0  # technical state lives in Details
         assert row.locator('.chat-bg-watch-elapsed').count() == 0  # elapsed already in title
@@ -278,7 +323,7 @@ def test_watch_rows_fit_the_card_on_a_phone(browser, static_server):
         page.wait_for_selector('#chat-background-work .chat-bg-watch')
         boxes = page.evaluate("""() => {
             const card = document.getElementById('chat-background-work').getBoundingClientRect();
-            const body = document.querySelector('#chat-background-work .chat-bg-body').getBoundingClientRect();
+            const body = document.querySelector('#chat-background-work .chat-bg-rows').getBoundingClientRect();
             return { card: [card.left, card.right], body: [body.left, body.right],
                      rows: [...document.querySelectorAll('#chat-background-work .chat-bg-watch')].map((r) => {
                          const b = r.getBoundingClientRect();
@@ -340,11 +385,11 @@ def test_live_cards_ride_only_their_own_turns_bubble(browser, static_server):
         page.close()
 
 
-def test_pinned_card_shows_subagents_as_fleet_rows(browser, static_server):
-    """CH-001822: the parent waits on `python -m api.subagents spawn --wait` in the
-    background. The pinned card shows the children as rows (avatar, name, live
-    status, outcome), folds the spawn command wait into them, and keeps the
-    supervised chat as "Open CH-…" under "Supervising". Fits a phone."""
+def test_subagents_are_left_to_their_transcript_cards(browser, static_server):
+    """CH-001822 / CH-001821: a parent waits on `python -m api.subagents spawn --wait`,
+    either as a harness background task or a detached systemd unit. The children
+    already have transcript cards, so the pinned card lists neither the children
+    nor the run that waits on them; only other work (here: supervision) stays."""
     page = browser.new_page(viewport={'width': 360, 'height': 740})
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
@@ -356,47 +401,41 @@ def test_pinned_card_shows_subagents_as_fleet_rows(browser, static_server):
         page.add_script_tag(url=static_server + '/js/shared/progress_model.js')
         page.add_script_tag(url=static_server + '/js/chat/chat_background_work.js')
         page.evaluate("""() => {
-            window.opened = [];
             window.bw = CuttleChatBackgroundWork.create({ win: window, currentSession: () => '1822',
-                sessionIdsEqual: (a, b) => String(a) === String(b), isBusy: () => false,
-                openChat: (sid) => window.opened.push(sid) });
+                sessionIdsEqual: (a, b) => String(a) === String(b), isBusy: () => false });
         }""")
         spawn_wait = 'Waiting on: python -m api.subagents spawn --parent CH-001822 --wait'
+        unit = {'job_id': 'ch1822-p9l5', 'label': 'Bots P9 L5 lane', 'kind': 'unit', 'unit': 'ch1822-p9l5',
+                'sub_state': 'running', 'state': 'running', 'handoff': 'on_exit', 'subagents': True,
+                'resume_chat': 'CH-001822', 'resume_note': 'L5 lane exited: read p9l5-report.md'}
+        kids = [{'handle': 'CH-002111', 'session_id': 2111, 'label': 'Cuttle fixes', 'agent': 'claude',
+                 'fleet': True, 'outcome': 'running', 'summary': 'Running pytest'},
+                {'handle': 'CH-002073', 'session_id': 2073, 'label': 'Reviewer', 'agent': 'codex',
+                 'fleet': True, 'outcome': 'done', 'summary': 'Approved.'}]
         live = {'success': True, 'generating': False, 'active': False,
                 'background': {'label': spawn_wait, 'process_count': 0, 'detached_count': 0,
-                               'started_at': None, 'working': True, 'watches': [], 'feed': False,
+                               'started_at': None, 'working': True, 'watches': [unit], 'feed': False,
                                'waits': [{'job_id': 'claude-bg-1822-x', 'label': spawn_wait, 'started_at': None}],
                                'schedules': [{'id': 'op1', 'label': 'Supervise CH-001821', 'detail': 'every 15m',
                                               'status': 'running', 'target': 'CH-001821'}]},
-                'subagents': [
-                    {'handle': 'CH-002111', 'session_id': 2111, 'label': 'Cuttle fixes', 'agent': 'claude',
-                     'fleet': True, 'outcome': 'running', 'summary': 'Running pytest on src/tests/chat_ops'},
-                    {'handle': 'CH-002073', 'session_id': 2073, 'label': 'Reviewer', 'avatar': '⚖️',
-                     'agent': 'codex', 'fleet': True, 'outcome': 'done', 'summary': 'Approved: tests pass.'}]}
+                'subagents': kids}
         page.evaluate('live => bw.sync(live, "1822")', live)
         card = page.locator('#chat-background-work')
-        expect(card.locator('.chat-bg-title')).to_contain_text('Sub-agents working')
-        rows = card.locator('.chat-bg-agent')
-        expect(rows).to_have_count(2)
-        expect(rows.nth(0).locator('.chat-bg-agent-name')).to_have_text('Cuttle fixes')
-        expect(rows.nth(0).locator('.chat-bg-agent-status')).to_have_text('Running pytest on src/tests/chat_ops')
-        expect(rows.nth(0).locator('.chat-bg-agent-outcome')).to_have_text('Running')
-        expect(rows.nth(1).locator('.chat-bg-agent-avatar')).to_have_text('⚖️')
-        expect(rows.nth(1).locator('.chat-bg-agent-outcome')).to_have_text('Done')
-        assert card.locator('.chat-bg-label').count() == 0      # the spawn command wait is folded in
-        assert card.locator('.chat-bg-open').all_inner_texts() == ['Open CH-001821']  # supervision only
-        expect(card.locator('.chat-bg-supervising')).to_have_count(0)
-        assert card.locator('.chat-bg-stop').count() == 1       # the background wait still stops
-        fits = card.evaluate("""el => { const c = el.getBoundingClientRect();
-            return [...el.querySelectorAll('.chat-bg-agent, .chat-bg-actions')].every((r) => {
-                const b = r.getBoundingClientRect(); return b.right <= c.right + 0.5 && r.scrollWidth <= r.clientWidth + 1; }); }""")
-        assert fits, 'rows must fit the card on a phone'
-        rows.nth(0).click()
-        assert page.evaluate('() => window.opened') == ['2111']
-        # No other background work: the card still shows the children alone.
-        page.evaluate('live => bw.sync({ ...live, background: null }, "1822")', live)
-        expect(card.locator('.chat-bg-agent')).to_have_count(2)
-        assert card.locator('.chat-bg-stop').count() == 0
+        expect(card.locator('.chat-bg-title')).to_have_text('Supervising')
+        expect(card).not_to_contain_text('Cuttle fixes')
+        expect(card).not_to_contain_text('Bots P9 L5')
+        expect(card).not_to_contain_text('api.subagents')
+        assert card.locator('.chat-bg-open').all_inner_texts() == ['CH-001821']
+        assert card.locator('.chat-bg-stop').count() == 0  # nothing visible to stop
+        # Only the sub-agent run itself: no card at all.
+        only = {**live, 'background': {**live['background'], 'schedules': []}}
+        page.evaluate('live => bw.sync(live, "1822")', only)
+        expect(card).to_have_count(0)
+        # Children finished but the detached unit still runs: it is ordinary work again.
+        done = {**only, 'subagents': [{**k, 'outcome': 'done'} for k in kids]}
+        page.evaluate('live => bw.sync(live, "1822")', done)
+        expect(card.locator('.chat-bg-watch-label')).to_have_text('Bots P9 L5 lane')
+        expect(card).not_to_contain_text('L5 lane exited')
         assert not errors
     finally:
         page.close()
@@ -477,10 +516,22 @@ def test_job_steps_details_staleness_and_completion_on_phone(browser, static_ser
         bg = {'watches': [job], 'waits': [], 'schedules': [], 'working': True}
         page.evaluate('bg => bw.sync({background: bg}, "7")', bg)
         card = page.locator('#chat-background-work')
+        # Closed, the row says it with graphics: one pip per step, a count, the
+        # step running now, and a "quiet" chip instead of a sentence.
+        row = card.locator('summary.chat-bg-watch')
+        expect(row.locator('.chat-bg-pip')).to_have_count(4)
+        assert [row.locator('.chat-bg-pip').nth(i).get_attribute('class').split('is-')[1] for i in range(4)] == [
+            'done', 'failed', 'running', 'pending']
+        expect(row.locator('.chat-bg-count')).to_have_text('2/4')
+        expect(row.locator('.chat-bg-now')).to_have_text('Check player facing')
+        expect(row.locator('.chat-bg-chip.is-warn')).to_have_text('quiet')
+        expect(card.locator('.chat-bg-job')).to_be_hidden()
         expect(card.locator('.chat-bg-step')).to_have_count(4)
         expect(card.locator('.chat-bg-job-summary')).to_have_text('2 of 4 steps finished · 1 failed')
         expect(card.locator('.chat-bg-job-health')).to_contain_text('No update for 15m')
-        expect(card.locator('.chat-bg-handoff')).to_contain_text('an agent will resume CH-000007')
+        expect(card.locator('.chat-bg-handoff')).to_have_text('CH-000007 resumes when it ends')
+        # The resume note is the agent's own instruction for its follow-up turn, not for people.
+        expect(card).not_to_contain_text('Read the case logs and report the failures.')
         for state, label in [('done', 'Done'), ('failed', 'Failed'), ('running', 'In progress'), ('pending', 'Pending')]:
             assert card.locator('.chat-bg-step.is-' + state + ' .chat-bg-step-icon').get_attribute('aria-label') == label
         assert card.locator('.is-running .chat-bg-step-icon').evaluate('el => getComputedStyle(el).animationName') == 'none'
@@ -498,7 +549,14 @@ def test_job_steps_details_staleness_and_completion_on_phone(browser, static_ser
         # Completion preserves the readable result and delivery receipt, without a running spinner.
         job.update(state='failed', handoff='failed', followup_query_id='follow7')
         page.evaluate('job => bw.sync({background: {watches: [], recent: [job]}}, "7")', job)
-        expect(card.locator('.chat-bg-title')).to_have_text('Background job results')
+        # Nothing live any more: the card shrinks to one line, like a locked form.
+        expect(card).to_have_class(re.compile(r'\bis-settled\b'))
+        expect(card.locator('.chat-bg-title')).to_have_text('Laptop build and multiplayer checks')
+        expect(card.locator('.chat-bg-head .chat-bg-chip')).to_have_text('1 failed')
+        expect(card.locator('.chat-bg-rows')).to_have_count(0)
+        assert card.evaluate('el => el.getBoundingClientRect().height') < 40
+        card.locator('.chat-bg-head').click()
+        expect(card.locator('summary.chat-bg-watch .chat-bg-chip')).to_have_text('failed')
         expect(card.locator('.chat-bg-handoff')).to_have_text('Follow-up delivery failed for CH-000007')
         expect(card.locator('.chat-bg-job-health')).to_have_count(0)
         expect(card.locator('.chat-bg-step.is-running')).to_have_count(0)  # ended without a step result

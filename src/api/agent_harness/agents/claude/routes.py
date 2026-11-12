@@ -1,4 +1,4 @@
-"""Claude Code palette HTTP — models, per-chat model pin, per-chat effort pin.
+"""Claude Code palette HTTP — models, per-chat model / effort / billing pins.
 
 Same contract as ``/api/codex/models|model|effort`` so the chat page treats
 every badge-gated harness alike. Owned by the Claude agent slice (not the
@@ -17,8 +17,10 @@ from api.agent_harness.agents.claude.model_catalog import (
 )
 from api.http_authz import authenticated_required, require_session_actor
 from scripts.utilities.claude_cli_session_store import (
+    load_claude_billing,
     load_claude_effort,
     load_claude_model,
+    save_claude_billing,
     save_claude_effort,
     save_claude_model,
 )
@@ -189,5 +191,64 @@ def api_set_claude_effort():
             "model": model or "",
             "levels": known,
         })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+def apply_request_pins(session_id, entry: dict) -> None:
+    """First-turn ``agent_pins.claude`` from the chat POST (model / effort / billing).
+
+    A new chat has no id to POST pins to until this request mints one.
+    """
+    model = str(entry.get("model") or "").strip()
+    effort = str(entry.get("effort") or "").strip().lower()
+    billing = str(entry.get("billing") or "").strip().lower()
+    if model:
+        save_claude_model(session_id, model)
+    if effort and effort not in _RESET_WORDS:
+        save_claude_effort(session_id, effort)
+    if billing in ("subscription", "api"):
+        save_claude_billing(session_id, billing)
+
+
+def _billing_body(session: str) -> dict:
+    from api.agent_harness.agents.claude import api_fallback
+
+    pin = load_claude_billing(session) if session else None
+    return {
+        "success": True,
+        "billing": pin or "default",
+        "default": api_fallback.default_billing(),
+        "effective": pin or api_fallback.default_billing(),
+        "api_ready": api_fallback.api_ready() or "ready",
+    }
+
+
+@claude_bp.route("/billing", methods=["GET"])
+@authenticated_required
+def api_claude_billing():
+    """This chat's billing order (``default`` / ``subscription`` / ``api``)."""
+    try:
+        return jsonify(_billing_body(_session_arg()))
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@claude_bp.route("/billing", methods=["POST"])
+def api_set_claude_billing():
+    """Body: { session, billing } — pin subscription-first / API-first ('default' clears)."""
+    try:
+        data = request.get_json(silent=True) or {}
+        session = _body_session(data)
+        if not session:
+            return jsonify({"success": False, "error": "session is required"}), 400
+        _user, _sid, err = require_session_actor(session)
+        if err:
+            return err
+        mode = str(data.get("billing") or "").strip().lower()
+        if mode not in ("default", "subscription", "api", *_RESET_WORDS):
+            return jsonify({"success": False, "error": "billing must be default, subscription or api"}), 400
+        save_claude_billing(session, mode)
+        return jsonify(_billing_body(session))
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500

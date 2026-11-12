@@ -31,6 +31,7 @@ keep the old insert-at-save behaviour: ``open_row`` returns None.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import uuid
@@ -368,6 +369,28 @@ def _settle(db: Any, entry: Dict[str, Any], *, status: str) -> None:
         db.update_message_content(entry['message_id'], content, metadata=meta)
     except Exception:
         log.exception('could not settle turn row %s', entry['message_id'])
+        return
+    _notify_mobile_card(entry, content, meta)
+
+
+def _notify_mobile_card(entry: Dict[str, Any], content: str, meta: Dict[str, Any]) -> None:
+    """A stopped/failed card is the turn's reply: tell the phone like a saved one.
+
+    The saver's ``notify_mobile`` only runs for a kept result, so a turn that
+    ended as this card (cancelled, failed, interrupted) never reached the
+    companion app. Never raises."""
+    try:
+        from api.mobile_companion import chat_complete_payload, emit_mobile_event
+
+        payload = chat_complete_payload(_bare(entry['session_id']), {
+            'response': content, 'query_id': meta.get('query_id'),
+            'report_url': meta.get('report_url')})
+        payload['error'] = True
+        status = (meta.get('interrupted_turn') or {}).get('status') or ''
+        payload['pipeline'] = 'Turn stopped' if status == 'cancelled' else 'Reply failed'
+        emit_mobile_event('chat_complete', payload)
+    except Exception:
+        log.debug('mobile notify for settled turn row failed', exc_info=True)
 
 
 def with_subagent_cards(db: Any, session_id: Any, message_id: int, meta: Dict[str, Any]) -> Dict[str, Any]:
@@ -400,6 +423,24 @@ def _run(query_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _owned_elsewhere(run: Optional[Dict[str, Any]]) -> bool:
+    """Whether a running run's capture process is another live process.
+
+    ``_open`` only knows this process's turns; a turn run by ``api.subagents
+    spawn`` or the daemon is not an orphan just because Flask reads history."""
+    owner = ((run or {}).get('metadata') or {}).get('capture_owner')
+    if not isinstance(owner, dict) or not owner.get('pid'):
+        return False
+    try:
+        if int(owner['pid']) == os.getpid():
+            return False
+        from api.agent_events.lifecycle import owner_alive
+
+        return owner_alive(owner)
+    except Exception:
+        return False
+
+
 def heal_orphans(db: Any, session_id: Any, *, store: Any = None) -> list:
     """Settle in-progress rows whose turn is not open in this process.
 
@@ -425,6 +466,8 @@ def heal_orphans(db: Any, session_id: Any, *, store: Any = None) -> list:
             except Exception:
                 run = None
         status = (run or {}).get('status') or 'interrupted'
+        if status == 'running' and _owned_elsewhere(run):
+            continue  # a live turn in another process (sub-agent CLI, daemon) finalizes its own row
         if status in ('running', 'ok'):
             status = 'interrupted'
         from api.chat_turn_recovery import interrupted_turn_card

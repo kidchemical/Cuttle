@@ -169,6 +169,24 @@ def is_lan_access_enabled() -> bool:
         return False
 
 
+def is_lan_http_enabled() -> bool:
+    """Plain HTTP on the network sends logins unencrypted, so it is opt-in."""
+    if not is_lan_access_enabled():
+        return False
+    env = (os.getenv("CUTTLE_LAN_HTTP") or "").strip().lower()
+    if env in ("1", "true", "yes", "on"):
+        return True
+    if env in ("0", "false", "no", "off"):
+        return False
+    try:
+        from managers.settings_manager import get_settings_manager
+
+        discovery = get_settings_manager().get_setting("discovery") or {}
+        return bool(discovery.get("lan_http_enabled"))
+    except Exception:
+        return False
+
+
 def resolve_bind_host(lan_enabled: Optional[bool] = None) -> str:
     if lan_enabled is None:
         lan_enabled = is_lan_access_enabled()
@@ -187,9 +205,10 @@ def build_cors_origins(lan_ip: Optional[str] = None) -> List[str]:
                 f"https://{ip}:{ports.https}",
                 f"http://{ip}:{ports.https}",
                 f"https://{ip}:{ports.phone_https}",
-                f"http://{ip}:{ports.http}",
             ]
         )
+        if is_lan_http_enabled():
+            origins.append(f"http://{ip}:{ports.http}")
     return origins
 
 
@@ -347,6 +366,9 @@ def ensure_all_lan_firewall_rules() -> bool:
     _remove_legacy_open_firewall_rules()
     ok_https = ensure_windows_lan_firewall_rule(get_primary_https_port())
     ok_phone = ensure_windows_lan_firewall_rule(get_phone_https_port())
+    if not is_lan_http_enabled():
+        _remove_firewall_rules(_FIREWALL_RULE_HTTP_ALT)
+        return ok_https and ok_phone
     ok_alt = ensure_windows_lan_firewall_rule(get_http_fallback_port())
     return ok_https and ok_phone and ok_alt
 
@@ -355,7 +377,9 @@ def windows_firewall_rule_active() -> bool:
     if sys.platform != "win32":
         return False
     try:
-        names = (_FIREWALL_RULE_HTTPS, _FIREWALL_RULE_HTTP, _FIREWALL_RULE_HTTP_ALT)
+        names = (_FIREWALL_RULE_HTTPS, _FIREWALL_RULE_HTTP)
+        if is_lan_http_enabled():
+            names += (_FIREWALL_RULE_HTTP_ALT,)
         for rule_name in names:
             total = _count_enabled_rules(rule_name)
             scoped = _count_scoped_rules(rule_name)
@@ -401,8 +425,8 @@ def lan_phone_portal_url(port: Optional[int] = None, lan_ip: Optional[str] = Non
 
 
 def lan_phone_http_fallback_url(lan_ip: Optional[str] = None) -> Optional[str]:
-    """Plain HTTP fallback URL for phones (configured companion HTTP port)."""
-    if not is_lan_access_enabled():
+    """Plain HTTP fallback URL for phones, when that opt-in is on."""
+    if not is_lan_http_enabled():
         return None
     ip = lan_ip or get_lan_ipv4()
     if not ip:

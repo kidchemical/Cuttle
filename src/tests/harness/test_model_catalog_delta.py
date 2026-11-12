@@ -48,7 +48,24 @@ def test_record_and_diff_detects_alias_retarget():
     assert moved["added"] == [] and moved["removed"] == []
     assert [c["id"] for c in moved["changed"]] == ["haiku"]
     text = delta.render_delta(moved)
-    assert "✎ 1 changed" in text and "Haiku 4.5 → Haiku 5.5" in text
+    assert "✎ 1 changed" in text and "`haiku` now points to Haiku 5.5 (was Haiku 4.5)" in text
+
+
+def test_alias_swap_between_listed_models_is_one_change_not_add_and_remove():
+    """``fable`` moves 5.1 → 5.2 and the pinned row flips 5.2 → 5.1: same two models."""
+    delta.record_and_diff("swap-agent", [
+        {"id": "fable", "label": "Fable 5.1", "resolved_model": "claude-fable-5-1"},
+        {"id": "claude-fable-5-2", "label": "Fable 5.2", "resolved_model": "claude-fable-5-2"},
+    ])
+    moved = delta.record_and_diff("swap-agent", [
+        {"id": "fable", "label": "Fable 5.2", "resolved_model": "claude-fable-5-2"},
+        {"id": "claude-fable-5-1", "label": "Fable 5.1", "resolved_model": "claude-fable-5-1"},
+    ])
+    assert moved["added"] == [] and moved["removed"] == []
+    text = delta.render_delta(moved)
+    assert "➕ 0 added · ➖ 0 removed · ✎ 1 changed" in text
+    assert "`fable` now points to Fable 5.2 (was Fable 5.1)" in text
+    assert "claude-fable-5-1" not in text and "claude-fable-5-2" not in text
 
 
 def _init_stdout(models):

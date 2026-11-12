@@ -48,8 +48,8 @@
            stickyTitleChipsForSession, parseTitleSlashChips,
            getSlashCommands, isAuthMode, getAuthSessions,
            applyGeneratingFlagsFromSessions, isChatSessionDeleted,
-           getTerminalHistoryEntries, createAuthHistoryItemHTML,
-           createHistoryItemHTML, createTerminalHistoryItemHTML,
+           createAuthHistoryItemHTML,
+           createHistoryItemHTML,
            createHistorySectionHeaderHTML,
            sessionHasUnread, sessionHasUnreadError,
            sessionHasPausedFollowup, sessionHasActiveFollowup,
@@ -59,9 +59,8 @@
            syncHistoryUnreadIndicators,
            refreshLocalOpenPanes,
            buildSessionMenuHTML, refreshGitPushMenuMode,
-           closeChatChromeMenu, isTerminalSessionId,
-           getChatSessionDisplayTitle, readTerminalSessionRegistry,
-           writeTerminalSessionRegistry, fetchWithTimeout,
+           closeChatChromeMenu,
+           getChatSessionDisplayTitle, fetchWithTimeout,
            currentSessionId, sessionIdsEqual, toAuthDbSessionId,
            deleteChatSession, persistRenamedTitle,
            refreshChatHistoryList, updateChatSessionTitle }.
@@ -226,11 +225,9 @@
             const modal = historyDeleteModalEl();
             if (!modal) return;
             pendingDeleteSessionId = sessionId;
-            const isTerminal = !!(item && item.getAttribute('data-kind') === 'terminal')
-                || deps.isTerminalSessionId(sessionId);
             const heading = doc.getElementById('historyDeleteTitle');
             const subtitle = doc.getElementById('historyDeleteSubtitle');
-            if (heading) heading.textContent = isTerminal ? 'Delete terminal?' : 'Delete chat?';
+            if (heading) heading.textContent = 'Delete chat?';
             if (subtitle) {
                 subtitle.textContent = '"' + historyDeleteLabel(item, sessionId) + '" will be removed. This cannot be undone.';
             }
@@ -303,7 +300,7 @@
 
         // ---- Rename modal -------------------------------------------------
         let pendingRenameSessionId = null;
-        let pendingRenameKind = 'chat'; // chat | terminal | local
+        let pendingRenameKind = 'chat'; // chat | local
         let renameEditMode = false;
         let renameSuggestGen = 0;
         let renameSuggestInFlight = false;
@@ -442,11 +439,6 @@
         }
 
         function resolveRenameCurrentTitle(sessionId, kind) {
-            if (kind === 'terminal') {
-                const map = deps.readTerminalSessionRegistry();
-                const entry = map[String(sessionId)];
-                return (entry && (entry.title || entry.shell)) || 'Terminal';
-            }
             if (kind === 'local') {
                 try {
                     const sessions = JSON.parse(storage.getItem('chatSessions') || '{}');
@@ -549,11 +541,7 @@
             closeHistoryDeleteModal();
             pendingRenameSessionId = sessionId;
             renameAvoidTitles = [];
-            const isTerminal = !!(item && item.getAttribute('data-kind') === 'terminal')
-                || deps.isTerminalSessionId(sessionId);
-            if (isTerminal) {
-                pendingRenameKind = 'terminal';
-            } else if (deps.isAuthMode() && deps.toAuthDbSessionId(sessionId) != null) {
+            if (deps.isAuthMode() && deps.toAuthDbSessionId(sessionId) != null) {
                 pendingRenameKind = 'chat';
             } else {
                 pendingRenameKind = 'local';
@@ -561,7 +549,7 @@
 
             const heading = doc.getElementById('historyRenameTitle');
             if (heading) {
-                heading.textContent = pendingRenameKind === 'terminal' ? 'Rename terminal' : 'Rename chat';
+                heading.textContent = 'Rename chat';
             }
             const resuggestBtn = doc.getElementById('historyRenameResuggest');
             if (resuggestBtn) {
@@ -1168,26 +1156,10 @@
             }
         }
 
-        function filterTerminalHistory(searchTerm) {
-            return deps.getTerminalHistoryEntries().filter((entry) => {
-                const s = entry.session || {};
-                // Terminals rarely have project/agent; hide when project/agent filters are on.
-                if (historyFiltersActive()) return false;
-                const hay = [
-                    s.title,
-                    s.shell,
-                    s.id,
-                    deps.formatChatDisplayId(s.id),
-                    'terminal',
-                ].join(' ').toLowerCase();
-                return !searchTerm || hay.includes(searchTerm);
-            });
-        }
-
-        function paintSearchResults(sessions, terminalEntries, renderSession, emptyOpts) {
+        function paintSearchResults(sessions, renderSession, emptyOpts) {
             const historyContainer = doc.getElementById('chatHistory');
             if (!historyContainer) return;
-            repaintHistorySearch = () => paintSearchResults(sessions, terminalEntries, renderSession, emptyOpts);
+            repaintHistorySearch = () => paintSearchResults(sessions, renderSession, emptyOpts);
             const options = Object.assign({ showRefresh: false }, emptyOpts || {});
 
             const toEntry = (session) => {
@@ -1214,8 +1186,7 @@
 
             const titleEntries = titleSessions.map(toEntry);
             const contentEntries = contentSessions.map(toEntry);
-            const termEntries = terminalEntries || [];
-            const all = titleEntries.concat(contentEntries).concat(termEntries);
+            const all = titleEntries.concat(contentEntries);
 
             if (!all.length) {
                 const icon = options.emptyIcon || '🔍';
@@ -1233,7 +1204,6 @@
             }
 
             const renderEntry = (entry, itemOpts) => {
-                if (entry.isTerminal) return deps.createTerminalHistoryItemHTML(entry.session);
                 if (entry.serverSession) return renderSession(entry.serverSession, itemOpts);
                 return renderSession(entry.session, itemOpts);
             };
@@ -1314,7 +1284,6 @@
 
             historySearchLiveQuery = searchTerm || '__filters__';
             const seq = ++historySearchSeq;
-            const terminalEntries = filterTerminalHistory(searchTerm);
 
             if (deps.isAuthMode()) {
                 const listed = deps.getAuthSessions()
@@ -1325,9 +1294,8 @@
                     .map((s) => Object.assign({}, s, { match: 'title' }));
                 paintSearchResults(
                     titleHits,
-                    terminalEntries,
                     deps.createAuthHistoryItemHTML,
-                    titleHits.length || terminalEntries.length
+                    titleHits.length
                         ? null
                         : {
                             emptyIcon: '🔍',
@@ -1350,8 +1318,8 @@
                     }).then((res) => (res.ok ? res.json() : null)).then((data) => {
                         if (seq !== historySearchSeq) return;
                         if (!data || !data.success || !Array.isArray(data.sessions)) {
-                            if (!titleHits.length && !terminalEntries.length) {
-                                paintSearchResults([], [], (s) => deps.createAuthHistoryItemHTML(s), {
+                            if (!titleHits.length) {
+                                paintSearchResults([], (s) => deps.createAuthHistoryItemHTML(s), {
                                     emptyIcon: '🔍',
                                     emptyTitle: 'No results found',
                                     emptyText: 'Try a different search term',
@@ -1393,7 +1361,6 @@
                         });
                         paintSearchResults(
                             merged,
-                            terminalEntries,
                             deps.createAuthHistoryItemHTML,
                             {
                                 emptyIcon: '🔍',
@@ -1404,8 +1371,8 @@
                     }).catch((err) => {
                         if (err && err.name === 'AbortError') return;
                         if (seq !== historySearchSeq) return;
-                        if (!titleHits.length && !terminalEntries.length) {
-                            paintSearchResults([], [], (s) => deps.createAuthHistoryItemHTML(s), {
+                        if (!titleHits.length) {
+                            paintSearchResults([], (s) => deps.createAuthHistoryItemHTML(s), {
                                 emptyIcon: '🔍',
                                 emptyTitle: 'No results found',
                                 emptyText: 'Try a different search term',
@@ -1431,7 +1398,6 @@
                 });
             paintSearchResults(
                 filtered,
-                terminalEntries,
                 (s) => deps.createHistoryItemHTML(s),
                 {
                     emptyIcon: '🔍',
@@ -1484,12 +1450,10 @@
             const historyContainer = doc.getElementById('chatHistory');
             if (!historyContainer) return;
 
-            const terminalEntries = deps.getTerminalHistoryEntries();
-
             if (deps.isAuthMode()) {
                 const serverSessions = deps.getAuthSessions()
                     .filter((s) => !deps.isChatSessionDeleted(s && s.id));
-                if (!serverSessions.length && !terminalEntries.length) {
+                if (!serverSessions.length) {
                     paintHistoryEntries([], null, {});
                     return;
                 }
@@ -1507,9 +1471,8 @@
                     updated: deps.parseSessionTimestamp(s.last_message_time)
                         || deps.parseSessionTimestamp(s.last_activity),
                     serverSession: s,
-                })).concat(terminalEntries);
+                }));
                 paintHistoryEntries(entries, (entry, itemOpts) => {
-                    if (entry.isTerminal) return deps.createTerminalHistoryItemHTML(entry.session);
                     return deps.createAuthHistoryItemHTML(entry.serverSession, itemOpts);
                 });
                 return;
@@ -1521,10 +1484,9 @@
                 sessionId: session.id,
                 session,
                 updated: Number(session.updated) || 0,
-            })).concat(terminalEntries);
+            }));
 
             paintHistoryEntries(entries, (entry) => {
-                if (entry.isTerminal) return deps.createTerminalHistoryItemHTML(entry.session);
                 return deps.createHistoryItemHTML(entry.session);
             });
         }
@@ -1582,22 +1544,19 @@
             } catch (_) {}
         }
 
-        /** Default expand latest project (+ open/unread/queue); honor stored overrides. */
-        function isHistoryProjectSectionExpanded(group, groupIdx) {
+        /** Projects default to collapsed, except the one holding the open chat;
+            stored per-project overrides win. */
+        function isHistoryProjectSectionExpanded(group) {
             if (!group || !group.project) return true;
             const key = String(group.project.key);
             const prefs = readHistoryProjectCollapsePrefs();
             const pref = prefs[key];
             if (pref === 'expanded') return true;
             if (pref === 'collapsed') return false;
-            if (view.historyGroupContainsCurrent(group, {
+            return view.historyGroupContainsCurrent(group, {
                 currentSessionId: deps.currentSessionId(),
                 sessionIdsEqual: deps.sessionIdsEqual,
-            })) return true;
-            if (view.historyGroupHasUnread(group, { hasUnread: deps.sessionHasUnread })) return true;
-            if (view.historyGroupHasActiveFollowup(group, { hasActiveFollowup: deps.sessionHasActiveFollowup })) return true;
-            if (view.historyGroupHasPausedFollowup(group, { hasPausedFollowup: deps.sessionHasPausedFollowup })) return true;
-            return groupIdx === 0;
+            });
         }
 
         function getHistoryGroupVisibleLimit(groupKey, total) {
@@ -1836,7 +1795,7 @@
             });
             let html = '';
             groups.forEach((group, groupIdx) => {
-                const expanded = isHistoryProjectSectionExpanded(group, groupIdx);
+                const expanded = isHistoryProjectSectionExpanded(group);
                 const unread = view.historyGroupHasUnread(group, { hasUnread: deps.sessionHasUnread });
                 const unreadError = view.historyGroupHasUnreadError(group, { hasUnreadError: deps.sessionHasUnreadError });
                 const queuedAny = view.historyGroupHasActiveFollowup(group, { hasActiveFollowup: deps.sessionHasActiveFollowup });

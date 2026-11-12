@@ -484,6 +484,21 @@ def cmd_hook(args: argparse.Namespace) -> int:
 
 _OPERATION_VERBS = ('operations', 'operation', 'cancel-operation', 'pause-operation', 'resume-operation',
                     'edit-operation')
+_SUPERVISE_EPILOG = """\
+Supervisor model / effort / harness:
+  A new schedule's check-ins run on the acting (supervisor) chat's own agent;
+  `supervise --agent` picks another harness. To change the model, effort,
+  harness or interval of an existing schedule (yours or one you were asked to
+  fix), edit it in place; never ask the user to do it in the dialog:
+
+    python -m api.chat_cli operations --as CH-…            # find the schedule id
+    python -m api.chat_cli edit-operation ID --model opus --effort high --as CH-…
+
+  --model '' / --effort '' go back to the CLI default; --agent without --model
+  drops the old harness's model. Model names are validated against the
+  harness catalog; on a rejection, read the error and pick a listed model.
+"""
+
 _CHAT_OP_VERBS = ('send', 'status', 'snapshot', 'stop', 'supervise', 'context', 'compact') + _OPERATION_VERBS
 
 
@@ -716,7 +731,9 @@ def build_parser() -> argparse.ArgumentParser:
         ('edit-operation', 'Change a supervision schedule in place (only the flags you pass); '
                            'the supervisor gets one update check-in'),
     ):
-        op = sub.add_parser(verb, parents=[common], help=help_text)
+        op = sub.add_parser(verb, parents=[common], help=help_text,
+                            epilog=_SUPERVISE_EPILOG if verb in ('supervise', 'edit-operation') else None,
+                            formatter_class=argparse.RawDescriptionHelpFormatter)
         op.add_argument('--as', dest='as_chat', help='Acting chat (default CUTTLE_CHAT_SESSION_ID); same owner required')
         if verb not in _OPERATION_VERBS:
             op.add_argument('handle', help='Target session CH-…')

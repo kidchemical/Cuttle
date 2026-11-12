@@ -8,11 +8,14 @@ harness's own background watch both die with their process, a detached
 
 from __future__ import annotations
 
+import importlib.util
 import json
 
 import pytest
 
 from api import job_watch as jw
+
+_HAS_FLOCK = importlib.util.find_spec("fcntl") is not None
 
 
 @pytest.fixture(autouse=True)
@@ -168,7 +171,8 @@ def test_unit_state_reads_systemctl_properties(monkeypatch):
                                                            "Result=success\nExecMainStatus=0\nMainPID=99\n"))
     state = jw.unit_state("x")
     assert state == {"queried": True, "active_state": "active", "sub_state": "running",
-                     "result": "success", "exit": 0, "pid": 99, "running": True}
+                     "result": "success", "exit": 0, "pid": 99, "running": True,
+                     "scheduled": False, "starts_at": None}
     monkeypatch.setattr(jw, "_systemctl", lambda args: (None, ""))
     assert jw.unit_state("x")["queried"] is False
 
@@ -225,7 +229,8 @@ def test_two_concurrent_pollers_resume_the_chat_exactly_once(monkeypatch):
 
     monkeypatch.setattr(jw, "unit_state", slow_exit)
     results = _concurrently(2, jw.poll_unit_watches)
-    assert sorted(len(r) for r in results) == [0, 1]  # one pass fired, the other found the lock held
+    if _HAS_FLOCK:  # one pass fired, the other found the lock held (Windows: no lock, the claim decides)
+        assert sorted(len(r) for r in results) == [0, 1]
     assert len(_notices()) == 1
     assert jw.unit_watch_records() == []
     assert jw.read_status(info["id"])["state"] == "done"
@@ -371,3 +376,31 @@ def test_flask_pump_resumes_a_finished_unit_watch(monkeypatch):
     assert worker._unit_watch_tick(now=5000.0)
     worker._unit_poll_thread.join(10)
     assert len(_notices()) == 1 and jw.unit_watch_records() == []
+
+
+def test_a_stopped_job_stops_its_unit_and_does_not_resume_the_chat(monkeypatch):
+    """Stop means stop: the exit of a job ended on purpose must not wake its agent."""
+    _unit(monkeypatch, **RUNNING)
+    info = _register(resume_message="Review the lane, then start the next build.")
+    calls = []
+    monkeypatch.setattr(jw, "_systemctl", lambda args: calls.append(list(args)) or (0, ""))
+    monkeypatch.setattr(jw, "timer_state", lambda unit: {"waiting": False})
+    monkeypatch.setattr(jw, "kill_status_pids", lambda pids: 0)
+
+    out = jw.cancel_job(info["id"])
+    assert out["ok"] and out["stopped_unit"] == "ep-build-linux" and out["resume"] == "cancelled"
+    assert ["stop", "ep-build-linux"] in calls
+
+    _unit(monkeypatch, queried=True, running=False, active_state="inactive", sub_state="dead",
+          result="success", exit=0, pid=0)
+    done = jw.poll_unit_watches()
+    assert len(done) == 1 and done[0]["resolved"] and done[0]["resume"] == "cancelled"
+    assert jw.unit_watch_records() == []
+    status = jw.read_status(info["id"])
+    assert status["state"] == "failed" and status["cancelled"] is True
+
+    from api.chat_ops import store
+
+    assert [o for o in store.listing(1821) if o["kind"] == "notice"] == []
+    receipts = jw.recent_unit_results(1821)
+    assert receipts[0]["id"] == info["id"] and receipts[0]["handoff"] == "cancelled"

@@ -397,6 +397,86 @@ def _settle(conn: sqlite3.Connection, row_id: int, sha: str) -> None:
     conn.execute("UPDATE edit_events SET commit_sha=?,settlement='settled' WHERE id=? AND settlement='open'", (sha, row_id))
 
 
+def _commits_by_path(root: str, since: int, wanted: set) -> Optional[Dict[str, List[Tuple[str, float]]]]:
+    """Commits on HEAD since ``since`` that touched each wanted path, newest first.
+
+    One ``git log`` for the whole repository. ``-m`` lists a merge against each
+    parent and ``--no-renames`` lists both sides of a rename, so the result is
+    a superset of ``git log -- <path>`` for every path. ``None`` when git fails.
+    """
+    import subprocess
+    try:
+        proc = subprocess.Popen(
+            ["git", "-c", "core.quotePath=false", "log", f"--since={since}", "-m", "--no-renames",
+             "--name-only", "--format=%x01%H %ct"],
+            cwd=root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace")
+    except OSError:
+        return None
+    touched: Dict[str, List[Tuple[str, float]]] = {}
+    commit: Optional[Tuple[str, float]] = None
+    with proc:
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            if line.startswith("\x01"):
+                sha, _, stamp = line[1:].partition(" ")
+                try:
+                    commit = (sha, float(stamp))
+                except ValueError:
+                    commit = None
+            elif line and commit and line in wanted:
+                seen = touched.setdefault(line, [])
+                if not seen or seen[-1][0] != commit[0]:
+                    seen.append(commit)
+    return touched if proc.returncode == 0 else None
+
+
+class _BlobReader:
+    """sha256 of ``<rev>:<path>`` contents through one ``git cat-file --batch`` per repository."""
+
+    def __init__(self) -> None:
+        self._procs: Dict[str, Any] = {}
+
+    def digest(self, root: str, rev: str, rel: str) -> Optional[str]:
+        """Content digest, ``None`` when the path is absent at ``rev``."""
+        import hashlib
+        import subprocess
+        if "\n" in rel:
+            return None
+        proc = self._procs.get(root)
+        if proc is None or proc.poll() is not None:
+            proc = self._procs[root] = subprocess.Popen(
+                ["git", "cat-file", "--batch"], cwd=root, stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            proc.stdin.write(f"{rev}:{rel}\n".encode("utf-8", "surrogateescape"))
+            proc.stdin.flush()
+            header = proc.stdout.readline().split()
+            if len(header) != 3 or not header[2].isdigit():
+                return None  # "<name> missing"
+            left, sha = int(header[2]), hashlib.sha256()
+            while left:
+                chunk = proc.stdout.read(min(left, 1 << 20))
+                if not chunk:
+                    raise OSError("git cat-file ended early")
+                sha.update(chunk)
+                left -= len(chunk)
+            proc.stdout.read(1)
+            return sha.hexdigest()
+        except (OSError, ValueError):
+            proc.kill()
+            self._procs.pop(root, None)
+            return None
+
+    def close(self) -> None:
+        for proc in self._procs.values():
+            try:
+                proc.stdin.close()
+                proc.wait(5)
+            except Exception:
+                proc.kill()
+        self._procs.clear()
+
+
 def reconcile_commits(path: Optional[Path] = None, *, now: Optional[float] = None) -> Dict[str, int]:
     """Settle open edits by content and close the ones that can never settle.
 
@@ -417,48 +497,50 @@ def reconcile_commits(path: Optional[Path] = None, *, now: Optional[float] = Non
     Worktree comparisons wait ``REVERT_GRACE_SECONDS`` so a branch switch or
     in-progress turn is not closed early; closing only ever withholds credit.
     """
-    import hashlib
-    import subprocess
     now = time.time() if now is None else now
-    conn = sqlite3.connect(path or _db_path())
+    conn = sqlite3.connect(path or _db_path(), timeout=30)
     conn.row_factory = sqlite3.Row
     stats = {"settled": 0, "chained": 0, "superseded": 0, "reverted": 0}
+    blobs = _BlobReader()
     try:
         rows = conn.execute(
             "SELECT * FROM edit_events WHERE commit_sha IS NULL AND settlement='open' "
             "ORDER BY ts DESC").fetchall()
-        grouped: Dict[Tuple[str, str], List[sqlite3.Row]] = {}
+        by_root: Dict[str, Dict[str, List[sqlite3.Row]]] = {}
         for row in rows:
-            if Path(row["repo_root"]).is_dir():
-                grouped.setdefault((row["repo_root"], row["rel_path"]), []).append(row)
+            by_root.setdefault(row["repo_root"], {}).setdefault(row["rel_path"], []).append(row)
         committed_after: Dict[Tuple[str, str], List[Tuple[str, float]]] = {}
-        for (root, rel), edits in grouped.items():
-            # Every commit since the oldest open edit on this path (not a fixed
-            # count): closing below is only safe for fully scanned history.
-            since = int(min(e["ts"] for e in edits)) - 2
-            history = subprocess.run(["git", "log", f"--since={since}", "--format=%H %ct", "--", rel],
-                                     cwd=root, capture_output=True, text=True, timeout=30)
-            if history.returncode:
+        for root, paths in by_root.items():
+            if not Path(root).is_dir():
                 continue
-            commits = [(sha, float(stamp)) for sha, stamp in
-                       (line.split(" ", 1) for line in history.stdout.splitlines() if " " in line)]
-            committed_after[(root, rel)] = commits
-            pending = list(edits)
-            for sha, stamp in reversed(commits):  # oldest first
-                candidates = [e for e in pending if stamp + 1 >= e["ts"]]
-                if not candidates:
-                    continue
-                blob = subprocess.run(["git", "show", sha + ":" + rel], cwd=root, capture_output=True, timeout=15)
-                digest = hashlib.sha256(blob.stdout).hexdigest() if blob.returncode == 0 else None
-                for edit in candidates:
-                    content_match = digest is not None and digest == edit["digest_after"]
-                    deletion = digest is None and edit["digest_after"] is None and edit["digest_before"] is not None
-                    if content_match or deletion:
-                        _settle(conn, edit["id"], sha)
-                        stats["settled"] += 1
-                        pending.remove(edit)
-                if not pending:
-                    break
+            # One history walk per repository, not one per path: every commit
+            # since the oldest open edit (not a fixed count), because closing
+            # below is only safe for fully scanned history.
+            oldest = {rel: int(min(e["ts"] for e in edits)) - 2 for rel, edits in paths.items()}
+            touched = _commits_by_path(root, min(oldest.values()), set(paths))
+            if touched is None:
+                continue
+            for rel, edits in paths.items():
+                commits = [c for c in touched.get(rel, []) if c[1] >= oldest[rel]]
+                committed_after[(root, rel)] = commits
+                pending = list(edits)
+                for sha, stamp in reversed(commits):  # oldest first
+                    candidates = [e for e in pending if stamp + 1 >= e["ts"]]
+                    if not candidates:
+                        continue
+                    digest = blobs.digest(root, sha, rel)
+                    for edit in candidates:
+                        content_match = digest is not None and digest == edit["digest_after"]
+                        deletion = digest is None and edit["digest_after"] is None and edit["digest_before"] is not None
+                        if content_match or deletion:
+                            _settle(conn, edit["id"], sha)
+                            stats["settled"] += 1
+                            pending.remove(edit)
+                    if not pending:
+                        break
+            # Keep each write transaction short and keep finished work when
+            # the process restarts mid-run.
+            conn.commit()
 
         # Chains: an earlier edit feeding a settled later one shares its commit.
         changed = True
@@ -475,6 +557,7 @@ def reconcile_commits(path: Optional[Path] = None, *, now: Optional[float] = Non
                     _settle(conn, earlier["id"], later["commit_sha"])
                     stats["chained"] += 1
                     changed = True
+            conn.commit()
 
         # Close what can never settle: only paths whose history was scanned.
         # Ambiguous rows (overlapping runs, often duplicate observations of one
@@ -486,7 +569,9 @@ def reconcile_commits(path: Optional[Path] = None, *, now: Optional[float] = Non
         for row in open_rows:
             if (row["repo_root"], row["rel_path"]) in committed_after:
                 by_path.setdefault((row["repo_root"], row["rel_path"]), []).append(row)
-        for (root, rel), edits in by_path.items():
+        for done, ((root, rel), edits) in enumerate(by_path.items()):
+            if done % 200 == 199:
+                conn.commit()
             observed = conn.execute(
                 "SELECT id, ts, digest_before FROM edit_events WHERE repo_root=? AND rel_path=? AND ambiguous=0 "
                 "ORDER BY ts, id",
@@ -524,13 +609,13 @@ def reconcile_commits(path: Optional[Path] = None, *, now: Optional[float] = Non
                     stats["reverted"] += 1
                 continue
             if latest["digest_after"] != current:
-                head = subprocess.run(["git", "show", "HEAD:" + rel], cwd=root, capture_output=True, timeout=15)
-                head_digest = hashlib.sha256(head.stdout).hexdigest() if head.returncode == 0 else None
+                head_digest = blobs.digest(root, "HEAD", rel)
                 touched_after = any(stamp + 1 >= latest["ts"] for _sha, stamp in committed_after.get((root, rel), []))
                 if touched_after and head_digest != latest["digest_after"]:
                     conn.execute("UPDATE edit_events SET settlement='superseded' WHERE id=?", (latest["id"],))
                     stats["superseded"] += 1
         conn.commit()
     finally:
+        blobs.close()
         conn.close()
     return stats

@@ -117,7 +117,7 @@ async function loadConfig() {
   const rawStored = port.value;
   const storedPort =
     rawStored == null || String(rawStored).trim() === ''
-      ? DEFAULT_PORT_HTTP
+      ? (host.value ? DEFAULT_PORT_HTTP : DEFAULT_PORT_HTTPS)
       : parsePortNumber(rawStored);
   return {
     host: host.value || '',
@@ -288,9 +288,33 @@ function syncSchemeUi() {
   if (hint) {
     hint.innerHTML =
       scheme === 'https'
-        ? 'Using <strong>https</strong> — Android requires a trusted certificate matching the server address.'
-        : 'Using <strong>http</strong> (LAN or Tailscale tunnel).';
+        ? 'Using <strong>https</strong> — the first connection asks you to confirm this PC.'
+        : 'Using <strong>http</strong> — unencrypted. Only use this on a Tailscale tunnel or a network you trust.';
   }
+}
+
+/**
+ * A Cuttle PC has its own certificate, so the phone trusts its key once, after
+ * the user compares the fingerprint. False means the user said no.
+ */
+async function ensureCertificateTrusted(host, port, useHttps) {
+  const shell = nativeShell();
+  if (!useHttps || !shell?.probeCertificate) return true;
+  let probe;
+  try {
+    probe = JSON.parse(shell.probeCertificate(host, String(port)) || '{}');
+  } catch {
+    return true;
+  }
+  // Unreachable: let the connection test report it.
+  if (!probe.ok || probe.trusted || probe.pinned === probe.fingerprint) return true;
+  const intro = probe.pinned
+    ? "WARNING: this PC's certificate has CHANGED. Only continue if you reinstalled Cuttle on it."
+    : 'First connection to this PC.';
+  const ok = window.confirm(
+    `${intro}\n\nCheck this matches Cuttle on your PC (Settings → Phone / LAN access):\n\n${probe.fingerprint}\n\nTrust it?`,
+  );
+  return ok && shell.trustCertificate(host, String(port), probe.fingerprint) === true;
 }
 
 async function testConnection(baseUrl) {
@@ -450,6 +474,10 @@ function bindForm() {
     const btn = $('#btn-test');
     if (btn) btn.disabled = true;
     try {
+      if (!(await ensureCertificateTrusted(host, port, useHttps))) {
+        showStatus('Certificate not trusted, so nothing was connected.', 'warn');
+        return;
+      }
       const data = await testConnection(baseUrl);
       const recent = await rememberHost(host, port, useHttps);
       renderRecentHosts(recent);
@@ -481,6 +509,11 @@ function bindForm() {
     const btn = $('#btn-connect');
     if (btn) btn.disabled = true;
     try {
+      if (!(await ensureCertificateTrusted(host, port, useHttps))) {
+        showStatus('Certificate not trusted, so nothing was connected.', 'warn');
+        if (btn) btn.disabled = false;
+        return;
+      }
       await testConnection(baseUrl);
       showStatus('Opening Cuttle…', 'ok');
       await openInNativeShell(host, port, useHttps, baseUrl, notifyEnabled, token);

@@ -15,6 +15,7 @@ it is labeled NEW, not oracle. Page wiring is pinned structurally below
 paint stay page-owned by design.
 """
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -649,3 +650,32 @@ def test_page_delegates_generation_to_owner():
         assert gone not in src, f"page still owns {gone}"
     html = CHAT_PAGE_HTML.read_text(encoding="utf-8")
     assert "chat_generation.js?v=" in html
+
+
+@node_only
+def test_idle_hub_ticks_sync_only_when_the_status_changed():
+    """Every pane gets a hub tick every few seconds; an unchanged idle chat must not refetch its transcript."""
+    script = r'''
+const G = require(process.env.MOD_GEN);
+const st = G.createSyncState();
+const idle = {query_id: 'q1', message_id: 7, updated_at: 100};
+const out = [
+  G.liveStatusChanged(st, 5, idle, false),                       // first tick
+  G.liveStatusChanged(st, 5, {...idle}, false),                  // same again
+  G.liveStatusChanged(st, 5, {...idle}, false),
+  G.liveStatusChanged(st, 5, {generating: true}, true),          // a turn started
+  G.liveStatusChanged(st, 5, {generating: true, status: 'x'}, true),
+  G.liveStatusChanged(st, 5, idle, false),                       // it ended
+  G.liveStatusChanged(st, 5, {...idle, query_id: 'q2'}, false),  // a whole turn ran between ticks
+  G.liveStatusChanged(st, 5, {...idle, query_id: 'q2'}, false),
+  G.liveStatusChanged(st, 6, {...idle, query_id: 'q2'}, false),  // pane switched chats
+  G.liveStatusChanged(st, 6, null, false),
+];
+console.log(JSON.stringify(out));
+'''
+    proc = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                          env={**os.environ, "MOD_GEN": str(MOD_GEN)}, check=True)
+    assert json.loads(proc.stdout) == [True, False, False, True, False, True, True, False, True, True]
+    page = CHAT_PAGE_JS.read_text(encoding="utf-8")
+    assert "CuttleChatGeneration.liveStatusChanged(messageSync" in page
+    assert "!stillGoing && (liveChanged ||" in page

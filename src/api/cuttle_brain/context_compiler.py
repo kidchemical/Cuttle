@@ -237,13 +237,28 @@ _ENVELOPE_PREAMBLE = (
 )
 
 
-def _core_contract_block(*, inject_capabilities: bool, project_path: Optional[str] = None) -> str:
+def unattended_reason(chat_session_id: Any) -> str:
+    """``subagent`` / ``supervised`` when another chat drives this one, else ''.
+
+    Same answer the turn launcher exports as ``CUTTLE_SUPERVISED``."""
+    try:
+        from api.chat_ops.git_hook import supervised_reason
+        from api.cuttle_ui_capabilities import numeric_chat_session_id
+
+        sid = numeric_chat_session_id(chat_session_id)
+        return supervised_reason(sid) if sid is not None else ""
+    except Exception:
+        return ""
+
+
+def _core_contract_block(*, inject_capabilities: bool, project_path: Optional[str] = None,
+                         unattended: str = "") -> str:
     parts: List[str] = [_ENVELOPE_PREAMBLE]
     if inject_capabilities:
         try:
             from api.cuttle_ui_capabilities import cuttle_ui_capabilities_block
 
-            caps = cuttle_ui_capabilities_block(project_path=project_path)
+            caps = cuttle_ui_capabilities_block(project_path=project_path, unattended=unattended)
             if caps.strip():
                 parts.append(caps.strip())
         except Exception:
@@ -290,6 +305,7 @@ def _runtime_block(
     inventory: Dict[str, List[str]],
     chat_session_id: Any = None,
     project_path: Optional[str] = None,
+    unattended: str = "",
 ) -> str:
     """Inventory + active Tasks digest. Handoff and chat-store hint are
     appended by ``compile_context`` after this block."""
@@ -318,6 +334,9 @@ def _runtime_block(
                        if global_doc_enabled(name, project_path)]
         from api.experimental.context_bundles import markdown
         global_docs.extend(name for name, _ in markdown("docs", project_path, global_config))
+        from api.cuttle_ui_capabilities import unattended_dropped_runbooks
+        hidden = unattended_dropped_runbooks(unattended)
+        global_docs = [name for name in global_docs if name not in hidden]
         deltas = [name for name in _delta_names(global_config / "docs", ("*.md",)) if name in global_docs]
     else:
         global_docs = []
@@ -448,7 +467,9 @@ def compile_context(
     sections: List[str] = []
     layer_chars: Dict[str, int] = {}
 
-    core = _core_contract_block(inject_capabilities=inject_capabilities, project_path=project_path)
+    unattended = unattended_reason(chat_session_id)
+    core = _core_contract_block(inject_capabilities=inject_capabilities, project_path=project_path,
+                                unattended=unattended)
     if core:
         sections.append(core)
         layers.append("core_contract")
@@ -496,6 +517,7 @@ def compile_context(
                 inventory=inv,
                 chat_session_id=chat_session_id,
                 project_path=project_path,
+                unattended=unattended,
             )
         )
         layer_chars["runtime"] = len(runtime_sections[-1])
@@ -513,12 +535,21 @@ def compile_context(
         except Exception:
             pass
 
+    # After the rules so it wins over a project rule that demands a card per turn.
+    from api.cuttle_ui_capabilities import unattended_note
+    note = unattended_note(unattended)
+    if note:
+        runtime_sections.append(note)
+        layer_chars["unattended"] = len(note)
+
     runtime = "\n\n".join(s for s in runtime_sections if s and s.strip()).strip()
     if runtime:
         sections.append(runtime)
         layers.append("runtime")
         if handoff and handoff.text.strip():
             layers.append("handoff")
+        if note:
+            layers.append("unattended")
 
     ranked_meta: Dict[str, Any] = {}
     try:

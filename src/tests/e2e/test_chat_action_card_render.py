@@ -341,6 +341,74 @@ def test_markdown_image_and_routing_chip_survive_history_reload(browser, static_
         page.close()
 
 
+def test_subagent_brief_agent_chip_shows_full_model(browser, static_server):
+    """A sub-agent child chat's parent brief (Cuttle speaker, user side) and the
+    child reply both badge harness | model | effort. A `medium` effort chip used
+    to overflow the 12rem header cap and clip the model to `Opus 5.` (CH-002472)."""
+    chip = lambda effort: {'chips': [{  # noqa: E731
+        'label': f'Claude Code - Opus 5.5 · {effort}',
+        'meta': f'/claude · model claude-opus-5-5 · effort {effort}', 'category': 'claude'}]}
+    world = CardWorld([])
+    world.history = [
+        {'id': 1, 'role': 'user', 'content': 'Brief: do the lane.', 'timestamp': time.time() * 1000,
+         'metadata': {'origin': 'subagent', 'speaker': 'Cuttle', 'speaker_kind': 'parent',
+                      'parent_session_id': 7, 'parent_handle': 'CH-000007', 'parent_label': 'Parent',
+                      'avatar': 'cuttle', 'slash_command': chip('medium')}},
+        {'id': 2, 'role': 'assistant', 'content': 'Done.', 'timestamp': time.time() * 1000,
+         'metadata': {'origin': 'subagent', 'speaker_kind': 'subagent', 'speaker': 'Lane',
+                      'slash_command': chip('xhigh')}},
+    ]
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        from playwright.sync_api import expect
+        for role in ('user.is-parent-speaker', 'assistant'):
+            badge = frame.locator(f'.message.{role} .message-header-row [data-agent-chip]')
+            expect(badge).to_have_count(1)
+            model = badge.locator('.slash-chip-seg--model')
+            expect(model).to_have_text('Opus 5.5')
+            assert model.evaluate('(el) => el.scrollWidth <= el.clientWidth + 1'), role
+        # Narrow screens still fit the chip to the header (model ellipsizes).
+        page.set_viewport_size({'width': 320, 'height': 700})
+        badge = frame.locator('.message.user [data-agent-chip]')
+        assert badge.evaluate('(el) => el.getBoundingClientRect().right <= '
+                              'el.closest(".message-header-row").getBoundingClientRect().right + 1')
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_running_subagent_working_bubble_shows_child_agent_chip(browser, static_server):
+    """Mid-turn, a child chat holds only the parent brief (skipped for the turn
+    badge), so the working bubble's chip comes from the live overlay's
+    `slash_command`. It used to show just the project chip (CH-002472)."""
+    world = CardWorld([])
+    world.history = [
+        {'id': 1, 'role': 'user', 'content': 'Brief: do the lane.', 'timestamp': time.time() * 1000,
+         'metadata': {'origin': 'subagent', 'speaker': 'Cuttle', 'speaker_kind': 'parent',
+                      'parent_session_id': 7, 'parent_handle': 'CH-000007', 'avatar': 'cuttle',
+                      'slash_command': {'chips': [{'label': 'Claude Code - Opus 5.5 · medium',
+                                                   'meta': '/claude · model claude-opus-5-5 · effort medium',
+                                                   'category': 'claude'}]}}},
+    ]
+    world.live = {'active': True, 'generating': True, 'status': 'tool 90: Bash',
+                  'updated_at': time.time() + 1,
+                  'slash_command': {'chips': [{'label': 'Claude Code - Haiku · high',
+                                               'meta': '/claude · model haiku · effort high',
+                                               'category': 'claude'}]}}
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        from playwright.sync_api import expect
+        typing = frame.locator('#typing-indicator-remote')
+        expect(typing).to_be_visible(timeout=5000)
+        badge = typing.locator('[data-agent-chip]')
+        expect(badge).to_have_count(1, timeout=3000)
+        expect(badge).to_contain_text('Haiku')
+        expect(badge).to_contain_text('high')
+        assert not errors
+    finally:
+        page.close()
+
+
 def test_segmented_status_chip_truncation_tooltips_and_error(browser, static_server):
     long_error = 'Request failed: ' + 'The selected agent could not complete this request. ' * 8
     world = CardWorld([long_error])

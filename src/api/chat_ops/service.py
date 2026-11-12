@@ -125,6 +125,22 @@ def _count_items(items):
     return done, total
 
 
+def undelivered(sid, *, older_than=0.0, now=None):
+    """Messages from or to the chat that are still in the outbox: who, how long,
+    and what they wait on. Read-only; an agent or check-in reads this to see a
+    send that never arrived instead of assuming it did."""
+    now = time.time() if now is None else now
+    out = []
+    for op in store.waiting_sends(sid, older_than=older_than, now=now):
+        result = op.get('result') or {}
+        out.append({'id': op['id'], 'kind': op['kind'], 'state': op['state'],
+                    'from': f"CH-{int(op['actor']):06d}", 'to': f"CH-{int(op['target']):06d}",
+                    'waiting_sec': int(now - op['waiting_since']),
+                    'waiting_on': result.get('waiting_on') or ('verifying' if op['state'] == 'verifying' else 'queued'),
+                    'text': ' '.join(str((op.get('payload') or {}).get('text') or '').split())[:160]})
+    return out
+
+
 def status(target, actor=None, *, db=None, request=None, task_pick=None):
     """``task_pick``: a schedule's ``(task_ids, task_ids_known)`` (``task_pick()``), or None for every list."""
     from api.chat_attention import is_error
@@ -178,6 +194,7 @@ def status(target, actor=None, *, db=None, request=None, task_pick=None):
             'live': live, 'attention': attention, 'tasks': progress,
             'followups': db.get_followup_state(sid, uid),
             'operations': [o for o in store.listing(actor) if o['target'] == sid and o['state'] in ('pending', 'dispatching', 'verifying')],
+            'undelivered': undelivered(sid),
             'latest_reply': latest}
 
 
@@ -276,6 +293,10 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
         raise ValueError('mode must be auto or queue')
     from api.orchestration_telemetry import record
     record.supervisor_action('sup_send', actor, int(row['id']), chars=len(text))
+    request = request or transport.request
+    # Read before the card round below marks a sub-agent child as working: that
+    # mark makes live status say "generating" with no turn behind it yet.
+    live = request(row['user_id'], row['id'], 'GET', '/api/chat-live-status') if mode == 'auto' else {}
     try:
         # A follow-up to a sub-agent child gets its card round on the parent,
         # exactly like `subagents message` (bound to the sending turn).
@@ -283,9 +304,7 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
         note_external_round(int(row['id']), db=db)
     except Exception as exc:
         print(f"[CHAT OPS] sub-agent card round for CH-{int(row['id']):06d} failed: {exc}", flush=True)
-    request = request or transport.request
     if mode == 'auto':
-        live = request(row['user_id'], row['id'], 'GET', '/api/chat-live-status')
         if live.get('generating'):
             # Recorded first (not dispatchable) so the steered row renders as Cuttle.
             op = store.create('send', actor, row['id'], {'text': text}, state='steering')
@@ -902,6 +921,14 @@ def supervision_digest(session_id, *, now=None, operations=None):
         else:
             state = 'checking now' if op['state'] == 'dispatching' else f"next check {_clock(op['due'])}"
             lines.append(f"- active — {who}, {every}, {state}")
+        if own:
+            # The supervisor can retune its own schedule; say how, so it never
+            # tells the user the CLI cannot (incident 2026-11-10, CH-001822).
+            pin = ' · '.join(p for p in (cfg.get('agent') or '', cfg.get('model') or '',
+                                         cfg.get('effort') or '') if p) or 'chat default'
+            lines.append(f"  schedule `{op['id']}` · check-ins run on {pin}. Change model/effort/harness/"
+                         f"interval in place: `python -m api.chat_cli edit-operation {op['id']} "
+                         f"--model M [--effort E] [--agent A] [--every S] --as CH-{sid:06d}`.")
     return ('### Supervision schedules on this chat\n'
             'Cuttle owns these timers, not your turn. A PAUSED schedule means no check-ins and '
             'no wake-ups for anyone — say so to the user instead of assuming supervision is running.\n'

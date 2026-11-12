@@ -76,7 +76,7 @@ Logs: `journalctl --user -u cuttle -f` and the daemon log under `<home>/logs`.
   `sudo systemctl restart systemd-logind`. Disable suspend:
   `sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target`.
 - **Firewall:** allow only your LAN:
-  `sudo ufw allow from <YOUR_LAN_CIDR> to any port 8080,8888,8000 proto tcp`.
+  `sudo ufw allow from <YOUR_LAN_CIDR> to any port 8080,8888 proto tcp`.
   Replace `<YOUR_LAN_CIDR>` with your LAN's actual subnet.
 - **Stable address:** a DHCP reservation, so Clients and phones keep finding the Host.
 - **TLS:** Flask's self-signed certificate (it includes the LAN IP) is fine for a

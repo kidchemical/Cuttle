@@ -113,7 +113,11 @@ def pull_due(oid, at):
 def recent(limit=200):
     with connection() as conn:
         return [public(r) for r in conn.execute(
-            "SELECT * FROM operations WHERE kind IN ('send','supervise') ORDER BY updated DESC LIMIT ?", (limit,))]
+            "SELECT * FROM operations WHERE kind IN ('send','supervise') "
+            # Live rows first: a send parked for hours must not fall off the end
+            # behind newer finished ones.
+            "ORDER BY state IN ('pending','dispatching','verifying','paused','steering') DESC, "
+            "updated DESC LIMIT ?", (limit,))]
 
 
 def cancel(oid, actor):
@@ -128,16 +132,18 @@ def cancel(oid, actor):
     return op
 
 
-def cancel_sends_to(target):
+def cancel_sends_to(target, *, kinds=('send',)):
     """Cancel every queued send to a chat; returns the cancelled operations.
 
     A stopped chat must stay stopped: a send still in the outbox would start a
-    new turn the moment the chat goes idle."""
+    new turn the moment the chat goes idle. ``kinds`` adds ``'notice'`` (job
+    wake-ups) for a stopped orchestration."""
     now = time.time()
+    kinds = [k for k in kinds if k in ('send', 'notice')] or ['send']
     with connection() as conn:
         rows = [public(r) for r in conn.execute(
-            "SELECT * FROM operations WHERE kind='send' AND target=? AND state IN ('pending','verifying')",
-            (int(target),))]
+            f"SELECT * FROM operations WHERE kind IN ({','.join('?' * len(kinds))}) AND target=? "
+            "AND state IN ('pending','verifying')", (*kinds, int(target)))]
         if rows:
             marks = ','.join('?' * len(rows))
             conn.execute(f"UPDATE operations SET state='cancelled', updated=? WHERE id IN ({marks})",
@@ -286,6 +292,63 @@ def finish(oid, state, result, *, due=None):
         conn.execute("UPDATE operations SET state=?,result=?,updated=?,due=COALESCE(?,due) "
                      "WHERE id=? AND state NOT IN ('cancelled','paused')",
                      (state, json.dumps(result), time.time(), due, oid))
+
+
+def defer(oid, *, due, reason='', blocked_by=None):
+    """An undelivered send whose target is busy: retry at ``due`` and remember since
+    when it waits (``result.waiting_since``) and on what.
+
+    Moving ``due`` matters: :func:`due` hands out the oldest rows first, so sends
+    parked on a long turn would otherwise fill every slot and starve check-ins."""
+    now = time.time()
+    with connection() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute("SELECT result FROM operations WHERE id=? AND state IN ('pending','verifying')",
+                           (oid,)).fetchone()
+        if not row:
+            return False
+        result = json.loads(row[0])
+        result.setdefault('waiting_since', now)
+        result['waiting_on'] = reason or 'busy'
+        if blocked_by:
+            result['blocked_by'] = blocked_by
+        conn.execute('UPDATE operations SET result=?, due=? WHERE id=?', (json.dumps(result), float(due), oid))
+        return True
+
+
+HELD_REASON = 'orchestration_paused'
+
+
+def release_held(target):
+    """Make deliveries that waited on a paused orchestration due now; how many."""
+    now = time.time()
+    released = 0
+    with connection() as conn:
+        for row in conn.execute("SELECT id, result FROM operations WHERE target=? AND state='pending' "
+                                "AND kind IN ('send','notice')", (int(target),)).fetchall():
+            try:
+                waiting = json.loads(row['result'] or '{}').get('waiting_on')
+            except ValueError:
+                waiting = None
+            if waiting == HELD_REASON:
+                conn.execute('UPDATE operations SET due=?, updated=? WHERE id=?', (now, now, row['id']))
+                released += 1
+    return released
+
+
+def waiting_sends(session_id, *, older_than=0.0, now=None):
+    """Sends and notices from or to the chat still undelivered after
+    ``older_than`` seconds, oldest first. Age counts from the first busy skip
+    (``waiting_since``), else from when the row last changed."""
+    now = time.time() if now is None else now
+    found = []
+    for op in involving(session_id, states=('pending', 'verifying')):
+        if op['kind'] not in ('send', 'notice'):
+            continue
+        since = float((op.get('result') or {}).get('waiting_since') or op['updated'])
+        if now - since >= older_than:
+            found.append({**op, 'waiting_since': since})
+    return sorted(found, key=lambda o: o['waiting_since'])
 
 
 def record_check(schedule_id, outcome, detail=None):

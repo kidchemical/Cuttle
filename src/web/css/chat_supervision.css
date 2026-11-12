@@ -344,3 +344,52 @@ body.light-mode .chat-supervision-state.is-orchestrating { color: #17725f; }
     border-left-color: color-mix(in srgb, var(--accent-color) 60%, transparent);
     background: color-mix(in srgb, var(--accent-color) 6%, transparent);
 }
+
+/* Check-in: one line of facts (chat, state, alerts, Tasks bar); the briefing
+   written for the supervisor agent opens from it
+   (CuttleChatSupervisionModel.checkinHtml). */
+.message.user[data-chat-op="checkin"] .message-content { padding: 6px 10px !important; font-size: 0.86em; }
+.message.user .chat-checkin-details > summary,
+.message.user .chat-op-fold > summary { list-style: none; cursor: pointer; user-select: none; }
+.message.user .chat-checkin-details > summary::-webkit-details-marker,
+.message.user .chat-op-fold > summary::-webkit-details-marker { display: none; }
+.message.user .chat-checkin-details:not(.chat-checkin-card) { margin-top: 6px; }
+.message.user .chat-checkin-details:not(.chat-checkin-card) > summary { width: fit-content; font-size: 12px; color: var(--text-secondary); }
+.chat-checkin-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.chat-checkin-ico { display: inline-flex; width: 16px; height: 16px; color: #3fbf7f; flex-shrink: 0; }
+.chat-checkin-ico svg { width: 100%; height: 100%; }
+.chat-checkin-target { font-weight: 620; font-variant-numeric: tabular-nums; }
+.chat-checkin-state, .chat-checkin-alert { padding: 1px 7px; border-radius: 999px; font-size: 0.9em; white-space: nowrap;
+    color: var(--text-secondary); background: color-mix(in srgb, var(--text-secondary) 12%, transparent); }
+.chat-checkin-state.is-live { color: var(--accent-color); background: color-mix(in srgb, var(--accent-color) 14%, transparent); }
+.chat-checkin-state.is-warn, .chat-checkin-alert.is-warn { color: var(--warning-color, #e0a63a); background: color-mix(in srgb, var(--warning-color, #e0a63a) 16%, transparent); }
+.chat-checkin-state.is-bad, .chat-checkin-alert.is-bad { color: var(--error-color, #e5706b); background: color-mix(in srgb, var(--error-color, #e5706b) 16%, transparent); }
+.chat-checkin-tasks { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 0.9em;
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chat-checkin-bar { display: inline-block; width: 56px; height: 5px; border-radius: 3px; overflow: hidden;
+    background: color-mix(in srgb, var(--text-secondary) 20%, transparent); }
+.chat-checkin-bar > span { display: block; height: 100%; background: #3fbf7f; }
+.chat-op-caret { width: 14px; height: 14px; flex-shrink: 0; color: var(--text-secondary); opacity: 0.7; transition: transform 0.15s ease; }
+.chat-checkin-row > .chat-op-caret { margin-left: auto; }
+details[open] > summary .chat-op-caret { transform: rotate(90deg); }
+.message.user .chat-checkin-card[open] > summary { margin-bottom: 8px; padding-bottom: 6px;
+    border-bottom: 1px solid color-mix(in srgb, var(--text-secondary) 18%, transparent); }
+.message.user .chat-checkin-body { opacity: 0.92; font-size: 1.08em; }
+/* Sub-agent hand-back notice (CuttleChatSupervisionModel.noticeHtml): each child's
+   handle + status, then why it is its own turn. */
+.chat-checkin-state.is-ok { color: var(--success-color, #3fbf7f); background: color-mix(in srgb, var(--success-color, #3fbf7f) 14%, transparent); }
+.chat-notice-ico.is-warn { color: var(--warning-color, #e0a63a); }
+.chat-notice-child { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.chat-notice-more { color: var(--text-secondary); font-size: 0.9em; font-variant-numeric: tabular-nums; }
+.chat-notice-why { color: var(--text-secondary); font-size: 0.9em; min-width: 0; }
+
+/* A long message relayed from another chat (or a Cuttle notice): a preview
+   line that opens the whole text (CuttleChatSupervisionModel.foldHtml). */
+.chat-op-fold > summary { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.chat-op-fold-preview { flex: 1 1 auto; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    line-clamp: 2; overflow: hidden; }
+.chat-op-fold-more { flex-shrink: 0; display: inline-flex; align-items: center; gap: 2px; font-size: 0.86em; color: var(--text-secondary); white-space: nowrap; }
+.chat-op-fold > summary:hover .chat-op-fold-more { color: var(--accent-color); }
+.chat-op-fold[open] > summary .chat-op-fold-preview { display: none; }
+.chat-op-fold[open] > summary { justify-content: flex-end; margin-bottom: 4px; }
+@media (prefers-reduced-motion: reduce) { .chat-op-caret { transition: none; } }

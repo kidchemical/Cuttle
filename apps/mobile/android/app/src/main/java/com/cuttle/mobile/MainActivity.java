@@ -36,6 +36,8 @@ import com.cuttle.mobile.notify.CuttleApi;
 import com.cuttle.mobile.notify.NetworkUtil;
 import com.cuttle.mobile.notify.ShellUpdate;
 import com.cuttle.mobile.media.MediaExport;
+import com.cuttle.mobile.tls.HostPins;
+import com.cuttle.mobile.tls.PinnedTls;
 import com.cuttle.mobile.voice.NativeMic;
 import com.cuttle.mobile.voice.LiveVoiceAudio;
 import com.cuttle.mobile.voice.VoiceCallService;
@@ -68,6 +70,9 @@ public class MainActivity extends BridgeActivity {
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final NativeMic nativeMic = new NativeMic();
+    // The native bridge is visible to every page, so certificate trust checks where we are.
+    private volatile boolean onLocalSetupPage;
+    private volatile String lastProbedKey;
     private final LiveVoiceAudio liveVoice = new LiveVoiceAudio("live", voiceEventDispatcher("cuttle-live-voice"));
     private final LiveVoiceAudio realtimeVoice = new LiveVoiceAudio("realtime", voiceEventDispatcher("cuttle-realtime-voice"));
     private boolean shellReady = false;
@@ -274,24 +279,42 @@ public class MainActivity extends BridgeActivity {
         webView.setFocusableInTouchMode(true);
     }
 
+    private boolean isPinnedCertificate(SslError error) {
+        try {
+            String pinned = HostPins.getForUrl(error.getUrl());
+            byte[] der = android.net.http.SslCertificate.saveState(error.getCertificate())
+                .getByteArray("x509-certificate");
+            if (pinned == null || der == null) return false;
+            java.security.cert.Certificate certificate = java.security.cert.CertificateFactory
+                .getInstance("X.509").generateCertificate(new java.io.ByteArrayInputStream(der));
+            return pinned.equals(PinnedTls.fingerprint(certificate));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private void attachShellClient(WebView webView) {
         // SafeArea 8 registers its own Bridge WebViewListener for viewport changes.
         // Keep the bridge client so those listeners receive navigation callbacks.
         webView.setWebViewClient(new BridgeWebViewClient(bridge) {
             @Override
             public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-                // WebView must never bypass certificate or hostname validation.
+                // Only the exact key the user trusted for this host:port gets through.
+                if (isPinnedCertificate(error)) {
+                    handler.proceed();
+                    return;
+                }
                 handler.cancel();
                 mainHandler.removeCallbacks(connectionWatchdog);
                 cuttleDocumentReady = false;
-                showError("HTTPS certificate validation failed. Use a server with a valid, "
-                    + "trusted certificate matching its address. You can change the address "
-                    + "in Server settings.");
+                showError("This PC's certificate isn't trusted or has changed. Open Server "
+                    + "settings and connect again to review it.");
             }
 
             @Override
             public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
+                onLocalSetupPage = url != null && url.startsWith("https://localhost/");
                 injectPreloadBridge(view);
             }
 
@@ -838,6 +861,39 @@ public class MainActivity extends BridgeActivity {
     }
 
     private class CuttleShellBridge {
+        /** What a server presents, for the setup screen's "trust this PC" step. */
+        @JavascriptInterface
+        public String probeCertificate(String host, String port) {
+            JSONObject out = new JSONObject();
+            try {
+                if (!onLocalSetupPage) throw new SecurityException("setup screen only");
+                int number = Integer.parseInt(port);
+                PinnedTls.Probe probe = PinnedTls.probe(host, number, 6000);
+                out.put("ok", true).put("trusted", probe.systemTrusted).put("fingerprint", probe.fingerprint);
+                String pinned = HostPins.get(host, number);
+                out.put("pinned", pinned == null ? "" : pinned);
+                lastProbedKey = HostPins.key(host, number) + "=" + probe.fingerprint;
+            } catch (Exception e) {
+                try { out.put("ok", false); } catch (Exception ignored) {}
+            }
+            return out.toString();
+        }
+
+        /** Trust a key. Setup screen only, and only the key just shown to the user. */
+        @JavascriptInterface
+        public boolean trustCertificate(String host, String port, String fingerprint) {
+            try {
+                int number = Integer.parseInt(port);
+                if (!onLocalSetupPage || !(HostPins.key(host, number) + "=" + fingerprint).equals(lastProbedKey)) {
+                    return false;
+                }
+                HostPins.put(host, number, fingerprint);
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
         @JavascriptInterface
         public void openSettings() {
             mainHandler.post(MainActivity.this::openSettings);

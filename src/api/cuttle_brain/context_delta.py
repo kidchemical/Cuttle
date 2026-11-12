@@ -401,6 +401,13 @@ def build_delta_text(
         digest = _supervision_digest(chat_session_id)
         if digest:
             parts += ["### Supervision changed", digest]
+            # A chat that just came under live supervision stops getting user-click
+            # cards; the fresh envelope says the same (context_compiler.unattended_reason).
+            from api.cuttle_brain.context_compiler import unattended_reason
+            from api.cuttle_ui_capabilities import unattended_note
+            note = unattended_note(unattended_reason(chat_session_id))
+            if note:
+                parts += ["", note]
         else:
             parts += ["### Supervision ended",
                       "- No supervision schedule runs on this chat any more; "

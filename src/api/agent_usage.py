@@ -1182,6 +1182,47 @@ def fetch_claude_plan_limits() -> Dict[str, Any]:
     return snapshot(_claude_credentials_path(), oauth, lambda: _fetch_claude_plan_limits(oauth))
 
 
+_CLAUDE_PLAN_LABEL_TTL_S = 3600.0
+_claude_plan_label_cache: Dict[str, Tuple[float, str]] = {}
+
+
+def _claude_plan_label(oauth: Dict[str, Any]) -> str:
+    """Current plan name from the OAuth profile (``plan_display_label``).
+
+    ``subscriptionType`` in the credentials file is written at login only, so
+    a plan change (Pro → Ultra) never reaches it. The profile is the live
+    answer; cached per token for an hour, credentials value as the fallback.
+    """
+    token = str(oauth.get("accessToken") or "")
+    fallback = str(oauth.get("subscriptionType") or "")
+    now = datetime.now(timezone.utc).timestamp()
+    hit = _claude_plan_label_cache.get(token)
+    if hit and now - hit[0] < _CLAUDE_PLAN_LABEL_TTL_S:
+        return hit[1] or fallback
+    label = ""
+    req = urllib.request.Request(
+        "https://api.anthropic.com/api/oauth/profile",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-beta": "oauth-2025-04-20",
+            "User-Agent": "Cuttle-ClaudeUsage/1.0",
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read().decode("utf-8", errors="replace") or "{}")
+        org = body.get("organization") if isinstance(body, dict) else None
+        raw = str((org or {}).get("plan_display_label") or "").strip() if isinstance(org, dict) else ""
+        label = re.sub(r"\s+plan$", "", raw, flags=re.IGNORECASE).strip()
+    except Exception:
+        label = ""
+    _claude_plan_label_cache.clear()
+    _claude_plan_label_cache[token] = (now, label)
+    return label or fallback
+
+
 def _fetch_claude_plan_limits(oauth) -> Dict[str, Any]:
     """Plan windows from the Claude Code OAuth usage endpoint (same data as ``claude /usage``).
 
@@ -1235,7 +1276,7 @@ def _fetch_claude_plan_limits(oauth) -> Dict[str, Any]:
         return {"success": False, "error": "Unexpected Claude usage payload."}
     return {
         "success": True,
-        "plan_type": oauth.get("subscriptionType"),
+        "plan_type": _claude_plan_label(oauth),
         "windows": _claude_plan_windows(payload),
         "extra_usage": payload.get("extra_usage") if isinstance(payload.get("extra_usage"), dict) else {},
         "spend": payload.get("spend") if isinstance(payload.get("spend"), dict) else {},

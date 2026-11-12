@@ -23,6 +23,17 @@ unavailable, turns bound to that project are rejected before execution. Resoluti
 is pinned for the current request; edits apply to subsequent turns. Project IDs
 and chat history remain intact when paths or project names change.
 
+## Default worktree folder
+
+Below the paths, **Default worktree folder** sets where agents create git
+worktrees for this project. Empty (the default for every project) means **Use
+Cuttle default**: the folder in Settings → Agents → Worktrees, or the Cuttle home
+when that is empty too. **Use Cuttle default** clears an override. The value is
+a host setting (`settings.json` → `worktrees.project_roots`, the same entry
+Settings edits and `python -m api.worktrees root --project-id N --set DIR`
+writes), not part of the project record, so it never leaves this machine. The
+section hides when the Worktrees experimental feature is off.
+
 ## Workflows
 
 - **Add project** registers an existing host folder and initializes `.cuttle/`.

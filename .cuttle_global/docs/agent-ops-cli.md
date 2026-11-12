@@ -35,7 +35,7 @@ agent toolkit.
 | Context Compiler | `python -m api.cuttle_brain` | Brain / ADDING_AN_AGENT |
 | Per-project knowledge graphs | `python -m api.knowledge_graph` (providers, status, where, index, update, query, explain, notes, note, enrich, export, sync) | `knowledge-graph.md` |
 | Sub-agent child chats | `python -m api.subagents` | `subagents.md` |
-| Git worktrees + a chat's active worktree (chip) | `python -m api.worktrees` (list, create, adopt, bind, show, remove, orphans, reconcile) | [Worktrees](#worktrees) below |
+| Git worktrees + a chat's active worktree (chip) | `python -m api.worktrees` (list, create, adopt, bind, show, move, root, remove, orphans, reconcile) | [Worktrees](#worktrees) below |
 | Job watch bars | `python -m api.job_watch` | `action-forms.md` |
 | Unified Jobs ledger | `python -m api.jobs` (list, inflight, view, cancel, rerun, stats) | Jobs |
 | Live work tree (chats, waits, schedules, the OS processes their agents own — detached included) | `python -m api.jobs work-tree` / `end-process PID --create-time T` | `agent-events.md` (Running now) |
@@ -111,6 +111,35 @@ PYTHONPATH=src .venv/bin/python -m api.worktrees show [--chat CH-…]
   the user which chat you changed.
 - The open chat's chip updates on its next message sync. A persisted
   `🌿 Worktree:` note records the change in that chat.
+
+**Where worktrees go.** New worktrees land in `<root>/<repo-id>/<worktree-id>`.
+The root is the project's own folder if one is set, else the global folder, else
+`<home>/worktrees` (the system drive on most machines). A full checkout of a
+large repository can take tens of GB, so the user picks the drive, not the agent:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.worktrees root [--project-id N]              # show the active folder
+PYTHONPATH=src .venv/bin/python -m api.worktrees root --project-id N --set /big/drive/worktrees
+PYTHONPATH=src .venv/bin/python -m api.worktrees root --set /big/drive/worktrees    # global
+PYTHONPATH=src .venv/bin/python -m api.worktrees root --project-id N --clear
+PYTHONPATH=src .venv/bin/python -m api.worktrees move CHECKOUT_UID [--to DIR]       # default: to the active folder
+```
+
+- Set a folder only when the user named it. It is stored per machine in
+  `settings.json` (`worktrees.project_roots`), never in a tracked `.cuttle/`.
+  Users edit the same value in Projects → Locations (per project; empty = Cuttle
+  default) and Settings → Agents → Worktrees (the Cuttle default).
+- `move` keeps the checkout id, branch and uncommitted files (`git worktree
+  move`), so bound chats follow. Stop agents working in the worktree first. A
+  folder that is unusable on this machine is refused; nothing falls back to
+  another drive.
+- Changing a folder does not move existing worktrees; run `move` for each.
+- **Free-space check.** `create` (and a `move` to another drive) is refused when
+  the target drive would be left with less than the reserve (`worktrees.min_free_gb`,
+  default 10 GB; 0 = off). The size is the tracked files of the base branch, an
+  estimate. When refused, tell the user; do not pick another drive or lower the
+  reserve yourself. The user sets the folders and the reserve in Settings →
+  Agents → Worktrees.
 
 ## Projects registry
 

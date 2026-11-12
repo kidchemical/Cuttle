@@ -1,7 +1,9 @@
 """
 Web terminal — PTY sessions over WebSocket for Cuttle's browser UI.
 
-Localhost-only: full shell access is never exposed on LAN, even when lan_access_enabled.
+Backs the IDE's terminal panel. Access needs all three of: a connection from this
+PC, a browser Origin matching this server (or no Origin), and the owner's login.
+Full shell access is never exposed on LAN, even when lan_access_enabled.
 
 PTY processes outlive a single WebSocket so Electron/browser refresh can reattach
 to the same shell (cwd, scrollback, running commands) via the CH- session id.
@@ -22,7 +24,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from urllib.parse import urlsplit
+
 from flask import Flask, jsonify, request
+
+from api.http_authz import current_user, is_owner_user
 
 try:
     from flask_sock import Sock
@@ -79,7 +85,7 @@ def _is_local_request() -> bool:
 def _terminal_local_url() -> str:
     from api.server_ports import resolve_with_env_file
 
-    return f'https://127.0.0.1:{resolve_with_env_file().https}/terminal_page.html'
+    return f'https://127.0.0.1:{resolve_with_env_file().https}/ide_page.html'
 
 
 def _terminal_unavailable_payload() -> Dict[str, Any]:
@@ -89,6 +95,30 @@ def _terminal_unavailable_payload() -> Dict[str, Any]:
         'hint': 'Open Cuttle on the machine running the daemon, not from a phone or another computer.',
         'localhost_url': _terminal_local_url(),
     }
+
+
+def _origin_matches_host() -> bool:
+    """A browser names the page opening the socket; it must be this server."""
+    origin = (request.headers.get('Origin') or '').strip()
+    if not origin:
+        return True  # Not a browser: the login check still applies.
+    return urlsplit(origin).netloc.lower() == (request.host or '').lower()
+
+
+def _terminal_denied() -> Optional[Tuple[Dict[str, Any], int]]:
+    """Why this request may not use the terminal, or None when it may.
+
+    A browser sends no CORS preflight for a WebSocket, so without the Origin
+    check any website open on this PC could reach it. Being "on this PC" also
+    covers anything forwarded by a local proxy, so it never stands in for login.
+    """
+    if not _is_local_request():
+        return _terminal_unavailable_payload(), 403
+    if not _origin_matches_host():
+        return {'success': False, 'error': 'Terminal refused a connection from another site.'}, 403
+    if not is_owner_user(current_user()):
+        return {'success': False, 'error': 'Sign in as the owner to use the terminal.'}, 401
+    return None
 
 
 def _pwsh_or_powershell() -> Optional[List[str]]:
@@ -537,8 +567,9 @@ def _attach_or_create_session(
 
 
 def _handle_ws_connection(ws: Any) -> None:
-    if not _is_local_request():
-        payload = _terminal_unavailable_payload()
+    denied = _terminal_denied()
+    if denied:
+        payload = denied[0]
         _ws_send(ws, {
             'op': 'error',
             'message': payload['error'],
@@ -642,16 +673,11 @@ def _handle_ws_connection(ws: Any) -> None:
 
 def register_terminal_routes(app: Flask) -> None:
     """Attach terminal HTTP + WebSocket routes to the Flask app."""
-    from flask import send_from_directory
-
-    @app.route('/terminal_page.html')
-    def serve_terminal_page():
-        return send_from_directory(_SRC_ROOT / 'web', 'terminal_page.html')
-
     @app.route('/api/terminal/status', methods=['GET'])
     def api_terminal_status():
-        if not _is_local_request():
-            return jsonify(_terminal_unavailable_payload()), 403
+        denied = _terminal_denied()
+        if denied:
+            return jsonify(denied[0]), denied[1]
         return jsonify({
             'success': True,
             'available': True,
@@ -660,8 +686,9 @@ def register_terminal_routes(app: Flask) -> None:
 
     @app.route('/api/terminal/shells', methods=['GET'])
     def api_terminal_shells():
-        if not _is_local_request():
-            return jsonify({**_terminal_unavailable_payload(), 'shells': []}), 403
+        denied = _terminal_denied()
+        if denied:
+            return jsonify({**denied[0], 'shells': []}), denied[1]
         return jsonify({'success': True, 'shells': list_shell_presets()})
 
     if Sock is None:

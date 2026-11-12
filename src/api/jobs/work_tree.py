@@ -22,6 +22,7 @@ chat background-work bubble (``background_summary`` → live-status
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -98,7 +99,12 @@ UNIT_STATE_TTL_SEC = 10.0
 _unit_state_cache: Dict[str, Any] = {}
 
 
-def _unit_sub_state(unit: str) -> str:
+def _unit_live(unit: str) -> Dict[str, Any]:
+    """``{"sub_state", "scheduled", "starts_at"}`` for one unit, cached briefly.
+
+    A unit waiting on its systemd timer (``systemd-run --on-calendar``) is
+    ``scheduled`` with the time it starts: the card says so instead of
+    "running" for a job that has not begun."""
     now = time.monotonic()
     with _lock:
         hit = _unit_state_cache.get(unit)
@@ -109,11 +115,49 @@ def _unit_sub_state(unit: str) -> str:
 
         st = unit_state(unit)
         sub = str(st.get("sub_state") or st.get("active_state") or "") if st.get("queried") else "status unavailable"
+        live = {"sub_state": sub, "scheduled": bool(st.get("scheduled")), "starts_at": st.get("starts_at"),
+                "subagents": _runs_subagents(int(st.get("pid") or 0))}
     except Exception:
-        sub = ""
+        live = {"sub_state": "", "scheduled": False, "starts_at": None}
     with _lock:
-        _unit_state_cache[unit] = (now, sub)
-    return sub
+        _unit_state_cache[unit] = (now, live)
+    return live
+
+
+_SUBAGENT_CMD = re.compile(r"\bapi\.subagents\b")
+
+
+def _runs_subagents(pid: int) -> bool:
+    """True when a detached job's process tree runs ``python -m api.subagents``.
+
+    Such a job is a sub-agent run: its children's transcript cards show it, so
+    the chat's background card does not list it a second time."""
+    if pid <= 0:
+        return False
+    try:
+        import psutil
+
+        root = psutil.Process(pid)
+        for proc in [root, *root.children(recursive=True)]:
+            try:
+                if _SUBAGENT_CMD.search(" ".join(proc.cmdline())):
+                    return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    except Exception:
+        return False
+    return False
+
+
+def _unit_label(rec: Dict[str, Any], unit: str, pid: int) -> str:
+    """The job's name for people: its title when the label is only the default "Running: <unit>"."""
+    label = str(rec.get("label") or "")
+    title = str(rec.get("title") or "")
+    if title.startswith("Detached job — "):
+        title = ""  # job_watch's default title names the unit again
+    if title and (not label or label in (f"Running: {unit}", f"Running: pid {pid}", unit)):
+        return title[:200]
+    return (label or (f"Running: {unit}" if unit else f"Running: pid {pid}"))[:200]
 
 
 def _unit_watches() -> Dict[str, List[Dict[str, Any]]]:
@@ -137,11 +181,14 @@ def _unit_watches() -> Dict[str, List[Dict[str, Any]]]:
         from api.job_watch import read_status
 
         status = read_status(rec["id"]) or {}
+        live = _unit_live(unit) if unit else {"sub_state": "running", "scheduled": False, "starts_at": None}
         out.setdefault(chat, []).append({
             "job_id": rec.get("id"), "kind": "unit",
-            "label": str(rec.get("label") or (f"Running: {unit}" if unit else f"Running: pid {pid}"))[:200],
+            "label": _unit_label(rec, unit, pid),
             "unit": unit, "pid": pid,
-            "sub_state": _unit_sub_state(unit) if unit else "running",
+            "sub_state": live["sub_state"],
+            "subagents": bool(live.get("subagents")),
+            "scheduled": live["scheduled"], "starts_at": live["starts_at"],
             "percent": None, "started_at": rec.get("created_ts"),
             "activity": status.get("activity"), "state": status.get("state", "running"),
             "resume_chat": _handle(chat), "handoff": "on_exit",
@@ -170,6 +217,10 @@ def _schedules() -> Dict[str, List[Dict[str, Any]]]:
             "id": job["id"], "label": job.get("label") or "", "status": job.get("status"),
             "target": job.get("target") or "", "detail": (job.get("meta") or {}).get("detail") or "",
             "cancellable": "cancel" in (job.get("actions") or []),
+            "kind": (job.get("meta") or {}).get("op_kind") or "",
+            "every": (job.get("meta") or {}).get("every"), "next_at": (job.get("meta") or {}).get("next_at"),
+            "seen": (job.get("meta") or {}).get("seen") or "",
+            "waiting_since": (job.get("meta") or {}).get("waiting_since"),
         })
     return out
 
@@ -300,6 +351,7 @@ def index(*, max_age: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
 def invalidate() -> None:
     processes.invalidate()
     with _lock:
+        _unit_state_cache.clear()
         _index_cache["at"] = 0.0
         _subagent_cache["at"] = 0.0  # sub-agent parents are cached beside the index
 
@@ -450,7 +502,7 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
     except Exception:
         receipts = []
     recent = [{"job_id": r["id"], "kind": "unit", "unit": r.get("unit", ""),
-               "label": _finished_label(r.get("label") or r["id"]), "state": r["outcome"].get("state", "unknown"),
+               "label": _finished_label(_unit_label(r, str(r.get("unit") or ""), int(r.get("pid") or 0)) or r["id"]), "state": r["outcome"].get("state", "unknown"),
                "started_at": r.get("created_ts"), "finished_at": r.get("finished_ts"),
                "handoff": r["handoff"], "resume_chat": _handle(chat),
                "resume_note": str(r.get("resume_message") or "")[:400],
@@ -471,10 +523,12 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
                    "agent": w.get("agent") or ""}
                   for w in e["waits"]],
         "watches": [{k: w[k] for k in ("job_id", "label", "percent", "started_at", "kind", "unit", "sub_state",
+                                       "scheduled", "starts_at", "subagents",
                                        "activity", "state", "resume_chat", "handoff", "resume_note", "origin_query_id") if k in w}
                     for w in watches],
         "recent": recent,
-        "schedules": [{k: s.get(k) for k in ("id", "label", "detail", "status", "target")} for s in e["schedules"]],
+        "schedules": [{k: s.get(k) for k in ("id", "label", "detail", "status", "target", "kind", "every",
+                                             "next_at", "seen", "waiting_since")} for s in e["schedules"]],
         "process_count": int(e.get("process_count") or 0),
         "detached_count": int(e.get("detached_count") or 0),
         "started_at": _earliest_start(e),

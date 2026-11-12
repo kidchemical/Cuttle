@@ -886,3 +886,37 @@ def test_all_usage_harnesses_produce_meters_via_adapters(monkeypatch, tmp_path):
         seen.append(agent_id)
 
     assert tuple(seen) == USAGE_HARNESS_IDS
+
+
+def test_claude_plan_label_prefers_live_profile_over_login_snapshot(monkeypatch):
+    """``subscriptionType`` is frozen at login; an upgrade shows via the profile."""
+    from api import agent_usage as au
+
+    class _Resp:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps(self.body).encode()
+
+    calls = []
+
+    def fake_urlopen(req, timeout=0):
+        calls.append(req.full_url)
+        return _Resp({"organization": {"plan_display_label": "Ultra plan"}})
+
+    au._claude_plan_label_cache.clear()
+    monkeypatch.setattr(au.urllib.request, "urlopen", fake_urlopen)
+    oauth = {"accessToken": "tok", "subscriptionType": "pro"}
+    assert au._claude_plan_label(oauth) == "Ultra"
+    assert au._claude_plan_label(oauth) == "Ultra" and len(calls) == 1  # cached
+
+    au._claude_plan_label_cache.clear()
+    monkeypatch.setattr(au.urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("down")))
+    assert au._claude_plan_label(oauth) == "pro"

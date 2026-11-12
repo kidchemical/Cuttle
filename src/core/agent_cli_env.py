@@ -67,6 +67,9 @@ _AUTH_OVERRIDES = frozenset({
 _CWD_HINTS = frozenset({"PWD", "OLDPWD"})
 
 
+_NO_CREDENTIAL_PROMPT = {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+
+
 def agent_cli_env(source: Optional[Mapping[str, str]] = None) -> dict[str, str]:
     """Keep runtime/native config paths; never pass host provider credentials.
 
@@ -81,4 +84,9 @@ def agent_cli_env(source: Optional[Mapping[str, str]] = None) -> dict[str, str]:
         and not key.upper().endswith(("API_KEY", "API_TOKEN", "AUTH_TOKEN"))
     }
     env.update(_operation_context.get())
+    # No one can answer a credential prompt inside an agent run. Make git and
+    # Git Credential Manager fail at once instead of waiting (GCM without a
+    # terminal spins a CPU core indefinitely). Stored credentials still work.
+    for key, value in _NO_CREDENTIAL_PROMPT.items():
+        env.setdefault(key, value)
     return env

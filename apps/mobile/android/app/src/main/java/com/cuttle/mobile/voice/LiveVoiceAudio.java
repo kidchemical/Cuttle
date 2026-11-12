@@ -16,6 +16,8 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import com.cuttle.mobile.tls.HostPins;
+import com.cuttle.mobile.tls.PinnedTls;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -34,7 +36,7 @@ public final class LiveVoiceAudio {
     private LinkedBlockingQueue<byte[]> playback = new LinkedBlockingQueue<>();
     private final AtomicLong buffered = new AtomicLong();
     private volatile long clearEpoch;
-    private final OkHttpClient client = new OkHttpClient.Builder()
+    private final OkHttpClient client = PinnedTls.apply(new OkHttpClient.Builder(), HostPins::get)
         .readTimeout(0, TimeUnit.SECONDS).pingInterval(20, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false).build();
     private WebSocket socket;

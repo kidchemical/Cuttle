@@ -82,6 +82,12 @@ console.log(JSON.stringify({
     {origin: 'chat_ops', parent_label: 'Background work finished'},
     {origin: 'subagent', parent_label: 'Parent chat'}, null,
   ].map((o) => M.chatOpBadge(o)),
+  checkin: M.checkinHtml('/claude **Check-in for CH-000002**: idle.\n\n**Your job:** keep it moving.',
+    (t) => '[H:' + t + ']', (t) => '[B:' + t + ']'),
+  checkinOneLine: M.checkinHtml('just one line', (t) => t, (t) => t),
+  bubbleCheckin: M.userBubbleHtml({kind: 'checkin'}, 'a\nb', (t) => 'H' + t, (t) => 'B' + t),
+  bubblePlain: M.userBubbleHtml({kind: 'send'}, 'a\nb', (t) => 'H' + t, (t) => 'B' + t),
+  bubbleNone: M.userBubbleHtml(null, 'a\nb', (t) => 'H' + t, (t) => 'B' + t),
 }));
 """
 
@@ -447,3 +453,120 @@ def test_dialog_closes_on_escape_right_after_it_opens(browser, static_server):
         assert not errors
     finally:
         page.close()
+
+
+def test_checkin_briefing_folds_behind_its_status_line():
+    """The user reads the one-line status; the briefing is for the supervisor agent."""
+    out = _model()
+    html = out["checkin"]
+    assert html.startswith("[H:/claude **Check-in for CH-000002**: idle.]")
+    assert '<details class="chat-checkin-details"><summary>Supervisor briefing</summary>' in html
+    assert "<details class=\"chat-checkin-details\" open" not in html
+    assert "[B:**Your job:** keep it moving.]" in html
+    assert out["checkinOneLine"] is None
+    assert out["bubbleCheckin"].startswith("Ha<details") and "Bb" in out["bubbleCheckin"]
+    assert out["bubblePlain"] == out["bubbleNone"] == "Ha\nb"
+
+
+def _node_model(expr, **env):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    script = ("const M = require(process.env.MODEL);\n"
+              "const input = JSON.parse(process.env.INPUT);\n"
+              f"console.log(JSON.stringify({expr}));")
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30,
+                         env={**os.environ, "MODEL": str(MODEL), "INPUT": json.dumps(env)})
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def test_checkin_card_draws_the_facts_the_host_wrote():
+    """The card reads the check-in the outbox actually generates (not a copy of
+    its wording): chat, state, alerts and Tasks progress on one line."""
+    from api.chat_ops import worker
+
+    snap = {"handle": "CH-002006", "state": "busy", "branch": "dev/core", "execution_path": "/wt", "warnings": [],
+            "live": {"status": "working"}, "latest_reply": {"id": 1, "text": "Lane 10 is running."},
+            "tasks": [{"id": "a", "title": "FP animation", "done": 51, "total": 65},
+                      {"id": "b", "title": "Bugs", "done": 1, "total": 5}],
+            "undelivered": [{"id": "op1", "from": "CH-002006", "to": "CH-002365", "waiting_on": "target_turn",
+                             "waiting_sec": worker.STUCK_SEND_SEC + 4 * 3600, "text": "Recheck please"}]}
+    text = worker.checkin_text({"agent": "claude", "every": 1800}, snap, ["Wrong branch: on dev/x"], stalled_min=95)
+    out = _node_model("({facts: M.checkinFacts(input.text), html: M.userBubbleHtml({kind: 'checkin'}, input.text,"
+                      " (t) => '[H:' + t + ']', (t) => '[B]'), idle: M.checkinFacts(input.idle)})",
+                      text=text, idle=worker.checkin_text({"every": 900}, {**snap, "state": "idle_with_work",
+                                                                           "undelivered": [], "tasks": []}, []))
+    facts = out["facts"]
+    assert (facts["handle"], facts["state"], facts["tone"]) == ("CH-002006", "working", "live")
+    assert facts["tasks"] == {"done": 52, "total": 70, "percent": 74}
+    assert [a["text"] for a in facts["alerts"]] == ["1 rule broken", "no progress 95m", "1 not delivered"]
+    html = out["html"]
+    assert html.startswith('<details class="chat-checkin-details chat-checkin-card">') and " open" not in html[:80]
+    assert "[H:" not in html and html.count("[B]") == 1  # the briefing is folded, never the headline
+    assert 'style="width:74%"' in html and ">52/70<" in html
+    assert (out["idle"]["state"], out["idle"]["tone"], out["idle"]["tasks"], out["idle"]["alerts"]) == (
+        "idle, tasks open", "warn", None, [])
+
+
+def test_long_relayed_message_folds_to_a_preview():
+    long = ("Supervisor CH-002369: the redo has stalled <b>now</b>.\n\nPlease do the following:\n"
+            + "\n".join(f"{i}. step {i}" for i in range(1, 9)))
+    out = _node_model("({short: M.foldPreview('Keep going.'), preview: M.foldPreview(input.long),"
+                      " html: M.userBubbleHtml({kind: 'send'}, input.long, (t) => '[F]', (t) => '[B]'),"
+                      " typed: M.userBubbleHtml(null, input.long, (t) => '[F]', (t) => '[B]')})", long=long)
+    assert out["short"] is None
+    assert out["preview"] == "Supervisor CH-002369: the redo has stalled <b>now</b>."
+    assert out["html"].startswith('<details class="chat-op-fold">') and "&lt;b&gt;now&lt;/b&gt;" in out["html"]
+    assert out["html"].count("[F]") == 1  # the whole message, once, inside
+    assert out["typed"] == "[F]"  # what the user typed is never folded
+
+
+def test_subagent_handback_notice_is_one_fact_line():
+    """CH-002006-447: the notice api.subagents.handback writes shows each child's
+    handle and status plus why it is its own turn, not `/claude Sub-agent batch
+    <32 hex>…`; what the agent got opens from it."""
+    from api.subagents import handback
+
+    batch = {"id": "366fcd72f8774359a6cd1a37c448363d", "status": "done", "children": [
+        {"handle": "CH-002457", "label": "B4 Lane 4F: reload hand fix P3 (bolt keys)", "agent": "claude",
+         "model": "haiku", "status": "done", "result": "Lane 4F is done."},
+        {"handle": "CH-002458", "label": "Reviewer", "agent": "codex", "status": "failed", "error": "boom"}]}
+    text = "/claude " + handback.notice_text(batch)
+    timed = "/claude " + handback.notice_text({**batch, "status": "cancelled"}, timed_out=True)
+    out = _node_model("({facts: M.noticeFacts(input.text), html: M.userBubbleHtml({kind: 'notice'}, input.text,"
+                      " (t) => '[H]', (t) => '[B:' + t.slice(0, 7) + ']'), timed: M.noticeFacts(input.timed),"
+                      " other: M.userBubbleHtml({kind: 'notice'}, input.other, (t) => '[H:' + t.slice(0, 9) + ']', (t) => '[B]'),"
+                      " preview: M.foldPreview(input.other)})",
+                      text=text, timed=timed, other="/claude " + "Detached job ch7-tests finished. " * 20)
+    facts = out["facts"]
+    assert facts["timedOut"] is False and out["timed"]["timedOut"] is True
+    assert [(c["handle"], c["status"], c["tone"]) for c in facts["children"]] == [
+        ("CH-002457", "done", "ok"), ("CH-002458", "failed", "bad")]
+    assert facts["children"][0]["label"] == "B4 Lane 4F: reload hand fix P3 (bolt keys)"
+    html = out["html"]
+    assert html.startswith('<details class="chat-checkin-details chat-checkin-card chat-notice-card">')
+    assert "366fcd72" not in html.split("</summary>")[0] and "/claude" not in html.split("</summary>")[0]
+    assert ">CH-002457<" in html and 'class="chat-checkin-state is-ok">done<' in html
+    assert "arrived after the turn ended" in html
+    assert html.count("[B:Sub-age]") == 1  # the full text, without the routing prefix, folded
+    # Any other long notice still folds, and its preview drops the routing prefix too.
+    assert out["preview"].startswith("Detached job ch7-tests finished.")
+    assert out["other"].startswith('<details class="chat-op-fold">')
+
+
+def test_cuttle_notice_has_no_launcher_back_to_its_own_chat():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    js = MODEL.parent / "chat_subagent_launchers.js"
+    script = ("require(process.env.JS);\n"
+              "const L = globalThis.CuttleChatSubagentLaunchers.create({ win: { document: {} },"
+              " escapeHtmlInline: (s) => s, parseChatHandleToken: () => null, avatarHtml: () => '', chipCategoryClass: () => '' });\n"
+              "const base = { origin: 'chat_ops', parent_session_id: 2006, parent_handle: 'CH-002006', parent_label: 'Sub-agents finished' };\n"
+              "console.log(JSON.stringify({ notice: L.parentRefs({ ...base, chat_op_kind: 'notice' }).length,"
+              " send: L.parentRefs({ ...base, chat_op_kind: 'send', parent_label: 'Sent by CH-002369' }).length }));")
+    out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30,
+                         env={**os.environ, "JS": str(js)})
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == {"notice": 0, "send": 1}

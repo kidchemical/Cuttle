@@ -20,6 +20,10 @@ _active = {}
 # wait this long (and for the chat to go idle) before reading history.
 VERIFY_GRACE_SEC = 30
 MAX_SEND_ATTEMPTS = 3
+# A send whose target is mid-turn is looked at again this often.
+BUSY_RETRY_SEC = 5
+# An undelivered send older than this is told to the supervisor of either chat.
+STUCK_SEND_SEC = 15 * 60
 # A busy target whose Tasks, git HEAD, replies, sub-agents and background waits
 # have not moved for this long wakes the supervisor anyway: one long turn can
 # hide a retry loop for hours.
@@ -28,6 +32,8 @@ STALL_SEC = 45 * 60
 # this factor, so a legitimately long wait does not wake the supervisor every
 # 45 minutes (each wake is a full supervisor turn).
 STALL_BACKOFF_MAX = 4
+# Target states where no progress for the stall window wakes the supervisor.
+STALL_STATES = ('busy', 'waiting_background', 'idle_with_work')
 # A supervisor out of usage with no reset time in its error retries after this.
 SUPERVISOR_QUOTA_RETRY_SEC = 3600
 
@@ -53,15 +59,50 @@ def _verify(op, db, sid):
         store.finish(op['id'], 'pending', {**result, 'resend': True})
 
 
+def _waiting(op):
+    """Since when (and on what) a send has waited; kept across busy retries."""
+    result = op.get('result') or {}
+    return {k: result[k] for k in ('waiting_since', 'waiting_on', 'blocked_by') if result.get(k)} \
+        or {'waiting_since': time.time(), 'waiting_on': 'target_turn'}
+
+
+def _awaiting_this_delivery(sid, db):
+    """A sub-agent child marked working by the very send that is still queued."""
+    try:
+        from api.subagents.service import external_round_undelivered
+        return external_round_undelivered(sid, db=db)
+    except Exception:
+        return False
+
+
+HELD_RETRY_SEC = 60.0
+
+
+def _orchestration_held(sid):
+    try:
+        from api.orchestrator.control import held
+        return bool(held(sid))
+    except Exception:
+        return False
+
+
 def dispatch(op, *, request=None):
     """One outbox attempt. A send whose outcome is lost is verified against the
     target's history before any resend, so a turn never runs twice."""
     request = request or transport.request
     db, actor, row = service.context(op['target'], op['actor'])
     uid, sid = row['user_id'], row['id']
+    if op['kind'] != 'supervise' and op.get('state') != 'verifying' and _orchestration_held(sid):
+        # The user paused this orchestration: wake-ups and messages wait for Resume.
+        store.defer(op['id'], due=time.time() + HELD_RETRY_SEC, reason=store.HELD_REASON)
+        return
     live = request(uid, sid, 'GET', '/api/chat-live-status')
-    if live.get('generating') and op['kind'] != 'supervise':
-        return  # Still pending; no busy-loop or second harness.
+    if live.get('generating') and op['kind'] != 'supervise' and not _awaiting_this_delivery(sid, db):
+        # Still undelivered; no busy-loop or second harness. Rotated to the back
+        # of the queue, with the wait recorded so status and check-ins can show it.
+        store.defer(op['id'], due=time.time() + BUSY_RETRY_SEC, reason='target_turn',
+                    blocked_by=live.get('query_id'))
+        return
     if not store.claim(op['id'], op.get('state') or 'pending'):
         return
     if op.get('state') == 'verifying':
@@ -84,7 +125,7 @@ def dispatch(op, *, request=None):
         with request(uid, sid, 'POST', '/api/chat', body, stream=True) as response:
             if response.status_code >= 400:
                 if response.status_code == 409:
-                    store.finish(op['id'], 'pending', {'busy': True}, due=time.time() + 2)
+                    store.finish(op['id'], 'pending', {**_waiting(op), 'busy': True}, due=time.time() + 2)
                 else:
                     store.finish(op['id'], 'failed', {'http_status': response.status_code})
                 return
@@ -94,7 +135,7 @@ def dispatch(op, *, request=None):
                 event = json.loads(line[6:])
                 kind = event.get('type')
                 if kind == 'busy':
-                    store.finish(op['id'], 'pending', {'busy': True}, due=time.time() + 2)
+                    store.finish(op['id'], 'pending', {**_waiting(op), 'busy': True}, due=time.time() + 2)
                     return
                 if kind == 'query_started':
                     store.finish(op['id'], 'delivered', {'query_id': event.get('query_id')})
@@ -115,10 +156,14 @@ def dispatch(op, *, request=None):
             _uncertain(op, 'connection lost during delivery')
 
 
-def _signature(snap, violations):
+def _signature(snap, violations, children=()):
+    """The picture the supervisor last saw. Sub-agent replies are part of it: a
+    lane finishing while its orchestrator sits idle is news, even though the
+    orchestrator's own reply and Tasks have not moved."""
     latest = snap.get('latest_reply') or {}
     return json.dumps([snap['state'], latest.get('id'), sorted(violations),
-                       [(t['id'], t['done'], t['total']) for t in snap['tasks']]])
+                       [(t['id'], t['done'], t['total']) for t in snap['tasks']],
+                       [list(c) for c in children]])
 
 
 _STATE_TEXT = {'busy': 'working', 'waiting_background': 'waiting on its own background task (it wakes by itself)', 'idle': 'idle, nothing open', 'idle_with_work': 'idle with open Tasks items',
@@ -127,6 +172,31 @@ _STATE_TEXT = {'busy': 'working', 'waiting_background': 'waiting on its own back
 CHECKIN_REPLY_CHARS = 2500
 # Window fill at which a check-in suggests compacting the target.
 CONTEXT_HIGH_PERCENT = 75
+
+
+def _stuck(snap):
+    return [u for u in (snap.get('undelivered') or []) if u.get('waiting_sec', 0) >= STUCK_SEND_SEC]
+
+
+def _waited(sec):
+    minutes = int(sec) // 60
+    return f'{minutes} min' if minutes < 90 else f'{minutes // 60} h {minutes % 60:02d} min'
+
+
+def undelivered_section(undelivered):
+    """Check-in lines for messages that were sent but have not arrived."""
+    stuck = _stuck({'undelivered': undelivered})
+    if not stuck:
+        return []
+    why = {'target_turn': "waiting for that chat's turn to end", 'verifying': 'delivery being verified'}
+    lines = ['', f'**Not delivered ({len(stuck)}):** sent, but still waiting in the outbox.']
+    for u in stuck[:6]:
+        lines.append(f"- {u['from']} → {u['to']}, {_waited(u['waiting_sec'])}: "
+                     f"{why.get(u['waiting_on'], 'queued')}: \"{u['text'][:100]}\"")
+    lines.append('The sender may believe these arrived. Check each receiving chat '
+                 '(`python -m api.chat_cli status CH-…`): if it is really working, leave it; if it shows busy '
+                 'with no new reply and no process behind it, tell the sender, or stop that chat and resend.')
+    return lines
 
 
 def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, changes=None):
@@ -147,12 +217,18 @@ def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, chang
                   'work, but no new reply, commit, Tasks change or sub-agent reply since. Check that the job '
                   'it waits on is still running and will report; if that job is done or gone, send it the '
                   'result. A long build or transfer that is still moving needs no message.']
+    elif stalled_min and snap['state'] == 'idle_with_work':
+        lines += ['', f'**No progress for {stalled_min} min:** its turn ended with Tasks items still open, '
+                  'and no new reply, commit, Tasks change or sub-agent reply since. Nothing will wake it by '
+                  'itself: if a lane it started has finished, or its next step is clear, send it that step; '
+                  'if it is really waiting on the user, say so.']
     elif stalled_min:
         lines += ['', f'**No progress for {stalled_min} min:** still mid-turn, but no commit and no Tasks '
                   'change. Check its run logs for a retry loop; if it keeps repeating a failing attempt, '
                   'steer it to escalate now.']
     if violations:
         lines += ['', '**Rule violations:**'] + [f'- {v}' for v in violations]
+    lines += undelivered_section(snap.get('undelivered'))
     if checkpoint:
         from api.chat_ops.checkpoints import checkin_section
         lines += checkin_section(*checkpoint)
@@ -233,14 +309,16 @@ def _children_progress(db, sid):
         conn.close()
 
 
-def _progress(snap, db=None):
+def _progress(snap, db=None, children=None):
     """What counts as the target moving: a commit, a Tasks change, a new reply of
     its own or of a sub-agent, or a newly started background wait."""
     waits = (snap.get('live') or {}).get('background_wait') or []
+    if children is None:
+        children = _children_progress(db, snap.get('session_id') or snap['handle'][3:])
     return json.dumps([_git_head(snap.get('execution_path')),
                        [(t['id'], t['done'], t['total']) for t in snap['tasks']],
                        (snap.get('latest_reply') or {}).get('id'),
-                       _children_progress(db, snap.get('session_id') or snap['handle'][3:]),
+                       children,
                        sorted(str(w.get('started_ts') or w.get('started_at') or '') for w in waits)])
 
 
@@ -479,7 +557,8 @@ def _check_in(op, db, actor, sid, request):
     violations = found if wake else []
     if not wake:
         moved = []
-    signature = _signature(snap, violations)
+    children = _children_progress(db, sid)
+    signature = _signature(snap, violations, children)
     nxt = time.time() + cfg['every']
     seen = {'state': snap['state'], 'branch': snap['branch'], 'violations': violations,
             'tasks': [{'title': t['title'], 'done': t['done'], 'total': t['total']} for t in snap['tasks']]}
@@ -489,16 +568,26 @@ def _check_in(op, db, actor, sid, request):
     # mid-turn: that is when the supervisor may need to steer.
     changes = service.changes_section(cfg, snap['handle'])
     now = time.time()
-    progress = _progress(snap, db)
+    progress = _progress(snap, db, children)
     progress_at = previous.get('progress_at') or now
     streak = int(previous.get('stall_streak') or 0)
     if progress != previous.get('progress'):
         progress_at = now
         streak = 0
     window = cfg.get('stall_after', STALL_SEC) * min(2 ** streak, STALL_BACKOFF_MAX)
-    stalled = snap['state'] in ('busy', 'waiting_background') and now - progress_at >= window
+    # An idle target with open Tasks stalls too: once the supervisor has seen
+    # that picture, nothing else wakes it, so a missed hand-off would sit for good.
+    stalled = snap['state'] in STALL_STATES and now - progress_at >= window
     tracking = {'progress': progress, 'progress_at': now if stalled else progress_at,
                 'stall_streak': streak + 1 if stalled else streak}
+    # A send from or to the target that never arrived is told once per message,
+    # even mid-turn: a busy orchestrator cannot see that its lanes got nothing.
+    stuck_ids = sorted(u['id'] for u in _stuck(snap))
+    told = previous.get('stuck_reported') or []
+    new_stuck = [i for i in stuck_ids if i not in told]
+    tracking['stuck_reported'] = [i for i in told if i in stuck_ids]
+    if stuck_ids:
+        seen['undelivered'] = len(stuck_ids)
     if stalled:
         seen['stalled_min'] = int((now - (previous.get('stalled_since') or progress_at)) // 60)
         tracking['stalled_since'] = previous.get('stalled_since') or progress_at
@@ -515,7 +604,7 @@ def _check_in(op, db, actor, sid, request):
         return
     # A working target or an unchanged picture costs no supervisor tokens;
     # a picture whose wake the supervisor never answered is not "seen".
-    if not violations and not briefing and not stalled and not changes and (
+    if not violations and not briefing and not stalled and not changes and not new_stuck and (
             snap['state'] in ('busy', 'waiting_background')
             or (signature == previous.get('signature') and not failure)):
         reason = snap['state'] if snap['state'] in ('busy', 'waiting_background') else 'unchanged'
@@ -524,12 +613,14 @@ def _check_in(op, db, actor, sid, request):
                                             'last_seen': seen, 'skipped': reason, 'guard_reported': found}, due=nxt)
         return
     if _template_nudge(op, cfg, snap, previous, request, db=db, actor=actor, quiet=not (
-            violations or briefing or stalled or changes or failure),
+            violations or briefing or stalled or changes or failure or new_stuck),
             result={**previous, **tracking, 'signature': signature, 'last_check': time.time(),
                     'last_seen': seen, 'guard_reported': found}, due=nxt):
         return
     active = _active_checkins(actor, op['id'])
-    store.record_check(op['id'], 'violation' if violations else 'stalled' if stalled else 'woke',
+    tracking['stuck_reported'] = stuck_ids
+    store.record_check(op['id'], 'violation' if violations else 'stalled' if stalled
+                       else 'undelivered' if new_stuck else 'woke',
                        {**seen, 'already_waiting': bool(active), **({'retry': True} if failure else {})})
     # A moved forbidden branch is reported once, so it never waits behind a queued check-in.
     if not active or moved:

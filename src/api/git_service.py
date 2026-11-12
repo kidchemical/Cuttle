@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -692,6 +693,70 @@ def worktree_remove(cwd: str, path: str, *, force: bool = False) -> Dict[str, An
         raise GitError(f"git worktree remove failed: {proc.stderr}",
                        returncode=proc.returncode, stderr=proc.stderr)
     return {'path': str(target), 'removed': True, 'forced': bool(force)}
+
+
+def tracked_size(cwd: str, ref: str = "HEAD") -> Optional[int]:
+    """Bytes a checkout of ``ref`` writes (sum of its tracked blobs); None if unknown.
+
+    An estimate: Git LFS files count as their small pointers, and build caches
+    a tool creates later are not in it.
+    """
+    proc = _run(['ls-tree', '-r', '-l', '--full-tree', ref or 'HEAD'], cwd)
+    if proc.returncode != 0:
+        return None
+    total = 0
+    for line in proc.stdout.splitlines():
+        meta = line.split('\t', 1)[0].split()
+        if len(meta) >= 4 and meta[3].isdigit():
+            total += int(meta[3])
+    return total
+
+
+def _same_device(source: Path, target_parent: Path) -> bool:
+    try:
+        return os.stat(source).st_dev == os.stat(target_parent).st_dev
+    except OSError:
+        return True  # let git decide
+
+
+def worktree_move(cwd: str, path: str, new_path: str) -> Dict[str, Any]:
+    """Move the worktree at ``path`` to ``new_path``; branch and edits stay.
+
+    Same drive: ``git worktree move``. Another drive: git refuses (it only
+    renames), so the tree is copied, ``git worktree repair`` points the
+    repository at the copy, and the original is deleted only after the copy
+    answers ``git status``. A failed copy is removed and the original stays
+    registered. ``new_path`` must not exist yet.
+    """
+    source, target = Path(path), Path(new_path)
+    if not source.is_dir():
+        raise GitError(f'Worktree path does not exist: {source}')
+    if target.exists():
+        raise GitError(f'Target path already exists: {target}')
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if _same_device(source, target.parent):
+        proc = _run(['worktree', 'move', str(source), str(target)], cwd)
+        if proc.returncode != 0:
+            raise GitError(f"git worktree move failed: {proc.stderr}",
+                           returncode=proc.returncode, stderr=proc.stderr)
+        return {'path': str(target), 'previous_path': str(source), 'copied': False}
+
+    try:
+        shutil.copytree(source, target, symlinks=True)
+    except (OSError, shutil.Error) as exc:
+        shutil.rmtree(target, ignore_errors=True)
+        raise GitError(f'Copying the worktree failed: {exc}') from exc
+    proc = _run(['worktree', 'repair', str(target)], cwd)
+    check = _run(['status', '--porcelain'], str(target)) if proc.returncode == 0 else proc
+    if proc.returncode != 0 or check.returncode != 0:
+        shutil.rmtree(target, ignore_errors=True)
+        _run(['worktree', 'repair', str(source)], cwd)
+        failed = proc if proc.returncode != 0 else check
+        raise GitError(f"Could not point the repository at the copy: {failed.stderr}",
+                       returncode=failed.returncode, stderr=failed.stderr)
+    shutil.rmtree(source, ignore_errors=True)
+    return {'path': str(target), 'previous_path': str(source), 'copied': True,
+            'source_left_behind': source.exists()}
 
 
 def worktree_prune(cwd: str, *, expire: Optional[str] = None) -> Dict[str, bool]:

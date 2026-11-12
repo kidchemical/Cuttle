@@ -7,6 +7,21 @@ from typing import Any, Dict, Optional, Tuple
 
 from api.agent_router.types import ExecutionTarget, FailureKind
 
+
+def _status_code(codes: str) -> str:
+    """An HTTP status in an error line, not any number containing it.
+
+    A bare ``\\b402\\b`` matched ``1.402`` in a weapon-balance table and marked
+    Claude and Codex out of usage for three hours. Require the code as its own
+    token (no digit/dot/word neighbours) next to an HTTP-ish word or reason."""
+    code = rf"(?<![\w.])(?:{codes})(?![\w.])"
+    return (
+        rf"(?:\bHTTP(?:/[\d.]+)?|\bstatus(?:[ _]code)?|\bcode|\berror|\bAPI Error|\bresponse)"
+        rf"[\s:=#(\[\"']{{0,4}}{code}"
+        rf"|{code}\s*[-:)\]]?\s*(?:Payment Required|Unauthorized|Forbidden|Too Many Requests)"
+    )
+
+
 _TRANSPORT_PATTERNS = [
     re.compile(p, re.I)
     for p in (
@@ -28,10 +43,7 @@ _TRANSPORT_PATTERNS = [
         r"timed? ?out",
         r"temporarily unavailable",
         r"service unavailable",
-        r"402\b",
-        r"401\b",
-        r"403\b",
-        r"429\b",
+        _status_code("401|402|403|429"),
         r"usage.?limit",
         r"spend limit",
         r"hit your usage limit",
@@ -60,7 +72,7 @@ _QUOTA_PATTERNS = [
         r"you['’]ve reached your\b[^\n]*\blimit",
         r"out of usage credits",
         r"ActionRequiredError",
-        r"\b402\b",
+        _status_code("402"),
     )
 ]
 
@@ -99,54 +111,35 @@ def classify_failure(
     if not result:
         return FailureKind.TRANSPORT.value, "empty result"
 
-    if result.get("success") and result.get("type") not in (
-        "cursor_error",
-        "codex_error",
-        "claude_error",
-        "hermes_error",
-        "muse_error",
-        "opencode_error",
-        "antigravity_error",
-        "router_error",
-    ):
-        text = response_text or str(result.get("response") or "")
-        if text.startswith("[FAIL]") or text.startswith("[CANCELLED]"):
-            # fall through to classification
-            pass
-        elif result.get("success"):
-            # Chat handlers often return success=True even on agent failure.
-            pass
-
     text = (response_text or str(result.get("response") or result.get("error") or "")).strip()
     err = str(result.get("error") or "").strip()
-    combined = f"{text}\n{err}".strip()
     rtype = str(result.get("type") or "")
+
+    # Only a failed run has a failure kind. Runners mark failure explicitly
+    # (``*_error`` type, ``[FAIL]``/``[CANCELLED]`` header, ``success: False``);
+    # kernel failures always carry ``{agent}_error``. A successful reply is
+    # never scanned: its prose ("budget", "rate limit", "timed out", "1.402")
+    # is the agent's work, not an error — scanning it marked whole vendor
+    # accounts out of usage from ordinary game-dev replies.
+    failed_flag = (
+        text.startswith("[FAIL]")
+        or text.startswith("[CANCELLED]")
+        or rtype.endswith("_error")
+        or result.get("success") is False
+    )
+    if not failed_flag:
+        return FailureKind.NONE.value, ""
+
+    combined = failure_excerpt(text, err)
 
     # Cancellation is the user's decision, not an agent defect. It must be
     # checked before transport/task so a Stop never buys an escalation.
     if is_cancellation(combined):
         return FailureKind.CANCELLED.value, _short_reason(combined) or "cancelled by user"
 
-    # Explicit transport markers from our runners
-    if rtype.endswith("_error") and any(
-        p.search(combined) for p in _TRANSPORT_PATTERNS
-    ):
-        return FailureKind.TRANSPORT.value, _short_reason(combined)
-
     for p in _TRANSPORT_PATTERNS:
         if p.search(combined):
             return FailureKind.TRANSPORT.value, _short_reason(combined)
-
-    failed_flag = False
-    if text.startswith("[FAIL]") or text.startswith("[CANCELLED]"):
-        failed_flag = True
-    if rtype.endswith("_error"):
-        failed_flag = True
-    if result.get("success") is False:
-        failed_flag = True
-
-    if not failed_flag:
-        return FailureKind.NONE.value, ""
 
     for p in _TASK_PATTERNS:
         if p.search(combined):
@@ -178,9 +171,31 @@ def _short_reason(text: str) -> str:
     return (lines[0] if lines else "")[:200]
 
 
+# A failed run's response can be the agent's whole transcript followed by the
+# CLI error. The error lives in the runner header / first lines or at the end;
+# the middle is the agent's own prose and must not decide the failure kind.
+_EXCERPT_HEAD = 1200
+_EXCERPT_TAIL = 800
+
+
+def failure_excerpt(text: str, err: str = "") -> str:
+    """The part of a failed run's output that can name why it failed."""
+    t = (text or "").strip()
+    if len(t) > _EXCERPT_HEAD + _EXCERPT_TAIL:
+        t = f"{t[:_EXCERPT_HEAD]}\n…\n{t[-_EXCERPT_TAIL:]}"
+    e = (err or "").strip()
+    if e and e not in t:
+        t = f"{t}\n{e[:_EXCERPT_HEAD]}" if t else e[:_EXCERPT_HEAD]
+    return t
+
+
 def is_quota_failure(text: str) -> bool:
-    """True when a failure means the vendor account is out of budget/usage."""
-    s = text or ""
+    """True when a failure means the vendor account is out of budget/usage.
+
+    Callers pass failure text only (a failed run's output or error); this is
+    applied to :func:`failure_excerpt` so a long transcript's prose cannot
+    decide it."""
+    s = failure_excerpt(text or "")
     return any(p.search(s) for p in _QUOTA_PATTERNS)
 
 

@@ -527,3 +527,32 @@ def test_query_started_carries_selected_model_effort_and_sse_badge(monkeypatch, 
     assert 'effort medium' in chip['meta']
     frame = _frame_stream_lifecycle_event('query_started', query, '148')[0]
     assert json.loads(frame.removeprefix('data: ').strip())['slash_command'] == query['slash_command']
+
+
+def test_adapter_turn_options_are_peeled_before_compile(monkeypatch, tmp_path):
+    """`peel_turn_options` strips a per-turn prefix before the compiler sees
+    the message and hands its options to ``execute()`` as kwargs."""
+    import api.cuttle_brain.handoff as handoff_mod
+    import api.cuttle_brain.context_compiler as compiler_mod
+
+    seen = {}
+
+    class _PeelAdapter(_FakeAdapter):
+        def peel_turn_options(self, prompt):
+            return (prompt[len("/use-api "):], {"billing": "api"}) if prompt.startswith("/use-api ") else (prompt, {})
+
+        async def execute(self, prompt, *, billing=None, **kwargs):
+            self._seen.update(prompt=prompt, billing=billing)
+            return AgentResult(success=True, output="pong", session_id="cli-sid-1")
+
+    manifest = _manifest()
+    _quiet_kernel(monkeypatch, manifest, seen)
+    monkeypatch.setattr(kernel, "get_agent", lambda aid, project_path=None: (manifest, _PeelAdapter(seen)))
+    monkeypatch.setattr(handoff_mod, "build_handoff", lambda *a, **k: None)
+    compiled_from = []
+    monkeypatch.setattr(compiler_mod, "compile_context",
+                        lambda *a, **k: compiled_from.append(repr((a, k))) or _compiled())
+
+    out = kernel.run_agent_web_command("fakeprobe", "/use-api do the thing", 148, project_path=str(tmp_path))
+    assert out.get("success") is True and seen["billing"] == "api"
+    assert compiled_from and "/use-api" not in compiled_from[0] and "do the thing" in compiled_from[0]

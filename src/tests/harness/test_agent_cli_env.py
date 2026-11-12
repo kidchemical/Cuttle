@@ -34,7 +34,8 @@ def test_preserves_native_configuration_and_runtime():
               'HTTPS_PROXY': 'http://proxy', 'CUTTLE_INTERNAL_API_BASE': 'https://localhost',
               'anthropic_api_key': 'host-key'}
     env = agent_cli_env(source)
-    assert env == {k: v for k, v in source.items() if k != 'anthropic_api_key'}
+    assert env == {**{k: v for k, v in source.items() if k != 'anthropic_api_key'},
+                   'GIT_TERMINAL_PROMPT': '0', 'GCM_INTERACTIVE': 'never'}
     assert source['anthropic_api_key'] == 'host-key'
 
 
@@ -95,3 +96,10 @@ def test_supervised_marker_is_set_per_turn_and_cleared_for_user_driven_turns():
         assert agent_cli_env({})['CUTTLE_SUPERVISED'] == 'subagent'
     with agent_operation_context(session_id='2', agent_id='fixture'):
         assert agent_cli_env(inherited)['CUTTLE_SUPERVISED'] == ''
+
+
+def test_agent_runs_never_wait_on_a_git_credential_prompt():
+    env = agent_cli_env({'PATH': '/bin'})
+    assert env['GIT_TERMINAL_PROMPT'] == '0' and env['GCM_INTERACTIVE'] == 'never'
+    # An explicit choice by the host still wins.
+    assert agent_cli_env({'GCM_INTERACTIVE': 'auto'})['GCM_INTERACTIVE'] == 'auto'

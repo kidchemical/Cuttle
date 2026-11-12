@@ -135,8 +135,7 @@ function snapshotLayoutTree(nodeEl) {
         if (state && state.paneCollapsed) entry.collapsed = true;
         if (entry.collapsed && nodeEl.dataset.restoreEdge) entry.restoreEdge = nodeEl.dataset.restoreEdge;
         if (handles.chat) entry.chat = String(handles.chat);
-        if (handles.terminal) entry.terminal = String(handles.terminal);
-        if (!entry.chat || !entry.terminal) {
+        if (!entry.chat) {
             try {
                 const url = new URL(page, window.location.origin);
                 const kind = chatSurfaceKind(url.pathname);
@@ -179,7 +178,6 @@ function flattenLayoutLeaves(node, out = []) {
             page: node.page || '/chat_page.html',
             flex: node.flex || '',
             chat: node.chat,
-            terminal: node.terminal,
             railCollapsed: node.railCollapsed,
         });
         return out;
@@ -210,7 +208,6 @@ function flatLayoutToTree(columns, orientation) {
             page: c.page || '/chat_page.html',
             flex: c.flex || '',
             chat: c.chat,
-            terminal: c.terminal,
             railCollapsed: c.railCollapsed,
         };
     }
@@ -225,7 +222,6 @@ function flatLayoutToTree(columns, orientation) {
             page: (c && c.page) || '/chat_page.html',
             flex: (c && c.flex) || '',
             chat: c && c.chat,
-            terminal: c && c.terminal,
             railCollapsed: c && c.railCollapsed,
         })),
     };
@@ -260,12 +256,12 @@ function getSplitColumns() {
         .filter((c) => !isSplitDiscardedEl(c));
 }
 
-/** Embed a pane's last chat/terminal handle on the page URL when missing. */
+/** Embed a pane's last chat handle on the page URL when missing. */
 function canonicalizeShellPage(page) {
     const fallback = '/chat_page.html';
     try {
         const u = new URL(page || fallback, window.location.origin);
-        if (['/task_management.html', '/media_player.html', '/git_ui.html', '/wizard_page.html'].includes(u.pathname)) return fallback;
+        if (['/task_management.html', '/media_player.html', '/git_ui.html', '/wizard_page.html', '/terminal_page.html'].includes(u.pathname)) return fallback;
         u.searchParams.delete('_cb');
         let path = u.pathname || fallback;
         // Guard against blank / non-page navigations that surface as Werkzeug "Not Found".
@@ -321,7 +317,7 @@ function pageFromLayoutLeaf(node) {
         const url = new URL(page, window.location.origin);
         const kind = chatSurfaceKind(url.pathname);
         if (kind && !url.searchParams.get('chat') && !url.searchParams.get('session')) {
-            const handle = node[kind] || node.chat || node.terminal;
+            const handle = node[kind] || node.chat;
             if (handle) url.searchParams.set('chat', String(handle));
         }
         url.searchParams.delete('_cb');
@@ -375,7 +371,7 @@ function persistSplitLayout() {
     } catch (_) {}
 }
 
-// ── Last chat / terminal handle per column ─────────────────────
+// ── Last chat handle per column ─────────────────────
 // The rail nav sends a bare "/chat_page.html", so leaving Chat for Settings and
 // coming back landed on the new-chat splash. Remember what each column had open
 // (durably, so a reload keeps it) and re-attach ?chat= on the way back.
@@ -393,7 +389,6 @@ function readLastChatHandles() {
             if (!Number.isFinite(idx) || !entry || typeof entry !== 'object') return;
             const clean = {};
             if (entry.chat) clean.chat = String(entry.chat);
-            if (entry.terminal) clean.terminal = String(entry.terminal);
             if (Object.keys(clean).length) map.set(idx, clean);
         });
     } catch (_) {}
@@ -410,10 +405,9 @@ function persistLastChatHandles() {
     } catch (_) {}
 }
 
-/** 'chat' | 'terminal' for the two session-bearing surfaces, else null. */
+/** 'chat' for the session-bearing surface, else null. */
 function chatSurfaceKind(pathname) {
     if (pathname === '/chat_page.html') return 'chat';
-    if (pathname === '/terminal_page.html') return 'terminal';
     return null;
 }
 
@@ -441,7 +435,7 @@ function rememberChatHandleFromPage(colIdx, page) {
 }
 
 /**
- * Re-attach a column's last session when nav asks for a bare chat/terminal page.
+ * Re-attach a column's last session when nav asks for a bare chat page.
  * Deep-links, sign-in, and an explicit new chat (handle already forgotten) pass through.
  */
 function withRememberedChat(colIdx, page) {
@@ -506,21 +500,9 @@ const bootParams = new URLSearchParams(window.location.search);
 const bootChatId = bootParams.get('chat') || bootParams.get('session');
 const savedBootLayout = readSplitLayout();
 
-function isTerminalChatHandle(chatId) {
-    if (chatId == null || chatId === '') return false;
-    try {
-        const map = JSON.parse(localStorage.getItem('cuttle_terminal_sessions_v1') || '{}');
-        return !!(map && map[String(chatId)]);
-    } catch (_) {
-        return false;
-    }
-}
-
 let currentPage;
 if (bootChatId) {
-    currentPage = isTerminalChatHandle(bootChatId)
-        ? '/terminal_page.html?chat=' + encodeURIComponent(bootChatId)
-        : '/chat_page.html?chat=' + encodeURIComponent(bootChatId);
+    currentPage = '/chat_page.html?chat=' + encodeURIComponent(bootChatId);
 } else if (savedBootLayout?.root) {
     const leaves = flattenLayoutLeaves(savedBootLayout.root);
     if (leaves[0]?.page) currentPage = leaves[0].page;
@@ -601,10 +583,7 @@ window.__cuttleHandleBack = function () {
 if (!bootChatId && currentPage) {
     try {
         const bootPageUrl = new URL(currentPage, window.location.origin);
-        if (
-            bootPageUrl.pathname === '/chat_page.html'
-            || bootPageUrl.pathname === '/terminal_page.html'
-        ) {
+        if (bootPageUrl.pathname === '/chat_page.html') {
             const cid = bootPageUrl.searchParams.get('chat') || bootPageUrl.searchParams.get('session');
             if (cid) syncShellChatUrl(cid);
         }
@@ -672,20 +651,6 @@ window.addEventListener('message', function(e) {
                 // Null means the pane is on a fresh unsaved chat — forget the old
                 // handle so returning to Chat doesn't resurrect it.
                 rememberChatHandle(colIdx, 'chat', e.data.chatId || null);
-                if (colIdx === 0 && !paneController.isApplyingHistory() && !shellPagesEqual(cur, next)) {
-                    pushShellBackEntry(cur);
-                }
-                setState(colIdx, next);
-                if (colIdx === 0) {
-                    sessionStorage.setItem(STORAGE_PAGE, next);
-                    syncShellChatUrl(e.data.chatId || null, { mode: 'replace', page: next });
-                }
-                persistSplitLayout();
-            } else if (pageUrl.pathname === '/terminal_page.html') {
-                const next = e.data.chatId
-                    ? '/terminal_page.html?chat=' + encodeURIComponent(String(e.data.chatId))
-                    : '/terminal_page.html';
-                rememberChatHandle(colIdx, 'terminal', e.data.chatId || null);
                 if (colIdx === 0 && !paneController.isApplyingHistory() && !shellPagesEqual(cur, next)) {
                     pushShellBackEntry(cur);
                 }
@@ -773,18 +738,6 @@ window.addEventListener('message', function(e) {
                 shellSpaces.syncActivityTabs();
             }
         } catch (_) {}
-    } else if (
-        e.data.type === 'cuttle-terminal-delete'
-        || e.data.type === 'cuttle-terminal-rename'
-    ) {
-        // Fan out history-panel mutations to any live terminal iframes.
-        document.querySelectorAll('iframe').forEach((fr) => {
-            try {
-                const src = fr.getAttribute('src') || '';
-                if (src.indexOf('terminal_page') === -1) return;
-                fr.contentWindow?.postMessage(e.data, '*');
-            } catch (_) {}
-        });
     }
 });
 
@@ -807,7 +760,6 @@ const PAGE_TITLES = {
     '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',
     '/query_log.html': 'Query log',
-    '/terminal_page.html': 'Terminal',
 };
 
 // ── Column state (per-column) ──────────────────────────────────
@@ -1009,7 +961,7 @@ function attachFrameLoadListener(colIdx, frameEl) {
                 if (colIdx === 0) {
                     try {
                         sessionStorage.setItem(STORAGE_PAGE, activePage);
-                        const isChatSurface = path === '/chat_page.html' || path === '/terminal_page.html';
+                        const isChatSurface = path === '/chat_page.html';
                         const cid = isChatSurface
                             ? (url.searchParams.get('chat') || url.searchParams.get('session'))
                             : null;

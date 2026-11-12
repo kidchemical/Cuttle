@@ -303,9 +303,13 @@ def execute_decision(
             return True
         if target.agent in premium_exhausted and not is_auto_target(target):
             return True
-        if quota.is_exhausted(target):
-            return True
         bset = budget.budget_settings()
+        if quota.is_exhausted(target):
+            # A guessed cooldown yields to fresher live usage (availability owns the rule).
+            from api.agent_router.availability import target_state
+
+            state, _why = target_state(target, accounts=budget.snapshot(), settings=bset)
+            return state == "blocked"
         if not bset["enabled"]:
             return False
         state, _why = budget.target_state(

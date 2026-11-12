@@ -68,3 +68,25 @@ def test_rewrite_protected_prefixes_matches_managed_roots(tmp_path, monkeypatch)
     monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
     cfg = {"root": str(tmp_path / "custom"), "previous_roots": [str(tmp_path / "old")]}
     assert roots.rewrite_protected_prefixes(cfg) == roots.managed_worktree_roots(cfg)
+
+
+def test_project_root_wins_over_global_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    settings = {"root": str(tmp_path / "global"),
+                "project_roots": {"7": str(tmp_path / "big-drive")}}
+    assert Path(roots.resolve_worktrees_root(settings, project_id=7).root) == tmp_path / "big-drive"
+    assert Path(roots.resolve_worktrees_root(settings, project_id=8).root) == tmp_path / "global"
+    assert Path(roots.resolve_worktrees_root(settings).root) == tmp_path / "global"
+
+
+def test_unusable_project_root_fails_closed(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    settings = {"root": str(tmp_path / "global"), "project_roots": {"7": "relative/wt"}}
+    assert roots.resolve_worktrees_root(settings, project_id=7) is None
+
+
+def test_project_roots_are_managed(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
+    settings = {"project_roots": {"7": str(tmp_path / "big-drive")}}
+    managed = roots.managed_worktree_roots(settings)
+    assert roots.is_under_managed_root(str(tmp_path / "big-drive" / "demo" / "wt-1"), managed)

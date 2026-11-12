@@ -7,7 +7,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Settings - Cuttle</title>
     <link rel="stylesheet" href="/css/ui_boot.css?v=20261103chips">
-    <script src="/js/shared/ui_boot.js?v=20261103chips2"></script>
+    <script src="/js/shared/ui_boot.js?v=20261111perf"></script>
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20261028gpuBg">
     <link rel="stylesheet" href="css/compact_page.css?v=20261015glass">
@@ -560,9 +560,19 @@
                 <span id="agentSetupStatus" role="status" aria-live="polite"></span>
             </div>
 
+            <div class="settings-group" id="agentBillingSettings" hidden>
+                <h3 class="settings-title">Billing <span class="settings-scope" data-scope="server">All devices</span><button type="button" class="cuttle-info" data-tooltip="For agents that can run on your plan subscription or on API credit: which one each turn uses first." aria-label="About Billing">i</button></h3>
+                <div id="agentBillingEditor"></div>
+            </div>
+
             <div class="settings-group" id="autoCompactSettings" hidden>
                 <h3 class="settings-title">Auto-compaction <span class="settings-scope">Experimental</span><button type="button" class="cuttle-info" data-tooltip="Compact an agent's context between turns, before its CLI compacts mid-task near the window edge. Fires when the window passes the percentage or the token cap, whichever comes first. Override per chat from the context gauge in the composer." aria-label="About Auto-compaction">i</button></h3>
                 <div id="autoCompactEditor"></div>
+            </div>
+
+            <div class="settings-group" id="worktreesSettings" hidden>
+                <h3 class="settings-title">Worktrees <span class="settings-scope">Experimental</span><button type="button" class="cuttle-info" data-tooltip="Agents can work in their own git worktree: a full copy of the project on its own branch. Choose the drive they use and how much free space to keep on it." aria-label="About Worktrees">i</button></h3>
+                <div id="worktreesEditor"></div>
             </div>
 
             <div class="settings-group" id="responsePostprocessingSettings" hidden>
@@ -799,12 +809,25 @@
                 </div>
                 <div class="setting-item">
                     <div class="setting-label">
+                        <strong>Allow unencrypted HTTP on the network</strong><button type="button" class="cuttle-info" data-tooltip="Only for older phone apps. Passwords and chats cross the network unencrypted. Cuttle on this PC keeps working with this off. Toggle requires a Flask restart." aria-label="About unencrypted HTTP">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch" id="lanHttpToggle" onclick="toggleLanHttp(event)">
+                            <input type="checkbox" id="lanHttpEnabled" style="display: none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
                         <strong>Connect another device</strong>
                         <div class="setting-description" id="lanAccessStatus">Loading…</div>
                     </div>
                     <div class="setting-control setting-control--column">
                         <code id="lanHttpUrl" style="font-size:12px;word-break:break-all">—</code>
                         <code id="lanHttpsUrl" style="font-size:12px;word-break:break-all">—</code>
+                        <div class="setting-description">Certificate fingerprint (compare when a device asks to trust this PC)</div>
+                        <code id="lanTlsFingerprint" style="font-size:12px;word-break:break-all">—</code>
                         <button type="button" class="control-button btn-info" onclick="loadLanAccessSettings()">Refresh</button>
                     </div>
                 </div>
@@ -939,6 +962,8 @@
     <script src="/js/settings/settings_storage.js?v=20261103cards"></script>
     <script src="/js/settings/settings_chat_preferences.js?v=20261016separateProcessor"></script>
     <script src="/js/settings/settings_auto_compact.js?v=20261108autocompact"></script>
+    <script src="/js/settings/settings_worktrees.js?v=20261111wtdefault"></script>
+    <script src="/js/settings/settings_agent_billing.js?v=20261109billing1"></script>
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261011menuPosition2"></script>
     <script src="/js/settings/settings_background_helpers.js?v=20261016separateProcessor"></script>
@@ -2169,6 +2194,7 @@
                 if (window.cuttleCompletionSettings) window.cuttleCompletionSettings.refresh();
                 chatPreferences.refreshProcessorAvailability();
                 window.CuttleSettingsAutoCompact.refresh();
+                if (window.CuttleSettingsWorktrees) window.CuttleSettingsWorktrees.refresh();
                 if (d.kill_switch) {
                     list.innerHTML += '<div class="provider-status" style="margin-top:12px">'
                         + '⚠️ CUTTLE_EXPERIMENTAL=0 is set — every flag is forced off at the process level.</div>';
@@ -2274,9 +2300,15 @@
                             : 'Disabled — phone apps and LAN browsers cannot reach Cuttle');
                 }
                 if (httpEl) {
+                    httpEl.hidden = !d.lan_http_enabled;
                     httpEl.textContent = d.portal_url_http_fallback
                         || (d.lan_ip ? `http://${d.lan_ip}:${d.http_port}` : `http://<pc-ip>:${d.http_port || 8000}`);
                 }
+                const httpBox = document.getElementById('lanHttpEnabled');
+                if (httpBox) httpBox.checked = !!d.lan_http_enabled;
+                document.getElementById('lanHttpToggle')?.classList.toggle('active', !!d.lan_http_enabled);
+                const fingerprintEl = document.getElementById('lanTlsFingerprint');
+                if (fingerprintEl) fingerprintEl.textContent = d.tls_fingerprint || '—';
                 if (httpsEl) {
                     httpsEl.textContent = d.portal_url_phone
                         || (d.lan_ip ? `https://${d.lan_ip}:${d.https_port}` : `https://<pc-ip>:${d.https_port || 8888}`);
@@ -2419,6 +2451,24 @@
             } catch (e) {
                 if (statusEl) statusEl.textContent = e.message || String(e);
                 (window.showToast || alert)('Failed to save timeouts: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function toggleLanHttp(event) {
+            event?.preventDefault?.();
+            const next = !document.getElementById('lanHttpEnabled')?.checked;
+            try {
+                const r = await fetch('/api/settings/lan-access', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ lan_http_enabled: next }),
+                });
+                const d = await r.json();
+                if (!d.success) throw new Error(d.error || 'Save failed');
+                await loadLanAccessSettings();
+                (window.showToast || alert)('Saved — restart Flask to apply', 'info');
+            } catch (e) {
+                (window.showToast || alert)('Failed to update HTTP access: ' + (e.message || e), 'error');
             }
         }
 
@@ -3007,6 +3057,8 @@
                 tabs.register('agents', function () {
                     chatPreferences.mountProcessor(document.getElementById('responsePostprocessingEditor'));
                     window.CuttleSettingsAutoCompact.mount(document.getElementById('autoCompactEditor'));
+                    window.CuttleSettingsWorktrees.mount(document.getElementById('worktreesEditor'));
+                    window.CuttleSettingsAgentBilling.mount(document.getElementById('agentBillingEditor'));
                     loadAgentCatalog();
                     loadCompletionProviders();
                     loadGitAutoCommitSetting();
@@ -3029,6 +3081,8 @@
                 chatPreferences.mountGlobal(document.getElementById('sharedSystemPromptEditor'));
                 chatPreferences.mountProcessor(document.getElementById('responsePostprocessingEditor'));
                 window.CuttleSettingsAutoCompact.mount(document.getElementById('autoCompactEditor'));
+                    window.CuttleSettingsWorktrees.mount(document.getElementById('worktreesEditor'));
+                window.CuttleSettingsAgentBilling.mount(document.getElementById('agentBillingEditor'));
                 window.CuttleSettingsReleases.mount(document.getElementById('cuttleReleaseSettings'));
                 loadAgentCatalog();
                 loadGitAutoCommitSetting();

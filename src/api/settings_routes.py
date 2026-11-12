@@ -98,6 +98,12 @@ SETTING_FAMILIES = (
     {"name": "auto-compact", "routes": ["GET/POST /settings/auto-compact"],
      "backend": "api.auto_compact.service (settings-manager key 'auto_compact')",
      "validator": "api.auto_compact.policy.validate_patch", "read": "authenticated", "write": "owner"},
+    {"name": "worktrees", "routes": ["GET/POST /settings/worktrees"],
+     "backend": "api.worktrees.space (settings-manager key 'worktrees': folders + free-space reserve)",
+     "validator": "api.worktrees.space.validate_patch", "read": "authenticated", "write": "owner"},
+    {"name": "agent-billing", "routes": ["GET/POST /settings/agent-billing"],
+     "backend": "api.agent_harness.agents.claude.api_fallback (settings-manager key 'agent_billing_fallback')",
+     "validator": "api_fallback.save_settings", "read": "authenticated", "write": "owner"},
     {"name": "timeouts", "routes": ["GET/POST /settings/timeouts"],
      "backend": "settings-manager key 'timeouts' (resolved by get_timeouts)",
      "validator": "validate_timeouts_update", "read": "authenticated", "write": "owner"},
@@ -150,8 +156,8 @@ def validate_ui_layout_update(data: dict) -> dict:
 
 
 def validate_lan_access_update(data: dict) -> tuple[bool, str]:
-    """LAN writes require the master flag; mdns is optional."""
-    if 'lan_access_enabled' not in data:
+    """LAN writes name the master flag or the plain-HTTP opt-in; mdns is optional."""
+    if 'lan_access_enabled' not in data and 'lan_http_enabled' not in data:
         return False, 'lan_access_enabled required'
     return True, ''
 
@@ -302,8 +308,10 @@ def api_settings_lan_access():
     """Read/update discovery.lan_access_enabled (phone/LAN portal). Restart Flask after changes."""
     try:
         from managers.settings_manager import get_settings_manager
+        from api.tls_cert import current_fingerprint
         from api.lan_access import (
             is_lan_access_enabled,
+            is_lan_http_enabled,
             get_lan_ipv4,
             lan_phone_portal_url,
             lan_phone_http_fallback_url,
@@ -319,9 +327,8 @@ def api_settings_lan_access():
             ok, err = validate_lan_access_update(data)
             if not ok:
                 return jsonify({'success': False, 'error': err}), 400
-            patch = {'lan_access_enabled': bool(data['lan_access_enabled'])}
-            if 'mdns_enabled' in data:
-                patch['mdns_enabled'] = bool(data['mdns_enabled'])
+            patch = {key: bool(data[key]) for key in
+                     ('lan_access_enabled', 'lan_http_enabled', 'mdns_enabled') if key in data}
             if not sm.update_setting('discovery', lambda current: {**(current or {}), **patch}):
                 return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
             discovery = sm.get_setting('discovery')
@@ -333,6 +340,9 @@ def api_settings_lan_access():
         return jsonify({
             'success': True,
             'lan_access_enabled': enabled,
+            'lan_http_enabled': bool(discovery.get('lan_http_enabled')),
+            'lan_http_live': is_lan_http_enabled(),
+            'tls_fingerprint': (current_fingerprint() or {}).get('fingerprint'),
             'live_enabled': live,
             'mdns_enabled': bool(discovery.get('mdns_enabled')),
             'lan_ip': lan_ip,
@@ -608,6 +618,71 @@ def update_auto_compact_setting():
     except policy.PolicyError as e:
         return jsonify({'success': False, 'error': str(e)}), 400
     return jsonify(_auto_compact_body())
+
+
+# --- worktrees (backend: api.worktrees.space) --------------------------------
+
+def _worktrees_body():
+    from api.experimental import is_enabled
+    if not is_enabled('worktrees'):
+        return {'success': True, 'available': False}
+    from api.worktrees import space
+    block = get_settings_manager().get_setting('worktrees', {})
+    projects = []
+    try:
+        from managers.project_manager import project_manager
+        projects = [{'id': p.get('id'), 'name': p.get('name')}
+                    for p in (project_manager.get_projects() if project_manager is not None else [])]
+    except Exception:
+        projects = []
+    return {'success': True, 'available': True, **space.describe(block, projects)}
+
+
+@settings_bp.route('/settings/worktrees', methods=['GET'])
+@authenticated_required
+def get_worktrees_setting():
+    """Where agent worktrees go (global + per project) and the free-space reserve."""
+    return jsonify(_worktrees_body())
+
+
+@settings_bp.route('/settings/worktrees', methods=['POST'])
+@owner_required
+def update_worktrees_setting():
+    """Body: { root?, min_free_gb?, project_roots?: { "<project id>": "<folder or empty>" } }."""
+    from api.experimental import is_enabled
+    if not is_enabled('worktrees'):
+        return jsonify({'success': True, 'available': False})
+    from api.worktrees import space
+    try:
+        patch = space.validate_patch(request.get_json(silent=True) or {})
+    except space.SpaceError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    if not get_settings_manager().update_setting('worktrees', lambda block: space.apply_patch(block, patch)):
+        return jsonify({'success': False, 'error': 'Failed to save settings'}), 500
+    return jsonify(_worktrees_body())
+
+
+# --- agent billing (backend: claude api_fallback) ----------------------------
+
+@settings_bp.route('/settings/agent-billing', methods=['GET'])
+@authenticated_required
+def get_agent_billing_setting():
+    """Per-agent billing order: subscription first (default) or API first."""
+    from api.agent_harness.agents.claude import api_fallback
+    return jsonify({'success': True, 'agents': {'claude': api_fallback.settings_view()}})
+
+
+@settings_bp.route('/settings/agent-billing', methods=['POST'])
+@owner_required
+def update_agent_billing_setting():
+    """Body: { claude: { prefer?, fallback_enabled?, monthly_budget_usd? } }."""
+    from api.agent_harness.agents.claude import api_fallback
+    body = request.get_json(silent=True) or {}
+    try:
+        view = api_fallback.save_settings(body.get('claude') or {})
+    except ValueError as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+    return jsonify({'success': True, 'agents': {'claude': view}})
 
 
 # --- timeouts (backend: managers.settings_manager) -------------------------

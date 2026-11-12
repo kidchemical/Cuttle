@@ -1752,7 +1752,8 @@
                     return;
                 }
                 setActionFormCardProgress(card, label, 'pending');
-                if (!(await cardWait(card, life, pollMs))) return;
+                // A when-idle wait can last hours; nothing changes fast until it fires.
+                if (!(await cardWait(card, life, state === 'waiting_for_idle' ? Math.max(pollMs, 10000) : pollMs))) return;
             }
             if (isCurrent(card, life) && card.__restartWatchId === String(restartId)) {
                 setActionFormCardProgress(card, 'Restart status unknown — check /restart status', 'error');

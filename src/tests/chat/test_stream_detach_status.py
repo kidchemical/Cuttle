@@ -72,41 +72,62 @@ def test_detached_stream_keeps_worker_busy_and_publishes_until_done(lane):
         live.clear_live_status(sid)
 
 
-def test_abandoned_connecting_marker_releases_unstarted_worker():
+def test_abandoned_connecting_marker_still_runs_the_saved_turn():
+    """The user's message is saved before the first frame. A subscriber that
+    drops right there (page reload, lost connection) must not leave a saved
+    message that nothing answers: the worker runs and its reply is saved."""
     from api.chat_turn_workflow import run_agent_stream_turn
     sid = "detach-before-worker"
+    persisted = []
+    saved = threading.Event()
     events = run_agent_stream_turn(
-        sid, delivery=delivery, persist_user=lambda: None,
-        run=lambda q: pytest.fail("worker must not start"),
-        make_saver=lambda: None, notify_mobile=None,
+        sid, delivery=delivery, persist_user=lambda: persisted.append("user"),
+        run=lambda q: {"success": True, "response": "reply"},
+        make_saver=lambda: lambda result: saved.set(), notify_mobile=None,
     )
     try:
         assert next(events)[0] == "connecting"
+        assert persisted == ["user"]
         events.close()
+        assert saved.wait(3), "a saved message was dropped without a reply"
+        for _ in range(300):
+            if not delivery.is_busy(sid):
+                break
+            threading.Event().wait(.01)
         assert not delivery.is_busy(sid)
         assert not live.get_live_status(sid)["active"]
     finally:
         events.close()
         delivery.end(sid)
+        delivery.clear_result(sid)
         live.clear_live_status(sid)
 
 
-def test_pipeline_transport_close_before_worker_start_releases_claim():
+def test_pipeline_transport_close_at_head_still_runs_the_saved_turn():
     from api import web_chat_api as wca
 
     sid = "detach-pipeline-head"
-    chunks = wca._generate_chat_stream(
-        lambda **kwargs: pytest.fail("worker must not start"), sid,
-    )
+    ran = threading.Event()
+
+    def process(**kwargs):
+        ran.set()
+        return {"success": True, "response": "reply"}
+
+    chunks = wca._generate_chat_stream(process, sid)
     try:
         assert '"type": "session"' in next(chunks)
-        assert delivery.is_busy(sid)
         chunks.close()
+        assert ran.wait(3), "closing at the head dropped a claimed turn"
+        for _ in range(300):
+            if not delivery.is_busy(sid):
+                break
+            threading.Event().wait(.01)
         assert not delivery.is_busy(sid)
         assert not live.get_live_status(sid)["active"]
     finally:
         chunks.close()
         delivery.end(sid)
+        delivery.clear_result(sid)
         live.clear_live_status(sid)
 
 

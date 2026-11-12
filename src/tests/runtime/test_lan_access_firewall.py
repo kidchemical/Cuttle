@@ -150,6 +150,7 @@ def test_non_windows_creates_no_rule(monkeypatch):
 
 def test_ensure_all_removes_legacy_open_rule(monkeypatch):
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(lan_access, "is_lan_http_enabled", lambda: True)
     monkeypatch.setattr(lan_access, "get_primary_https_port", lambda: 8443)
     monkeypatch.setattr(lan_access, "get_phone_https_port", lambda: 8890)
     monkeypatch.setattr(lan_access, "get_http_fallback_port", lambda: 8001)
@@ -174,10 +175,26 @@ def test_ensure_all_removes_legacy_open_rule(monkeypatch):
 
 
 def test_status_requires_all_three_scoped_rules(monkeypatch):
+    monkeypatch.setattr(lan_access, "is_lan_http_enabled", lambda: True)
     commands = _run_win(monkeypatch, [_ok('1'), _ok('1')] * 3)
     assert lan_access.windows_firewall_rule_active() is True
     assert len(commands) == 6
     assert any(lan_access._FIREWALL_RULE_HTTP_ALT in cmd[-1] for cmd in commands)
+
+
+def test_http_rule_is_removed_without_the_opt_in(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(lan_access, "is_lan_http_enabled", lambda: False)
+    monkeypatch.setattr(lan_access, "get_primary_https_port", lambda: 8443)
+    monkeypatch.setattr(lan_access, "get_phone_https_port", lambda: 8890)
+    monkeypatch.setattr(lan_access, "get_http_fallback_port", lambda: 8001)
+    seen, commands = [], []
+    monkeypatch.setattr(lan_access, "ensure_windows_lan_firewall_rule", lambda port=None: seen.append(port) or True)
+    monkeypatch.setattr(lan_access.subprocess, "run", lambda cmd, **k: commands.append(cmd) or _ok(""))
+
+    assert lan_access.ensure_all_lan_firewall_rules() is True
+    assert seen == [8443, 8890], seen
+    assert any(lan_access._FIREWALL_RULE_HTTP_ALT in c[-1] for c in _cmds(commands, "Remove-NetFirewallRule"))
 
 
 def test_status_rejects_broad_or_mixed_rules(monkeypatch):

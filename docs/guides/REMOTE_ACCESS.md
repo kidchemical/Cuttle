@@ -2,7 +2,8 @@
 
 Cuttle is designed for trusted local users and devices. Its primary listener is
 **HTTPS :8080**, using a self-signed certificate by default. The same Flask app
-also exposes **HTTP :8000**; this is Electron's preferred portal and is cleartext.
+also exposes **HTTP :8000** on this PC only; this is Electron's preferred portal
+and is cleartext. It reaches the network only with the opt-in below.
 An optional phone HTTPS listener uses :8888. Port 8080 is not cleartext HTTP.
 
 ## LAN access
@@ -16,10 +17,15 @@ On a headless server, set `CUTTLE_LAN_ACCESS=1` in `<home>/.env` instead; see
 [Headless Linux server Host](HEADLESS_SERVER.md).
 
 For a browser, use `https://<host>:8080`. Verify the Host certificate before
-accepting a self-signed warning. Native apps need their own certificate trust;
-accepting a warning in Chrome does not configure OkHttp or Android app trust.
-`http://<host>:8000` is an alternative only on a trusted network where cleartext
-credentials and traffic are acceptable.
+accepting a self-signed warning. The Android app and desktop Clients trust the
+PC's key once: compare the fingerprint they show with **Settings → Phone / LAN
+access** (or `python -m api.tls_cert fingerprint`). Accepting a warning in Chrome
+does not configure app trust.
+
+**Allow unencrypted HTTP on the network** in the same settings section
+(`discovery.lan_http_enabled`, or `CUTTLE_LAN_HTTP=1`) also exposes
+`http://<host>:8000` to the network. It is off by default because passwords and
+chats cross the network unencrypted; use it only on a network you trust.
 
 ## Custom ports (env-only)
 

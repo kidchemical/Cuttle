@@ -380,7 +380,7 @@ registered worktree checkouts — the same allowlist as the Git routes):
   palette, find/replace in files (ripgrep when installed, else Python),
   quick-diff gutter against HEAD, Source Control via the shared pending-changes
   strip (commit/ignore) with a Monaco diff editor.
-- Integrated terminal (Ctrl+`): the existing localhost-only PTY terminal,
+- Integrated terminal (Ctrl+`): the owner-only, localhost-only PTY terminal,
   started in the project folder (`cwd` must resolve to a registered project).
 - AI: a side panel hosting the real chat page in a chat bound to the project
   (Ctrl+I). Ctrl+L adds the selection to its composer; Ctrl+K sends an inline

@@ -41,6 +41,8 @@
     /** bare -> { running, background, queue, at } — `at` is the poll start time. */
     const _server = new Map();
     const _attention = new Map();
+    /** bare -> last server reply_id seen (seeded on first sight, so history never notifies). */
+    const _replySeen = new Map();
     /** bare -> '' | 'input' | 'unread' | 'error' (a row exists ⇒ prefs decide). */
     let _prefs = new Map();
     /** bare -> 'queued' | 'paused' (local mode). */
@@ -50,6 +52,7 @@
         _sources.clear();
         _server.clear();
         _attention.clear();
+        _replySeen.clear();
         _prefs = new Map();
         _local = new Map();
     }
@@ -338,6 +341,31 @@
         return best;
     }
 
+    /** Server attention says a chat got a reply this shell has not seen yet.
+     *  Returns [{ bare, isError, awaitingInput }] for each chat whose reply_id
+     *  moved past the last one seen while it is still unread. The first sight
+     *  of a chat only seeds it, so a reload never re-notifies old replies; a
+     *  reply that is already read (opened elsewhere) is skipped. Covers every
+     *  way a reply lands — saved answers, errors and stopped/interrupted cards —
+     *  because it reads the durable reply id, not a running→idle transition a
+     *  short turn can slip between polls. */
+    function noteNewReplies(rows) {
+        const fresh = [];
+        (Array.isArray(rows) ? rows : []).forEach((r) => {
+            const att = r && r.attention;
+            if (!att || att.reply_id == null) return;
+            const bare = bareSid(r.id);
+            if (!bare) return;
+            const replyId = Number(att.reply_id) || 0;
+            const had = _replySeen.has(bare);
+            const prev = _replySeen.get(bare) || 0;
+            if (replyId > prev) _replySeen.set(bare, replyId);
+            if (!had || replyId <= prev || !att.hasUnread) return;
+            fresh.push({ bare, isError: !!att.unreadIsError, awaitingInput: !!att.awaitingInput });
+        });
+        return fresh;
+    }
+
     const api = {
         RANK,
         LABEL,
@@ -348,6 +376,7 @@
         notePushSnapshot,
         pruneSources,
         noteServerSnapshot,
+        noteNewReplies,
         setUnreadPrefs,
         setLocalQueues,
         lookupSessionActivity,

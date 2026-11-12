@@ -40,6 +40,7 @@ _VIEW_HELPERS = (
     "historySessionAncestorIds",
     "isHistorySubagentGroupExpanded",
     "visibleHistoryRoots",
+    "visibleHistoryChildren",
     "historySubagentNoun",
     "historySubagentToggleTitle",
 )
@@ -132,6 +133,19 @@ const many = nestHistoryEntries(
 assert.strictEqual(many.roots.length, 8);
 const pinned = visibleHistoryRoots(many, 5, { currentSessionId: 20 });
 assert.ok(pinned.some((e) => String(e.sessionId) === '8'), JSON.stringify(pinned.map((e) => e.sessionId)));
+// Sub-agent lists page like projects; the current chat's branch stays listed.
+const fan = nestHistoryEntries([{ sessionId: 100, serverSession: { id: 100 } }].concat(
+  Array.from({ length: 12 }, (_, i) => ({
+    sessionId: 101 + i, serverSession: { id: 101 + i, parent_session_id: 100 },
+  })),
+  [{ sessionId: 200, serverSession: { id: 200, parent_session_id: 111 } }]
+));
+const fanKids = fan.childrenByParent.get('100');
+assert.strictEqual(visibleHistoryChildren(fanKids, 5, fan, {}).length, 5);
+const fanPinned = visibleHistoryChildren(fanKids, 5, fan, { currentSessionId: 200 });
+assert.strictEqual(fanPinned.length, 6);
+assert.strictEqual(String(fanPinned[5].sessionId), '111');
+assert.strictEqual(visibleHistoryChildren(fanKids, 20, fan, { currentSessionId: 200 }).length, 12);
 assert.strictEqual(historySubagentToggleTitle(3, false, false), 'Show 3 sub-agents');
 assert.strictEqual(historySubagentToggleTitle(1, true, false), 'Hide 1 sub-agent');
 

@@ -63,12 +63,28 @@ PYTHONPATH=src .venv/bin/python -m api.job_watch watch-unit --unit ep-build-linu
   `live.background.watches` (`kind: "unit"`) and reports the chat as
   `waiting_background`, so supervision does not nudge it. Finished jobs retain up to
   three receipts per chat for seven days, including follow-up delivery status.
+- **Stop means stop.** Stop on the card (or `python -m api.job_watch cancel --id <id>`)
+  stops the unit and cancels its follow-up: the chat is not resumed for a job that
+  was ended on purpose. The receipt shows the handoff as `cancelled`. A unit that is
+  stopped any other way (`systemctl --user stop`, a crash, a reboot) still counts as
+  an exit and resumes the chat, so stop watched jobs through the card or `cancel`.
 - Pass `--remain-after-exit` to `systemd-run` so the unit keeps its exit status;
   without it the resume turn has to say "exit status not available".
 - `--chat CH-…` names the chat to resume (default `CUTTLE_CHAT_SESSION_ID`).
 - Register **after** the job is running: a watch on a dead unit is refused
   (`--allow-inactive` overrides).
 - Inspect with `python -m api.job_watch units`; `poll-units` forces one pass.
+- **Starting later** (after a reset, overnight): let systemd own the schedule —
+  `systemd-run --user --unit=<name> --on-calendar='2026-11-09 15:52' --remain-after-exit -- ./job.sh`,
+  then `watch-unit --unit <name>` as usual. While the timer waits the card says
+  *Background job scheduled* with the start time and a **Start now** button
+  (`python -m api.job_watch start-now --id <id>`); Stop disarms the timer. Never
+  hide a wait inside the job (`sleep N` in a script): the card can only call that
+  "running", and nobody can start it early.
+- **Before deferring for a usage limit**, check live usage
+  (`python -m api.gizmos usage <agent>`). A spawn's `out of usage until … (re-probe
+  after an earlier failed run; the reset was not named)` is a guess, not the
+  vendor's reset; if the agent you are running on *is* that agent, it is wrong.
 - Rule of thumb: if the work outlives your turn on purpose, it needs `watch-unit`.
   Never finish a turn with "I'll check back later" for detached work.
 

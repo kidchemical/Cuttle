@@ -42,6 +42,7 @@ PURE_FUNCTIONS = [
     "isValidPort",
     "saveConfig",
     "loadConfig",
+    "ensureCertificateTrusted",
     "loadRecentHosts",
     "saveRecentHosts",
     "rememberHost",

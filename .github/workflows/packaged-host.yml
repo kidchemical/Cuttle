@@ -49,6 +49,43 @@ jobs:
       - name: Build Windows installer + portable
         if: matrix.platform == 'windows'
         run: npx electron-builder --win nsis portable --publish never
+      # SignPath (free OSS signing, see .cuttle/docs/cuttle-release.md): release
+      # builds only, and only once the SIGNPATH_* repo variables exist. The
+      # request waits for a maintainer to approve it in SignPath, then the
+      # signed exes replace the unsigned ones before the install E2E below.
+      # The artifact name must not match the release job's `cuttle-*` pattern.
+      - name: Upload unsigned Windows executables for SignPath
+        id: signpath-upload
+        if: matrix.platform == 'windows' && inputs.upload && vars.SIGNPATH_ORGANIZATION_ID != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-windows-exe
+          if-no-files-found: error
+          path: electron/dist/Cuttle-*.exe
+      - name: Sign Windows executables (SignPath, waits for approval)
+        if: steps.signpath-upload.outcome == 'success'
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'cuttle' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG || 'installers' }}
+          github-artifact-id: ${{ steps.signpath-upload.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 14400
+          output-artifact-directory: electron/dist/signed
+      - name: Use signed Windows executables
+        if: steps.signpath-upload.outcome == 'success'
+        shell: pwsh
+        run: |
+          Get-ChildItem dist\signed\Cuttle-*.exe | ForEach-Object {
+            $sig = Get-AuthenticodeSignature $_.FullName
+            if ($sig.Status -ne 'Valid') { throw "$($_.Name): signature $($sig.Status)" }
+            Write-Host "$($_.Name): signed by $($sig.SignerCertificate.Subject)"
+            Move-Item -Force $_.FullName dist\
+          }
+          Remove-Item -Recurse -Force dist\signed
       - name: Install artifact (Linux AppImage → extracted tree)
         if: matrix.platform == 'linux'
         run: |

@@ -182,6 +182,24 @@
      * Message-sync poll cadence. snap: { backgrounded, shellUnfocused,
      * loading, generating }. Branch order preserved exactly.
      */
+    /**
+     * Hub live-status ticks arrive every few seconds for every open pane.
+     * A chat that is not running needs a transcript sync only when its status
+     * changed since the previous tick: a turn ended, or ran entirely between
+     * two ticks (new query / message / timestamp). The cadence timer covers
+     * everything else. Returns true on the first tick for a session.
+     */
+    function liveStatusChanged(state, sessionId, live, active) {
+        var l = live || {};
+        var key = String(sessionId) + '|' + (active ? 'active' : [
+            l.query_id || '', l.message_id == null ? '' : l.message_id,
+            l.updated_at || '', l.cancelled ? 1 : 0,
+        ].join('|'));
+        var changed = state.liveKey !== key;
+        state.liveKey = key;
+        return changed;
+    }
+
     function decideSyncDelayMs(snap) {
         if (snap.backgrounded) return SYNC_MS.hidden;
         if (snap.shellUnfocused) {
@@ -400,6 +418,7 @@
         rebindGeneration: rebindGeneration,
         isLoadingForSession: isLoadingForSession,
         decideSyncDelayMs: decideSyncDelayMs,
+        liveStatusChanged: liveStatusChanged,
         classifyDetachedPoll: classifyDetachedPoll,
         decideSessionOpen: decideSessionOpen,
     };

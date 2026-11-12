@@ -75,9 +75,11 @@
 
         function parentRefsFromOpts(opts) {
             if (!opts) return [];
-            // A supervision check-in's "parent" is the supervisor chat it sits in:
-            // a launcher would open this same chat. Its header badge names it.
+            // A supervision check-in's "parent" is the supervisor chat it sits in, and
+            // a Cuttle notice's is the chat it was posted to: a launcher would open
+            // this same chat. Its header badge names it.
             if (String(opts.origin || '') === 'chat_ops' && (opts.chat_op_kind === 'checkin'
+                || opts.chat_op_kind === 'notice'
                 || /^Supervision check-in/i.test(String(opts.parent_label || '')))) return [];
             const handleRaw = String(opts.parent_handle || '').trim();
             const sid = opts.parent_session_id != null && opts.parent_session_id !== ''

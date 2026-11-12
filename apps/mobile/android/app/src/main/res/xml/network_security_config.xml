@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- LAN-only client: allow HTTP to the PC (port 8000) and user-installed certs. -->
+    <!-- LAN client: HTTP only when the PC opts in; user-installed certs for private proxies. -->
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />

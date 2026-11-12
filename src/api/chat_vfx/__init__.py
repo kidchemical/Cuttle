@@ -74,6 +74,7 @@ def pending(session_id, after=0):
     if isinstance(after, bool) or not isinstance(after, int) or after < 0:
         raise ValueError('after must be a nonnegative integer')
     with _connect() as db:
-        db.execute('DELETE FROM events WHERE expires <= ?', (time.time(),))
-        rows = db.execute('SELECT seq,id,expires,payload FROM events WHERE session=? AND seq>? ORDER BY seq LIMIT 100', (session, after)).fetchall()
+        # Read-only: every open chat polls this, so expired rows are filtered
+        # here and pruned by publish(), never written on a poll.
+        rows = db.execute('SELECT seq,id,expires,payload FROM events WHERE session=? AND seq>? AND expires>? ORDER BY seq LIMIT 100', (session, after, time.time())).fetchall()
     return [{'seq': seq, 'id': eid, 'expires': expires, **json.loads(payload)} for seq, eid, expires, payload in rows]

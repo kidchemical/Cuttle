@@ -79,7 +79,8 @@
         let stopped = false, timer = null, controller = null;
         async function tick() {
             if (stopped) return;
-            const session = host.getSessionId();
+            // Effects are for a chat on screen; they expire, so a hidden page skips the poll.
+            const session = !(host.isBackgrounded && host.isBackgrounded()) && host.getSessionId();
             if (session) {
                 const key = String(session);
                 controller = new AbortController();
@@ -101,7 +102,8 @@
                 } catch (_) { /* transient transport error; retry next tick */ }
                 finally { controller = null; }
             }
-            if (!stopped) timer = host.setTimeout(tick, 2000);
+            // Events live 30 s server-side, so a 5 s poll never misses one.
+            if (!stopped) timer = host.setTimeout(tick, 5000);
         }
         tick();
         return {dispose: function () {

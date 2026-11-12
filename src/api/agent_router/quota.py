@@ -80,6 +80,8 @@ _RESET_AT = re.compile(
 )
 # "try again at 4:46 AM": a time of day only (Codex), the next one from now.
 _RESET_TIME = re.compile(r"try again (?:at|after)\s+(\d{1,2}:\d{2}\s*[AP]M)\b", re.I)
+# Cursor: "Your usage limits will reset when your monthly cycle ends on 11/21/2026."
+_RESET_DATE = re.compile(r"\breset[^\n]{0,60}?\bon\s+(\d{1,2})/(\d{1,2})/(\d{4})\b", re.I)
 
 
 def reset_at(text: str, now: Optional[float] = None) -> Optional[float]:
@@ -96,6 +98,13 @@ def reset_at(text: str, now: Optional[float] = None) -> Optional[float]:
             if ts > now:
                 return min(ts, now + MAX_COOLDOWN_S)
         return None
+    m = _RESET_DATE.search(text or "")
+    if m:
+        try:
+            ts = datetime(int(m.group(3)), int(m.group(1)), int(m.group(2))).timestamp()
+        except ValueError:
+            ts = 0.0
+        return min(ts, now + MAX_COOLDOWN_S) if ts > now else None
     m = _RESET_TIME.search(text or "")
     if not m:
         return None
@@ -111,7 +120,8 @@ def reset_at(text: str, now: Optional[float] = None) -> Optional[float]:
 def mark_exhausted(target: ExecutionTarget, text: str = "", *, now: Optional[float] = None) -> None:
     """Record that ``target``'s account is out of usage."""
     now = time.time() if now is None else now
-    until = reset_at(text, now) or (now + DEFAULT_COOLDOWN_S)
+    named = reset_at(text, now)
+    until = named or (now + DEFAULT_COOLDOWN_S)
     scope = "all" if is_auto_target(target) else "premium"
     reason = (text or "").strip().splitlines()
     reason_line = next((ln for ln in reason if "usage" in ln.lower() or "limit" in ln.lower()), "")
@@ -124,6 +134,10 @@ def mark_exhausted(target: ExecutionTarget, text: str = "", *, now: Optional[flo
             "scope": scope,
             "until": until,
             "reason": reason_line[:160],
+            # The error named its reset; otherwise ``until`` is a guess that a
+            # fresher live usage snapshot overrides (api.agent_router.availability).
+            "reset_named": bool(named),
+            "marked_at": now,
         }
         _save()
 
@@ -157,7 +171,18 @@ def reason(target: ExecutionTarget) -> str:
     with _LOCK:
         rec = _EXHAUSTED.get(target.agent) or {}
     when = datetime.fromtimestamp(rec.get("until") or 0).strftime("%b %d %H:%M")
-    return f"out of usage until {when}"
+    if rec.get("reset_named"):
+        return f"out of usage until {when}"
+    return f"out of usage until {when} (re-probe after an earlier failed run; the reset was not named)"
+
+
+def record(target: ExecutionTarget) -> Optional[Dict[str, Any]]:
+    """The active cooldown for ``target`` (a copy), or None."""
+    if not is_exhausted(target):
+        return None
+    with _LOCK:
+        rec = _EXHAUSTED.get(target.agent)
+        return dict(rec) if rec else None
 
 
 def snapshot(*, now: Optional[float] = None) -> List[Dict[str, Any]]:

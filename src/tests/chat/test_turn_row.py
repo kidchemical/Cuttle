@@ -309,6 +309,34 @@ def test_orphan_row_from_a_dead_turn_heals_on_history_read(authed):
     assert db.in_progress_messages(sid) == []
 
 
+def test_history_read_never_heals_a_turn_running_in_another_process(authed, monkeypatch):
+    """A sub-agent turn runs in the `api.subagents spawn` CLI, not Flask.
+
+    Flask's open set does not know it, so a history read stamped the live
+    turn "interrupted" mid-run (CH-002266-2)."""
+    import subprocess
+    import sys
+    import psutil
+    from api import chat_turn_row
+
+    client, db, owner = authed
+    sid = db.create_chat_session(owner)
+    row = chat_turn_row.open_row(db, sid, turn=1)
+    chat_turn_row.reset_for_tests()  # the turn is not open in this process
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        run = {"status": "running", "metadata": {"capture_owner": {
+            "pid": other.pid, "started_at": psutil.Process(other.pid).create_time()}}}
+        monkeypatch.setattr(chat_turn_row, "_run", lambda qid: run)
+        assert chat_turn_row.heal_orphans(db, sid) == []
+        assert db.in_progress_messages(sid)
+    finally:
+        other.kill()
+        other.wait()
+    # Once that process is gone the row is a real orphan and heals.
+    assert chat_turn_row.heal_orphans(db, sid) == [row["message_id"]]
+
+
 def test_history_read_during_the_reply_save_never_stamps_the_interrupted_card(authed, monkeypatch):
     """A poll landing between finalize's start and its commit healed the live row.
 
@@ -380,3 +408,26 @@ def test_answered_card_keeps_the_bubbles_query_id(authed):
     mid = db.add_message(sid, "assistant", content, metadata={"query_id": "q1234567", "project_path": "/p"})
     meta = action_forms._message_meta(db.get_message_by_id(mid))
     assert meta == {"query_id": "q1234567", "project_path": "/p", "turn_id": "q1234567"}
+
+
+def test_settled_card_notifies_the_phone_but_a_dropped_row_does_not(authed, monkeypatch):
+    """A turn that ends as the stopped/failed card is the turn's reply: the
+    companion app gets ``chat_complete`` like a saved reply (the saver's
+    notify only ran for kept results, so error cards never reached the phone)."""
+    from api import chat_turn_row, mobile_companion
+
+    _client, db, owner = authed
+    sent = []
+    monkeypatch.setattr(mobile_companion, "emit_mobile_event",
+                        lambda kind, payload=None, device_id=None: sent.append((kind, payload)))
+    sid = db.create_chat_session(owner)
+    chat_turn_row.open_row(db, sid, turn=1)
+    db.add_message(sid, "user", "later", metadata=None)  # row not newest: skipped -> card
+    chat_turn_row.close(db, sid, status="failed", turn=1)
+    [(kind, payload)] = sent
+    assert kind == "chat_complete" and payload["error"] is True
+    assert payload["session_id"] == str(sid) and payload["pipeline"] == "Reply failed"
+    assert "failed before completion" in payload["response"]
+    chat_turn_row.open_row(db, sid, turn=2)
+    chat_turn_row.close(db, sid, status="skipped", turn=2)  # newest skipped row is dropped
+    assert len(sent) == 1

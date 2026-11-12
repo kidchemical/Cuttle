@@ -106,3 +106,31 @@ def test_auth_me_refreshes_cookie_for_cookie_login(db, monkeypatch):
 
 def test_lifetime_constant_backs_default():
     assert auth_db_mod.AUTH_SESSION_LIFETIME_HOURS == 720
+
+
+def test_activity_is_written_once_a_minute_not_on_every_request(db, monkeypatch):
+    """An open UI verifies its login several times a second; each check must
+    not take the database write lock."""
+    token = db.create_auth_session(db._uid)
+    clock = [1000.0]
+    monkeypatch.setattr(auth_db_mod.time, 'monotonic', lambda: clock[0])
+    statements = []
+    real = db._get_connection
+    def traced():
+        conn = real()
+        conn.set_trace_callback(statements.append)
+        return conn
+    monkeypatch.setattr(db, '_get_connection', traced)
+    writes = lambda: len([s for s in statements if s.lstrip().upper().startswith('UPDATE AUTH_SESSIONS')])
+    for _ in range(5):
+        assert db.verify_auth_session(token)
+    assert writes() == 1
+    clock[0] += db.ACTIVITY_WRITE_INTERVAL_SEC + 1
+    assert db.verify_auth_session(token)
+    assert writes() == 2
+    # A login that reaches the renewal window is still renewed within a minute.
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    _set_times(db, token, now - timedelta(days=29), now + timedelta(days=1))
+    clock[0] += db.ACTIVITY_WRITE_INTERVAL_SEC + 1
+    assert db.verify_auth_session(token)
+    assert _parse(_row(db, token)['expires_at']) > now + timedelta(days=29)

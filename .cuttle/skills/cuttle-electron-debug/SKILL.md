@@ -77,6 +77,27 @@ Use a short Python + `websockets` CDP client (or equivalent):
 Do **not** leave `--remote-debugging-port` enabled in committed production
 `main.js` unless the user wants dogfood debugging on by default.
 
+## Profile without relaunching (Linux)
+
+For CPU or rendering cost in a window the user is working in, do not relaunch.
+The Host main process keeps Node's `SIGUSR1` inspector hook (check bit 9 of
+`SigCgt` in `/proc/<main pid>/status` first; an unhandled `SIGUSR1` would end
+the app):
+
+```bash
+kill -USR1 <electron main pid>          # inspector on 127.0.0.1:9229
+curl -s http://127.0.0.1:9229/json/list # webSocketDebuggerUrl
+```
+
+`Runtime.evaluate` there runs in the main process, so
+`process.mainModule.require('electron').webContents.getAllWebContents()` gives
+each window; `wc.debugger.attach('1.3')` + `sendCommand('Profiler.start' / 'Profiler.stop')`
+and `Performance.getMetrics` profile the renderer, and `wc.executeJavaScript`
+reaches every same-origin pane through `window.frames[i]`. All panes share one
+renderer. `document.getAnimations()` per frame lists running animations:
+high `RecalcStyleCount` with little script time means an animation, not JS.
+Close the port when done: `require('inspector').close()`.
+
 ## Known Electron failure modes (Cuttle)
 
 | Symptom | Likely cause | What works |

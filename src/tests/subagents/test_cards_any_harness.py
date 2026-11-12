@@ -295,3 +295,58 @@ def test_cancelled_send_to_a_child_does_not_leave_it_running(authed, monkeypatch
     assert done.status == "done" and done.result == "round one ok"
     assert store.get_batch(db, child.batch_id).status != "running"
     assert service.close_stale_external_rounds(db, now=later) == []  # once
+
+
+def test_queued_send_to_a_finished_child_is_delivered_not_deadlocked(authed, monkeypatch, tmp_path):
+    """The send marks the child's round running before delivery, and live status
+    then reports the child as generating. The outbox used to read that as a live
+    turn and wait for it, while the round waited for the send: the child said
+    "running" for hours with the brief never delivered (CH-002385, 2026-11-10)."""
+    import json as _json
+
+    from api import chat_turn_row
+    from api.chat_ops import service as ops
+    from api.chat_ops import store as ops_store
+    from api.chat_ops import worker as ops_worker
+
+    _client, db, owner, _path = authed
+    sid = db.create_chat_session(owner)
+    db.add_message(sid, "user", "/codex review", metadata=None)
+    first = chat_turn_row.open_row(db, sid, turn=1)
+    service.spawn(parent_session_id=sid, children=[{"title": "Reviewer", "message": "review"}], wait=True,
+                  timeout=10, runner=lambda **kw: {"success": True, "response": "round one ok"}, db=db)
+    _saver(db, sid, tmp_path)({"success": True, "response": "spawned", "query_id": first["query_id"]})
+    [child] = store.list_batches_for_parent(db, sid)[0].children
+    posted = []
+
+    class Accepted:
+        status_code = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def iter_lines(self):
+            yield b"data: " + _json.dumps({"type": "query_started", "query_id": "q9"}).encode()
+
+    def host(uid, s, method, path, data=None, stream=False):
+        if path == "/api/chat-live-status":  # what the real route reports for a sub-agent child
+            return {"generating": bool((service.child_live_status(s, db=db) or {}).get("generating"))}
+        if path == "/api/chat":
+            posted.append(data)
+            return Accepted()
+        return {"steered": False, "reason": "no steerable run"}
+
+    sent = ops.send(f"CH-{child.session_id:06d}", "redo the walks", f"CH-{sid:06d}", db=db, request=host)
+    # Idle at send time: queued for delivery, not offered to a turn that does not exist.
+    assert sent["delivery"] == "queued" and not sent.get("target_busy")
+    assert store.get_child(db, child.id).status == "running"
+    assert service.external_round_undelivered(child.session_id, db=db)
+
+    original = ops.context
+    monkeypatch.setattr(ops, "context", lambda target, actor=None, **kw: original(target, actor, db=db))
+    ops_worker.dispatch(sent["operation"], request=host)
+    assert ops_store.get(sent["operation"]["id"], sid)["state"] == "delivered"
+    assert [p["message"].endswith("redo the walks") for p in posted] == [True]

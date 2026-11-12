@@ -148,19 +148,40 @@ def save_snapshot(agent: str, models: Any) -> None:
         pass
 
 
-def diff(previous: Any, current: Any) -> Dict[str, List[Dict[str, Any]]]:
-    """Added / removed / changed rows between two catalogs (id-keyed).
+def _identity(row: Dict[str, str]) -> str:
+    """The model a row runs: its resolved model when known, else its id."""
+    return (row.get("resolved_model") or row["id"]).lower()
 
-    ``changed`` holds ids present in both whose label or resolved model moved —
-    e.g. the ``haiku`` alias resolving to a new model without a new id.
+
+def diff(previous: Any, current: Any) -> Dict[str, List[Dict[str, Any]]]:
+    """Added / removed / changed models between two catalogs.
+
+    Added / removed compare the models the rows *run* (resolved model, else
+    id), not palette ids: when an alias moves to a newer model and the CLI
+    lists the older one under its pinned id instead (``fable`` → 5.2 and
+    ``claude-fable-5-1`` replacing ``claude-fable-5-2``), the same two models
+    are available and only the alias moved. ``changed`` holds ids present in
+    both whose label or resolved model moved.
     """
-    prev = {row["id"].lower(): row for row in _normalize(previous)}
-    cur = {row["id"].lower(): row for row in _normalize(current)}
-    added = [cur[key] for key in cur if key not in prev]
-    removed = [prev[key] for key in prev if key not in cur]
+    prev_rows = _normalize(previous)
+    cur_rows = _normalize(current)
+    prev_ids = {_identity(row) for row in prev_rows}
+    cur_ids = {_identity(row) for row in cur_rows}
+
+    def _unique(rows: List[Dict[str, str]], skip: set) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        seen = set(skip)
+        for row in rows:
+            key = _identity(row)
+            if key not in seen:
+                seen.add(key)
+                out.append(row)
+        return out
+
+    prev = {row["id"].lower(): row for row in prev_rows}
     changed: List[Dict[str, Any]] = []
-    for key, after in cur.items():
-        before = prev.get(key)
+    for after in cur_rows:
+        before = prev.get(after["id"].lower())
         if before is None:
             continue
         if (
@@ -168,6 +189,12 @@ def diff(previous: Any, current: Any) -> Dict[str, List[Dict[str, Any]]]:
             or (before.get("resolved_model") or "") != (after.get("resolved_model") or "")
         ):
             changed.append({"id": after["id"], "before": before, "after": after})
+    # A model reached or left only through a moved alias is told by that
+    # alias's line ("`haiku` now points to Haiku 5.5"), not again as ➕/➖.
+    moved_to = {_identity(c["after"]) for c in changed}
+    moved_from = {_identity(c["before"]) for c in changed}
+    added = _unique(cur_rows, prev_ids | moved_to)
+    removed = _unique(prev_rows, cur_ids | moved_from)
     return {"added": added, "removed": removed, "changed": changed}
 
 
@@ -195,11 +222,13 @@ def _change_text(entry: Dict[str, Any]) -> str:
     after = entry.get("after") or {}
     before_label = str(before.get("label") or "").strip()
     after_label = str(after.get("label") or "").strip()
-    if before_label != after_label:
-        return f"`{mid}` — {before_label or mid} → {after_label or mid}"
     before_res = str(before.get("resolved_model") or "").strip()
     after_res = str(after.get("resolved_model") or "").strip()
-    return f"`{mid}` — resolves {before_res or mid} → {after_res or mid}"
+    if before_res.lower() != after_res.lower():
+        was = before_label or before_res or mid
+        now = after_label or after_res or mid
+        return f"`{mid}` now points to {now} (was {was})"
+    return f"`{mid}` renamed {before_label or mid} → {after_label or mid}"
 
 
 def render_delta(delta: Dict[str, Any]) -> str:

@@ -22,6 +22,16 @@ class FakeAPI:
         self.can_edit = can_edit
         self.invalid_metadata = False
         self.branch = "main"
+        self.worktree_roots = {}
+
+    def worktrees_view(self):
+        default = {'path': '/big/worktrees', 'usable': True, 'free_gb': 812.0}
+        rows = []
+        for p in self.projects:
+            own = self.worktree_roots.get(str(p['id']), '')
+            rows.append({'id': str(p['id']), 'name': p['name'], 'root': own,
+                         'effective': {'path': own, 'usable': True, 'free_gb': 400.0} if own else default})
+        return {'available': True, 'root': '/big/worktrees', 'effective': default, 'min_free_gb': 10, 'projects': rows}
 
     def handle(self, route):
         req = route.request
@@ -57,6 +67,10 @@ class FakeAPI:
             self.projects.append(project); response['project_id']=8
         elif path.endswith('/remove'): self.projects=[]
         elif path.endswith('/chat'): response['session_id']=985
+        elif path == '/api/settings/worktrees':
+            if req.method == 'POST':
+                self.worktree_roots.update(body.get('project_roots') or {})
+            response.update(self.worktrees_view())
         elif path == '/api/auth/me': response.update(authenticated=True, user={'id':1,'display_name':'Owner'})
         elif path.startswith('/api/'): response['data']=[]
         route.fulfill(status=status, content_type='application/json', body=json.dumps(response))
@@ -231,3 +245,23 @@ def test_projects_layout_all_tabs_and_dialog_fit_viewport(browser, static_server
         assert not errors
     finally:
         context.close()
+
+
+def test_project_worktree_folder_overrides_and_returns_to_cuttle_default(page_ctx, static_server):
+    page, _, errors = page_ctx
+    api = FakeAPI(); open_page(page, static_server, api)
+    page.get_by_role('button', name='Locations', exact=True).click()
+    status = page.locator('[data-worktree-status]')
+    status.wait_for()
+    assert 'Using the Cuttle default: /big/worktrees' in status.inner_text()
+    assert page.get_by_role('button', name='Use Cuttle default', exact=True).is_disabled()
+    page.locator('#worktree-folder-form [name="worktree_root"]').fill('/galaxy/Game Dev')
+    page.get_by_role('button', name='Save folder', exact=True).click()
+    page.get_by_text("Using this project's folder: /galaxy/Game Dev", exact=False).wait_for()
+    assert ('POST', '/api/settings/worktrees', {'project_roots': {'7': '/galaxy/Game Dev'}}) in api.calls
+    page.screenshot(path='temp/projects-worktree-folder.png', full_page=True)
+    page.get_by_role('button', name='Use Cuttle default', exact=True).click()
+    page.get_by_text('Using the Cuttle default: /big/worktrees', exact=False).wait_for()
+    assert api.worktree_roots == {'7': ''}
+    assert not any(call[0] == 'PUT' for call in api.calls)  # the project record is not touched
+    assert not errors
