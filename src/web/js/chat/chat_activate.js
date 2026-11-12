@@ -104,7 +104,36 @@
             pre.classList.add('has-code-copy');
             pre.appendChild(btn);
         });
+        attachOriginalResponseCopy(containerEl, d);
         }
+
+    /** "Original response" disclosure (post-processed replies): copy the agent's raw reply. */
+    function attachOriginalResponseCopy(containerEl, d) {
+        containerEl.querySelectorAll('.response-original-copy-btn').forEach((btn) => {
+            if (btn.__copyWired) return;
+            btn.__copyWired = true;
+            const label = 'Copy original response';
+            const idle = d.copyIcon + '<span>Copy</span>';
+            btn.title = label;
+            btn.setAttribute('aria-label', label);
+            btn.innerHTML = idle;
+            btn.addEventListener('click', async (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                const ok = await d.copyText(btn.getAttribute('data-copy-text') || '');
+                btn.classList.toggle('is-copied', ok);
+                if (ok) {
+                    btn.innerHTML = d.copiedIcon + '<span>Copied</span>';
+                } else {
+                    d.notifyError('Could not copy the original response');
+                }
+                d.later(() => {
+                    btn.classList.remove('is-copied');
+                    btn.innerHTML = idle;
+                }, 1500);
+            });
+        });
+    }
 
 
 
@@ -146,6 +175,7 @@
     const api = {
         activateVegaEmbeds,
         attachCodeCopyButtons,
+        attachOriginalResponseCopy,
         highlightCodeBlocks,
         wireTerminalInputs,
     };

@@ -6236,6 +6236,39 @@ pre.has-code-copy:hover .code-copy-btn,
     margin-top: 8px;
 }
 
+.response-original-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 8px;
+}
+
+.response-original-copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 0.8em;
+    cursor: pointer;
+}
+
+.response-original-copy-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+.response-original-copy-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.response-original-copy-btn.is-copied {
+    color: #4ade80;
+}
+
 .response-postprocessed-label {
     margin: 14px 0 4px;
     padding-top: 8px;

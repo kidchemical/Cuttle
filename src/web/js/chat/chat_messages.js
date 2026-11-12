@@ -338,7 +338,10 @@
             const content = typeof d.formatMessage === 'function'
                 ? d.formatMessage(processed.original) : d.escapeHtmlInline(processed.original);
             thinkBlocks.push('<details class="response-original-block"><summary>Original response</summary>'
-                + '<div class="response-original-content">' + content + '</div></details>'
+                + '<div class="response-original-content">' + content + '</div>'
+                // Copy wiring (icon, clipboard, toast) is post-paint: chat_activate.js.
+                + '<div class="response-original-actions"><button type="button" class="response-original-copy-btn"'
+                + ' data-copy-text="' + d.escapeHtmlInline(processed.original) + '">Copy</button></div></details>'
                 + '<div class="response-postprocessed-label">Added by post-processing</div>');
             out = (processed.lead ? processed.lead + '\n\n' : '') + placeholder + '\n\n' + processed.response;
         }
