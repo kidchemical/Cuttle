@@ -33,8 +33,9 @@ console.log(JSON.stringify(out));
 
 
 def test_wake_line_says_what_starts_the_next_turn():
-    out = json.loads(subprocess.run(["node", "-e", HARNESS], capture_output=True, text=True, check=True,
-                                    env={**os.environ, "WEB": str(WEB)}).stdout)
+    # utf-8 explicitly: Windows would decode the JS output with the locale codec.
+    out = json.loads(subprocess.run(["node", "-e", HARNESS], capture_output=True, text=True, encoding="utf-8",
+                                    check=True, env={**os.environ, "WEB": str(WEB)}).stdout)
     # An ordinary idle chat shows no card and no wake line.
     assert out["plain"] is None and out["processesOnly"] is None and out["boundWatch"] is None
     # An orchestrating chat nobody watches says so instead of just looking idle.
