@@ -1,6 +1,6 @@
 {
     "name":  "cuttle-desktop",
-    "version":  "0.7.0",
+    "version":  "0.8.0",
     "description":  "Cuttle - AI Agent Framework Desktop Application",
     "main":  "main.js",
     "desktopName":  "cuttle-desktop.desktop",
