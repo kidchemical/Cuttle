@@ -45,6 +45,26 @@ def test_typesafe_key_wins_over_openrouter(monkeypatch):
     assert base == TYPESAFE_BASE_URL
 
 
+def test_key_falls_back_to_home_env_file(monkeypatch):
+    """Agent CLI shells carry no provider keys; the home .env still serves them."""
+    from api.jev.config import resolve_jev_credentials
+    from core.runtime_paths import env_file
+
+    for name in ("TYPESAFE_API_KEY", "OPENROUTER_API_KEY", "CUTTLE_JEV_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    path = env_file()
+    assert resolve_jev_credentials()[2] == "none"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('OPENROUTER_API_KEY="sk-or-file"\n', encoding="utf-8")
+    try:
+        key, _base, src = resolve_jev_credentials()
+        assert (key, src) == ("sk-or-file", "openrouter")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-env")
+        assert resolve_jev_credentials()[0] == "sk-or-env"
+    finally:
+        path.unlink()
+
+
 def test_explicit_base_url_wins(monkeypatch):
     from api.jev.config import resolve_jev_credentials
 

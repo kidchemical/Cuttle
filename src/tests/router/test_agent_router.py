@@ -319,6 +319,62 @@ def test_fallback_exhaustion_clear_error(router_settings):
     assert len(result["router"]["attempts"]) >= 2
 
 
+def test_no_agent_installed_gets_setup_guidance(router_settings, monkeypatch):
+    """A new install with no agent CLI gets install steps, not a failure dump."""
+    import api.agent_router.setup_reply as setup_reply
+
+    monkeypatch.setattr(setup_reply, "_installed_agents", lambda project_path: [])
+    cfg = load_router_config()
+    decision = RoutingDecision(
+        decision_id="testsetup",
+        task_type="basic_ask",
+        difficulty="low",
+        target=ExecutionTarget("cursor", "auto"),
+        escalation_target=ExecutionTarget("cursor", "grok-4.6"),
+        confidence=0.9,
+        reason="router error: OPENAI_API_KEY not set",
+        source=TargetSource.DEFAULT.value,
+    )
+
+    def missing(label):
+        def run(prompt, chat_session_id, status_queue=None, project_path=None, model=None, **kw):
+            return {
+                "success": True,
+                "response": f"❌ **{label} not found.** Install {label}.",
+                "type": f"{label.lower()}_error",
+                "cli_missing": {"label": label, "hint": f"Install {label}."},
+            }
+        return run
+
+    result = execute_decision(
+        decision,
+        "hello",
+        chat_session_id=4,
+        runners={"cursor": missing("Cursor"), "codex": missing("Codex"), "claude": missing("Claude")},
+        config=cfg,
+    )
+    text = result["response"]
+    assert text.startswith("**No agent is installed yet.**")
+    assert "- **Cursor**: Install Cursor." in text
+    assert "Then send your message again." in text
+    assert "All execution targets failed" not in text
+    assert "OPENAI_API_KEY" not in text and "/retry" not in text
+    assert result["type"] == "router_error"
+
+
+def test_setup_guidance_only_when_every_target_is_missing():
+    from api.agent_router.setup_reply import no_agent_installed_reply
+
+    gone = {"cli_missing": {"label": "Codex", "hint": "Install Codex."}}
+    assert no_agent_installed_reply([], installed=[]) == ""
+    assert no_agent_installed_reply([gone, {"failure_kind": "transport"}], installed=[]) == ""
+    text = no_agent_installed_reply(
+        [gone, gone], installed=[{"label": "Hermes", "slash": "/hermes", "available": True}]
+    )
+    assert text.count("- **Codex**") == 1
+    assert "Already installed here: **Hermes** (`/hermes your message`)." in text
+
+
 def test_user_cancellation_is_terminal(router_settings):
     """Stop must not buy an escalation or spawn a fallback agent."""
     cfg = load_router_config()
