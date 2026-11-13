@@ -103,6 +103,13 @@ register_flag(FlagSpec(
 ))
 
 register_flag(FlagSpec(
+    id="composer_voice_clip", label="Composer voice clips",
+    description="Show the microphone button in the chat composer: record one or more voice clips (live waveform, pause, stop) and send them as attachments. Each clip is transcribed for the agent on send (OpenAI key required).",
+    # Default on: low-risk UI; a clip is an ordinary removable attachment.
+    default=True, category="chat", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
     id="composer_prompt_enhance", label="Composer prompt enhancer",
     description="Show the wand button in the chat composer that rewrites your draft prompt with AI (click again to undo).",
     default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,

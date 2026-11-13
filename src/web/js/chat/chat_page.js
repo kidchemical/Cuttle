@@ -1251,11 +1251,13 @@
                     e.preventDefault();
                     e.stopPropagation();
                     pendingAttachments = CuttleChatAttachments.removeAttachmentAt(pendingAttachments, idx);
+                    if (voiceClip) voiceClip.attachmentRemoved(att);
                     _savePendingAttachments();
                     renderAttachmentChips();
                 });
                 chip.appendChild(name);
                 chip.appendChild(remove);
+                if (CuttleChatAttachments.isAudioAttachment(att)) CuttleChatVoiceClip.decorateChip(chip, name, att);
                 row.appendChild(chip);
             });
         }
@@ -1335,6 +1337,9 @@
                     '</button>'
                 );
             }
+            if (CuttleChatAttachments.messageAttachmentKind(att) === 'audio') {
+                return '<audio class="msg-attach-audio" controls preload="metadata" src="' + safeUrl + '" title="' + name + '"></audio>';
+            }
             if (CuttleChatAttachments.messageAttachmentKind(att) === 'link') {
                 return (
                     '<a class="msg-attach-file" href="' +
@@ -1367,9 +1372,9 @@
     }
 
     // Owned by chat_attachments.js — DOM/state gather, domain decides.
-    async function uploadChatFiles(fileList) {
+    async function uploadChatFiles(fileList, extra) {
         const files = Array.from(fileList || []).filter(Boolean);
-        if (!files.length) return;
+        if (!files.length) return false;
         const form = new FormData();
         form.append('session_id', authSessionIdForRequest() || session.current() || 'anon');
         for (const f of files) form.append('files', f, f.name);
@@ -1391,12 +1396,28 @@
         });
         if (!plan.ok) {
             (window.showToast || function (m) { alert(m); })(plan.error, 'error');
-            return;
+            return false;
         }
         pendingAttachments = CuttleChatAttachments.addAttachmentsToPending(
-            pendingAttachments, plan.items);
+            pendingAttachments, extra ? plan.items.map((item) => Object.assign({}, item, extra)) : plan.items);
         _savePendingAttachments();
         renderAttachmentChips();
+        return true;
+    }
+
+    /** Composer mic button: record → voice-clip attachment (chat_voice_clip.js). */
+    let voiceClip = null;
+    function wireVoiceClipControls() {
+        voiceClip = CuttleChatVoiceClip.create({
+            win: window,
+            recorder: CuttleChatVoiceRecorder,
+            upload: (file, extra) => uploadChatFiles([file], extra),
+            toast: (m, k) => (window.showToast || function () {})(m, k),
+            text: CuttleChatVoiceClipText, fetch: window.fetch.bind(window), sessionId: () => session.current(),
+            config: () => fetch('/api/voice-stt/status', { credentials: 'include' }).then((r) => r.json()).then((d) => d.clip),
+            composers: [['micButton', 'chatAttachChipsRow', 'chatInput'], ['welcomeMicButton', 'welcomeAttachChipsRow', 'welcomeChatInput']]
+                .map(([b, r, i]) => ({ button: document.getElementById(b), row: document.getElementById(r), input: document.getElementById(i) })),
+        });
     }
 
     function wireAttachControls() {
@@ -6828,6 +6849,7 @@
             LOG_ERR('sendWelcomeMessage: welcomeChatInput not found');
             return;
         }
+        if (voiceClip && voiceClip.isActive() && !(await voiceClip.finishForSend())) return;
         const message = composeMessageWithSlashChip(input).trim();
         const attachments = pendingAttachments.slice();
 
@@ -10692,6 +10714,8 @@
             return;
         }
         if (overrideText == null && composerLock.blocksSend()) return;
+        // Recording a voice clip: Send stops it and sends it with the message.
+        if (overrideText == null && voiceClip && voiceClip.isActive() && !(await voiceClip.finishForSend())) return;
         const composerSource = overrideText != null ? { id: input.id, value: overrideText } : input;
         const message = composeMessageWithSlashChip(composerSource).trim();
         const attachments = overrideText != null ? [] : pendingAttachments.slice();
@@ -12482,6 +12506,7 @@
         }
 
         wireAttachControls();
+        wireVoiceClipControls();
         wireEnhanceControls();
         syncExperimentalComposerControls();
         window.addEventListener('focus', syncExperimentalComposerControls);

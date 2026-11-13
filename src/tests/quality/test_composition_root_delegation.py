@@ -57,6 +57,8 @@ CHAT_OWNERS = (
     ("chat_project.js", "CuttleChatProject", "CuttleChatProject."),
     ("chat_usage.js", "CuttleChatUsage", "CuttleChatUsage."),
     ("chat_voice.js", "CuttleChatVoice", "CuttleChatVoice.create("),
+    ("chat_voice_clip.js", "CuttleChatVoiceClip", "CuttleChatVoiceClip.create("),
+    ("chat_voice_clip_text.js", "CuttleChatVoiceClipText", "text: CuttleChatVoiceClipText"),
     ("supervised_control.js", "CuttleSupervised", "CuttleSupervised."),
     ("chat_slash.js", "CuttleChatSlash", "CuttleChatSlash."),
     ("chat_agent_model.js", "CuttleChatAgentModel", "CuttleChatAgentModel."),
@@ -84,6 +86,7 @@ SHELL_OWNERS = (
     ("shell_panes.js", "CuttleShellPanes", "CuttleShellPanes.create("),
     ("shell_spaces.js", "CuttleShellSpaces", "CuttleShellSpaces.create("),
     ("shell_notifications.js", "CuttleShellNotifications", "CuttleShellNotifications.create("),
+    ("shell_workspaces.js", "CuttleShellWorkspaces", "CuttleShellWorkspaces.create("),
 )
 
 # Owners that expose top-level globals instead of a namespace (external

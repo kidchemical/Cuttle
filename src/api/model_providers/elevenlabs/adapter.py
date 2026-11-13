@@ -1,4 +1,4 @@
-"""ElevenLabs account models, voice library, and speech transport."""
+"""ElevenLabs account models, voice library, speech and transcription transport."""
 import os
 from urllib.parse import quote
 import requests
@@ -27,7 +27,10 @@ class Adapter:
         return [{'id': m['model_id'], 'label': m.get('name') or m['model_id'],
                  'capabilities': {'operations': ['speech_generation'] if m.get('can_do_text_to_speech') else [],
                                   'max_input_characters': m.get('maximum_text_length_per_request')}}
-                for m in self._get(manifest, '/v1/models') if m.get('model_id')]
+                for m in self._get(manifest, '/v1/models') if m.get('model_id')] + [
+            # The account model list is text-to-speech only; Scribe is declared.
+            dict(m) for m in manifest.models
+            if 'audio_transcription' in (m.get('capabilities') or {}).get('operations', [])]
 
     def list_voices(self, manifest, model=''):
         return [{'id': v['voice_id'], 'label': v.get('name') or v['voice_id']}
@@ -50,6 +53,16 @@ class Adapter:
         if not response.content:
             raise RuntimeError('TTS returned empty audio')
         return SpeechResult(bytes(response.content))
+
+    def transcribe(self, manifest, request):
+        data = {'model_id': request.model}
+        if request.language:
+            data['language_code'] = request.language
+        response = requests.post(endpoint() + '/v1/speech-to-text', headers={'xi-api-key': manifest.api_key()},
+                                 data=data, files={'file': (request.filename, request.audio, request.mime)},
+                                 timeout=request.timeout)
+        response.raise_for_status()
+        return str(response.json().get('text') or '')
 
 
 def build_adapter():

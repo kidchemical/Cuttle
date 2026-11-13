@@ -23,7 +23,7 @@
     const WRAP_ID = 'chatComposerWrap';
     // Made inert while locked. Stop and the context gauge stay usable.
     const LOCKED_PARTS = ['#chatSlashChipsRow', '#chatAttachChipsRow', '.textarea-with-slash-menu',
-        '#chatContextGauge', '#enhanceButton', '#attachButton', '#sendButton'];
+        '#chatContextGauge', '#enhanceButton', '#attachButton', '#micButton', '#sendButton'];
     const REASON_TEXT = { subagent: 'sub-agent chat', supervised: 'supervised chat' };
     /** Padlock icon; `open` draws the shackle released. */
     function lockSvg(size, open) {

@@ -3,7 +3,10 @@
 Settings → Agents → Background helpers uses the manifest-driven catalog
 at `src/api/model_providers/<provider>/`, distinct from agent CLI adapters.
 OpenAI, Anthropic, and user-managed local servers serve text operations. OpenAI,
-ElevenLabs, and Google serve speech; OpenAI serves transcription. TypeSafe/OpenRouter
+ElevenLabs, and Google serve speech; OpenAI, ElevenLabs (Scribe), and a local
+OpenAI-compatible speech-to-text server serve transcription, chosen under
+Voice → Speech to text (`api.voice_stt.settings`; the browser's own recognizer
+is the fourth, client-only choice). TypeSafe/OpenRouter
 Jev decisions use their own typed operation in the same provider owner.
 `api.background_helpers` selects a global execution chain and optional per-task
 chains over API providers/local servers or installed agent CLIs. Claude Code and

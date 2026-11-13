@@ -486,6 +486,12 @@
                 </div><!-- /voiceTtsConfig -->
             </div>
 
+            <div class="settings-group" id="voiceSttSettings">
+                <h3 class="settings-title">Speech to text <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+                <p class="setting-description">What turns your recorded speech into text: the microphone button in the message box, and voice chat when its server transcription is on.</p>
+                <div id="voiceSttEditor"></div>
+            </div>
+
             <!-- Experiment-owned: stays hidden unless a voice-engine flag is on. -->
             <div class="settings-group" id="voiceConversationGroup" hidden>
                 <h3 class="settings-title">Voice conversation <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
@@ -978,7 +984,8 @@
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261011menuPosition2"></script>
     <script src="/js/settings/settings_background_helpers.js?v=20261016separateProcessor"></script>
-    <script src="/js/settings/settings_voice_providers.js?v=20261028guide"></script>
+    <script src="/js/settings/settings_voice_providers.js?v=20261112stt"></script>
+    <script src="/js/settings/settings_voice_stt.js?v=20261112stt"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261103sidebar"></script>
     <script src="/js/settings/settings_subpages.js?v=20261103sidebar"></script>
     <script src="/js/settings/settings_text_prefs.js?v=20261102prefs"></script>
@@ -1145,7 +1152,7 @@
             const themeSelect = document.getElementById('themeSelect');
             const currentTheme = window.CuttleUiBoot
                 ? window.CuttleUiBoot.currentTheme()
-                : (localStorage.getItem('theme') || 'nord');
+                : (localStorage.getItem('theme') || 'light');
             themeSelect.value = currentTheme;
         }
 
@@ -3094,7 +3101,10 @@
                 tabs.register('providers', function () {
                     loadApiKeys();
                 });
-                tabs.register('voice', function () { loadChatTtsSettings(); });
+                tabs.register('voice', function () {
+                    loadChatTtsSettings();
+                    window.CuttleSettingsVoiceStt.mount(document.getElementById('voiceSttEditor'));
+                });
                 tabs.register('experimental', function () { loadExperimentalFlags(); });
                 tabs.register('devices', function () {
                     loadLanAccessSettings();
@@ -3116,6 +3126,7 @@
                 loadCompletionProviders();
                 loadTimeoutsSettings();
                 loadChatTtsSettings();
+                window.CuttleSettingsVoiceStt.mount(document.getElementById('voiceSttEditor'));
                 loadApiKeys();
                 loadExperimentalFlags();
                 loadLanAccessSettings();

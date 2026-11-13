@@ -7677,6 +7677,150 @@ button.cuttle-button.is-unselected {
     color: #ef4444;
 }
 
+/* Composer voice clips (chat_voice_clip.js) */
+.mic-button.is-recording {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.14);
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
+.voice-clip-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    padding: 0 6px 0 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background: rgba(148, 163, 184, 0.12);
+}
+
+.voice-clip-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ef4444;
+    flex: 0 0 auto;
+    animation: voice-clip-pulse 1.2s ease-in-out infinite;
+}
+
+.voice-clip-bar[data-state="paused"] .voice-clip-dot,
+.voice-clip-bar[data-state="starting"] .voice-clip-dot,
+.voice-clip-bar[data-state="saving"] .voice-clip-dot {
+    background: var(--text-secondary);
+    animation: none;
+}
+
+.voice-clip-bar[data-state="failed"] .voice-clip-dot {
+    animation: none;
+}
+
+@keyframes voice-clip-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.8); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .voice-clip-dot { animation: none; }
+}
+
+.voice-clip-time {
+    flex: 0 0 auto;
+    min-width: 34px;
+    font-size: 12px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+}
+
+.voice-clip-bar[data-state="failed"] .voice-clip-time {
+    color: #ef4444;
+}
+
+/* `color` is the waveform's bar color (read by the canvas painter). */
+.voice-clip-wave {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 24px;
+    color: var(--accent-color);
+}
+
+.voice-clip-bar[data-state="paused"] .voice-clip-wave,
+.voice-clip-bar[data-state="saving"] .voice-clip-wave,
+.voice-clip-bar[data-state="failed"] .voice-clip-wave {
+    color: var(--text-secondary);
+    opacity: 0.6;
+}
+
+.voice-clip-btn,
+.attach-chip-play {
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.voice-clip-btn[hidden] {
+    display: none;
+}
+
+.voice-clip-btn:hover,
+.attach-chip-play:hover {
+    background: rgba(102, 126, 234, 0.16);
+    color: var(--text-primary);
+}
+
+.voice-clip-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.voice-clip-discard:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+
+.voice-clip-stop {
+    background: #ef4444;
+    color: #fff;
+}
+
+.voice-clip-stop:hover {
+    background: #dc2626;
+    color: #fff;
+}
+
+.voice-clip-bar[data-state="failed"] .voice-clip-stop {
+    background: var(--accent-color);
+}
+
+.attach-chip--voice {
+    padding: 2px 6px 2px 3px;
+    gap: 4px;
+}
+
+.attach-chip-play {
+    width: 24px;
+    height: 24px;
+    background: rgba(102, 126, 234, 0.18);
+    color: var(--accent-color);
+}
+
+.msg-attach-audio {
+    height: 36px;
+    width: 280px;
+    max-width: 100%;
+}
+
 /* Image / file attachments in the chat transcript */
 .user-message-with-attachments {
     display: flex;

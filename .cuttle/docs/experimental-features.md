@@ -38,6 +38,19 @@ flag row, `src/api/auto_compact/`, its blueprint nesting in
 `agent_harness/routes.py`, the preflight call in `subagents/turns.py`, the
 settings route family, `chat_auto_compact.js` / `settings_auto_compact.js`.
 
+**Composer voice clips:** flag `composer_voice_clip` (default on). A mic button
+after the paperclip records a voice clip with a live waveform, pause, discard
+and stop; each stopped recording is a removable attachment chip (record again
+for more), and Send while recording sends the clip. Your words are typed into
+the message box while you record (one editable block per clip, removed with
+its chip); the chat keeps the audio. Provider, live text and the longest clip
+are ordinary settings (Settings → Voice → Speech to text), not part of the
+experiment. Owners `src/web/js/chat/chat_voice_clip.js` and
+`chat_voice_clip_text.js`. Teardown: the flag row, those files and their
+script tags, the two mic buttons in `chat_page.html`, the `voiceClip` call sites
+in `chat_page.js`, the audio branch in `vision_prepass.py`, the `purpose=clip`
+gate in `voice_stt/routes.py`.
+
 **Response post-processing:** flag `response_postprocessing` (default off).
 Its instructions, append/replace behavior, API/CLI, model, effort and fallback
 chain are configured together in Settings → Agents → Response post-processing,

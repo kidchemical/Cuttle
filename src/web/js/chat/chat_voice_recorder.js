@@ -131,10 +131,35 @@
         return new Blob([bytes], { type: type });
     }
 
+    /**
+     * Join 16-bit PCM WAV files (same format, 44-byte headers) into one.
+     * The native mic hands back one WAV per cut; a paused recording is
+     * several of them.
+     */
+    function mergeWavBuffers(buffers) {
+        const list = (buffers || []).filter((b) => b && b.byteLength > 44);
+        if (!list.length) return new ArrayBuffer(0);
+        const dataLen = list.reduce((n, b) => n + b.byteLength - 44, 0);
+        const out = new Uint8Array(44 + dataLen);
+        out.set(new Uint8Array(list[0], 0, 44), 0);
+        let at = 44;
+        for (const b of list) {
+            out.set(new Uint8Array(b, 44), at);
+            at += b.byteLength - 44;
+        }
+        const view = new DataView(out.buffer);
+        view.setUint32(4, 36 + dataLen, true);
+        view.setUint32(40, dataLen, true);
+        return out.buffer;
+    }
+
     /*
      * Audio sources: start(), levels() → RMS per new frame, cut(keep) and
      * stop(keep) → Promise<{blob, durationMs}|null> for the audio since the
-     * previous cut.
+     * previous cut. pause()/resume() leave a gap in the audio stop() returns
+     * (composer voice clips; voice mode never pauses). start({phrases: true})
+     * also taps the mic per phrase: cutPhrase(keep) returns the audio since the
+     * previous phrase cut and leaves the recording stop() returns whole.
      */
     function browserSource() {
         let stream = null;
@@ -144,16 +169,23 @@
         let rec = null;
         let chunks = [];
         let startedAt = 0;
+        /** Second recorder on the same stream, restarted at each phrase cut. */
+        let tap = null;
 
-        function startRecorder() {
+        function newRecorder() {
             const mime = pickMime();
             const r = mime ? new root.MediaRecorder(stream, { mimeType: mime }) : new root.MediaRecorder(stream);
             const mine = [];
             r.ondataavailable = (e) => { if (e.data && e.data.size) mine.push(e.data); };
             r.start();
-            rec = r;
-            chunks = mine;
-            startedAt = Date.now();
+            return { r: r, chunks: mine, t0: Date.now() };
+        }
+
+        function startRecorder() {
+            const next = newRecorder();
+            rec = next.r;
+            chunks = next.chunks;
+            startedAt = next.t0;
         }
 
         function finish(r, mine, t0, keep) {
@@ -168,7 +200,7 @@
         }
 
         return {
-            async start() {
+            async start(opts) {
                 stream = await root.navigator.mediaDevices.getUserMedia({
                     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
                 });
@@ -180,6 +212,7 @@
                 ctx.createMediaStreamSource(stream).connect(analyser);
                 frame = new Float32Array(analyser.fftSize);
                 startRecorder();
+                if (opts && opts.phrases) tap = newRecorder();
             },
             levels() {
                 if (!analyser) return [];
@@ -191,9 +224,28 @@
                 startRecorder();
                 return finish(r, mine, t0, keep);
             },
+            cutPhrase(keep) {
+                if (!tap || !stream) return Promise.resolve(null);
+                const old = tap;
+                tap = newRecorder();
+                if (rec && rec.state === 'paused') { try { tap.r.pause(); } catch (_) {} }
+                return finish(old.r, old.chunks, old.t0, keep);
+            },
+            pause() {
+                for (const r of [rec, tap && tap.r]) {
+                    try { if (r && r.state === 'recording') r.pause(); } catch (_) {}
+                }
+            },
+            resume() {
+                for (const r of [rec, tap && tap.r]) {
+                    try { if (r && r.state === 'paused') r.resume(); } catch (_) {}
+                }
+            },
             async stop(keep) {
                 const done = rec ? finish(rec, chunks, startedAt, keep) : Promise.resolve(null);
                 rec = null;
+                if (tap) finish(tap.r, tap.chunks, tap.t0, false);
+                tap = null;
                 const clip = await done;
                 try { stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
                 try { await ctx.close(); } catch (_) {}
@@ -213,8 +265,13 @@
             // 16 kHz mono 16-bit after a 44-byte header: 32 bytes per ms.
             return { blob: blob, durationMs: Math.max(0, Math.round((blob.size - 44) / 32)) };
         }
+        /** Audio kept before each pause; the paused stretch is cut away. */
+        let parts = [];
+        let paused = false;
         return {
             async start() {
+                parts = [];
+                paused = false;
                 const result = String(mic.micStart() || '');
                 if (result === 'ok') return;
                 const err = new Error(result === 'denied'
@@ -230,11 +287,99 @@
             cut(keep) {
                 return Promise.resolve(take(keep));
             },
-            async stop(keep) {
-                const clip = take(keep);
-                mic.micStop();
-                return clip;
+            /** Every piece stays part of the recording; `keep` only says who wants it back. */
+            cutPhrase(keep) {
+                if (paused) return Promise.resolve(null);
+                const clip = take(true);
+                if (clip) parts.push(clip);
+                return Promise.resolve(keep ? clip : null);
             },
+            pause() {
+                if (paused) return;
+                const clip = take(true);
+                if (clip) parts.push(clip);
+                paused = true;
+            },
+            resume() {
+                if (!paused) return;
+                take(false);
+                paused = false;
+            },
+            async stop(keep) {
+                const last = take(keep && !paused);
+                mic.micStop();
+                const all = keep ? parts.concat(last ? [last] : []) : [];
+                parts = [];
+                paused = false;
+                if (all.length <= 1) return all[0] || null;
+                const merged = mergeWavBuffers(await Promise.all(all.map((c) => c.blob.arrayBuffer())));
+                return {
+                    blob: new Blob([merged], { type: 'audio/wav' }),
+                    durationMs: all.reduce((n, c) => n + c.durationMs, 0),
+                };
+            },
+        };
+    }
+
+    /**
+     * Phrase clips → text, delivered in spoken order whatever order the
+     * transcriptions return in.
+     * @param {object} host
+     * @param {typeof fetch} host.fetch
+     * @param {(text: string) => void} host.onPhraseText
+     * @param {(pending: number) => void} host.onPending  clips awaiting text
+     * @param {(message: string) => void} host.onError
+     * @param {() => (string|number)} [host.sessionId]
+     * @param {string} [host.purpose]  'clip' for composer voice clips
+     */
+    function createTextQueue(host) {
+        let pending = 0;
+        let commits = Promise.resolve();
+        let context = '';
+
+        async function requestText(clip) {
+            const form = new FormData();
+            const type = clip.blob.type || '';
+            const ext = /wav/.test(type) ? 'wav' : (/mp4/.test(type) ? 'mp4' : (/ogg/.test(type) ? 'ogg' : 'webm'));
+            form.append('audio', clip.blob, 'phrase.' + ext);
+            form.append('duration_ms', String(clip.durationMs));
+            if (host.sessionId?.()) form.append('session_id', String(host.sessionId()));
+            if (host.purpose) form.append('purpose', host.purpose);
+            form.append('language', (root.navigator && root.navigator.language) || '');
+            if (context) form.append('prompt', context);
+            const r = await host.fetch('/api/voice-stt/transcribe', {
+                method: 'POST', credentials: 'include', body: form,
+            });
+            const d = await r.json().catch(() => ({}));
+            if (d && d.disabled) throw new Error('Server transcription is turned off');
+            if (!r.ok || !d || !d.success) throw new Error((d && d.error) || ('Transcription failed (' + r.status + ')'));
+            return String(d.text || '').trim();
+        }
+
+        function push(clipPromise) {
+            pending += 1;
+            host.onPending(pending);
+            const text = Promise.resolve(clipPromise).then((clip) => (clip ? requestText(clip) : ''));
+            commits = commits
+                .then(() => text)
+                .then((t) => {
+                    if (!t) return;
+                    context = (context + ' ' + t).slice(-400);
+                    host.onPhraseText(t);
+                })
+                .catch((err) => host.onError(String((err && err.message) || err)))
+                .finally(() => {
+                    pending -= 1;
+                    host.onPending(pending);
+                });
+        }
+
+        return {
+            push: push,
+            /** Resolves once every pushed clip's text has been delivered. */
+            idle: () => commits,
+            pending: () => pending,
+            resetContext: () => { context = ''; },
         };
     }
 
@@ -251,47 +396,10 @@
         let timer = 0;
         let vad = createVad();
         let running = false;
-        let pending = 0;
-        let commits = Promise.resolve();
-        let context = '';
+        const queue = createTextQueue(host);
+        const enqueue = queue.push;
         /** Latest frame RMS for the waveform; decays when quiet. */
         let lastRms = 0;
-
-        async function requestText(clip) {
-            const form = new FormData();
-            const type = clip.blob.type || '';
-            const ext = /wav/.test(type) ? 'wav' : (/mp4/.test(type) ? 'mp4' : (/ogg/.test(type) ? 'ogg' : 'webm'));
-            form.append('audio', clip.blob, 'phrase.' + ext);
-            form.append('duration_ms', String(clip.durationMs));
-            if (host.sessionId?.()) form.append('session_id', String(host.sessionId()));
-            form.append('language', (root.navigator && root.navigator.language) || '');
-            if (context) form.append('prompt', context);
-            const r = await host.fetch('/api/voice-stt/transcribe', {
-                method: 'POST', credentials: 'include', body: form,
-            });
-            const d = await r.json().catch(() => ({}));
-            if (d && d.disabled) throw new Error('Server transcription is turned off');
-            if (!r.ok || !d || !d.success) throw new Error((d && d.error) || ('Transcription failed (' + r.status + ')'));
-            return String(d.text || '').trim();
-        }
-
-        function enqueue(clipPromise) {
-            pending += 1;
-            host.onPending(pending);
-            const text = clipPromise.then((clip) => (clip ? requestText(clip) : ''));
-            commits = commits
-                .then(() => text)
-                .then((t) => {
-                    if (!t) return;
-                    context = (context + ' ' + t).slice(-400);
-                    host.onPhraseText(t);
-                })
-                .catch((err) => host.onError(String((err && err.message) || err)))
-                .finally(() => {
-                    pending -= 1;
-                    host.onPending(pending);
-                });
-        }
 
         function tick() {
             if (!running || !source) return;
@@ -338,19 +446,15 @@
                 if (keep) enqueue(clip);
                 else await clip;
             }
-            await commits;
-        }
-
-        function resetContext() {
-            context = '';
+            await queue.idle();
         }
 
         return {
             start: start,
             stop: stop,
-            resetContext: resetContext,
+            resetContext: queue.resetContext,
             isRunning: () => running,
-            pending: () => pending,
+            pending: queue.pending,
             /** RMS of the latest mic frame (0 when idle) for the waveform. */
             level: () => (running ? lastRms : 0),
         };
@@ -365,6 +469,13 @@
         missingSupport: missingSupport,
         sourceKind: sourceKind,
         nativeMic: nativeMic,
+        mergeWavBuffers: mergeWavBuffers,
+        createTextQueue: createTextQueue,
+        /** A fresh mic source (native app mic when present, else browser). */
+        openSource: function () {
+            const mic = nativeMic();
+            return mic ? nativeSource(mic) : browserSource();
+        },
         create: create,
     };
     root.CuttleChatVoiceRecorder = api;
