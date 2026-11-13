@@ -2167,7 +2167,8 @@
                     || /\s·\s+\S+$/.test(existingLabel);
                 const existingHasModel = / - /.test(existingLabel) || /model\s+\S/i.test(existingMeta);
                 if (existingHasEffort && !effort) return chip;
-                if (existingHasModel && !model && !effort) return chip;
+                // A pin update without a model never strips the stored model.
+                if (existingHasModel && !model) return chip;
                 if (existingLabel === nextLabel) {
                     if ((chip.category || '') === agentCategory) return chip;
                     return Object.assign({}, chip, { category: agentCategory });
@@ -2324,7 +2325,9 @@
                 category: 'claude',
                 model: model,
                 effort: effort,
-                prettyModel: prettyClaudeModelLabel(model),
+                // Empty model must stay empty: prettyClaudeModelLabel('') is the
+                // agent name, which rendered "Claude Code - Claude Code · medium".
+                prettyModel: String(model || '').trim() ? prettyClaudeModelLabel(model) : '',
                 slashMeta: '/claude',
                 matchChip: (chip) => {
                     const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
