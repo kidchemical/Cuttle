@@ -4316,6 +4316,8 @@
         getChatCheckout: () => currentCheckoutUid,
         setChatCheckout,
         showToast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+        reloadProjects: () => loadProjects(),
+        navigate: (page) => (window.parent !== window ? window.parent.postMessage({ type: 'cuttle-navigate', page }, '*') : window.location.assign(page)),
     });
     // `/orchestrate` chip + playbook popup — owned by chat_orchestrate_chip.js.
     const orchestrateChip = CuttleChatOrchestrateChip.create({

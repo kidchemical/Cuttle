@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -155,6 +156,7 @@ def _cmd_spawn(args: argparse.Namespace) -> int:
             route=bool(args.route),
             watch=bool(args.watch),
             tasks=bool(args.tasks),
+            detached_pid=os.getpid() if listener and listener.get("detached") else 0,
             db=db,
         )
     except SubagentError as exc:

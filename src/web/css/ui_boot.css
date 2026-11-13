@@ -17,6 +17,14 @@
     --cuttle-transition-ms: 220ms;
 }
 
+/* Page resets (`* { margin: 0 }` in shared_navigation.css, landing_page.css,
+   …) strip the UA `margin: auto` that centers a modal <dialog>, pinning it to
+   the top-left. Restore it at element specificity: beats any `*` reset in any
+   load order, still loses to a page's own class/id dialog positioning. */
+dialog {
+    margin: auto;
+}
+
 /* position:fixed / background-attachment:fixed break inside a transformed root.
    The wallpaper layer and theme page fill both need a non-transformed <html>. */
 html,

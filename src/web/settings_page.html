@@ -6,7 +6,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Settings - Cuttle</title>
-    <link rel="stylesheet" href="/css/ui_boot.css?v=20261103chips">
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20261112dialogCenter">
     <script src="/js/shared/ui_boot.js?v=20261111perf"></script>
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20261028gpuBg">
@@ -221,6 +221,17 @@
                         <select id="activityStatusStyleSelect" class="setting-input" style="min-width: 200px;" onchange="changeActivityStatusStyle()">
                             <option value="sweep">Gradient sweep</option>
                             <option value="rise">Rise &amp; fade</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Sub-agent Chat Opens</strong><button type="button" class="cuttle-info" data-tooltip="How a sub-agent chat opens when you click its card: a side drawer, or a centred window with the page blurred behind it." aria-label="About Sub-agent Chat Opens">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <select id="subagentPeekLayoutSelect" class="setting-input" style="min-width: 200px;" onchange="changeSubagentPeekLayout()">
+                            <option value="side">Side drawer</option>
+                            <option value="center">Centred window</option>
                         </select>
                     </div>
                 </div>
@@ -1057,6 +1068,20 @@
         function loadActivityStatusStyle() {
             const select = document.getElementById('activityStatusStyleSelect');
             if (select) select.value = localStorage.getItem(ACTIVITY_STATUS_KEY) === 'rise' ? 'rise' : 'sweep';
+        }
+
+        const SUBAGENT_PEEK_LAYOUT_KEY = 'cuttleSubagentPeekLayout';
+
+        function changeSubagentPeekLayout() {
+            const select = document.getElementById('subagentPeekLayoutSelect');
+            const layout = select && select.value === 'center' ? 'center' : 'side';
+            localStorage.setItem(SUBAGENT_PEEK_LAYOUT_KEY, layout);
+            (window.showToast || showNotification)(layout === 'center' ? 'Sub-agent chat: centred window' : 'Sub-agent chat: side drawer', 'info');
+        }
+
+        function loadSubagentPeekLayout() {
+            const select = document.getElementById('subagentPeekLayoutSelect');
+            if (select) select.value = localStorage.getItem(SUBAGENT_PEEK_LAYOUT_KEY) === 'center' ? 'center' : 'side';
         }
 
         function previewUiTransitionMs() {
@@ -3012,6 +3037,7 @@
             loadUiAnimationSettings();
             loadChatBubbleSettings();
             loadActivityStatusStyle();
+            loadSubagentPeekLayout();
             if (window.CuttleSettingsTextPrefs && window.CuttleUiBoot) {
                 window.cuttleTextPrefs = window.CuttleSettingsTextPrefs.create({
                     boot: window.CuttleUiBoot,

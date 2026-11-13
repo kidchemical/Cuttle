@@ -55,6 +55,21 @@ def _unit_waits(sid):
              'chat_session_id': str(sid)} for r in records]
 
 
+def _detached_spawn_waits(db, sid):
+    """Sub-agent spawns this chat started under a service manager (no listener):
+    the turn ends while the spawn CLI runs, and its hand-back notice wakes the
+    chat when the batch ends. Counted while the CLI process is alive."""
+    try:
+        from api.job_watch import pid_alive
+        from api.subagents import store as subagent_store
+        rows = subagent_store.detached_cli_pids(db, sid)
+    except Exception:
+        return []
+    return [{'job_id': r['batch_id'], 'label': 'sub-agent spawn', 'unit': '', 'pid': r['pid'],
+             'started_ts': None, 'kind': 'detached_spawn', 'chat_session_id': str(sid)}
+            for r in rows if pid_alive(r['pid'])]
+
+
 def supervised_tasks(db, uid, sid, task_ids=None, known_ids=None):
     """Tasks lists a check reads: every list visible to the chat, or the
     schedule's pick ``task_ids`` (missing/archived ids are skipped) plus any of
@@ -206,7 +221,7 @@ def status(target, actor=None, *, db=None, request=None, task_pick=None):
         state = 'error'
     else:
         from api.agent_harness.background_wait import running_on_disk
-        waits = running_on_disk(sid) + _unit_waits(sid)
+        waits = running_on_disk(sid) + _unit_waits(sid) + _detached_spawn_waits(db, sid)
         if waits:
             # The turn ended but its CLI is still waiting on background work and
             # will post a follow-up bubble by itself (agent_harness.background_wait),

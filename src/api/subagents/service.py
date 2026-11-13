@@ -529,6 +529,7 @@ def spawn(
     route: bool = False,
     watch: bool = False,
     tasks: bool = False,
+    detached_pid: int = 0,
     runner: Optional[TurnRunner] = None,
     db=None,
     turn_id: Optional[str] = None,
@@ -630,6 +631,9 @@ def spawn(
         watch_id=watch_id,
         widget_id=widget_id,
         metadata={"route": bool(route), "cards": store.CARDS_BY_TURN,
+                  # The spawn CLI's pid when a service manager runs it (no listener):
+                  # chat_ops reports the parent as waiting on it while it lives.
+                  **({"detached_cli_pid": int(detached_pid)} if detached_pid else {}),
                   # Which parent message started the turn that launched this batch.
                   "turn_message_id": turn_from.get("message_id"),
                   "turn_message": turn_from.get("message") or None},

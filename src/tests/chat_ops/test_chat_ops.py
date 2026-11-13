@@ -210,6 +210,28 @@ def test_status_states(chats):
     assert out["tasks"][0]["done"] == 0 and out["tasks"][0]["total"] == 1
 
 
+def test_detached_spawn_reads_as_waiting_while_its_cli_lives(chats, monkeypatch):
+    """A spawn run under a service manager (no listener) is a background wait
+    while its CLI process lives; once the CLI is gone the chat is idle again."""
+    from api import job_watch
+    from api.subagents import store as subagent_store
+    monkeypatch.setattr(job_watch, "pid_alive", lambda pid: int(pid) == 4242)
+    db, owner, sup, target, _foreign = chats
+    _tasks(db, owner, target, done=False)
+    subagent_store.insert_batch(db, parent_session_id=int(target), user_id=owner, collect="all",
+                                lifetime="one_shot", metadata={"detached_cli_pid": 4242})
+    out = service.status(_ch(target), _ch(sup), db=db, request=FakeHost())
+    assert out["state"] == "waiting_background"
+    assert out["live"]["background_wait"][0]["kind"] == "detached_spawn"
+    # Same chat, its CLI gone: the batch no longer holds the chat.
+    subagent_store.insert_batch(db, parent_session_id=int(target), user_id=owner, collect="all",
+                                lifetime="one_shot", metadata={"detached_cli_pid": 5151})
+    out = service.status(_ch(target), _ch(sup), db=db, request=FakeHost())
+    assert out["state"] == "waiting_background"  # the 4242 batch still counts
+    monkeypatch.setattr(job_watch, "pid_alive", lambda pid: False)
+    assert service.status(_ch(target), _ch(sup), db=db, request=FakeHost())["state"] == "idle_with_work"
+
+
 # --- outbox delivery ----------------------------------------------------------
 
 

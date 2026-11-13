@@ -15,6 +15,17 @@ CHAT_PAGE = PEEK_JS.parent / "chat_page.js"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_peek_layout_setting_defaults_to_side():
+    code = r"""
+const P = require(process.env.PEEK_JS);
+console.log(JSON.stringify([P.layoutFor('center'), P.layoutFor('side'), P.layoutFor(null), P.layoutFor('x')]));
+"""
+    out = json.loads(subprocess.run(["node", "-e", code], env={**os.environ, "PEEK_JS": str(PEEK_JS)},
+                                    capture_output=True, text=True, encoding="utf-8", check=True).stdout)
+    assert out == ["center", "side", "side", "side"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_peek_src_and_header():
     code = r"""
 const P = require(process.env.PEEK_JS);

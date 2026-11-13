@@ -5128,30 +5128,6 @@ pre.has-code-copy:hover .code-copy-btn,
     cursor: pointer;
 }
 
-.chip-config-input {
-    width: 100%;
-    box-sizing: border-box;
-    padding: 11px 12px;
-    border-radius: 10px;
-    background-color: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    color: #e2e8f0;
-    font-size: 14px;
-    font-family: inherit;
-    appearance: none;
-    -webkit-appearance: none;
-}
-
-.chip-config-input::placeholder {
-    color: rgba(160, 174, 192, 0.65);
-}
-
-.chip-config-input:focus {
-    outline: none;
-    border-color: rgba(139, 92, 246, 0.6);
-    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25);
-}
-
 .chip-config-create {
     width: 100%;
     box-sizing: border-box;
@@ -8223,11 +8199,14 @@ html.cuttle-bg-paused .chat-restore-spinner {
 /* Fleet-card peek drawer (chat_subagent_peek.js): the child chat over this pane. */
 .subagent-peek { position:fixed; inset:0; z-index:9000; display:flex; justify-content:flex-end; }
 .subagent-peek[hidden] { display:none; }
-.subagent-peek-backdrop { position:absolute; inset:0; background:rgba(0,0,0,.38); }
+.subagent-peek-backdrop { position:absolute; inset:0; background:rgba(0,0,0,.38); backdrop-filter:blur(5px); -webkit-backdrop-filter:blur(5px); }
+.subagent-peek[data-layout="center"] { align-items:center; justify-content:center; padding:4vh 4vw; box-sizing:border-box; }
+.subagent-peek[data-layout="center"] .subagent-peek-panel { width:min(1100px, 100%); height:min(88vh, 100%); border:1px solid var(--bubble-border); border-radius:14px; overflow:hidden; box-shadow:0 18px 60px rgba(0,0,0,.45); animation:subagent-peek-pop .16s ease-out; }
+@keyframes subagent-peek-pop { from { transform:scale(.98); opacity:0; } to { transform:none; opacity:1; } }
 .subagent-peek-panel { position:relative; display:flex; flex-direction:column; width:min(760px, 92%); height:100%; background:var(--bg-primary, #10151f); border-left:1px solid var(--bubble-border); box-shadow:-8px 0 28px rgba(0,0,0,.35); animation:subagent-peek-in .16s ease-out; }
 @media (max-width: 640px) { .subagent-peek-panel { width:100%; } }
 @keyframes subagent-peek-in { from { transform:translateX(24px); opacity:0; } to { transform:none; opacity:1; } }
-@media (prefers-reduced-motion: reduce) { .subagent-peek-panel { animation:none; } }
+@media (prefers-reduced-motion: reduce) { .subagent-peek-panel, .subagent-peek[data-layout="center"] .subagent-peek-panel { animation:none; } }
 .subagent-peek-head { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--bubble-border); color:var(--text-primary); font-size:13px; min-width:0; }
 .subagent-peek-title { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
 .subagent-peek-handle, .subagent-peek-status { color:var(--text-secondary, #9aa4b2); font-size:12px; white-space:nowrap; }

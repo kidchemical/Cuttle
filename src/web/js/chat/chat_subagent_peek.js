@@ -7,6 +7,9 @@
    drawer's "Open chat" button navigates the pane for real; ✕, Esc
    or the backdrop close it.
 
+   Layout: a side drawer (default) or a centred dialog, chosen in
+   Settings → Chat (`cuttleSubagentPeekLayout`), read on each open.
+
    Interface: `create(deps)` → { open(handle, opts), close(), isOpen(),
    current() }. deps: { win, doc, parseChatHandleToken, navigate(handle) }. `peekSrc` / `headerModel` are pure (no DOM).
    The page owns the click → open call site. Loaded before chat_page.js.
@@ -18,6 +21,14 @@
     // while the drawer is open updates it too (same set as ide_chat.js).
     const APPEARANCE = new Set(['cuttle-theme-change', 'cuttle-video-state',
         'cuttle-bg-effect-blend', 'cuttle-ui-anim-change', 'cuttle-shell-visibility']);
+
+    // Settings → Chat → "Sub-agent chat opens": 'side' (default) or 'center'.
+    const LAYOUT_KEY = 'cuttleSubagentPeekLayout';
+
+    /** Layout name from a stored value; anything unknown is the side drawer. Pure. */
+    function layoutFor(raw) {
+        return raw === 'center' ? 'center' : 'side';
+    }
 
     /** Frame URL for a parsed handle; `-N` bubble refs carry through as `msg`. */
     function peekSrc(parsed) {
@@ -42,6 +53,10 @@
         let frame = null;
         let openHandle = '';
         let lastFocus = null;
+
+        function readLayoutSetting() {
+            try { return win.localStorage.getItem(LAYOUT_KEY); } catch (_) { return null; }
+        }
 
         function onKey(e) {
             if (e.key === 'Escape' && openHandle) {
@@ -104,6 +119,7 @@
             status.hidden = !head.status;
             el.querySelector('.subagent-peek-panel').setAttribute('aria-label', 'Sub-agent chat: ' + head.title);
             if (frame.getAttribute('src') !== src) frame.setAttribute('src', src);
+            el.dataset.layout = layoutFor(readLayoutSetting());
             openHandle = parsed.display;
             if (el.hidden) lastFocus = doc.activeElement;
             el.hidden = false;
@@ -127,7 +143,7 @@
         return { open, close, isOpen: () => !!openHandle, current: () => openHandle };
     }
 
-    const api = { create, peekSrc, headerModel };
+    const api = { create, peekSrc, headerModel, layoutFor, LAYOUT_KEY };
 
     const ns = (root.CuttleChatSubagentPeek = root.CuttleChatSubagentPeek || {});
     Object.assign(ns, api);

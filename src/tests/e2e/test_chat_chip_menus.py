@@ -281,3 +281,96 @@ def test_model_combobox_lazy_loads_with_infinite_scroll(surface):
     page.wait_for_timeout(120)
     assert options.count() > first_batch
     assert not errors, errors
+
+
+def _route_add_project(page, can_edit=True):
+    """Owner access + register + a registry that grows after register."""
+    state = {"registered": False}
+    new_project = {"id": 42, "name": "Fresh", "path": "/work/Fresh"}
+
+    def access(route):
+        route.fulfill(status=200, content_type="application/json",
+                      body=json.dumps({"success": True, "can_edit": can_edit}))
+
+    def register(route):
+        state["registered"] = True
+        state["payload"] = json.loads(route.request.post_data or "{}")
+        route.fulfill(status=200, content_type="application/json",
+                      body=json.dumps({"success": True, "project_id": 42}))
+
+    def projects(route):
+        from .test_shared_diff_modal import PROJECT
+        data = [PROJECT] + ([new_project] if state["registered"] else [])
+        route.fulfill(status=200, content_type="application/json",
+                      body=json.dumps({"success": True, "data": data}))
+
+    page.route("**/api/projects/app/access", access)
+    page.route("**/api/projects/register", register)
+    page.route("**/api/projects", projects)
+    # Owner access is asked once when the picker is composed (page load).
+    page.reload()
+    return state
+
+
+def _open_project_modal(page):
+    chip = page.locator(PROJECT_CHIP).first
+    chip.wait_for(state="visible")
+    chip.click()
+    page.locator(MODAL).wait_for(state="visible")
+
+
+def test_project_modal_add_project_registers_and_picks_it(surface):
+    page, _api, errors = surface("chat_page.html")
+    _route_branches(page)
+    state = _route_add_project(page)
+    _open_project_modal(page)
+    modal = page.locator(MODAL)
+    expect(modal.locator("#chipConfigBack")).to_be_hidden()
+    modal.locator('[data-link-key="add-project"]').click()
+    expect(modal.locator("#chipConfigTitle")).to_have_text("Add project")
+    expect(modal.locator("#chipConfigBack")).to_be_visible()
+    expect(modal.locator("#chipConfigDone")).to_be_hidden()
+    # Back returns to the picker without registering anything.
+    modal.locator("#chipConfigBack").click()
+    expect(modal.locator("#chipConfigTitle")).to_have_text("Working project")
+    expect(modal.locator("#chipConfigDone")).to_be_visible()
+    modal.locator('[data-link-key="add-project"]').click()
+    modal.locator("#chipConfigNewPath").fill("/work/Fresh/")
+    # Name left empty: defaults to the folder name.
+    modal.locator("#chipConfigRegister").click()
+    expect(modal.locator("#chipConfigTitle")).to_have_text("Working project")
+    assert state["payload"] == {"name": "Fresh", "path": "/work/Fresh/"}
+    page.wait_for_function(
+        "() => document.querySelector('#chipConfigProject')?.value === '42'", timeout=4000)
+    assert not errors, errors
+
+
+def test_project_modal_add_project_hidden_for_non_owner(surface):
+    page, _api, errors = surface("chat_page.html")
+    _route_branches(page)
+    _route_add_project(page, can_edit=False)
+    _open_project_modal(page)
+    expect(page.locator('[data-link-key="add-project"]')).to_have_count(0)
+    expect(page.locator(".chip-config-link", has_text="Project settings")).to_be_visible()
+    assert not errors, errors
+
+
+def test_settings_links_navigate_to_projects_and_agent_settings(surface):
+    page, _api, errors = surface("chat_page.html")
+    _route_branches(page)
+    _route_add_project(page)
+    page.route("**/projects_page.html*", lambda r: r.fulfill(status=200, body="<html></html>"))
+    _open_project_modal(page)
+    with page.expect_navigation(url="**/projects_page.html?project_id=*"):
+        page.locator(".chip-config-link", has_text="Project settings").click()
+    assert "project_id=" in page.url
+    assert not errors, errors
+
+    page2, _api2, errors2 = surface("chat_page.html")
+    page2.route("**/settings_page.html*", lambda r: r.fulfill(status=200, body="<html></html>"))
+    _add_cursor_chip(page2)
+    page2.locator(AGENT_CHIP).first.click()
+    page2.locator(MODAL).wait_for(state="visible")
+    with page2.expect_navigation(url="**/settings_page.html?tab=agents"):
+        page2.locator(".chip-config-link", has_text="Agent settings").click()
+    assert not errors2, errors2
