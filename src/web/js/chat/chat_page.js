@@ -7242,6 +7242,7 @@
                 applyServerFollowups: applyServerFollowups,
                 acceptSessionAttention: acceptSessionAttention,
                 clearChatRestoreVeil: clearChatRestoreVeil,
+                reconcileReplyThreads: () => replyThreads.reconcile(),
                 reconcileCuttleButtonLocks: reconcileCuttleButtonLocks,
                 fetchChatLiveStatus: fetchChatLiveStatus,
                 updateRemoteWaitingFromMessages: updateRemoteWaitingFromMessages,
@@ -7943,6 +7944,7 @@
         ) {
             const statusLabel = (liveStatus && liveStatus.status) || undefined;
             ensureLocalTypingIndicator(statusLabel);
+            if (liveStatus) stampLiveBubbleTurnRow(liveStatus.message_id, liveStatus.report_url, liveStatus.query_id);
             setHistorySessionRunning(session.current(), true);
             try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             return;
@@ -7955,6 +7957,7 @@
                 setHistorySessionRunning(session.current(), true);
                 const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
                 addRemoteWaitingIndicator(statusLabel);
+                if (liveStatus) stampLiveBubbleTurnRow(liveStatus.message_id, liveStatus.report_url, liveStatus.query_id);
                 updateRemoteWaitingStatus(statusLabel, liveStatus && liveStatus.report_url);
                 try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             }
@@ -7994,6 +7997,7 @@
         }
         if (liveActive) {
             addRemoteWaitingIndicator(statusLabel);
+            if (liveStatus) stampLiveBubbleTurnRow(liveStatus.message_id, liveStatus.report_url, liveStatus.query_id);
             updateRemoteWaitingStatus(statusLabel, liveStatus && liveStatus.report_url);
             try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             // Offer Stop for remote/other-tab runs too.
