@@ -226,6 +226,7 @@ async function scenario(cfg) {
   const isSessionGenerating = () => cfg.generating;
   const composerLock = { blocksSend: () => false };  // unlocked chat (chat_composer_lock.js)
   const voiceClip = { isActive: () => false };  // no recording in progress (chat_voice_clip.js)
+  const quoteClips = null;  // no quote clips staged (chat_quote_clips.js)
   const composeMessageWithSlashChip = (t) => t.value;
   const isSendableComposerMessage = (m, a) =>
     CuttleChatComposer.isSendableComposerMessage(m, a, null);

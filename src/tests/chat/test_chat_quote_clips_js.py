@@ -73,6 +73,25 @@ assert.strictEqual(Q.composeBody([r], '/restart'), '/restart\n\n> other\n\nnot s
 
 
 @node_only
+def test_queued_preview_is_compact():
+    _node(r"""
+const assert = require('assert');
+const Q = require(process.argv[1]);
+const esc = (s) => s.replace(/</g, '&lt;');
+const body = Q.composeBody([Q.makeClip('agree', 'a <b>\n\nc'), Q.makeClip('reply', 'other', 'why')], 'two\nlines');
+// One line per quote, one block per paragraph, no blank lines between them.
+assert.strictEqual(Q.previewHtml(body, esc),
+    '<span class="quote-preview-quote">a &lt;b> c</span><span class="quote-preview-text">I agree with this.</span>'
+    + '<span class="quote-preview-quote">other</span><span class="quote-preview-text">why</span>'
+    + '<span class="quote-preview-text">two\nlines</span>');
+// Plain paragraphs lose the blank rows between them too.
+assert.strictEqual(Q.previewHtml('plain\n\n\ntext', esc),
+    '<span class="quote-preview-text">plain</span><span class="quote-preview-text">text</span>');
+assert.strictEqual(Q.previewHtml('', esc), '');
+""")
+
+
+@node_only
 def test_toolbar_placement():
     _node(r"""
 const assert = require('assert');

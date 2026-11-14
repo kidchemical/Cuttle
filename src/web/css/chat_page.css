@@ -5903,6 +5903,13 @@ pre.has-code-copy:hover .code-copy-btn,
     margin-right: 4px;
 }
 
+/* The agent badge reads in full here. The transcript's 9rem cap clipped the
+   model ("Fable 5.2" → "F") while the chip row still reserved the full label's
+   width, leaving a wide gap before the queued text. */
+.followup-queue-text .slash-command-chip--segmented.slash-command-chip--history {
+    max-width: min(100%, 18rem);
+}
+
 .followup-queue-body {
     vertical-align: middle;
 }
@@ -7806,6 +7813,31 @@ button.cuttle-button.is-unselected {
 .quote-reply-accept:disabled {
     opacity: 0.45;
     cursor: default;
+}
+
+/* Quoted message text in the queued follow-up panel (previewHtml) */
+.quote-preview-quote,
+.quote-preview-text {
+    display: block;
+}
+
+.quote-preview-quote {
+    color: var(--text-secondary);
+    border-left: 2px solid var(--border-color);
+    padding-left: 7px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.quote-preview-text + .quote-preview-text,
+.quote-preview-text + .quote-preview-quote {
+    margin-top: 4px;
+}
+
+/* After an agent chip the first paragraph stays on the chip's line. */
+.followup-queue-body > .quote-preview-text:first-child {
+    display: inline;
 }
 
 .quote-clips-row {

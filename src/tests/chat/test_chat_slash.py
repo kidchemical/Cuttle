@@ -280,3 +280,27 @@ def test_chat_slash_module_parses():
     import subprocess as sp
     proc = sp.run(["node", "--check", str(MOD_JS)], capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
+
+
+@node_only
+def test_attachment_only_agent_message_still_parses_its_chip():
+    """`/claude\\n[Attached: …]` (no text) must yield the agent chip.
+
+    The stored form has a newline, not a space, after the command. The parser
+    returned nothing, so the user bubble's header lost its agent badge and the
+    body drew a bare "Claude Code" chip inside the bubble instead.
+    """
+    script = r"""
+const assert = require('assert');
+const S = require(process.env.MOD_JS);
+const p = S.parseStoredSlashCommandMessage('/claude\n[Attached: a.png]', {});
+assert.deepStrictEqual(p.chips.map((c) => c.meta), ['/claude']);
+assert.strictEqual(p.body, '[Attached: a.png]');
+assert.deepStrictEqual(S.slashCommandMetaFromUserMessage('/claude\n[Attached: a.png]', {}).chips.map((c) => c.meta), ['/claude']);
+// A longer word that merely starts with the command is still not it.
+assert.strictEqual(S.parseStoredSlashCommandMessage('/claudette hi', {}), null);
+"""
+    import os
+    proc = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=30,
+                          env={"PATH": os.environ["PATH"], "MOD_JS": str(MOD_JS)})
+    assert proc.returncode == 0, proc.stderr

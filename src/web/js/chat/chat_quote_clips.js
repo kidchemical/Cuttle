@@ -13,7 +13,8 @@
    Experimental flag `chat_quote_clips` (default on).
 
    Pure (node-testable): `ACTIONS`, `actionFor`, `normalizeQuote`,
-   `makeClip`, `clipText`, `composeBody`, `excerpt`, `placeToolbar`.
+   `makeClip`, `clipText`, `composeBody`, `previewHtml`, `excerpt`,
+   `placeToolbar`.
    Controller: `create(host)` →
      { start, setEnabled, syncFlag, source, compose, clear, render,
        count, add, hide }
@@ -81,6 +82,30 @@
         return typed.charAt(0) === '/'
             ? typed + '\n\n' + blocks.join('\n\n')
             : blocks.join('\n\n') + '\n\n' + typed;
+    }
+
+    /**
+     * Compact HTML for raw message text (the queued follow-up panel): each
+     * blockquote is one muted line, each paragraph one block, and the blank
+     * lines between them are dropped instead of shown as empty rows.
+     */
+    function previewHtml(text, escapeHtml) {
+        const esc = typeof escapeHtml === 'function' ? escapeHtml : (s) => String(s);
+        const parts = [];
+        let last = null;
+        String(text == null ? '' : text).split('\n').forEach((line) => {
+            const m = /^\s*>\s?(.*)$/.exec(line);
+            const body = (m ? m[1] : line).trim();
+            if (!body) {
+                if (!m) last = null; // a blank line ends a paragraph; a bare ">" stays in its quote
+                return;
+            }
+            const kind = m ? 'quote' : 'text';
+            if (last && last.kind === kind) last.lines.push(body);
+            else parts.push(last = { kind, lines: [body] });
+        });
+        return parts.map((p) => '<span class="quote-preview-' + p.kind + '">'
+            + esc(p.lines.join(p.kind === 'quote' ? ' ' : '\n')) + '</span>').join('');
     }
 
     /** One-line preview of a quote or reply. */
@@ -467,7 +492,7 @@
         return { start, setEnabled, syncFlag, source, compose, clear, render, count, add, hide };
     }
 
-    const api = { ACTIONS, MAX_QUOTE_CHARS, actionFor, normalizeQuote, makeClip, clipText, composeBody, excerpt, placeToolbar, create };
+    const api = { ACTIONS, MAX_QUOTE_CHARS, actionFor, normalizeQuote, makeClip, clipText, composeBody, previewHtml, excerpt, placeToolbar, create };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.CuttleChatQuoteClips = api;
 })(typeof window !== 'undefined' ? window : globalThis);

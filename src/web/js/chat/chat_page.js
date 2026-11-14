@@ -9496,11 +9496,12 @@
                 const chipsHtml = chips
                     .map((c) => slashCommandChipHistoryHtml(c.label, c.meta, c.category))
                     .join('');
-                const bodyText = escapeHtml(String(parsed.body || '').trim());
+                const bodyRaw = String(parsed.body || '').trim();
+                const bodyText = CuttleChatQuoteClips.previewHtml(bodyRaw, escapeHtml);
                 preview = '<span class="slash-chips-inline">' + chipsHtml + '</span>'
                     + (bodyText ? '<span class="followup-queue-body">' + bodyText + '</span>' : '');
             } else {
-                preview = escapeHtml(raw);
+                preview = CuttleChatQuoteClips.previewHtml(raw, escapeHtml);
             }
             return `
                 <div class="followup-queue-item${item.paused ? ' is-paused' : ''}" data-followup-id="${escapeHtml(item.id)}">
