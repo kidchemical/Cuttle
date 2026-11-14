@@ -237,6 +237,49 @@ function cuttleSyncMobileServerRows() {
         });
     }
 
+    // The native app keeps its startup screen up until the first page is
+    // revealed, so restored layout (collapsed sidebar, last chat) never flashes.
+    document.addEventListener('cuttle-shell-frame-revealed', () => {
+        try { window.CuttleShellNative?.startupReady?.(); } catch (_) {}
+        syncStartupColors();
+    }, { once: true });
+
+    // The native startup screen is drawn before any page loads, so it uses the
+    // theme colours reported here on the previous run.
+    function cssColorToHex(value) {
+        const m = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+))?/.exec(String(value || ''));
+        if (!m || (m[4] !== undefined && Number(m[4]) < 0.5)) return '';
+        return '#' + [m[1], m[2], m[3]]
+            .map((n) => Math.min(255, Number(n)).toString(16).padStart(2, '0')).join('');
+    }
+
+    function syncStartupColors() {
+        try {
+            const native = window.CuttleShellNative;
+            if (!native?.setStartupColors || !document.body) return;
+            // What the phone actually shows is the page in the first pane; the
+            // shell's rail colour stands in when that page paints no solid colour.
+            let background = '';
+            try {
+                const page = document.querySelector('.shell-main iframe')?.contentDocument?.body;
+                if (page) background = cssColorToHex(window.getComputedStyle(page).backgroundColor);
+            } catch (_) {}
+            const probe = document.createElement('span');
+            probe.style.cssText = 'position:absolute;visibility:hidden;'
+                + 'background-color:var(--rail-bg);color:var(--accent)';
+            document.body.appendChild(probe);
+            const style = window.getComputedStyle(probe);
+            background = background || cssColorToHex(style.backgroundColor);
+            const accent = cssColorToHex(style.color);
+            probe.remove();
+            if (background && accent) native.setStartupColors(background, accent);
+        } catch (_) {}
+    }
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') syncStartupColors();
+    });
+
     document.addEventListener('cuttle-mobile-ready', boot);
     document.addEventListener('cuttle-apk-update', (e) => {
         if (!isMobileClient()) return;

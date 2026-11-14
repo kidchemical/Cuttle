@@ -7243,6 +7243,7 @@
                 acceptSessionAttention: acceptSessionAttention,
                 clearChatRestoreVeil: clearChatRestoreVeil,
                 reconcileReplyThreads: () => replyThreads.reconcile(),
+                resetReplyThreads: (id) => replyThreads.resetView(id),
                 reconcileCuttleButtonLocks: reconcileCuttleButtonLocks,
                 fetchChatLiveStatus: fetchChatLiveStatus,
                 updateRemoteWaitingFromMessages: updateRemoteWaitingFromMessages,

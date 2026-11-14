@@ -311,6 +311,7 @@
                 // Opening this chat — stop any background completion poll for it.
                 cancelDetachedSessionCompletionWatch(sessionId);
                 const loadSeq = session.open(sessionId);
+                if (h.resetReplyThreads) h.resetReplyThreads(sessionId);
                 if (updateSessionUsageSummary) updateSessionUsageSummary();
                 adoptFollowupQueue(session.current());
                 // Opened chat defaults to idle until the one-shot live-status (below)
