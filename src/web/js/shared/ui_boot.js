@@ -456,17 +456,30 @@
         } catch (_) {}
     }
 
+    /* True once this focus session measured a real IME shrink. Android Back
+       hides the keyboard but leaves the field focused: after a measured
+       shrink, a viewport back at full height means closed, focus or not. */
+    var keyboardShrinkSeen = false;
+
     function isKeyboardOpen() {
         try {
             var vv = window.visualViewport;
             if (vv && typeof vv.height === 'number' && vv.height > 0) {
-                if ((window.innerHeight - vv.height) > KEYBOARD_OPEN_PX) return true;
+                if ((window.innerHeight - vv.height) > KEYBOARD_OPEN_PX) {
+                    keyboardShrinkSeen = true;
+                    return true;
+                }
             }
         } catch (_) {}
         try {
-            if (BASELINE_H > 0 && (BASELINE_H - window.innerHeight) > KEYBOARD_OPEN_PX) return true;
+            if (BASELINE_H > 0 && (BASELINE_H - window.innerHeight) > KEYBOARD_OPEN_PX) {
+                keyboardShrinkSeen = true;
+                return true;
+            }
         } catch (_) {}
-        return composerFocused;
+        /* Focus is only a fallback for the moment before the resize lands
+           (or a WebView that never resizes). */
+        return composerFocused && !keyboardShrinkSeen;
     }
 
     function syncKeyboardOpen() {
@@ -673,12 +686,23 @@
         document.addEventListener('focusin', function (e) {
             var t = e && e.target;
             if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) {
+                if (!composerFocused) keyboardShrinkSeen = false;
                 composerFocused = true;
                 syncKeyboardOpen();
             }
         });
+        /* Tapping the still-focused field after Back reopens the IME without
+           a new focusin: re-arm the focus fallback for that reopen. */
+        document.addEventListener('pointerdown', function (e) {
+            var t = e && e.target;
+            if (composerFocused && t && t === document.activeElement && !root.classList.contains('keyboard-open')) {
+                keyboardShrinkSeen = false;
+                syncKeyboardOpen();
+            }
+        }, true);
         document.addEventListener('focusout', function () {
             composerFocused = false;
+            keyboardShrinkSeen = false;
             setTimeout(syncKeyboardOpen, 300);
         });
         if (!framed) {

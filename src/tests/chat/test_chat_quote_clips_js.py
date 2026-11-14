@@ -38,6 +38,8 @@ const Q = require(process.argv[1]);
 assert.deepStrictEqual(Q.ACTIONS.map((a) => a.id), ['agree', 'disagree', 'explain', 'investigate', 'do', 'reply']);
 // Every quick button carries its canned reply; Reply has none (typed).
 Q.ACTIONS.forEach((a) => assert.strictEqual(a.reply == null, a.id === 'reply'));
+// The toolbar shows Reply first, then the quick replies in order.
+assert.deepStrictEqual(Q.toolbarOrder().map((a) => a.id), ['reply', 'agree', 'disagree', 'explain', 'investigate', 'do']);
 
 assert.deepStrictEqual(Q.makeClip('agree', '  use a queue \n'), { action: 'agree', quote: 'use a queue', reply: 'I agree with this.' });
 // A canned button ignores typed text; Reply requires it.

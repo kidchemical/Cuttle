@@ -1,8 +1,8 @@
 /* ================================================================
    Cuttle Chat — quote clips (chat_quote_clips.js).
    Owner: replying to a piece of the transcript. Selecting text in a
-   message shows a small toolbar above it (Agree, Disagree, Explain,
-   Investigate, Do this, Reply). A button stages a **quote clip** in the
+   message shows a capsule toolbar near it (Reply, Agree, Disagree,
+   Explain, Investigate, Do this; what does not fit goes under ⋮). A button stages a **quote clip** in the
    composer: the selected text plus a reply — canned for the quick
    buttons, typed in a small panel for Reply. Clips are removable cards
    above the composer text, several at once, kept per chat until sent.
@@ -14,7 +14,7 @@
 
    Pure (node-testable): `ACTIONS`, `actionFor`, `normalizeQuote`,
    `makeClip`, `clipText`, `composeBody`, `previewHtml`, `excerpt`,
-   `placeToolbar`.
+   `placeToolbar`, `toolbarOrder`.
    Controller: `create(host)` →
      { start, setEnabled, syncFlag, source, compose, clear, render,
        count, add, hide }
@@ -113,6 +113,11 @@
         const s = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
         const n = max || 60;
         return s.length > n ? s.slice(0, n - 1).replace(/\s+$/, '') + '…' : s;
+    }
+
+    /** Toolbar display order: Reply first, then the quick replies. */
+    function toolbarOrder() {
+        return ACTIONS.filter((a) => a.reply == null).concat(ACTIONS.filter((a) => a.reply != null));
     }
 
     /**
@@ -336,18 +341,15 @@
             pendingQuote = found.quote;
             mode = 'toolbar';
             const el = mount('quote-toolbar', 'toolbar');
-            ACTIONS.forEach((action) => {
+            // Text-only capsule, like the OS selection menu: Reply (the
+            // open-ended one) first, then the quick replies.
+            toolbarOrder().forEach((action) => {
                 const btn = doc.createElement('button');
                 btn.type = 'button';
                 btn.className = 'quote-toolbar-btn';
                 btn.setAttribute('data-action', action.id);
                 btn.title = action.reply != null ? 'Quote this and add: “' + action.reply + '”' : 'Quote this and write a reply';
-                const icon = doc.createElement('span');
-                icon.className = 'quote-toolbar-icon';
-                icon.setAttribute('aria-hidden', 'true');
-                icon.textContent = action.icon;
-                btn.appendChild(icon);
-                btn.appendChild(doc.createTextNode(action.label));
+                btn.textContent = action.label;
                 // Keep the selection while the button is pressed.
                 btn.addEventListener('mousedown', (e) => e.preventDefault());
                 btn.addEventListener('click', (e) => {
@@ -362,8 +364,52 @@
                     hide();
                 });
                 el.appendChild(btn);
+                if (action.reply == null) {
+                    const sep = doc.createElement('span');
+                    sep.className = 'quote-toolbar-sep';
+                    sep.setAttribute('aria-hidden', 'true');
+                    el.appendChild(sep);
+                }
             });
+            fitToolbar(el);
             place(found.rect);
+        }
+
+        // Buttons that do not fit the viewport move, from the end, into a
+        // "More" (⋮) menu — never a sideways-scrolling strip.
+        function fitToolbar(el) {
+            const max = doc.documentElement.clientWidth - 12;
+            el.style.left = '0px';
+            el.style.top = '0px';
+            if (el.offsetWidth <= max) return;
+            const more = doc.createElement('button');
+            more.type = 'button';
+            more.className = 'quote-toolbar-more';
+            more.setAttribute('aria-label', 'More replies');
+            more.setAttribute('aria-haspopup', 'menu');
+            more.setAttribute('aria-expanded', 'false');
+            more.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">'
+                + '<circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
+            const menu = doc.createElement('div');
+            menu.className = 'quote-toolbar-menu';
+            menu.setAttribute('role', 'menu');
+            menu.hidden = true;
+            el.appendChild(more);
+            el.appendChild(menu);
+            const inline = () => Array.from(el.querySelectorAll(':scope > .quote-toolbar-btn'));
+            while (el.offsetWidth > max && inline().length > 1) {
+                const btns = inline();
+                menu.insertBefore(btns[btns.length - 1], menu.firstChild);
+            }
+            more.addEventListener('mousedown', (e) => e.preventDefault());
+            more.addEventListener('click', (e) => {
+                e.preventDefault();
+                const open = menu.hidden;
+                menu.hidden = !open;
+                more.setAttribute('aria-expanded', open ? 'true' : 'false');
+                // Open toward the roomier half of the screen.
+                el.classList.toggle('quote-toolbar--menu-up', el.getBoundingClientRect().top > win.innerHeight / 2);
+            });
         }
 
         function showReplyPanel(quote, rect) {
@@ -492,7 +538,7 @@
         return { start, setEnabled, syncFlag, source, compose, clear, render, count, add, hide };
     }
 
-    const api = { ACTIONS, MAX_QUOTE_CHARS, actionFor, normalizeQuote, makeClip, clipText, composeBody, previewHtml, excerpt, placeToolbar, create };
+    const api = { ACTIONS, MAX_QUOTE_CHARS, actionFor, normalizeQuote, makeClip, clipText, composeBody, previewHtml, excerpt, placeToolbar, toolbarOrder, create };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.CuttleChatQuoteClips = api;
 })(typeof window !== 'undefined' ? window : globalThis);

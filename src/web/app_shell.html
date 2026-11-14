@@ -8,8 +8,8 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <title>Cuttle</title>
-    <link rel="stylesheet" href="/css/ui_boot.css?v=20261112dialogCenter">
-    <script src="/js/shared/ui_boot.js?v=20261111perf"></script>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20261114kbBack">
+    <script src="/js/shared/ui_boot.js?v=20261114kbBack"></script>
     <link rel="stylesheet" href="/css/app_shell.css?v=20261112workspaces">
     <link rel="stylesheet" href="/css/chip_config_modal.css?v=20261112projDialogs">
     <link rel="stylesheet" href="/css/shell_voice.css?v=20261106meter">
@@ -299,7 +299,7 @@
 </div>
 
 <!-- Toast container (managed by toast.js) -->
-<div id="cuttle-toast-container" style="position:fixed;bottom:var(--shell-voice-strip-h, 0px);right:0;padding:24px;z-index:999998;pointer-events:none;display:flex;flex-direction:column;align-items:flex-end;gap:10px;"></div>
+<div id="cuttle-toast-container" style="position:fixed;bottom:max(var(--shell-voice-strip-h, 0px), var(--cuttle-toast-safe-bottom, 0px));right:0;padding:24px;z-index:999998;pointer-events:none;display:flex;flex-direction:column;align-items:flex-end;gap:10px;"></div>
 
 <!-- Notifications panel (past toasts) -->
 <div class="notifications-slide-layer">
@@ -472,7 +472,7 @@
     </section>
 </div>
 
-<script src="/js/shared/toast.js?v=20261106meter"></script>
+<script src="/js/shared/toast.js?v=20261114kbBack"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
 <script src="/js/shared/net_debug.js?v=20260810c"></script>
 <script src="/js/media/youtube_id.js"></script>

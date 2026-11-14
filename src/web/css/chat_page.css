@@ -7703,43 +7703,115 @@ button.cuttle-button.is-unselected {
     display: flex;
     align-items: center;
     gap: 2px;
-    padding: 3px;
-    max-width: calc(100vw - 12px);
-    overflow-x: auto;
-    scrollbar-width: none;
+    width: max-content;
+    padding: 4px;
+    border-radius: 999px;
+    border-color: rgba(128, 128, 128, 0.18);
+    /* Lifted surface; the theme fill may be a gradient, so layer, don't mix. */
+    background: linear-gradient(rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.07)), var(--bg-primary);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.25);
+    font-size: 14px;
+    animation: quote-toolbar-in var(--dur-fast, 120ms) var(--ease-out, ease-out);
 }
 
-.quote-toolbar-btn {
+@keyframes quote-toolbar-in {
+    from { opacity: 0; transform: translateY(4px) scale(0.97); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .quote-toolbar { animation: none; }
+}
+
+.quote-toolbar-btn,
+.quote-toolbar-more {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    padding: 5px 9px;
+    justify-content: center;
+    height: 34px;
+    padding: 0 13px;
     border: none;
-    border-radius: 7px;
+    border-radius: 999px;
     background: transparent;
     color: var(--text-primary);
     font: inherit;
-    font-weight: 600;
+    font-weight: 500;
+    letter-spacing: 0.01em;
     white-space: nowrap;
     cursor: pointer;
-}
-
-.quote-toolbar-btn:hover,
-.quote-toolbar-btn:focus-visible {
-    background: rgba(148, 163, 184, 0.18);
-    outline: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color var(--dur-fast, 120ms) var(--ease-out, ease-out);
 }
 
 .quote-toolbar-btn[data-action="reply"] {
-    margin-left: 3px;
-    border-left: 1px solid var(--border-color);
-    border-radius: 0 7px 7px 0;
-    padding-left: 11px;
+    color: var(--accent-color);
+    font-weight: 600;
 }
 
-.quote-toolbar-icon {
-    font-size: 12px;
-    line-height: 1;
+.quote-toolbar-more {
+    width: 34px;
+    padding: 0;
+    color: var(--text-secondary);
+}
+
+.quote-toolbar-more svg { fill: currentColor; }
+
+.quote-toolbar-btn:hover,
+.quote-toolbar-btn:focus-visible,
+.quote-toolbar-more:hover,
+.quote-toolbar-more:focus-visible,
+.quote-toolbar-more[aria-expanded="true"] {
+    background: rgba(148, 163, 184, 0.16);
+    outline: none;
+}
+
+.quote-toolbar-btn:active,
+.quote-toolbar-more:active {
+    background: rgba(148, 163, 184, 0.26);
+}
+
+.quote-toolbar-sep {
+    flex: none;
+    width: 1px;
+    height: 18px;
+    margin: 0 4px;
+    background: rgba(148, 163, 184, 0.35);
+}
+
+/* Overflow (⋮) menu: buttons that did not fit, as a vertical list. */
+.quote-toolbar-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 168px;
+    padding: 6px;
+    border-radius: 16px;
+    border: 1px solid rgba(128, 128, 128, 0.18);
+    background: inherit;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+
+.quote-toolbar-menu[hidden] { display: none; }
+
+.quote-toolbar--menu-up .quote-toolbar-menu {
+    top: auto;
+    bottom: calc(100% + 6px);
+}
+
+.quote-toolbar-menu .quote-toolbar-btn {
+    justify-content: flex-start;
+    height: 40px;
+    padding: 0 14px;
+    border-radius: 10px;
+}
+
+@media (pointer: coarse) {
+    .quote-toolbar { padding: 5px; }
+    .quote-toolbar-btn,
+    .quote-toolbar-more { height: 40px; }
+    .quote-toolbar-more { width: 40px; }
+    .quote-toolbar-menu .quote-toolbar-btn { height: 44px; }
 }
 
 .quote-reply-panel {

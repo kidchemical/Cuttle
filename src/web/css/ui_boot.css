@@ -7,7 +7,7 @@
    else.
    ================================================================ */
 
-@import url("safe_area.css");
+@import url("safe_area.css?v=20261114kbBack");
 @import url("design_tokens.css?v=20261025polish");
 @import url("themes.css?v=20260923themes");
 @import url("text_prefs.css?v=20261102prefs");

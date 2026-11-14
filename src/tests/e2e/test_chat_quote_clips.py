@@ -48,8 +48,8 @@ SELECT = '''(id) => {
 }'''
 
 
-def _open(browser, static_server, flags=FLAGS_ON):
-    page = browser.new_page(viewport={'width': 800, 'height': 520})
+def _open(browser, static_server, flags=FLAGS_ON, width=800):
+    page = browser.new_page(viewport={'width': width, 'height': 520})
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(static_server + '/agent_feed.html')
@@ -70,7 +70,8 @@ def test_quick_reply_stages_removable_clips_and_sends_them(browser, static_serve
         page.evaluate(SELECT, 'p1')
         expect(toolbar).to_be_visible()
         expect(toolbar.locator('button')).to_have_text(
-            ['👍Agree', '👎Disagree', '💡Explain', '🔍Investigate', '▶Do this', '↩Reply'])
+            ['Reply', 'Agree', 'Disagree', 'Explain', 'Investigate', 'Do this'])
+        expect(toolbar.locator('.quote-toolbar-more')).to_have_count(0)  # all fit at 800px
         # The toolbar sits above the selected text.
         assert toolbar.bounding_box()['y'] + toolbar.bounding_box()['height'] <= page.locator('#p1').bounding_box()['y']
 
@@ -176,6 +177,30 @@ def test_toolbar_only_for_transcript_selections(browser, static_server):
         expect(toolbar).to_be_visible()
         page.keyboard.press('Escape')
         expect(toolbar).to_have_count(0)
+        assert errors == []
+    finally:
+        page.close()
+
+
+def test_narrow_toolbar_moves_extra_buttons_under_more(browser, static_server):
+    page, errors = _open(browser, static_server, width=360)
+    try:
+        toolbar = page.locator('.quote-toolbar')
+        page.evaluate(SELECT, 'p1')
+        expect(toolbar).to_be_visible()
+        box = toolbar.bounding_box()
+        assert box['x'] >= 0 and box['x'] + box['width'] <= 360  # one capsule, inside the screen
+        assert page.evaluate("document.querySelector('.quote-toolbar').scrollWidth"
+                             " <= document.querySelector('.quote-toolbar').clientWidth")
+        more, menu = toolbar.locator('.quote-toolbar-more'), toolbar.locator('.quote-toolbar-menu')
+        expect(toolbar.locator(':scope > [data-action="reply"]')).to_be_visible()  # Reply never overflows
+        expect(menu).to_be_hidden()
+        more.click()
+        expect(menu).to_be_visible()
+        expect(menu.locator('[data-action="do"]')).to_be_visible()
+        menu.locator('[data-action="do"]').click()
+        expect(toolbar).to_have_count(0)
+        expect(page.locator('.quote-clip')).to_have_count(1)
         assert errors == []
     finally:
         page.close()

@@ -12331,10 +12331,12 @@
         });
     }
     function syncComposerEnterKeyHint() {
-        const hint = isTouchComposer() ? 'enter' : 'send';
+        let desk = false;
+        try { desk = localStorage.getItem(CuttleChatComposer.SPELLCHECK_PREF_KEY) === '1'; } catch (_) {}
+        const attrs = CuttleChatComposer.keyboardAttrs(isTouchComposer(), desk);
         ['welcomeChatInput', 'chatInput'].forEach((id) => {
             const el = document.getElementById(id);
-            if (el) el.setAttribute('enterkeyhint', hint);
+            if (el) Object.keys(attrs).forEach((k) => el.setAttribute(k, attrs[k]));
         });
     }
 
@@ -12533,6 +12535,9 @@
         if (composerTouchMq && composerTouchMq.addEventListener) {
             composerTouchMq.addEventListener('change', syncComposerEnterKeyHint);
         }
+        window.addEventListener('storage', (e) => {
+            if (e && e.key === CuttleChatComposer.SPELLCHECK_PREF_KEY) syncComposerEnterKeyHint();
+        });
 
         wireAttachControls();
         wireVoiceClipControls();
