@@ -8869,3 +8869,7 @@ a.chat-bg-details:hover { text-decoration: underline; }
     .chat-bg-now { max-width: none; flex: 1 1 0; }
     .chat-bg-job { padding-left: 12px; }
 }
+
+/* Queued compaction row (chat_context_gauge.js) in the follow-up queue panel. */
+.followup-queue-item--compact .followup-queue-badge { text-transform: uppercase; letter-spacing: 0.04em; }
+.followup-queue-compact-hint { opacity: 0.65; }

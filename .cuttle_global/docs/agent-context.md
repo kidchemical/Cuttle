@@ -39,7 +39,8 @@ Limits come from (in order):
 
 1. Model id / label hints (`[context=1m]`, `1M Thinking`)
 2. models.dev `limit.context` (pricing cache)
-3. Agent defaults (Cursor/Muse/Antigravity **1M**, Codex **272k**,
+3. Claude only: the full model id from the CLI transcript (the chat stores the alias, e.g. `fable`)
+4. Agent defaults (Cursor/Muse/Antigravity **1M**, Codex **272k**,
    OpenCode/Hermes/Claude **200k**, DeepSeek **128k**)
 
 ## UI
@@ -48,6 +49,9 @@ Limits come from (in order):
 - Visible when a supported agent badge is sticky
 - Click → details + **Compact** (when `compact_available`)
 - Colors: green &lt;60%, amber 60–85%, red ≥85%
+- **Compact** while a reply is generating (or while the agent CLI is still alive, e.g. a Claude
+  background wait) queues it: a removable row in the queued panel, run when the agent is idle and
+  before queued messages. Client-side, one per chat, not kept across a page reload.
 
 ## API
 

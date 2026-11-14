@@ -756,6 +756,21 @@ def get_agent_context_status(
                     limit_source = "snapshot"
         except Exception:
             pass
+        if limit_source == "agent_default" and resume_id:
+            # The chat stores the alias ("fable"); the transcript names the
+            # model that really ran, which the catalog can size (1M, not 200k).
+            try:
+                from scripts.utilities.claude_cli_session_store import (
+                    claude_transcript_stats,
+                )
+
+                real = str(claude_transcript_stats(resume_id).get("model") or "")
+                if real:
+                    sized, source = resolve_context_limit(aid, real)
+                    if source != "agent_default":
+                        limit, limit_source = sized, source
+            except Exception:
+                pass
 
     # Never invent a fake window from billing aggregates (CH-000504-style 2.9M/2.9M).
     if tokens > 0 and token_source not in ("aggregated",):
@@ -1100,6 +1115,7 @@ def _compact_claude(cwd: str, resume_id: str, chat_session_id: Any = None) -> Di
             "success": False,
             "agent_id": "claude",
             "method": "compact",
+            "busy": True,
             "error": (
                 "Claude Code is still running in this chat (a turn or a "
                 "background wait), and that live process keeps its full "

@@ -588,7 +588,7 @@
                 toAuthDbSessionId: (id) => toAuthDbSessionId(id),
                 currentSession: () => session.current(),
                 isAuthMode: isAuthMode,
-                isSessionGenerating: isSessionGenerating,
+                isSessionGenerating: () => isSessionGenerating() || !!(queuedCompaction() && queuedCompaction().holds()),
                 healStaleGenerating: healStaleGeneratingState,
                 followupAuthSid: followupAuthSid,
                 getPrefs: (sid) => getSessionPrefs(sid),
@@ -9455,15 +9455,19 @@
 
     function saveEditFollowup(id, nextText) { followupController().saveEdit(id, nextText); }
 
+    /** Queued compaction (chat_context_gauge.js); null until the gauge is built. */
+    function queuedCompaction() { try { return contextGauge.queued; } catch (_) { return null; } }
+
     function renderFollowupQueue() {
         const root = document.getElementById('followupQueue');
         if (!root) return;
+        const compactRow = queuedCompaction() ? queuedCompaction().rowHtml() : '';
         const ctl = followupController();
         ctl.pruneEditing();
         const queueItems = ctl.getState().items;
         const editingId = ctl.getEditingId();
         patchLiveSessionFollowupQueue(session.current(), queueItems);
-        if (!queueItems.length) {
+        if (!queueItems.length && !compactRow) {
             root.hidden = true;
             root.innerHTML = '';
             syncHistoryUnreadIndicators();
@@ -9530,7 +9534,7 @@
         const otherPaused = queueItems.filter(
             (x) => x.paused && x.id !== editingId
         ).length;
-        const titleBits = [`Queued · ${queueItems.length}`];
+        const titleBits = [`Queued · ${queueItems.length + (compactRow ? 1 : 0)}`];
         if (editingId) titleBits.push('editing · send paused');
         if (otherPaused) titleBits.push(`${otherPaused} paused`);
         root.innerHTML = `
@@ -9538,9 +9542,10 @@
                 <span class="followup-queue-title">${titleBits.join(' · ')}</span>
                 <button type="button" class="followup-queue-clear" id="followupQueueClear">Clear all</button>
             </div>
-            <div class="followup-queue-list">${itemsHtml}</div>
+            <div class="followup-queue-list">${compactRow}${itemsHtml}</div>
         `;
         root.querySelector('#followupQueueClear')?.addEventListener('click', clearFollowupQueue);
+        root.querySelector('[data-remove-queued-compact]')?.addEventListener('click', () => queuedCompaction().cancel());
         root.querySelectorAll('[data-remove-followup]').forEach((btn) => {
             btn.addEventListener('click', () => removeFollowup(btn.getAttribute('data-remove-followup')));
         });
@@ -9706,7 +9711,10 @@
 
     function removeFollowup(id) { followupController().remove(id); }
 
-    function clearFollowupQueue() { followupController().clear(); }
+    function clearFollowupQueue() {
+        followupController().clear();
+        if (queuedCompaction()) queuedCompaction().cancel();
+    }
 
     function scheduleFollowupDrain(delayMs = 120) { followupController().requestDrain(delayMs); }
 
@@ -11334,6 +11342,8 @@
         toast: (message, variant) => (window.showToast || function () {})(message, variant),
         notice: { add: (spec, o) => addSystemMessage(spec, o), update: (el, spec, o) => timelineNotices().update(el, spec, o) },
         autoCompact: window.CuttleChatAutoCompact,
+        isGenerating: () => isSessionGenerating(),
+        queue: { render: () => renderFollowupQueue(), requestDrain: () => scheduleFollowupDrain(120) },
     });
 
     // Transcript navigation: follow-latest scroll, nav rail + pins, jumps,
