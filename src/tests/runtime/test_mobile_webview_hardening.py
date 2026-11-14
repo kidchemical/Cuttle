@@ -316,7 +316,14 @@ def test_keyboard_open_drops_nav_inset_under_composer():
     assert "noteHeightBaseline" in boot
     assert "BASELINE_H - window.innerHeight" in boot
     assert "focusin" in boot
+    # Android Back hides the IME but keeps the field focused: once a real
+    # shrink was measured, focus alone must not keep keyboard-open (the
+    # composer and toasts would drop their nav-bar inset and sit too low).
+    assert "composerFocused && !keyboardShrinkSeen" in boot
     css = (REPO / "src" / "web" / "css" / "safe_area.css").read_text(encoding="utf-8")
+    assert "--cuttle-toast-safe-bottom: var(--cuttle-safe-bottom)" in css
+    shell = (REPO / "src" / "web" / "app_shell.html").read_text(encoding="utf-8")
+    assert "var(--cuttle-toast-safe-bottom, 0px)" in shell
     assert "html.is-cuttle-mobile.keyboard-open .chat-input-container" in css
     # While the IME covers the nav bar, no safe-bottom term under the composer.
     block = css.split("html.is-cuttle-mobile.keyboard-open .chat-input-container", 1)[1].split("}", 1)[0]

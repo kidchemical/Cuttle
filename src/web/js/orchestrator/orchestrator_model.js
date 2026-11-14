@@ -11,8 +11,8 @@
     const ROLES = ['worker', 'escalation', 'expert'];
     const ROLE_LABELS = { worker: 'Worker', escalation: 'Escalation', expert: 'Expert' };
     const LIMIT_FIELDS = [
-        ['solo_attempts', 'Solo attempts before delegating', 1, 20],
-        ['solo_minutes', 'Solo minutes before delegating', 5, 600],
+        ['solo_attempts', 'Failed attempts before escalation', 1, 20],
+        ['solo_minutes', 'Minutes without progress before escalation', 5, 600],
         ['child_retries', 'Same-tier retries before escalating', 0, 5],
         ['setup_retries', 'Setup failures before reporting', 1, 5],
     ];

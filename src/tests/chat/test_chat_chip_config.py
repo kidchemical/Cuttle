@@ -71,6 +71,8 @@ out.labelPicked = A.activeRepoBranchLabel(two, '/p/B');
 out.labelMerged = A.activeRepoBranchLabel(two, '');
 out.labelSingle = A.activeRepoBranchLabel([two[1]], '/p/A');
 out.clearChoice = A.withClearChoice([{ value: '7', label: 'Demo' }]);
+// projectNameFromPath: Add project's default name = the folder's last segment.
+out.names = ['/home/u/Dev/Cuttle/', 'C:\\\\Dev\\\\Game', 'Proj', '/', 'D:\\\\', '~/', ''].map(A.projectNameFromPath);
 
 process.stdout.write(JSON.stringify(out));
 """
@@ -93,7 +95,10 @@ def test_helper_outputs():
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout)
     assert out["hasCreate"] is True
-    assert out["api"] == ["bindRow", "close", "openAgent", "openCustom", "openProject"]
+    assert out["api"] == [
+        "bindRow", "close", "openAddProject", "openAgent", "openCustom", "openProject",
+    ]
+    assert out["names"] == ["Cuttle", "Game", "Proj", "", "", "", ""]
     assert out["branchEmpty"] == ""
     assert out["modelOpts"] == [
         {"value": "opus", "label": "Opus", "disabled": False},

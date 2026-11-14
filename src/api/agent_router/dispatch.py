@@ -15,6 +15,7 @@ from api.agent_router.policy import (
     is_auto_target,
     is_quota_failure,
 )
+from api.agent_router.setup_reply import no_agent_installed_reply
 from api.agent_router.types import (
     ExecutionOutcome,
     ExecutionTarget,
@@ -282,6 +283,8 @@ def execute_decision(
             "reason": reason,
             "latency_ms": round(latency_ms, 3),
         }
+        if isinstance(result.get("cli_missing"), dict):
+            attempt["cli_missing"] = result["cli_missing"]
         attempts.append(attempt)
         record_attempt(
             decision=decision,
@@ -503,7 +506,8 @@ def execute_decision(
     lines.append("Try `/retry frontier`, `/retry fallback`, or `/route <agent> <model> …`.")
     exhausted = {
         "success": True,
-        "response": "\n".join(lines),
+        # Nothing installed is a setup step, not a routing failure.
+        "response": no_agent_installed_reply(attempts, project_path) or "\n".join(lines),
         "type": "router_error",
         "session_id": chat_session_id,
     }

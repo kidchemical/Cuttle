@@ -206,6 +206,26 @@
     }
 
     /** "82% → 14%" when both readings are known, else the one we have. Pure. */
+    function agentLabel(agent) {
+        const a = String(agent || '');
+        return a.charAt(0).toUpperCase() + a.slice(1);
+    }
+
+    /** Queued-panel row for a compaction waiting on the running reply. */
+    function queuedCompactRowHtml(agent, escapeHtml) {
+        const esc = typeof escapeHtml === 'function' ? escapeHtml : (x) => String(x);
+        return '<div class="followup-queue-item followup-queue-item--compact" data-queued-compact="1">'
+            + '<span class="followup-queue-badge">next</span>'
+            + '<div class="followup-queue-text">Compact ' + esc(agentLabel(agent)) + ' context'
+            + '<span class="followup-queue-compact-hint"> \u00B7 runs when the agent is idle, before queued messages</span></div>'
+            + '<div class="followup-queue-actions">'
+            + '<button type="button" class="followup-queue-remove" title="Remove queued compaction"'
+            + ' aria-label="Remove queued compaction" data-remove-queued-compact="1">'
+            + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"'
+            + ' stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/>'
+            + '<line x1="6" y1="6" x2="18" y2="18"/></svg></button></div></div>';
+    }
+
     function compactDetail(beforePct, afterPct) {
         const b = beforePct == null ? null : Math.round(Number(beforePct));
         const a = afterPct == null ? null : Math.round(Number(afterPct));
@@ -235,10 +255,61 @@
         const autoCompact = deps.autoCompact && typeof deps.autoCompact.create === 'function'
             ? deps.autoCompact.create({ fetch: doFetch, escapeHtml, toast }) : null;
 
+        const isGenerating = typeof deps.isGenerating === 'function' ? deps.isGenerating : () => false;
+        const queueHost = deps.queue || {};
+
         let status = null;
         let fetchTimer = 0;
         let busy = false;
         let popoverEl = null;
+        // Compactions waiting for their chat to go idle: chat id -> { agent, notBefore }.
+        const queuedCompacts = new Map();
+        let queueTimer = 0;
+        const QUEUE_TICK_MS = 1000;
+        const BUSY_RETRY_MS = 15000;
+
+        const queueKey = () => String(getSessionId() || '');
+        const repaintQueue = () => { try { if (queueHost.render) queueHost.render(); } catch (_) {} };
+
+        function queueCompact(agent, delayMs) {
+            const key = queueKey();
+            if (!key) return;
+            queuedCompacts.set(key, { agent, notBefore: Date.now() + (delayMs || 0) });
+            if (!queueTimer) queueTimer = frameWin.setInterval(tickQueue, QUEUE_TICK_MS);
+            repaintQueue();
+        }
+
+        function cancelQueuedCompact() {
+            if (queuedCompacts.delete(queueKey())) repaintQueue();
+        }
+
+        function tickQueue() {
+            if (!queuedCompacts.size) {
+                frameWin.clearInterval(queueTimer);
+                queueTimer = 0;
+                return;
+            }
+            const item = queuedCompacts.get(queueKey());
+            if (!item || busy || isGenerating() || Date.now() < item.notBefore) return;
+            if (stickyAgentId() !== item.agent) {
+                // The chat moved to another agent: that context no longer applies.
+                cancelQueuedCompact();
+                return;
+            }
+            runCompact(null, { queued: true });
+        }
+
+        const queued = {
+            rowHtml() {
+                const item = queuedCompacts.get(queueKey());
+                return item ? queuedCompactRowHtml(item.agent, escapeHtml) : '';
+            },
+            /** Compact now, or queue it when the chat is busy. */
+            request: () => runCompact(null),
+            cancel: cancelQueuedCompact,
+            /** Queued messages wait while a compaction is pending or running. */
+            holds: () => busy || queuedCompacts.has(queueKey()),
+        };
 
         function stickyAgentId() {
             return stickyAgentIdFromSlashCtx(getSlashCtx());
@@ -454,7 +525,7 @@
             });
         }
 
-        async function runCompact(anchorBtn) {
+        async function runCompact(anchorBtn, opts) {
             const agent = stickyAgentId();
             if (!agent || busy) return;
             const sessionId = getSessionId();
@@ -462,8 +533,21 @@
                 try { toast('Send a message first so the agent session exists.', 'info'); } catch (_) {}
                 return;
             }
+            const queuedRun = !!(opts && opts.queued);
+            if (!queuedRun && (isGenerating() || queuedCompacts.has(queueKey()))) {
+                const already = queuedCompacts.has(queueKey());
+                if (!already) queueCompact(agent, 0);
+                try {
+                    toast(already ? 'Compaction is already queued.'
+                        : 'Compaction queued \u2014 it runs when this reply finishes.', 'info');
+                } catch (_) {}
+                closePopover();
+                return;
+            }
+            queuedCompacts.delete(queueKey());
             busy = true;
-            const label = agent.charAt(0).toUpperCase() + agent.slice(1);
+            repaintQueue();
+            const label = agentLabel(agent);
             const beforePct = status && status.agent_id === agent && Number(status.used_tokens) > 0
                 ? Math.round(Number(status.percent) || 0) : null;
             let row = null;
@@ -513,6 +597,13 @@
                     } else {
                         scheduleRefresh(400);
                     }
+                } else if (data && data.busy) {
+                    // The agent CLI is still alive (e.g. a background wait): keep it queued.
+                    try { if (row && row.remove) row.remove(); } catch (_) {}
+                    queueCompact(agent, BUSY_RETRY_MS);
+                    if (!queuedRun) {
+                        try { toast(`${label} is still running \u2014 compaction queued until it is idle.`, 'info'); } catch (_) {}
+                    }
                 } else {
                     const err = (data && data.error) || 'unknown error';
                     settle({ type: 'compact', state: 'error', label: `${label} compact failed`, detail: err }, false, 'error');
@@ -528,9 +619,11 @@
                 });
                 if (anchorBtn && popoverEl && !popoverEl.hidden) {
                     openPopover(anchorBtn);
-                } else {
+                } else if (!queuedRun) {
                     closePopover();
                 }
+                repaintQueue();
+                try { if (queueHost.requestDrain) queueHost.requestDrain(); } catch (_) {}
             }
         }
 
@@ -570,6 +663,7 @@
             noteUsage,
             scheduleRefresh,
             stickyAgentId,
+            queued,
         };
     }
 
@@ -583,6 +677,7 @@
         computeUsageStatus,
         renderPopoverHtml,
         compactDetail,
+        queuedCompactRowHtml,
         create,
     };
 

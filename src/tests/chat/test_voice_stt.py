@@ -104,7 +104,11 @@ def test_status_reports_whether_openai_key_is_configured(client, monkeypatch):
     monkeypatch.setattr(voice_stt, "configured", lambda: False)
     r = client.get("/api/voice-stt/status")
     assert r.status_code == 200
-    assert r.json == {"success": True, "enabled": True, "configured": False}
+    body = dict(r.json)
+    clip = body.pop("clip")
+    assert body == {"success": True, "enabled": True, "configured": False}
+    # The composer mic reads its provider, live-text engine and length cap here.
+    assert clip["max_clip_ms"] == 600000 and clip["live_text"] is True and clip["enabled"] is True
     monkeypatch.setattr(voice_stt, "configured", lambda: True)
     assert client.get("/api/voice-stt/status").json["configured"] is True
 
@@ -129,3 +133,121 @@ def test_route_requires_auth(monkeypatch, fake):
     app = Flask(__name__)
     app.register_blueprint(routes.voice_stt_bp)
     assert _post(app.test_client()).status_code == 401
+
+
+# ---- Speech-to-text provider choice (Settings → Voice → Speech to text) ----
+
+def _prefs(monkeypatch, **over):
+    from api.voice_stt import settings
+
+    prefs = settings.normalize(over)
+    monkeypatch.setattr(settings, "load", lambda: prefs)
+    return settings
+
+
+def test_settings_defaults_and_validation():
+    from api.voice_stt import settings
+
+    assert settings.normalize(None) == {"provider": "openai", "models": {}, "local_base_url": "",
+                                        "live_text": True, "max_clip_minutes": 10}
+    assert {p.id for p in settings.providers()} >= {"openai", "local", "elevenlabs"}
+    for bad in ({"provider": "nope"}, {"max_clip_minutes": 0}, {"max_clip_minutes": 31},
+                {"max_clip_minutes": True}, {"local_base_url": "ftp://x"}, {"live_text": "yes"},
+                {"models": {"openai": 3}}):
+        with pytest.raises(ValueError):
+            settings.normalize(bad)
+    kept = settings.normalize({"models": {"openai": " whisper-1 ", "unknown": "x"}, "local_base_url": "http://box:8000/v1/"})
+    assert kept["models"] == {"openai": "whisper-1"} and kept["local_base_url"] == "http://box:8000/v1"
+
+
+def test_transcribe_uses_the_chosen_provider_model_and_local_address(monkeypatch):
+    _prefs(monkeypatch, provider="local", models={"local": "base.en"}, local_base_url="http://box:8000/v1")
+    seen = []
+
+    def transport(provider, request, **_kw):
+        seen.append((provider, request.model, request.base_url))
+        return "from the box"
+
+    monkeypatch.setattr("api.model_providers.service.transcribe", transport)
+    assert voice_stt.transcribe(b"RIFF", mime="audio/wav") == "from the box"
+    assert seen == [("local", "base.en", "http://box:8000/v1")]
+
+
+def test_default_model_chain_comes_from_the_provider_manifest(monkeypatch):
+    settings = _prefs(monkeypatch, provider="elevenlabs")
+    assert settings.resolve() == ("elevenlabs", ["scribe_v2"], "")
+    settings = _prefs(monkeypatch)
+    assert settings.resolve() == ("openai", [voice_stt.DEFAULT_MODEL, voice_stt.FALLBACK_MODEL], "")
+
+
+def test_browser_recognizer_never_transcribes_on_the_server(monkeypatch, fake):
+    settings = _prefs(monkeypatch, provider="browser")
+    assert settings.configured() is False
+    assert settings.clip_status()["engine"] == "browser"
+    with pytest.raises(RuntimeError, match="browser"):
+        voice_stt.transcribe(b"OggS")
+    assert fake.calls == []
+
+
+def test_live_text_off_or_no_credentials_means_no_live_engine(monkeypatch):
+    settings = _prefs(monkeypatch, provider="browser", live_text=False)
+    assert settings.clip_status()["engine"] == "none"
+    settings = _prefs(monkeypatch, provider="elevenlabs", max_clip_minutes=3)
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    status = settings.clip_status()
+    assert status["engine"] == "none" and status["configured"] is False and status["max_clip_ms"] == 180000
+
+
+def test_clip_phrases_pass_under_the_composer_flag(client, fake):
+    flags.set_enabled("voice_server_stt", False)
+    flags.set_enabled("composer_voice_clip", True)
+    r = _post(client, purpose="clip")
+    assert r.status_code == 200 and r.json == {"success": True, "text": "hello there"}
+    flags.set_enabled("composer_voice_clip", False)
+    assert _post(client, purpose="clip").json["disabled"] is True
+
+
+def test_elevenlabs_and_local_adapters_send_the_documented_request(monkeypatch):
+    from api.model_providers.catalog import get_adapter, get_provider
+    from api.model_providers.types import TranscriptionRequest
+
+    sent = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"text": "scribed"}
+
+    def post(url, **kw):
+        sent.update(url=url, **kw)
+        return _Resp()
+
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k" * 24)
+    monkeypatch.setattr("api.model_providers.elevenlabs.adapter.requests.post", post)
+    request = TranscriptionRequest(b"OggS", "scribe_v2", filename="phrase.webm", language="en")
+    assert get_adapter("elevenlabs").transcribe(get_provider("elevenlabs"), request) == "scribed"
+    assert sent["url"].endswith("/v1/speech-to-text")
+    assert sent["data"] == {"model_id": "scribe_v2", "language_code": "en"}
+    assert sent["files"]["file"][0] == "phrase.webm" and sent["headers"]["xi-api-key"] == "k" * 24
+
+    made = {}
+
+    class _SDK:
+        def __init__(self, **kw):
+            made.update(kw)
+            self.audio = SimpleNamespace(transcriptions=SimpleNamespace(
+                create=lambda **k: made.update(call=k) or SimpleNamespace(text="local words")))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    monkeypatch.setattr("openai.OpenAI", _SDK)
+    request = TranscriptionRequest(b"RIFF", "whisper-1", filename="phrase.wav", mime="audio/wav",
+                                   base_url="http://box:8000/v1")
+    assert get_adapter("local").transcribe(get_provider("local"), request) == "local words"
+    assert made["base_url"] == "http://box:8000/v1" and made["call"]["model"] == "whisper-1"

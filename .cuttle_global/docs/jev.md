@@ -8,6 +8,10 @@ Auth (first match wins):
 1. `TYPESAFE_API_KEY` → `https://api.typesafe.ai`
 2. `OPENROUTER_API_KEY` → `https://openrouter.ai/api` (same System One body; billed to OpenRouter)
 
+Each key is read from the process environment, then from `<home>/.env`. Agent
+CLI shells never inherit provider keys, so `python -m api.jev` run by an agent
+uses the home file.
+
 Override host with `CUTTLE_JEV_BASE_URL`. Optional `settings.json → jev`
 (`enabled`, `model`, `rank_context`, `label_turns`, `regress.interval_s`).
 

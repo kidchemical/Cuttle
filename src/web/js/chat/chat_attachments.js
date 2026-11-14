@@ -26,18 +26,39 @@
         return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
     }
 
-    /** Server rows / restored rows → canonical item shape. */
+    /** Voice clip (composer mic) or other audio, by extension then mime. */
+    function isAudioAttachment(att) {
+        if (!att) return false;
+        const name = String(att.filename || att.url || '').toLowerCase();
+        if (/\.(webm|ogg|m4a|wav|mp3)$/i.test(name)) return true;
+        return String(att.mime || '').toLowerCase().startsWith('audio/');
+    }
+
+    /**
+     * Server rows / restored rows → canonical item shape. `duration_ms`
+     * (voice clips, staged rows only) is carried when it is a number, and
+     * a voice clip's live-text fields when present.
+     */
     function normalizeAttachmentList(list) {
         if (!Array.isArray(list)) return [];
         return list
             .filter((a) => a && typeof a === 'object')
-            .map((a) => ({
-                filename: a.filename || 'file',
-                path: a.path || '',
-                mime: a.mime || '',
-                size: a.size,
-                url: a.url || '',
-            }));
+            .map((a) => {
+                const item = {
+                    filename: a.filename || 'file',
+                    path: a.path || '',
+                    mime: a.mime || '',
+                    size: a.size,
+                    url: a.url || '',
+                };
+                if (Number.isFinite(a.duration_ms)) item.duration_ms = a.duration_ms;
+                // Live text of a voice clip: its block id, its words when it
+                // was attached, and whether those words cover the whole clip.
+                if (typeof a.clip_id === 'string' && a.clip_id) item.clip_id = a.clip_id;
+                if (typeof a.transcript === 'string' && a.transcript) item.transcript = a.transcript;
+                if (a.transcribed === true) item.transcribed = true;
+                return item;
+            });
     }
 
     /** Strip trailing `[Attached: …]` note used in stored history text. */
@@ -96,12 +117,12 @@
      * path/url, so size never travels (staged rows keep it locally).
      */
     function requestAttachmentPayload(attachments) {
-        return normalizeAttachmentList(attachments).map((a) => ({
+        return normalizeAttachmentList(attachments).map((a) => Object.assign({
             filename: a.filename,
             path: a.path,
             mime: a.mime || '',
             url: a.url || '',
-        }));
+        }, a.transcribed ? { transcribed: true } : null));
     }
 
     /**
@@ -137,12 +158,13 @@
 
     /**
      * Message-HTML branch for one item: thumbnail button (image + URL),
-     * file link (URL only), or plain span (no URL — e.g. legacy rows).
+     * audio player (voice clip + URL), file link (URL only), or plain span (no URL — e.g. legacy rows).
      * The page still builds the HTML (escaping + download URLs live in
      * the message/media domains); this owns the branch decision.
      */
     function messageAttachmentKind(att) {
         const url = String((att && att.url) || '').trim();
+        if (isAudioAttachment(att) && url) return 'audio';
         if (isImageAttachment(att) && url) return 'thumb';
         if (url) return 'link';
         return 'span';
@@ -246,6 +268,7 @@
 
     const api = {
         isImageAttachment,
+        isAudioAttachment,
         bindPasteUpload,
         pastedImageName,
         clipboardImageFiles,

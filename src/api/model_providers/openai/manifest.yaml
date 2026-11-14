@@ -112,6 +112,9 @@ models:
   capabilities:
     operations:
     - speech_generation
+transcription:
+  default_model: gpt-4o-mini-transcribe
+  fallback_model: whisper-1
 speech:
   default_model: gpt-4o-mini-tts
   voices:

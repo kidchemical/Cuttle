@@ -110,11 +110,21 @@ code, .path-text { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Re
 .feed-item header button { margin-left: auto; }
 .config-files { padding-left: 18px; line-height: 1.9; word-break: break-word; }
 .empty { color: var(--project-muted); padding: 36px 16px; text-align: center; }
-dialog { background: var(--project-panel); color: var(--project-text); border: 1px solid var(--project-border); border-radius: 12px; padding: 26px; width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; box-shadow: 0 24px 80px #0004; }
-dialog::backdrop { background: #0008; }
-dialog h2 { margin-bottom: 8px; }
-dialog label { margin-bottom: 16px; }
-dialog .actions { justify-content: flex-end; margin-top: 20px; }
+/* Dialogs wear the shared popup (auth_modal.css + chip_config_modal.css, as
+   the chat chip pickers do). These rules only stop this page's global
+   button/input/label styles from leaking into it. */
+.projects-dialog.auth-modal { width: min(450px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
+.projects-dialog::backdrop { background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(5px); }
+.projects-dialog .chip-config-field { margin: 0; font-size: inherit; font-weight: inherit; }
+.projects-dialog .auth-modal-close { display: block; min-height: 0; border: 0; border-radius: 0; background: transparent; }
+.projects-dialog .auth-modal-close:hover { background: transparent; }
+.projects-dialog .logout-confirm-btn { display: block; min-height: 0; }
+.projects-dialog .logout-confirm-submit:hover { background: var(--popup-accent); }
+/* .logout-confirm-btn doubled: auth_modal.css colors submits via :is(.a.b, …). */
+.projects-dialog .logout-confirm-btn.projects-dialog-danger,
+.projects-dialog .logout-confirm-btn.projects-dialog-danger:hover { background: var(--error-border, #e53e3e); color: #fff; }
+.projects-dialog .projects-dialog-note { margin: 0; font-size: 13px; color: var(--popup-muted); }
+.projects-dialog .auth-modal-subtitle:empty { display: none; }
 :focus-visible { outline: 2px solid var(--project-accent); outline-offset: 3px; }
 @media (max-width: 900px) {
     .projects-layout { grid-template-columns: 210px minmax(0, 1fr); gap: 24px; }
@@ -158,7 +168,7 @@ dialog .actions { justify-content: flex-end; margin-top: 20px; }
     .branch-checkout { align-items: flex-start; flex-direction: column; gap: 12px; }
     .branch-note summary { min-height: 44px; display: list-item; padding-top: 10px; }
     .feed-item header button { margin-left: 0; }
-    dialog { padding: 22px 18px; }
+    .projects-dialog.auth-modal { padding: 26px 18px 20px; }
 }
 @media (max-width: 370px) {
     .projects-header { flex-wrap: wrap; }
@@ -173,5 +183,7 @@ dialog .actions { justify-content: flex-end; margin-top: 20px; }
 .projects-app .detail-header { padding: 16px; border: var(--page-card-border); }
 .projects-app .tabs { padding: 0 16px; border: var(--page-card-border); }
 .projects-app #detail > .empty { border: var(--page-card-border); }
-/* Dialogs sit above panels and need an opaque backing. */
-body[data-page="projects"] dialog { background: rgb(from var(--bg-secondary) r g b / 1); }
+@media (max-width: 720px) {
+    /* 16px keeps iOS from zooming into a focused field. */
+    .projects-dialog .chip-config-input { font-size: 16px; }
+}

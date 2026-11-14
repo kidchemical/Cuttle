@@ -588,7 +588,7 @@
                 toAuthDbSessionId: (id) => toAuthDbSessionId(id),
                 currentSession: () => session.current(),
                 isAuthMode: isAuthMode,
-                isSessionGenerating: isSessionGenerating,
+                isSessionGenerating: () => isSessionGenerating() || !!(queuedCompaction() && queuedCompaction().holds()),
                 healStaleGenerating: healStaleGeneratingState,
                 followupAuthSid: followupAuthSid,
                 getPrefs: (sid) => getSessionPrefs(sid),
@@ -641,6 +641,7 @@
             if (raw) pendingAttachments = JSON.parse(raw) || [];
         } catch {}
         renderAttachmentChips();
+        if (quoteClips) quoteClips.render();
     }
     function _clearPersistedPending(sid) {
         try { localStorage.removeItem(_pendingKey(sid)); } catch {}
@@ -1251,11 +1252,13 @@
                     e.preventDefault();
                     e.stopPropagation();
                     pendingAttachments = CuttleChatAttachments.removeAttachmentAt(pendingAttachments, idx);
+                    if (voiceClip) voiceClip.attachmentRemoved(att);
                     _savePendingAttachments();
                     renderAttachmentChips();
                 });
                 chip.appendChild(name);
                 chip.appendChild(remove);
+                if (CuttleChatAttachments.isAudioAttachment(att)) CuttleChatVoiceClip.decorateChip(chip, name, att);
                 row.appendChild(chip);
             });
         }
@@ -1335,6 +1338,9 @@
                     '</button>'
                 );
             }
+            if (CuttleChatAttachments.messageAttachmentKind(att) === 'audio') {
+                return '<audio class="msg-attach-audio" controls preload="metadata" src="' + safeUrl + '" title="' + name + '"></audio>';
+            }
             if (CuttleChatAttachments.messageAttachmentKind(att) === 'link') {
                 return (
                     '<a class="msg-attach-file" href="' +
@@ -1367,9 +1373,9 @@
     }
 
     // Owned by chat_attachments.js — DOM/state gather, domain decides.
-    async function uploadChatFiles(fileList) {
+    async function uploadChatFiles(fileList, extra) {
         const files = Array.from(fileList || []).filter(Boolean);
-        if (!files.length) return;
+        if (!files.length) return false;
         const form = new FormData();
         form.append('session_id', authSessionIdForRequest() || session.current() || 'anon');
         for (const f of files) form.append('files', f, f.name);
@@ -1391,12 +1397,42 @@
         });
         if (!plan.ok) {
             (window.showToast || function (m) { alert(m); })(plan.error, 'error');
-            return;
+            return false;
         }
         pendingAttachments = CuttleChatAttachments.addAttachmentsToPending(
-            pendingAttachments, plan.items);
+            pendingAttachments, extra ? plan.items.map((item) => Object.assign({}, item, extra)) : plan.items);
         _savePendingAttachments();
         renderAttachmentChips();
+        return true;
+    }
+
+    /** Composer mic button: record → voice-clip attachment (chat_voice_clip.js). */
+    let voiceClip = null;
+    function wireVoiceClipControls() {
+        voiceClip = CuttleChatVoiceClip.create({
+            win: window,
+            recorder: CuttleChatVoiceRecorder,
+            upload: (file, extra) => uploadChatFiles([file], extra),
+            toast: (m, k) => (window.showToast || function () {})(m, k),
+            text: CuttleChatVoiceClipText, fetch: window.fetch.bind(window), sessionId: () => session.current(),
+            config: () => fetch('/api/voice-stt/status', { credentials: 'include' }).then((r) => r.json()).then((d) => d.clip),
+            composers: [['micButton', 'chatAttachChipsRow', 'chatInput'], ['welcomeMicButton', 'welcomeAttachChipsRow', 'welcomeChatInput']]
+                .map(([b, r, i]) => ({ button: document.getElementById(b), row: document.getElementById(r), input: document.getElementById(i) })),
+        });
+    }
+
+    /** Select transcript text → reply toolbar → quote clips in the composer (chat_quote_clips.js). */
+    let quoteClips = null;
+    function wireQuoteClips() {
+        quoteClips = CuttleChatQuoteClips.create({
+            doc: document, win: window, storage: localStorage,
+            container: () => document.getElementById('chatMessages'), sessionId: () => session.current(),
+            composers: [['chatInput', 'chatAttachChipsRow'], ['welcomeChatInput', 'welcomeAttachChipsRow']]
+                .map(([i, r]) => ({ input: document.getElementById(i), before: document.getElementById(r) })),
+            onChange: () => { autoResizeTextarea(); autoResizeWelcomeTextarea(); },
+        });
+        quoteClips.start();
+        quoteClips.syncFlag((u, o) => fetch(u, o));
     }
 
     function wireAttachControls() {
@@ -2756,6 +2792,13 @@
                 if (!handle) return;
                 e.preventDefault();
                 e.stopPropagation();
+                // Fleet cards peek the child in a drawer over this pane (chat_subagent_peek.js).
+                if (launcher.classList.contains('subagent-fleet-card') && subagentPeek()) {
+                    const name = launcher.querySelector('.subagent-fleet-name');
+                    const state = launcher.querySelector('.subagent-fleet-outcome');
+                    subagentPeek().open(handle, { title: name && name.textContent, status: state && (state.getAttribute('title') || state.getAttribute('data-tooltip')) });
+                    return;
+                }
                 navigateToChatHandle(handle);
                 return;
             }
@@ -2813,6 +2856,12 @@
         avatarHtml: profileAvatarInnerHtml,
         chipCategoryClass: slashCommandChipCategoryClass,
     });
+
+    // Fleet-card peek drawer; off inside a peek frame so drawers never nest.
+    let peekCtl = null;
+    const subagentPeek = () => (window.CuttleChatSubagentPeek && !new URLSearchParams(location.search).has('peek')
+        ? (peekCtl = peekCtl || CuttleChatSubagentPeek.create({ win: window, doc: document, parseChatHandleToken, navigate: navigateToChatHandle }))
+        : null);
 
     // Idle chat's background work (waits, watches, schedules, owned processes): chat_background_work.js.
     const backgroundWork = CuttleChatBackgroundWork.create({ win: window, currentSession: () => session.current(), sessionIdsEqual, isBusy: () => isLoadingThisSession(), openChat: (sid) => loadChatSession(sid) });
@@ -4303,6 +4352,8 @@
         getChatCheckout: () => currentCheckoutUid,
         setChatCheckout,
         showToast: (msg, kind) => (window.showToast || function () {})(msg, kind),
+        reloadProjects: () => loadProjects(),
+        navigate: (page) => (window.parent !== window ? window.parent.postMessage({ type: 'cuttle-navigate', page }, '*') : window.location.assign(page)),
     });
     // `/orchestrate` chip + playbook popup — owned by chat_orchestrate_chip.js.
     const orchestrateChip = CuttleChatOrchestrateChip.create({
@@ -6813,7 +6864,8 @@
             LOG_ERR('sendWelcomeMessage: welcomeChatInput not found');
             return;
         }
-        const message = composeMessageWithSlashChip(input).trim();
+        if (voiceClip && voiceClip.isActive() && !(await voiceClip.finishForSend())) return;
+        const message = composeMessageWithSlashChip(quoteClips ? quoteClips.source(input) : input).trim();
         const attachments = pendingAttachments.slice();
 
         if (!isSendableComposerMessage(message, attachments)) {
@@ -6839,6 +6891,7 @@
         await ensureCodexEffortForSend(message);
 
         input.value = '';
+        if (quoteClips) quoteClips.clear();
         clearComposerDraft('new');
         applyStickySlashAfterComposerSend(message);
         const displayMessage = formatMessageWithAttachments(message, attachments);
@@ -7189,6 +7242,8 @@
                 applyServerFollowups: applyServerFollowups,
                 acceptSessionAttention: acceptSessionAttention,
                 clearChatRestoreVeil: clearChatRestoreVeil,
+                reconcileReplyThreads: () => replyThreads.reconcile(),
+                resetReplyThreads: (id) => replyThreads.resetView(id),
                 reconcileCuttleButtonLocks: reconcileCuttleButtonLocks,
                 fetchChatLiveStatus: fetchChatLiveStatus,
                 updateRemoteWaitingFromMessages: updateRemoteWaitingFromMessages,
@@ -7890,6 +7945,7 @@
         ) {
             const statusLabel = (liveStatus && liveStatus.status) || undefined;
             ensureLocalTypingIndicator(statusLabel);
+            if (liveStatus) stampLiveBubbleTurnRow(liveStatus.message_id, liveStatus.report_url, liveStatus.query_id);
             setHistorySessionRunning(session.current(), true);
             try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             return;
@@ -7902,6 +7958,7 @@
                 setHistorySessionRunning(session.current(), true);
                 const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
                 addRemoteWaitingIndicator(statusLabel);
+                if (liveStatus) stampLiveBubbleTurnRow(liveStatus.message_id, liveStatus.report_url, liveStatus.query_id);
                 updateRemoteWaitingStatus(statusLabel, liveStatus && liveStatus.report_url);
                 try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             }
@@ -7941,6 +7998,7 @@
         }
         if (liveActive) {
             addRemoteWaitingIndicator(statusLabel);
+            if (liveStatus) stampLiveBubbleTurnRow(liveStatus.message_id, liveStatus.report_url, liveStatus.query_id);
             updateRemoteWaitingStatus(statusLabel, liveStatus && liveStatus.report_url);
             try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
             // Offer Stop for remote/other-tab runs too.
@@ -9402,15 +9460,19 @@
 
     function saveEditFollowup(id, nextText) { followupController().saveEdit(id, nextText); }
 
+    /** Queued compaction (chat_context_gauge.js); null until the gauge is built. */
+    function queuedCompaction() { try { return contextGauge.queued; } catch (_) { return null; } }
+
     function renderFollowupQueue() {
         const root = document.getElementById('followupQueue');
         if (!root) return;
+        const compactRow = queuedCompaction() ? queuedCompaction().rowHtml() : '';
         const ctl = followupController();
         ctl.pruneEditing();
         const queueItems = ctl.getState().items;
         const editingId = ctl.getEditingId();
         patchLiveSessionFollowupQueue(session.current(), queueItems);
-        if (!queueItems.length) {
+        if (!queueItems.length && !compactRow) {
             root.hidden = true;
             root.innerHTML = '';
             syncHistoryUnreadIndicators();
@@ -9443,11 +9505,12 @@
                 const chipsHtml = chips
                     .map((c) => slashCommandChipHistoryHtml(c.label, c.meta, c.category))
                     .join('');
-                const bodyText = escapeHtml(String(parsed.body || '').trim());
+                const bodyRaw = String(parsed.body || '').trim();
+                const bodyText = CuttleChatQuoteClips.previewHtml(bodyRaw, escapeHtml);
                 preview = '<span class="slash-chips-inline">' + chipsHtml + '</span>'
                     + (bodyText ? '<span class="followup-queue-body">' + bodyText + '</span>' : '');
             } else {
-                preview = escapeHtml(raw);
+                preview = CuttleChatQuoteClips.previewHtml(raw, escapeHtml);
             }
             return `
                 <div class="followup-queue-item${item.paused ? ' is-paused' : ''}" data-followup-id="${escapeHtml(item.id)}">
@@ -9476,7 +9539,7 @@
         const otherPaused = queueItems.filter(
             (x) => x.paused && x.id !== editingId
         ).length;
-        const titleBits = [`Queued · ${queueItems.length}`];
+        const titleBits = [`Queued · ${queueItems.length + (compactRow ? 1 : 0)}`];
         if (editingId) titleBits.push('editing · send paused');
         if (otherPaused) titleBits.push(`${otherPaused} paused`);
         root.innerHTML = `
@@ -9484,9 +9547,10 @@
                 <span class="followup-queue-title">${titleBits.join(' · ')}</span>
                 <button type="button" class="followup-queue-clear" id="followupQueueClear">Clear all</button>
             </div>
-            <div class="followup-queue-list">${itemsHtml}</div>
+            <div class="followup-queue-list">${compactRow}${itemsHtml}</div>
         `;
         root.querySelector('#followupQueueClear')?.addEventListener('click', clearFollowupQueue);
+        root.querySelector('[data-remove-queued-compact]')?.addEventListener('click', () => queuedCompaction().cancel());
         root.querySelectorAll('[data-remove-followup]').forEach((btn) => {
             btn.addEventListener('click', () => removeFollowup(btn.getAttribute('data-remove-followup')));
         });
@@ -9652,7 +9716,10 @@
 
     function removeFollowup(id) { followupController().remove(id); }
 
-    function clearFollowupQueue() { followupController().clear(); }
+    function clearFollowupQueue() {
+        followupController().clear();
+        if (queuedCompaction()) queuedCompaction().cancel();
+    }
 
     function scheduleFollowupDrain(delayMs = 120) { followupController().requestDrain(delayMs); }
 
@@ -10677,12 +10744,16 @@
             return;
         }
         if (overrideText == null && composerLock.blocksSend()) return;
-        const composerSource = overrideText != null ? { id: input.id, value: overrideText } : input;
+        // Recording a voice clip: Send stops it and sends it with the message.
+        if (overrideText == null && voiceClip && voiceClip.isActive() && !(await voiceClip.finishForSend())) return;
+        const composerSource = overrideText != null ? { id: input.id, value: overrideText }
+            : (quoteClips ? quoteClips.source(input) : input);
         const message = composeMessageWithSlashChip(composerSource).trim();
         const attachments = overrideText != null ? [] : pendingAttachments.slice();
         const clearComposer = () => {
             if (overrideText != null) return;
             input.value = '';
+            if (quoteClips) quoteClips.clear();
             clearComposerDraft(session.current());
         };
 
@@ -11276,6 +11347,8 @@
         toast: (message, variant) => (window.showToast || function () {})(message, variant),
         notice: { add: (spec, o) => addSystemMessage(spec, o), update: (el, spec, o) => timelineNotices().update(el, spec, o) },
         autoCompact: window.CuttleChatAutoCompact,
+        isGenerating: () => isSessionGenerating(),
+        queue: { render: () => renderFollowupQueue(), requestDrain: () => scheduleFollowupDrain(120) },
     });
 
     // Transcript navigation: follow-latest scroll, nav rail + pins, jumps,
@@ -12263,10 +12336,12 @@
         });
     }
     function syncComposerEnterKeyHint() {
-        const hint = isTouchComposer() ? 'enter' : 'send';
+        let desk = false;
+        try { desk = localStorage.getItem(CuttleChatComposer.SPELLCHECK_PREF_KEY) === '1'; } catch (_) {}
+        const attrs = CuttleChatComposer.keyboardAttrs(isTouchComposer(), desk);
         ['welcomeChatInput', 'chatInput'].forEach((id) => {
             const el = document.getElementById(id);
-            if (el) el.setAttribute('enterkeyhint', hint);
+            if (el) Object.keys(attrs).forEach((k) => el.setAttribute(k, attrs[k]));
         });
     }
 
@@ -12465,8 +12540,13 @@
         if (composerTouchMq && composerTouchMq.addEventListener) {
             composerTouchMq.addEventListener('change', syncComposerEnterKeyHint);
         }
+        window.addEventListener('storage', (e) => {
+            if (e && e.key === CuttleChatComposer.SPELLCHECK_PREF_KEY) syncComposerEnterKeyHint();
+        });
 
         wireAttachControls();
+        wireVoiceClipControls();
+        wireQuoteClips();
         wireEnhanceControls();
         syncExperimentalComposerControls();
         window.addEventListener('focus', syncExperimentalComposerControls);

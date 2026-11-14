@@ -254,3 +254,14 @@ html.is-cuttle-mobile .cuttle-lightbox-bar {
             calc(14px + var(--cuttle-safe-left));
     }
 }
+
+/* Toasts (#cuttle-toast-container, inline bottom in app_shell.html/toast.js)
+   clear the nav bar like the composer; the IME covers it while typing. The
+   container's own 24px padding sits on top of this. */
+html.is-cuttle-mobile {
+    --cuttle-toast-safe-bottom: var(--cuttle-safe-bottom);
+}
+
+html.is-cuttle-mobile.keyboard-open {
+    --cuttle-toast-safe-bottom: 0px;
+}

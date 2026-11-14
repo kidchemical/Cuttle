@@ -14,11 +14,8 @@
    reply, sub-agent cards updating — so every path that paints a row is
    covered without call sites.
 
-   Open state:
-   - a thread you open or close stays that way (saved per chat);
-   - a live thread (its turn or a reply is still running, or you just
-     steered into it) opens by itself;
-   - nothing ever closes a thread except you.
+   Open state is local to the current visit: threads start collapsed and
+   remain open only after the user expands or navigates to a reply.
    Unread: an agent reply (follow-up) that arrives
    while its thread is closed, or since your last visit, shows a dot and
    a one-line preview until you open the thread.
@@ -66,7 +63,6 @@
         const openNow = new Set(); // threads open in this view
         const seenNow = new Map(); // key → Set(unread keys seen this view)
         const elKey = new WeakMap(); // row → thread key it was in last
-        const shown = new WeakSet(); // rows you have seen on screen in this view
         const wasLive = new Map(); // thread key → its root was live last pass
 
         function storageGet(key) {
@@ -93,7 +89,7 @@
             }
             hadStore = !!(store && typeof store === 'object');
             if (!hadStore) store = {};
-            store.open = store.open && typeof store.open === 'object' ? store.open : {};
+            delete store.open; // Discard choices saved by older versions.
             store.pending = store.pending && typeof store.pending === 'object' ? store.pending : {};
             if (hadStore && Number.isFinite(Number(store.w))) {
                 viewBaseline = { messageId: Number(store.w), at: Number(store.at) || 0 };
@@ -124,7 +120,6 @@
                 saveTimer = 0;
             }
             if (sid == null || !store) return;
-            trim(store.open);
             trim(store.pending);
             storageSet(STORE_PREFIX + sid, JSON.stringify(store));
         }
@@ -257,41 +252,16 @@
             return out;
         }
 
-        /** Open or closed, by the rules in the header. Never closes by itself. */
+        /** Preserve an explicit expansion when a live row gains its final key. */
         function resolveOpen(thread, memberEls, prior) {
             const key = thread.key;
-            // Carry choices across a key change (live bubble → saved reply).
             prior.forEach((k) => {
                 if (k === key) return;
-                if (store.open[k] !== undefined && store.open[key] === undefined) store.open[key] = store.open[k];
                 if (openNow.has(k)) openNow.add(key);
                 if (wasLive.get(k)) wasLive.set(key, true);
                 if (seenNow.has(k) && !seenNow.has(key)) seenNow.set(key, seenNow.get(k));
             });
-            // A steer you just sent (optimistic, not yet saved) opens its thread.
-            const sentNow = memberEls.some((el) => el.classList.contains('is-steered')
-                && !el.dataset.messageId && !elKey.has(el));
-            if (sentNow) {
-                delete store.open[key];
-                openNow.add(key);
-                return true;
-            }
-            if (openNow.has(key)) return store.open[key] !== false;
-            // Rows you already see on screen never vanish into a thread that
-            // forms around them (a reply's root arriving later, a reload mid-turn).
-            if (store.open[key] !== false && memberEls.slice(1).some((el) => shown.has(el))) {
-                openNow.add(key);
-                return true;
-            }
-            if (store.open[key] !== undefined) {
-                if (store.open[key]) openNow.add(key);
-                return !!store.open[key];
-            }
-            if (thread.live) {
-                openNow.add(key);
-                return true;
-            }
-            return false;
+            return openNow.has(key);
         }
 
         function isNewer(k) {
@@ -459,9 +429,6 @@
                 const preview = (!open && (unreadCount || thread.live)) ? previewFor(thread, rows) : '';
                 mountBar(rootEl, thread, open, unreadCount, preview);
             });
-            rows.forEach((el) => {
-                if (!el.classList.contains('thread-reply-hidden')) shown.add(el);
-            });
             if (Number.isFinite(maxId) && store && !(Number(store.w) >= maxId)) {
                 store.w = maxId;
                 store.at = Date.now();
@@ -514,10 +481,8 @@
             const fromTail = btn.classList.contains('chat-thread-toggle--tail');
             if (isOpen) {
                 openNow.delete(key);
-                store.open[key] = false;
             } else {
                 openNow.add(key);
-                store.open[key] = true;
             }
             scheduleSave();
             reconcile();
@@ -544,7 +509,6 @@
             if (!key) return false;
             ensureSession();
             openNow.add(key);
-            if (store.open[key] === false) delete store.open[key];
             scheduleSave();
             reconcile();
             return true;
@@ -608,7 +572,8 @@
                 .catch(() => enabled);
         }
 
-        return { start, setEnabled, syncFlag, reconcile, reveal, flush: flushSave };
+        return { start, setEnabled, syncFlag, reconcile, reveal, flush: flushSave,
+            resetView: (id) => loadSession(id == null ? null : String(id)) };
     }
 
     const api = { create };

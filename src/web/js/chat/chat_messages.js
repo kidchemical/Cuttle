@@ -77,7 +77,10 @@
         // SQLite CURRENT_TIMESTAMP is UTC "YYYY-MM-DD HH:MM:SS". Raw Date.parse
         // treats that as local time, so in US timezones messages look hours in
         // the future and formatTimeAgo always shows "Just now".
-        const parsed = parseTs(m.timestamp);
+        // An assistant row is opened when its turn starts; ``completed_at``
+        // (epoch seconds, api.chat_turn_row) is when the reply landed.
+        const completedMs = m.role === 'assistant' ? Number(meta.completed_at) * 1000 : 0;
+        const parsed = completedMs > 0 ? completedMs : parseTs(m.timestamp);
         const attachments = normAtts(
             m.attachments || meta.attachments || []
         );
@@ -335,7 +338,10 @@
             const content = typeof d.formatMessage === 'function'
                 ? d.formatMessage(processed.original) : d.escapeHtmlInline(processed.original);
             thinkBlocks.push('<details class="response-original-block"><summary>Original response</summary>'
-                + '<div class="response-original-content">' + content + '</div></details>'
+                + '<div class="response-original-content">' + content + '</div>'
+                // Copy wiring (icon, clipboard, toast) is post-paint: chat_activate.js.
+                + '<div class="response-original-actions"><button type="button" class="response-original-copy-btn"'
+                + ' data-copy-text="' + d.escapeHtmlInline(processed.original) + '">Copy</button></div></details>'
                 + '<div class="response-postprocessed-label">Added by post-processing</div>');
             out = (processed.lead ? processed.lead + '\n\n' : '') + placeholder + '\n\n' + processed.response;
         }

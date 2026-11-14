@@ -6,8 +6,14 @@ credential_env:
 - ELEVENLABS_API_KEY
 operations:
 - speech_generation
+- audio_transcription
 defaults: {}
 models:
+- id: scribe_v2
+  label: Scribe v2 (speech to text)
+  capabilities:
+    operations:
+    - audio_transcription
 - id: eleven_flash_v2_5
   label: Flash v2.5 (fast, cheap)
   capabilities:
@@ -28,6 +34,8 @@ models:
   capabilities:
     operations:
     - speech_generation
+transcription:
+  default_model: scribe_v2
 speech:
   default_model: eleven_flash_v2_5
   voices:

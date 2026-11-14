@@ -124,7 +124,7 @@ def test_popout_loads_saved_theme_before_rendering(browser, static_server, theme
         context.close()
 
 
-@pytest.mark.parametrize('saved, expected', [(None, 'nord'), ('dark', 'dark'), ('light', 'light')])
+@pytest.mark.parametrize('saved, expected', [(None, 'light'), ('dark', 'dark'), ('nord', 'nord')])
 def test_fresh_theme_default_preserves_saved_choices(browser, static_server, saved, expected):
     context = browser.new_context()
     apply_request_guard(context, static_server)
@@ -134,6 +134,8 @@ def test_fresh_theme_default_preserves_saved_choices(browser, static_server, sav
     try:
         page.goto(static_server + '/apps_page.html', wait_until='networkidle')
         assert page.evaluate('CuttleUiBoot.currentTheme()') == expected
+        if expected == 'light':
+            expect(page.locator('html')).to_have_class(re.compile(r'\blight-mode\b'))
         if expected == 'nord':
             expect(page.locator('html')).to_have_class(re.compile(r'\btheme-nord\b'))
         assert page.evaluate("localStorage.getItem('theme')") == saved

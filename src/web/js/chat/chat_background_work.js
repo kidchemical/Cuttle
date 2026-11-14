@@ -27,6 +27,12 @@
    any more the card shrinks to one line (`settled`), like a locked form.
    Supervision schedules name the chat they drive; the card links to it
    ("Open CH-…", and a schedule-only card opens it on click).
+   Wake line (`wake`): an idle chat says what starts its next turn — its own
+   background work ("Resumes by itself when … ends"), its supervisor's next
+   check (`background.watchers`, with the same countdown ring), or nothing
+   (supervision paused, a held orchestration, or an orchestrating chat nobody
+   watches). An orchestrating or supervised chat shows the card for that line
+   alone, so "idle" never leaves it open whether anything will happen.
    host: { win, currentSession(), sessionIdsEqual(a,b), isBusy(), openChat(bareId) } */
 (function(root) {
     'use strict';
@@ -122,9 +128,56 @@
             && (s.outcome === 'running' || s.outcome === 'queued' || (!s.outcome && s.generating)));
     }
 
+    function short(text, max) {
+        const t = String(text || '').replace(/\s+/g, ' ').trim();
+        return t.length > max ? t.slice(0, max - 1).trimEnd() + '…' : t;
+    }
+
+    /**
+     * What starts this idle chat's next turn, or null when that is not worth a line.
+     * `{ kind: 'self' | 'supervisor' | 'none' | 'held', tone, text, supervisor?, at?, every? }`.
+     * `orchestration`: live-status `orchestration` ('' | 'active' | 'paused' | 'stopped').
+     */
+    function wake(bg, orchestration) {
+        bg = bg && typeof bg === 'object' ? bg : {};
+        const orch = String(orchestration || '');
+        if (orch === 'paused' || orch === 'stopped') {
+            return { kind: 'held', tone: 'warn',
+                text: 'Orchestration ' + orch + ': nothing wakes this chat until you resume it or message it' };
+        }
+        // Work that resumes the chat by itself: a CLI still open on background
+        // tasks (it posts its own follow-up) and watched jobs that hand back.
+        const jobs = (bg.waits || []).filter(Boolean).map((w) => String(w.label || ''))
+            .concat((bg.watches || []).filter((w) => w && (w.kind === 'unit' || w.resume_chat)).map((w) => String(w.label || '')));
+        if (jobs.length) {
+            const what = jobs.every((l) => SUBAGENT_CMD.test(l)) ? 'its sub-agents finish'
+                : jobs.length === 1 && jobs[0] ? '“' + short(jobs[0], 60) + '” ends' : 'its background work ends';
+            return { kind: 'self', tone: 'ok', text: 'Resumes by itself when ' + what };
+        }
+        const watchers = (bg.watchers || []).filter((w) => w && typeof w === 'object');
+        const live = watchers.filter((w) => w.status !== 'paused');
+        if (live.length) {
+            const next = live.reduce((a, b) => ((epoch(b.next_at) || Infinity) < (epoch(a.next_at) || Infinity) ? b : a));
+            return { kind: 'supervisor', tone: 'ok', supervisor: handle(next.supervisor), at: epoch(next.next_at),
+                every: Number(next.every) || null, text: 'Idle until its supervisor checks on it' };
+        }
+        if (watchers.length) {
+            return { kind: 'none', tone: 'warn', supervisor: handle(watchers[0].supervisor),
+                text: 'Supervision is paused: nothing will wake this chat until you message it or resume supervision' };
+        }
+        if (orch === 'active') {
+            return { kind: 'none', tone: 'warn', text: 'Nothing is set to wake this chat: message it to continue' };
+        }
+        return null;
+    }
+
     /** Presentation for one summary (+ live sub-agents), or null when there is nothing to show. */
-    function plan(bg, subagents) {
-        if (!bg || typeof bg !== 'object') return null;
+    function plan(bg, subagents, orchestration) {
+        const waking = wake(bg, orchestration);
+        if (!bg || typeof bg !== 'object') {
+            if (!waking) return null;
+            bg = {};
+        }
         // Live children are shown by their transcript cards; only the wait or
         // detached job that runs their `api.subagents` command is folded away.
         const folding = childrenLive(subagents);
@@ -135,7 +188,7 @@
         const schedules = bg.schedules || [];
         const n = Number(bg.process_count) || 0;
         const d = Number(bg.detached_count) || 0;
-        if (!waits.length && !watches.length && !recent.length && !schedules.length && !n) return null;
+        if (!waits.length && !watches.length && !recent.length && !schedules.length && !n && !waking) return null;
         const working = !!(waits.length || watches.length || n);
         const scheduleOnly = !working && !recent.length;
         const schedulesPaused = schedules.length > 0 && schedules.every((s) => s.status === 'paused');
@@ -212,6 +265,8 @@
                 : n ? processTitle
                 : recent.length ? 'Background job results'
                 : !sups.length && sends.length ? (sends.length > 1 ? 'Messages queued' : 'Message queued')
+                : !schedules.length && waking ? (waking.kind === 'supervisor' ? 'Supervised'
+                    : waking.kind === 'held' ? 'Orchestration ' + String(orchestration) : 'Idle')
                 : schedulesPaused ? 'Supervision paused' : 'Supervising',
             label: (units.length && !bound.length && !waits.length) || foldedLabel
                 || fallbackProcessLabel || fallbackScheduleLabel || scheduleOnly ? '' : (bg.label || ''),
@@ -253,6 +308,7 @@
             processCount: n,
             feed: !!bg.feed,
             targets,
+            wake: waking,
         };
     }
 
@@ -757,8 +813,37 @@
                 if (!lone) { row.append(aside); rows.append(row); }
             });
 
+            // Wake line: what starts the chat's next turn. Outside `rows`, so a
+            // settled (collapsed) card still says it.
+            let wakeRows = null;
+            if (p.wake) {
+                const w = p.wake;
+                const row = mk('div', 'chat-bg-row chat-bg-wake is-' + w.tone);
+                row.append(icon(w.kind === 'self' ? 'resume' : w.kind === 'supervisor' ? 'eye' : 'alert'));
+                if (w.supervisor && /^CH-\d+$/.test(w.supervisor)) {
+                    row.append(chatChip(w.supervisor, 'Open the supervisor chat ' + w.supervisor));
+                }
+                const label = mk('span', 'chat-bg-row-label chat-bg-seen', w.text);
+                label.title = w.text;
+                row.append(label);
+                if (w.kind === 'supervisor' && w.at) {
+                    const aside = mk('span', 'chat-bg-row-aside');
+                    const next = mk('span', 'chat-bg-next');
+                    next.setAttribute('data-next', String(w.at));
+                    next.setAttribute('data-every', String(w.every || ''));
+                    next.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><circle class="chat-bg-next-track" cx="10" cy="10" r="7"/>'
+                        + '<circle class="chat-bg-next-arc" cx="10" cy="10" r="7" transform="rotate(-90 10 10)"/></svg>';
+                    next.append(mk('span', 'chat-bg-next-text'));
+                    aside.append(next);
+                    row.append(aside);
+                }
+                wakeRows = mk('div', 'chat-bg-rows chat-bg-wake-rows');
+                wakeRows.append(row);
+            }
+
             const parts = [head];
             if (open && rows.childNodes.length) parts.push(rows);
+            if (wakeRows) parts.push(wakeRows);
             node.replaceChildren(...parts);
             if (node.parentNode !== box) box.appendChild(node);
             keepLast();
@@ -783,7 +868,7 @@
                 return;
             }
             const busy = !!(live && (live.generating || live.active)) || !!(host.isBusy && host.isBusy());
-            const p = busy ? null : plan(live && live.background, live && live.subagents);
+            const p = busy ? null : plan(live && live.background, live && live.subagents, live && live.orchestration);
             if (!p) { remove(); return; }
             const key = JSON.stringify(p);
             const node = el();
@@ -798,6 +883,6 @@
         return { sync, remove };
     }
 
-    root.CuttleChatBackgroundWork = { ID, plan, jobView, elapsed, startsText, sendView, nextCheck, settled,
+    root.CuttleChatBackgroundWork = { ID, plan, wake, jobView, elapsed, startsText, sendView, nextCheck, settled,
         SEEN_TEXT, STUCK_AFTER_SEC, create };
 })(typeof window === 'undefined' ? globalThis : window);

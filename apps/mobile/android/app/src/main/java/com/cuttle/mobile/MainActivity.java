@@ -82,6 +82,11 @@ public class MainActivity extends BridgeActivity {
     private boolean recoverQueued = false;
     private static final long CONNECTION_WATCHDOG_MS = 18000;
     private volatile boolean cuttleDocumentReady = false;
+    // Main-thread generation fences late probe results when the user changes screens.
+    private int connectionAttempt = 0;
+    private final StartupCover startupCover = new StartupCover(this);
+    // Above the shell's own 7 s first-page reveal failsafe.
+    private static final long STARTUP_SHELL_SETTLE_MS = 8000;
 
     private final Runnable connectionWatchdog = () -> {
         if (cuttleDocumentReady) {
@@ -104,6 +109,13 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         EdgeToEdge.enable(this);
+        // Cover the bundled setup page from the first frame when a host is saved.
+        String savedBase = readBaseUrl();
+        if (savedBase != null && !savedBase.isEmpty()) {
+            int[] colors = StartupColors.read(this);
+            getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(colors[0]));
+            startupCover.show(colors[0], colors[1], this::openSettings);
+        }
 
         NotifyController.watchPrefs(this);
         maybeRequestNotificationPermission();
@@ -161,6 +173,9 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onDestroy() {
+        connectionAttempt++;
+        mainHandler.removeCallbacks(connectionWatchdog);
+        startupCover.hide();
         liveVoice.stop();
         realtimeVoice.stop();
         VoiceCallService.stop(this);
@@ -246,13 +261,17 @@ public class MainActivity extends BridgeActivity {
     private void bootLikeElectron() {
         if (forceSetupOnce) {
             forceSetupOnce = false;
+            startupCover.hide();
             return;
         }
         String base = readBaseUrl();
         if (base == null || base.isEmpty()) {
+            startupCover.hide();
             return; // stay on local setup (Capacitor default)
         }
-        showLoading("Starting Cuttle…");
+        if (!startupCover.isShowing()) {
+            showLoading("Starting Cuttle…");
+        }
         loadCuttle(base);
     }
 
@@ -319,12 +338,19 @@ public class MainActivity extends BridgeActivity {
             }
 
             @Override
+            public void onPageCommitVisible(WebView view, String url) {
+                super.onPageCommitVisible(view, url);
+                releaseStartupCover(url, false);
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 if (url != null && isWebViewErrorUrl(url)) {
                     handleDocumentLoadError(url, "Server unreachable");
                     return;
                 }
+                releaseStartupCover(url, true);
                 if (url != null && url.contains("app_shell.html")) {
                     cuttleDocumentReady = true;
                     mainHandler.removeCallbacks(connectionWatchdog);
@@ -576,19 +602,34 @@ public class MainActivity extends BridgeActivity {
         }
         cuttleDocumentReady = false;
         mainHandler.removeCallbacks(connectionWatchdog);
-        if (!NetworkUtil.isOnline(this)) {
-            showServerOffline(baseUrl);
-            return;
-        }
+        int attempt = ++connectionAttempt;
+        probeCuttle(baseUrl, entry, attempt, 0);
+    }
+
+    private void probeCuttle(String baseUrl, String entry, int attempt, int failures) {
         new Thread(() -> {
+            // A network capability snapshot can lag Wi-Fi/VPN wake-up or exclude
+            // a LAN-only network. Probe the host itself before declaring it offline.
             boolean reachable = CuttleApi.ping(this, 5);
             mainHandler.post(() -> {
+                if (attempt != connectionAttempt || isFinishing() || isDestroyed()) {
+                    return;
+                }
                 WebView wv = bridge != null ? bridge.getWebView() : null;
                 if (wv == null) {
                     return;
                 }
                 if (!reachable) {
-                    showServerOffline(baseUrl);
+                    if (failures < 2) {
+                        long delay = failures == 0 ? 500 : 1500;
+                        mainHandler.postDelayed(() -> {
+                            if (attempt == connectionAttempt && !isFinishing() && !isDestroyed()) {
+                                probeCuttle(baseUrl, entry, attempt, failures + 1);
+                            }
+                        }, delay);
+                    } else {
+                        showServerOffline(baseUrl);
+                    }
                     return;
                 }
                 wv.loadUrl(entry);
@@ -597,7 +638,28 @@ public class MainActivity extends BridgeActivity {
         }, "cuttle-reachability").start();
     }
 
+    /**
+     * The shell document loads before its sidebar state and first page settle,
+     * so the shell itself ends the cover (startupReady); the limit covers a
+     * shell that never says so. Any other host page ends it at once.
+     */
+    private void releaseStartupCover(String url, boolean finished) {
+        // A failed load commits an error page under the host URL; keep the
+        // cover up while the retry is queued.
+        if (!isCuttleRemote(url) || recoverQueued) {
+            return;
+        }
+        if (!url.contains("app_shell.html")) {
+            startupCover.hide();
+        } else if (finished) {
+            startupCover.hideWithin(STARTUP_SHELL_SETTLE_MS);
+        }
+    }
+
     private void openSettings() {
+        connectionAttempt++;
+        mainHandler.removeCallbacks(connectionWatchdog);
+        startupCover.hide();
         WebView webView = bridge != null ? bridge.getWebView() : null;
         if (webView == null) {
             return;
@@ -639,7 +701,9 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void showOfflineLogin(String baseUrl) {
+        connectionAttempt++;
         mainHandler.removeCallbacks(connectionWatchdog);
+        startupCover.hide();
         cuttleDocumentReady = false;
         WebView webView = bridge != null ? bridge.getWebView() : null;
         if (webView == null) {
@@ -670,6 +734,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void showError(String message) {
+        startupCover.hide();
         WebView webView = bridge != null ? bridge.getWebView() : null;
         if (webView == null) {
             return;
@@ -892,6 +957,18 @@ public class MainActivity extends BridgeActivity {
             } catch (Exception e) {
                 return false;
             }
+        }
+
+        /** The shell's theme colours, kept for the next launch's startup screen. */
+        @JavascriptInterface
+        public void setStartupColors(String background, String accent) {
+            mainHandler.post(() -> StartupColors.save(MainActivity.this, background, accent));
+        }
+
+        /** The shell revealed its first page: layout and chat are settled. */
+        @JavascriptInterface
+        public void startupReady() {
+            mainHandler.post(startupCover::hide);
         }
 
         @JavascriptInterface

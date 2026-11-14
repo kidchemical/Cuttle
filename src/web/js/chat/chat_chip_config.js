@@ -11,6 +11,13 @@
    Optional host labels (app pages reusing the picker, e.g. Apps →
    Agents): `agentPickerTitle`, `agentPickerSubtitle`, `clearChoiceLabel`.
 
+   Optional host links (each shown only when supplied): `navigate(page)`
+   adds "Project settings" (Apps → Projects on the picked project) and
+   "Agent settings" (Settings → Agents); `reloadProjects()` (Promise)
+   adds "Add project", which swaps the same modal to a register form
+   (POST /api/projects/register, owners only) with a Back button, then
+   reloads the registry and picks the new project for this chat.
+
    Composed once per page by chat_page.js:
    `CuttleChipConfig.create(host)` returns
    `{ openProject, openAgent, close, bindRow, openCustom }` — `openCustom`
@@ -73,6 +80,17 @@
             value: '',
             label: noneLabel || 'None — use starred default',
         }].concat(options || []);
+    }
+
+    /**
+     * Default project name for a folder path: its last segment (POSIX or
+     * Windows separators, trailing slashes ignored). Pure.
+     */
+    function projectNameFromPath(path) {
+        const parts = String(path == null ? '' : path).trim()
+            .split(/[\\/]+/).filter(Boolean);
+        const last = parts.length ? parts[parts.length - 1] : '';
+        return /^[A-Za-z]:$/.test(last) || last === '~' ? '' : last;
     }
 
     function agentSettingOptions(spec, kind) {
@@ -218,6 +236,7 @@
             : (msg, kind) => { if (typeof root.showToast === 'function') root.showToast(msg, kind); };
 
         let modalEl = null;
+        let canRegister = null; // owner check for Add project, fetched once
 
         function optionsHtml(list, selected) {
             const opts = (list && list.length)
@@ -289,11 +308,13 @@
                 '<div class="auth-modal chip-config-modal" role="dialog" aria-modal="true">' +
                 '<button type="button" class="auth-modal-close" id="chipConfigClose" aria-label="Close">×</button>' +
                 '<div class="auth-modal-header">' +
+                '<button type="button" class="chip-config-back" id="chipConfigBack" hidden>← Back</button>' +
                 '<h2 class="auth-modal-title" id="chipConfigTitle"></h2>' +
                 '<p class="auth-modal-subtitle" id="chipConfigSubtitle"></p>' +
                 '</div>' +
                 '<div class="chip-config-fields" id="chipConfigFields"></div>' +
                 '<div class="chip-config-actions">' +
+                '<div class="chip-config-links" id="chipConfigLinks" hidden></div>' +
                 '<button type="button" class="logout-confirm-btn logout-confirm-submit" id="chipConfigDone">Done</button>' +
                 '</div>' +
                 '</div>';
@@ -321,10 +342,28 @@
             }
         }
 
-        function openModal(title, subtitle, fieldsHtml, onMount) {
+        // `opts.links`: footer shortcuts `[{key?, label, onClick}]`; `opts.back`:
+        // shows ← Back (a sub-view of the same modal returns to its picker).
+        function openModal(title, subtitle, fieldsHtml, onMount, opts) {
             const el = ensureModal();
+            const o = opts || {};
             el.querySelector('#chipConfigTitle').textContent = title;
             el.querySelector('#chipConfigSubtitle').textContent = subtitle || '';
+            const backBtn = el.querySelector('#chipConfigBack');
+            backBtn.hidden = typeof o.back !== 'function';
+            backBtn.onclick = backBtn.hidden ? null : () => o.back();
+            // A sub-view has its own submit; Done would read as "save".
+            el.querySelector('#chipConfigDone').hidden = !backBtn.hidden;
+            const linksEl = el.querySelector('#chipConfigLinks');
+            const links = (o.links || []).filter((l) => l && typeof l.onClick === 'function');
+            linksEl.innerHTML = links.map((l, i) =>
+                '<button type="button" class="chip-config-link" data-link="' + i + '"' +
+                (l.key ? ' data-link-key="' + esc(l.key) + '"' : '') + '>' +
+                esc(l.label) + '</button>').join('');
+            linksEl.hidden = !links.length;
+            linksEl.querySelectorAll('[data-link]').forEach((btn) => {
+                btn.addEventListener('click', () => links[Number(btn.dataset.link)].onClick(btn));
+            });
             const host_ = el.querySelector('#chipConfigFields');
             host_.querySelectorAll('select').forEach(sel => sel.__cuttleSearchable?.destroy());
             host_.innerHTML = fieldsHtml;
@@ -452,6 +491,100 @@
             }
         }
 
+        function goTo(page) {
+            close();
+            h.navigate(page);
+        }
+
+        function projectLinks(getProjectId) {
+            const links = [];
+            if (typeof h.reloadProjects === 'function' && canRegister === true) {
+                links.push({ key: 'add-project', label: '＋ Add project', onClick: () => openAddProject() });
+            }
+            if (typeof h.navigate === 'function') {
+                links.push({ label: '⚙ Project settings', onClick: () => {
+                    const id = getProjectId();
+                    goTo('/projects_page.html' + (id ? '?project_id=' + encodeURIComponent(id) : ''));
+                } });
+            }
+            return links;
+        }
+
+        // Add project: the same modal swaps to a register form; Back (or a
+        // successful register) returns to the working-project picker.
+        function openAddProject() {
+            const fields =
+                inputHtml('chipConfigNewPath', 'Folder path', '', '/home/you/Projects/MyProject') +
+                inputHtml('chipConfigNewName', 'Name', '', 'Defaults to the folder name') +
+                '<p class="chip-config-error" id="chipConfigAddError" role="alert"></p>' +
+                '<div class="chip-config-field">' +
+                '<button type="button" class="chip-config-create" id="chipConfigRegister">Register project</button>' +
+                '</div>';
+            openModal(
+                'Add project',
+                'Register an existing folder on the Cuttle host. Cuttle sets up its .cuttle/ config.',
+                fields,
+                (el) => {
+                    const pathIn = el.querySelector('#chipConfigNewPath');
+                    const nameIn = el.querySelector('#chipConfigNewName');
+                    const errEl = el.querySelector('#chipConfigAddError');
+                    const btn = el.querySelector('#chipConfigRegister');
+                    pathIn.addEventListener('input', () => {
+                        nameIn.placeholder = projectNameFromPath(pathIn.value) || 'Defaults to the folder name';
+                    });
+                    const submit = async () => {
+                        const path = pathIn.value.trim();
+                        const name = nameIn.value.trim() || projectNameFromPath(path);
+                        errEl.textContent = '';
+                        if (!path) { errEl.textContent = 'Enter the project folder path.'; pathIn.focus(); return; }
+                        if (!name) { errEl.textContent = 'Enter a project name.'; nameIn.focus(); return; }
+                        btn.disabled = true;
+                        try {
+                            const resp = await fetch('/api/projects/register', {
+                                method: 'POST',
+                                credentials: 'include',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ name, path }),
+                            });
+                            const data = await resp.json().catch(() => ({}));
+                            if (!resp.ok || !data.success) {
+                                errEl.textContent = (data && data.error) || 'Could not register project.';
+                                return;
+                            }
+                            await Promise.resolve(h.reloadProjects());
+                            const proj = h.findProjectById ? h.findProjectById(data.project_id) : null;
+                            if (proj && h.setChatProject) h.setChatProject(proj);
+                            toast('Project registered: ' + name, 'success');
+                            openProject();
+                        } catch (err) {
+                            errEl.textContent = (err && err.message) || 'Could not register project.';
+                        } finally {
+                            btn.disabled = false;
+                        }
+                    };
+                    btn.addEventListener('click', submit);
+                    [pathIn, nameIn].forEach((input) => input.addEventListener('keydown', (e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); submit(); }
+                    }));
+                    pathIn.focus();
+                },
+                { back: () => openProject() }
+            );
+        }
+
+        // Owners only may register projects. Asked once up front (and again
+        // on open while unknown) so Add project never pops in or out.
+        function checkCanRegister() {
+            if (canRegister !== null || typeof h.reloadProjects !== 'function'
+                || typeof fetch !== 'function') return;
+            canRegister = false;
+            fetch('/api/projects/app/access', { credentials: 'include', cache: 'no-store' })
+                .then((r) => r.json())
+                .then((d) => { canRegister = !!(d && d.can_edit); })
+                .catch(() => { canRegister = null; });
+        }
+        if (typeof document !== 'undefined') checkCanRegister();
+
         function openProject() {
             const defaultsMode = h.pickerMode === 'defaults';
             const projects = h.getProjects ? (h.getProjects() || []) : [];
@@ -504,6 +637,7 @@
                 fields,
                 (el) => {
                     const projSel = el.querySelector('#chipConfigProject');
+                    checkCanRegister();
                     const modeSel = el.querySelector('#chipConfigMode');
                     const repoSel = el.querySelector('#chipConfigRepo');
                     const branchSel = el.querySelector('#chipConfigBranch');
@@ -605,7 +739,11 @@
                         });
                     }
                     sync();
-                }
+                },
+                { links: projectLinks(() => {
+                    const sel = modalEl && modalEl.querySelector('#chipConfigProject');
+                    return (sel && sel.value) || curId;
+                }) }
             );
         }
 
@@ -717,7 +855,10 @@
                             node.addEventListener('focus', cancel, { once: true });
                         });
                     }
-                }
+                },
+                { links: typeof h.navigate === 'function'
+                    ? [{ label: '⚙ Agent settings', onClick: () => goTo('/settings_page.html?tab=agents') }]
+                    : [] }
             );
         }
 
@@ -767,12 +908,12 @@
             });
         }
 
-        return { openProject, openAgent, close, bindRow, openCustom: openModal };
+        return { openProject, openAgent, openAddProject, close, bindRow, openCustom: openModal };
     }
 
     const api = {
         create, stickyAgentEntries, agentSettingOptions, withClearChoice, branchFor, refreshBranch,
-        repoChoice, activeRepoBranchLabel,
+        repoChoice, activeRepoBranchLabel, projectNameFromPath,
     };
 
     const ns = (root.CuttleChipConfig = root.CuttleChipConfig || {});

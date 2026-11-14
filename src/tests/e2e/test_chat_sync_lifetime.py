@@ -639,3 +639,27 @@ def test_malformed_body_paints_waiting_in_current_session(
         assert errors == []
     finally:
         page.close()
+
+
+def test_open_running_turn_threads_steer_on_first_paint(browser, static_server):
+    world = SyncWorld()
+    steer = _msg(3, 'user', 'Also check the tests')
+    steer['metadata'] = {'steered': True, 'turn_id': 'turn-1'}
+    world.scenario[str(SID_A)]['messages'] = [_msg(1, 'user', 'Fix it'), steer]
+    world.scenario[str(SID_A)]['live'] = {
+        'active': True, 'generating': True, 'status': 'Working',
+        'message_id': 2, 'query_id': 'turn-1',
+    }
+    page, frame, errors = _open(browser, static_server, world, SID_A)
+    try:
+        state = frame.locator('#chatMessages').evaluate('''box => {
+            const live = box.querySelector('#typing-indicator-remote');
+            const steer = box.querySelector('[data-message-id="3"]');
+            return { root: !!live && live.classList.contains('thread-root'),
+                reply: !!steer && steer.classList.contains('thread-reply'),
+                order: !!live && !!steer && live.nextElementSibling === steer };
+        }''')
+        assert state == {'root': True, 'reply': True, 'order': True}
+        assert not errors
+    finally:
+        page.close()

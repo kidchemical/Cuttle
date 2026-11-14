@@ -62,6 +62,28 @@ def is_jev_model_id(model: str) -> bool:
     return mid.startswith("jev-")
 
 
+def _key(name: str) -> str:
+    """Process env first, then ``<home>/.env``.
+
+    Agent CLI shells never inherit provider keys (``core.agent_cli_env``), so
+    ``python -m api.jev`` run by an agent reads the key from the home file.
+    """
+    value = (os.environ.get(name) or "").strip()
+    if value:
+        return value
+    try:
+        from dotenv import dotenv_values
+
+        from core.runtime_paths import env_file
+
+        path = env_file()
+        if path.is_file():
+            return str((dotenv_values(path) or {}).get(name) or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
 def resolve_jev_credentials(raw: Optional[Dict[str, Any]] = None) -> tuple[str, str, str]:
     """Return (api_key, base_url, auth_source).
 
@@ -70,8 +92,8 @@ def resolve_jev_credentials(raw: Optional[Dict[str, Any]] = None) -> tuple[str, 
     An explicit ``CUTTLE_JEV_BASE_URL`` / ``jev.base_url`` always wins on host.
     """
     blob = raw if isinstance(raw, dict) else {}
-    typesafe = (os.environ.get("TYPESAFE_API_KEY") or blob.get("api_key") or "").strip()
-    openrouter = (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+    typesafe = (_key("TYPESAFE_API_KEY") or blob.get("api_key") or "").strip()
+    openrouter = _key("OPENROUTER_API_KEY")
     explicit_base = str(
         blob.get("base_url") or os.environ.get("CUTTLE_JEV_BASE_URL") or ""
     ).strip().rstrip("/")

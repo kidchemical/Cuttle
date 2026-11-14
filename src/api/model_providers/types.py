@@ -21,6 +21,7 @@ class ProviderManifest:
     model_rules: tuple[dict[str, Any], ...] = ()
     models: tuple[dict[str, Any], ...] = ()
     speech: dict[str, Any] = field(default_factory=dict)
+    transcription: dict[str, Any] = field(default_factory=dict)
     schema_version: int = 1
 
     def api_key(self) -> str:
@@ -118,6 +119,8 @@ class TranscriptionRequest:
     prompt: str = ""
     language: str = ""
     timeout: float = 30
+    # Endpoint override for a user-managed server (local provider only).
+    base_url: str = ""
 
 
 def text_result(text, response, model):

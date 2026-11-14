@@ -250,6 +250,31 @@ def list_running_for_parent(db, parent_session_id: int) -> List[BatchRecord]:
     ]
 
 
+def detached_cli_pids(db, parent_session_id: int) -> List[Dict[str, Any]]:
+    """Running batches of this chat whose spawn CLI was started detached (a
+    ``systemd-run`` unit or orphaned to init): ``[{batch_id, pid}]``. Read from
+    the raw metadata; the caller checks the pid is still alive."""
+    conn = db._get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, metadata FROM subagent_batches WHERE parent_session_id = ? AND status = 'running'",
+        (int(parent_session_id),),
+    )
+    rows = cur.fetchall()
+    conn.close()
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        d = dict(row)
+        try:
+            meta = json.loads(d.get("metadata") or "{}")
+        except ValueError:
+            continue
+        pid = int(meta.get("detached_cli_pid") or 0)
+        if pid:
+            out.append({"batch_id": str(d.get("id") or ""), "pid": pid})
+    return out
+
+
 def list_live_for_parent(db, parent_session_id: int) -> List[BatchRecord]:
     """Batches whose cards show live in the parent chat right now.
 
@@ -447,9 +472,13 @@ def update_batch(
     finished: bool = False,
     watch_id: Optional[str] = None,
     widget_id: Optional[str] = None,
+    turn_id: Optional[str] = None,
 ) -> None:
     sets = []
     args: List[Any] = []
+    if turn_id is not None:
+        sets.append("turn_id = ?")
+        args.append(turn_id or None)
     if status is not None:
         sets.append("status = ?")
         args.append(status)

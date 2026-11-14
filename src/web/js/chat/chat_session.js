@@ -311,6 +311,7 @@
                 // Opening this chat — stop any background completion poll for it.
                 cancelDetachedSessionCompletionWatch(sessionId);
                 const loadSeq = session.open(sessionId);
+                if (h.resetReplyThreads) h.resetReplyThreads(sessionId);
                 if (updateSessionUsageSummary) updateSessionUsageSummary();
                 adoptFollowupQueue(session.current());
                 // Opened chat defaults to idle until the one-shot live-status (below)
@@ -377,6 +378,7 @@
 
                 const authSid = toAuthDbSessionId(sessionId);
                 let loadedMessages = [];
+                const liveStatusPromise = fetchChatLiveStatus(sessionId);
                 try {
                     // Boot deep-links already have this transcript in flight (started in
                     // chat_page.html) — reuse it instead of paying for a second round trip.
@@ -447,6 +449,10 @@
                             rememberChatSessionTitle(sessionId, data.session_name);
                             updateChatSessionTitle(sessionId);
                         }
+                        // Obtain the live turn before painting saved steers, so the
+                        // working bubble and its thread appear together on reopen.
+                        const liveStatus = await liveStatusPromise;
+                        if (loadSeq !== session.navSeq()) return;
                         beginSuppressChatAttention();
                         try {
                             // skipScroll/skipNav: bulk paint must not schedule bottom
@@ -466,18 +472,15 @@
                         // stuck queue (e.g. CH-000441) drains without waiting for sync.
                         applyServerFollowups(data.followups, data.followup_revision);
                         acceptSessionAttention(sessionId, data.attention);
-                        // Transcript is on screen — drop the restore veil before the
-                        // live-status round trip, which nobody needs to wait behind.
-                        clearChatRestoreVeil();
                         reconcileCuttleButtonLocks(loadedMessages);
                         // Sticky agent BEFORE remote-waiting paint — otherwise
                         // currentTypingSlashMeta() sees empty/other-chat chips and
                         // the working bubble reopens without the agent badge.
                         restoreSessionStickySlash(sessionId, loadedMessages);
-                        const liveStatus = await fetchChatLiveStatus(sessionId);
-                        if (loadSeq !== session.navSeq()) return;
                         setDeferOpenChatGeneratingFromSessions(false);
                         updateRemoteWaitingFromMessages(loadedMessages, liveStatus);
+                        if (h.reconcileReplyThreads) h.reconcileReplyThreads();
+                        clearChatRestoreVeil();
                         healStaleGeneratingState();
                         if (
                             getFollowupQueue().items.some((x) => !x.paused)
