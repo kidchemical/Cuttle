@@ -59,6 +59,7 @@ CHAT_OWNERS = (
     ("chat_voice.js", "CuttleChatVoice", "CuttleChatVoice.create("),
     ("chat_voice_clip.js", "CuttleChatVoiceClip", "CuttleChatVoiceClip.create("),
     ("chat_voice_clip_text.js", "CuttleChatVoiceClipText", "text: CuttleChatVoiceClipText"),
+    ("chat_quote_clips.js", "CuttleChatQuoteClips", "CuttleChatQuoteClips.create("),
     ("supervised_control.js", "CuttleSupervised", "CuttleSupervised."),
     ("chat_slash.js", "CuttleChatSlash", "CuttleChatSlash."),
     ("chat_agent_model.js", "CuttleChatAgentModel", "CuttleChatAgentModel."),

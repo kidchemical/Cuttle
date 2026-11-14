@@ -7677,6 +7677,209 @@ button.cuttle-button.is-unselected {
     color: #ef4444;
 }
 
+/* Quote clips (chat_quote_clips.js): selection toolbar, reply panel, composer cards */
+.quote-toolbar,
+.quote-reply-panel {
+    position: fixed;
+    z-index: 1200;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    box-shadow: 0 6px 28px rgba(0, 0, 0, 0.32), 0 0 0 1px rgba(255, 255, 255, 0.04);
+    font-size: 12px;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.quote-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    max-width: calc(100vw - 12px);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.quote-toolbar-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 9px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.quote-toolbar-btn:hover,
+.quote-toolbar-btn:focus-visible {
+    background: rgba(148, 163, 184, 0.18);
+    outline: none;
+}
+
+.quote-toolbar-btn[data-action="reply"] {
+    margin-left: 3px;
+    border-left: 1px solid var(--border-color);
+    border-radius: 0 7px 7px 0;
+    padding-left: 11px;
+}
+
+.quote-toolbar-icon {
+    font-size: 12px;
+    line-height: 1;
+}
+
+.quote-reply-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(380px, calc(100vw - 12px));
+    padding: 10px;
+}
+
+.quote-reply-quote,
+.quote-clip-quote {
+    color: var(--text-secondary);
+    border-left: 2px solid var(--border-color);
+    padding-left: 7px;
+}
+
+.quote-reply-quote {
+    max-height: 4.2em;
+    overflow: hidden;
+    line-height: 1.4;
+}
+
+.quote-reply-input {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 56px;
+    max-height: 40vh;
+    padding: 7px 9px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: rgba(148, 163, 184, 0.08);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.4;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.quote-reply-input:focus {
+    outline: none;
+    border-color: var(--accent-color, #6366f1);
+}
+
+.quote-reply-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.quote-reply-cancel,
+.quote-reply-accept {
+    padding: 5px 12px;
+    border-radius: 7px;
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.quote-reply-accept {
+    border-color: transparent;
+    background: var(--accent-color, #6366f1);
+    color: #fff;
+}
+
+.quote-reply-accept:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.quote-clips-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: stretch;
+    min-height: 0;
+    max-height: 132px;
+    overflow-y: auto;
+}
+
+.quote-clips-row[hidden] {
+    display: none !important;
+}
+
+.quote-clip {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 4px;
+    width: 210px;
+    max-width: 100%;
+    padding: 6px 4px 6px 9px;
+    border-radius: 8px;
+    font-size: 12px;
+    background: rgba(148, 163, 184, 0.16);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+
+.quote-clip-text {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1;
+    min-width: 0;
+}
+
+.quote-clip-reply,
+.quote-clip-quote {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.quote-clip-reply {
+    font-weight: 600;
+}
+
+.quote-clip-quote {
+    font-size: 11px;
+}
+
+.quote-clip-remove {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.quote-clip-remove:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+
 /* Composer voice clips (chat_voice_clip.js) */
 .mic-button.is-recording {
     color: #ef4444;

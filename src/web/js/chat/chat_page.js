@@ -641,6 +641,7 @@
             if (raw) pendingAttachments = JSON.parse(raw) || [];
         } catch {}
         renderAttachmentChips();
+        if (quoteClips) quoteClips.render();
     }
     function _clearPersistedPending(sid) {
         try { localStorage.removeItem(_pendingKey(sid)); } catch {}
@@ -1418,6 +1419,20 @@
             composers: [['micButton', 'chatAttachChipsRow', 'chatInput'], ['welcomeMicButton', 'welcomeAttachChipsRow', 'welcomeChatInput']]
                 .map(([b, r, i]) => ({ button: document.getElementById(b), row: document.getElementById(r), input: document.getElementById(i) })),
         });
+    }
+
+    /** Select transcript text → reply toolbar → quote clips in the composer (chat_quote_clips.js). */
+    let quoteClips = null;
+    function wireQuoteClips() {
+        quoteClips = CuttleChatQuoteClips.create({
+            doc: document, win: window, storage: localStorage,
+            container: () => document.getElementById('chatMessages'), sessionId: () => session.current(),
+            composers: [['chatInput', 'chatAttachChipsRow'], ['welcomeChatInput', 'welcomeAttachChipsRow']]
+                .map(([i, r]) => ({ input: document.getElementById(i), before: document.getElementById(r) })),
+            onChange: () => { autoResizeTextarea(); autoResizeWelcomeTextarea(); },
+        });
+        quoteClips.start();
+        quoteClips.syncFlag((u, o) => fetch(u, o));
     }
 
     function wireAttachControls() {
@@ -6850,7 +6865,7 @@
             return;
         }
         if (voiceClip && voiceClip.isActive() && !(await voiceClip.finishForSend())) return;
-        const message = composeMessageWithSlashChip(input).trim();
+        const message = composeMessageWithSlashChip(quoteClips ? quoteClips.source(input) : input).trim();
         const attachments = pendingAttachments.slice();
 
         if (!isSendableComposerMessage(message, attachments)) {
@@ -6876,6 +6891,7 @@
         await ensureCodexEffortForSend(message);
 
         input.value = '';
+        if (quoteClips) quoteClips.clear();
         clearComposerDraft('new');
         applyStickySlashAfterComposerSend(message);
         const displayMessage = formatMessageWithAttachments(message, attachments);
@@ -10716,12 +10732,14 @@
         if (overrideText == null && composerLock.blocksSend()) return;
         // Recording a voice clip: Send stops it and sends it with the message.
         if (overrideText == null && voiceClip && voiceClip.isActive() && !(await voiceClip.finishForSend())) return;
-        const composerSource = overrideText != null ? { id: input.id, value: overrideText } : input;
+        const composerSource = overrideText != null ? { id: input.id, value: overrideText }
+            : (quoteClips ? quoteClips.source(input) : input);
         const message = composeMessageWithSlashChip(composerSource).trim();
         const attachments = overrideText != null ? [] : pendingAttachments.slice();
         const clearComposer = () => {
             if (overrideText != null) return;
             input.value = '';
+            if (quoteClips) quoteClips.clear();
             clearComposerDraft(session.current());
         };
 
@@ -12507,6 +12525,7 @@
 
         wireAttachControls();
         wireVoiceClipControls();
+        wireQuoteClips();
         wireEnhanceControls();
         syncExperimentalComposerControls();
         window.addEventListener('focus', syncExperimentalComposerControls);
