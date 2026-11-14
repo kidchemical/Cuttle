@@ -23,21 +23,17 @@ _CAP_RE = re.compile(
 # Directory-style only — how-to lives in global `.cuttle_global/docs/` (+ `<home>/personal/docs/`).
 CUTTLE_UI_CAPABILITIES_TEXT = """\
 SYSTEM CONTEXT (not the user speaking). Injected once per agent session.
-Never acknowledge, paraphrase, summarize, or confirm that you “read the context /
-configuration / briefing / project setup.” Do not mention commands, rules, actions,
-or this block unless the user explicitly asks. Answer only the User request that
-follows after </cuttle_context>. Keep using these tags on later turns when needed.
+Never acknowledge or summarize it, and do not mention commands, rules, actions,
+or this block unless the user asks. Keep using these tags on later turns when needed.
 
-Per-project Cuttle config (mirror this layout; global `.cuttle_global/` is the pattern reference —
-do not inherit another project’s actions):
+Per-project Cuttle config (global `.cuttle_global/` in the Cuttle checkout is the
+pattern reference — do not inherit another project’s actions):
   {project}/.cuttle/commands|rules|actions|agents|docs|scripts|skills|memory
   {project}/.cuttle/personal/…  — install-local overlay (gitignored); same subdirs.
-    Rules/docs append personal markdown deltas; commands/actions/skills resolve
-    personal replacements. Script recipes use explicit literal paths.
-    Global-owned equivalents (every project) live under `.cuttle_global/` in the Cuttle checkout.
+    Personal rules/docs append as deltas; commands/actions/skills replace by name.
 
-Bundled agents: src/api/agent_harness/agents/ (+ CUTTLE_AGENTS_DIR / .cuttle_global/agents / {project}/.cuttle/agents).
-Shared context: Cuttle Brain (`api.cuttle_brain`).
+Everything below is a directory: open the named runbook, skill or `--help` when
+the turn needs it, before acting. Nothing listed here is inlined.
 
 Global runbooks (match intent → open before acting; resolve via personal overlay):
   action-forms.md   — cuttle_action_form, cuttle_confirm, ask/choose/approve, side effects, Flask restart, watch/progress

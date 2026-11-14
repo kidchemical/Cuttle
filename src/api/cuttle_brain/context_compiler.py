@@ -225,9 +225,25 @@ def skill_inventory(project_path: Optional[str]) -> List[str]:
     from api.markdown_skills import list_markdown_skills
 
     return [
-        f"{skill['ref']}: {skill['description']} ({skill['path']})"
+        f"{skill['ref']}: {_clip_summary(skill['description'])} ({skill['path']})"
         for skill in list_markdown_skills(project_path)
     ]
+
+
+# The inventory is a directory: enough to know a skill exists and when it
+# applies. The full description is the first thing in its SKILL.md.
+_SKILL_SUMMARY_CHARS = 160
+
+
+def _clip_summary(text: Any, limit: int = _SKILL_SUMMARY_CHARS) -> str:
+    flat = " ".join(str(text or "").split())
+    if len(flat) <= limit:
+        return flat
+    cut = flat[:limit]
+    # Prefer a sentence end, then a word boundary.
+    stop = cut.rfind(". ")
+    cut = cut[: stop + 1] if stop >= limit // 2 else cut[: cut.rfind(" ")].rstrip(",;:") + "…"
+    return cut
 
 
 _ENVELOPE_PREAMBLE = (
@@ -306,8 +322,10 @@ def _runtime_block(
     chat_session_id: Any = None,
     project_path: Optional[str] = None,
     unattended: str = "",
+    described: str = "",
 ) -> str:
-    """Inventory + active Tasks digest. Handoff and chat-store hint are
+    """Inventory + active Tasks digest. ``described`` is the core-contract text:
+    runbooks it already names are not listed a second time. Handoff and chat-store hint are
     appended by ``compile_context`` after this block."""
     parts: List[str] = ["## Runtime context"]
     active_root = _project_root(project_path) if project_path else None
@@ -338,6 +356,7 @@ def _runtime_block(
         hidden = unattended_dropped_runbooks(unattended)
         global_docs = [name for name in global_docs if name not in hidden]
         deltas = [name for name in _delta_names(global_config / "docs", ("*.md",)) if name in global_docs]
+        global_docs = [name for name in global_docs if name not in described]
     else:
         global_docs = []
         deltas = []
@@ -354,8 +373,8 @@ def _runtime_block(
                 else ""
             )
             parts.append(
-                f"- global docs (Cuttle): {', '.join(global_docs)} "
-                f"— under `{global_docs_path}` when path differs from project"
+                f"- {'more ' if described else ''}global docs (Cuttle): {', '.join(global_docs)} "
+                f"— all global runbooks live under `{global_docs_path}`"
                 f"{delta_note}"
             )
         if not router.docs and global_config is not None:
@@ -518,6 +537,7 @@ def compile_context(
                 chat_session_id=chat_session_id,
                 project_path=project_path,
                 unattended=unattended,
+                described=core,
             )
         )
         layer_chars["runtime"] = len(runtime_sections[-1])
@@ -555,10 +575,10 @@ def compile_context(
     try:
         from api.jev.config import load_jev_config
         from api.jev.client import jev_available
-        from api.jev.rank import format_ranked_block, rank_context
+        from api.jev.rank import format_ranked_block, helper_chain, rank_context
 
         jcfg = load_jev_config()
-        if jcfg.rank_context and jev_available() and (user_prompt or "").strip():
+        if jcfg.rank_context and (helper_chain() or jev_available()) and (user_prompt or "").strip():
             ranked = rank_context(
                 user_prompt,
                 project_path=project_path,

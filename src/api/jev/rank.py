@@ -143,6 +143,93 @@ def _read_skill_body(ref: str, project_path: Optional[str] = None) -> str:
 
 from api.experimental.context_bundles import capture_call
 
+# Background-helpers task id. With an executor chosen for it (Settings →
+# Background helpers → Context ranking: any model API, or a tool-less one-turn
+# agent CLI), that executor judges instead of Jev. Unset → Jev, as before.
+CONTEXT_TASK = "context"
+_HELPER_TIMEOUT_S = 20.0
+
+
+def helper_chain() -> List[Dict[str, Any]]:
+    """The explicit executor chain for context ranking, or [] (Jev judges)."""
+    try:
+        from api import background_helpers
+
+        return list((background_helpers.preferences().get("tasks") or {}).get(CONTEXT_TASK) or [])
+    except Exception:
+        return []
+
+
+def _jev_judge(user_prompt: str, criteria: Dict[str, str], client) -> Dict[str, Any]:
+    state = {
+        "user_request": (user_prompt or "")[:1500],
+        "candidate_count": len(criteria),
+    }
+    questions = {
+        "needs_extra": noul(
+            "Would injecting one of the listed runbooks or skills materially help this turn, "
+            "or is the always-on rule set already enough?",
+            true="Extra skill/doc would help",
+            false="No extra context needed",
+        ),
+        "pick": choice(
+            "Which listed runbook or skill is the best extra context for `user_request`?",
+            criteria,
+        ),
+    }
+    c = client or get_client(timeout_s=8.0)
+    result = c.system_one(state, questions, task="jev:rank")
+    pick = result.get("pick")
+    return {
+        "needs_extra": float(result.get("needs_extra").noul or 0.0),
+        "confidence": float(pick.confidence) if pick.confidence is not None else 0.0,
+        "choice": pick.choice,
+        "probabilities": dict(pick.probabilities),
+        "model": result.model,
+        "usage": result.usage,
+    }
+
+
+def _helper_judge(user_prompt: str, criteria: Dict[str, str], chain: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Same judgment from one tool-less text turn (API or agent CLI helper)."""
+    import json
+
+    from api import background_helpers
+    from api.model_providers.types import TextRequest
+
+    ids = list(criteria)
+    listing = "\n".join(f"{i + 1}. {criteria[key]}" for i, key in enumerate(ids))
+    request = TextRequest(
+        user=f"User request:\n{(user_prompt or '')[:1500]}\n\nCandidates:\n{listing}",
+        system=(
+            "You pick at most one runbook or skill to preload for a coding agent's turn. "
+            "The agent already has its always-on rules and can open any candidate itself, "
+            "so pick only when one clearly applies to the user request. "
+            'Reply with one JSON object: {"pick": <candidate number, or 0 for none>, '
+            '"confidence": <0 to 1>}.'
+        ),
+        max_tokens=60,
+        temperature=0.0,
+        timeout=_HELPER_TIMEOUT_S,
+        json_object=True,
+    )
+    reply = background_helpers.generate(CONTEXT_TASK, request, chain=chain)
+    if reply is None:
+        raise RuntimeError("context ranking helper returned nothing")
+    data = json.loads(reply.text)
+    number = int(data.get("pick") or 0)
+    picked = ids[number - 1] if 1 <= number <= len(ids) else ""
+    conf = max(0.0, min(1.0, float(data.get("confidence") or 0.0))) if picked else 0.0
+    return {
+        "needs_extra": 1.0 if picked else 0.0,
+        "confidence": conf,
+        "choice": picked,
+        "probabilities": {picked: conf} if picked else {},
+        "model": str(reply.usage.get("model") or ""),
+        "usage": reply.usage,
+        "judge": "helper",
+    }
+
 
 @capture_call
 def rank_context(
@@ -160,7 +247,8 @@ def rank_context(
     if max_items is not None and max_items <= 0:
         # No room for even the winner: skip before any judge call or read.
         return {"items": [], "meta": {"skipped": True, "injected": [], "excerpt": False}}
-    if client is None and not jev_available():
+    chain = helper_chain() if client is None else []
+    if client is None and not chain and not jev_available():
         return empty
 
     inv = inventory or {}
@@ -168,41 +256,14 @@ def rank_context(
     if not candidates:
         return empty
     criteria = {c["id"]: c["summary"] for c in candidates[:80]}
-    state = {
-        "user_request": (user_prompt or "")[:1500],
-        "candidate_count": len(criteria),
-    }
-    questions = {
-        "needs_extra": noul(
-            "Would injecting one of the listed runbooks or skills materially help this turn, "
-            "or is the always-on rule set already enough?",
-            true="Extra skill/doc would help",
-            false="No extra context needed",
-        ),
-        "pick": choice(
-            "Which listed runbook or skill is the best extra context for `user_request`?",
-            criteria,
-        ),
-    }
     try:
-        c = client or get_client(timeout_s=8.0)
-        result = c.system_one(state, questions, task="jev:rank")
+        judged = _helper_judge(user_prompt, criteria, chain) if chain else _jev_judge(user_prompt, criteria, client)
     except (JevError, Exception) as e:
         return {"items": [], "meta": {"error": str(e)[:200], "skipped": True}}
 
-    needs = float(result.get("needs_extra").noul or 0.0)
-    pick = result.get("pick")
-    conf = float(pick.confidence) if pick.confidence is not None else 0.0
-    meta = {
-        "skipped": False,
-        "needs_extra": needs,
-        "confidence": conf,
-        "choice": pick.choice,
-        "probabilities": dict(pick.probabilities),
-        "model": result.model,
-        "usage": result.usage,
-    }
-    if needs < T.NEEDS_EXTRA_CONTEXT_NOUL or conf < T.RANK_CONFIDENCE_FLOOR or not pick.choice:
+    needs, conf = judged["needs_extra"], judged["confidence"]
+    meta = {"skipped": False, **judged}
+    if needs < T.NEEDS_EXTRA_CONTEXT_NOUL or conf < T.RANK_CONFIDENCE_FLOOR or not judged["choice"]:
         return {"items": [], "meta": meta}
 
     # Winner only. The choice distribution holds alternative hypotheses, not
@@ -210,7 +271,7 @@ def rank_context(
     # matter how high their probability is.
     meta["excerpt"] = False
     by_id = {c["id"]: c for c in candidates}
-    winner = by_id.get(pick.choice)
+    winner = by_id.get(judged["choice"])
     if winner is None:
         meta["injected"] = []
         return {"items": [], "meta": meta}
@@ -234,7 +295,7 @@ def rank_context(
         else:
             body = body[:cap]
     item = {
-        "id": pick.choice,
+        "id": judged["choice"],
         "kind": winner["kind"],
         "name": winner["name"],
         "body": body,

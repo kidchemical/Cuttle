@@ -24,6 +24,7 @@ TASKS = {
     'enhance': 'Prompt enhancement', 'narration': 'Reply narration',
     'progress': 'Progress narration', 'router': 'Router decisions',
     'wiki': 'Knowledge wiki explanations',
+    'context': 'Context ranking (preloaded runbook)',
 }
 _SLOTS = threading.BoundedSemaphore(2)
 _LOG = logging.getLogger(__name__)

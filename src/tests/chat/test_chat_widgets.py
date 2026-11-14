@@ -161,7 +161,9 @@ def test_apply_widget_tags_upserts(tmp_path, monkeypatch):
 
     digest = format_tasks_digest([row2])
     assert "Tasks" in digest
-    assert "`1`" in digest
+    assert "`2`" in digest and "`1`" not in digest  # open items only
+    assert "1/2 done" in digest
+    assert "api.gizmos tasks get" in digest
     assert "api.gizmos tasks patch" in digest
     assert "Do not create another list" in digest
     assert "markdown tags" in digest
@@ -195,6 +197,11 @@ def test_apply_widget_tags_upserts(tmp_path, monkeypatch):
     assert row4["status"] == "active"
     assert row4["payload"]["items"][1]["done"] is False
     assert "w1" in format_tasks_digest([row4])
+
+    # A shared (project) list is a header: its items are one `tasks get` away.
+    shared = dict(row4, scope="project")
+    assert "`2`" not in format_tasks_digest([shared])
+    assert "`w1`, scope=project" in format_tasks_digest([shared])
 
 
 def test_widget_description_attr_body_patch_and_digest(tmp_path, monkeypatch):

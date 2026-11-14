@@ -418,3 +418,34 @@ def test_deterministic_injected_char_count(tmp_path):
     )
     assert [i["id"] for i in ranked["items"]] == ["doc:b.md"]
     assert sum(len(i["body"]) for i in ranked["items"]) == 200
+
+
+def test_context_ranking_runs_on_a_chosen_helper_instead_of_jev(tmp_path, monkeypatch):
+    """Settings → Background helpers → Context ranking swaps the judge: any model
+    API or tool-less agent CLI answers in one turn; Jev is not consulted."""
+    import api.background_helpers as helpers
+    import api.jev.rank as rank
+    from api.model_providers.types import TextResult
+
+    guest = _guest(tmp_path, {"alpha.md": "# Alpha\nalpha body", "beta.md": "# Beta\nbeta body"})
+    chain = [{"kind": "cli", "target": "claude", "model": "haiku", "effort": "low"}]
+    monkeypatch.setattr(helpers, "preferences", lambda: {"tasks": {"context": chain}})
+    monkeypatch.setattr(rank, "jev_available", lambda: False)
+    seen = []
+
+    def generate(task, request, chain=None, cancel_event=None):
+        seen.append((task, chain, request.json_object))
+        number = next(line.split(".")[0] for line in request.user.splitlines() if "beta.md" in line)
+        return TextResult('{"pick": %s, "confidence": 0.9}' % number, {"model": "haiku"})
+
+    monkeypatch.setattr(helpers, "generate", generate)
+    out = rank.rank_context("use beta", project_path=str(guest), inventory={"docs": ["alpha.md", "beta.md"]})
+    assert seen == [("context", chain, True)]
+    assert [i["name"] for i in out["items"]] == ["beta.md"]
+    assert out["meta"]["judge"] == "helper"
+
+    # "None apply" and a failed helper both inject nothing (fail-open).
+    monkeypatch.setattr(helpers, "generate", lambda *a, **k: TextResult('{"pick": 0}', {}))
+    assert rank.rank_context("hi", project_path=str(guest), inventory={"docs": ["alpha.md"]})["items"] == []
+    monkeypatch.setattr(helpers, "generate", lambda *a, **k: None)
+    assert rank.rank_context("hi", project_path=str(guest), inventory={"docs": ["alpha.md"]})["items"] == []

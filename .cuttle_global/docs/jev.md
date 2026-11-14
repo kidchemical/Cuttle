@@ -34,7 +34,7 @@ Flags after the verb. `--json` is implied: stdout is JSON.
 |---|---|
 | Agent router brain | `/router api model jev` (keeps the use-case table + demotions in code) |
 | Frustration investigator | Default `agent_router.rage.investigator.agent` is `jev`; falls back to Cursor Auto if no key |
-| Context Compiler | Optional ranked runbook/skill snippets when Jev is available |
+| Context Compiler | Optional ranked runbook/skill snippet. Jev judges unless an executor is chosen for **Context ranking** in Settings → Background helpers (model API or tool-less agent CLI) |
 | Pipeline skillsets | `dynamicStrategy: "jev"` (keyword fallback) |
 | My Cuttle Performance | Cached miss labels (`python -m api.jev label` or dashboard **Label with Jev**) |
 | Hourly regress | Flask daemon thread: scan recent query logs + router outcomes → maybe run a pytest subset → tray/toast if tests fail |
