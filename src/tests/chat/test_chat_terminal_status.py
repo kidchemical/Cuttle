@@ -46,6 +46,7 @@ const ctx = {
   addRemoteWaitingIndicator: () => {remote = true},
   removeRemoteWaitingIndicator: () => {remote = false},
   updateRemoteWaitingStatus: () => {}, subagentLaunchers: {syncLive: () => {}},
+  stampLiveBubbleTurnRow: () => {},
   syncComposerStopWithWatch: () => {},
   scheduleFollowupDrain: () => {},
 };

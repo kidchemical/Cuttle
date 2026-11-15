@@ -7,7 +7,7 @@
    else.
    ================================================================ */
 
-@import url("safe_area.css");
+@import url("safe_area.css?v=20261114kbBack");
 @import url("design_tokens.css?v=20261025polish");
 @import url("themes.css?v=20260923themes");
 @import url("text_prefs.css?v=20261102prefs");
@@ -15,6 +15,14 @@
 
 :root {
     --cuttle-transition-ms: 220ms;
+}
+
+/* Page resets (`* { margin: 0 }` in shared_navigation.css, landing_page.css,
+   …) strip the UA `margin: auto` that centers a modal <dialog>, pinning it to
+   the top-left. Restore it at element specificity: beats any `*` reset in any
+   load order, still loses to a page's own class/id dialog positioning. */
+dialog {
+    margin: auto;
 }
 
 /* position:fixed / background-attachment:fixed break inside a transformed root.

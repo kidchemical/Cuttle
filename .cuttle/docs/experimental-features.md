@@ -38,6 +38,33 @@ flag row, `src/api/auto_compact/`, its blueprint nesting in
 `agent_harness/routes.py`, the preflight call in `subagents/turns.py`, the
 settings route family, `chat_auto_compact.js` / `settings_auto_compact.js`.
 
+**Quote clips:** flag `chat_quote_clips` (default on). Selecting text in a chat
+message shows a toolbar above it: Agree, Disagree, Explain, Investigate, Do this
+(each adds the selected text with a canned reply) and Reply (opens a small panel
+to type the reply; Accept adds it). Each one is a removable clip above the
+composer text, several at once, kept per chat until sent. On send a clip is
+ordinary message text: a Markdown blockquote followed by its reply, ahead of
+what was typed. Off hides the toolbar and the clips; saved clips come back when
+it is turned on again. Owner: `src/web/js/chat/chat_quote_clips.js`
+(`CuttleChatQuoteClips`); buttons and canned replies are its `ACTIONS` table.
+Tests: `src/tests/chat/test_chat_quote_clips_js.py`,
+`src/tests/e2e/test_chat_quote_clips.py`. Teardown: remove the owner script and
+its tag, the `wireQuoteClips` call site in `chat_page.js`, the `.quote-*` styles
+and the flag row.
+
+**Composer voice clips:** flag `composer_voice_clip` (default on). A mic button
+after the paperclip records a voice clip with a live waveform, pause, discard
+and stop; each stopped recording is a removable attachment chip (record again
+for more), and Send while recording sends the clip. Your words are typed into
+the message box while you record (one editable block per clip, removed with
+its chip); the chat keeps the audio. Provider, live text and the longest clip
+are ordinary settings (Settings → Voice → Speech to text), not part of the
+experiment. Owners `src/web/js/chat/chat_voice_clip.js` and
+`chat_voice_clip_text.js`. Teardown: the flag row, those files and their
+script tags, the two mic buttons in `chat_page.html`, the `voiceClip` call sites
+in `chat_page.js`, the audio branch in `vision_prepass.py`, the `purpose=clip`
+gate in `voice_stt/routes.py`.
+
 **Response post-processing:** flag `response_postprocessing` (default off).
 Its instructions, append/replace behavior, API/CLI, model, effort and fallback
 chain are configured together in Settings → Agents → Response post-processing,

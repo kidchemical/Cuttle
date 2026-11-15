@@ -144,11 +144,13 @@
     $('refresh').addEventListener('click', () => { if (!busy && (!dirty || window.confirm('Discard unsaved project changes?'))) load().catch(error => notice(error.message, true)); });
     $('add-project').addEventListener('click', () => { $('register-form').reset(); $('register-error').textContent = ''; $('register-dialog').showModal(); });
     document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => $(button.dataset.close).close()));
+    // Name defaults to the folder's last segment (same as the chat project picker).
+    const folderName = path => String(path || '').trim().split(/[\\/]+/).filter(Boolean).pop() || '';
     $('register-form').addEventListener('submit', async event => {
         event.preventDefault(); if (busy) return; busy = true;
         const form = new FormData(event.target), button = event.target.querySelector('[type="submit"]'); button.disabled = true;
         try {
-            const result = await api('/api/projects/register', {name:form.get('name'), path:form.get('path'), description:form.get('description'), tags:tags(form.get('tags')), repo_url:form.get('repo_url')});
+            const result = await api('/api/projects/register', {name:String(form.get('name') || '').trim() || folderName(form.get('path')), path:form.get('path'), description:form.get('description'), tags:tags(form.get('tags')), repo_url:form.get('repo_url')});
             $('register-dialog').close(); await load(result.project_id); notice('Project registered.');
         } catch (error) { $('register-error').textContent = error.message; }
         finally { busy = false; button.disabled = false; renderDetail(); }

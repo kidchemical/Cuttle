@@ -50,7 +50,7 @@ def _write(path: Path, *lines: str) -> None:
 def test_transcript_fill_uses_post_tokens_after_boundary(claude_home):
     _write(claude_home, _assistant(876_000), _boundary(13_472))
     stats = store.claude_transcript_stats(SID)
-    assert stats == {"compactions": 1, "context_tokens": 13_472}
+    assert stats == {"compactions": 1, "context_tokens": 13_472, "model": ""}
 
     # A model call after the boundary is the live fill again.
     _write(claude_home, _assistant(876_000), _boundary(13_472), _assistant(20_000))
@@ -71,6 +71,27 @@ def test_compact_refused_while_live_run_holds_session(claude_home, monkeypatch, 
     out = ac._compact_claude(str(tmp_path), SID, 2006)
     assert out["success"] is False
     assert "still running" in out["error"]
+    assert out["busy"] is True  # the composer keeps the compaction queued
+
+
+def test_alias_model_is_sized_from_the_transcript(claude_home, monkeypatch, tmp_path):
+    """The chat stores "fable"; the transcript names the 1M model that ran."""
+    row = json.loads(_assistant(8_000))
+    row["message"]["model"] = "claude-fable-5-2"
+    _write(claude_home, json.dumps(row, separators=(",", ":")))
+    assert store.claude_transcript_stats(SID)["model"] == "claude-fable-5-2"
+
+    monkeypatch.setattr(store, "resolve_claude_resume", lambda *_a, **_k: (SID, str(tmp_path)))
+    monkeypatch.setattr(ac, "_resolve_model_for_agent", lambda *_a, **_k: "fable")
+    monkeypatch.setattr(
+        ac, "lookup_catalog_context_limit",
+        lambda model: 1_000_000 if model == "claude-fable-5-2" else None,
+    )
+    status = ac.get_agent_context_status(
+        chat_session_id=2006, agent_id="claude", cwd=str(tmp_path), messages=[]
+    )
+    assert status["limit_tokens"] == 1_000_000
+    assert status["limit_source"] != "agent_default"
 
 
 def _fake_compact(claude_home, monkeypatch, *, writes_boundary: bool):

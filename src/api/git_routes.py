@@ -698,7 +698,11 @@ def git_suggest_commit_message():
         suggest_paths = [str(p).strip() for p in files_raw if str(p).strip()]
 
     try:
-        ctx = collect_commit_suggest_context(git_cwd, paths=suggest_paths)
+        if body.get('batch'):
+            from api.commit_batch import collect_batch_context, suggest_batch
+            ctx = collect_batch_context(git_cwd, body, suggest_paths)
+        else:
+            ctx = collect_commit_suggest_context(git_cwd, paths=suggest_paths)
     except ValueError as e:
         return jsonify({'success': False, 'error': str(e)}), 400
     except Exception as e:
@@ -722,6 +726,12 @@ def git_suggest_commit_message():
                 avoid_messages.append(item.strip()[:120])
     elif isinstance(avoid_raw, str) and avoid_raw.strip():
         avoid_messages.append(avoid_raw.strip()[:120])
+
+    if body.get('batch'):
+        try:
+            return jsonify({'success': True, **suggest_batch(ctx, user_prompts=prompts)})
+        except ValueError as e:
+            return jsonify({'success': False, 'error': str(e)}), 400
 
     result = suggest_commit_message(
         ctx,

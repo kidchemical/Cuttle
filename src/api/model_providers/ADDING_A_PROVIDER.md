@@ -37,7 +37,11 @@ returning `SpeechResult(audio, mime, usage)` and `list_voices(manifest, model)`.
 The manifest's validated `speech` declaration owns fallback models/voices,
 default model, speed range, stability, and `fetch_voices`. Account discovery
 filters by operation while sharing a provider's full model snapshot.
-`audio_transcription` adds `transcribe(manifest, TranscriptionRequest)`.
+`audio_transcription` adds `transcribe(manifest, TranscriptionRequest)` and a
+manifest `transcription: {default_model, fallback_model?}`; the provider then
+appears under Settings → Voice → Speech to text with no further wiring.
+`TranscriptionRequest.base_url` is the user's address for a self-hosted server
+(local provider only).
 `structured_decision` adds `decide(manifest, DecisionRequest)` for Jev's native
 question API. Jev retains answer parsing and configuration policy. `check_key`
 uses an explicitly supplied credential for a read, without changing global env.

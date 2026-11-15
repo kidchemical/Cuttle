@@ -1,9 +1,9 @@
-"""Voice-mode server transcription (experimental ``voice_server_stt``).
+"""Server speech-to-text for voice mode and composer voice clips.
 
-The browser records continuously and uploads one audio clip per spoken phrase;
-this owner turns each clip into text with OpenAI transcription. Replaces the
-Web Speech recognizer, whose start/stop chime fires on Android every time it
-restarts after a pause.
+The browser uploads one audio clip per spoken phrase (voice mode with
+``voice_server_stt``, composer clips with ``composer_voice_clip``) or a whole
+voice clip (attachment pre-pass); this owner turns it into text with the
+provider chosen in Settings → Voice → Speech to text (``voice_stt.settings``).
 """
 
 from __future__ import annotations
@@ -42,11 +42,16 @@ def is_enabled() -> bool:
 
 
 def configured() -> bool:
-    """True when the transcription provider has credentials (an OpenAI key)."""
-    from api.model_providers.catalog import get_provider
+    """True when the chosen speech-to-text provider can run on this server."""
+    from api.voice_stt import settings
 
-    provider = get_provider("openai")
-    return bool(provider and provider.configured())
+    return settings.configured()
+
+
+def clips_enabled() -> bool:
+    from api.experimental import is_enabled as flag_enabled
+
+    return flag_enabled("composer_voice_clip")
 
 
 def file_extension(mime: str) -> str:
@@ -71,6 +76,7 @@ def transcribe(
     prompt: str = "",
     language: str = "",
     duration_ms: Optional[int] = None,
+    max_bytes: int = MAX_AUDIO_BYTES,
 ) -> str:
     """Return the phrase text ("" when nothing intelligible was said).
 
@@ -79,7 +85,7 @@ def transcribe(
     """
     if not audio:
         raise ValueError("audio is empty")
-    if len(audio) > MAX_AUDIO_BYTES:
+    if len(audio) > max_bytes:
         raise ValueError("audio clip is too large")
     from api.model_providers.service import transcribe as provider_transcribe
     from api.model_providers.types import TranscriptionRequest
@@ -92,16 +98,24 @@ def transcribe(
         kwargs["language"] = lang
     last_error: Optional[Exception] = None
     from api import voice_usage
+    from api.voice_stt import settings
 
-    for model in (DEFAULT_MODEL, FALLBACK_MODEL):
+    provider, models, base_url = settings.resolve()
+    if provider == settings.BROWSER:
+        raise RuntimeError("speech to text is set to the browser's recognizer, which cannot read a recording")
+    if base_url:
+        kwargs["base_url"] = base_url
+    for model in models:
         seconds = (duration_ms / 1000.0) if duration_ms else None
         cost = voice_usage.estimate_transcription_cost_usd(model, seconds=seconds)
         try:
-            result = provider_transcribe("openai", TranscriptionRequest(audio, model,
+            result = provider_transcribe(provider, TranscriptionRequest(audio, model,
                         filename=f"phrase.{file_extension(mime)}", mime=mime or "audio/webm", **kwargs),
                         usage_task="stt", usage_cost=cost)
-        except Exception as exc:  # model unavailable on this key → try the fallback
+        except Exception as exc:  # model unavailable on this key → try the next one
             last_error = exc
             continue
         return clean_transcript(result or "", duration_ms=duration_ms)
-    raise RuntimeError(f"transcription failed: {type(last_error).__name__}")
+    if isinstance(last_error, RuntimeError) and "API key is not set" in str(last_error):
+        raise RuntimeError(f"no API key for the {provider} speech-to-text provider (Settings → Voice → Speech to text)")
+    raise RuntimeError(f"transcription failed ({provider}): {type(last_error).__name__}")

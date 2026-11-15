@@ -6,7 +6,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Settings - Cuttle</title>
-    <link rel="stylesheet" href="/css/ui_boot.css?v=20261103chips">
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20261112dialogCenter">
     <script src="/js/shared/ui_boot.js?v=20261111perf"></script>
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/landing_page.css?v=20261028gpuBg">
@@ -133,6 +133,17 @@
                         </label>
                     </div>
                 </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Spellcheck in the chat composer</strong><button type="button" class="cuttle-info" data-tooltip="Underline misspelled words in the message box on this computer; right-click a word for fixes. Phones always use the keyboard's own autocorrect." aria-label="About composer spellcheck">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <label class="toggle-switch" id="composerSpellcheckToggle" onclick="toggleComposerSpellcheck(event)">
+                            <input type="checkbox" id="composerSpellcheckEnabled" style="display:none;">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
                 <div class="setting-item" id="sessionUsageSubagentsSetting" hidden>
                     <div class="setting-label">
                         <strong>Include subagents</strong><button type="button" class="cuttle-info" data-tooltip="Include token usage and estimated cost from attached subagent sessions in each chat's totals." aria-label="About including subagents in usage estimates">i</button>
@@ -221,6 +232,17 @@
                         <select id="activityStatusStyleSelect" class="setting-input" style="min-width: 200px;" onchange="changeActivityStatusStyle()">
                             <option value="sweep">Gradient sweep</option>
                             <option value="rise">Rise &amp; fade</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <div class="setting-label">
+                        <strong>Sub-agent Chat Opens</strong><button type="button" class="cuttle-info" data-tooltip="How a sub-agent chat opens when you click its card: a side drawer, or a centred window with the page blurred behind it." aria-label="About Sub-agent Chat Opens">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <select id="subagentPeekLayoutSelect" class="setting-input" style="min-width: 200px;" onchange="changeSubagentPeekLayout()">
+                            <option value="side">Side drawer</option>
+                            <option value="center">Centred window</option>
                         </select>
                     </div>
                 </div>
@@ -473,6 +495,12 @@
                     <div class="setting-description" id="chatTtsPreviewStatus" role="status"></div>
                 </div>
                 </div><!-- /voiceTtsConfig -->
+            </div>
+
+            <div class="settings-group" id="voiceSttSettings">
+                <h3 class="settings-title">Speech to text <span class="settings-scope" data-scope="server" title="Stored on the server — every device shares these preferences.">This server</span></h3>
+                <p class="setting-description">What turns your recorded speech into text: the microphone button in the message box, and voice chat when its server transcription is on.</p>
+                <div id="voiceSttEditor"></div>
             </div>
 
             <!-- Experiment-owned: stays hidden unless a voice-engine flag is on. -->
@@ -967,7 +995,8 @@
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/settings/settings_model_picker.js?v=20261011menuPosition2"></script>
     <script src="/js/settings/settings_background_helpers.js?v=20261016separateProcessor"></script>
-    <script src="/js/settings/settings_voice_providers.js?v=20261028guide"></script>
+    <script src="/js/settings/settings_voice_providers.js?v=20261112stt"></script>
+    <script src="/js/settings/settings_voice_stt.js?v=20261112stt"></script>
     <script src="/js/settings/settings_page_tabs.js?v=20261103sidebar"></script>
     <script src="/js/settings/settings_subpages.js?v=20261103sidebar"></script>
     <script src="/js/settings/settings_text_prefs.js?v=20261102prefs"></script>
@@ -1059,6 +1088,20 @@
             if (select) select.value = localStorage.getItem(ACTIVITY_STATUS_KEY) === 'rise' ? 'rise' : 'sweep';
         }
 
+        const SUBAGENT_PEEK_LAYOUT_KEY = 'cuttleSubagentPeekLayout';
+
+        function changeSubagentPeekLayout() {
+            const select = document.getElementById('subagentPeekLayoutSelect');
+            const layout = select && select.value === 'center' ? 'center' : 'side';
+            localStorage.setItem(SUBAGENT_PEEK_LAYOUT_KEY, layout);
+            (window.showToast || showNotification)(layout === 'center' ? 'Sub-agent chat: centred window' : 'Sub-agent chat: side drawer', 'info');
+        }
+
+        function loadSubagentPeekLayout() {
+            const select = document.getElementById('subagentPeekLayoutSelect');
+            if (select) select.value = localStorage.getItem(SUBAGENT_PEEK_LAYOUT_KEY) === 'center' ? 'center' : 'side';
+        }
+
         function previewUiTransitionMs() {
             const input = document.getElementById('uiTransitionMs');
             const label = document.getElementById('uiTransitionMsLabel');
@@ -1120,7 +1163,7 @@
             const themeSelect = document.getElementById('themeSelect');
             const currentTheme = window.CuttleUiBoot
                 ? window.CuttleUiBoot.currentTheme()
-                : (localStorage.getItem('theme') || 'nord');
+                : (localStorage.getItem('theme') || 'light');
             themeSelect.value = currentTheme;
         }
 
@@ -2603,6 +2646,22 @@
             if (subagentsSetting) subagentsSetting.hidden = !checkbox.checked;
         }
 
+        const COMPOSER_SPELLCHECK_KEY = 'cuttleComposerSpellcheck';
+        function loadComposerSpellcheckSetting() {
+            const on = localStorage.getItem(COMPOSER_SPELLCHECK_KEY) === '1';
+            const checkbox = document.getElementById('composerSpellcheckEnabled');
+            const toggle = document.getElementById('composerSpellcheckToggle');
+            if (checkbox) checkbox.checked = on;
+            if (toggle) toggle.classList.toggle('active', on);
+        }
+        function toggleComposerSpellcheck(event) {
+            if (event) event.preventDefault();
+            const on = localStorage.getItem(COMPOSER_SPELLCHECK_KEY) !== '1';
+            localStorage.setItem(COMPOSER_SPELLCHECK_KEY, on ? '1' : '0');
+            loadComposerSpellcheckSetting();
+            (window.showToast || showNotification)(on ? 'Composer spellcheck on' : 'Composer spellcheck off', 'info');
+        }
+
         function toggleSessionUsageSubagents(event) {
             if (event) event.preventDefault();
             const checkbox = document.getElementById('sessionUsageSubagentsEnabled');
@@ -2972,6 +3031,7 @@
             const sessionUsageSubagentsEnabled = localStorage.getItem('cuttleSessionUsageIncludeSubagents') === 'true';
             
             document.getElementById('agentName').value = agentName;
+            loadComposerSpellcheckSetting();
             document.getElementById('notificationsEnabled').checked = notificationsEnabled;
             const usageEstimateCb = document.getElementById('sessionUsageEstimateEnabled');
             if (usageEstimateCb) usageEstimateCb.checked = sessionUsageEstimateEnabled;
@@ -3012,6 +3072,7 @@
             loadUiAnimationSettings();
             loadChatBubbleSettings();
             loadActivityStatusStyle();
+            loadSubagentPeekLayout();
             if (window.CuttleSettingsTextPrefs && window.CuttleUiBoot) {
                 window.cuttleTextPrefs = window.CuttleSettingsTextPrefs.create({
                     boot: window.CuttleUiBoot,
@@ -3068,7 +3129,10 @@
                 tabs.register('providers', function () {
                     loadApiKeys();
                 });
-                tabs.register('voice', function () { loadChatTtsSettings(); });
+                tabs.register('voice', function () {
+                    loadChatTtsSettings();
+                    window.CuttleSettingsVoiceStt.mount(document.getElementById('voiceSttEditor'));
+                });
                 tabs.register('experimental', function () { loadExperimentalFlags(); });
                 tabs.register('devices', function () {
                     loadLanAccessSettings();
@@ -3090,6 +3154,7 @@
                 loadCompletionProviders();
                 loadTimeoutsSettings();
                 loadChatTtsSettings();
+                window.CuttleSettingsVoiceStt.mount(document.getElementById('voiceSttEditor'));
                 loadApiKeys();
                 loadExperimentalFlags();
                 loadLanAccessSettings();

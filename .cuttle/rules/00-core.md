@@ -3,9 +3,6 @@
 Applies only when the chat targets the Cuttle repo itself. Global etiquette
 (always-on for every project) lives in `.cuttle_global/rules/` — do not duplicate it here.
 
-These files under `.cuttle/rules/` are compiled into the fresh/full Cuttle-chat context by the
-**Context Compiler** (Cuttle Brain) and ride change-deltas on resume. Keep them short — how-to lives in `.cuttle/docs/`.
-
 ## Project layout
 
 | Path | Role |
@@ -31,12 +28,10 @@ These files under `.cuttle/rules/` are compiled into the fresh/full Cuttle-chat 
 1. **Versioning** — SemVer bump at release time only, never per push; git hash
    owns staleness/update checks → `04-versioning.md`, how-to
    `.cuttle/docs/cuttle-release.md`.
-2. **Mesh updates ride git revs, not version bumps** — `needs_update` is SemVer
-   mismatch OR git-rev mismatch OR stale boot rev (`platform.py`); a push without
-   a bump still flags Clients behind. Bump `electron/package.json` SemVer at
-   release time only (`04-versioning.md`), then commit → emit the `git.push`
-   action form (do not `git push` from the agent shell) → `workers.self-update`
-   for Clients. Details → `.cuttle/docs/cuttle-release.md`.
+2. **Mesh updates ride git revs, not version bumps** — a push without a bump
+   still flags Clients behind (`needs_update`, `platform.py`). Release flow (bump
+   `electron/package.json` → commit → `git.push` action form → `workers.self-update`)
+   → `.cuttle/docs/cuttle-release.md`.
 3. **Reload ladder (least disruptive first)** — (1) hard-refresh the Cuttle shell
    when only HTML/JS/CSS changed; (2) Host Electron UI restart
    (`electron.host-restart` / `workers.self-update` `target=<host>` `no_daemon`)

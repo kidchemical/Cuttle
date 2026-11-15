@@ -8,7 +8,8 @@ For multi-step work, **create a Tasks gizmo at the beginning of planning**, then
 patch the same id as work progresses. These are tool calls: do not emit
 `<cuttle_widget>` Tasks tags or a second list in a final reply. First inspect
 active lists from the context digest or `tasks list` and reuse the list for the
-same concern. Include its intent in `description`; do not create empty stubs.
+same concern. The digest is a directory (title, id, progress, intent, plus the
+next open items of this chat's own list): run `tasks get <id>` for the items. Include its intent in `description`; do not create empty stubs.
 
 Use Tasks for an agent's multi-step investigation, implementation, or other
 work, even when the user does not ask for a progress display. Skip a quick

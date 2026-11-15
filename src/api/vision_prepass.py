@@ -2,8 +2,9 @@
 Vision / document pre-pass for chat attachments.
 
 Runs before the agent (pipeline or CLI harness): describes images (Claude
-vision → OpenAI vision) and extracts PDF text (rasterize + vision when
-pages are image-heavy). Produces a plain-text digest the rest of the stack can
+vision → OpenAI vision), extracts PDF text (rasterize + vision when
+pages are image-heavy) and transcribes voice clips recorded in the composer
+(``api.voice_stt``). Produces a plain-text digest the rest of the stack can
 use, since none of the CLI harnesses (Cursor, Codex, Muse, Hermes) accept image
 input.
 """
@@ -21,6 +22,14 @@ StatusCb = Optional[Callable[[str], None]]
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 PDF_EXTS = {".pdf"}
+AUDIO_EXTS = {".webm", ".ogg", ".m4a", ".wav", ".mp3"}
+#: What ``POST /api/upload`` accepts: everything this pre-pass can digest.
+UPLOAD_EXTS = IMAGE_EXTS | PDF_EXTS | AUDIO_EXTS
+_AUDIO_MIME_BY_EXT = {".webm": "audio/webm", ".ogg": "audio/ogg", ".m4a": "audio/mp4",
+                      ".wav": "audio/wav", ".mp3": "audio/mpeg"}
+# The transcription API's own request limit is 25 MB.
+MAX_AUDIO_BYTES = 24 * 1024 * 1024
+MAX_TRANSCRIPT_CHARS = 12000
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_PDF_BYTES = 25 * 1024 * 1024
 MAX_PDF_PAGES_TEXT = 20
@@ -65,6 +74,12 @@ def _is_image(filename: str, mime: str) -> bool:
 def _is_pdf(filename: str, mime: str) -> bool:
     ext = Path(filename).suffix.lower()
     return mime == "application/pdf" or ext in PDF_EXTS
+
+
+def _is_audio(filename: str, mime: str) -> bool:
+    # Extension first: ``mimetypes`` calls a recorder's ``.webm`` a video.
+    ext = Path(filename).suffix.lower()
+    return ext in AUDIO_EXTS or mime.startswith("audio/")
 
 
 def _read_bytes(att: Dict[str, Any]) -> bytes:
@@ -269,10 +284,31 @@ def extract_pdf(att: Dict[str, Any], status_cb: StatusCb = None) -> str:
         doc.close()
 
 
+def transcribe_audio(att: Dict[str, Any]) -> str:
+    """The words spoken in a voice clip, or an inline reason there are none."""
+    from api import voice_stt
+
+    filename = att.get("filename") or "voice clip"
+    mime = str(att.get("mime") or "")
+    if not mime.startswith("audio/"):
+        mime = _AUDIO_MIME_BY_EXT.get(Path(filename).suffix.lower(), "audio/webm")
+    try:
+        text = voice_stt.transcribe(_read_bytes(att), mime=mime, max_bytes=MAX_AUDIO_BYTES)
+    except (ValueError, RuntimeError) as e:
+        # Same rule as images: say why, never a silent empty result.
+        return f"(voice clip not transcribed — {e})"
+    except Exception as e:
+        return f"(voice clip not transcribed — {type(e).__name__})"
+    return text[:MAX_TRANSCRIPT_CHARS] if text else "(no speech heard in this clip)"
+
+
 def analyze_attachment(att: Dict[str, Any], status_cb: StatusCb = None) -> str:
     filename = att.get("filename") or "file"
     mime = _guess_mime(filename, att.get("mime"))
 
+    if _is_audio(filename, mime):
+        _emit(status_cb, f"Transcribing voice clip ({filename})...")
+        return transcribe_audio(att)
     if _is_image(filename, mime):
         _emit(status_cb, f"Analyzing image ({filename})...")
         return describe_image(att)
@@ -298,13 +334,17 @@ def build_attachment_digest(
     _emit(status_cb, "Analyzing attachments...")
     blocks: List[str] = []
     for att in attachments:
+        if att.get("transcribed") is True:
+            continue  # the user's message already carries this clip's words
         fname = att.get("filename") or "file"
         mime = _guess_mime(fname, att.get("mime"))
         try:
             body = analyze_attachment(att, status_cb=status_cb)
         except Exception as e:
             body = f"(analysis failed: {_short_error(e)})"
-        if _is_pdf(fname, mime):
+        if _is_audio(fname, mime):
+            kind = "voice clip — transcript of what the user said"
+        elif _is_pdf(fname, mime):
             kind = "PDF"
         elif _is_image(fname, mime):
             kind = "image"
@@ -314,6 +354,8 @@ def build_attachment_digest(
         head = f"• {fname} ({kind})" + (f" — {location}" if location else "")
         blocks.append(f"{head}:\n{body}")
 
+    if not blocks:
+        return ""
     return DIGEST_HEADER + "\n" + "\n\n".join(blocks)
 
 
@@ -377,5 +419,9 @@ def resolve_upload_refs(
             continue
         fname = ref.get("filename") or path.name
         mime = ref.get("mime") or _guess_mime(fname)
-        out.append({"filename": fname, "path": str(path), "mime": mime})
+        item = {"filename": fname, "path": str(path), "mime": mime}
+        # A voice clip whose words the composer already typed into the message.
+        if ref.get("transcribed") is True and _is_audio(fname, mime):
+            item["transcribed"] = True
+        out.append(item)
     return out

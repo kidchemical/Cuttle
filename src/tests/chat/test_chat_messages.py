@@ -55,6 +55,13 @@ out.stringMeta = A.authMessageOptsFromServer(
 out.objectMeta = A.authMessageOptsFromServer(
   { id: 8, content: 'x', role: 'assistant', timestamp: 1700000000000,
     metadata: { slash_command: { chips: [] }, cursor_run: { requested_model: 'm' } } }, deps);
+// a reply shows when it landed (metadata.completed_at, epoch seconds), not when its turn started
+out.replyTime = A.authMessageOptsFromServer(
+  { id: 11, content: 'x', role: 'assistant', timestamp: 1700000000000,
+    metadata: { completed_at: 1700009236.5 } }, deps).timestamp;
+out.userTime = A.authMessageOptsFromServer(
+  { id: 12, content: 'x', role: 'user', timestamp: 1700000000000,
+    metadata: { completed_at: 1700009236.5 } }, deps).timestamp;
 out.badMeta = A.authMessageOptsFromServer(
   { id: 9, content: 'x', role: 'user', timestamp: 1700000000000, metadata: '{oops' }, deps);
 out.noMeta = A.authMessageOptsFromServer(
@@ -145,6 +152,7 @@ def test_record_options_metadata_shapes():
     assert res["stringMeta"]["project_id"] == 3
     assert res["objectMeta"]["slash_command"] == {"chips": []}
     assert res["objectMeta"]["cursor_run"] == {"requested_model": "m"}
+    assert res["replyTime"] == 1700009236500 and res["userTime"] == 1700000000000
     assert res["badMeta"].get("kind") is None
     assert res["noMeta"].get("project_id") is None
 

@@ -131,6 +131,7 @@
             const { mainEl, oldFrames } = entry;
             const ms = uiAnimationsEnabled() ? uiTransitionMs() : 0;
             frame.classList.remove('shell-frame-pending');
+            document.dispatchEvent(new CustomEvent('cuttle-shell-frame-revealed'));
             frame.style.transition = ms > 0 ? `opacity ${ms}ms ease` : 'none';
             // A space switch hides the outgoing frame with visibility:hidden;
             // a reused frame must clear that here or it stays invisible after reveal.

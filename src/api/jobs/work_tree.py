@@ -198,14 +198,39 @@ def _unit_watches() -> Dict[str, List[Dict[str, Any]]]:
     return out
 
 
-def _schedules() -> Dict[str, List[Dict[str, Any]]]:
-    """Live supervision schedules / queued sends, by the chat that owns them."""
+def _chat_op_jobs() -> List[Dict[str, Any]]:
     try:
         from api.jobs.ledger import chat_op_jobs
 
-        jobs = chat_op_jobs()
+        return chat_op_jobs()
     except Exception:
-        return {}
+        return []
+
+
+def _watchers(jobs: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """Live supervision schedules by the chat they watch (the supervised side).
+
+    This is what will wake an idle chat that has no job of its own pending:
+    ``next_at`` is the next check, None while the schedule is paused."""
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for job in jobs:
+        meta = job.get("meta") or {}
+        if meta.get("op_kind") != "supervise" or job.get("status") not in ("running", "paused"):
+            continue
+        chat = _bare(job.get("target"))
+        if not chat:
+            continue
+        out.setdefault(chat, []).append({
+            "id": job["id"], "status": job.get("status"),
+            "supervisor": _handle((job.get("origin") or {}).get("chat_session_id")),
+            "every": meta.get("every"), "next_at": meta.get("next_at"),
+        })
+    return out
+
+
+def _schedules(jobs: Optional[List[Dict[str, Any]]] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """Live supervision schedules / queued sends, by the chat that owns them."""
+    jobs = _chat_op_jobs() if jobs is None else jobs
     out: Dict[str, List[Dict[str, Any]]] = {}
     for job in jobs:
         if job.get("status") not in ("running", "queued", "paused"):
@@ -302,7 +327,8 @@ def _build_index() -> Dict[str, Dict[str, Any]]:
     skip = {str(w.get("job_id") or "") for w in waits}
     skip |= {str(u.get("job_id") or "") for rows in units.values() for u in rows}
     watches = _watches(skip)
-    schedules = _schedules()
+    chat_ops = _chat_op_jobs()
+    schedules = _schedules(chat_ops)
     index: Dict[str, Dict[str, Any]] = {}
 
     def entry(chat: str) -> Dict[str, Any]:
@@ -324,6 +350,8 @@ def _build_index() -> Dict[str, Dict[str, Any]]:
         entry(chat)["watches"].extend(rows)
     for chat, rows in schedules.items():
         entry(chat)["schedules"].extend(rows)
+    for chat, rows in _watchers(chat_ops).items():
+        entry(chat)["watchers"] = rows
     return index
 
 
@@ -512,7 +540,7 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
     if not e and not recent:
         return None
     e = e or {"waits": [], "watches": [], "schedules": []}
-    if not (_working(e) or e.get("schedules") or recent):
+    if not (_working(e) or e.get("schedules") or e.get("watchers") or recent):
         return None
     # A failed enqueue can leave both a pending watch and a terminal receipt.
     recent_ids = {r["job_id"] for r in recent}
@@ -529,6 +557,8 @@ def background_summary(session_id: Any) -> Optional[Dict[str, Any]]:
         "recent": recent,
         "schedules": [{k: s.get(k) for k in ("id", "label", "detail", "status", "target", "kind", "every",
                                              "next_at", "seen", "waiting_since")} for s in e["schedules"]],
+        # Supervision schedules watching this chat: what wakes it when no job of its own is pending.
+        "watchers": [dict(w) for w in e.get("watchers") or ()],
         "process_count": int(e.get("process_count") or 0),
         "detached_count": int(e.get("detached_count") or 0),
         "started_at": _earliest_start(e),

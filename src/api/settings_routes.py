@@ -95,6 +95,9 @@ SETTING_FAMILIES = (
      "backend": "api.agent_harness.steer (key 'agent_steer') + catalog (key 'agent_harness'); "
                 "model/effort defaults read here, written via POST /agent-defaults/<id>",
      "validator": "validate_agent_adapters_update", "read": "authenticated", "write": "owner"},
+    {"name": "voice-stt", "routes": ["GET/POST /settings/voice-stt"],
+     "backend": "api.voice_stt.settings (settings-manager key 'voice_stt')",
+     "validator": "api.voice_stt.settings.normalize", "read": "authenticated", "write": "owner"},
     {"name": "auto-compact", "routes": ["GET/POST /settings/auto-compact"],
      "backend": "api.auto_compact.service (settings-manager key 'auto_compact')",
      "validator": "api.auto_compact.policy.validate_patch", "read": "authenticated", "write": "owner"},
@@ -119,6 +122,27 @@ SETTING_FAMILIES = (
 @authenticated_required
 def voice_chat_settings():
     from api.voice_live.settings import catalog
+    return jsonify(success=True, **catalog())
+
+
+@settings_bp.route('/settings/voice-stt', methods=['GET'])
+@authenticated_required
+def voice_stt_settings():
+    from api.voice_stt.settings import catalog
+    return jsonify(success=True, **catalog())
+
+
+@settings_bp.route('/settings/voice-stt', methods=['POST'])
+@owner_required
+def update_voice_stt_settings():
+    from api.voice_stt.settings import catalog, save
+    body = request.get_json(silent=True)
+    try:
+        save(body.get('voice_stt') if isinstance(body, dict) and isinstance(body.get('voice_stt'), dict) else body)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except RuntimeError as exc:
+        return jsonify(success=False, error=str(exc)), 500
     return jsonify(success=True, **catalog())
 
 

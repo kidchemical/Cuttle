@@ -31,6 +31,14 @@ def test_append_collapses_original_before_labelled_summary_and_survives_reload(b
         expect(disclosure.locator('h2')).to_be_visible()
         expect(disclosure.locator('pre code')).to_contain_text('print("hello")')
         assert bubble.locator('script').count() == 0
+        copy_btn = disclosure.locator('.response-original-copy-btn')
+        expect(copy_btn).to_be_visible()
+        frame.locator('html').evaluate(
+            '() => { window.__copied = []; navigator.clipboard.writeText = async (t) => { window.__copied.push(t); }; }')
+        copy_btn.click()
+        expect(copy_btn).to_have_class('response-original-copy-btn is-copied')
+        assert frame.locator('html').evaluate('() => window.__copied') == [original]
+        expect(disclosure).to_have_attribute('open', '')
         assert not frame.locator('html').evaluate('() => window.__originalInjected === true')
         page.reload(wait_until='domcontentloaded')
         expect(frame.locator('details.response-original-block h2').last).to_be_hidden()

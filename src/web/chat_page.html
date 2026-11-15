@@ -8,8 +8,8 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <title>Chat - Cuttle AI Assistant</title>
-    <link rel="stylesheet" href="/css/ui_boot.css?v=20261107progress">
-    <script src="/js/shared/ui_boot.js?v=20261111perf"></script>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20261114kbBack">
+    <script src="/js/shared/ui_boot.js?v=20261114kbBack"></script>
     <script src="/js/shared/progress_model.js?v=20261107progress"></script>
     <!-- Fonts are optional: never block first paint / DOMContentLoaded offline. -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -19,11 +19,11 @@
     <link rel="stylesheet" href="css/shared_navigation.css?v=20260926lightBg">
     <link rel="stylesheet" href="css/auth_modal.css?v=20260926authLogin">
     <link rel="stylesheet" href="/css/git_push_report.css?v=20261018pushReview" data-push-style="git_push_report">
-    <link rel="stylesheet" href="css/chat_page.css?v=20261111perf">
+    <link rel="stylesheet" href="css/chat_page.css?v=20261114quotecapsule">
     <link rel="stylesheet" href="/css/chat_flat_messages.css?v=20261102flat">
     <link rel="stylesheet" href="/css/chat_threads.css?v=20261108threads">
     <link rel="stylesheet" href="/css/chat_activity_status.css?v=20261102rise3">
-    <link rel="stylesheet" href="css/chip_config_modal.css?v=20261030orchChip">
+    <link rel="stylesheet" href="css/chip_config_modal.css?v=20261112projDialogs">
     <link rel="stylesheet" href="css/searchable_select.css?v=20261011attachedMenus">
     <link rel="stylesheet" href="css/chat_voice.css?v=20261028bigOrb">
     <link rel="stylesheet" href="/css/chat_supervision.css?v=20261110cards2">
@@ -235,6 +235,7 @@
                                                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                                             </svg>
                                         </button>
+                                        <button type="button" class="attach-button mic-button" id="welcomeMicButton" data-experimental-flag="composer_voice_clip" hidden title="Record a voice clip" aria-label="Record a voice clip" aria-pressed="false"></button>
                                         <button type="button" class="send-button" id="welcomeSendButton">
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                                                 <path d="M22 2L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -322,6 +323,7 @@
                                             <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                                         </svg>
                                     </button>
+                                    <button type="button" class="attach-button mic-button" id="micButton" data-experimental-flag="composer_voice_clip" hidden title="Record a voice clip" aria-label="Record a voice clip" aria-pressed="false"></button>
                                     <button type="button" class="stop-button" id="stopButton" title="Stop generating" aria-label="Stop generating" style="display: none;">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                                             <rect x="6" y="6" width="12" height="12" rx="2"/>
@@ -439,7 +441,7 @@
          makes iPad Chrome show the key/card/pin autofill bar on the composer. -->
     
     <script src="/js/media/emoticons.js?v=20260807b"></script>
-    <script src="/js/shared/toast.js?v=20261106meter"></script>
+    <script src="/js/shared/toast.js?v=20261114kbBack"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
     <script src="/js/shared/net_debug.js?v=20260810c"></script>
     <script src="/js/media/video_background.js?v=20260927blendTarget"></script>
@@ -462,21 +464,21 @@
     <script src="/js/chat/chat_attention.js?v=20261010attention4"></script>
     <script src="/js/chat/chat_mutations.js?v=20261008sync"></script>
     <script src="/js/chat/chat_project.js?v=20261028wtproj"></script>
-    <script src="/js/chat/chat_slash.js?v=20261007nomode"></script>
+    <script src="/js/chat/chat_slash.js?v=20261113attach"></script>
     <script src="/js/chat/chat_slash_palette.js?v=20261010palette2"></script>
     <script src="/js/chat/chat_secret_fields.js?v=20261027secretVault1"></script>
     <script src="/js/chat/chat_action_forms.js?v=20261107progress"></script>
     <script src="/js/chat/chat_activity.js?v=20261008sync"></script>
     <script src="/js/chat/chat_action_cards.js?v=20261028poll"></script>
-    <script src="/js/chat/chat_attachments.js?v=20261001slice5"></script>
-    <script src="/js/chat/chat_composer.js?v=20261005drafts"></script>
+    <script src="/js/chat/chat_attachments.js?v=20261112clip2"></script>
+    <script src="/js/chat/chat_composer.js?v=20261114spell"></script>
     <script src="/js/chat/chat_agent_model.js?v=20261025spaceov1"></script>
     <script src="/js/chat/chat_agent_controls.js?v=20261010controls1"></script>
     <script src="/js/chat/chat_agent_billing.js?v=20261109billing1"></script>
     <script src="/js/chat/chat_usage.js?v=20261012live2"></script>
     <script src="/js/chat/chat_session_usage.js?v=20261111perf"></script>
-    <script src="/js/chat/chat_messages.js?v=20261108chatop1"></script>
-    <script src="/js/chat/chat_activate.js?v=20261001slice8e"></script>
+    <script src="/js/chat/chat_messages.js?v=20261112origCopy"></script>
+    <script src="/js/chat/chat_activate.js?v=20261112origCopy"></script>
     <script src="/js/chat/chat_markdown.js?v=20261004completion"></script>
     <script src="/js/chat/chat_media.js?v=20261009media1"></script>
     <script src="/js/shared/audio_level.js?v=20261106meter"></script>
@@ -487,7 +489,7 @@
     <script src="/js/chat/chat_status_motion.js?v=20261102rise1"></script>
     <script src="/js/chat/chat_timeline_notice.js?v=20261108chatop1"></script>
     <script src="/js/chat/chat_auto_compact.js?v=20261108autocompact"></script>
-    <script src="/js/chat/chat_context_gauge.js?v=20261108autocompact"></script>
+    <script src="/js/chat/chat_context_gauge.js?v=20261113queue"></script>
     <script src="/js/chat/chat_prompt_history.js?v=20261001slice8f"></script>
     <script src="/js/chat/chat_turn_guard.js?v=20261001slice9a"></script>
     <script src="/js/chat/chat_stop_state.js?v=20261001slice9b"></script>
@@ -500,6 +502,7 @@
     <script src="/js/chat/chat_vfx.js?v=20261111perf"></script>
     <script src="/js/chat/chat_subagent_fleet.js?v=20261004fleetLive"></script>
     <script src="/js/chat/chat_subagent_launchers.js?v=20261108chatop1"></script>
+    <script src="/js/chat/chat_subagent_peek.js?v=20261112peek"></script>
     <script src="/js/chat/chat_background_work.js?v=20261110cards2"></script>
     <script src="/js/chat/chat_history_archive.js?v=20261007archivededupe"></script>
     <script src="/js/chat/chat_history_view.js?v=20261110subpage1"></script>
@@ -507,7 +510,7 @@
     <script src="/js/chat/chat_voice_segments.js?v=20261007voice1"></script>
     <script src="/js/chat/chat_voice_stars.js?v=20261007voice1"></script>
     <script src="/js/chat/chat_voice_narrator.js?v=20261007narrator2"></script>
-    <script src="/js/chat/chat_voice_recorder.js?v=20261012live2"></script>
+    <script src="/js/chat/chat_voice_recorder.js?v=20261112clip2"></script>
     <script src="/js/chat/chat_voice_waveform.js?v=20261008wave1"></script>
     <script src="/js/chat/chat_voice_receipts.js?v=20261012live2"></script>
     <script src="/js/chat/chat_voice_realtime.js?v=20261106meter"></script>
@@ -515,21 +518,24 @@
     <script src="/js/chat/chat_voice_activity.js?v=20261012voiceact"></script>
     <script src="/js/shell/shell_voice.js?v=20261028callBtn"></script>
     <script src="/js/chat/chat_voice.js?v=20261106meter"></script>
+    <script src="/js/chat/chat_voice_clip_text.js?v=20261112clip2"></script>
+    <script src="/js/chat/chat_voice_clip.js?v=20261112clip2"></script>
+    <script src="/js/chat/chat_quote_clips.js?v=20261114capsule"></script>
     <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
     <script src="/js/chat/chat_worktrees.js?v=20261027wtbind1"></script>
     <script src="/js/chat/chat_supervision_model.js?v=20261110cards2"></script>
     <script src="/js/chat/chat_supervision.js?v=20261108cards1"></script>
     <script src="/js/chat/chat_orchestration_model.js?v=20261111hold"></script>
     <script src="/js/chat/chat_orchestration.js?v=20261111hold"></script>
-    <script src="/js/chat/chat_composer_lock.js?v=20261101lock2"></script>
+    <script src="/js/chat/chat_composer_lock.js?v=20261112clip1"></script>
     <script src="/js/chat/chat_composer_resize.js?v=20261104resize3"></script>
     <script src="/js/chat/chat_scrollbar_autohide.js?v=20261104scrollhide"></script>
     <script src="/js/chat/chat_export.js?v=20261101menu1"></script>
     <script src="/js/chat/chat_session_menu.js?v=20261101menu1"></script>
-    <script src="/js/chat/chat_chip_config.js?v=20261109billing1"></script>
+    <script src="/js/chat/chat_chip_config.js?v=20261112chipLinks"></script>
     <script src="/js/chat/chat_orchestrate_chip.js?v=20261030orchChip"></script>
     <script src="/js/chat/chat_session.js?v=20261027wtbind1"></script>
-    <script src="/js/chat/chat_page.js?v=20261111perf"></script>
+    <script src="/js/chat/chat_page.js?v=20261114spell"></script>
     <!-- highlight.js / Vega: load after boot so offline WAN never blocks the chat UI -->
     <script src="/js/shared/optional_cdn.js?v=20260815vegaReady"></script>
 </body>

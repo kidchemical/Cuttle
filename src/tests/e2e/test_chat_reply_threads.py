@@ -72,7 +72,7 @@ def _history(page, boot=True):
 def _reload(page):
     """Leave the chat and come back: state is read again from storage."""
     page.evaluate('() => { threads.flush(); window.sid = "other"; box().innerHTML = ""; }')
-    page.evaluate('() => { window.sid = "2161"; }')
+    page.evaluate('() => { window.sid = "2161"; threads.resetView(window.sid); }')
     _history(page, boot=False)
 
 
@@ -99,11 +99,11 @@ def test_history_folds_replies_under_the_turn_and_keeps_row_order(browser, stati
         page.evaluate('''() => { document.querySelector('.message[data-message-id="14"] .message-content').textContent = 'Background tests pass (edited).'; }''')
         page.wait_for_timeout(50)
         expect(page.locator('.message[data-message-id="14"]')).to_be_visible()
-        # The choice survives a reload of the transcript.
+        # Every new visit starts collapsed, even after an explicit expansion.
         _reload(page)
-        expect(page.locator('.message[data-message-id="12"]')).to_be_visible()
-        page.locator('.message[data-message-id="11"] .chat-thread-toggle').click()
         expect(page.locator('.message[data-message-id="12"]')).to_be_hidden()
+        page.locator('.message[data-message-id="11"] .chat-thread-toggle').click()
+        expect(page.locator('.message[data-message-id="12"]')).to_be_visible()
         assert not errors
     finally:
         page.close()
@@ -120,8 +120,11 @@ def test_live_turn_thread_opens_and_stays_open_when_the_answer_lands(browser, st
             add(row('user', '/codex keep the API stable. ' + 'Also more detail. '.repeat(300), { steered: true }));  // optimistic, unsaved
         }''')
         steer = page.locator('.message.is-steered')
-        expect(steer).to_be_visible()
+        expect(steer).to_be_hidden()
         bar = page.locator('#typing-indicator .chat-thread-bar')
+        expect(bar.locator('.chat-thread-label')).to_have_text('1 reply')
+        bar.locator('.chat-thread-toggle').click()
+        expect(steer).to_be_visible()
         expect(bar.locator('.chat-thread-label')).to_have_text('Hide replies')
         expect(bar.locator('.chat-thread-status')).to_contain_text('working')
         # The final reply replaces the live bubble (saved row id 21 above the steer).
@@ -213,10 +216,8 @@ def test_fleet_cards_do_not_create_reply_threads(browser, static_server):
 
 
 def test_reload_mid_turn_keeps_the_steer_threaded_and_visible(browser, static_server):
-    """Reloaded while the turn runs: the saved steer comes back as a row and the
-    working bubble is appended below it. The bubble moves back above its steer
-    (its turn row id is older), the thread is live and open, and it stays open
-    when the answer replaces the bubble — the steer never disappears."""
+    """A restored live thread starts closed and preserves a user's expansion
+    when the working bubble becomes the saved answer."""
     page, errors = _page(browser, static_server)
     try:
         page.evaluate('''() => {
@@ -234,9 +235,11 @@ def test_reload_mid_turn_keeps_the_steer_threaded_and_visible(browser, static_se
             live.dataset.turnId = 'T9';
         }''')
         assert page.evaluate(order) == ['40', 'typing-indicator-remote', '42']
-        expect(steer).to_be_visible()
+        expect(steer).to_be_hidden()
         bar = page.locator('#typing-indicator-remote .chat-thread-bar')
-        expect(bar.locator('.chat-thread-label')).to_have_text('Hide replies')
+        expect(bar.locator('.chat-thread-label')).to_have_text('1 reply')
+        bar.locator('.chat-thread-toggle').click()
+        expect(steer).to_be_visible()
         # The answer replaces the working bubble: still open, steer still shown.
         page.evaluate('''() => document.getElementById('typing-indicator-remote')
             .replaceWith(row('assistant', 'Steering works.', { mid: 41, turn: 'T9' }))''')
@@ -249,8 +252,7 @@ def test_reload_mid_turn_keeps_the_steer_threaded_and_visible(browser, static_se
 
 
 def test_thread_forming_around_rows_on_screen_opens(browser, static_server):
-    """A steer shown as a plain row (its root not on screen yet) never vanishes
-    when the root arrives and the thread forms."""
+    """A thread forming around an existing row still starts collapsed."""
     page, errors = _page(browser, static_server)
     try:
         page.evaluate('''() => {
@@ -262,8 +264,8 @@ def test_thread_forming_around_rows_on_screen_opens(browser, static_server):
         expect(steer).to_be_visible()
         page.evaluate('''() => box().insertBefore(row('assistant', 'Done.', { mid: 51, turn: 'T8' }),
             document.querySelector('.message[data-message-id="52"]'))''')
-        expect(page.locator('.message[data-message-id="51"] .chat-thread-label')).to_have_text('Hide replies')
-        expect(steer).to_be_visible()
+        expect(page.locator('.message[data-message-id="51"] .chat-thread-label')).to_have_text('1 reply')
+        expect(steer).to_be_hidden()
         assert not errors
     finally:
         page.close()

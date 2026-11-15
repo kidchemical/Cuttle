@@ -395,17 +395,19 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
                 if (str === headTrim) {
                     return { chips: [{ label: cmd.label, meta: headTrim, category: cat }], body: '' };
                 }
-                if (str.startsWith(p)) {
+                // Any whitespace ends the command: an attachment-only send is
+                // stored as `/claude\n[Attached: …]`, with no space after it.
+                if (str.startsWith(headTrim) && /\s/.test(str.charAt(headTrim.length))) {
                     return {
                         chips: [{ label: cmd.label, meta: headTrim, category: cat }],
-                        body: str.slice(p.length).trim(),
+                        body: str.slice(headTrim.length).trim(),
                     };
                 }
             } else {
                 if (str === p) {
                     return { chips: [{ label: cmd.label, meta: p, category: cat }], body: '' };
                 }
-                if (str.startsWith(p + ' ')) {
+                if (str.startsWith(p) && /\s/.test(str.charAt(p.length))) {
                     return {
                         chips: [{ label: cmd.label, meta: p, category: cat }],
                         body: str.slice(p.length + 1).trim(),

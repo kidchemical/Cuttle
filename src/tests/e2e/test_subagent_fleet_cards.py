@@ -137,3 +137,46 @@ def test_unchanged_fleet_poll_keeps_cards_after_tooltip_enhancement(browser, sta
         assert not errors
     finally:
         page.close()
+
+
+def test_fleet_card_click_peeks_child_in_pane_drawer(browser, static_server):
+    world = CardWorld([])
+    world._append('assistant', 'Finished review.')
+    world.history[-1]['metadata'] = {'subagents': [_card(1, 'done', 'Tests passed', label='Reviewer')]}
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        page.set_viewport_size({'width': 1024, 'height': 768})
+        html = frame.locator('html')
+        before = html.evaluate('() => location.search')
+        frame.locator('.subagent-fleet-card').click()
+        peek = frame.locator('.subagent-peek')
+        peek.wait_for(state='visible')
+        assert peek.locator('.subagent-peek-title').inner_text() == 'Reviewer'
+        assert peek.locator('.subagent-peek-handle').inner_text() == 'CH-000901'
+        assert peek.locator('.subagent-peek-status').inner_text() == 'Done'
+        assert peek.locator('iframe').get_attribute('src') == '/chat_page.html?chat=901&peek=1'
+        assert html.evaluate('() => location.search') == before  # the pane did not navigate
+        previews = Path(__file__).resolve().parents[3] / 'temp' / 'fleet-cards'
+        previews.mkdir(parents=True, exist_ok=True)
+        page.wait_for_timeout(1500)
+        page.screenshot(path=str(previews / 'peek.png'))
+        html.press('Escape')
+        peek.wait_for(state='hidden')
+        assert peek.locator('iframe').get_attribute('src') is None  # nested chat dropped
+        frame.locator('.subagent-fleet-card').click()
+        peek.wait_for(state='visible')
+        peek.locator('.subagent-peek-backdrop').click(position={'x': 10, 'y': 10})
+        peek.wait_for(state='hidden')
+        frame.locator('.subagent-fleet-card').click()
+        peek.locator('.subagent-peek-open').click()
+        peek.wait_for(state='hidden')
+        html.evaluate('''() => new Promise((resolve, reject) => {
+            const t0 = Date.now();
+            const timer = setInterval(() => {
+                if (/chat=901/.test(location.search)) { clearInterval(timer); resolve(); }
+                else if (Date.now() - t0 > 10000) { clearInterval(timer); reject(new Error(location.search)); }
+            }, 50);
+        })''')
+        assert not [e for e in errors if 'CH-000901' not in e]
+    finally:
+        page.close()

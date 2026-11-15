@@ -70,3 +70,31 @@ def test_composer_does_not_use_agent_middot_format():
         encoding="utf-8"
     )
     assert "collapseCursorSlashChips(parsed.chips)" in mod
+
+
+@node_only
+def test_claude_badge_never_repeats_agent_name_or_strips_stored_model():
+    """CH-002404-131: effort-only pins rendered "Claude Code - Claude Code · medium"."""
+    model_js = REPO_ROOT / "src" / "web" / "js" / "chat/chat_agent_model.js"
+    harness = f"""
+require({str(model_js)!r});
+const C = require({str(CONTROLS_JS)!r});
+const ctl = C.create({{ state: {{ claudeModels: [] }}, getSessionId: () => null }});
+const stored = {{ chips: [{{
+    label: 'Claude Code - Opus 5.5 · medium',
+    meta: '/claude · model opus · effort medium',
+    category: 'claude',
+}}] }};
+const bare = {{ chips: [{{ label: 'Claude Code', meta: '/claude', category: 'claude' }}] }};
+process.stdout.write(JSON.stringify({{
+    stored: ctl.enrichSlashCommandWithClaudeModel(stored, '', 'medium').chips[0].label,
+    bare: ctl.enrichSlashCommandWithClaudeModel(bare, '', 'medium').chips[0].label,
+}}));
+"""
+    proc = subprocess.run(
+        ["node", "-e", harness], capture_output=True, text=True, encoding="utf-8", timeout=30
+    )
+    assert proc.returncode == 0, proc.stderr
+    res = json.loads(proc.stdout)
+    assert res["stored"] == "Claude Code - Opus 5.5 · medium", res
+    assert res["bare"] == "Claude Code · medium", res

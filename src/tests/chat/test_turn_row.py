@@ -107,6 +107,7 @@ def test_live_turn_has_row_and_inspector_before_it_finishes(authed, monkeypatch,
     client, db, owner = authed
     sid = db.create_chat_session(owner)
     gate = Gate(f"{agent} answer").install(monkeypatch, agent, db)
+    started_at = time.time()
     res, events = _start_stream(client, sid, f"/{agent} hello")
     try:
         started = _until(events, "query_started")
@@ -141,6 +142,12 @@ def test_live_turn_has_row_and_inspector_before_it_finishes(authed, monkeypatch,
     [row] = _assistants(db, sid)
     assert row["id"] == mid and row["content"] == f"{agent} answer"
     assert row["metadata"]["query_id"] == qid and not row["metadata"].get("in_progress")
+    # The row's timestamp is the turn's start; the reply time is recorded when it
+    # lands and survives a later rewrite of the row (post-processing).
+    done = row["metadata"]["completed_at"]
+    assert started_at <= done <= time.time()
+    assert db.update_message_content(mid, "rewritten", metadata={"query_id": qid})
+    assert _assistants(db, sid)[0]["metadata"]["completed_at"] == done
     after = client.get(f"/api/query-log/{qid}")
     assert after.status_code == 200 and after.get_json()["executing"] is False
     attention = db.get_attention(sid, owner)

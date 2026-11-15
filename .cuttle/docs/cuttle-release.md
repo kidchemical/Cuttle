@@ -84,8 +84,10 @@ exe plus a combined `SHA256SUMS`. The `.deb` is the supported Ubuntu 24.04+
 install: its AppArmor profile grants `userns`, so Chromium keeps its sandbox. An
 AppImage cannot ship a setuid `chrome-sandbox` and aborts on hosts with
 `kernel.apparmor_restrict_unprivileged_userns=1`; CI's AppImage E2E passes
-`--no-sandbox` only for that reason, while the installed-deb E2E runs sandboxed. Review the draft, write the notes, then publish it by
-hand — CI never publishes.
+`--no-sandbox` only for that reason, while the installed-deb E2E runs sandboxed. CI never publishes: whoever runs the
+release does. An agent asked for a release finishes it — check the draft has
+every asset, write the notes, then `gh release edit vX.Y.Z --draft=false
+--latest` and confirm it shows as Latest. Do not hand the publish click back.
 
 Packaged Hosts are self-contained: `electron/bundle-python.js` ships a
 python-build-standalone CPython pinned by SHA-256 in

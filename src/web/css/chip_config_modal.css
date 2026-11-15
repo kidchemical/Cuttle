@@ -68,6 +68,45 @@
     color: var(--popup-text);
 }
 
+.chip-config-input {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 11px 12px;
+    border-radius: 10px;
+    background-color: var(--popup-field);
+    border: 1px solid var(--popup-border);
+    color: var(--popup-text);
+    font-size: 14px;
+    font-family: inherit;
+    line-height: 1.4;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+textarea.chip-config-input {
+    min-height: 64px;
+    resize: vertical;
+}
+
+.chip-config-input::placeholder {
+    color: var(--popup-muted);
+    opacity: 0.75;
+}
+
+.chip-config-input:focus {
+    outline: none;
+    border-color: var(--popup-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--popup-accent) 25%, transparent);
+}
+
+.chip-config-field-hint {
+    margin-left: 6px;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
 .chip-config-field .cuttle-combo {
     width: 100%;
 }
@@ -114,4 +153,54 @@
 
 .chip-config-fields button.orch-chip-edit:hover {
     text-decoration: underline;
+}
+
+/* Picker shortcuts (Add project / Project settings / Agent settings) and
+   the ← Back of a sub-view (Add project) in the same modal. */
+.chip-config-links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px 16px;
+}
+
+.chip-config-links[hidden],
+.chip-config-back[hidden] {
+    display: none;
+}
+
+.chip-config-link,
+.chip-config-back {
+    padding: 4px 2px;
+    border: 0;
+    background: none;
+    color: var(--popup-accent);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.chip-config-link:hover,
+.chip-config-back:hover {
+    text-decoration: underline;
+}
+
+.chip-config-back {
+    display: block;
+    margin: 0 0 8px;
+    color: var(--popup-muted);
+}
+
+.chip-config-error {
+    margin: 0;
+    font-size: 13px;
+    color: var(--popup-danger, #f87171);
+}
+
+.chip-config-error:empty {
+    display: none;
+}
+
+#chipConfigDone[hidden] {
+    display: none;
 }

@@ -90,3 +90,75 @@ def test_wide_pane_keeps_full_chrome(browser, static_server):
         assert errors == []
     finally:
         context.close()
+
+
+@pytest.mark.parametrize('expanded', [False, True])
+@pytest.mark.parametrize('fail_second', [False, True])
+def test_shift_hover_batch_commits_and_partial_failure(browser, static_server, expanded, fail_second):
+    context, page, errors = _open(browser, static_server, 900)
+    plans, commits = [], []
+    page.evaluate('window.batchToasts = []; window.showToast = message => window.batchToasts.push(message)')
+    def plan(route):
+        plans.append(route.request.post_data_json)
+        route.fulfill(json={'success': True, 'commits': [
+            {'message': 'Fix panel', 'files': [FILES[0]['path']]},
+            {'message': 'Update guide', 'files': ['README.md']},
+        ]})
+    def commit(route):
+        commits.append(route.request.post_data_json)
+        route.fulfill(json={'success': not fail_second or len(commits) == 1, 'commit': 'abc123', 'error': 'Hook rejected'})
+    page.route('**/api/git/suggest-commit-message', plan)
+    page.route('**/api/git/commit', commit)
+    button = page.locator('#pendingChangesHost [data-pc="commitQuick"]')
+    panel = page.locator('#pendingChangesHost [data-pending-panel]')
+    try:
+        button.hover()
+        page.keyboard.down('Shift')
+        page.wait_for_function("document.querySelector('[data-pc=commitQuick]').textContent === 'Batch Commits'")
+        page.keyboard.up('Shift')
+        assert button.inner_text() == 'Commit'
+        page.keyboard.down('Shift')
+        page.mouse.move(0, 0)
+        assert button.inner_text() == 'Commit'
+        panel.hover()
+        assert button.inner_text() == 'Batch Commits'
+        page.keyboard.up('Shift')
+        if expanded:
+            panel.locator('[data-pc=toggle]').click()
+            button = panel.locator('[data-pc=commitBtn]')
+        button.hover()
+        page.keyboard.down('Shift')
+        assert button.inner_text() == 'Batch Commits'
+        button.click(modifiers=['Shift'])
+        page.wait_for_function("window.batchToasts.some(t => typeof t === 'string' && (t.startsWith('Batch stopped') || t === '2 commits created'))")
+        toast = page.evaluate("window.batchToasts.find(t => typeof t === 'string' && (t.startsWith('Batch stopped') || t === '2 commits created'))")
+        assert ('Batch stopped after 1' in toast) if fail_second else toast == '2 commits created'
+        assert plans[0]['batch'] is True
+        assert plans[0]['files'] == [f['path'] for f in FILES]
+        assert [c['files'] for c in commits] == [[FILES[0]['path']], ['README.md']]
+        assert [c['message'] for c in commits] == ['Fix panel', 'Update guide']
+        assert errors == []
+    finally:
+        context.close()
+
+
+def test_plain_commit_still_suggests_one_message(browser, static_server):
+    context, page, errors = _open(browser, static_server, 900)
+    committed = []
+    def suggestion(route):
+        assert not route.request.post_data_json.get('batch')
+        route.fulfill(json={'success': True, 'message': 'Fix pending panel'})
+    def commit(route):
+        committed.append(route.request.post_data_json)
+        route.fulfill(json={'success': True, 'commit': 'abc123'})
+    page.route('**/api/git/suggest-commit-message', suggestion)
+    page.route('**/api/git/commit', commit)
+    try:
+        with page.expect_response('**/api/git/commit'):
+            page.locator('#pendingChangesHost [data-pc=commitQuick]').click()
+        assert len(committed) == 1
+        assert committed[0]['message'] == 'Fix pending panel'
+        assert committed[0]['files'] == [f['path'] for f in FILES]
+        assert errors == []
+    finally:
+        context.close()

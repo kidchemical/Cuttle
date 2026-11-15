@@ -283,8 +283,12 @@ def _git_head(path):
 
 
 def _children_progress(db, sid):
-    """Newest message id per sub-agent chat (two levels down): a lane that is
-    talking is progress for the orchestrator waiting on it."""
+    """Newest message id and sub-agent status per sub-agent chat (two levels
+    down): a lane that is talking is progress for the orchestrator waiting on it,
+    and so is one that ends. The status is needed for the end: a child's reply
+    row is created when its turn starts and filled in place, so a lane that
+    finishes, fails or is cancelled adds no message id (CH-002353, 2026-11-12: a
+    child cancelled at its time limit was news only after the 45 min stall window)."""
     if db is None:
         return []
     try:
@@ -302,11 +306,26 @@ def _children_progress(db, sid):
                 f'FROM chat_sessions s WHERE s.parent_session_id IN ({marks})', frontier).fetchall()
             frontier = [int(r[0]) for r in rows]
             found += [(int(r[0]), r[1]) for r in rows]
-        return sorted(found)
+        status = _children_status(conn, [f[0] for f in found])
+        return sorted((sid_, last, status.get(sid_, '')) for sid_, last in found)
     except Exception:
         return []
     finally:
         conn.close()
+
+
+def _children_status(conn, session_ids):
+    """``session id -> status`` of each chat's newest sub-agent row ({} when the
+    table is missing: message ids alone still count)."""
+    if not session_ids:
+        return {}
+    try:
+        rows = conn.execute(
+            'SELECT session_id, status FROM subagent_children WHERE session_id IN (%s) ORDER BY rowid'
+            % ','.join('?' * len(session_ids)), list(session_ids)).fetchall()
+    except Exception:
+        return {}
+    return {int(r[0]): str(r[1] or '') for r in rows}
 
 
 def _progress(snap, db=None, children=None):

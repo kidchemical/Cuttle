@@ -41,6 +41,26 @@
     }
 
     /**
+     * Composer textarea keyboard attributes. Touch keyboards (Android
+     * WebView → IME flags) need autocorrect/spellcheck/autocomplete on, or
+     * Gboard never corrects; desktop keeps them off (no squiggles in code
+     * or slash commands) unless `desktopSpellcheck` (Settings → General,
+     * device-local `SPELLCHECK_PREF_KEY`) turns underlines on there.
+     * The page writes the map onto both textareas.
+     */
+    const SPELLCHECK_PREF_KEY = 'cuttleComposerSpellcheck';
+    function keyboardAttrs(touchMode, desktopSpellcheck) {
+        const t = !!touchMode;
+        return {
+            enterkeyhint: t ? 'enter' : 'send',
+            autocorrect: t ? 'on' : 'off',
+            spellcheck: (t || desktopSpellcheck) ? 'true' : 'false',
+            autocapitalize: t ? 'sentences' : 'off',
+            autocomplete: t ? 'on' : 'off',
+        };
+    }
+
+    /**
      * True when composed text (plus optional attachments) is worth sending.
      * Sticky-agent chips alone (``/cursor``, ``/cursor /model auto``, …) are
      * not a prompt — Enter must no-op. Native control commands (``/restart``)
@@ -465,6 +485,8 @@
         draftWithSharedAgent,
         draftChips,
         enterSubmits,
+        keyboardAttrs,
+        SPELLCHECK_PREF_KEY,
         isSendableComposerMessage,
         isImmediateControlLaneText,
         stickyCommandAfterSend,

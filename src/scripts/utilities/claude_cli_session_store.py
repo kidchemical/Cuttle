@@ -108,7 +108,7 @@ def resolve_claude_resume(
     for k, v in data.items():
         if not isinstance(k, str) or not k.endswith(suffix):
             continue
-        if k.startswith(("model\x1f", "ctx\x1f", "effort\x1f", "billing\x1f")):
+        if k.startswith(("model\x1f", "ctx\x1f", "effort\x1f", "billing\x1f", "cost\x1f")):
             continue
         tid = _valid_session_id(v if isinstance(v, str) else None)
         if tid:
@@ -294,8 +294,14 @@ def _transcript_paths(claude_session_id: Optional[str]) -> list:
         return []
 
 
-def claude_transcript_stats(claude_session_id: Optional[str]) -> Dict[str, int]:
+_TRANSCRIPT_MODEL_RE = re.compile(rb'"model":"(claude-[A-Za-z0-9._\[\]=,-]+)"')
+
+
+def claude_transcript_stats(claude_session_id: Optional[str]) -> Dict[str, Any]:
     """Compactions + current window fill from Claude Code's own transcript.
+
+    * ``model``: full id of the last model call (``claude-fable-5-2``). Cuttle
+      stores the alias the user picked (``fable``), which no catalog knows.
 
     * ``compactions``: ``compact_boundary`` system rows (manual ``/compact``
       or auto). Message text containing the phrase is JSON-escaped, so the
@@ -308,7 +314,7 @@ def claude_transcript_stats(claude_session_id: Optional[str]) -> Dict[str, int]:
 
     Zeros when the transcript cannot be found.
     """
-    out = {"compactions": 0, "context_tokens": 0}
+    out: Dict[str, Any] = {"compactions": 0, "context_tokens": 0, "model": ""}
     for path in _transcript_paths(claude_session_id):
         last_usage: Optional[bytes] = None
         post_compact = 0
@@ -321,6 +327,9 @@ def claude_transcript_stats(claude_session_id: Optional[str]) -> Dict[str, int]:
                         post_compact = _post_compact_tokens(line)
                     elif b'"type":"assistant"' in line and b'"usage"' in line:
                         last_usage = line
+                        hit = _TRANSCRIPT_MODEL_RE.search(line)
+                        if hit:
+                            out["model"] = hit.group(1).decode("ascii", "replace")
         except OSError:
             continue
         if last_usage is None:
@@ -355,3 +364,32 @@ def _post_compact_tokens(line: bytes) -> int:
 
 def count_compact_boundaries(claude_session_id: Optional[str]) -> int:
     return claude_transcript_stats(claude_session_id)["compactions"]
+
+
+def _cost_key(claude_session_id: Any) -> str:
+    return f"cost\x1f{str(claude_session_id or '').strip()}"
+
+
+def save_claude_cost_snapshot(claude_session_id: Optional[str], snapshot: Optional[Dict[str, Any]]) -> None:
+    """Last session-wide ``modelUsage`` / ``total_cost_usd`` seen for a Claude session."""
+    if not str(claude_session_id or "").strip():
+        return
+    key = _cost_key(claude_session_id)
+    with _lock:
+        data = _load_all()
+        if snapshot:
+            data[key] = dict(snapshot)
+        elif key in data:
+            del data[key]
+        else:
+            return
+        _write_all(data)
+
+
+def load_claude_cost_snapshot(claude_session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not str(claude_session_id or "").strip():
+        return None
+    with _lock:
+        data = _load_all()
+    raw = data.get(_cost_key(claude_session_id))
+    return dict(raw) if isinstance(raw, dict) else None

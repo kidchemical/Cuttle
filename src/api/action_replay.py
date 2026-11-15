@@ -42,8 +42,11 @@ def claim(receipt_key: str, expires_at: int = 0) -> bool:
     from api.auth_db import get_auth_db
 
     with closing(get_auth_db()._get_connection()) as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS action_replay_receipts (receipt_key TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)")
+        # Create the table inside the write transaction: a concurrent first
+        # claim otherwise changes the schema under statements already prepared
+        # by another connection ("database schema has changed").
         conn.execute("BEGIN IMMEDIATE")
+        conn.execute("CREATE TABLE IF NOT EXISTS action_replay_receipts (receipt_key TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)")
         conn.execute("DELETE FROM action_replay_receipts WHERE expires_at > 0 AND expires_at < ?", (int(time.time()),))
         inserted = conn.execute("INSERT OR IGNORE INTO action_replay_receipts VALUES (?, ?)", (receipt_key, expires_at)).rowcount
         conn.commit()

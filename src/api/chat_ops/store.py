@@ -431,3 +431,11 @@ def supervising(targets):
         return [public(r) for r in conn.execute(
             f"SELECT * FROM operations WHERE kind='supervise' AND state IN ('pending','dispatching') "
             f'AND target IN ({marks})', targets)]
+
+
+def watching(target):
+    """Supervision schedules on ``target`` still in force, paused ones included."""
+    with connection() as conn:
+        return [public(r) for r in conn.execute(
+            "SELECT * FROM operations WHERE kind='supervise' AND state IN ('pending','dispatching','paused') "
+            'AND target=?', (int(target),))]

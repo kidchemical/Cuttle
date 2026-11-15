@@ -242,8 +242,20 @@ def tasks_chip(
     return base
 
 
+# Context digest budget: the envelope is a directory, not a copy of the lists.
+# A chat's own (session) list shows its next open items; shared lists show the
+# header only. Everything else is one ``tasks get`` away.
+_DIGEST_OPEN_ITEMS = 8
+_DIGEST_TEXT_CHARS = 160
+
+
+def _clip(text: Any, limit: int = _DIGEST_TEXT_CHARS) -> str:
+    s = re.sub(r"\s+", " ", str(text or "")).strip()
+    return s if len(s) <= limit else s[: limit - 1].rstrip() + "…"
+
+
 def format_tasks_digest(widgets: List[Dict[str, Any]]) -> str:
-    """Compact markdown for Context Compiler injection."""
+    """Compact directory of active lists for Context Compiler injection."""
     lines: List[str] = []
     for w in widgets or []:
         if str(w.get("type") or "") != "tasks":
@@ -262,26 +274,31 @@ def format_tasks_digest(widgets: List[Dict[str, Any]]) -> str:
                 payload = {}
         payload = normalize_tasks_payload(payload)
         done, total = count_tasks(payload.get("items") or [])
-        lines.append(f"- **{title}** (`{wid}`, scope={scope}) {done}/{total}")
+        lines.append(f"- **{title}** (`{wid}`, scope={scope}) {done}/{total} done")
         if desc:
-            lines.append(f"  - intent: {desc}")
+            lines.append(f"  - intent: {_clip(desc, 240)}")
+        if scope != "session":
+            continue
+        open_items: List[Dict[str, Any]] = []
 
-        def walk(nodes: List[Dict[str, Any]], indent: int = 2) -> None:
-            pad = " " * indent
+        def walk(nodes: List[Dict[str, Any]]) -> None:
             for n in nodes or []:
-                mark = "x" if n.get("done") else " "
-                lines.append(f"{pad}- [{mark}] `{n.get('id')}` {n.get('text') or ''}")
-                walk(n.get("children") or [], indent + 2)
+                if not n.get("done"):
+                    open_items.append(n)
+                walk(n.get("children") or [])
 
         walk(payload.get("items") or [])
+        for n in open_items[:_DIGEST_OPEN_ITEMS]:
+            lines.append(f"  - [ ] `{n.get('id')}` {_clip(n.get('text'))}")
+        if len(open_items) > _DIGEST_OPEN_ITEMS:
+            lines.append(f"  - … {len(open_items) - _DIGEST_OPEN_ITEMS} more open")
     if not lines:
         return ""
     return (
         "### Active Tasks gizmos\n"
-        "Reuse these ids through `python -m api.gizmos tasks patch <id>`. "
-        "Create a list at the start of multi-step planning; update it during work. "
+        "Lists only; items: `python -m api.gizmos tasks get <id>`, update: "
+        "`python -m api.gizmos tasks patch <id>`. "
         "Do not create another list for the same concern or emit Tasks markdown tags. "
         "Completing the last item auto-archives the list.\n"
-        "Honor each list's intent.\n"
         + "\n".join(lines)
     )

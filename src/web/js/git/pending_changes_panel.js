@@ -429,9 +429,33 @@
         }
 
         function createRepoPanel(panelEl, repoRoot, label, showChip) {
+            let hovered = false;
+            let shiftHeld = false;
+            let disposed = false;
+            function updateBatchLabel() {
+                ['commitQuick', 'commitBtn'].forEach(function (role) {
+                    const button = qs(role);
+                    if (button && !quickCommitInFlight) {
+                        button.textContent = hovered && shiftHeld ? 'Batch Commits' : 'Commit';
+                        button.title = hovered && shiftHeld
+                            ? 'Group selected changes into commits using your commit naming helper'
+                            : (role === 'commitQuick' ? 'Auto-suggest a message and commit' : 'Edit a commit message') + ' (hold Shift for batch commits)';
+                    }
+                });
+            }
+            function onShiftKey(e) { shiftHeld = e.shiftKey; updateBatchLabel(); }
+            function onWindowBlur() { shiftHeld = false; hovered = false; updateBatchLabel(); }
+            function onPanelEnter(e) { hovered = true; shiftHeld = e.shiftKey; updateBatchLabel(); }
+            function onPanelLeave() { hovered = false; updateBatchLabel(); }
+            panelEl.addEventListener('mouseenter', onPanelEnter);
+            panelEl.addEventListener('mouseleave', onPanelLeave);
+            global.addEventListener('keydown', onShiftKey);
+            global.addEventListener('keyup', onShiftKey);
+            global.addEventListener('blur', onWindowBlur);
             let expanded = startExpanded;
             let hasSnapshot = false;
             let quickCommitInFlight = false;
+            let commitInFlight = false;
             let fileInclusion = {};
             let filesSnapshot = [];
             let truncated = false;
@@ -545,11 +569,11 @@
                 }
                 if (submitBtn) {
                     setPolledText(submitBtn, 'Commit');
-                    if (!suggestInFlight && !quickCommitInFlight) submitBtn.disabled = effective === 0;
+                    submitBtn.disabled = suggestInFlight || quickCommitInFlight || commitInFlight || effective === 0;
                 }
                 if (quickBtn && !quickCommitInFlight) {
-                    setPolledText(quickBtn, 'Commit');
-                    if (!suggestInFlight) quickBtn.disabled = effective === 0;
+                    updateBatchLabel();
+                    quickBtn.disabled = suggestInFlight || commitInFlight || effective === 0;
                 }
                 const list = qs('list');
                 if (list) {
@@ -684,6 +708,7 @@
             }
 
             async function suggestMessage(opts) {
+                if (quickCommitInFlight && !(opts && opts.quick)) return null;
                 const force = !!(opts && opts.force);
                 if (!currentProject() || !currentProject().path) return null;
                 const ta = qs('commitMessage');
@@ -771,6 +796,8 @@
             }
 
             async function submitCommit(opts) {
+                if (commitInFlight) return;
+                if (quickCommitInFlight && !(opts && opts.reviewGuarded)) return;
                 if (!currentProject() || !currentProject().path) {
                     setStatus('No project selected', true);
                     return;
@@ -793,6 +820,8 @@
                     return;
                 }
                 if (submitBtn) submitBtn.disabled = true;
+                commitInFlight = true;
+                updateSelectionChrome();
                 setStatus('Committing…', false);
                 pendingChangesSuppressFocusRefreshUntil = Date.now() + 2500;
                 try {
@@ -835,13 +864,69 @@
                     setStatus(err, true);
                     (window.showToast || function () {})(err, 'error');
                 } finally {
+                    commitInFlight = false;
                     if (submitBtn) submitBtn.disabled = false;
                     updateSelectionChrome();
                 }
             }
 
+            async function batchCommit() {
+                if (commitInFlight || quickCommitInFlight || suggestInFlight || !effectiveCount()) return;
+                const project = currentProject();
+                if (!project || !project.path) return;
+                const target = { path: project.path, repo_root: repoRoot };
+                const selection = buildFilesPayload();
+                const button = qs(expanded ? 'commitBtn' : 'commitQuick');
+                let committed = 0;
+                quickCommitInFlight = true;
+                updateSelectionChrome();
+                if (button) { button.disabled = true; button.textContent = 'Grouping…'; }
+                async function post(url, body, timeout) {
+                    const response = await fetchWithTimeout(url, {
+                        method: 'POST', credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+                    }, timeout);
+                    const data = await response.json();
+                    if (!response.ok || !data.success) throw new Error(data.error || 'Batch commit failed');
+                    return data;
+                }
+                try {
+                    const plan = await post('/api/git/suggest-commit-message', Object.assign({}, target, selection, {
+                        batch: true, session_id: getSessionId(), prompts: getPrompts(),
+                    }), 180000);
+                    if (disposed || currentProject()?.path !== target.path) return;
+                    if (!Array.isArray(plan.commits) || !plan.commits.length) throw new Error('No batch commits returned');
+                    const paths = plan.commits.flatMap(group => group.files);
+                    if (global.CuttleAgentReview && !(await global.CuttleAgentReview.guardCommit({
+                        projectPath: target.path, repoRoot: repoRoot, paths: paths,
+                    }))) return;
+                    for (const group of plan.commits) {
+                        if (disposed || currentProject()?.path !== target.path) throw new Error('Project changed; batch stopped');
+                        if (button) button.textContent = 'Committing ' + (committed + 1) + '/' + plan.commits.length + '…';
+                        await post('/api/git/commit', Object.assign({}, target, group), 180000);
+                        committed += 1;
+                    }
+                    (window.showToast || function () {})(committed + ' commit' + (committed === 1 ? '' : 's') + ' created', 'success');
+                    setCommitFormVisible(false);
+                } catch (e) {
+                    const message = 'Batch stopped after ' + committed + ' commit(s): ' + (e.message || 'Unknown error');
+                    setStatus(message, true);
+                    (window.showToast || function () {})(message, 'error');
+                } finally {
+                    quickCommitInFlight = false;
+                    if (button) button.disabled = false;
+                    updateSelectionChrome();
+                    if (committed) {
+                        pendingChangesFetchGen += 1;
+                        await refresh({ forceLocal: true });
+                        notifySiblingChanged();
+                        onAfterCommit();
+                    }
+                }
+            }
+
             async function quickCommit() {
-                if (quickCommitInFlight || suggestInFlight) return;
+                if (commitInFlight || quickCommitInFlight || suggestInFlight) return;
                 if (!currentProject() || !currentProject().path) {
                     (window.showToast || function () {})('No project selected', 'error');
                     return;
@@ -861,7 +946,7 @@
                     }
                     const ta = qs('commitMessage');
                     if (ta) ta.value = '';
-                    const message = await suggestMessage({ force: true });
+                    const message = await suggestMessage({ force: true, quick: true });
                     if (!message) {
                         (window.showToast || function () {})('Could not suggest a commit message', 'error');
                         return;
@@ -870,7 +955,7 @@
                     await submitCommit({ reviewGuarded: true });
                 } finally {
                     quickCommitInFlight = false;
-                    if (quickBtn) quickBtn.textContent = 'Commit';
+                    updateBatchLabel();
                     updateSelectionChrome();
                 }
             }
@@ -1224,6 +1309,8 @@
                         e.stopPropagation();
                         pendingChangesSuppressFocusRefreshUntil = Date.now() + 2000;
                         const form = qs('commitForm');
+                        if (e.shiftKey) { batchCommit(); return; }
+                        if (quickCommitInFlight) return;
                         const opening = !(form && !form.hidden);
                         if (opening && !expanded) setExpanded(true);
                         setCommitFormVisible(opening);
@@ -1243,7 +1330,8 @@
                     commitQuick.addEventListener('click', function (e) {
                         e.preventDefault();
                         e.stopPropagation();
-                        quickCommit();
+                        if (e.shiftKey) batchCommit();
+                        else quickCommit();
                     });
                 }
                 const commitCancel = qs('commitCancel');
@@ -1316,6 +1404,10 @@
                 setChip: setChip,
                 getFiles: function () { return filesSnapshot.slice(); },
                 destroy: function () {
+                    disposed = true;
+                    global.removeEventListener('keydown', onShiftKey);
+                    global.removeEventListener('keyup', onShiftKey);
+                    global.removeEventListener('blur', onWindowBlur);
                     unsubscribeReview();
                     try { panelEl.remove(); } catch (_) {}
                 },

@@ -210,6 +210,28 @@ def test_status_states(chats):
     assert out["tasks"][0]["done"] == 0 and out["tasks"][0]["total"] == 1
 
 
+def test_detached_spawn_reads_as_waiting_while_its_cli_lives(chats, monkeypatch):
+    """A spawn run under a service manager (no listener) is a background wait
+    while its CLI process lives; once the CLI is gone the chat is idle again."""
+    from api import job_watch
+    from api.subagents import store as subagent_store
+    monkeypatch.setattr(job_watch, "pid_alive", lambda pid: int(pid) == 4242)
+    db, owner, sup, target, _foreign = chats
+    _tasks(db, owner, target, done=False)
+    subagent_store.insert_batch(db, parent_session_id=int(target), user_id=owner, collect="all",
+                                lifetime="one_shot", metadata={"detached_cli_pid": 4242})
+    out = service.status(_ch(target), _ch(sup), db=db, request=FakeHost())
+    assert out["state"] == "waiting_background"
+    assert out["live"]["background_wait"][0]["kind"] == "detached_spawn"
+    # Same chat, its CLI gone: the batch no longer holds the chat.
+    subagent_store.insert_batch(db, parent_session_id=int(target), user_id=owner, collect="all",
+                                lifetime="one_shot", metadata={"detached_cli_pid": 5151})
+    out = service.status(_ch(target), _ch(sup), db=db, request=FakeHost())
+    assert out["state"] == "waiting_background"  # the 4242 batch still counts
+    monkeypatch.setattr(job_watch, "pid_alive", lambda pid: False)
+    assert service.status(_ch(target), _ch(sup), db=db, request=FakeHost())["state"] == "idle_with_work"
+
+
 # --- outbox delivery ----------------------------------------------------------
 
 
@@ -966,6 +988,38 @@ def test_new_reply_or_subagent_reply_counts_as_progress(chats, monkeypatch):
     assert _tick(chats, sched, _snap("busy", reply_id=2), monkeypatch) == []  # a sub-agent spoke
     clock[0] += worker.STALL_SEC + 60
     assert len(_tick(chats, sched, _snap("busy", reply_id=2), monkeypatch)) == 1
+
+
+def test_subagent_ending_is_news_at_the_next_check(chats, monkeypatch):
+    """A child's reply row exists from its turn's start, so its end adds no message
+    id: the status change itself must reach the supervisor (CH-002353: a lane
+    cancelled at its time limit sat unseen until the 45 min stall window)."""
+    db, owner, sup, target, _foreign = chats
+    child = db.create_chat_session(owner, "lane")
+    conn = db._get_connection()
+    conn.execute("UPDATE chat_sessions SET parent_session_id=? WHERE id=?", (target, child))
+    conn.execute("INSERT INTO subagent_batches (id, parent_session_id, user_id) VALUES ('b1', ?, ?)", (target, owner))
+    conn.execute("INSERT INTO subagent_children (id, batch_id, session_id, status) VALUES ('c1', 'b1', ?, 'running')",
+                 (child,))
+    conn.commit()
+    conn.close()
+    db.add_message(child, "assistant", "")  # the turn's reply row, filled in place later
+    sched = _schedule(chats)
+    monkeypatch.setattr(worker, "_git_head", lambda path: "abc")
+    snap = _snap("idle_with_work")
+    first = _tick(chats, sched, snap, monkeypatch)  # the supervisor has seen this picture
+    for c in first:
+        store.finish(c["id"], "done", {})
+    assert len(_tick(chats, sched, snap, monkeypatch)) == len(first)  # unchanged: no wake
+    before = worker._children_progress(db, target)
+    conn = db._get_connection()
+    conn.execute("UPDATE subagent_children SET status='cancelled' WHERE id='c1'")
+    conn.commit()
+    conn.close()
+    after = worker._children_progress(db, target)
+    assert before == [(child, before[0][1], "running")] and after == [(child, before[0][1], "cancelled")]
+    assert len(_tick(chats, sched, snap, monkeypatch)) == len(first) + 1  # woken at once, not after STALL_SEC
+    assert worker._children_status(None, [child]) == {}  # a broken lookup never hides message progress
 
 
 def test_waiting_background_stall_reads_as_a_wait_and_backs_off(chats, monkeypatch):

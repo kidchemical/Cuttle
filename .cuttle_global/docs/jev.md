@@ -8,6 +8,10 @@ Auth (first match wins):
 1. `TYPESAFE_API_KEY` → `https://api.typesafe.ai`
 2. `OPENROUTER_API_KEY` → `https://openrouter.ai/api` (same System One body; billed to OpenRouter)
 
+Each key is read from the process environment, then from `<home>/.env`. Agent
+CLI shells never inherit provider keys, so `python -m api.jev` run by an agent
+uses the home file.
+
 Override host with `CUTTLE_JEV_BASE_URL`. Optional `settings.json → jev`
 (`enabled`, `model`, `rank_context`, `label_turns`, `regress.interval_s`).
 
@@ -30,7 +34,7 @@ Flags after the verb. `--json` is implied: stdout is JSON.
 |---|---|
 | Agent router brain | `/router api model jev` (keeps the use-case table + demotions in code) |
 | Frustration investigator | Default `agent_router.rage.investigator.agent` is `jev`; falls back to Cursor Auto if no key |
-| Context Compiler | Optional ranked runbook/skill snippets when Jev is available |
+| Context Compiler | Optional ranked runbook/skill snippet. Jev judges unless an executor is chosen for **Context ranking** in Settings → Background helpers (model API or tool-less agent CLI) |
 | Pipeline skillsets | `dynamicStrategy: "jev"` (keyword fallback) |
 | My Cuttle Performance | Cached miss labels (`python -m api.jev label` or dashboard **Label with Jev**) |
 | Hourly regress | Flask daemon thread: scan recent query logs + router outcomes → maybe run a pytest subset → tray/toast if tests fail |

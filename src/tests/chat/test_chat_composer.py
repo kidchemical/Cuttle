@@ -40,6 +40,10 @@ out.touchCtrl = A.enterSubmits(
   { key: 'Enter', shiftKey: false, ctrlKey: true, touchMode: true });
 out.touchMeta = A.enterSubmits(
   { key: 'Enter', shiftKey: false, metaKey: true, touchMode: true });
+out.kbTouch = A.keyboardAttrs(true);
+out.kbDesk = A.keyboardAttrs(false);
+out.kbDeskSpell = A.keyboardAttrs(false, true);
+out.kbKey = A.SPELLCHECK_PREF_KEY;
 // sticky/slash callbacks mirroring the slash domain surface
 const stickyOf = (rest) => {
   const m = String(rest || '').match(/^\\/(cursor|codex|claude) (.*)$|^\\/(cursor|codex|claude)$/i);
@@ -119,6 +123,23 @@ def test_enter_submit_interpretation():
     assert res["touchEnter"] is False  # touch needs Ctrl/Meta+Enter
     assert res["touchCtrl"] is True
     assert res["touchMeta"] is True
+
+
+@node_only
+def test_keyboard_attrs_enable_ime_autocorrect_on_touch_only():
+    # Android WebView maps these to IME flags; off = no Gboard autocorrect.
+    res = _run()
+    assert res["kbTouch"] == {
+        "enterkeyhint": "enter", "autocorrect": "on", "spellcheck": "true",
+        "autocapitalize": "sentences", "autocomplete": "on",
+    }
+    assert res["kbDesk"] == {
+        "enterkeyhint": "send", "autocorrect": "off", "spellcheck": "false",
+        "autocapitalize": "off", "autocomplete": "off",
+    }
+    # Settings → General toggle turns desktop underlines on, nothing else.
+    assert res["kbDeskSpell"] == {**res["kbDesk"], "spellcheck": "true"}
+    assert res["kbKey"] == "cuttleComposerSpellcheck"
 
 
 @node_only
@@ -225,6 +246,8 @@ async function scenario(cfg) {
   const LOG = () => {}, LOG_ERR = () => {};
   const isSessionGenerating = () => cfg.generating;
   const composerLock = { blocksSend: () => false };  // unlocked chat (chat_composer_lock.js)
+  const voiceClip = { isActive: () => false };  // no recording in progress (chat_voice_clip.js)
+  const quoteClips = null;  // no quote clips staged (chat_quote_clips.js)
   const composeMessageWithSlashChip = (t) => t.value;
   const isSendableComposerMessage = (m, a) =>
     CuttleChatComposer.isSendableComposerMessage(m, a, null);

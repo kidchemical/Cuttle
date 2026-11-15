@@ -91,3 +91,34 @@ def test_duplicate_chat_records_and_resume(saved, tmp_path):
     target = paths['logs_path'] / 'query_data_test123.json'
     target.write_bytes((backup / target.name).read_bytes())
     assert cr.resume_logs(backup_dir=backup, logs_path=paths['logs_path'])['resumed_logs'] == 1
+
+
+def _mark_running_total(paths, meta):
+    """Turn the fixture row into a saved estimate that priced the session total."""
+    meta['usage'].update(cost_estimated=True, reported_cost=90.0)
+    with sqlite3.connect(paths['auth_path']) as db:
+        db.execute('UPDATE chat_messages SET metadata=?', (json.dumps(meta),))
+
+
+def test_per_turn_repair_reprices_running_totals(saved, tmp_path):
+    paths, meta = saved
+    _mark_running_total(paths, meta)
+    assert cr.repair(**paths)['messages'] == 0  # the API-equivalent pass leaves estimates alone
+    result = cr.repair(**paths, apply=True, backup_dir=tmp_path / 'b', estimator=cr.estimate_per_turn)
+    assert result['messages'] == 1
+    with sqlite3.connect(paths['auth_path']) as db:
+        usage = json.loads(db.execute('SELECT metadata FROM chat_messages').fetchone()[0])['usage']
+    assert usage['cost'] == pytest.approx(4.539049)
+    assert usage['cumulative_cost'] == pytest.approx(83.985179)
+    assert usage['cost_basis'] == cr.PER_TURN_BASIS
+    with sqlite3.connect(paths['outcomes_path']) as db:
+        assert db.execute('SELECT cost FROM router_outcomes').fetchone()[0] == pytest.approx(4.539049)
+    log = json.loads((paths['logs_path'] / 'query_data_test123.json').read_text())
+    assert log['total_cost'] == pytest.approx(5.539049)
+    assert cr.repair(**paths, estimator=cr.estimate_per_turn)['messages'] == 0
+
+
+def test_per_turn_repair_leaves_estimates_near_their_tokens(saved, monkeypatch):
+    paths, meta = saved
+    meta['usage'].update(cost_estimated=True, cost=5.0)  # helper models can add a little
+    assert cr.estimate_per_turn(meta)[1] == 'not_inflated'

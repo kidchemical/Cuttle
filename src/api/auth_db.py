@@ -2040,6 +2040,8 @@ class AuthDatabase:
                 old_meta = {}
             if not turn_id_of(metadata) and turn_id_of(old_meta):
                 metadata = {**metadata, 'turn_id': turn_id_of(old_meta)}  # never lose the anchor
+            if 'completed_at' not in metadata and old_meta.get('completed_at'):
+                metadata = {**metadata, 'completed_at': old_meta['completed_at']}  # a later rewrite keeps the reply time
             metadata = self._stamp_turn(target['chat_session_id'], metadata)
         if metadata is not None:
             cursor.execute(

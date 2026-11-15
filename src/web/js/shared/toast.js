@@ -210,7 +210,7 @@
         if (!c) {
             c = document.createElement('div');
             c.id = 'cuttle-toast-container';
-            c.style.cssText = 'position:fixed;bottom:var(--shell-voice-strip-h, 0px);right:0;padding:24px;z-index:999998;pointer-events:none;display:flex;flex-direction:column;align-items:flex-end;gap:10px;';
+            c.style.cssText = 'position:fixed;bottom:max(var(--shell-voice-strip-h, 0px), var(--cuttle-toast-safe-bottom, 0px));right:0;padding:24px;z-index:999998;pointer-events:none;display:flex;flex-direction:column;align-items:flex-end;gap:10px;';
             document.body.appendChild(c);
         }
         return c;

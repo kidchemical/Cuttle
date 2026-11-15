@@ -55,6 +55,21 @@ def _unit_waits(sid):
              'chat_session_id': str(sid)} for r in records]
 
 
+def _detached_spawn_waits(db, sid):
+    """Sub-agent spawns this chat started under a service manager (no listener):
+    the turn ends while the spawn CLI runs, and its hand-back notice wakes the
+    chat when the batch ends. Counted while the CLI process is alive."""
+    try:
+        from api.job_watch import pid_alive
+        from api.subagents import store as subagent_store
+        rows = subagent_store.detached_cli_pids(db, sid)
+    except Exception:
+        return []
+    return [{'job_id': r['batch_id'], 'label': 'sub-agent spawn', 'unit': '', 'pid': r['pid'],
+             'started_ts': None, 'kind': 'detached_spawn', 'chat_session_id': str(sid)}
+            for r in rows if pid_alive(r['pid'])]
+
+
 def supervised_tasks(db, uid, sid, task_ids=None, known_ids=None):
     """Tasks lists a check reads: every list visible to the chat, or the
     schedule's pick ``task_ids`` (missing/archived ids are skipped) plus any of
@@ -141,6 +156,30 @@ def undelivered(sid, *, older_than=0.0, now=None):
     return out
 
 
+def wake_line(state, schedules, *, orchestration=''):
+    """What starts the chat's next turn, in one sentence (pure).
+
+    ``schedules``: supervision schedules watching it (``store.watching``);
+    ``orchestration``: ``api.orchestrator.control.state``. Two things can wake
+    an idle chat, and they are easy to mix up: its own background work (a job or
+    sub-agent it started hands back when it ends) and its supervisor's check."""
+    if state == 'busy':
+        return 'Working now.'
+    if orchestration in ('paused', 'stopped'):
+        return f'Orchestration {orchestration}: nothing wakes it until the user resumes it or a message arrives.'
+    if state == 'waiting_background':
+        return 'Resumes by itself when its background work ends.'
+    live = [s for s in schedules if s.get('state') != 'paused']
+    if live:
+        op = min(live, key=lambda s: s.get('due') or 0)
+        at = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(float(op.get('due') or time.time())))
+        return (f"No background work pending, so it does not wake itself. Its supervisor CH-{int(op['actor']):06d} "
+                f'checks next at {at} UTC.')
+    if schedules:
+        return 'Supervision is paused and no background work is pending: nothing wakes it until a message arrives.'
+    return 'No background work pending and no supervisor: nothing wakes it until a message arrives.'
+
+
 def status(target, actor=None, *, db=None, request=None, task_pick=None):
     """``task_pick``: a schedule's ``(task_ids, task_ids_known)`` (``task_pick()``), or None for every list."""
     from api.chat_attention import is_error
@@ -168,7 +207,10 @@ def status(target, actor=None, *, db=None, request=None, task_pick=None):
                 meta = json.loads(meta)
             except ValueError:
                 meta = {}
-        latest['metadata'] = {k: meta[k] for k in ('query_id', 'report_url', 'slash_command_failed', 'failed', 'is_error', 'usage') if k in meta}
+        if meta.get('completed_at'):
+            # ``timestamp`` is the turn's start (api.chat_turn_row); this is when the reply landed.
+            latest['completed'] = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(float(meta['completed_at'])))
+        latest['metadata'] = {k: meta[k] for k in ('query_id', 'report_url', 'slash_command_failed', 'failed', 'is_error', 'usage', 'completed_at') if k in meta}
     if live.get('generating'):
         state = 'busy'
     elif live.get('cancelled'):
@@ -179,7 +221,7 @@ def status(target, actor=None, *, db=None, request=None, task_pick=None):
         state = 'error'
     else:
         from api.agent_harness.background_wait import running_on_disk
-        waits = running_on_disk(sid) + _unit_waits(sid)
+        waits = running_on_disk(sid) + _unit_waits(sid) + _detached_spawn_waits(db, sid)
         if waits:
             # The turn ended but its CLI is still waiting on background work and
             # will post a follow-up bubble by itself (agent_harness.background_wait),
@@ -190,7 +232,13 @@ def status(target, actor=None, *, db=None, request=None, task_pick=None):
             state = 'idle_with_work'
         else:
             state = 'idle'
+    try:
+        from api.orchestrator.control import state as orchestration_state
+        orchestration = orchestration_state(sid)
+    except Exception:
+        orchestration = ''
     return {'schema_version': 1, 'ok': True, 'handle': f'CH-{sid:06d}', 'state': state,
+            'wake': wake_line(state, store.watching(sid), orchestration=orchestration),
             'live': live, 'attention': attention, 'tasks': progress,
             'followups': db.get_followup_state(sid, uid),
             'operations': [o for o in store.listing(actor) if o['target'] == sid and o['state'] in ('pending', 'dispatching', 'verifying')],

@@ -93,6 +93,11 @@ def load_manifest(folder: Path) -> ProviderManifest:
         if speed is not None and (not isinstance(speed, list) or len(speed) != 2 or
                 any(type(v) not in (int, float) for v in speed) or not 0 < speed[0] <= speed[1]):
             raise ValueError(f"Invalid speech speed: {folder.name}")
+    transcription = raw.get("transcription", {})
+    if not isinstance(transcription, dict) or not all(isinstance(v, str) for v in transcription.values()):
+        raise ValueError(f"Invalid transcription manifest: {folder.name}")
+    if "audio_transcription" in operations and not transcription.get("default_model"):
+        raise ValueError(f"Invalid transcription defaults: {folder.name}")
     env = raw.get("credential_env", [])
     if not isinstance(env, list) or not all(isinstance(v, str) and v for v in env):
         raise ValueError(f"Invalid credentials: {folder.name}")
@@ -102,7 +107,7 @@ def load_manifest(folder: Path) -> ProviderManifest:
         model_env=str(raw.get("model_env") or ""), default_model=str(raw.get("default_model") or ""),
         needs_credential=bool(raw.get("needs_credential", True)), priority=int(raw.get("priority", 100)),
         models_dev_provider=str(raw.get("models_dev_provider") or ""), defaults=defaults,
-        model_rules=tuple(rules), models=tuple(models), speech=raw.get("speech", {}),
+        model_rules=tuple(rules), models=tuple(models), speech=raw.get("speech", {}), transcription=transcription,
     )
 
 

@@ -2729,108 +2729,10 @@ function updateChatUnreadBadge() {
     broadcastToFrames({ type: 'cuttle-chat-unread', count });
 }
 
-// ── Workspace save / load (cross-device split + open chats) ─────
-function getWorkspacePopover() {
-    return document.getElementById('workspacePopover');
-}
-
-function isWorkspacePopoverOpen() {
-    const pop = getWorkspacePopover();
-    return pop && pop.classList.contains('notifications-popover-open');
-}
-
-function setWorkspaceBackdropVisible(on) {
-    const back = document.getElementById('notificationsPopoverBackdrop');
-    if (!back) return;
-    if (on || isNotificationsPopoverOpen() || isWorkspacePopoverOpen()) {
-        back.classList.add('notifications-popover-backdrop-visible');
-    } else {
-        back.classList.remove('notifications-popover-backdrop-visible');
-    }
-}
-
-function openWorkspacePopover() {
-    const pop = getWorkspacePopover();
-    if (pop) pop.classList.add('notifications-popover-open');
-    setWorkspaceBackdropVisible(true);
-    const input = document.getElementById('workspaceNameInput');
-    if (input && !input.value.trim()) input.value = 'Workspace';
-    refreshWorkspacePopover();
-}
-
-function closeWorkspacePopover() {
-    const pop = getWorkspacePopover();
-    if (pop) pop.classList.remove('notifications-popover-open');
-    setWorkspaceBackdropVisible(false);
-}
-
-function toggleWorkspacePopover() {
-    if (isWorkspacePopoverOpen()) closeWorkspacePopover();
-    else {
-        closeNotificationsPopover();
-        openWorkspacePopover();
-    }
-}
-
-function workspaceColumnLabel(entry) {
-    const page = (entry && entry.page) || '';
-    try {
-        const url = new URL(page, window.location.origin);
-        const title = PAGE_TITLES[url.pathname] || (url.pathname.replace(/^\//, '').replace(/\.html$/, '') || 'Pane');
-        const cid = url.searchParams.get('chat') || url.searchParams.get('session')
-            || (entry && (entry.chat || entry.terminal));
-        if (cid) {
-            const raw = String(cid);
-            const display = /^\d+$/.test(raw) ? ('CH-' + raw.padStart(6, '0')) : raw;
-            return title + ' ' + display;
-        }
-        return title;
-    } catch (_) {
-        return page || 'Pane';
-    }
-}
-
-function formatWorkspaceSummary(columns) {
-    const cols = Array.isArray(columns) ? columns : [];
-    const n = Math.max(1, cols.length);
-    const paneWord = n === 1 ? 'pane' : 'panes';
-    const labels = cols.map(workspaceColumnLabel).filter(Boolean);
-    return n + ' ' + paneWord + (labels.length ? (' · ' + labels.join(' · ')) : '');
-}
-
-function formatWorkspaceTime(ts) {
-    const n = Number(ts);
-    if (!Number.isFinite(n) || n <= 0) return '';
-    try {
-        return new Date(n * 1000).toLocaleString(undefined, {
-            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-        });
-    } catch (_) {
-        return '';
-    }
-}
-
-async function fetchWorkspaces() {
-    const res = await fetch('/api/shell/workspaces', { cache: 'no-store', credentials: 'same-origin' });
-    if (res.status === 404) return [];
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.success) throw new Error(data.error || 'Could not load workspaces');
-    return Array.isArray(data.workspaces) ? data.workspaces : [];
-}
-
-const DEFAULT_WORKSPACE_ID = '__default__';
-
-function getBuiltinDefaultWorkspace() {
-    return {
-        id: DEFAULT_WORKSPACE_ID,
-        name: 'Default',
-        summary: '1 pane · single viewport',
-        builtin: true,
-        columns: [{ page: '/chat_page.html' }],
-        orientation: 'horizontal',
-        root: { type: 'leaf', page: '/chat_page.html', flex: '' },
-    };
-}
+// ── Workspace save / load → shell_workspaces.js ─────────────────
+// The popover (save new, update in place, rename, load, delete) is owned by
+// CuttleShellWorkspaces; the shell supplies layout snapshot/apply.
+function getBuiltinDefaultWorkspace() { return CuttleShellWorkspaces.builtinDefault(); }
 
 /** Collapse the shell to a single full-bleed viewport (built-in Default workspace). */
 function applyDefaultWorkspace() {
@@ -2845,175 +2747,42 @@ function applyDefaultWorkspace() {
         applyGroupOrientation(splitContainer, 'horizontal');
     }
     sanitizeSplitDom();
-    const cols = getSplitColumns();
-    cols.forEach((c) => {
+    getSplitColumns().forEach((c) => {
         c.style.flex = '';
         clearPaneBoxStyles(c);
     });
     remumberSplitColumns();
     persistSplitLayout();
-    closeWorkspacePopover();
-    if (typeof window.showToast === 'function') {
-        window.showToast('Loaded Default · 1 pane', 'success');
-    }
     return true;
 }
 
-function renderWorkspaceList(workspaces) {
-    const listEl = document.getElementById('workspaceList');
-    const emptyEl = document.getElementById('workspaceEmpty');
-    if (!listEl || !emptyEl) return;
-    const saved = Array.isArray(workspaces) ? workspaces : [];
-    const items = [getBuiltinDefaultWorkspace()].concat(
-        saved.filter((ws) => String(ws?.id || '') !== DEFAULT_WORKSPACE_ID
-            && String(ws?.name || '').trim().toLowerCase() !== 'default')
-    );
-    emptyEl.style.display = 'none';
-    listEl.innerHTML = items.map((ws) => {
-        const id = escapeHtml(String(ws.id || ''));
-        const name = escapeHtml(String(ws.name || 'Workspace'));
-        const summary = escapeHtml(ws.summary || formatWorkspaceSummary(ws.columns));
-        const when = ws.builtin ? '' : escapeHtml(formatWorkspaceTime(ws.updated_at));
-        const badge = ws.builtin ? '<span class="workspace-item-badge">built-in</span>' : '';
-        const deleteBtn = ws.builtin
-            ? ''
-            : '<button type="button" class="workspace-btn workspace-btn-danger" data-workspace-delete>Delete</button>';
-        return '<div class="workspace-item' + (ws.builtin ? ' workspace-item-builtin' : '')
-            + '" data-workspace-id="' + id + '"'
-            + (ws.builtin ? ' data-workspace-builtin="1"' : '') + '>'
-            + '<div class="workspace-item-main">'
-            + '<div class="workspace-item-name">' + name + badge + (when ? ' · ' + when : '') + '</div>'
-            + '<div class="workspace-item-summary">' + summary + '</div>'
-            + '</div>'
-            + '<div class="workspace-item-actions">'
-            + '<button type="button" class="workspace-btn workspace-btn-primary" data-workspace-load>Load</button>'
-            + deleteBtn
-            + '</div></div>';
-    }).join('');
-    listEl.querySelectorAll('[data-workspace-load]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-            const row = btn.closest('.workspace-item');
-            const id = row?.dataset.workspaceId;
-            if (id === DEFAULT_WORKSPACE_ID || row?.dataset.workspaceBuiltin === '1') {
-                applyDefaultWorkspace();
-                return;
-            }
-            const ws = saved.find((x) => String(x.id) === String(id));
-            if (ws) loadWorkspace(ws);
-        });
-    });
-    listEl.querySelectorAll('[data-workspace-delete]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-            const row = btn.closest('.workspace-item');
-            if (row?.dataset.workspaceBuiltin === '1') return;
-            const id = row?.dataset.workspaceId;
-            if (id) deleteWorkspace(id);
-        });
-    });
-}
-
-async function refreshWorkspacePopover() {
-    const summaryEl = document.getElementById('workspaceCurrentSummary');
-    if (summaryEl) summaryEl.textContent = formatWorkspaceSummary(snapshotSplitColumns());
-    try {
-        renderWorkspaceList(await fetchWorkspaces());
-    } catch (err) {
-        // Still show the built-in Default entry when the API is unreachable.
-        renderWorkspaceList([]);
-        const emptyEl = document.getElementById('workspaceEmpty');
-        if (emptyEl && err) {
-            emptyEl.style.display = 'block';
-            emptyEl.textContent = (err && err.message) || 'Could not load workspaces';
-        }
-    }
-}
-
-async function saveCurrentWorkspace() {
-    const input = document.getElementById('workspaceNameInput');
-    const btn = document.getElementById('workspaceSaveBtn');
-    const name = ((input && input.value) || 'Workspace').trim() || 'Workspace';
-    if (name.toLowerCase() === 'default') {
-        if (typeof window.showToast === 'function') {
-            window.showToast('Default is built-in and cannot be overwritten', 'info');
-        }
-        return;
-    }
-    const columns = snapshotSplitColumns();
-    if (btn) btn.disabled = true;
-    try {
-        const res = await fetch('/api/shell/workspaces', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({
-                name,
-                columns,
-                orientation: primaryOrientationFromTree(snapshotLayoutTree(splitContainer)),
-                root: snapshotLayoutTree(splitContainer),
-                spaces: shellSpaces.exportSnapshot(),
-            }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
-        if (typeof window.showToast === 'function') {
-            window.showToast('Saved workspace · ' + formatWorkspaceSummary(columns), 'success');
-        }
-        renderWorkspaceList(data.workspaces || []);
-    } catch (err) {
-        if (typeof window.showToast === 'function') {
-            window.showToast((err && err.message) || 'Save failed', 'error');
-        }
-    } finally {
-        if (btn) btn.disabled = false;
-    }
-}
-
-function loadWorkspace(ws) {
-    if (ws && (ws.builtin || String(ws.id) === DEFAULT_WORKSPACE_ID)) {
-        applyDefaultWorkspace();
-        return;
-    }
-    const columns = ws && ws.columns;
+const shellWorkspaces = CuttleShellWorkspaces.create({
+    win: window,
+    doc: document,
+    escapeHtml: (s) => escapeHtml(s),
+    pageTitles: PAGE_TITLES,
+    snapshotColumns: () => snapshotSplitColumns(),
+    snapshot: () => {
+        const root = snapshotLayoutTree(splitContainer);
+        return {
+            columns: snapshotSplitColumns(),
+            orientation: primaryOrientationFromTree(root),
+            root,
+            spaces: shellSpaces.exportSnapshot(),
+        };
+    },
     // Spaces (tabs + groups) carry each space's layout; older saves are panes only.
-    const applied = (ws && ws.spaces && shellSpaces.importSnapshot(ws.spaces))
-        || applyWorkspaceColumns(columns, ws && ws.orientation, ws && ws.root);
-    if (!applied) {
-        if (typeof window.showToast === 'function') window.showToast('Could not load workspace', 'error');
-        return;
-    }
-    closeWorkspacePopover();
-    if (typeof window.showToast === 'function') {
-        window.showToast('Loaded ' + (ws.name || 'workspace') + ' · ' + (ws.summary || formatWorkspaceSummary(columns)), 'success');
-    }
-}
-
-async function deleteWorkspace(id) {
-    if (String(id) === DEFAULT_WORKSPACE_ID) return;
-    try {
-        const res = await fetch('/api/shell/workspaces/' + encodeURIComponent(id), {
-            method: 'DELETE',
-            credentials: 'same-origin',
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) throw new Error(data.error || 'Delete failed');
-        renderWorkspaceList(data.workspaces || []);
-        if (typeof window.showToast === 'function') window.showToast('Workspace deleted', 'info');
-    } catch (err) {
-        if (typeof window.showToast === 'function') {
-            window.showToast((err && err.message) || 'Delete failed', 'error');
-        }
-    }
-}
-
-(function setupWorkspacePopover() {
-    document.getElementById('workspaceSaveBtn')?.addEventListener('click', () => saveCurrentWorkspace());
-    document.getElementById('workspaceNameInput')?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            saveCurrentWorkspace();
-        }
-    });
-})();
+    apply: (ws) => !!((ws.spaces && shellSpaces.importSnapshot(ws.spaces))
+        || applyWorkspaceColumns(ws.columns, ws.orientation, ws.root)),
+    applyDefault: () => applyDefaultWorkspace(),
+    closeOtherPopovers: () => closeNotificationsPopover(),
+    isOtherPopoverOpen: () => isNotificationsPopoverOpen(),
+});
+function isWorkspacePopoverOpen() { return shellWorkspaces.isOpen(); }
+function closeWorkspacePopover() { shellWorkspaces.close(); }
+function toggleWorkspacePopover() { shellWorkspaces.toggle(); }
+function setWorkspaceBackdropVisible() { shellWorkspaces.syncBackdrop(); }
+shellWorkspaces.setup();
 
 // ── Spaces tab strip (owner: shell_spaces.js) ─────────────────
 // Tab rendering, group menus, selection wiring, activity dots, the tab

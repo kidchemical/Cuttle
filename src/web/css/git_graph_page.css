@@ -30,17 +30,13 @@ body.git-graph-body {
     color: var(--text-primary);
 }
 
+/* Frame (inset, max width) comes from the shared `.cuttle-page` backbone;
+   `.cuttle-page--fill` makes it full height. This rule only lays out the
+   column inside it. */
 .git-graph-page {
-    display: flex !important;
-    flex-direction: column !important;
-    height: 100% !important;
-    max-height: 100% !important;
-    min-height: 0 !important;
-    overflow: hidden !important;
-    max-width: none !important;
-    margin: 0 !important;
-    padding: var(--page-pad-top) var(--page-pad-x) 0 !important;
-    box-sizing: border-box !important;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 .git-graph-pending-wrap {
@@ -923,9 +919,6 @@ html.git-graph-root *::-webkit-scrollbar-corner {
 }
 
 @media (max-width: 900px) {
-    .git-graph-page {
-        padding: var(--page-pad-top) var(--page-pad-x) 0 !important;
-    }
     .git-graph-toolbar {
         gap: 8px;
     }

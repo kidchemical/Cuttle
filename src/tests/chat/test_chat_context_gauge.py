@@ -241,3 +241,82 @@ def test_controller_factory_contract():
                                "MOD_JS": str(MOD_JS)})
     assert proc.returncode == 0, proc.stderr
     assert "controller contract ok" in proc.stdout
+
+
+@node_only
+def test_compact_queues_while_generating_and_runs_when_idle():
+    """Compact during a reply waits in the queue panel; it can be removed."""
+    probe = r"""
+const G = require(process.env.MOD_JS);
+const assert = require('assert');
+const arc = { setAttribute() {} };
+const el = { hidden: true, innerHTML: '', isConnected: true, dataset: {},
+  addEventListener() {}, getAttribute() { return null; }, setAttribute() {},
+  querySelector: (s) => s === '.context-gauge-arc' ? arc : null,
+  classList: { add() {}, remove() {}, toggle() {} }, appendChild() {},
+  getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
+  style: {}, offsetWidth: 0, offsetHeight: 0 };
+const doc = { getElementById: () => el, createElement: () => el,
+  body: { appendChild() {} }, addEventListener() {} };
+let tick = null;
+const win = { document: doc, innerWidth: 1200, innerHeight: 800,
+  setTimeout: () => 1, clearTimeout() {},
+  setInterval: (fn) => { tick = fn; return 7; }, clearInterval() { tick = null; } };
+const slashCtx = { chat: { chips: [{ prefix: '/claude ' }] }, welcome: { chips: [] } };
+let generating = true, renders = 0, drains = 0, posts = 0, reply = { success: true };
+const ctl = G.create({ win,
+  fetch: (url, opts) => {
+    if (opts && opts.method === 'POST') { posts += 1; return Promise.resolve({ json: () => Promise.resolve(reply) }); }
+    return Promise.reject(new Error('status'));
+  },
+  escapeHtml: (s) => String(s), normalizeUsage: (u) => u,
+  getSlashCtx: () => slashCtx, getSessionId: () => 42, getProjectPath: () => '', toast() {},
+  isGenerating: () => generating,
+  queue: { render: () => { renders += 1; }, requestDrain: () => { drains += 1; } } });
+(async () => {
+  const html = G.queuedCompactRowHtml('claude', (s) => s);
+  assert.ok(html.includes('Compact Claude context') && html.includes('data-remove-queued-compact'));
+  assert.strictEqual(ctl.queued.rowHtml(), '');
+  assert.strictEqual(ctl.queued.holds(), false);
+
+  // Mid-reply: queued, not sent; shown as a removable row; holds queued messages.
+  await ctl.queued.request();
+  assert.strictEqual(posts, 0);
+  assert.ok(ctl.queued.rowHtml().includes('Compact Claude context'));
+  assert.strictEqual(ctl.queued.holds(), true);
+  assert.ok(renders >= 1 && typeof tick === 'function');
+  tick();
+  assert.strictEqual(posts, 0, 'must wait for the reply to finish');
+
+  // Removing it unqueues.
+  ctl.queued.cancel();
+  assert.strictEqual(ctl.queued.rowHtml(), '');
+  assert.strictEqual(ctl.queued.holds(), false);
+
+  // Queued again; the reply ends; the next tick runs it, then drains the queue.
+  await ctl.queued.request();
+  generating = false;
+  tick();
+  assert.strictEqual(ctl.queued.holds(), true, 'running compaction still holds the queue');
+  assert.strictEqual(ctl.queued.rowHtml(), '');
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(posts, 1);
+  assert.strictEqual(ctl.queued.holds(), false);
+  assert.ok(drains >= 1);
+
+  // Idle chat but the CLI is still alive (background wait): stays queued.
+  reply = { success: false, busy: true, error: 'still running' };
+  await ctl.queued.request();
+  assert.strictEqual(posts, 2);
+  assert.ok(ctl.queued.rowHtml().includes('Compact Claude context'));
+  tick();
+  assert.strictEqual(posts, 2, 'retry waits, no hammering');
+  console.log(JSON.stringify({ ok: true }));
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+    proc = subprocess.run(["node", "-e", probe], capture_output=True, text=True,
+                          encoding="utf-8",
+                          env={"PATH": __import__("os").environ["PATH"],
+                               "MOD_JS": str(MOD_JS)})
+    assert proc.returncode == 0, proc.stderr

@@ -827,6 +827,9 @@ def run_agent_web_command(
                 "query_id": query_id,
                 "report_url": f"/query_log.html?id={query_id}",
                 "agent_id": manifest.id,
+                # Machine-readable: the router turns "every target is missing"
+                # into setup guidance (api.agent_router.setup_reply).
+                "cli_missing": {"label": label, "hint": hint},
             }
 
         cwd = _resolve_agent_cwd(adapter, project_path)

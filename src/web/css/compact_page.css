@@ -6,8 +6,8 @@
    and card surface. Page roots opt in with `.cuttle-page`; page CSS
    owns what sits inside the frame, never the frame itself (enforced
    by src/tests/quality/test_page_header_standard.py). Full-height
-   pages (Git) and full-bleed sticky bars (Router) align to the same
-   tokens. Chat keeps its own layout. */
+   pages (Git) add `.cuttle-page--fill`; full-bleed sticky bars (Router)
+   align to the same tokens. Chat keeps its own layout. */
 body.compact-shell-page {
     --page-max-width: 1180px;
     --page-pad-top: 10px;
@@ -34,6 +34,15 @@ body.compact-shell-page .cuttle-page {
         max(var(--page-pad-bottom), var(--safe-area-inset-bottom, 0px));
     box-sizing: border-box;
     min-width: 0;
+}
+
+/* Full-height tool pages (Git): same inset and max width, but the frame
+   fills the viewport and inner panes scroll, so no bottom pad. */
+body.compact-shell-page .cuttle-page.cuttle-page--fill {
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+    padding-bottom: 0;
 }
 
 body.compact-shell-page .page-section,

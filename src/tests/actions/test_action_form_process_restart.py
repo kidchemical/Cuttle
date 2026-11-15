@@ -59,18 +59,20 @@ def restart_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CUTTLE_ACTION_HMAC_SECRET", secret)
     import api.project_actions as pa
 
-    pa._hmac_secret_cache = None
+    # monkeypatch (not plain assignment) so the process-wide singletons are
+    # restored; a leaked _db_instance pointed later tests at this temp DB.
+    monkeypatch.setattr(pa, "_hmac_secret_cache", None)
     from api import auth_db as auth_db_mod
     from api.action_forms import clear_forms_for_tests, rewrite_action_forms
     from api.project_actions import clear_pending_for_tests, rewrite_cuttle_confirms
 
     db_path = tmp_path / "restart.db"
     monkeypatch.setattr(auth_db_mod, "DB_PATH", db_path)
-    auth_db_mod._db_instance = None
+    monkeypatch.setattr(auth_db_mod, "_db_instance", None)
     db = auth_db_mod.AuthDatabase(db_path)
-    auth_db_mod._db_instance = db
-    monkeypatch.setattr("api.auth_db.get_auth_db", lambda: db)
-    monkeypatch.setattr("api.web_chat_api.get_auth_db", lambda: db)
+    monkeypatch.setattr(auth_db_mod, "_db_instance", db)
+    # get_auth_db() reads the _db_instance patched above; replacing the
+    # function itself leaked into other modules' bindings (api.auth_api).
     monkeypatch.delenv("OWNER_USER_EMAIL", raising=False)
     clear_forms_for_tests()
     clear_pending_for_tests()

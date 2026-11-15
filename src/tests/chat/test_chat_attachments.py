@@ -221,3 +221,87 @@ def test_uploads_outside_the_upload_root_are_rejected(tmp_path):
     root = tmp_path / "uploads"
     root.mkdir()
     assert vp.resolve_upload_refs([{"path": str(outside)}], root) == []
+
+
+# --------------------------------------------------------------------------
+# Voice clips (composer mic button): transcribed, never described as images
+# --------------------------------------------------------------------------
+
+
+def test_voice_clip_reaches_the_agent_as_a_transcript(tmp_path, monkeypatch):
+    from api import voice_stt
+
+    clip = tmp_path / "voice-20261112-101500.webm"
+    clip.write_bytes(b"opus-bytes")
+    seen = {}
+
+    def fake_transcribe(audio, **kwargs):
+        seen.update(kwargs, audio=audio)
+        return "ship the mic button"
+
+    monkeypatch.setattr(voice_stt, "transcribe", fake_transcribe)
+    out = vp.append_attachment_digest(
+        "/cursor do what I said",
+        [{"filename": clip.name, "path": str(clip), "mime": "audio/webm;codecs=opus"}],
+    )
+    assert out.startswith("/cursor do what I said")
+    assert "voice clip — transcript of what the user said" in out
+    assert "ship the mic button" in out
+    assert seen["audio"] == b"opus-bytes"
+    assert seen["mime"] == "audio/webm;codecs=opus"
+
+
+def test_voice_clip_without_a_mime_is_still_audio(tmp_path, monkeypatch):
+    """``mimetypes`` calls .webm a video; the extension decides."""
+    from api import voice_stt
+
+    clip = tmp_path / "voice.webm"
+    clip.write_bytes(b"x")
+    seen = {}
+    monkeypatch.setattr(voice_stt, "transcribe", lambda audio, **kw: seen.update(kw) or "hi")
+    assert vp.analyze_attachment({"filename": clip.name, "path": str(clip)}) == "hi"
+    assert seen["mime"] == "audio/webm"
+
+
+def test_voice_clip_transcription_failure_is_reported_inline(tmp_path, monkeypatch):
+    from api import voice_stt
+
+    clip = tmp_path / "voice.wav"
+    clip.write_bytes(b"x")
+
+    def broke(audio, **kwargs):
+        raise RuntimeError("transcription failed: AuthenticationError")
+
+    monkeypatch.setattr(voice_stt, "transcribe", broke)
+    out = vp.analyze_attachment({"filename": clip.name, "path": str(clip), "mime": "audio/wav"})
+    assert "not transcribed" in out and "AuthenticationError" in out
+
+    monkeypatch.setattr(voice_stt, "transcribe", lambda audio, **kw: "")
+    out = vp.analyze_attachment({"filename": clip.name, "path": str(clip), "mime": "audio/wav"})
+    assert out == "(no speech heard in this clip)"
+
+
+def test_upload_allowlist_covers_what_the_prepass_digests():
+    assert {".png", ".pdf", ".webm", ".wav", ".m4a"} <= vp.UPLOAD_EXTS
+    assert ".exe" not in vp.UPLOAD_EXTS and ".mp4" not in vp.UPLOAD_EXTS
+
+
+def test_voice_clip_already_typed_into_the_message_is_not_transcribed_again(tmp_path, monkeypatch):
+    """Live text: the composer typed the clip's words, so the pre-pass skips it."""
+    from api import vision_prepass
+
+    root = tmp_path / "uploads"
+    (root / "7").mkdir(parents=True)
+    clip = root / "7" / "voice-20261112-101500.webm"
+    clip.write_bytes(b"OggS")
+    refs = [{"filename": clip.name, "path": str(clip), "mime": "audio/webm", "transcribed": True}]
+    resolved = vision_prepass.resolve_upload_refs(refs, root)
+    assert resolved[0]["transcribed"] is True
+    monkeypatch.setattr("api.voice_stt.transcribe", lambda *a, **k: pytest.fail("must not transcribe"))
+    assert vision_prepass.append_attachment_digest("fix the header", resolved) == "fix the header"
+    # Only audio may claim it: an image marked transcribed is still analyzed.
+    image = root / "7" / "shot.png"
+    image.write_bytes(b"png")
+    marked = vision_prepass.resolve_upload_refs(
+        [{"filename": "shot.png", "path": str(image), "mime": "image/png", "transcribed": True}], root)
+    assert "transcribed" not in marked[0]

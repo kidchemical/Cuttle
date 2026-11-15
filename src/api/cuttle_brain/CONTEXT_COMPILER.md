@@ -28,8 +28,18 @@ inspect the envelope. Day-to-day, Flask injects it — no extra round-trip.
 3. **Project rules** — `{project}/.cuttle/rules/*.md` (always-on guidelines for that project; for the Cuttle repo itself this is Cuttle-only rules, never guest etiquette).
 4. **Profile** — `standard` today; room for coordination / supervision later.
 5. **Runtime** — inventory of commands/docs/actions/skills (global + project); optional handoff delta; chat-store hint.
-6. **Ranked context (optional)** — Jev may inject one selected skill/doc snippet for this prompt (`python -m api.jev rank`). Always-on rules still win on conflict.
+6. **Ranked context (optional)** — one selected skill/doc snippet preloaded for this prompt. Judge: Jev by default (`python -m api.jev rank`), or the executor chosen for **Context ranking** in Settings → Background helpers (any model API, or a tool-less one-turn agent CLI; `api.background_helpers` task `context`). Always-on rules still win on conflict.
 7. **User request** — the actual turn prompt (never truncated by the compiler).
+
+## The envelope is a directory
+
+Inline only what an agent cannot know to look up: prohibitions and the pointer
+that names the owner. Everything else is listed, not copied — runbooks by name
+and one-line trigger, skills by a clipped summary and path, Tasks lists by
+title/progress (a chat's own list adds its next open items; `python -m
+api.gizmos tasks get <id>` has the rest). A runbook named in the core contract's
+directory is not repeated in the inventory. Measure a fresh `hello` envelope
+before and after any change (`meta.layer_chars`).
 
 ## How this relates to `.cuttle/`
 

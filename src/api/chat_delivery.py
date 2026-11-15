@@ -41,12 +41,14 @@ _cancel_sticky: Dict[str, int] = {}
 # Undelivered replies older than this are dropped so the store cannot grow
 # without bound; the reply is still saved in the chat history either way.
 _PENDING_TTL = 3600.0
-# A run stuck this long is treated as dead, so a wedged worker cannot lock a
-# chat out of sending forever.
-_BUSY_TTL = 7200.0
 # If busy is held but there is no live status and no live subprocess for this
 # long, treat it as a zombie lock (agent died without chat_delivery.end).
-# Keeps history spinners from sticking after a crashed /cursor run.
+# Keeps history spinners from sticking after a crashed /cursor run, and a wedged
+# worker from locking a chat out of sending. This is the only expiry of a busy
+# lock: a turn that is still working keeps it however long it runs. (A blind
+# 2 h expiry used to drop the lock of a live turn: the chat list stopped showing
+# it as working, a second turn could start beside it, and its real end released
+# nothing, so no ``turn_end`` reached supervision or auto-compact.)
 _BUSY_ZOMBIE_GRACE = 90.0
 
 
@@ -67,9 +69,6 @@ def _purge_locked(now: float) -> None:
     for k, v in list(_pending.items()):
         if now - v.get("at", 0) > _PENDING_TTL:
             _pending.pop(k, None)
-    for k, v in list(_busy.items()):
-        if now - v.get("since", 0) > _BUSY_TTL:
-            _busy.pop(k, None)
 
 
 # ── busy tracking ────────────────────────────────────────────────────────────
@@ -81,6 +80,7 @@ def try_begin(session_id, query_id: Optional[str] = None) -> bool:
     if not keys:
         return True  # no id to gate on (brand-new anonymous chat)
     now = time.time()
+    reconcile_zombie_busy(now)  # a dead worker's lock never blocks a new turn
     with _lock:
         _purge_locked(now)
         for k in keys:

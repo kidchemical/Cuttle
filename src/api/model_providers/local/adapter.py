@@ -77,6 +77,18 @@ class Adapter:
             response = sdk.chat.completions.create(**kwargs)
         return text_result(response.choices[0].message.content if response.choices else "", response, request.model)
 
+    def transcribe(self, manifest, request):
+        """OpenAI-compatible ``/audio/transcriptions`` on a user-managed server."""
+        from openai import OpenAI
+        kwargs = dict(model=request.model, file=(request.filename, request.audio, request.mime))
+        if request.prompt:
+            kwargs["prompt"] = request.prompt
+        if request.language:
+            kwargs["language"] = request.language
+        with OpenAI(base_url=request.base_url or get_local_base_url(), api_key=get_local_api_key(),
+                    timeout=max(request.timeout, .1), max_retries=0) as sdk:
+            return sdk.audio.transcriptions.create(**kwargs).text or ""
+
 
 def build_adapter():
     return Adapter()

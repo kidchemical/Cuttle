@@ -19,6 +19,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.runtime_paths import runtime_cache_path
 
+_FETCH_TIMEOUT_SEC = 20
+
 _MODELS_DEV_URL = "https://models.dev/api.json"
 _CACHE_VERSION = 2
 _CACHE_TTL_SEC = 24 * 60 * 60

@@ -8,10 +8,10 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <title>Cuttle</title>
-    <link rel="stylesheet" href="/css/ui_boot.css?v=20261103chips">
-    <script src="/js/shared/ui_boot.js?v=20261111perf"></script>
-    <link rel="stylesheet" href="/css/app_shell.css?v=20261104paneLine">
-    <link rel="stylesheet" href="/css/chip_config_modal.css?v=20261030orchChip">
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20261114kbBack">
+    <script src="/js/shared/ui_boot.js?v=20261114kbBack"></script>
+    <link rel="stylesheet" href="/css/app_shell.css?v=20261112workspaces">
+    <link rel="stylesheet" href="/css/chip_config_modal.css?v=20261112projDialogs">
     <link rel="stylesheet" href="/css/shell_voice.css?v=20261106meter">
     <link rel="stylesheet" href="/css/searchable_select.css?v=20261011attachedMenus">
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
@@ -299,7 +299,7 @@
 </div>
 
 <!-- Toast container (managed by toast.js) -->
-<div id="cuttle-toast-container" style="position:fixed;bottom:var(--shell-voice-strip-h, 0px);right:0;padding:24px;z-index:999998;pointer-events:none;display:flex;flex-direction:column;align-items:flex-end;gap:10px;"></div>
+<div id="cuttle-toast-container" style="position:fixed;bottom:max(var(--shell-voice-strip-h, 0px), var(--cuttle-toast-safe-bottom, 0px));right:0;padding:24px;z-index:999998;pointer-events:none;display:flex;flex-direction:column;align-items:flex-end;gap:10px;"></div>
 
 <!-- Notifications panel (past toasts) -->
 <div class="notifications-slide-layer">
@@ -320,15 +320,22 @@
         <span class="notifications-popover-title">Workspace</span>
     </div>
     <div class="workspace-popover-body">
-        <p class="workspace-popover-hint">Save this split — pane count, sizes, and open chats — then load it on another device. Default always restores a single viewport.</p>
-        <div class="workspace-current" id="workspaceCurrentSummary">1 pane</div>
-        <div class="workspace-save-row">
-            <input type="text" id="workspaceNameInput" class="workspace-name-input" maxlength="80" placeholder="Workspace name" aria-label="Workspace name">
-            <button type="button" class="workspace-btn workspace-btn-primary" id="workspaceSaveBtn">Save</button>
+        <p class="workspace-popover-hint">Saves pane count, sizes, spaces and open chats so you can load them on another device. Default always restores a single viewport.</p>
+        <div class="workspace-current">
+            <div class="workspace-current-main">
+                <div class="workspace-current-name" id="workspaceCurrentName">Unsaved layout</div>
+                <div class="workspace-current-summary" id="workspaceCurrentSummary">1 pane</div>
+            </div>
+            <button type="button" class="workspace-btn workspace-btn-primary" id="workspaceUpdateBtn" hidden>Update</button>
         </div>
+        <div class="workspace-save-row">
+            <input type="text" id="workspaceNameInput" class="workspace-name-input" maxlength="80" placeholder="New workspace name" aria-label="New workspace name">
+            <button type="button" class="workspace-btn" id="workspaceSaveBtn" disabled>Save new</button>
+        </div>
+        <div class="workspace-save-note" id="workspaceSaveNote" hidden></div>
         <div class="workspace-list-label">Saved</div>
         <div class="workspace-list" id="workspaceList"></div>
-        <div class="workspace-empty" id="workspaceEmpty" style="display:none">No saved workspace yet.</div>
+        <div class="workspace-empty" id="workspaceEmpty" style="display:none">No saved workspaces yet.</div>
     </div>
 </div>
 
@@ -465,7 +472,7 @@
     </section>
 </div>
 
-<script src="/js/shared/toast.js?v=20261106meter"></script>
+<script src="/js/shared/toast.js?v=20261114kbBack"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
 <script src="/js/shared/net_debug.js?v=20260810c"></script>
 <script src="/js/media/youtube_id.js"></script>
@@ -490,10 +497,11 @@
 <script src="/js/shell/shell_updates.js?v=20261018updateCenter"></script>
 <script src="/js/shell/shell_connection.js?v=20261025connPopup"></script>
 <script src="/js/shell/shell_electron.js?v=20261108dragReveal"></script>
-<script src="/js/shell/shell_mobile.js?v=20261028poll"></script>
-<script src="/js/shell/shell_panes.js?v=20261018menus"></script>
+<script src="/js/shell/shell_mobile.js?v=20261114startup2"></script>
+<script src="/js/shell/shell_panes.js?v=20261114startup"></script>
 <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
-<script src="/js/chat/chat_chip_config.js?v=20261030orchChip"></script>
+<script src="/js/chat/chat_chip_config.js?v=20261112chipLinks"></script>
+<script src="/js/shell/shell_workspaces.js?v=20261112ws1"></script>
 <script src="/js/shell/shell_spaces.js?v=20261025spaceov1"></script>
 <script src="/js/shell/shell_rail.js?v=20261027secretVault1"></script>
 <script src="/js/chat/chat_voice_receipts.js?v=20261012live2"></script>
@@ -502,7 +510,7 @@
 <script src="/js/chat/chat_voice_live.js?v=20261106meter"></script>
 <script src="/js/shell/shell_voice.js?v=20261106meter"></script>
 <script src="/js/shell/shell_notifications.js?v=20261028notifPanel"></script>
-<script src="/js/shell/app_shell.js?v=20261104thinSplit"></script>
+<script src="/js/shell/app_shell.js?v=20261112workspaces"></script>
 <script src="/js/gizmos/gizmos_model.js?v=20261007gizmos2"></script>
 <script src="/js/gizmos/gizmos_shell.js?v=20261103parkedRail"></script>
 </body>

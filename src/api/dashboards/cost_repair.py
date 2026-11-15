@@ -19,13 +19,13 @@ from api.model_pricing import estimate_cost_usd, lookup_model_rates
 BASIS = "api-equivalent-backfill-v1"
 
 
-def estimate_saved(meta):
-    usage = meta.get("usage") or {}
-    chips = (meta.get("slash_command") or {}).get("chips") or []
-    if not chips or not isinstance(chips[0], dict) or chips[0].get("category") != "claude":
-        return None, "other_agent"
-    if usage.get("cost_basis") == BASIS or usage.get("cost_estimated"):
-        return None, "already_estimated"
+PER_TURN_BASIS = "per-turn-v1"
+# A saved estimate this far above its own tokens' price is a session running total.
+_INFLATED_RATIO, _INFLATED_SLACK = 1.25, 0.01
+
+
+def _price_saved(usage, chips, basis):
+    """Price a saved Claude row from its own tokens: ``(repaired_usage, reason)``."""
     model = str(usage.get("model") or "")
     if not model.startswith("claude-"):
         match = re.search(r"\b(Opus|Sonnet|Haiku)\s+(\d+)\.(\d+)\b", str(chips[0].get("label") or ""), re.I)
@@ -48,9 +48,51 @@ def estimate_saved(meta):
         return None, "invalid_usage"
     if cost is None:
         return None, "missing_tokens"
-    repaired = dict(usage, cost=cost, cost_estimated=True, reported_cost=usage.get("reported_cost", old),
-                    cost_basis=BASIS, pricing_model=model, pricing_rates=dict(rates))
+    return dict(usage, cost=cost, cost_estimated=True, cost_basis=basis, pricing_model=model,
+                pricing_rates=dict(rates)), "eligible"
+
+
+def _claude_chips(meta):
+    chips = (meta.get("slash_command") or {}).get("chips") or []
+    if not chips or not isinstance(chips[0], dict) or chips[0].get("category") != "claude":
+        return None
+    return chips
+
+
+def estimate_saved(meta):
+    usage = meta.get("usage") or {}
+    chips = _claude_chips(meta)
+    if chips is None:
+        return None, "other_agent"
+    if usage.get("cost_basis") or usage.get("cost_estimated"):
+        return None, "already_estimated"
+    repaired, reason = _price_saved(usage, chips, BASIS)
+    if repaired is not None:
+        repaired["reported_cost"] = usage.get("reported_cost", usage["cost"])
+    return repaired, reason
+
+
+def estimate_per_turn(meta):
+    """Saved estimates that priced the Claude session's running total, not the turn."""
+    usage = meta.get("usage") or {}
+    chips = _claude_chips(meta)
+    if chips is None:
+        return None, "other_agent"
+    if usage.get("cost_basis"):
+        return None, "already_repaired"
+    if not usage.get("cost_estimated"):
+        return None, "not_estimated"
+    repaired, reason = _price_saved(usage, chips, PER_TURN_BASIS)
+    if repaired is None:
+        return None, reason
+    old = float(usage["cost"])
+    if old <= repaired["cost"] * _INFLATED_RATIO + _INFLATED_SLACK:
+        return None, "not_inflated"
+    repaired["cumulative_cost"] = old
     return repaired, "eligible"
+
+
+ESTIMATORS = {"api-equivalent": estimate_saved, "per-turn": estimate_per_turn}
 
 
 def repair_log(data, old_usage, new_usage):
@@ -74,16 +116,16 @@ def repair_log(data, old_usage, new_usage):
         row["reported_cost"] = row.get("reported_cost", row["cost"])
         row["cost"] = new_usage["cost"]
         row["cost_is_estimated"] = True
-        row["cost_basis"] = BASIS
+        row["cost_basis"] = new_usage["cost_basis"]
         row["pricing_model"] = new_usage["pricing_model"]
-    tool["tokens"].update({k: v for k, v in new_usage.items() if k in ("cost_estimated", "cost_basis", "pricing_model", "pricing_rates", "reported_cost")})
+    tool["tokens"].update({k: v for k, v in new_usage.items() if k in ("cost_estimated", "cost_basis", "pricing_model", "pricing_rates", "reported_cost", "cumulative_cost")})
     updated["reported_total_cost"] = updated.get("reported_total_cost", updated.get("total_cost"))
     updated["total_cost"] = round(float(updated.get("total_cost") or 0) - old_cost + new_usage["cost"], 6)
-    updated["cost_basis"] = BASIS
+    updated["cost_basis"] = new_usage["cost_basis"]
     return updated
 
 
-def repair(*, auth_path, outcomes_path, logs_path, backup_dir=None, apply=False):
+def repair(*, auth_path, outcomes_path, logs_path, backup_dir=None, apply=False, estimator=estimate_saved):
     auth_path, outcomes_path, logs_path = map(Path, (auth_path, outcomes_path, logs_path))
     conn = sqlite3.connect(auth_path, timeout=10)
     conn.row_factory = sqlite3.Row
@@ -93,7 +135,7 @@ def repair(*, auth_path, outcomes_path, logs_path, backup_dir=None, apply=False)
     for row in conn.execute("SELECT id, chat_session_id, metadata FROM chat_messages WHERE role='assistant' AND metadata IS NOT NULL"):
         try:
             meta = json.loads(row["metadata"])
-            new, reason = estimate_saved(meta)
+            new, reason = estimator(meta)
         except (ValueError, TypeError, AttributeError):
             reasons["invalid_metadata"] += 1
             continue

@@ -72,7 +72,7 @@
         }
         const EXPERIMENTS = {
             voice_narrator: 'Speaks short progress updates in voice chat while the agent works. Uses the Spoken replies voice below, so it is silent when “Read replies aloud” is off.',
-            voice_server_stt: 'Changes how voice chat hears you: your speech is transcribed by OpenAI instead of the browser. No settings on this page.',
+            voice_server_stt: 'Changes how voice chat hears you: your speech is transcribed by the Speech to text provider below instead of the browser.',
             voice_live: 'Adds a GPT-Live engine under Voice conversation. It has its own voice and settings; Spoken replies does not affect it.',
             voice_realtime: 'Adds an OpenAI Realtime engine under Voice conversation. It has its own voice and settings; Spoken replies does not affect it.',
         };

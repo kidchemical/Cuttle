@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 import subprocess
 import sys
 from pathlib import Path
@@ -260,7 +261,16 @@ def test_followup_round_mints_new_card_and_freezes_old(tmp_path: Path, monkeypat
     quiet = _save_reply(db, parent, "unrelated reply", "t2")  # another turn → no card
     assert _history(db, parent)[quiet] == []
 
-    service.message_child(sid, "again", wait=False, runner=lambda *a, **k: None, db=db, turn_id="t3")
+    # The follow-up runs on a background thread. Its runner waits for the test,
+    # so its own result cannot land after the test's update (a late "failed"
+    # would overwrite it on a slower machine).
+    gate = threading.Event()
+
+    def late_runner(*_a, **_k):
+        gate.wait(10)
+        return {"response": "second answer"}
+
+    service.message_child(sid, "again", wait=False, runner=late_runner, db=db, turn_id="t3")
     hist = _history(db, parent)
     old = hist[first][0]
     assert old["frozen"] is True and old["outcome"] == "done" and "first answer" in old["summary"]
@@ -268,6 +278,10 @@ def test_followup_round_mints_new_card_and_freezes_old(tmp_path: Path, monkeypat
     second = _save_reply(db, parent, "sent Chatty a follow-up", "t3")
     child_id = spawned["children"][0]["id"]
     store.update_child(db, child_id, status="done", result="second answer", finished=True)
+    gate.set()
+    for t in threading.enumerate():
+        if t is not threading.current_thread() and t is not threading.main_thread():
+            t.join(10)
     hist = _history(db, parent)
     assert "first answer" in hist[first][0]["summary"]  # old card unchanged
     assert hist[second][0]["handle"] == f"CH-{sid:06d}" and "second answer" in hist[second][0]["summary"]

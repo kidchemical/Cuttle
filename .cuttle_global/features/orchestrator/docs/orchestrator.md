@@ -46,6 +46,21 @@ Inside a Cuttle turn `--session` defaults to the current chat. A bound chat's
 brief is part of its compiled context, so a new harness joining the chat gets
 it too. Treat it as standing instructions.
 
+## What wakes an orchestrator
+
+Two separate things start an orchestrator's next turn; do not mix them up when
+reporting on one:
+
+- **Its own work.** A job or sub-agent it started hands back when it ends, within
+  seconds, with or without a supervisor.
+- **Its supervisor.** A turn that ends with nothing pending registers no wake-up.
+  The chat then stays idle until the supervisor checks: at once when the turn
+  ended on open Tasks items, a question or an error, otherwise at the next interval.
+
+With neither (no pending work, supervision paused or absent) nothing wakes it
+until a message arrives. `python -m api.chat_cli status CH-…` states which case
+applies in `wake`, and the chat's background card shows the same line.
+
 ## Pause, stop, resume
 
 An orchestrator keeps itself going: each job or sub-agent it starts registers a
@@ -81,6 +96,12 @@ PYTHONPATH=src .venv/bin/python -m api.orchestrator resume --session CH-…   # 
 Owner: `api.orchestrator.control`.
 
 ## Delegating
+
+The orchestrator plans, coordinates, reviews and integrates; hands-on tasks are
+delegated from the start. Attempt and no-progress time limits apply to work at
+each delegated tier. Retry within those limits, then escalate one tier at a time.
+The stored `solo_attempts` and `solo_minutes` keys retain their names for existing
+playbooks; they are escalation limits, not permission for the orchestrator to work solo.
 
 Spawn by **tier** (its id from the brief's org chart; a label or role also
 works). Cuttle picks the tier's first switched-on agent whose account can run,

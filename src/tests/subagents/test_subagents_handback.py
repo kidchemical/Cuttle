@@ -52,7 +52,63 @@ def test_listener_checks():
     assert handback.listener_gone(_live_listener()) is False
     assert handback.listener_gone(_gone_listener()) is True
     found = handback.capture_listener()
-    assert found is None or (found["pid"] > 1 and found["name"] not in handback._WRAPPERS)
+    assert found is None or found.get("detached") or (
+        found["pid"] > 1 and found["name"] not in handback._WRAPPERS)
+
+
+def _parents(*names_pids):
+    class P:
+        def __init__(self, name, pid):
+            self._name, self.pid = name, pid
+
+        def name(self):
+            return self._name
+
+        def create_time(self):
+            return 1.0
+
+    class Me:
+        def parents(self):
+            return [P(n, p) for n, p in names_pids]
+
+    return lambda: Me()
+
+
+def test_detached_launch_has_no_listener_and_always_hands_back(monkeypatch):
+    """CH-002353: `systemd-run --user … subagents spawn --wait`. The CLI's parent is
+    the user service manager, which never exits, so the round was never handed back."""
+    import psutil
+
+    monkeypatch.setattr(psutil, "Process", _parents(("bash", 4000), ("systemd", 2632), ("systemd", 1)))
+    unit = handback.capture_listener()
+    assert unit == {"detached": True, "name": "systemd"} and handback.listener_gone(unit) is True
+    monkeypatch.setattr(psutil, "Process", _parents(("init", 1)))  # nohup/setsid, re-parented
+    assert handback.capture_listener()["detached"] is True
+    monkeypatch.setattr(psutil, "Process", _parents(("bash", 4000), ("claude", 3999), ("systemd", 2632)))
+    assert handback.capture_listener()["name"] == "claude"  # an agent is listening
+
+    op = handback.hand_back(unit, _batch(8210), timed_out=True)
+    assert op and op["kind"] == "notice" and len(_notices(8210)) == 1
+    text = op["payload"]["text"]
+    assert "ran detached from your turn" in text and "cancelled" in text and "CH-008202" in text
+    assert "ran detached from your turn and has finished" in handback.notice_text(_batch(), detached=True)
+
+
+def test_detached_launch_with_a_unit_watch_is_resumed_by_the_watch_only(monkeypatch):
+    """An agent that followed the runbook (`watch-unit` on the spawn's unit) gets the
+    watch's resume turn; a notice on top would wake the chat twice."""
+    from api import job_watch
+
+    unit = {"detached": True, "name": "systemd"}
+    monkeypatch.setattr(handback, "_own_unit", lambda: "bsv2-lanes16")
+    monkeypatch.setattr(job_watch, "unit_watch_records",
+                        lambda sid=None: [{"id": "w", "unit": "bsv2-lanes16.service", "pid": 0}] if sid == 8211 else [])
+    assert handback.hand_back(unit, _batch(8211)) is None and _notices(8211) == []
+    assert handback.hand_back(unit, _batch(8212)) is not None  # another chat's watch does not count
+    monkeypatch.setattr(job_watch, "unit_watch_records", lambda sid=None: [{"id": "w", "unit": "", "pid": os.getpid()}])
+    assert handback.hand_back(unit, _batch(8213)) is None  # watched by pid
+    monkeypatch.setattr(job_watch, "unit_watch_records", lambda sid=None: [{"id": "w", "unit": "other", "pid": 7}])
+    assert handback.hand_back(unit, _batch(8214)) is not None
 
 
 def test_gone_listener_queues_the_batch_on_the_parent():

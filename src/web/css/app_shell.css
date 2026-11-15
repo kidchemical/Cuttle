@@ -2780,6 +2780,9 @@ body.is-electron:not(.fullscreen) .notifications-popover-backdrop {
 }
 
 .workspace-current {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     font-size: 12px;
     color: var(--panel-text);
     background: var(--panel-hover);
@@ -2787,6 +2790,36 @@ body.is-electron:not(.fullscreen) .notifications-popover-backdrop {
     border-radius: 8px;
     padding: 8px 10px;
     line-height: 1.4;
+}
+
+.workspace-current-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.workspace-current-name {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.workspace-current-name.is-unsaved {
+    font-weight: 500;
+    color: var(--panel-dim);
+    font-style: italic;
+}
+
+.workspace-current-summary {
+    font-size: 11px;
+    color: var(--panel-dim);
+    overflow-wrap: anywhere;
+}
+
+.workspace-save-note {
+    margin-top: -4px;
+    font-size: 11px;
+    color: var(--panel-dim);
 }
 
 .workspace-save-row {
@@ -2899,9 +2932,31 @@ body.is-electron:not(.fullscreen) .notifications-popover-backdrop {
 }
 
 .workspace-item-name {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0 6px;
     font-size: 12px;
     font-weight: 600;
     color: var(--panel-text);
+}
+
+.workspace-item-title {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.workspace-item-name .workspace-item-badge {
+    margin-left: 0;
+}
+
+.workspace-item.is-current {
+    border-color: color-mix(in srgb, var(--accent, #4f8cff) 55%, var(--panel-border));
+}
+
+.workspace-rename-input {
+    height: 26px;
+    width: 100%;
 }
 
 .workspace-item-summary {
@@ -2912,10 +2967,20 @@ body.is-electron:not(.fullscreen) .notifications-popover-backdrop {
 }
 
 .workspace-item-actions {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(2, auto);
     gap: 4px;
     flex-shrink: 0;
+}
+
+.workspace-item-builtin .workspace-item-actions {
+    grid-template-columns: auto;
+}
+
+.workspace-btn.is-armed {
+    border-color: var(--dot-err);
+    color: var(--dot-err);
+    background: rgba(248, 81, 73, 0.12);
 }
 
 .workspace-item-actions .workspace-btn {

@@ -103,7 +103,10 @@ def _pushed_commits(local_sha: str, remote_sha: str) -> tuple[str | None, list[s
         return remote_sha, commits
     base = _merge_base(local_sha)
     if base == local_sha:
-        base = None  # degenerate: fall back to scanning everything
+        # The pushed commit is already in the remote's main history (a new tag
+        # or branch on a commit GitHub has): nothing new leaves this machine.
+        # Rescanning all history here re-flags long-public fixtures.
+        return base, []
     rev_range = f"{base}..{local_sha}" if base else local_sha
     proc = _run_git("rev-list", rev_range)
     commits = (proc.stdout or "").split() if proc.returncode == 0 else []

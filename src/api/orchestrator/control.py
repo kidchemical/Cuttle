@@ -45,6 +45,17 @@ def held(session_id: Any) -> str:
         return ""
 
 
+def state(session_id: Any) -> str:
+    """``''`` when the chat is not orchestrating, else ``'active'`` or its hold. Never raises."""
+    try:
+        from api.orchestrator.service import enabled
+
+        row = store.binding(parse_session(session_id)) if enabled() else None
+        return (str(row.get("hold") or "") or "active") if row else ""
+    except Exception:
+        return ""
+
+
 def hold_note(session_id: Any) -> str:
     """The line a held chat's brief starts with (``''`` when running)."""
     return HOLD_NOTE.get(held(session_id), "")

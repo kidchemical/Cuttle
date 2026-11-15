@@ -123,3 +123,37 @@ def test_workspace_api_round_trips_spaces_and_groups(workspace_settings, owner_s
         "spaces": {"spaces": []},
     }).get_json()
     assert "spaces" not in again["workspace"]
+
+
+def test_workspace_api_rename_keeps_layout(workspace_settings, owner_session):
+    from api import web_chat_api as w
+
+    client = w.app.test_client()
+    owner_session.sign_in(client)
+    a = client.post("/api/shell/workspaces", json={
+        "name": "Laptop", "columns": [{"page": "/chat_page.html?chat=5", "flex": ""}],
+    }).get_json()["workspace"]
+    client.post("/api/shell/workspaces", json={
+        "name": "Desk", "columns": [{"page": "/chat_page.html", "flex": ""}],
+    })
+
+    # id without columns renames only; the saved layout stays.
+    renamed = client.post("/api/shell/workspaces", json={"id": a["id"], "name": "Travel"})
+    assert renamed.status_code == 200
+    ws = renamed.get_json()["workspace"]
+    assert ws["id"] == a["id"] and ws["name"] == "Travel"
+    assert ws["columns"] == a["columns"]
+
+    # Renaming onto another workspace's name is refused, not merged.
+    clash = client.post("/api/shell/workspaces", json={"id": a["id"], "name": "desk"})
+    assert clash.status_code == 409
+    names = sorted(x["name"] for x in client.get("/api/shell/workspaces").get_json()["workspaces"])
+    assert names == ["Desk", "Travel"]
+
+    # id + columns updates that workspace in place under its name.
+    updated = client.post("/api/shell/workspaces", json={
+        "id": a["id"], "name": "Travel",
+        "columns": [{"page": "/chat_page.html?chat=9", "flex": ""}],
+    }).get_json()
+    assert len(updated["workspaces"]) == 2
+    assert "CH-000009" in updated["workspace"]["summary"]

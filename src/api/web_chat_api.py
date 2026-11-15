@@ -3480,7 +3480,7 @@ def upload_attachments():
         upload_dir = _output_dir() / 'uploads' / safe_session
         upload_dir.mkdir(parents=True, exist_ok=True)
 
-        allowed_ext = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.pdf'}
+        from api.vision_prepass import UPLOAD_EXTS as allowed_ext
         max_bytes = 25 * 1024 * 1024
         results = []
         for f in files:
@@ -3493,7 +3493,7 @@ def upload_attachments():
             if ext not in allowed_ext:
                 return jsonify({
                     'success': False,
-                    'error': f'Unsupported file type: {ext or "(none)"}. Use images or PDF.',
+                    'error': f'Unsupported file type: {ext or "(none)"}. Use images, PDF or a voice clip.',
                 }), 400
             # Size check via stream peek
             f.stream.seek(0, os.SEEK_END)
@@ -4604,6 +4604,13 @@ def api_shell_workspaces():
         match = None
         if existing_id:
             match = next((x for x in items if x.get('id') == existing_id), None)
+        if match is not None and 'columns' not in data:  # rename only; layout kept
+            if any(x is not match and str(x.get('name') or '').lower() == name.lower() for x in items):
+                return jsonify({'success': False, 'error': f'A workspace named "{name}" already exists'}), 409
+            match['name'] = name
+            items = _save_shell_workspaces(items)
+            return jsonify({'success': True, 'workspace': _public_shell_workspace(match),
+                            'workspaces': [_public_shell_workspace(x) for x in items]})
         if match is None:
             lower = name.lower()
             match = next((x for x in items if str(x.get('name') or '').lower() == lower), None)

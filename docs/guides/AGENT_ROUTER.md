@@ -176,6 +176,10 @@ when an earlier one cannot run (transport failure walks the remaining chain;
 a task failure stops the turn). Use-case routing accepts only the ordered
 `targets` list; the obsolete tiered fields are rejected.
 
+When every target in the chain reports a missing CLI (a new install with no
+agent set up), the reply is setup guidance: each tried agent with its install
+hint, plus any agent that is installed (`src/api/agent_router/setup_reply.py`).
+
 A fresh install is seeded with one block per kind of work: *Quick chat*,
 *Ops & chores*, *Writing & docs* (Claude first), *Explain the codebase*,
 *Research*, *Everyday coding*, *Architecture & design*, *Deep work*

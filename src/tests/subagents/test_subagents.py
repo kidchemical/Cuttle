@@ -1126,3 +1126,26 @@ def test_orphan_reconcile_closes_the_batch(tmp_path: Path, monkeypatch):
     service._reconcile(db)
     assert store.get_child(db, kid.id).status == "failed"
     assert service._refresh(db, batch.id).status == "failed"
+
+
+def test_cli_detached_spawn_and_message_take_explicit_turn(tmp_path, monkeypatch):
+    from api.subagents import store
+    from api import chat_turn_row
+    db, db_path, _owner, parent = _seed(tmp_path)
+    monkeypatch.setattr("api.subagents.turns.default_runner", lambda **kw: {"success": True, "response": "done"})
+    monkeypatch.setattr("api.chat_turn_id.ambient", lambda sid: "")
+    first = chat_turn_row.open_row(db, parent, turn=1)
+    code, out, err = _run_cli(["spawn", "--parent", str(parent), "--turn", first["query_id"],
+                               "--wait", "--json", "--db", str(db_path),
+                               "--child", json.dumps({"title": "Scout", "message": "go"})])
+    assert code == 0, err or out
+    payload = json.loads(out)
+    batch = store.get_batch(db, payload["id"])
+    assert batch.turn_id == first["query_id"] and batch.attach_message_id == first["message_id"]
+    chat_turn_row.finalize(db, parent, "done", {"query_id": first["query_id"]})
+    second = chat_turn_row.open_row(db, parent, turn=2)
+    code, out, err = _run_cli(["message", "--session", str(batch.children[0].session_id),
+                               "--turn", second["query_id"], "--text", "again", "--wait", "--json", "--db", str(db_path)])
+    assert code == 0, err or out
+    child = store.get_child(db, batch.children[0].id)
+    assert child.card_turn_id == second["query_id"] and child.card_message_id == second["message_id"]

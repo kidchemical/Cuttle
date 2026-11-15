@@ -249,3 +249,42 @@ def test_peek_result_does_not_consume():
     taken = delivery.take_result("42")
     assert taken and taken.get("response") == "multi-device"
     assert delivery.peek_result("42") is None
+
+
+def test_long_turn_keeps_busy_and_publishes_turn_end(monkeypatch):
+    """A turn that is still working never loses its lock to age (it ran 2 h 34 min once):
+    it stays busy for the chat list, blocks a second turn, and its end reaches listeners."""
+    from api import chat_delivery as delivery
+    from api import session_events
+
+    delivery._busy.clear()
+    delivery._pending.clear()
+    monkeypatch.setattr(delivery, "_session_has_live_work", lambda _sid: True)
+    seen = []
+    monkeypatch.setattr(session_events, "publish", lambda kind, sid, detail=None: seen.append((kind, str(sid))))
+
+    assert delivery.try_begin("314")
+    token = delivery.current_turn("314")
+    for entry in delivery._busy.values():
+        entry["since"] = time.time() - 3 * 3600
+
+    assert delivery.is_busy("314") is True
+    assert "314" in delivery.busy_session_ids()
+    assert delivery.try_begin("314") is False
+    delivery.end("314", turn=token)
+    assert delivery.is_busy("314") is False
+    assert seen == [("turn_end", "314")]
+
+
+def test_try_begin_reclaims_a_dead_workers_lock(monkeypatch):
+    from api import chat_delivery as delivery
+
+    delivery._busy.clear()
+    delivery._pending.clear()
+    monkeypatch.setattr(delivery, "_session_has_live_work", lambda _sid: False)
+
+    assert delivery.try_begin("315")
+    for entry in delivery._busy.values():
+        entry["since"] = time.time() - 600
+    assert delivery.try_begin("315") is True
+    delivery.end("315")

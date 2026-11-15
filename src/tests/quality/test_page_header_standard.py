@@ -35,8 +35,9 @@ PAGES = [
     'git_graph_page.html',
 ]
 
-# Full-height tool surfaces that use the frame tokens without `.cuttle-page`.
-FRAME_EXEMPT = {'git_graph_page.html'}
+# Full-height tool surfaces that use the frame tokens without `.cuttle-page`
+# (Git now uses `.cuttle-page.cuttle-page--fill`).
+FRAME_EXEMPT: set[str] = set()
 FRAME_PROPS = re.compile(r'(?<![\w-])(padding|margin|max-width)\s*:')
 
 # The only header class that satisfies the standard.

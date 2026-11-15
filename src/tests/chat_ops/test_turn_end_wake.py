@@ -194,3 +194,18 @@ def test_a_stale_end_for_an_older_turn_publishes_nothing(events):
     assert events == [] and chat_delivery.is_busy(sid)
     chat_delivery.end(sid, turn=chat_delivery.current_turn(sid))
     assert events == [918274]
+
+
+def test_wake_line_tells_self_wake_from_supervisor_check():
+    """`status.wake`: the two things that can start an idle chat's next turn, kept apart."""
+    from api.chat_ops.service import wake_line
+
+    live = {'state': 'pending', 'actor': 2404, 'due': 1794476026.0}
+    paused = {'state': 'paused', 'actor': 2404, 'due': None}
+    assert wake_line('busy', [live]) == 'Working now.'
+    assert wake_line('waiting_background', [live]) == 'Resumes by itself when its background work ends.'
+    line = wake_line('idle_with_work', [live])
+    assert 'does not wake itself' in line and 'CH-002404' in line and '2026-11-12 09:33:46 UTC' in line
+    assert 'Supervision is paused' in wake_line('idle_with_work', [paused])
+    assert 'no supervisor' in wake_line('idle', [])
+    assert wake_line('waiting_background', [live], orchestration='paused').startswith('Orchestration paused')

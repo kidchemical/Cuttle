@@ -1,7 +1,8 @@
 """Authenticated transport over the voice transcription owner.
 
 Answers ``200 {success: false, disabled: true}`` while the ``voice_server_stt``
-experimental flag is off.
+experimental flag is off (composer voice clips pass ``purpose=clip`` and are
+gated by ``composer_voice_clip`` instead).
 """
 
 from __future__ import annotations
@@ -26,14 +27,19 @@ _DISABLED = {"success": False, "disabled": True, "error": "Server transcription 
 @authenticated_required
 def status():
     """Voice mode picks its input engine from this: no key → browser speech."""
-    return jsonify(success=True, enabled=voice_stt.is_enabled(), configured=voice_stt.configured())
+    from api.voice_stt import settings
+
+    return jsonify(success=True, enabled=voice_stt.is_enabled(), configured=voice_stt.configured(),
+                   clip=dict(settings.clip_status(), enabled=voice_stt.clips_enabled()))
 
 
 @voice_stt_bp.route("/transcribe", methods=["POST"])
 @authenticated_required
 @attributed_call
 def transcribe():
-    if not voice_stt.is_enabled():
+    # Composer voice clips send their phrases here under their own flag.
+    clip = request.form.get("purpose") == "clip" and voice_stt.clips_enabled()
+    if not (clip or voice_stt.is_enabled()):
         return jsonify(_DISABLED)
     upload = request.files.get("audio")
     if upload is None:

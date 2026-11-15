@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -98,6 +99,10 @@ def _message_payload(
         "timestamp": msg.get("timestamp"),
         "content": _clip(str(content), max_chars),
     }
+    done = (msg.get("metadata") or {}).get("completed_at") if isinstance(msg.get("metadata"), dict) else None
+    if done:
+        # ``timestamp`` is when the turn started; this is when its reply landed (UTC, same format).
+        out["completed"] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(float(done)))
     if max_chars and isinstance(content, str) and len(content) > max_chars:
         out["content_truncated"] = True
         out["content_chars"] = len(content)

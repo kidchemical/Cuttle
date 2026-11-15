@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -92,7 +93,7 @@ def _hand_back(listener: Any, batch: Any, verb: str, **kwargs: Any) -> None:
         from api.subagents.handback import hand_back
 
         if hand_back(listener, batch, verb=verb, **kwargs):
-            sys.stderr.write("note: the launching agent is gone; result queued to the parent chat\n")
+            sys.stderr.write("note: no agent is listening to this run; result queued to the parent chat\n")
     except Exception as exc:  # never fail the CLI over the courtesy notice
         sys.stderr.write(f"warning: could not hand the result back to the parent chat: {exc}\n")
 
@@ -146,6 +147,7 @@ def _cmd_spawn(args: argparse.Namespace) -> int:
         payload = spawn(
             parent_session_id=int(parent),
             anchor_message_id=anchor,
+            turn_id=getattr(args, "turn", None),
             children=children,
             collect=args.collect,
             lifetime=args.lifetime,
@@ -154,6 +156,7 @@ def _cmd_spawn(args: argparse.Namespace) -> int:
             route=bool(args.route),
             watch=bool(args.watch),
             tasks=bool(args.tasks),
+            detached_pid=os.getpid() if listener and listener.get("detached") else 0,
             db=db,
         )
     except SubagentError as exc:
@@ -286,6 +289,7 @@ def _cmd_message(args: argparse.Namespace) -> int:
             int(sid),
             args.text,
             anchor_message_id=anchor,
+            turn_id=getattr(args, "turn", None),
             wait=bool(args.wait),
             timeout=float(args.timeout),
             db=db,
@@ -401,6 +405,17 @@ def _cmd_profiles(args: argparse.Namespace) -> int:
     return _fail({"ok": False, "error": f"unknown profiles action {action!r}"}, args.json)
 
 
+def _cmd_repair_cards(args: argparse.Namespace) -> int:
+    from api.subagents.service import SubagentError, repair_batch_cards
+
+    try:
+        payload = repair_batch_cards(args.batch, args.turn, db=_open_db(args.db))
+    except SubagentError as exc:
+        return _fail({"ok": False, "error": str(exc)}, args.json)
+    _emit(payload, as_json=args.json, text=f"Cards bound to turn {args.turn}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
 
     common = argparse.ArgumentParser(add_help=False)
@@ -413,6 +428,11 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[common],
     )
     sub = p.add_subparsers(dest="verb", required=True)
+
+    repair = sub.add_parser("repair-cards", parents=[common], help="Repair lost detached-launch identity using its known originating parent turn")
+    repair.add_argument("--batch", required=True)
+    repair.add_argument("--turn", required=True)
+    repair.set_defaults(func=_cmd_repair_cards)
 
     sp = sub.add_parser("spawn", parents=[common], help="Create child chats and optionally wait")
     sp.add_argument("--parent", required=True, help="Parent CH- handle")
@@ -442,7 +462,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--route", action="store_true", help="Ask the Cuttle router to pick each child's harness")
     sp.add_argument("--watch", action="store_true", help="Write a job_watch status JSON with per-child bars")
     sp.add_argument("--tasks", action="store_true", help="Create a Tasks gizmo on the parent chat")
-    sp.add_argument("--anchor", default=None, help="Manual runs only: bind the cards to this parent bubble (CH-<chat>-<N>). Inside a turn the cards bind to that turn (CUTTLE_TURN_ID) without it")
+    spawn_identity = sp.add_mutually_exclusive_group()
+    spawn_identity.add_argument("--turn", default=None, help="Originating parent turn id; pass explicitly when a detached launcher drops CUTTLE_TURN_ID")
+    spawn_identity.add_argument("--anchor", default=None, help="Manual runs only: bind the cards to this parent bubble (CH-<chat>-<N>). Inside a turn the cards bind to that turn (CUTTLE_TURN_ID) without it")
     sp.set_defaults(func=_cmd_spawn)
 
     st = sub.add_parser("status", parents=[common], help="Show a batch or all batches for a parent")
@@ -464,7 +486,9 @@ def build_parser() -> argparse.ArgumentParser:
     msg = sub.add_parser("message", parents=[common], help="Send a follow-up into a child chat")
     msg.add_argument("--session", required=True)
     msg.add_argument("--text", required=True)
-    msg.add_argument("--anchor", default=None, help="Manual runs only: bind the cards to this parent bubble (CH-<chat>-<N>). Inside a turn the cards bind to that turn (CUTTLE_TURN_ID) without it")
+    message_identity = msg.add_mutually_exclusive_group()
+    message_identity.add_argument("--turn", default=None, help="Originating parent turn id when CUTTLE_TURN_ID is not inherited")
+    message_identity.add_argument("--anchor", default=None, help="Manual runs only: bind the cards to this parent bubble (CH-<chat>-<N>). Inside a turn the cards bind to that turn (CUTTLE_TURN_ID) without it")
     msg.add_argument(
         "--wait",
         action="store_true",
