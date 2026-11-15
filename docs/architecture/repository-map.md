@@ -638,3 +638,15 @@ Linux CLI resource limits are owned by `api.agent_harness.resource_scope`,
 attached through `scripts.utilities.agent_process.attach_to_chat_run`.
 This optional machine-local policy is disabled by default. Configuration and
 platform support: [Agent resource limits](../../.cuttle/docs/agent-resource-limits.md).
+
+### Pending Changes batch commits
+
+`js/git/pending_changes_panel.js` owns Shift-hover **Batch Commits** in both
+collapsed and expanded strips. `/api/git/suggest-commit-message` with `batch: true`
+uses `api.commit_batch` to resolve selections and validate a version-1
+`{commits: [{message, files}]}` partition from the configured `commits` helper.
+Every selected whole file must occur exactly once. The panel submits groups
+sequentially to the existing `/api/git/commit` owner and stops on failure,
+reporting partial success; it never pushes. Tests: `git/test_commit_batch.py`
+and `e2e/test_pending_changes_narrow.py`. Removing the batch branch/controller
+leaves ordinary commit naming, Git execution and saved settings intact.

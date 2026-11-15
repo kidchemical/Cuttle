@@ -689,6 +689,10 @@ class ClaudeCliTool:
                 pass
 
         stream = ClaudeStream(status_queue, _persist)
+        from scripts.utilities.claude_turn_cost import TurnCostLedger
+
+        # modelUsage / total_cost_usd are session-wide; price each result as its own turn.
+        costs = TurnCostLedger(rid)
         from api.agent_harness import steer as steer_registry
 
         loop = asyncio.get_running_loop()
@@ -878,7 +882,7 @@ class ClaudeCliTool:
                 elif st["waiting"]:
                     stream.activity.emit(f"waiting on background task: {_task_label(st['bg'])}", force=True)
             elif obj.get("type") == "result" and not obj.get("parent_tool_use_id"):
-                st["results"].append(obj)
+                st["results"].append(costs.turn(obj))
                 waits = bool(st["bg"] and st["open"] and bg_wait > 0)
                 if ctl is not None:
                     _deliver_result(waits)
@@ -954,10 +958,10 @@ class ClaudeCliTool:
             _persist(stream.session_id)
             _finish_detached(ctl.wait, run, st, bg_wait, chat_session_id)
             return {"success": True, "output": "", "detached": True}
-        if len(st["results"]) > 1:
+        if st["results"]:
             parsed = _merge_results([_parse_claude_json(json.dumps(r)) for r in st["results"]])
         elif stream.result is not None:
-            parsed = _parse_claude_json(json.dumps(stream.result))
+            parsed = _parse_claude_json(json.dumps(costs.turn(stream.result)))
         else:
             parsed = {
                 "output": stream.partial_output(), "session_id": stream.session_id, "usage": {}, "errors": [],

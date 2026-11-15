@@ -108,7 +108,7 @@ def resolve_claude_resume(
     for k, v in data.items():
         if not isinstance(k, str) or not k.endswith(suffix):
             continue
-        if k.startswith(("model\x1f", "ctx\x1f", "effort\x1f", "billing\x1f")):
+        if k.startswith(("model\x1f", "ctx\x1f", "effort\x1f", "billing\x1f", "cost\x1f")):
             continue
         tid = _valid_session_id(v if isinstance(v, str) else None)
         if tid:
@@ -364,3 +364,32 @@ def _post_compact_tokens(line: bytes) -> int:
 
 def count_compact_boundaries(claude_session_id: Optional[str]) -> int:
     return claude_transcript_stats(claude_session_id)["compactions"]
+
+
+def _cost_key(claude_session_id: Any) -> str:
+    return f"cost\x1f{str(claude_session_id or '').strip()}"
+
+
+def save_claude_cost_snapshot(claude_session_id: Optional[str], snapshot: Optional[Dict[str, Any]]) -> None:
+    """Last session-wide ``modelUsage`` / ``total_cost_usd`` seen for a Claude session."""
+    if not str(claude_session_id or "").strip():
+        return
+    key = _cost_key(claude_session_id)
+    with _lock:
+        data = _load_all()
+        if snapshot:
+            data[key] = dict(snapshot)
+        elif key in data:
+            del data[key]
+        else:
+            return
+        _write_all(data)
+
+
+def load_claude_cost_snapshot(claude_session_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not str(claude_session_id or "").strip():
+        return None
+    with _lock:
+        data = _load_all()
+    raw = data.get(_cost_key(claude_session_id))
+    return dict(raw) if isinstance(raw, dict) else None
