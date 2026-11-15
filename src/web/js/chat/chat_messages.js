@@ -301,7 +301,8 @@
 
     function splitPostprocessedResponse(text) {
         const source = String(text || '');
-        // Leading <think> blocks (the turn's reasoning) sit ahead of the wrapper.
+        // Leading <think> blocks (the turn's reasoning) are stored ahead of the
+        // wrapper and rendered nested inside the "Original response" disclosure.
         const match = /^((?:\s*<think>[\s\S]*?<\/think>)*)\s*<cuttle_original_response>([\s\S]*?)<\/cuttle_original_response>\s*/i.exec(source);
         if (!match) return null;
         try {
@@ -316,6 +317,12 @@
         const parsed = splitPostprocessedResponse(text);
         if (!parsed) return text;
         return [parsed.original.trim(), parsed.response.trim()].filter(Boolean).join('\n\n');
+    }
+
+    /** One collapsed reasoning disclosure (saved replies; live: chat_live_thinking.js). */
+    function thinkingBlockHtml(content, deps) {
+        return '<details class="thinking-block"><summary>Thinking</summary>'
+            + formatThinkingInner(content, deps) + '</details>';
     }
 
     /**
@@ -337,22 +344,23 @@
             const placeholder = '{{CUTTLE_THINK_' + thinkBlocks.length + '}}';
             const content = typeof d.formatMessage === 'function'
                 ? d.formatMessage(processed.original) : d.escapeHtmlInline(processed.original);
+            // The turn's reasoning belongs to the agent's own reply: it nests
+            // inside the disclosure, ahead of the original text.
+            const reasoning = [];
+            processed.lead.replace(/<think>\n?([\s\S]*?)\n?<\/think>/gi, (_, body) => {
+                if (body.trim()) reasoning.push(thinkingBlockHtml(body, d));
+            });
             thinkBlocks.push('<details class="response-original-block"><summary>Original response</summary>'
-                + '<div class="response-original-content">' + content + '</div>'
+                + '<div class="response-original-content">' + reasoning.join('') + content + '</div>'
                 // Copy wiring (icon, clipboard, toast) is post-paint: chat_activate.js.
                 + '<div class="response-original-actions"><button type="button" class="response-original-copy-btn"'
                 + ' data-copy-text="' + d.escapeHtmlInline(processed.original) + '">Copy</button></div></details>'
                 + '<div class="response-postprocessed-label">Added by post-processing</div>');
-            out = (processed.lead ? processed.lead + '\n\n' : '') + placeholder + '\n\n' + processed.response;
+            out = placeholder + '\n\n' + processed.response;
         }
         const pushThinkBlock = (content) => {
             const placeholder = '{{CUTTLE_THINK_' + thinkBlocks.length + '}}';
-            thinkBlocks.push(
-                '<details class="thinking-block">'
-                + '<summary>Progress</summary>'
-                + formatThinkingInner(content, d)
-                + '</details>'
-            );
+            thinkBlocks.push(thinkingBlockHtml(content, d));
             return placeholder;
         };
         // Match <think>/<redacted_thinking> tags, but ignore any that live inside

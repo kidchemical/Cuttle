@@ -300,8 +300,8 @@ the opt-in `response_postprocessing` experimental pass via restricted
 `chat_coordinator` also applies it to unclaimed compatibility turns; the supervised orchestrator applies it to the terminal answer it persists.
 Its executor chain is stored in `response_postprocessing.chain`, independently
 of Background helpers preferences; the shared helper engine and picker provide
-API/CLI capabilities. `api.agent_harness.reasoning_reply` (kernel) puts each chat turn's reasoning (all adapters' `TextActivityLog` thinking, nested sub-agents excluded) in the reply as one leading `<think>` block. `chat_messages.js` owns the append layout (original
-reply in a collapsed disclosure, labelled processed text after) and copy text. `settings_chat_preferences.js` owns the General/Agents editors. Behavior and
+API/CLI capabilities. `api.agent_harness.reasoning_reply` (kernel) puts each chat turn's reasoning (all adapters' `TextActivityLog` thinking, nested sub-agents excluded) in the reply as one leading `<think>` block, and serves the running turn's reasoning so far as live-status `thinking` (`live_thinking`, merged by `api.chat_live_extras`). `chat_live_thinking.js` owns the collapsed "Thinking" disclosure in the live bubble, above the activity animation (guard: `src/tests/e2e/test_chat_live_thinking.py`; do not fold it into the status line). `chat_messages.js` owns the append layout (original
+reply in a collapsed disclosure with its reasoning nested inside, labelled processed text after) and copy text. `settings_chat_preferences.js` owns the General/Agents editors. Behavior and
 settings contracts: [Chat prompts](../../.cuttle/docs/chat-prompts.md).
 
 **Direct model APIs:** `api.model_providers` owns validated provider manifests,

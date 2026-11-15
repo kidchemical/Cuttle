@@ -4006,6 +4006,21 @@ pre.has-code-copy:hover .code-copy-btn,
     word-break: break-word;
 }
 
+/* Live bubble: the running turn's reasoning (chat_live_thinking.js). */
+.message-content .thinking-block--live {
+    margin: 0 0 10px;
+    padding: 4px 10px;
+}
+.message-content .thinking-block--live .thinking-live-body {
+    max-height: min(40vh, 360px);
+    overflow-y: auto;
+}
+/* Reasoning nested in a post-processed reply's "Original response". */
+.response-original-content > .thinking-block {
+    margin: 0 0 10px;
+    padding: 4px 10px;
+}
+
 .message-content .thinking-inner {
     padding: 8px 12px 10px;
     font-size: 0.9em;

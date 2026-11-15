@@ -2864,6 +2864,8 @@
         : null);
 
     // Idle chat's background work (waits, watches, schedules, owned processes): chat_background_work.js.
+    // The running turn's reasoning in its live bubble: owned by chat_live_thinking.js.
+    const liveThinking = CuttleChatLiveThinking.create({ doc: document, currentSession: () => session.current(), sessionIdsEqual, formatThinking: (t) => CuttleChatMessages.formatThinkingInner(t, structuredRenderDeps()), afterPaint: () => transcriptNav.autoScrollChatToBottom() });
     const backgroundWork = CuttleChatBackgroundWork.create({ win: window, currentSession: () => session.current(), sessionIdsEqual, isBusy: () => isLoadingThisSession(), openChat: (sid) => loadChatSession(sid) });
     // Media thumbs, lightbox and image Copy / Save menu: owned by chat_media.js.
     // Host-document listeners ride the frame teardown signal.
@@ -7080,6 +7082,7 @@
             ensureLocalTypingIndicator(statusLabel);
             try { subagentLaunchers.paintLive(); } catch (_) {}
         }
+        try { liveThinking.sync(live, sessionId); } catch (_) {}
 
         if (live.status && (isLoadingThisSession() || document.getElementById('typing-indicator-remote'))) {
             updateTypingStatus(live.status);
@@ -8403,7 +8406,10 @@
                     4000
                 );
                 const data = await response.json();
-                if (data && data.success) return data;
+                if (data && data.success) {
+                    try { liveThinking.sync(data, sessionId); } catch (_) {}
+                    return data;
+                }
             } catch (_) {}
             return null;
         })().finally(() => {
