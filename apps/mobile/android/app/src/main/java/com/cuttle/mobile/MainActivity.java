@@ -66,7 +66,8 @@ public class MainActivity extends BridgeActivity {
 
     private static final String SETUP_URL = "https://localhost/index.html?setup=1";
     private static final String SETUP_URL_FRESH = "https://localhost/index.html";
-    private static final String OFFLINE_URL = "https://localhost/index.html?offline=1";
+    /** Shared styled error page (src/web/error_page.html, copied into dist by vite.config.js). */
+    private static final String ERROR_PAGE_URL = "https://localhost/error_page.html";
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final NativeMic nativeMic = new NativeMic();
@@ -80,6 +81,10 @@ public class MainActivity extends BridgeActivity {
     private String pendingOpenChat;
     private int documentLoadFailures = 0;
     private boolean recoverQueued = false;
+    /** Last main-frame load error (e.g. net::ERR_CONNECTION_REFUSED), shown on the error page. */
+    private String lastLoadError = "";
+    /** Error pages shown since Cuttle last loaded; drives the page's retry backoff. */
+    private int errorPageShows = 0;
     private static final long CONNECTION_WATCHDOG_MS = 18000;
     private volatile boolean cuttleDocumentReady = false;
     // Main-thread generation fences late probe results when the user changes screens.
@@ -326,8 +331,8 @@ public class MainActivity extends BridgeActivity {
                 handler.cancel();
                 mainHandler.removeCallbacks(connectionWatchdog);
                 cuttleDocumentReady = false;
-                showError("This PC's certificate isn't trusted or has changed. Open Server "
-                    + "settings and connect again to review it.");
+                showErrorPage("ERR_CERT_AUTHORITY_INVALID", "This PC's certificate isn't trusted or has changed. "
+                    + "Open Server settings and connect again to review it.");
             }
 
             @Override
@@ -355,6 +360,8 @@ public class MainActivity extends BridgeActivity {
                     cuttleDocumentReady = true;
                     mainHandler.removeCallbacks(connectionWatchdog);
                     documentLoadFailures = 0;
+                    lastLoadError = "";
+                    errorPageShows = 0;
                     injectPreloadBridge(view);
                     tryOpenPendingChat(view);
                     // Drop local setup / loading entries so the system back key
@@ -404,7 +411,7 @@ public class MainActivity extends BridgeActivity {
                     if (error != null && error.getErrorCode() == ERROR_FAILED_SSL_HANDSHAKE) {
                         mainHandler.removeCallbacks(connectionWatchdog);
                         cuttleDocumentReady = false;
-                        showError("HTTPS connection failed. Check the server certificate and address.");
+                        showErrorPage("ERR_SSL_PROTOCOL_ERROR", "HTTPS connection failed. Check the server certificate and address.");
                         return;
                     }
                     handleDocumentLoadError(url, desc);
@@ -701,26 +708,19 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void showOfflineLogin(String baseUrl) {
-        connectionAttempt++;
-        mainHandler.removeCallbacks(connectionWatchdog);
-        startupCover.hide();
-        cuttleDocumentReady = false;
-        WebView webView = bridge != null ? bridge.getWebView() : null;
-        if (webView == null) {
+        String code = lastLoadError.replaceFirst("(?i)^net::", "").trim();
+        if (!code.toUpperCase(java.util.Locale.US).startsWith("ERR_")) {
+            // "HTTP 502" / timeouts / probe failures: describe instead of a fake code.
+            String detail = code.isEmpty() ? "" : " (" + code + ")";
+            showErrorPage("", "Cuttle on your PC isn't reachable" + detail + ". Make sure the PC is on "
+                + "and Cuttle is running (tray icon), then retry, or open Server settings.");
             return;
         }
-        mainHandler.post(() -> webView.loadUrl(OFFLINE_URL));
+        showErrorPage(code, "");
     }
 
     private void showServerOffline(String baseUrl) {
         showOfflineLogin(baseUrl);
-    }
-
-    private static String escapeHtml(String s) {
-        if (s == null) {
-            return "";
-        }
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private static boolean isWebViewErrorUrl(String url) {
@@ -734,44 +734,31 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void showError(String message) {
+        showErrorPage("", message == null || message.trim().isEmpty() ? "Could not reach Cuttle." : message);
+    }
+
+    /** Load the shared styled error page; Retry / Server settings use the CuttleShellNative bridge. */
+    private void showErrorPage(String code, String message) {
+        connectionAttempt++;
+        mainHandler.removeCallbacks(connectionWatchdog);
         startupCover.hide();
+        cuttleDocumentReady = false;
         WebView webView = bridge != null ? bridge.getWebView() : null;
         if (webView == null) {
             return;
         }
-        String safe = (message == null ? "Could not reach Cuttle" : message)
-            .replace("'", "&#39;");
-        if (!safe.contains("<")) {
-            safe = safe
-                .replace("&", "&amp;")
-                .replace("<", "&lt;");
+        String base = readBaseUrl();
+        android.net.Uri.Builder url = android.net.Uri.parse(ERROR_PAGE_URL).buildUpon()
+            .appendQueryParameter("kind", "network")
+            .appendQueryParameter("platform", "android")
+            .appendQueryParameter("code", code == null ? "" : code)
+            .appendQueryParameter("url", base == null ? "" : base)
+            .appendQueryParameter("attempt", String.valueOf(errorPageShows++));
+        if (message != null && !message.isEmpty()) {
+            url.appendQueryParameter("message", message);
         }
-        String html =
-            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                + "<meta name='viewport' content='width=device-width,initial-scale=1,viewport-fit=cover'>"
-                + "<style>"
-                + "html,body{margin:0;min-height:100%;background:#0b0f14;color:#e8edf5;"
-                + "font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;"
-                + "padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0)}"
-                + ".box{text-align:center;padding:1.5rem;max-width:22rem}"
-                + "h1{font-size:1.4rem;margin:0 0 .5rem;color:#f87171}"
-                + "p{color:#8b9bb0;line-height:1.45}"
-                + "button{margin-top:1rem;padding:.75rem 1rem;width:100%;border:0;border-radius:8px;"
-                + "background:#3b82f6;color:#fff;font-weight:600;font-size:1rem}"
-                + "button.secondary{background:transparent;border:1px solid #243041;color:#e8edf5;margin-top:.5rem}"
-                + "</style></head><body><div class='box'><h1>Cuttle</h1><p>"
-                + safe
-                + "</p>"
-                + "<button onclick=\"CuttleShellNative.reload()\">Retry</button>"
-                + "<button class='secondary' onclick=\"CuttleShellNative.openSettings()\">Server settings</button>"
-                + "</div></body></html>";
-        mainHandler.post(() -> webView.loadDataWithBaseURL(
-            "https://localhost/",
-            html,
-            "text/html",
-            "UTF-8",
-            null
-        ));
+        final String target = url.build().toString();
+        mainHandler.post(() -> webView.loadUrl(target));
     }
 
     /**
@@ -900,6 +887,7 @@ public class MainActivity extends BridgeActivity {
             return;
         }
         recoverQueued = true;
+        if (desc != null && !desc.isEmpty()) lastLoadError = desc;
         documentLoadFailures += 1;
         final int n = documentLoadFailures;
         final String err = desc == null ? "" : desc;

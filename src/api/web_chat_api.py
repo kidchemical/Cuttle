@@ -114,8 +114,9 @@ except ImportError as e:
 
 app = Flask(__name__)
 # gzip text responses; registered first so it runs after every other hook.
-from api import http_compression  # noqa: E402
+from api import error_pages, http_compression  # noqa: E402
 http_compression.install(app)
+error_pages.install(app)  # styled 4xx/5xx for page loads only
 # Restrict CORS to known-safe origins (+ LAN IP when lan_access_enabled).
 try:
     from api.lan_access import build_cors_origins

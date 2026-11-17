@@ -526,6 +526,14 @@ listed as expired). Client `js/media_library/` (pure model + controller) reuses
 `CuttleChatMedia` thumbs/lightbox through its `galleryFor` dep. Shipped without an
 experimental flag: a read-only view over existing data with no new effects.
 
+**Error pages:** `src/web/error_page.html` is one self-contained page (inline
+CSS/JS and logo) for every client. Flask (`api.error_pages`, installed beside
+`http_compression`) renders it for document/iframe loads only; API, fetch and
+asset callers keep Flask's normal error responses. When Cuttle cannot be reached,
+Electron (`did-fail-load` → `errorPageUrl`) and Android (`MainActivity.showErrorPage`;
+the vite build copies the page into the APK) load it locally with query params.
+Tests: `tests/runtime/test_error_pages.py`, `e2e/test_error_page.py`.
+
 **Chat VFX:** `api.chat_vfx` owns validated transient confetti/toast events and
 session-scoped SQLite delivery (`python -m api.chat_vfx`); `chat_vfx.routes`
 owns authenticated HTTP transport. `chat_vfx.js` owns the renderer and a

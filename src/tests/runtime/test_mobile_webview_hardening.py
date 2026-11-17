@@ -65,7 +65,7 @@ def test_webview_certificate_and_handshake_errors_fail_closed():
     assert src.count("handler.proceed(") == 1
     assert callback.index("if (isPinnedCertificate(error))") < callback.index("handler.proceed(")
     assert "removeCallbacks(connectionWatchdog)" in callback
-    assert "showError(" in callback
+    assert "showErrorPage(\"ERR_CERT_AUTHORITY_INVALID\"" in callback
     assert "ERROR_FAILED_SSL_HANDSHAKE" in src
 
 

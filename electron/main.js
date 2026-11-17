@@ -1413,6 +1413,25 @@ function loadingPageHTML(message, isError) {
         </div></body></html>`;
 }
 
+/**
+ * Styled offline/error page (src/web/error_page.html, shared with Flask and the
+ * Android app). Self-contained, so it renders while Flask is down; its Retry and
+ * backoff auto-retry navigate back to `url`. Falls back to the plain page if
+ * the file is missing.
+ */
+let mainLoadFailures = 0;
+function errorPageUrl({ code, errno, url, attempt }) {
+    const file = app.isPackaged
+        ? path.join(process.resourcesPath, 'app', 'src', 'web', 'error_page.html')
+        : path.join(SRC_ROOT, 'web', 'error_page.html');
+    if (!fs.existsSync(file)) return null;
+    const q = new URLSearchParams({
+        kind: 'network', platform: 'electron', code: String(code || ''),
+        errno: String(errno ?? ''), url: String(url || ''), attempt: String(attempt || 0),
+    });
+    return `file://${file.replace(/\\/g, '/')}?${q}`;
+}
+
 function showConnectPage() {
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.show();
@@ -1896,10 +1915,18 @@ async function createWindow(opts = {}) {
         if (errorCode === 0 || errorCode === -3) return; // 0=OK, -3=ABORTED
         if ((validatedURL || '').startsWith('file:')) return;
         console.error(`Failed to load (${errorCode}): ${errorDescription} — ${validatedURL}`);
+        const styled = errorPageUrl({ code: errorDescription, errno: errorCode, url: validatedURL, attempt: mainLoadFailures });
+        mainLoadFailures += 1;
+        if (styled) { mainWindow.loadURL(styled); return; }
         const msg = errorCode === -102
             ? 'Cannot connect to Cuttle server.\nFlask may still be starting up.\nDouble-click the tray icon to retry.'
             : `Failed to load Cuttle UI.\nError ${errorCode}: ${errorDescription}\n\nMake sure the Cuttle daemon is running.`;
         mainWindow.loadURL(loadingPageHTML(msg, true));
+    });
+
+    // A Cuttle page loaded: the next failure starts the retry backoff over.
+    mainWindow.webContents.on('did-finish-load', () => {
+        if (isShowingCuttleUi()) mainLoadFailures = 0;
     });
 
     // Renderer died (OOM / GPU / crash) — shell chrome can stay painted while the
