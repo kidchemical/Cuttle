@@ -20,6 +20,7 @@
         'nav-orchestrator': 286,
         'nav-agents': 330,
         'nav-tasks': 152,
+        'nav-media': 340,
         'nav-ide': 204,
         'nav-settings': 150,
         'nav-account': 262,

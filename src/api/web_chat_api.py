@@ -347,6 +347,10 @@ try:
     app.register_blueprint(secret_vault_pages_bp)
 except Exception as _secret_vault_err:
     print(f"[SECRET VAULT] Failed to register routes: {_secret_vault_err}")
+try:  # Media App (owner: api.media_library)
+    from api.media_library.routes import media_library_bp; app.register_blueprint(media_library_bp)
+except Exception as _media_library_err:
+    print(f"[MEDIA] Failed to register routes: {_media_library_err}")
 
 try:
     from api.chat_vfx.routes import chat_vfx_bp

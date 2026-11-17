@@ -25,17 +25,39 @@ plus any **description** you attach (see below).
 ## Agent recipe
 
 1. Write or copy the file somewhere durable (project `temp/`, build output, etc.).
-2. Prefer a hosted URL in the reply:
+2. **Stage local media explicitly before replying.** Use
+   `api.shared_media.stage_file(path)` with the real filesystem path (spaces intact),
+   or `POST /api/shared-media/stage` (see below). Use the Cuttle Python environment
+   and source path described in `agent-ops-cli.md`.
+3. Require `success: true`, and check the returned `path` exists and is nonempty.
+   Copy the returned `url` verbatim into the Markdown image or `<media>` tag.
+   The staging service may add a filename suffix; do not invent the hosted URL.
 
-```markdown
-![UI after fix](/output/shared/ui-after-fix.png)
+```python
+from pathlib import Path
+from api.shared_media import stage_file
+
+result = stage_file("/path/to/project/temp/before-after.png")
+if not result.get("success"):
+    raise RuntimeError(result.get("error", "Media staging failed"))
+staged = Path(result["path"])
+if not staged.is_file() or staged.stat().st_size == 0:
+    raise RuntimeError("Staged media is missing or empty")
+print(result["url"])  # Use this exact URL in the reply.
 ```
 
-Or let Cuttle auto-stage a local path on persist:
+For example, if the returned URL is `/output/shared/before-after-abc123.png`:
 
 ```markdown
-![UI after fix](/path/to/Cuttle/temp/ui-after-fix.png)
+![Before and after](/output/shared/before-after-abc123.png)
 ```
+
+**Do not rely on local-path auto-staging for delivery.** In CH-002597, an image
+link containing a local path with URL-encoded spaces (`Game%20Dev/...`) was dead;
+explicit staging and the returned `/output/shared/…` URL fixed delivery. A file
+existing on disk or appearing in a tool preview does not verify the chat attachment.
+Pass raw filesystem paths to the staging API, not URL-encoded paths. Local-path
+auto-staging remains a compatibility feature, not the agent delivery recipe.
 
 ### Descriptions (optional)
 
@@ -78,10 +100,10 @@ Video without description:
 <media type="video" src="/output/shared/demo.mp4" title="Walkthrough"/>
 ```
 
-3. Do **not** rely on `file://` for in-chat previews — browsers and phones cannot
-   load host disk paths from the HTTPS chat page.
+Do **not** use `file://` or filesystem paths as final image URLs — browsers and
+phones cannot load host disk paths from the HTTPS chat page.
 
-## Staging API (optional)
+## Staging API
 
 ```http
 POST /api/shared-media/stage
@@ -91,6 +113,14 @@ POST /api/shared-media/stage
 → `{ "success": true, "url": "/output/shared/shot-….png", "kind": "image" }`
 
 Python: `api.shared_media.stage_file(path)`.
+
+## Repairing a broken attachment
+
+Check the original file still exists, stage it explicitly again, verify the staging
+result as above, then resend the image with the returned URL. If a hosted copy has
+expired, restage the original. Do not resend an unchanged local-path link or guess
+that replacing spaces with `%20` will repair delivery. If staging fails, report the
+failure instead of claiming the attachment is fixed.
 
 ## Expiry
 

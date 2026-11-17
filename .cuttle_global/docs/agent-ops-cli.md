@@ -27,6 +27,7 @@ agent toolkit.
 | Experimental flags | `python -m api.experimental` (list, get, set, reset) | Cuttle `.cuttle/docs/experimental-features.md` |
 | Secret vault (experimental `secret_vault`; use secrets without reading them) | `python -m api.secret_vault` (status, list, request, run) | `feature/secret_vault/docs/secret-vault.md` (loaded while enabled) |
 | Tasks gizmos | `python -m api.gizmos tasks` | `gizmos.md` |
+| Media shared in chats | `python -m api.media_library list [--chat CH-…] [--kind image\|video] [--available] [--json]` | `chat-media.md` |
 | Cuttle QA / promo accounts | `python -m api.fixture_accounts` | Cuttle project `.cuttle/docs/fixture-accounts.md` |
 | Discord reads | `python -m api.discord_cli` | `discord.md` (posts stay on `discord.post`) |
 | External service ops (action types) | `python -m api.service_ops list` | `commands-and-actions.md` |

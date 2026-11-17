@@ -517,6 +517,15 @@ deferred `api.subagents.store` / `api.chat_ops.store` reads). Client:
 `tests/gizmos/test_tasks_app*.py`, `e2e/test_tasks_app.py`. Notes:
 `.cuttle/docs/tasks-app.md`.
 
+**Media App (not flag-gated):** Apps → Media browses every image/video shared in
+the user's chats (uploads and agent replies), newest first, with type / source /
+chat / project / date filters, sort, grouping and tile sizes; clicking opens the
+chat lightbox over the whole shown list. Read-only index over chat history in
+`api.media_library` (no store of its own; expired `/output/shared` copies stay
+listed as expired). Client `js/media_library/` (pure model + controller) reuses
+`CuttleChatMedia` thumbs/lightbox through its `galleryFor` dep. Shipped without an
+experimental flag: a read-only view over existing data with no new effects.
+
 **Chat VFX:** `api.chat_vfx` owns validated transient confetti/toast events and
 session-scoped SQLite delivery (`python -m api.chat_vfx`); `chat_vfx.routes`
 owns authenticated HTTP transport. `chat_vfx.js` owns the renderer and a
