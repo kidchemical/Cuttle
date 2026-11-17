@@ -509,6 +509,44 @@
             return m === 'amount' ? 'Dollar amount' : (m === 'percent' ? 'Percent' : 'Auto');
         }
 
+        /** Default billing order for agents that bill either way (data.billing). */
+        function billingField(data) {
+            const b = data && data.billing;
+            if (!b || !b.agent) return '';
+            const esc = M.escape;
+            const tip = 'Applies to chats without their own Billing choice (agent chip). '
+                + (b.prefer === 'api' && b.api_ready && b.api_ready !== 'ready'
+                    ? (b.api_ready === 'no_key' ? 'No API key is set, so turns use the subscription.'
+                        : 'The API budget is spent, so turns use the subscription.')
+                    : 'Subscription first moves to API credit only when the subscription hits its limit.');
+            return '<div class="shell-gizmo-billing" role="group" aria-label="Bill first">'
+                + '<span class="shell-gizmo-billing-label">Bill first<button type="button" class="cuttle-info"'
+                + ' aria-label="About billing order" data-tooltip="' + esc(tip) + '">i</button></span>'
+                + [['subscription', 'Subscription'], ['api', 'API credit']].map(([mode, label]) =>
+                    '<button type="button" data-gizmo-action="billing" data-agent="' + esc(b.agent) + '" data-mode="' + mode + '"'
+                    + (b.prefer === mode ? ' class="is-current" aria-pressed="true"' : ' aria-pressed="false"')
+                    + '>' + label + '</button>').join('')
+                + '</div>';
+        }
+
+        async function setBilling(id, agent, mode) {
+            const res = await api('/api/settings/agent-billing', {
+                method: 'POST', body: JSON.stringify({ [agent]: { prefer: mode } }),
+            });
+            if (!res.ok || !res.body || !res.body.success) {
+                toast((res.body && res.body.error) || 'Could not change billing', 'error');
+                return;
+            }
+            const view = (res.body.agents || {})[agent] || {};
+            const g = state.gizmos.find(x => x.id === id);
+            const data = g && state.data.get(M.dataKey(g));
+            if (data && data.billing) {
+                data.billing = { ...data.billing, prefer: view.prefer || mode };
+                if (state.popoverId === id) refreshPopover();
+            }
+            toast('Claude bills ' + (mode === 'api' ? 'API credit' : 'the subscription') + ' first', 'success');
+        }
+
         function refreshPopover() {
             const g = state.gizmos.find(x => x.id === state.popoverId);
             const anchor = g && findWrap(g.id);
@@ -540,6 +578,7 @@
                     + '>' + (armed ? 'Stop notify' : 'Notify when unblocked') + '</button>'
                 : '';
             const html = M.renderDetailHtml(g, state.data.get(M.dataKey(g)), Date.now())
+                + billingField(data)
                 + agentField
                 + '<div class="shell-gizmo-popover-section">Move to</div><div class="shell-gizmo-popover-docks">'
                 + docks.map(dk => '<button type="button" data-gizmo-action="dock" data-dock="' + dk + '"'
@@ -591,6 +630,8 @@
             if (action === 'dock') {
                 closePopover();
                 patch(id, { placement: { dock: btn.dataset.dock } });
+            } else if (action === 'billing') {
+                setBilling(id, btn.dataset.agent, btn.dataset.mode);
             } else if (action === 'refresh') {
                 refreshDue(true, id);
             } else if (action === 'notify') {

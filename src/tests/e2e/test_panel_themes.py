@@ -83,14 +83,14 @@ def test_gizmo_previews_docks_and_unselected_controls_follow_theme(browser, stat
             return [getComputedStyle(host.querySelector('.gizmo-row-label')).color, getComputedStyle(host).backgroundColor];
         }''')
         assert page.evaluate(CONTRAST, colors) >= 4.5, (theme, 'popover row label', colors)
-        for selector in ['.gizmo-item-actions button:not(.gizmos-danger)', '.shell-gizmo-popover button:not(.is-current)']:
+        for selector in ['.gizmo-item-actions button:not(.gizmos-danger)', '.shell-gizmo-popover button:not(.is-current):not(.cuttle-info)']:
             # Translucent inks are judged against the opaque surface they sit on.
             colors = page.locator(selector).evaluate('''el => {
                 const s = getComputedStyle(el), host = el.closest('.shell-gizmo-popover');
                 return [s.borderTopColor, host ? getComputedStyle(host).backgroundColor : s.backgroundColor];
             }''')
             assert page.evaluate(CONTRAST, colors) >= 1.5, (theme, selector, colors)
-        assert page.locator('.shell-gizmo-popover button.is-current').evaluate('el => getComputedStyle(el).borderColor') != page.locator('.shell-gizmo-popover button:not(.is-current)').evaluate('el => getComputedStyle(el).borderColor')
+        assert page.locator('.shell-gizmo-popover button.is-current').evaluate('el => getComputedStyle(el).borderColor') != page.locator('.shell-gizmo-popover button:not(.is-current):not(.cuttle-info)').evaluate('el => getComputedStyle(el).borderColor')
         if theme in ['dark', 'light', 'sakura', 'matrix']:
             page.screenshot(path=f'temp/ui-gizmos-theme-{theme}.png')
         page.set_viewport_size({'width': 320, 'height': 900})
