@@ -16,6 +16,7 @@
     const $ = (id) => document.getElementById(id);
     const PREFS_KEY = 'cuttle.mediaLibrary.prefs.v1';
     const PAGE_SIZE = 120;
+    const FILL_MARGIN_PX = 600;
 
     const els = {
         toolbar: $('mediaToolbar'), notice: $('mediaNotice'), grid: $('mediaGrid'), more: $('mediaMore'),
@@ -29,6 +30,8 @@
         shown: [],     // filtered + sorted items (render order)
         gallery: [],   // lightbox items for `shown`
         limit: PAGE_SIZE,
+        rendered: 0,      // tiles in the DOM (prefix of `shown`)
+        groupTotals: new Map(), // group key → items in the whole shown list
         loading: false,
     };
 
@@ -275,12 +278,13 @@
 
     function groupHeadHtml(g) {
         if (!g.label) return '';
+        const total = state.groupTotals.get(g.key) || g.items.length;
         let extra = '';
         if (g.chat) {
             extra = '<a href="/chat_page.html?chat=' + g.chat.id + '" class="media-group-link" data-open-chat="' + g.chat.id + '">' + escapeHtml(g.chat.handle) + '</a>';
         }
         return '<h2 class="media-group-head"><span>' + escapeHtml(g.label) + '</span>' + extra +
-            '<span class="media-group-count">' + g.items.length + '</span></h2>';
+            '<span class="media-group-count">' + total + '</span></h2>';
     }
 
     function render() {
@@ -318,31 +322,62 @@
         }
         els.notice.hidden = true;
 
-        const visible = state.shown.slice(0, state.limit);
-        const groups = M.groupItems(visible, p.group);
-        els.grid.innerHTML = groups.map((g) =>
-            '<section class="media-group">' + groupHeadHtml(g) +
-            '<div class="media-grid" role="list">' + g.items.map(tileHtml).join('') + '</div></section>'
-        ).join('');
+        state.groupTotals = new Map(M.groupItems(state.shown, p.group).map((g) => [g.key, g.items.length]));
+        els.grid.innerHTML = '';
+        state.rendered = 0;
         els.grid.hidden = false;
+        appendTiles(state.limit);
+    }
 
-        const rest = state.shown.length - visible.length;
+    /** Add the next tiles of `shown` without redrawing the ones already there. */
+    function appendTiles(upTo) {
+        const end = Math.min(upTo, state.shown.length);
+        const slice = state.shown.slice(state.rendered, end);
+        // Grouping a later slice gives the same groups a full redraw would:
+        // items join their group's grid (sort order holds), new groups go last.
+        M.groupItems(slice, state.prefs.group).forEach((g) => {
+            let grid = els.grid.querySelector('.media-group[data-key="' + CSS.escape(g.key) + '"] > .media-grid');
+            if (!grid) {
+                els.grid.insertAdjacentHTML('beforeend',
+                    '<section class="media-group" data-key="' + escapeHtml(g.key) + '">' + groupHeadHtml(g) +
+                    '<div class="media-grid" role="list"></div></section>');
+                grid = els.grid.lastElementChild.querySelector('.media-grid');
+            }
+            grid.insertAdjacentHTML('beforeend', g.items.map(tileHtml).join(''));
+        });
+        state.rendered = end;
+        state.limit = Math.max(state.limit, end);
+
+        const rest = state.shown.length - end;
         els.more.hidden = rest <= 0;
         els.more.innerHTML = rest > 0
             ? '<button type="button">Show ' + Math.min(rest, PAGE_SIZE) + ' more</button><span>' + rest + ' not shown</span>'
             : '';
+        fillScreen();
     }
 
     function showMore() {
-        state.limit += PAGE_SIZE;
-        render();
+        if (state.rendered >= state.shown.length) return;
+        appendTiles(state.rendered + PAGE_SIZE);
+    }
+
+    // Keep loading while the end marker is still within reach, so a tall window
+    // or small tiles never strand the observer (it only fires on changes).
+    let fillQueued = false;
+    function fillScreen() {
+        if (fillQueued || els.more.hidden) return;
+        fillQueued = true;
+        requestAnimationFrame(() => {
+            fillQueued = false;
+            if (!els.more.hidden && els.more.getBoundingClientRect().top < window.innerHeight + FILL_MARGIN_PX) showMore();
+        });
     }
 
     // Load the next page as the end of the grid scrolls into view.
     if (typeof IntersectionObserver === 'function') {
         new IntersectionObserver((entries) => {
             if (entries.some((e) => e.isIntersecting) && !els.more.hidden) showMore();
-        }, { rootMargin: '600px 0px' }).observe(els.more);
+        }, { rootMargin: FILL_MARGIN_PX + 'px 0px' }).observe(els.more);
     }
 
     wireControls();

@@ -115,3 +115,51 @@ def test_group_by_chat_and_chat_links(page):
     assert 'chat=12' in page.url
     link = page.locator('.media-tile[data-id="1:0"] .media-chat-link')
     assert link.get_attribute('href') == '/chat_page.html?chat=12&msg=1'
+
+
+def test_paging_appends_fills_tall_screens_and_keeps_groups_whole(browser, static_server):
+    many = [_item(1000 - i, 11 if i % 2 else 12, f'img{i:03d}.png',
+                  f'2026-11-{17 - i // 30:02d}T{23 - i % 24:02d}:00:00Z') for i in range(300)]
+    for i, it in enumerate(many):
+        it['id'] = f'm{i}'
+
+    def handle(route):
+        path = urlparse(route.request.url).path
+        if path == '/api/media-library':
+            route.fulfill(status=200, content_type='application/json', body=json.dumps(
+                {'success': True, 'items': many, 'chats': CHATS, 'totals': {}}))
+        elif path.startswith('/output/'):
+            route.fulfill(status=200, content_type='image/png', body=PNG)
+        else:
+            route.fulfill(status=200, content_type='application/json', body='{"success": true}')
+
+    context = browser.new_context(viewport={'width': 1600, 'height': 4600})
+    apply_request_guard(context, static_server)
+    pg = context.new_page()
+    errors = []
+    pg.on('pageerror', lambda e: errors.append(str(e)))
+    pg.route('**/api/**', handle)
+    pg.route('**/output/**', handle)
+    pg.add_init_script("""if (!sessionStorage.pagingTest) { sessionStorage.pagingTest = 1;
+        localStorage.setItem('cuttle.mediaLibrary.prefs.v1', JSON.stringify({size: 'small'})); }""")
+    pg.goto(static_server + '/media_page.html')
+    pg.locator('.media-tile').first.wait_for()
+    # 120 small tiles (~3700px) do not reach the bottom of a 4600px window: it keeps loading by itself.
+    pg.wait_for_function("document.querySelectorAll('.media-tile').length > 120")
+    first = pg.locator('.media-tile').first
+    first.evaluate("el => { el.__kept = true; }")
+    before = pg.locator('.media-tile').count()
+    pg.mouse.wheel(0, 100000)
+    pg.wait_for_function(f"document.querySelectorAll('.media-tile').length > {before}")
+    assert first.evaluate("el => el.__kept === true")  # appended, not redrawn
+
+    # Group by chat: two sections only, headed with full totals, still whole after paging.
+    choose(pg, pg.locator('#mediaGroup'), 'chat')
+    pg.wait_for_function("document.querySelectorAll('.media-group').length === 2")
+    assert pg.locator('.media-group-count').all_inner_texts() == ['150', '150']
+    pg.mouse.wheel(0, 100000)
+    pg.wait_for_function("document.querySelectorAll('.media-tile').length === 300")
+    assert pg.locator('.media-group').count() == 2
+    assert pg.locator('#mediaMore').is_hidden()
+    assert errors == []
+    context.close()
