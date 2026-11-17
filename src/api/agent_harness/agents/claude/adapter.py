@@ -326,6 +326,14 @@ class Adapter:
             kernel_override=model,
             cli_default="",
         )
+        from api.agent_harness.agents.claude import api_fallback
+
+        pin = api_fallback.bare_billing_command(prompt)
+        if pin:
+            from scripts.utilities.claude_cli_session_store import save_claude_billing
+
+            save_claude_billing(chat_session_id, pin)
+            return AgentResult(success=True, output=api_fallback.pin_reply(pin), model=active or "")
         usage_md = handle_agent_usage_slash("claude", prompt)
         if usage_md is not None:
             return AgentResult(success=True, output=usage_md, model=active or "")

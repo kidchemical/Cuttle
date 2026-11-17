@@ -300,6 +300,16 @@ def pipeline_fallback_result(message: str = "") -> Dict[str, Any]:
     token = (str(message or "").strip().split() or [""])[0]
     if token.startswith("/") and len(token) > 1:
         shown = token if len(token) <= 60 else token[:57] + "…"
+        if token.lower() in ("/use-api", "/use-subscription"):
+            return {
+                'success': False,
+                'type': 'unknown_command',
+                'error': 'unknown_command',
+                'response': (
+                    f'Nothing ran: `{shown}` goes after the agent — `/claude {shown}` pins this chat, '
+                    f'`/claude {shown} …` bills one message.'
+                ),
+            }
         return {
             'success': False,
             'type': 'unknown_command',
