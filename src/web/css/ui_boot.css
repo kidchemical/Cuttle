@@ -154,7 +154,7 @@ body.light-mode .cuttle-tooltip {
 }
 
 .cuttle-tooltip.is-wrap {
-    white-space: normal;
+    white-space: pre-line;
     text-align: left;
     overflow-wrap: anywhere;
 }

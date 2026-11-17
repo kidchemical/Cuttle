@@ -4496,7 +4496,7 @@
             renderSlashChips('chat', document.getElementById('chatInput'));
             return null;
         }
-        const stickyCmd = CuttleChatComposer.stickyCommandAfterSend({ message }, {
+        const stickyCmd = CuttleChatComposer.stickyCommandAfterSend({ message, chips: slashCtx.chat.chips.concat(slashCtx.welcome.chips) }, {
             stickyOf: getStickySlashCommandFromMessage,
         });
         if (!stickyCmd) {
