@@ -680,7 +680,20 @@ def test_history_is_pruned(chats):
     sched = _schedule(chats)
     for _ in range(store.HISTORY_KEEP + 5):
         store.record_check(sched["id"], "skipped", {"reason": "busy"})
-    assert len(store.checks(sched["id"], limit=500)) == store.HISTORY_KEEP
+    history = store.checks(sched["id"], limit=500)
+    assert len(history) == store.SKIPPED_KEEP
+    assert all(row["outcome"] == "skipped" for row in history)
+
+
+def test_skipped_history_does_not_displace_real_checks(chats):
+    sched = _schedule(chats)
+    for _ in range(5):
+        store.record_check(sched["id"], "stalled")
+    for _ in range(60):
+        store.record_check(sched["id"], "skipped")
+    history = store.checks(sched["id"], limit=500)
+    assert sum(row["outcome"] == "stalled" for row in history) == 5
+    assert sum(row["outcome"] == "skipped" for row in history) == store.SKIPPED_KEEP
 
 
 def test_pause_stops_checks_and_resume_checks_now(chats):
