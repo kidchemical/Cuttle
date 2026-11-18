@@ -276,6 +276,25 @@ def test_unpersisted_user_message_discards_registration():
     steer.unregister('907', token)
 
 
+def test_bind_failure_does_not_discard_inserted_receipt(monkeypatch):
+    from api import chat_turn_persist as persist
+    discarded = []
+    class DB:
+        def add_message(self, *args, **kwargs):
+            return 42
+    def fail(*args):
+        raise RuntimeError('bind failed')
+    monkeypatch.setattr(persist, '_bind_steer', fail)
+    monkeypatch.setattr(persist, '_discard_unwritten_steer', discarded.append)
+    meta = {'steer': {'steer_id': 'receipt'}}
+    merge = lambda m, *_: m
+    persist.persist_auth_user_message(DB(), 1, 'hello', metadata=meta, project_merge_fn=merge)
+    persist.persist_user_turn(DB(), 1, message_text='hello', history_text='hello',
+                              base_meta=meta, badge_fn=lambda *a, **kw: None,
+                              project_merge_fn=merge)
+    assert discarded == []
+
+
 def test_detached_acceptance_survives_bind_and_replay_of_duplicate_text():
     updates = []
     tracker = Receipts(updates.append)

@@ -55,10 +55,14 @@ def persist_auth_user_message(
                         **chat_op_metadata(request_data, chat_session_id))
         metadata = project_merge_fn(metadata, request_data, chat_session_id)
         message_id = db.add_message(chat_session_id, 'user', message_text, metadata=metadata or None)
-        _bind_steer(db, message_id, metadata)
     except Exception as e:
         _discard_unwritten_steer(metadata)
         print(f"[CHAT] persist user message failed: {e}")
+        return
+    try:
+        _bind_steer(db, message_id, metadata)
+    except Exception as e:
+        print(f"[CHAT] bind steer receipt failed: {e}")
 
 
 def persist_user_turn(
@@ -92,10 +96,14 @@ def persist_user_turn(
     try:
         metadata = project_merge_fn(turn_meta or None, request_data, session_id)
         message_id = db.add_message(session_id, 'user', history_text, metadata=metadata or None)
-        _bind_steer(db, message_id, metadata)
     except Exception as e:
         _discard_unwritten_steer(turn_meta)
         print(f"[CHAT] persist user turn failed: {e}")
+        return
+    try:
+        _bind_steer(db, message_id, metadata)
+    except Exception as e:
+        print(f"[CHAT] bind steer receipt failed: {e}")
 
 
 def make_assistant_saver(
