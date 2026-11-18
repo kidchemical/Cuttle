@@ -219,7 +219,8 @@ pytestmark_posix = pytest.mark.skipif(os.name == "nt", reason="fake server scrip
 
 
 @pytestmark_posix
-def test_codex_app_server_turn_accepts_steer(tmp_path, monkeypatch):
+@pytest.mark.parametrize("observe", [False, True])
+def test_codex_app_server_turn_accepts_steer(tmp_path, monkeypatch, observe):
     import scripts.utilities.codex_app_server_turn as mod
 
     monkeypatch.setattr(mod, "codex_executable", lambda: _fake_bin(tmp_path, "codex", _FAKE_CODEX))
@@ -237,11 +238,13 @@ def test_codex_app_server_turn_accepts_steer(tmp_path, monkeypatch):
     res = asyncio.run(
         mod.run_codex_turn_app_server(
             "go", cwd=str(tmp_path), resume=None, model=None, reasoning_effort=None,
-            chat_session_id="db_session_4242", timeout=30, on_event=events.append,
+            chat_session_id="db_session_4242", timeout=30, on_event=events.append if observe else None,
         )
     )
     t.join(5)
-    assert any(e.get("method") == "turn/completed" for e in events)
+    assert bool(events) is observe
+    if observe:
+        assert any(e.get("method") == "turn/completed" for e in events)
     assert results and results[0]["steered"] is True
     assert res["success"] is True
     assert res["output"] == "saw: add BANANA"
