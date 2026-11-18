@@ -82,7 +82,7 @@ BASE_ITEMS = [
 ]
 
 CARDS_JSON = json.dumps([
-    {"handle": "CH-000041", "label": "Scout", "display_name": "Scout", "agent": "codex", "fleet": True,
+    {"handle": "CH-000041", "label": "Changelog", "display_name": "Changelog entries", "agent": "codex", "fleet": True,
      "outcome": "running", "summary": "Parsing the changelog entries", "generating": True, "turn_id": "turn40"},
     {"handle": "CH-000042", "label": "Fin", "display_name": "Fin", "agent": "claude", "fleet": True,
      "outcome": "done", "summary": "Shipped the draft notes", "turn_id": "turn40",
@@ -153,8 +153,7 @@ def _open(browser, base, *, studio=True, width=1280, state=None, orch_binding=No
                 if (!card) return;
                 e.preventDefault();
                 window.PEEK.open(card.getAttribute('data-chat-handle'), {
-                    title: card.querySelector('.subagent-fleet-name').textContent,
-                    status: card.querySelector('.subagent-fleet-outcome').getAttribute('title') });
+                    title: null, status: card.querySelector('.subagent-fleet-outcome').getAttribute('title') });
             });
         }""",
         json.loads(CARDS_JSON),
@@ -256,9 +255,17 @@ def test_card_opens_a_push_tray_and_escape_returns_focus(browser, static_server)
         assert thread_right <= 1280 - margin + 1
         # Parent header carries the identity (dot + name) of the clicked card.
         expect(tray.locator(".subagent-peek-identity .agent-identity-name")).to_have_text("Codex")
+        # Header: line 1 "<agent> · <child title>", line 2 "<handle> · sub-agent of <parent Tasks list>".
+        expect(tray.locator(".subagent-peek-line--1")).to_have_text(re.compile(r"Codex\s*·\s*Changelog entries"))
+        expect(tray.locator(".subagent-peek-line--2")).to_have_text(
+            re.compile(r"CH-000041\s*·\s*sub-agent of Release v0\.8"))
+        # The open card keeps the selected state until the tray closes.
+        expect(card).to_have_class(re.compile(r"\bis-selected\b"))
+        assert card.get_attribute("aria-pressed") == "true"
         _shot(page, "tray-studio.png")
         page.keyboard.press("Escape")
         expect(tray).to_be_hidden()
+        expect(card).not_to_have_class(re.compile(r"\bis-selected\b"))
         assert page.evaluate("document.documentElement.classList.contains('cuttle-peek-push')") is False
         focused = page.evaluate("() => document.activeElement && document.activeElement.getAttribute('data-chat-handle')")
         assert focused == "CH-000041", focused

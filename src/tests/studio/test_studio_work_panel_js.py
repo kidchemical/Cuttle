@@ -131,7 +131,17 @@ assert.ok(!/progress/i.test(studio), 'no progress bar or percentages');
 assert.ok(studio.includes('is-running') && studio.includes('is-done'));
 assert.ok(studio.includes('Parsing the file'), 'live status is one line');
 assert.ok(studio.includes('Done · 2m 05s'), 'outcome with duration when finished');
-assert.ok(studio.includes('class="subagent-fleet-name">Scout<'));
+assert.ok(studio.includes('data-card-title="Scout"'), 'child title rides the card');
+assert.ok(studio.includes('subagent-fleet-handle">CH-000041<'), 'handle on the identity line');
+assert.ok(!studio.includes('subagent-fleet-name'), 'no separate title line');
+assert.ok(!studio.includes('is-selected'), 'nothing selected by default');
+const picked = F.renderStudioCardsHtml([
+  { handle: 'CH-000041', label: 'Scout', agent: 'codex', outcome: 'running', summary: 'x' },
+], { esc: (s) => String(s), selectedHandle: 'CH-000041', parentTitle: 'Release v0.8',
+     identityHtml: () => '<span class="agent-identity-name">Codex</span>' });
+assert.ok(picked.includes('studio-fleet-card is-running is-selected'), 'selected card gets the accent state');
+assert.ok(picked.includes('data-parent-title="Release v0.8"'), 'parent Tasks list title for the tray');
+assert.ok(picked.includes('aria-pressed="true"'));
 assert.ok(studio.includes('data-chat-handle="CH-000041"'));
 
 console.log('ok');
@@ -192,6 +202,10 @@ def test_tray_css_is_studio_scoped_and_push_only():
     for prelude in re.findall(r"([^{};]+)\{", body):
         text = prelude.strip()
         if not text or text.startswith("@"):
+            continue
+        if text.startswith(".subagent-peek-id"):
+            # Classic-neutral wrappers: display: contents keeps the flat header row.
+            assert "display: contents" in css
             continue
         for part in text.split(","):
             assert part.strip().startswith(":root.cuttle-studio"), part

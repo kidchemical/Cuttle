@@ -48,51 +48,104 @@
     display: none;
 }
 
-:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-head {
-    padding: var(--studio-space-3) var(--studio-space-4);
-    gap: var(--studio-space-2);
-    color: var(--studio-ink);
-}
-
 /* The identity takes the header's colour in every layout (light overlay or Studio push). */
 :root.cuttle-studio .subagent-peek-identity .agent-identity {
     color: inherit;
 }
 
-/* Header text and buttons read on the light Studio surface (Classic's are light-on-dark). */
-:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-title {
-    color: var(--studio-ink);
-    font-weight: var(--studio-weight-semibold);
-    font-size: var(--studio-text-sm);
+/* Two-line header (Studio): line 1 "<agent> · <child title>" bold; line 2
+   "<CH handle> · sub-agent of <parent>" muted. Classic has no `.subagent-peek-id`
+   box to draw, so these wrappers are display: contents there and its flat row holds. */
+.subagent-peek-id,
+.subagent-peek-line {
+    display: contents;
 }
 
-:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-handle,
-:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-status {
+:root.cuttle-studio .subagent-peek-id {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    min-width: 0;
+}
+
+:root.cuttle-studio .subagent-peek-line {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    max-width: 100%;
+}
+
+:root.cuttle-studio .subagent-peek-line--1 {
+    color: var(--studio-ink);
+    font-size: var(--studio-text-md);
+    font-weight: var(--studio-weight-bold);
+}
+
+:root.cuttle-studio .subagent-peek-line--1 .subagent-peek-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: inherit;
+}
+
+:root.cuttle-studio .subagent-peek-line--2 {
     color: var(--studio-ink-muted);
     font-size: var(--studio-text-xs);
+    white-space: nowrap;
+    overflow: hidden;
 }
 
-:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-open {
-    padding: 4px 12px;
+:root.cuttle-studio .subagent-peek-line--2 .subagent-peek-parent {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+:root.cuttle-studio .subagent-peek-sep {
+    color: var(--studio-ink-faint);
+    white-space: pre;
+}
+
+/* Studio's header carries the status in the card, not here. */
+:root.cuttle-studio .subagent-peek-status {
+    display: none;
+}
+
+/* "Open chat": a soft lavender pill, not a solid button. */
+:root.cuttle-studio .subagent-peek-open {
+    padding: 5px 14px;
     border: 0;
     border-radius: var(--studio-radius-pill);
-    background: var(--studio-accent);
-    color: #ffffff;
+    background: var(--studio-accent-soft);
+    color: var(--studio-accent-ink);
     font: inherit;
     font-size: var(--studio-text-xs);
     font-weight: var(--studio-weight-semibold);
+    cursor: pointer;
 }
 
-:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-close {
+:root.cuttle-studio .subagent-peek-open:hover {
+    filter: brightness(0.97);
+}
+
+:root.cuttle-studio .subagent-peek-close {
     border: 0;
     background: transparent;
     color: var(--studio-ink-muted);
 }
 
-:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-open:focus-visible,
-:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-close:focus-visible {
+:root.cuttle-studio .subagent-peek-open:focus-visible,
+:root.cuttle-studio .subagent-peek-close:focus-visible {
     outline: none;
     box-shadow: var(--studio-focus-ring);
+}
+
+/* The push tray's surface and header colours (light Studio surface). */
+:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-head {
+    padding: var(--studio-space-3) var(--studio-space-4);
+    gap: var(--studio-space-2);
+    color: var(--studio-ink);
 }
 
 @media (prefers-reduced-motion: reduce) {

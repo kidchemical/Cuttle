@@ -185,17 +185,21 @@
      * `data-work-panel` and `.work-panel`; the launcher mounts it at the end of
      * the bubble and repaints it in place.
      */
-    function html(m) {
+    function html(m, opts) {
         if (!m || m.empty) return '';
+        const o = opts || {};
         const fleet = fleetLib();
         const cols = m.hasTasks && m.hasCards ? 'is-two' : (m.hasTasks ? 'is-tasks' : 'is-cards');
         const tasks = m.hasTasks
             ? '<div class="work-panel-tasks">' + m.tasks.map(listHtml).join('') + '</div>'
             : '';
+        // The tray's "sub-agent of" names the turn's Tasks list (the parent a card's child reports to).
         const cards = m.hasCards
             ? '<div class="work-panel-cards">' + fleet.renderStudioCardsHtml(m.cards, {
                 esc,
                 identityHtml: (s) => identityLib().labelHtml(agentIdentity(s.agent, catalog)),
+                selectedHandle: o.selectedHandle || '',
+                parentTitle: m.hasTasks ? m.tasks[0].title : '',
             }) + '</div>'
             : '';
         const label = m.hasTasks && m.hasCards ? 'Tasks and sub-agents for this turn'

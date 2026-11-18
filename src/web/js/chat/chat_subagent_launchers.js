@@ -74,7 +74,9 @@
             const panel = workPanel();
             if (!panel) return '';
             ensureCatalog();
-            return panel.html(panel.model(tasksLists(), list, opts && opts.turnId));
+            // The card whose tray is open keeps its selected state across repaints.
+            const selectedHandle = frameDoc.documentElement ? frameDoc.documentElement.getAttribute('data-peek-handle') || '' : '';
+            return panel.html(panel.model(tasksLists(), list, opts && opts.turnId), { selectedHandle });
         }
 
         function normalizeSubagentList(raw) {
@@ -107,14 +109,17 @@
                     summary: String(item.summary || ''),
                     detail: String(item.detail || ''),
                     effort: String(item.effort || '').trim(),
-                    displayName: String(item.display_name || '').trim(),
-                    startedAt: String(item.started_at || ''),
-                    finishedAt: String(item.finished_at || ''),
-                    liveStatusAt: String(item.live_status_at || ''),
+                    // Accepts the wire names (snake_case) and this normalized shape again:
+                    // live bubbles and repaints re-normalize entries they already normalized.
+                    displayName: String(item.display_name || item.displayName || '').trim(),
+                    startedAt: String(item.started_at || item.startedAt || ''),
+                    finishedAt: String(item.finished_at || item.finishedAt || ''),
+                    liveStatusAt: String(item.live_status_at || item.liveStatusAt || ''),
                     // Live entries only: the parent bubble that owns this card, and
                     // the parent turn it was started in (api.chat_turn_id).
-                    boundMessageId: item.bound_message_id != null ? String(item.bound_message_id) : '',
-                    turnId: String(item.turn_id || ''),
+                    boundMessageId: item.bound_message_id != null ? String(item.bound_message_id)
+                        : (item.boundMessageId != null ? String(item.boundMessageId) : ''),
+                    turnId: String(item.turn_id || item.turnId || ''),
                 });
             });
             return out;

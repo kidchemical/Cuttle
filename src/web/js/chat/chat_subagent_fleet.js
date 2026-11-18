@@ -132,38 +132,46 @@
 
     /**
      * Studio fleet cards (the work panel's right column; no wrapper, cards only).
-     * Identity (dot + plain agent name, `opts.identityHtml(entry)`), the display
-     * name, ONE line of live status while running or the result while finished,
-     * and the outcome with its duration once finished. No progress bar and no
-     * percentages: the server's outcome and text only. Pure.
+     * Two lines: the identity (dot + plain agent name, bold) with the CH- handle
+     * right-aligned; then a status dot with one line of live status while running,
+     * or the outcome with duration once finished. The child's title rides the
+     * card's title and aria-label (and `data-card-title` for the tray). No progress
+     * bar and no percentages: the server's outcome and text only.
+     * `opts.selectedHandle`: the card whose tray is open (accent border).
+     * `opts.parentTitle`: the parent Tasks list title, for the tray's "sub-agent of" line. Pure.
      */
     function renderStudioCardsHtml(list, opts) {
         const esc = opts.esc;
         const identityHtml = typeof opts.identityHtml === 'function'
             ? opts.identityHtml
             : (s) => '<span class="agent-identity-name">' + esc(s.agent || '') + '</span>';
+        const selected = String(opts.selectedHandle || '');
+        const parentTitle = String(opts.parentTitle || '').trim();
         const items = (Array.isArray(list) ? list : []).filter(Boolean);
         return items.slice(0, MAX_CARDS).map((s) => {
             const state = OUTCOMES[s.outcome] ? s.outcome : (s.generating ? 'running' : 'unknown');
             const meta = OUTCOMES[state];
             const live = state === 'running' || state === 'queued';
-            const name = String(s.displayName || s.label || s.handle);
+            const title = String(s.displayName || s.label || s.handle);
             const duration = live ? '' : formatDuration(s.startedAt, s.finishedAt);
-            const outcomeText = live ? '' : meta.label + (duration ? ' · ' + duration : '');
-            const line = String(s.summary || '').replace(/\s+/g, ' ').trim();
-            const tip = name + ' · ' + s.handle + ' · ' + meta.label + (s.detail ? '\n\n' + String(s.detail) : '');
+            const text = live
+                ? String(s.summary || '').replace(/\s+/g, ' ').trim()
+                : meta.icon + ' ' + meta.label + (duration ? ' · ' + duration : '');
+            const isSelected = selected !== '' && selected === String(s.handle);
             return (
-                '<button type="button" class="subagent-fleet-card studio-fleet-card is-' + state + '"'
+                '<button type="button" class="subagent-fleet-card studio-fleet-card is-' + state
+                + (isSelected ? ' is-selected' : '') + '"'
                 + ' data-chat-handle="' + esc(s.handle) + '" data-agent="' + esc(s.agent || '') + '"'
-                + ' data-tooltip="' + esc(tip) + '" aria-label="' + esc('Open ' + name + ' (' + meta.label + ')') + '">'
+                + ' data-card-title="' + esc(title) + '" data-parent-title="' + esc(parentTitle) + '"'
+                + ' title="' + esc(title + ' · ' + s.handle + ' · ' + meta.label) + '"'
+                + ' aria-label="' + esc('Open ' + title + ' (' + meta.label + ')') + '"'
+                + (isSelected ? ' aria-pressed="true"' : '') + '>'
                 + '<span class="subagent-fleet-head">' + identityHtml(s)
+                + '<span class="subagent-fleet-handle">' + esc(s.handle) + '</span></span>'
+                + '<span class="subagent-fleet-line">'
+                + '<span class="studio-status-dot is-' + state + '" aria-hidden="true"></span>'
                 + '<span class="subagent-fleet-outcome is-' + state + '" title="' + esc(meta.label) + '">'
-                + (live ? '<span class="studio-live-dot" aria-hidden="true"></span>' : '<i aria-hidden="true">' + esc(meta.icon) + '</i>')
-                + (outcomeText ? '<span>' + esc(outcomeText) + '</span>' : '')
-                + '</span></span>'
-                + '<span class="subagent-fleet-name">' + esc(name) + '</span>'
-                + '<span class="subagent-fleet-summary' + (live ? ' subagent-fleet-summary--live' : '') + '">' + esc(line) + '</span>'
-                + '<span class="subagent-fleet-foot"><span>' + esc(s.handle) + '</span></span>'
+                + esc(text) + '</span></span>'
                 + '</button>'
             );
         }).join('');

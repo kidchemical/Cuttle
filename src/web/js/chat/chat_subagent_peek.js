@@ -96,10 +96,13 @@
             el.innerHTML = '<div class="subagent-peek-backdrop" data-peek-close></div>'
                 + '<section class="subagent-peek-panel" role="dialog" aria-modal="true" aria-label="Sub-agent chat">'
                 + '<header class="subagent-peek-head">'
-                + '<span class="subagent-peek-identity" hidden></span>'
-                + '<span class="subagent-peek-title"></span>'
-                + '<span class="subagent-peek-handle"></span>'
+                + '<span class="subagent-peek-id">'
+                + '<span class="subagent-peek-line subagent-peek-line--1">'
+                + '<span class="subagent-peek-identity" hidden></span><span class="subagent-peek-title"></span></span>'
+                + '<span class="subagent-peek-line subagent-peek-line--2">'
+                + '<span class="subagent-peek-handle"></span><span class="subagent-peek-parent" hidden></span></span>'
                 + '<span class="subagent-peek-status"></span>'
+                + '</span>'
                 + '<span class="subagent-peek-spacer"></span>'
                 + '<button type="button" class="subagent-peek-open" title="Open this chat in the pane">Open chat</button>'
                 + '<button type="button" class="subagent-peek-close" data-peek-close title="Close (Esc)" aria-label="Close">✕</button>'
@@ -146,20 +149,64 @@
             if (doc.documentElement) doc.documentElement.classList.toggle(PUSH_CLASS, !!on);
         }
 
+        /** The Studio card for a handle on this page, or null. */
+        function cardFor(handle) {
+            const cards = doc.querySelectorAll('.subagent-fleet-card[data-chat-handle]');
+            for (let i = 0; i < cards.length; i++) {
+                if (cards[i].getAttribute('data-chat-handle') === handle) return cards[i];
+            }
+            return null;
+        }
+
+        /**
+         * The card whose tray is open carries the selected state (accent border);
+         * closing clears it. Studio cards only. The handle also rides the frame root so
+         * a repaint of the work panel keeps the selection (chat_subagent_launchers.js).
+         */
+        function markSelected(handle) {
+            doc.querySelectorAll('.studio-fleet-card.is-selected').forEach((c) => {
+                c.classList.remove('is-selected');
+                c.removeAttribute('aria-pressed');
+            });
+            if (doc.documentElement) {
+                if (handle) doc.documentElement.setAttribute('data-peek-handle', handle);
+                else doc.documentElement.removeAttribute('data-peek-handle');
+            }
+            if (!handle || !studioOn()) return;
+            doc.querySelectorAll('.studio-fleet-card[data-chat-handle]').forEach((c) => {
+                if (c.getAttribute('data-chat-handle') !== handle) return;
+                c.classList.add('is-selected');
+                c.setAttribute('aria-pressed', 'true');
+            });
+        }
+
         function open(raw, opts) {
             const parsed = deps.parseChatHandleToken(raw);
             const src = peekSrc(parsed);
             if (!src) return false;
             if (!el) build();
-            const head = headerModel(parsed, opts);
+            const card = cardFor(parsed.display);
+            // The title falls back to the card's child title when the call site gives none.
+            const cardTitle = card ? String(card.getAttribute('data-card-title') || '') : '';
+            const head = headerModel(parsed, Object.assign({}, opts || {}, { title: (opts && opts.title) || cardTitle }));
             el.querySelector('.subagent-peek-title').textContent = head.title;
-            el.querySelector('.subagent-peek-handle').textContent = head.handle;
+            const studio = studioOn();
+            // Studio's second line always names the handle; Classic shows it only when it is not the title.
+            el.querySelector('.subagent-peek-handle').textContent = studio ? parsed.display : head.handle;
             const status = el.querySelector('.subagent-peek-status');
             status.textContent = head.status;
             status.hidden = !head.status;
+            // Studio's parent line: "<handle> · sub-agent of <parent Tasks list>" (Classic keeps its header).
+            const parentEl = el.querySelector('.subagent-peek-parent');
+            const parentTitle = card ? String(card.getAttribute('data-parent-title') || '').trim() : '';
+            parentEl.textContent = ' · sub-agent' + (parentTitle ? ' of ' + parentTitle : '');
+            parentEl.hidden = !studio;
             const identity = el.querySelector('.subagent-peek-identity');
-            identity.innerHTML = identityHtmlFor(parsed.display);
+            const idHtml = identityHtmlFor(parsed.display);
+            // Studio: "<agent> · <child title>" on the first line.
+            identity.innerHTML = idHtml ? idHtml + '<span class="subagent-peek-sep"> · </span>' : '';
             identity.hidden = !identity.innerHTML;
+            markSelected(parsed.display);
             el.querySelector('.subagent-peek-panel').setAttribute('aria-label', 'Sub-agent chat: ' + head.title);
             if (frame.getAttribute('src') !== src) frame.setAttribute('src', src);
             const layout = layoutForMode(readLayoutSetting(), {
@@ -180,6 +227,7 @@
             el.hidden = true;
             openHandle = '';
             setPush(false);
+            markSelected('');
             // Drop the nested chat: it stops polling and streaming while closed.
             frame.removeAttribute('src');
             try { frame.contentWindow.location.replace('about:blank'); } catch (_) {}

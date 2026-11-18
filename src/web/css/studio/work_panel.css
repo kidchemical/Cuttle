@@ -180,22 +180,35 @@
 }
 
 /* ---- Sub-agent cards (Studio fleet markup, chat_subagent_fleet.js) --------- */
+/* The cards column has no box of its own: each card is a separate card. */
+:root.cuttle-studio .work-panel .work-panel-cards {
+    display: grid;
+    gap: var(--studio-space-3);
+    padding: 0;
+    background: none;
+    box-shadow: none;
+    border-radius: 0;
+}
+
+/* Two lines: identity + handle, then status. */
 :root.cuttle-studio .work-panel .studio-fleet-card {
     display: grid;
-    gap: 4px;
+    gap: 6px;
     width: 100%;
     min-width: 0;
     margin: 0;
-    padding: var(--studio-space-3);
-    border: 0;
-    border-radius: var(--studio-radius-sm);
+    padding: 14px 16px;
+    border: 1.5px solid transparent;
+    border-radius: var(--studio-radius-md);
     background: var(--studio-card-bg);
     box-shadow: var(--studio-card-ring), var(--studio-shadow-card);
     color: var(--studio-ink);
     font: inherit;
     text-align: left;
     cursor: pointer;
-    transition: box-shadow var(--studio-dur-fast) var(--studio-ease-out), transform var(--studio-dur-fast) var(--studio-ease-out);
+    transition: box-shadow var(--studio-dur-fast) var(--studio-ease-out),
+        border-color var(--studio-dur-fast) var(--studio-ease-out),
+        transform var(--studio-dur-fast) var(--studio-ease-out);
 }
 
 :root.cuttle-studio .work-panel .studio-fleet-card:hover {
@@ -208,6 +221,12 @@
     box-shadow: var(--studio-focus-ring);
 }
 
+/* The card whose tray is open: accent border, cleared when the tray closes. */
+:root.cuttle-studio .work-panel .studio-fleet-card.is-selected {
+    border-color: var(--studio-accent);
+    box-shadow: var(--studio-card-ring), 0 0 0 3px var(--studio-accent-soft);
+}
+
 :root.cuttle-studio .work-panel .subagent-fleet-head {
     display: flex;
     align-items: center;
@@ -216,29 +235,31 @@
     min-width: 0;
 }
 
-:root.cuttle-studio .work-panel .subagent-fleet-outcome {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
+:root.cuttle-studio .work-panel .subagent-fleet-head .agent-identity {
     min-width: 0;
-    font-size: var(--studio-text-2xs);
-    color: var(--studio-ink-muted);
-    white-space: nowrap;
-}
-
-:root.cuttle-studio .work-panel .subagent-fleet-outcome i {
-    font-style: normal;
-}
-
-:root.cuttle-studio .work-panel .subagent-fleet-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     font-size: var(--studio-text-sm);
-    font-weight: var(--studio-weight-semibold);
+    font-weight: var(--studio-weight-bold);
 }
 
-:root.cuttle-studio .work-panel .subagent-fleet-summary {
+:root.cuttle-studio .work-panel .subagent-fleet-handle {
+    flex: 0 0 auto;
+    font-size: var(--studio-text-2xs);
+    font-weight: var(--studio-weight-semibold);
+    letter-spacing: 0.02em;
+    color: var(--studio-ink-faint);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+:root.cuttle-studio .work-panel .subagent-fleet-line {
+    display: flex;
+    align-items: center;
+    gap: var(--studio-space-2);
+    min-width: 0;
+}
+
+:root.cuttle-studio .work-panel .subagent-fleet-outcome {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -247,11 +268,21 @@
     color: var(--studio-ink-muted);
 }
 
-:root.cuttle-studio .work-panel .subagent-fleet-foot {
-    display: flex;
-    gap: var(--studio-space-2);
-    font-size: var(--studio-text-2xs);
-    color: var(--studio-ink-faint);
+:root.cuttle-studio .work-panel .studio-status-dot {
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--studio-ink-faint);
+}
+
+:root.cuttle-studio .work-panel .studio-status-dot.is-running {
+    background: var(--studio-accent);
+    animation: studio-live-pulse 1.6s var(--studio-ease-out) infinite;
+}
+
+:root.cuttle-studio .work-panel .studio-status-dot.is-failed {
+    background: #c2410c;
 }
 
 /* ---- Entrance (new rows and cards only; reduced motion turns it off) -------- */
