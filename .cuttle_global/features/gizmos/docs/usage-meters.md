@@ -45,14 +45,30 @@ PYTHONPATH=src .venv/bin/python -m api.gizmos remove codex-meter
 JSON out; exit `0` ok, `1` flag off, `2` invalid/not found. Writes bump a
 store revision the shell polls every few seconds, so open windows update with
 no restart and no chat message. Check `list` before creating a meter; do not
-create a second meter for an agent that already has one unless asked.
+create a second meter for an agent that already has one unless asked (two
+Claude meters with different `billing` views are a normal setup).
 
 `usage_meter` config: `agent` (`codex` | `claude` | `cursor` | `openrouter`),
 `window` (`tightest` or a window id from `usage <agent>`, e.g. `five_hour`, `weekly`),
 `show` (`remaining` | `used`), `metric` (`auto` | `amount` | `percent` — how the
 meter reads out; `amount` is only meaningful for a provider that reports
 dollars, otherwise it falls back to `percent`), `notify_on_unblock` (bool,
-default off).
+default off), and for `claude` only `billing`:
+
+| `billing` | Shows |
+|---|---|
+| `subscription` (default) | the plan windows |
+| `api` | the API-credit row only (blocked once the monthly budget is spent) |
+| `both` | plan windows plus the API-credit row |
+| `current` | whichever side the default billing uses right now: API when billing is API first, or while the fallback covers an exhausted subscription |
+
+`current` follows the install default, not a chat's own Billing pin. The old
+`api_credit: true` flag reads as `both`.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.gizmos create usage_meter --agent claude --billing api --id claude-api
+```
+
 Changing the agent keeps a default title in step; a custom title sticks.
 
 ### Notify when unblocked

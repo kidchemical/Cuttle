@@ -455,7 +455,46 @@ def merge_claude_usage(snap: Dict[str, Any], now: Optional[float] = None) -> Dic
     extras["api_credit"] = (f"{usd(spent['usd'])}" + (f" of ${cap:,.0f}" if cap else "")
                             + f" this month ({spent['turns']} turns) · {credit_status(now)}")
     out["extras"] = extras
-    out["billing"] = {"agent": "claude", "prefer": default_billing(), "api_ready": api_ready() or "ready"}
+    out["billing"] = billing_info(snap, now)
     if out.get("blocked") and not available():
         out.update(blocked=False, unblock_at=None, primary_window="api_credit")
+    return out
+
+
+# What a Claude meter shows (gizmo config ``billing``): the subscription
+# windows, the API-credit row, both, or whichever side is billing right now.
+BILLING_VIEWS = ("subscription", "api", "both", "current")
+
+
+def active_billing(snap: Optional[Dict[str, Any]] = None, now: Optional[float] = None) -> str:
+    """The side a chat without its own Billing pin bills right now."""
+    if default_billing() == "api" and not api_ready():
+        return "api"
+    if (exhausted_until(now) or (snap or {}).get("blocked")) and not available():
+        return "api"
+    return "subscription"
+
+
+def billing_info(snap: Optional[Dict[str, Any]] = None, now: Optional[float] = None) -> Dict[str, Any]:
+    return {"agent": "claude", "prefer": default_billing(), "api_ready": api_ready() or "ready",
+            "active": active_billing(snap, now)}
+
+
+def claude_usage_view(snap: Dict[str, Any], view: str, now: Optional[float] = None) -> Dict[str, Any]:
+    """The Claude usage snapshot shaped for one meter ``view`` (BILLING_VIEWS)."""
+    now = time.time() if now is None else now
+    view = view if view in BILLING_VIEWS else "subscription"
+    shown = active_billing(snap, now) if view == "current" else view
+    if shown == "subscription":
+        out = dict(snap or {})
+        out["billing"] = billing_info(snap, now)
+    else:
+        out = merge_claude_usage(snap, now)
+    if shown == "api":
+        row = [w for w in out["windows"] if w.get("id") == "api_credit"]
+        spent = api_ready() == "over_budget"
+        out.update(windows=row, primary_window="api_credit", plan="API", blocked=spent,
+                   unblock_at=row[0]["reset_at"] if spent and row else None,
+                   extras={"api_credit": out["extras"]["api_credit"]})
+    out["billing"] = {**out["billing"], "view": view, "shown": shown}
     return out
