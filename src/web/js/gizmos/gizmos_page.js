@@ -86,8 +86,8 @@
                       : '')
                   + '<label><span>Window</span><select data-field="window">' + options(windowChoices(g), cfg.window || 'tightest', w => w.id, w => w.label) + '</select></label>'
                   + (cfg.agent === 'claude'
-                      ? '<label class="gizmo-check"><input type="checkbox" data-field="api_credit"' + (cfg.api_credit ? ' checked' : '')
-                        + '><span>Include API credit (Providers key fallback)</span></label>'
+                      ? '<label><span>Billing</span><select data-field="billing">'
+                        + options(M.BILLING_VIEWS, M.claudeBilling(cfg), v => v, v => M.BILLING_LABELS[v]) + '</select></label>'
                       : '')
                 : '';
             return '<article class="gizmo-item" data-gizmo-item="' + esc(g.id) + '">'

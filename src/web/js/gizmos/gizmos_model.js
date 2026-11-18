@@ -70,9 +70,19 @@
         if (!gizmo) return '';
         if (gizmo.type === 'usage_meter') {
             const cfg = gizmo.config || {};
-            return 'usage:' + String(cfg.agent || '') + (cfg.api_credit ? '+api_credit' : '');
+            const view = cfg.agent === 'claude' ? claudeBilling(cfg) : 'subscription';
+            return 'usage:' + String(cfg.agent || '') + (view === 'subscription' ? '' : '+' + view);
         }
         return 'gizmo:' + gizmo.id;
+    }
+
+    /** What a Claude meter shows; stored configs may carry the old api_credit flag. */
+    const BILLING_VIEWS = ['subscription', 'api', 'both', 'current'];
+    const BILLING_LABELS = { subscription: 'Subscription', api: 'API credit', both: 'Both', current: 'Current mode' };
+    function claudeBilling(cfg) {
+        const v = String((cfg && cfg.billing) || '');
+        if (BILLING_VIEWS.includes(v)) return v;
+        return cfg && cfg.api_credit ? 'both' : 'subscription';
     }
 
     function meterModel(gizmo, data, nowMs) {
@@ -84,9 +94,10 @@
             title, agentLabel, show, pct: 0, value: '…', valueLabel: show === 'used' ? 'used' : 'left',
             caption: '', resetText: '', rows: [], tone: 'unknown', state: 'loading',
             error: '', stale: false, plan: '', updatedAt: null, unblockAt: null, extras: {},
-            hasBar: false, metric: 'percent', notifyArmed: !!cfg.notify_on_unblock,
+            hasBar: false, metric: 'percent', notifyArmed: !!cfg.notify_on_unblock, billing: null,
         };
         if (!data) return base;
+        base.billing = (data.billing && typeof data.billing === 'object') ? data.billing : null;
         const windows = Array.isArray(data.windows) ? data.windows : [];
         const readout = (data.readout && typeof data.readout === 'object') ? data.readout : null;
         if (!windows.length && !readout) {
@@ -270,6 +281,8 @@
         if (extras.credits) lines.push('Credits: ' + extras.credits);
         if (extras.note) lines.push(extras.note);
         if (extras.api_credit) lines.push('API credit: ' + extras.api_credit);
+        const b = model.billing;
+        if (b && b.view === 'current') lines.push('Current mode: showing ' + (b.shown === 'api' ? 'API credit' : 'the subscription'));
         if (model.notifyArmed) lines.push('Will notify when this account unblocks.');
         if (model.updatedAt) {
             lines.push('Updated ' + new Date(model.updatedAt * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
@@ -332,7 +345,7 @@
     }
 
     const api = {
-        DOCKS, DOCK_LABELS, escape, clampPct, formatDuration, relative, absolute, toneFor,
+        DOCKS, DOCK_LABELS, BILLING_VIEWS, BILLING_LABELS, claudeBilling, escape, clampPct, formatDuration, relative, absolute, toneFor,
         pickWindow, dataKey, meterModel, tooltipText, renderGizmoHtml, renderDetailHtml, detailInfoLines,
         effectiveDock, sortForDock, orderBetween, compactValue,
     };

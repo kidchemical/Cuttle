@@ -103,7 +103,12 @@ out.apiCredit = {key: M.dataKey(clG), plainKey: M.dataKey({...clG, config: {agen
   picked: M.pickWindow(clData, clG.config).id,
   pinned: M.pickWindow(clData, {...clG.config, window: 'weekly'}).id,
   rowText: M.renderGizmoHtml(clG, clData, 'card', now).includes('$188.00 left'),
-  detail: M.renderDetailHtml(clG, clData, now).includes('API credit: $12.00 of $200')};
+  detail: M.renderDetailHtml(clG, clData, now).includes('API credit: $12.00 of $200'),
+  apiKey: M.dataKey({...clG, config: {agent: 'claude', billing: 'api'}}),
+  currentKey: M.dataKey({...clG, config: {agent: 'claude', billing: 'current', api_credit: true}}),
+  codexKey: M.dataKey({...clG, config: {agent: 'codex', billing: 'api'}}),
+  currentTip: M.renderDetailHtml(clG, {...clData, billing: {view: 'current', shown: 'api'}}, now)
+    .includes('Current mode: showing API credit')};
 console.log(JSON.stringify(out));
 """
 
@@ -597,7 +602,10 @@ def test_gizmos_app_creates_without_an_agent(tmp_path):
 
 def test_claude_meter_api_credit_row(harness):
     a = harness["apiCredit"]
-    assert a["key"] == "usage:claude+api_credit" and a["plainKey"] == "usage:claude"
+    # Legacy api_credit=true reads as the "both" billing view.
+    assert a["key"] == "usage:claude+both" and a["plainKey"] == "usage:claude"
+    assert a["apiKey"] == "usage:claude+api" and a["currentKey"] == "usage:claude+current"
+    assert a["codexKey"] == "usage:codex" and a["currentTip"]
     assert a["picked"] == "api_credit" and a["pinned"] == "weekly"
     assert a["rowText"] and a["detail"]
 

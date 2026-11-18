@@ -544,6 +544,9 @@
                 data.billing = { ...data.billing, prefer: view.prefer || mode };
                 if (state.popoverId === id) refreshPopover();
             }
+            // "Current mode" meters follow the default: refetch every meter for this agent.
+            state.gizmos.forEach(x => { if ((x.config || {}).agent === agent) state.fetchedAt.delete(M.dataKey(x)); });
+            refreshDue(false);
             toast('Claude bills ' + (mode === 'api' ? 'API credit' : 'the subscription') + ' first', 'success');
         }
 
@@ -569,6 +572,11 @@
                         ? '<label class="shell-gizmo-popover-field"><span>Readout</span><select data-gizmo-field="metric">'
                             + metricOptions().map(m => '<option value="' + esc(m) + '"' + ((g.config.metric || 'auto') === m ? ' selected' : '')
                                 + '>' + esc(metricLabel(m)) + '</option>').join('') + '</select></label>'
+                        : '')
+                    + (g.config.agent === 'claude'
+                        ? '<label class="shell-gizmo-popover-field"><span>Billing</span><select data-gizmo-field="billing">'
+                            + M.BILLING_VIEWS.map(v => '<option value="' + v + '"' + (M.claudeBilling(g.config) === v ? ' selected' : '')
+                                + '>' + esc(M.BILLING_LABELS[v]) + '</option>').join('') + '</select></label>'
                         : '')
                 : '';
             const armed = !!(g.config && g.config.notify_on_unblock);
