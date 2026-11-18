@@ -11,8 +11,10 @@ def project(session, *, before=None, limit=50, include_quiet=False):
     ops = [o for o in operations if o['kind'] == 'supervise']
     schedules = {o['id']: o for o in ops}
     items = []
+    oldest = {}
     for oid, op in schedules.items():
         rows = store.timeline_checks(oid)
+        oldest[oid] = min((r['at'] for r in rows), default=float('inf'))
         snapshots = [row for row in reversed(rows) if 'process_snapshot' in row['detail']]
         from api.chat_ops.system_care import _size
         for previous, current in zip(snapshots, snapshots[1:]):
@@ -41,7 +43,7 @@ def project(session, *, before=None, limit=50, include_quiet=False):
             if outcome in ('skipped', 'unchanged') and include_quiet: kind = outcome
             if not kind: continue
             text = str(d.get('text') or d.get('error') or ', '.join(d.get('lines') or []))
-            branch = d.get('branch') or (d.get('state') or {}).get('branch')
+            branch = d.get('branch') or (d['state'].get('branch') if isinstance(d.get('state'), dict) else None)
             command = d.get('command')
             guard_headline = (f'Guard blocked a commit to {branch}' if d.get('blocked') and branch
                               else f'Flagged a forbidden command: {command}' if command
@@ -53,15 +55,26 @@ def project(session, *, before=None, limit=50, include_quiet=False):
                           'chat':f"CH-{int(op['target']):06d}",'headline':headline,'detail':text,
                           'refs':{k: v for k, v in {'branch': branch, 'command': command}.items() if v},'source':'check'})
     from api.orchestration_telemetry import store as telemetry
-    for event in telemetry.events(kinds=('sup_schedule',)):
+    for event in telemetry.events(kinds=('sup_schedule', 'sup_check')):
         if event['session_id'] != sid or event['batch_id'] not in schedules:
             continue
-        kind = {'pause': 'paused', 'resume': 'resumed'}.get(event['status'])
+        if event['kind'] == 'sup_check':
+            if event['at'] >= oldest[event['batch_id']]:
+                continue
+            kind = {'violation': 'guard', 'stalled': 'stalled', 'error': 'error',
+                    'paused_alert': 'paused', 'resumed': 'resumed'}.get(event['status'])
+            if include_quiet and event['status'] in ('skipped', 'unchanged'):
+                kind = event['status']
+        else:
+            kind = {'pause': 'paused', 'resume': 'resumed'}.get(event['status'])
         if kind:
             op = schedules[event['batch_id']]
             items.append({'schema_version': 1, 'id': f"telemetry:{event['id']}", 'at': event['at'],
                           'kind': kind, 'chat': f"CH-{int(op['target']):06d}",
-                          'headline': f'Supervision {kind}', 'detail': '', 'refs': {}, 'source': 'telemetry'})
+                          'headline': {'guard': 'Guard flagged a violation', 'stalled': 'Chat stalled',
+                                       'error': 'Supervision check failed'}.get(kind, f'Supervision {kind}'),
+                          'detail': '; '.join(event['detail'].get('violations') or []),
+                          'refs': {}, 'source': 'telemetry'})
     for op in operations:
         if (op['kind'] != 'send' or op['state'] not in ('delivered', 'done')
                 or op['target'] not in {s['target'] for s in schedules.values()}):

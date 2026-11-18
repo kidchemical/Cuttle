@@ -41,3 +41,17 @@ def test_paging_ties_and_all_schedules(chats, monkeypatch):
     assert second['next_before'] is None
     assert len(timeline.project(sup, limit=1000)['items']) == 2
     assert all(x['chat'] == f'CH-{target:06d}' for x in first['items'] + second['items'])
+
+
+def test_legacy_checks_only_before_retained_history(chats):
+    from api.orchestration_telemetry import store as telemetry
+    _, _, sup, target, _ = chats
+    sched = _schedule(chats)
+    store.record_check(sched['id'], 'stalled')
+    at = store.timeline_checks(sched['id'])[0]['at']
+    for timestamp in (at - 10, at + 10):
+        telemetry.append('sup_check', at=timestamp, session_id=sup, parent_session_id=target,
+                         batch_id=sched['id'], status='error')
+    items = timeline.project(sup)['items']
+    assert len([i for i in items if i['source'] == 'telemetry' and i['kind'] == 'error']) == 1
+    assert len({i['id'] for i in items}) == len(items)
