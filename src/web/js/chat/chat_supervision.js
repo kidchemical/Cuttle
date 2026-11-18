@@ -24,6 +24,7 @@
         let popover = null;
         let seq = 0;
         let pauseMenuFor = null;
+        let studio = null; // Studio panel state while one is open (see openStudioPanel)
 
         const slot = () => doc.getElementById(host.slotId || 'chatSupervisionSlot');
         const now = () => host.now() / 1000;
@@ -53,7 +54,12 @@
             if (!enabled || !sid) { overview = null; render(); reportSupervised(session, false); return; }
             try {
                 const data = await call('GET', '/api/chat-ops/sessions/' + sid);
-                if (mine === seq) { overview = data; render(); reportSupervised(session, M.isSupervised(data), M.supervisorOf(data)); }
+                if (mine === seq) {
+                    overview = data;
+                    render();
+                    reportSupervised(session, M.isSupervised(data), M.supervisorOf(data));
+                    if (studio) loadStudio(false);
+                }
             } catch (_) {
                 if (mine === seq) { overview = null; render(); }
             }
@@ -100,7 +106,9 @@
             }
             el.innerHTML = parts.join('');
             el.hidden = false;
-            if (popover && popover.__key) {
+            if (popover && popover.__key && popover.__key.studio) {
+                studioPaint();
+            } else if (popover && popover.__key) {
                 const still = popoverContent(popover.__key.kind, popover.__key.id, v);
                 if (still) popover.innerHTML = still; else closePopover();
             }
@@ -189,8 +197,16 @@
             return '';
         }
 
+        function placeAt(anchor) {
+            const r = anchor.getBoundingClientRect();
+            const W = host.viewportWidth();
+            popover.style.top = Math.round(r.bottom + 6) + 'px';
+            popover.style.left = Math.round(Math.max(8, Math.min(r.left, W - popover.offsetWidth - 8))) + 'px';
+        }
+
         function openPopover(kind, id, anchor) {
             closePopover();
+            if ((kind === 'chip' || kind === 'badge') && studioOn()) { openStudioPanel(kind, id, anchor); return; }
             const v = overview && M.view(overview, now());
             const html = v && popoverContent(kind, id, v);
             if (!html) return;
@@ -200,15 +216,109 @@
             popover.__key = { kind, id };
             popover.innerHTML = html;
             doc.body.appendChild(popover);
-            const r = anchor.getBoundingClientRect();
-            const W = host.viewportWidth();
-            popover.style.top = Math.round(r.bottom + 6) + 'px';
-            popover.style.left = Math.round(Math.max(8, Math.min(r.left, W - popover.offsetWidth - 8))) + 'px';
+            placeAt(anchor);
+        }
+
+        // ---- Studio panel: the chip and the worker's "Supervised by" badge open a
+        // timeline panel instead of the Classic popover. Read from the projection
+        // route; Classic markup and behaviour are untouched.
+
+        function studioOn() {
+            if (typeof host.isStudio === 'function') return !!host.isStudio();
+            return !!(root.CuttleChatDisplay && root.CuttleChatDisplay.isStudio());
+        }
+
+        // Which schedules the panel covers and whose timeline it reads. The chip's panel
+        // is the supervisor's whole view; a badge's panel is the supervisor's timeline
+        // narrowed to this chat (the server returns every chat the supervisor runs).
+        function studioScope(kind, id) {
+            if (!overview) return null;
+            if (kind === 'chip') {
+                const sid = numericSession(session);
+                const own = overview.supervising || [];
+                if (!sid || !own.some((s) => s.id === id)) return null;
+                return { sid, filterChat: '', schedules: own, title: '' };
+            }
+            const one = (overview.supervised_by || []).find((s) => s.id === id);
+            const n = one ? Number(String(one.supervisor || '').replace(/^CH-/, '')) : 0;
+            const worker = String(overview.handle || '');
+            if (!(n > 0) || !worker) return null;
+            return {
+                sid: String(n),
+                filterChat: worker,
+                schedules: overview.supervised_by.filter((s) => s.supervisor === one.supervisor),
+                title: 'Supervised by ' + one.supervisor,
+            };
+        }
+
+        function studioPaint() {
+            if (!popover || !studio) return;
+            const scope = studioScope(studio.kind, studio.id);
+            if (!scope) { closePopover(); return; }
+            const picked = scope.filterChat ? M.filterChat(studio.items, scope.filterChat) : studio.items;
+            const rows = M.timelineRows(picked, now());
+            const chats = new Set(rows.map((r) => r.chat).filter(Boolean));
+            popover.innerHTML = M.panelHeaderHtml(M.panelHeader(scope.schedules, { title: scope.title }))
+                + M.timelineHtml(rows, {
+                    loading: studio.loading, error: studio.error, more: !!studio.nextBefore,
+                    showChat: !scope.filterChat && chats.size > 1,
+                });
+        }
+
+        // First page on open and on each refresh (the poll path); "Show older" appends.
+        // A response for a panel that was closed or re-opened in the meantime is dropped.
+        async function loadStudio(older) {
+            const st = studio;
+            if (!st || !popover || (older && !st.nextBefore)) return;
+            const before = older ? st.nextBefore : '';
+            const mine = ++st.seq;
+            st.loading = true;
+            st.error = '';
+            studioPaint();
+            const q = '?limit=50' + (before ? '&before=' + encodeURIComponent(before) : '');
+            try {
+                const data = await call('GET', '/api/chat-ops/sessions/' + st.sid + '/timeline' + q);
+                if (studio !== st || st.seq !== mine) return;
+                const page = Array.isArray(data.items) ? data.items : [];
+                if (older) {
+                    st.items = M.mergeItems(st.items, page);
+                    st.nextBefore = data.next_before || null;
+                    st.paged = true;
+                } else if (!st.paged) {
+                    st.items = M.mergeItems(page);
+                    st.nextBefore = data.next_before || null;
+                } else {
+                    // Older pages are already loaded: keep the cursor, take the newer rows.
+                    st.items = M.mergeItems(page, st.items);
+                }
+                st.loading = false;
+            } catch (e) {
+                if (studio !== st || st.seq !== mine) return;
+                st.loading = false;
+                st.error = String(e.message || e);
+            }
+            studioPaint();
+        }
+
+        function openStudioPanel(kind, id, anchor) {
+            if (!studioScope(kind, id)) return;
+            popover = doc.createElement('div');
+            popover.className = 'sup-studio-panel';
+            popover.setAttribute('role', 'dialog');
+            popover.setAttribute('aria-label', 'Supervision timeline');
+            popover.__key = { kind, id, studio: true };
+            studio = { kind, id, sid: studioScope(kind, id).sid, items: [], nextBefore: null, paged: false,
+                loading: true, error: '', seq: 0 };
+            studioPaint();
+            doc.body.appendChild(popover);
+            placeAt(anchor);
+            loadStudio(false);
         }
 
         function closePopover() {
             if (popover) { popover.remove(); popover = null; }
             pauseMenuFor = null;
+            studio = null;
         }
 
         async function act(verb, id, choice) {
@@ -249,6 +359,7 @@
                 return;
             }
             if (popover && popover.contains(t)) {
+                if (t.closest && t.closest('[data-sup-more]')) { loadStudio(true); return; }
                 const chosen = t.closest('[data-sup-pause]');
                 if (chosen) {
                     act('pause', chosen.getAttribute('data-sup-id'), chosen.getAttribute('data-sup-pause'));
