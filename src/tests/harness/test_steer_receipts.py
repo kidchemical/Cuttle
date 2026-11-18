@@ -1107,3 +1107,63 @@ def test_a_late_bind_after_a_given_up_group_never_duplicates_the_excerpt(tmp_pat
     holders = [mid for mid in (first_id, second_id) if db.steer_meta(mid)['reply']]
     assert holders == [first_id], 'exactly one excerpt holder, ever'
     assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+# ── detached sends: identity and mode ───────────────────────────────────────
+
+def test_a_wait_whose_registration_is_gone_never_reaches_a_replacement():
+    """Codex final 3a: teardown clears the wait's token before the send.
+
+    Claude's ``_close_input`` unregisters and clears ``wait.steer_token``. A
+    send through the still-running wait afterwards used to pass
+    ``expect_token=None`` — no expectation at all — so it reached whatever CLI
+    had registered since and came back stamped with the old turn id.
+    """
+    from api.agent_harness.background_wait import steer_detached
+
+    wait = _idle_detached_wait(9454)
+    old, replacement_writes = [], []
+    token = steer.register('9454', 'claude',
+                           lambda text, sid=None: (old.append(text), _future((True, None)))[1])
+    wait.claim_steer(token)
+    # Claude teardown order: unregister, drop the wait's token, close stdin.
+    steer.unregister('9454', token)
+    wait.claim_steer(None)
+    replacement = steer.register(
+        '9454', 'claude',
+        lambda text, sid=None: (replacement_writes.append(text), _future((True, None)))[1])
+    try:
+        assert steer_detached(9454, 'claude', 'hello') is None, 'the send is refused'
+        assert replacement_writes == [], "the replacement CLI's stdin is untouched"
+        assert old == []
+        assert steer_receipts.retained()['pending'] == 0
+    finally:
+        steer.unregister('9454', replacement)
+        _drop_detached_wait(wait)
+
+
+def test_a_superseded_idle_detached_send_keeps_its_detached_mode(tmp_path, monkeypatch):
+    """Codex final 3b: the mode is a fact of the send, not a later observation."""
+    from api.agent_harness.background_wait import steer_detached
+
+    turn = {'query_id': 'q-one'}
+    monkeypatch.setattr('api.chat_turn_row.current', lambda sid: dict(turn))
+    db = FakeDb(tmp_path / 'detached-mode.db')
+    wait = _idle_detached_wait(9455)
+    token = steer.register('9455', 'claude', lambda text, sid=None: _future((True, None)))
+    wait.claim_steer(token)
+    try:
+        turn['query_id'] = 'q-two'   # a newer turn takes the chat mid-delivery
+        info = steer_detached(9455, 'claude', 'status?')
+        assert info and info['steered'] is True and info['background_idle'] is True
+        message_id = db.add_message(
+            9455, 'user', 'status?',
+            {'steer': steer_receipts.insert_shape(info['steer_id'], mode='detached')})
+        steer_receipts.bind(info['steer_id'], db, message_id)
+        assert steer_receipts.flush(5.0)
+        saved = db.steer_meta(message_id)
+        assert saved['mode'] == 'detached', 'an idle background send is never "live"'
+        assert saved['state'] == 'undelivered', 'one terminal state, by its own facts'
+    finally:
+        steer.unregister('9455', token)
+        _drop_detached_wait(wait)

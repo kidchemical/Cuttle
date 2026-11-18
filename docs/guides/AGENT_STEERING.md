@@ -98,6 +98,8 @@ wholesale by the receipt owner, `api.agent_harness.steer_receipts`:
     *waiting*. It stays `pending` ("Accepted into the background run") until
     the CLI replays it, then becomes `delivered`; a run that exits before the
     replay leaves it `undelivered`, matching the run's closing "unread" notice.
+    The mode is a fact of the send itself, so a newer turn taking the chat
+    straight afterwards changes the `state` but never relabels the row `live`.
   - `mode: "live"` — everything else, **including** a steer into a detached run
     that is already working. Copy must not assume `detached` covers every send
     into a background run.
@@ -172,7 +174,12 @@ after a reload the user row is the only source of truth.
   exactly one terminal state carrying the facts earned while the run still
   owned the chat. Receipts never write a reply, so the turn guard is untouched.
   A detached send targets the wait's **own** registration token, so it cannot
-  reach a replacement CLI.
+  reach a replacement CLI; a wait whose CLI has already unregistered (teardown
+  clears the token before closing stdin) has nothing left to steer and the
+  send is refused rather than sent without an expectation. The runner checks
+  the same identity again **at the write**, because teardown can happen while
+  the send callback waits on its event loop, and writes nothing once its own
+  registration is gone.
 - **Retention.** A receipt is released once it has ended and been saved — or
   given up on after bounded write retries; a group is held until every member
   has bound. One that no row will ever carry (unauthenticated steer path, a
@@ -180,7 +187,10 @@ after a reload the user row is the only source of truth.
   still retained is purged a grace period after its turn ended, by the writer
   itself, so cleanup never depends on later traffic. The writer exits when
   there is nothing queued and nothing retained, restarts on demand, and drains
-  what it has at interpreter exit. Live status keeps only the current turn's,
+  what it has at interpreter exit. That drain is an orderly-exit hook only: a
+  hard stop (`SIGTERM` with no handler, `SIGKILL`) can leave a queued row
+  `pending`, which readers render as *not confirmed* — follow-up, not a state
+  a client has to treat as special. Live status keeps only the current turn's,
   and is a transient overlay: after it disappears, reconcile against refreshed
   history, where the user row is the only source of truth.
 

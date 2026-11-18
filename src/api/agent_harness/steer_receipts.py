@@ -179,8 +179,13 @@ class Receipts:
         """
         with self._lock:
             entry = self._find(steer_id)
-            if entry is None or not self._fresh():
+            if entry is None:
                 return
+            # The mode is a fact of **this send** — the caller just accepted it
+            # into an idle background run — not an observation of later vendor
+            # output. A supersession landing between acceptance and this call
+            # must not relabel the saved row ``live``; the terminal write still
+            # carries only facts earned while the run owned the chat.
             entry['mode'] = 'detached'
             self._emit(entry)
 

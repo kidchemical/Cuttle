@@ -369,6 +369,7 @@ def test_stream_lane_steers_into_detached_wait_without_running(monkeypatch):
         return fut
 
     token = steer.register(6104, "claude", _send)
+    wait.claim_steer(token)   # the runner claims its registration for the wait
     rows = []
     io = StreamTurnIO(
         run_harness=lambda *a, **k: pytest.fail("must steer, not run"),
@@ -402,6 +403,7 @@ def test_steer_into_detached_wait_threads_under_the_first_reply(monkeypatch):
     wait.start(["watch CI"], pid=None)
     bw.bind_saver(wait.job_id, _Saver(), {"agent_id": "claude", "query_id": "q-first-reply"})
     token = steer.register(6105, "claude", lambda _t: _done_future())
+    wait.claim_steer(token)
     rows = []
     io = StreamTurnIO(
         run_harness=lambda *a, **k: pytest.fail("must steer, not run"),
@@ -448,6 +450,7 @@ def test_chat_steer_route_steers_into_the_detached_run():
     bw.bind_saver(wait.job_id, _Saver(), {"agent_id": "claude", "query_id": "q-first"})
     sent = []
     token = steer.register(6106, "claude", lambda t: (sent.append(t), _done_future())[1])
+    wait.claim_steer(token)
     try:
         info = steer_chat(6106, "status?")
         assert info["steered"] is True and info["turn_id"] == "q-first" and info["background_idle"] is True

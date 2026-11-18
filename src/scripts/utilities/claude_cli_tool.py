@@ -776,7 +776,12 @@ class ClaudeCliTool:
             out: "concurrent.futures.Future" = concurrent.futures.Future()
 
             def _write() -> None:
-                if not st["open"]:
+                # Identity is checked here, at the write, not only when the
+                # caller looked this run up: teardown can have unregistered
+                # (and a replacement CLI registered) while this callback sat on
+                # the loop queue. A send that no longer belongs to this run's
+                # registration writes nothing.
+                if not st["open"] or st["token"] is None:
                     out.set_result((False, "Claude Code turn already finished"))
                     return
                 # On the loop, before the write: the CLI can replay the line

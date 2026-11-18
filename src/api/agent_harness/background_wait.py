@@ -530,9 +530,16 @@ def steer_detached(chat_session_id: Any, agent_id: Optional[str], text: str) -> 
     with wait._lock:
         was_waiting = wait.phase == "waiting"
     # Target this wait's own registration: another run may have replaced it
-    # between the lookup above and the send.
+    # between the lookup above and the send. No token means the CLI already
+    # unregistered (``_close_input`` clears it before closing stdin), so there
+    # is nothing of ours left to steer — sending without an expectation would
+    # write into whatever run registered since and stamp the reply with this
+    # wait's old turn id.
+    token = wait.steer_token
+    if token is None:
+        return None
     info = steer.steer(chat_session_id, text, turn_id=base_turn or None,
-                       expect_token=wait.steer_token)
+                       expect_token=token)
     if not info.get("steered"):
         return None
     # The detached run is still the first reply's turn: the steer threads there.
