@@ -51,3 +51,72 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
 }
+
+/* Live THINKING box (chat_live_thinking.js): the running turn's reasoning,
+   open by default, a few lines tall, the older lines fading at the top. */
+:root.cuttle-studio .thinking-block--live {
+    margin: 0 0 var(--studio-space-3, 12px);
+    padding: var(--studio-space-2, 8px) var(--studio-space-3, 12px);
+    border-radius: var(--studio-radius-md, 14px);
+    background: var(--studio-thinking-bg, #f7f6fb);
+    box-shadow: none;
+    font-family: var(--studio-font-sans, 'Cuttle Inter', Inter, system-ui, sans-serif);
+}
+
+:root.cuttle-studio .thinking-block--live > summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    list-style: none;
+    cursor: pointer;
+    font-size: var(--studio-text-2xs, 11px);
+    font-weight: var(--studio-weight-bold, 700);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--studio-ink-muted, #5d5f7e);
+}
+
+:root.cuttle-studio .thinking-block--live > summary::-webkit-details-marker {
+    display: none;
+}
+
+:root.cuttle-studio .thinking-block--live > summary::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    margin-left: 2px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform var(--studio-dur-fast, 160ms) var(--studio-ease-out, ease-out);
+}
+
+:root.cuttle-studio .thinking-block--live[open] > summary::before {
+    transform: rotate(45deg);
+}
+
+:root.cuttle-studio .thinking-block--live .thinking-live-body {
+    max-height: calc(1.5em * 4 + 4px);
+    margin-top: 6px;
+    overflow-y: auto;
+    scrollbar-width: none;
+    font-size: var(--studio-text-sm, 13px);
+    line-height: var(--studio-leading-base, 1.5);
+    font-style: italic;
+    color: var(--studio-ink-muted, #5d5f7e);
+}
+
+:root.cuttle-studio .thinking-block--live .thinking-live-body::-webkit-scrollbar {
+    display: none;
+}
+
+:root.cuttle-studio .thinking-block--live .thinking-live-body.is-clipped {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.5em);
+    mask-image: linear-gradient(to bottom, transparent 0, #000 1.5em);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root.cuttle-studio .thinking-block--live > summary::before {
+        transition: none;
+    }
+}
