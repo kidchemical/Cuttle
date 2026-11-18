@@ -70,7 +70,7 @@
                 </nav>
 
                 <section class="orch-tab" data-panel="chart">
-                    <p class="orch-help orch-tab-intro orch-intro-studio">Read left to right: every task starts in the first worker tier and climbs one tier when it fails. In each tier the first agent that is on is the default. Select an agent to jump to its row in the editor below.</p>
+                    <p class="orch-help orch-tab-intro orch-intro-studio">Read left to right: every task starts in the first worker tier and climbs one tier when it keeps failing, or stalls past the limits on the Limits tab. In each tier the first agent that is on is the default. Select an agent to jump to its row in the editor below.</p>
                     <section id="orchChart" class="studio-playbook" aria-label="Playbook org chart" hidden></section>
                     <p class="orch-help orch-tab-intro orch-intro-classic">Tiers run top to bottom. Every task starts at the first worker tier and escalates down one tier at a time. In each tier the first agent that is on is the default; the rest are alternates. Switch an agent off to skip it without removing it, or add a temporary agent when you don't need a saved profile.</p>
                     <ol id="orchTiers" class="orch-ladder"></ol>
