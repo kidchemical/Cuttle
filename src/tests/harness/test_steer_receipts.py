@@ -26,3 +26,19 @@ def test_completion_before_delivery_response_marks_undelivered():
     tracker.accepted(a, True)
     assert tracker.snapshot(a)['state'] == 'undelivered'
     assert tracker.snapshot(a)['reply'] is None
+
+
+def test_recorded_codex_rapid_steers():
+    import json
+    from pathlib import Path
+
+    events = json.loads((Path(__file__).parent / 'fixtures/codex_rapid_steers.json').read_text())
+    tracker = Receipts()
+    ids = [tracker.begin(event['text'], 'turn') for event in events if event['kind'] == 'echo']
+    for event in events:
+        if event['kind'] == 'echo':
+            tracker.echo(event['text'], event['item_id'])
+        else:
+            tracker.reply(event['text'])
+    assert tracker.snapshot(ids[0])['reply']['covers'] == ids
+    assert tracker.snapshot(ids[1])['reply']['text'].startswith('Acknowledged: amber and cobalt')
