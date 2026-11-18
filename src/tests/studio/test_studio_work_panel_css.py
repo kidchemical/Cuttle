@@ -12,6 +12,7 @@ PANEL_JS = WEB / "js" / "chat" / "chat_work_panel.js"
 TASKS_JS = WEB / "js" / "gizmos" / "tasks_gizmo.js"
 FLEET_JS = WEB / "js" / "chat" / "chat_subagent_fleet.js"
 LAUNCHERS_JS = WEB / "js" / "chat" / "chat_subagent_launchers.js"
+ORCH_JS = WEB / "js" / "chat" / "chat_orchestration.js"
 
 
 def _style_rules(css: str) -> list[str]:
@@ -37,9 +38,9 @@ def test_every_rule_is_studio_scoped():
 
 def test_styled_classes_are_emitted_by_the_owners():
     css = CSS.read_text(encoding="utf-8")
-    owners = "\n".join(p.read_text(encoding="utf-8") for p in (PANEL_JS, TASKS_JS, FLEET_JS, LAUNCHERS_JS))
+    owners = "\n".join(p.read_text(encoding="utf-8") for p in (PANEL_JS, TASKS_JS, FLEET_JS, LAUNCHERS_JS, ORCH_JS))
     for cls in ("work-panel", "work-panel-cols", "work-panel-tasks", "work-panel-cards", "work-list",
                 "work-list-head", "work-task-list", "is-in-progress", "is-entering", "studio-fleet-card",
-                "studio-agent-header", "studio-working-tag"):
+                "studio-agent-header", "studio-working-tag", "studio-live-dot", "chat-orch-quick"):
         assert re.search(r"\." + re.escape(cls) + r"\b", css), f"css lost {cls}"
         assert cls in owners, f"no owner emits {cls}"

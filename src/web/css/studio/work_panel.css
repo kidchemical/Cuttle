@@ -276,6 +276,11 @@
     cursor: pointer;
 }
 
+:root.cuttle-studio .chat-orch-quick.is-danger {
+    background: rgba(190, 40, 60, 0.1);
+    color: #b4233a;
+}
+
 :root.cuttle-studio .chat-orch-quick:hover {
     filter: brightness(0.97);
 }
