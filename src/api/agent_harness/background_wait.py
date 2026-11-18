@@ -544,8 +544,9 @@ def steer_detached(chat_session_id: Any, agent_id: Optional[str], text: str) -> 
     if was_waiting:
         from api.agent_harness.steer_receipts import accepted_detached
 
+        # Accepted into the background run: ``mode: detached`` and still
+        # pending — ``delivered`` is only ever a confirmed echo.
         accepted_detached(info.get("steer_id"))
-        info["delivered"] = True
     wait.log("status", f"Message steered in: {(text or '').strip()[:500]}")
     # The answer is on its way: show the typing bubble now, not at the echo.
     wait.working(f"{wait.label} is answering your message…", force=True)

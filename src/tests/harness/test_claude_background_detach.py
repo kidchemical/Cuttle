@@ -290,11 +290,11 @@ def test_message_sent_while_waiting_steers_into_the_live_run(tmp_path, monkeypat
     assert ran == [], "no second claude run may start while the detached run is live"
     assert len(steered_rows) == 1
     receipt = steered_rows[0].pop("steer")
+    # Accepted into the background run, not yet proven read: ``delivered`` is
+    # reserved for a confirmed echo, so acceptance is pending + detached.
     assert receipt["steer_id"] and receipt == {
-        "v": 1, "steer_id": receipt["steer_id"], "state": "delivered",
-        "delivered_at": receipt["delivered_at"], "mode": "detached",
-        "reply": None, "covers": []}
-    assert receipt["delivered_at"]
+        "v": 1, "steer_id": receipt["steer_id"], "state": "pending",
+        "delivered_at": None, "mode": "detached", "reply": None, "covers": []}
     assert steered_rows == [{"steered": True, "steered_agent": "claude", "steer_idle": True}]
     assert chat_delivery.is_busy(6103) is False
     # While the run answers, every device sees a typing bubble: live status is
@@ -384,9 +384,8 @@ def test_stream_lane_steers_into_detached_wait_without_running(monkeypatch):
     assert sent == ["status?"] and len(rows) == 1
     receipt = rows[0].pop("steer")
     assert receipt["steer_id"] and receipt == {
-        "v": 1, "steer_id": receipt["steer_id"], "state": "delivered",
-        "delivered_at": receipt["delivered_at"], "mode": "detached",
-        "reply": None, "covers": []}
+        "v": 1, "steer_id": receipt["steer_id"], "state": "pending",
+        "delivered_at": None, "mode": "detached", "reply": None, "covers": []}
     assert rows == [{"steered": True, "steered_agent": "claude", "steer_idle": True}]
     assert events[0][1]["steer_idle"] is True
     steer.unregister(6104, token)
@@ -417,9 +416,8 @@ def test_steer_into_detached_wait_threads_under_the_first_reply(monkeypatch):
         assert len(rows) == 1
         receipt = rows[0].pop("steer")
         assert receipt["steer_id"] and receipt == {
-            "v": 1, "steer_id": receipt["steer_id"], "state": "delivered",
-            "delivered_at": receipt["delivered_at"], "mode": "detached",
-            "reply": None, "covers": []}
+            "v": 1, "steer_id": receipt["steer_id"], "state": "pending",
+            "delivered_at": None, "mode": "detached", "reply": None, "covers": []}
         assert rows == [{"steered": True, "steered_agent": "claude", "turn_id": "q-first-reply",
                          "steer_idle": True}]
         # A second message while the run is answering the first is a real steer (threads).

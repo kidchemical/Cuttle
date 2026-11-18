@@ -170,13 +170,18 @@ class Receipts:
             return bool(entry['delivered_at'])
 
     def accepted_detached(self, steer_id):
-        """A follow-up accepted into an idle detached wait is delivered input."""
+        """A follow-up accepted into an idle detached wait: input, not delivery.
+
+        ``delivered`` is reserved for a confirmed echo, so the state stays
+        ``pending`` under ``mode: "detached"`` until the CLI replays the
+        follow-up. A run that exits before that replay ends ``undelivered``,
+        which is what its closing "unread" notice says too.
+        """
         with self._lock:
             entry = self._find(steer_id)
             if entry is None or not self._fresh():
                 return
             entry['mode'] = 'detached'
-            entry['delivered_at'] = entry['delivered_at'] or _now()
             self._emit(entry)
 
     def bind(self, steer_id, message_id):
@@ -215,10 +220,12 @@ class Receipts:
         """Text of a finished agent output item: the reply of the steers it follows.
 
         Only an item that **started** after a steer's echo can be its reply, so
-        an item already running when the steer landed never claims it. A steer
-        that was accepted but never echoed (a detached wait's accepted input
-        with no replay yet) has no echo to order against and keeps
-        ``reply: null``.
+        an item already running when the steer landed never claims it. An item
+        whose start was never observed cannot be ordered against an echo at
+        all, so it claims nothing: there is no completion-time fallback. A
+        steer that was accepted but never echoed (a detached wait's accepted
+        input with no replay yet) has no echo to order against either, and
+        keeps ``reply: null``.
         """
         clipped = _clip(text)
         if not clipped:
@@ -228,7 +235,7 @@ class Receipts:
                 return
             started = self._starts.get(str(item_id or ''))
             if started is None:
-                started = self._next()
+                return  # no observed start: nothing can be attributed to it
             waiting = [e for e in self._entries
                        if e['echo_seq'] is not None and e['echo_seq'] < started
                        and e['group'] is None and not e['ended']]

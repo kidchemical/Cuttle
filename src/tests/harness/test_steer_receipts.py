@@ -32,6 +32,27 @@ def _future(value):
     return out
 
 
+def _idle_detached_wait(session):
+    """A running detached wait, with its card/status side effects stubbed out."""
+    from api.agent_harness import background_wait as bw
+
+    wait = bw.BackgroundWait(session, 'claude')
+    wait._state = 'running'
+    wait.log = lambda *a, **k: None
+    wait.working = lambda *a, **k: None
+    with bw._lock:
+        bw._active[wait.job_id] = wait
+    return wait
+
+
+def _drop_detached_wait(wait):
+    from api.agent_harness import background_wait as bw
+
+    wait._state = 'done'
+    with bw._lock:
+        bw._active.pop(wait.job_id, None)
+
+
 class FakeDb:
     """Stands in for ``AuthDatabase``: one batched metadata patch per write."""
 
@@ -113,6 +134,7 @@ def test_grouped_reply_belongs_to_the_last_covered_row_only():
     tracker.echo(second)
     tracker.bind(first, 10)
     tracker.bind(second, 11)
+    tracker.output_start('a1')
     tracker.output_text('a1', 'Both done.\n\nMore detail.')
     assert tracker.snapshot(first)['covers'] == [10, 11]
     assert tracker.snapshot(second)['covers'] == [10, 11]
@@ -127,6 +149,7 @@ def test_a_row_bound_after_the_reply_takes_the_reply_over():
         tracker.accepted(sid, True)
         tracker.echo(sid)
     tracker.bind(first, 10)
+    tracker.output_start('a1')
     tracker.output_text('a1', 'Both done.')
     assert tracker.snapshot(first)['reply']['text'] == 'Both done.'
     tracker.bind(second, 11)
@@ -147,6 +170,7 @@ def test_a_group_is_not_released_until_every_member_is_bound(tmp_path):
         tracker.echo(steer_id)
     first_id = db.add_message(965, 'user', 'one')
     steer_receipts.bind(first, db, first_id)
+    tracker.output_start('a1')
     tracker.output_text('a1', 'Both noted.')   # one reply covers both sends
     tracker.finish()                           # the turn ends mid-delivery
     assert steer_receipts.flush(5.0)
@@ -174,6 +198,7 @@ def test_a_group_member_that_never_binds_still_lets_the_others_go(monkeypatch, t
         tracker.accepted(steer_id, True)
         tracker.echo(steer_id)
     steer_receipts.bind(first, db, db.add_message(966, 'user', 'one'))
+    tracker.output_start('a1')
     tracker.output_text('a1', 'Both noted.')
     tracker.finish()
     assert steer_receipts.flush(5.0)
@@ -223,6 +248,7 @@ def test_grouped_rows_are_written_in_one_batch(tmp_path):
         steer_receipts.bind(steer_id, db, db.add_message(941, 'user', 'x'))
     assert steer_receipts.flush(5.0)
     db.writes.clear()
+    tracker.output_start('a1')
     tracker.output_text('a1', 'Both done.')
     assert steer_receipts.flush(5.0)
     assert db.writes == [[1, 2]], "one transaction covers the grouped rows"
@@ -419,7 +445,8 @@ def test_detached_acceptance_alone_never_claims_a_reply():
     # A background task's own completion follow-up, with no replay linking it.
     tracker.output_start('a1')
     tracker.output_text('a1', 'The build finished.')
-    assert tracker.snapshot(steer_id)['state'] == 'delivered'
+    # Accepted input is not proven delivery: pending until the CLI replays it.
+    assert tracker.snapshot(steer_id)['state'] == 'pending'
     assert tracker.snapshot(steer_id)['mode'] == 'detached'
     assert tracker.snapshot(steer_id)['reply'] is None
     # Once the CLI replays the follow-up, later output is its reply.
@@ -429,10 +456,76 @@ def test_detached_acceptance_alone_never_claims_a_reply():
     assert tracker.snapshot(steer_id)['reply']['text'] == 'Answering your message.'
 
 
+def test_output_without_an_observed_start_claims_nothing():
+    """Codex 5: no completion-time fallback — an unordered item is not a reply."""
+    tracker = Receipts()
+    steer_id = tracker.begin('one')
+    tracker.accepted(steer_id, True)
+    tracker.echo(steer_id)
+    tracker.output_text('a1', 'Could be from before the echo.')  # no output_start
+    assert tracker.snapshot(steer_id)['reply'] is None
+    # The same item, once its start is known to be after the echo, is the reply.
+    tracker.output_start('a2')
+    tracker.output_text('a2', 'Answering your note.')
+    assert tracker.snapshot(steer_id)['reply']['text'] == 'Answering your note.'
+
+
+def test_detached_acceptance_is_pending_until_replay_and_undelivered_on_exit():
+    """Codex 5: acceptance into a background run is input, not confirmed delivery."""
+    from api.agent_harness.background_wait import steer_detached
+    from api.agent_harness.steer_delivery import SteerDelivery
+
+    wait = _idle_detached_wait(9470)
+    delivery = SteerDelivery()
+    sends = []
+
+    def send(text, steer_id=None):
+        sends.append(delivery.begin(text, steer_id))
+        delivery.acknowledge(sends[-1], succeeded=True)  # stdin write accepted
+        return _future((True, None))
+
+    token = steer.register('9470', 'claude', send)
+    wait.claim_steer(token)
+    try:
+        info = steer_detached(9470, 'claude', 'status?')
+        assert info and info['steered'] is True and info['background_idle'] is True
+        assert info.get('delivered') is not True, '"delivered" means a confirmed echo'
+        snap = steer_receipts.snapshot(info['steer_id'])
+        assert snap['mode'] == 'detached' and snap['state'] == 'pending'
+        # Claude's own closing notice calls the same input unread: one matcher.
+        assert delivery.undelivered == ['status?']
+
+        # The CLI replays it: now it is delivered.
+        steer.note_echo('9470', token, info['steer_id'])
+        assert steer_receipts.snapshot(info['steer_id'])['state'] == 'delivered'
+        assert delivery.accepted_count == 1
+    finally:
+        steer.unregister('9470', token)
+        _drop_detached_wait(wait)
+
+    # A second run that exits before any replay: undelivered, like the notice.
+    wait2 = _idle_detached_wait(9471)
+    quiet = SteerDelivery()
+    token2 = steer.register('9471', 'claude', lambda text, sid=None: (
+        quiet.acknowledge(quiet.begin(text, sid), succeeded=True), _future((True, None)))[1])
+    wait2.claim_steer(token2)
+    try:
+        info2 = steer_detached(9471, 'claude', 'anything new?')
+        assert steer_receipts.snapshot(info2['steer_id'])['state'] == 'pending'
+        steer.unregister('9471', token2)  # the CLI exits with it unread
+        assert quiet.closing_notice('Claude Code')
+        assert steer_receipts.snapshot(info2['steer_id']) is None or \
+            steer_receipts.snapshot(info2['steer_id'])['state'] == 'undelivered'
+    finally:
+        steer_receipts.discard(info2['steer_id'])
+        _drop_detached_wait(wait2)
+
+
 def test_reply_is_the_first_paragraph_clipped():
     tracker = Receipts()
     steer_id = tracker.begin('one')
     tracker.echo(steer_id)
+    tracker.output_start('a1')
     tracker.output_text('a1', 'x' * 300 + '\n\nignored')
     assert tracker.snapshot(steer_id)['reply']['text'] == 'x' * 280
 
@@ -536,23 +629,26 @@ def test_an_observation_made_after_stop_is_never_recorded(tmp_path):
 
 def test_a_detached_send_only_reaches_its_own_registration():
     """Codex 1: a replacement run must never receive the wait's steer."""
-    from api.agent_harness.background_wait import BackgroundWait, steer_detached
+    from api.agent_harness.background_wait import steer_detached
 
     first, second = [], []
-    wait = BackgroundWait(9453, 'claude')
-    wait._state = 'running'
+    wait = _idle_detached_wait(9453)
     token = steer.register('9453', 'claude',
                            lambda text, sid=None: (first.append(text), _future((True, None)))[1])
     wait.claim_steer(token)
     try:
+        # Sanity: the wait's own registration does deliver.
+        assert steer_detached(9453, 'claude', 'first') is not None
+        assert first == ['first'] and second == []
         replacement = steer.register('9453', 'claude',
                                      lambda text, sid=None: (second.append(text), _future((True, None)))[1])
+        wait.steer_token = token  # the wait still believes it owns the channel
         assert steer_detached(9453, 'claude', 'hello') is None
-        assert first == [] and second == [], 'the swapped-in CLI is not the wait\'s run'
+        assert first == ['first'] and second == [], 'the swapped-in CLI is not the wait\'s run'
         steer.unregister('9453', replacement)
     finally:
         steer.unregister('9453', token)
-        wait._state = 'done'
+        _drop_detached_wait(wait)
 
 
 def test_live_status_only_carries_the_current_turn(tmp_path, monkeypatch):
@@ -799,6 +895,7 @@ def test_a_receipt_callback_that_raises_never_stops_the_turn(caplog):
     steer_id = tracker.begin('one')
     tracker.accepted(steer_id, True)
     tracker.echo(steer_id)
+    tracker.output_start('a1')
     tracker.output_text('a1', 'Seen.')
     tracker.finish()
     assert tracker.snapshot(steer_id)['reply']['text'] == 'Seen.'
@@ -877,7 +974,13 @@ def test_recorded_claude_replay_and_assistant_block():
     tracker.bind(steer_id, 12)
     receipt = tracker.snapshot(steer_id)
     assert receipt['state'] == 'delivered'
-    assert receipt['reply']['text'].startswith('Noted, marigold.')
+    # This trial was recorded before output boundaries were captured, so it
+    # holds no ``message_start`` and no message id: without an observed start
+    # the block cannot be ordered against the echo, and nothing claims it.
+    # (The live reader gets those boundaries from
+    # ``--include-partial-messages``; ordering is covered against the real
+    # reader in test_agent_steer.py.)
+    assert receipt['reply'] is None
 
 
 def test_recorded_muse_steered_item_and_agent_message():
@@ -895,6 +998,10 @@ def test_recorded_muse_steered_item_and_agent_message():
             for receipt in delivery.receive(item.get('text') or '', item.get('itemId')):
                 tracker.echo(receipt.steer_id)
         elif item.get('kind') == 'agentMessage':
+            # The recording kept only ``item/completed``; the live reader also
+            # notes the matching ``item/started`` boundary for this itemId
+            # (muse_serve_turn.py), which is what orders it after the echo.
+            tracker.output_start(item.get('itemId'))
             tracker.output_text(item.get('itemId'), item.get('text'))
     tracker.bind(steer_id, 13)
     receipt = tracker.snapshot(steer_id)
