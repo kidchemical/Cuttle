@@ -733,9 +733,9 @@ def _queue_owed():
 def _fail_closed(steer_ids, log):
     """An unexpected error in planning or settling: a bug, never retried.
 
-    ``steer_ids`` is the failed group as it stood **at the fault**: captured by
-    the faulting code under the lock it held (``_fault_group``), or the
-    membership the writer read before the fault. Nothing is read again here, so
+    ``steer_ids`` is the failed group as it stood **at the fault**: its
+    membership under ``_pending_lock``, captured by the faulting code under the
+    lock it held or by its handler (``_fault_group``). Nothing is read again here, so
     a reply that lands after the fault cannot widen the failure: a steer it
     groups with these is regrouped by the drop and saved normally. The first
     statement records the whole set — from it on nothing is planned or written
@@ -764,7 +764,23 @@ def _mark_fault_locked(exc, steer_ids):
 
 
 def _fault_group(exc, known):
-    """The group that failed with ``exc``: captured at the fault, else ``known``."""
+    """The group that failed with ``exc``, as it stands under ``_pending_lock``.
+
+    The one rule for every handler: the doomed set is ``known`` plus whoever
+    shares a group with it, read under ``_pending_lock`` at the fault. Code
+    that faulted holding that lock marked ``exc`` there and that is used as it
+    is. For a fault outside the lock (before a plan is read, or after the
+    database call, when a reply may have regrouped the plan's members) the
+    handler reads the membership here, once, before ``_fail_closed`` records
+    anything — never ``known`` alone, and never again afterwards.
+    """
+    if not getattr(exc, 'steer_group', None):
+        try:
+            known = tuple(known)
+            with _pending_lock:
+                _mark_fault_locked(exc, known)
+        except Exception:
+            pass   # the caller's own membership is used instead
     return tuple(getattr(exc, 'steer_group', None) or known)
 
 
@@ -931,7 +947,7 @@ def _plan_groups(batch, log):
     """
     plans = {}   # member steer id → its group's plan
     for steer_id, attempts in batch.items():
-        known = (steer_id,)   # its group as last read here, before any fault
+        known = (steer_id,)   # widened to its group under the lock at a fault
         try:
             plan = plans.get(steer_id)
             if plan is not None:
@@ -940,11 +956,16 @@ def _plan_groups(batch, log):
                 plan['attempts'] = min(plan['attempts'], attempts)
                 continue
             with _pending_lock:
-                binding = _pending.get(steer_id)
-                if binding is None or not _doomed.isdisjoint(binding['group']):
-                    continue   # released, discarded or failed closed
-                tracker = binding['tracker']
-                known = (steer_id, *binding['group'])
+                try:
+                    binding = _pending.get(steer_id)
+                    if binding is None or not _doomed.isdisjoint(binding['group']):
+                        continue   # released, discarded or failed closed
+                    tracker = binding['tracker']
+                    known = (steer_id, *binding['group'])
+                except Exception as exc:
+                    # The lock is still held: this is the group at the fault.
+                    _mark_fault_locked(exc, known)
+                    raise
             plan = _plan(tracker, steer_id, attempts)
             if plan is None:
                 continue

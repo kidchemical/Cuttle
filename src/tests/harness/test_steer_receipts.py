@@ -2577,3 +2577,149 @@ def test_a_forget_that_failed_part_way_is_finished_by_doing_it_again():
     assert tracker.snapshot(b)['group'] == (b,) and tracker.snapshot(b)['covers'] == [2]
     assert tracker.snapshot(b)['reply']['text'] == 'Both noted.'
     assert [[snap['steer_id'] for snap in snaps] for snaps in published] == [[b]]
+
+
+# ── round 11: the doomed set is the whole group under the lock at the fault ──
+
+
+def _doomed_sets(monkeypatch):
+    """Record what each ``_fail_closed`` call was given."""
+    fail_closed, seen = steer_receipts._fail_closed, []
+
+    def spy(steer_ids, log):
+        seen.append(set(steer_ids))
+        return fail_closed(steer_ids, log)
+
+    monkeypatch.setattr(steer_receipts, '_fail_closed', spy)
+    return seen
+
+
+def _writer_is_healthy():
+    writer = steer_receipts._writer
+    return writer is None or writer.is_alive()   # it only ever exits idle
+
+
+class _RaisingOnce(dict):
+    """A binding or plan whose read of ``key`` really raises once, when armed."""
+
+    def arm(self, key, armed, faults):
+        self.key, self.armed, self.faults = key, armed, faults
+        return self
+
+    def __getitem__(self, key):
+        if key == self.key and self.armed() and not self.faults:
+            self.faults.append(key)
+            raise KeyError(key)
+        return dict.__getitem__(self, key)
+
+
+def test_a_fault_reading_the_binding_dooms_its_whole_group(monkeypatch):
+    """Claude gate 10, blocker: a fault before the plan is read.
+
+    One agent message makes A and B one dirty group. The writer's lookup of
+    A's binding raises in ``_plan_groups`` before the group was read there.
+    Only A used to be doomed (``known`` was still A alone), and B was written
+    after its group had failed.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    db = _MemoryDb()
+    doomed, faults, armed = _doomed_sets(monkeypatch), [], []
+    tracker, ids = _echoed_group('9921', 'AB')
+    a = _insert(db, '9921', 'A', ids['A'])
+    b = _insert(db, '9921', 'B', ids['B'])
+    steer_receipts.bind(ids['A'], db, a)
+    steer_receipts.bind(ids['B'], db, b)
+    assert steer_receipts.flush(5.0)                    # both echoes committed
+    saved = len(db.attempts)
+    with steer_receipts._pending_lock:
+        steer_receipts._pending[ids['A']] = _RaisingOnce(
+            steer_receipts._pending[ids['A']]).arm('tracker', lambda: armed, faults)
+    armed.append(True)
+    tracker.output_start('reply')
+    tracker.output_text('reply', 'Both noted.')         # one group (A, B), dirty
+    assert steer_receipts.flush(5.0)
+    assert faults == ['tracker']
+    assert doomed == [{ids['A'], ids['B']}], 'the group under the lock at the fault'
+    assert db.attempts[saved:] == [], 'nothing written for A or B after the fault'
+    assert all(steer_receipts.snapshot(ids[label]) is None for label in 'AB')
+    assert _writer_is_healthy()
+    assert steer_receipts.retained() == _NOTHING
+    assert not steer_receipts._queue and not steer_receipts._doomed
+
+
+def test_a_fault_after_a_refused_write_dooms_the_group_as_it_is_now(monkeypatch):
+    """Claude gate 10, blocker: a reply regroups the plan's members mid-call.
+
+    A is planned alone. While its write is refused inside the database call,
+    one agent message answers A and B; then ``_fail`` raises. The handler used
+    to doom the plan's members (A alone), and B — in A's group at the fault —
+    was written afterwards.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    in_call, release, state, faults = threading.Event(), threading.Event(), {}, []
+
+    def before_write(_attempt):
+        if state.get('armed') and not state.get('after_call'):
+            in_call.set()
+            assert release.wait(5)
+            state['after_call'] = True
+            raise RuntimeError('injected: the database refused the write')
+
+    db = _MemoryDb(before_write)
+    doomed, plan = _doomed_sets(monkeypatch), steer_receipts._plan
+
+    def raising_plan(owner, steer_id, attempts):
+        out = plan(owner, steer_id, attempts)
+        if out is None:
+            return None
+        return _RaisingOnce(out).arm('attempts', lambda: state.get('after_call'), faults)
+
+    monkeypatch.setattr(steer_receipts, '_plan', raising_plan)
+    tracker, ids = _echoed_group('9922', 'AB')
+    a = _insert(db, '9922', 'A', ids['A'])
+    b = _insert(db, '9922', 'B', ids['B'])
+    steer_receipts.bind(ids['B'], db, b)
+    assert steer_receipts.flush(5.0)
+    b_before = (db.steer_meta(b)['state'], _held(db, b))
+    saved = len(db.attempts)
+    state['armed'] = True
+    try:
+        steer_receipts.bind(ids['A'], db, a)             # A alone, into its DB call
+        assert in_call.wait(5)
+        tracker.output_start('reply')
+        tracker.output_text('reply', 'Both noted.')      # (A, B) during the call
+    finally:
+        release.set()
+    assert steer_receipts.flush(5.0)
+    assert faults == ['attempts']
+    assert doomed == [{ids['A'], ids['B']}], 'B was in A\'s group at the fault'
+    assert db.attempts[saved:] == [[a]], 'only the refused attempt: nothing after the fault'
+    assert db.steer_meta(a)['state'] == 'pending'
+    assert (db.steer_meta(b)['state'], _held(db, b)) == b_before, 'last committed state'
+    assert all(steer_receipts.snapshot(ids[label]) is None for label in 'AB')
+    assert _writer_is_healthy()
+    assert steer_receipts.retained() == _NOTHING
+    assert not steer_receipts._queue and not steer_receipts._doomed
+
+
+def test_a_fault_inside_the_locked_plan_still_dooms_the_whole_group(monkeypatch):
+    """Control for the two above: the path that already captured the group."""
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    db = _MemoryDb()
+    doomed = _doomed_sets(monkeypatch)
+    _no_writer()
+    with monkeypatch.context() as staged:
+        staged.setattr(steer_receipts, '_ensure_writer', lambda: None)
+        tracker, ids = _echoed_group('9923', 'AB')
+        a = _insert(db, '9923', 'A', ids['A'])
+        b = _insert(db, '9923', 'B', ids['B'])
+        steer_receipts.bind(ids['A'], db, a)
+        steer_receipts.bind(ids['B'], db, b)
+        _reply_and_finish(tracker)
+    fault = _fault_at(monkeypatch, '_plan', 'rows.sort(', lambda owner, *_: owner is tracker)
+    assert steer_receipts.flush(5.0)
+    assert len(fault.injected) == 1
+    assert doomed == [{ids['A'], ids['B']}]
+    assert db.attempts == [], 'nothing written for A or B'
+    assert _writer_is_healthy()
+    assert steer_receipts.retained() == _NOTHING
