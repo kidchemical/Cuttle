@@ -231,15 +231,17 @@ def test_codex_app_server_turn_accepts_steer(tmp_path, monkeypatch):
         "scripts.utilities.codex_cli_session_store.save_codex_context_snapshot",
         lambda sid, snap: snaps.append((sid, snap)),
     )
+    events = []
     results = []
     t = _steer_when_live(4242, "/codex add BANANA", results)
     res = asyncio.run(
         mod.run_codex_turn_app_server(
             "go", cwd=str(tmp_path), resume=None, model=None, reasoning_effort=None,
-            chat_session_id="db_session_4242", timeout=30,
+            chat_session_id="db_session_4242", timeout=30, on_event=events.append,
         )
     )
     t.join(5)
+    assert any(e.get("method") == "turn/completed" for e in events)
     assert results and results[0]["steered"] is True
     assert res["success"] is True
     assert res["output"] == "saw: add BANANA"
