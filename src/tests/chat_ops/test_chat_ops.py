@@ -680,7 +680,20 @@ def test_history_is_pruned(chats):
     sched = _schedule(chats)
     for _ in range(store.HISTORY_KEEP + 5):
         store.record_check(sched["id"], "skipped", {"reason": "busy"})
-    assert len(store.checks(sched["id"], limit=500)) == store.HISTORY_KEEP
+    history = store.checks(sched["id"], limit=500)
+    assert len(history) == store.SKIPPED_KEEP
+    assert all(row["outcome"] == "skipped" for row in history)
+
+
+def test_skipped_history_does_not_displace_real_checks(chats):
+    sched = _schedule(chats)
+    for _ in range(5):
+        store.record_check(sched["id"], "stalled")
+    for _ in range(60):
+        store.record_check(sched["id"], "skipped")
+    history = store.checks(sched["id"], limit=500)
+    assert sum(row["outcome"] == "stalled" for row in history) == 5
+    assert sum(row["outcome"] == "skipped" for row in history) == store.SKIPPED_KEEP
 
 
 def test_pause_stops_checks_and_resume_checks_now(chats):
@@ -1297,3 +1310,29 @@ def test_undelivered_send_wakes_the_supervisor_once_even_mid_turn(chats, monkeyp
     again = _tick(chats, sched, {**_snap("busy"), "undelivered": [stuck]}, monkeypatch)
     assert [c["id"] for c in again] == [checkins[0]["id"]]  # told once
     assert store.checks(sched["id"])[1]["outcome"] == "undelivered"
+
+
+def test_timeline_cli_handle_and_output(monkeypatch, capsys):
+    from api.chat_cli.cli import main
+    from api.chat_ops import timeline
+    monkeypatch.setattr('api.chat_cli.cli._open_db', lambda _: object())
+    monkeypatch.setattr(service, 'context', lambda *a, **kw: None)
+    calls = []
+    def project(sid, **kwargs):
+        calls.append((sid, kwargs))
+        return {'items': [{'at': 42, 'kind': 'stalled', 'headline': 'Chat stalled'}]}
+    monkeypatch.setattr(timeline, 'project', project)
+    assert main(['timeline', 'CH-002620', '--limit', '3', '--before', '99', '--include-quiet']) == 0
+    assert capsys.readouterr().out == '42  stalled  Chat stalled\n'
+    assert calls == [(2620, {'limit': 3, 'before': '99', 'include_quiet': True})]
+    assert main(['timeline', 'CH-002620', '--json']) == 0
+    assert json.loads(capsys.readouterr().out)['items'][0]['kind'] == 'stalled'
+
+
+def test_timeline_route_requires_session_owner(client, chats, monkeypatch):
+    _flag(monkeypatch, True)
+    db, _, sup, _, foreign = chats
+    _schedule(chats)
+    assert client.get(f'/api/chat-ops/sessions/{sup}/timeline').status_code == 200
+    assert client.get(f'/api/chat-ops/sessions/{foreign}/timeline').status_code == 404
+    assert client.get('/api/chat-ops/sessions/99999999/timeline').status_code == 404

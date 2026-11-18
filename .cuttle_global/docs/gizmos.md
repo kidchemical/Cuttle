@@ -70,6 +70,28 @@ Authenticated REST (each caller can access only their own tasks/chats):
 - `PATCH /api/gizmos/tasks/<id>/items/<item_id>` `{done: true, session_id}` (shared lists)
 - `GET /api/gizmos/tasks/<id>/history?limit=100` → `{success, events}`
 
+### Owners and work in progress
+
+An item can name who holds it and whether it is being worked on. `owner` is
+`{"kind":"chat"|"agent"|"user"|"group","id":"CH-…","label":"…","agent":"codex"}`:
+`id` is the chat handle for kind `chat` (must be one of your chats), `label` is
+plain text up to 60 characters, `agent` is a harness id. `in_progress` is a flag;
+a done item is never in progress. Colours and markup are not stored.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --owner api=CH-000470 --working api
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --owner test=user --owner docs=agent:claude
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --not-working api --owner api=none
+```
+
+Patch ops: `set_owner {item: owner|null}`, `set_in_progress [ids]`,
+`clear_in_progress [ids]`; `set_done` clears `in_progress`. The item route
+`PATCH /api/gizmos/tasks/<id>/items/<item>` accepts `owner` and `in_progress`
+(`done` stays required unless one of them is sent). A sub-agent spawned with
+`"task":"<gizmo>:<item>"` sets that item's owner and in-progress flag (see
+`subagents.md`). `origin_turn_id` records the chat turn that created the list;
+it is read-only.
+
 ## Interaction attribution
 
 Every Tasks create/update/archive/delete writes a durable

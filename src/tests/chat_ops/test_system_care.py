@@ -109,3 +109,25 @@ def test_edit_changes_system_care_and_the_view_reports_it(chats):
 
 def test_focus_asking_for_process_cleanup_points_at_the_setting():
     assert any("System care" in w for w in brief.focus_warnings("End orphaned processes and watch for OOM."))
+
+
+@pytest.mark.parametrize('second, expected', [('gone', 1), ('present', 0), ('reused', 1), ('failed', 0), ('busy', 0)])
+def test_timeline_process_disappearance(chats, monkeypatch, second, expected):
+    from api.chat_ops import timeline
+    sched = _schedule(chats)
+    tree = _tree(chat=str(chats[3]))
+    monkeypatch.setattr(system_care, '_work_tree', lambda: tree)
+    _tick(chats, sched, _snap('idle'), monkeypatch)
+    if second == 'gone':
+        tree['owners'] = []
+    elif second == 'reused':
+        tree['owners'][0]['processes'][0]['create_time'] += 1
+    elif second == 'failed':
+        def fail():
+            raise OSError('unavailable')
+        monkeypatch.setattr(system_care, '_work_tree', fail)
+    _tick(chats, sched, _snap('busy' if second == 'busy' else 'idle'), monkeypatch)
+    events = [x for x in timeline.project(chats[2])['items'] if x['kind'] == 'care']
+    assert len(events) == expected
+    if events:
+        assert events[0]['headline'] == 'Leftover process ended: Unity (PID 4242, 3.0 GB)'

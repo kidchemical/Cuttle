@@ -604,6 +604,10 @@ def spawn(
     except Exception:
         pass
     _preflight_pins(specs)
+    try:
+        extras.preflight_task_refs(specs, user_id=user_id, db=db)
+    except ValueError as exc:
+        raise SubagentError(str(exc)) from exc
     _preflight_budget(specs, int(parent_session_id), db,
                       tier_checked={n["child"] - 1 for n in budget_notes})
     collect_n = normalize_collect(collect)
@@ -683,6 +687,8 @@ def spawn(
     # api.chat_turn_row) or the manual anchor: the cards ride that bubble now.
     # Nothing to bind to yet → the pinned background card until a row of that turn is saved.
     bind_new_batch(db, batch, anchor_message_id=anchor_message_id)
+    for item in created:
+        extras.assign_child_task(db, item["child"], batch)
     extras.ensure_parent_tasks(db, batch)
     extras.write_watch(batch)
 
