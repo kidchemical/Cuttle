@@ -124,3 +124,16 @@ def test_legacy_checks_only_before_retained_history(chats):
     items = _items(chats, sup)
     assert len([i for i in items if i['source'] == 'telemetry' and i['kind'] == 'error']) == 1
     assert len({i['id'] for i in items}) == len(items)
+
+
+def test_cli_timeline_prints_the_projection_headline(chats, monkeypatch, capsys):
+    """Not a stub: the CLI runs the real projection and prints its headline."""
+    from api import auth_db
+    from api.chat_cli.cli import main
+    db, _, sup, _, _ = chats
+    sched = _schedule(chats)
+    store.record_check(sched['id'], 'stalled', {'stalled_min': 45, 'state': 'idle_with_work'})
+    monkeypatch.setattr('api.chat_cli.cli._open_db', lambda _path=None: db)
+    monkeypatch.setattr(auth_db, 'get_auth_db', lambda: db)
+    assert main(['timeline', f'CH-{sup:06d}']) == 0
+    assert 'stalled  worker has been stuck for 45 min' in capsys.readouterr().out
