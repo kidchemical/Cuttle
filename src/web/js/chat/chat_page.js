@@ -352,7 +352,7 @@
     });
     // Chat supervision chip/badge/dialog (experimental `chat_supervision`).
     const supervision = CuttleChatSupervision.create({
-        doc: document, fetch: (u, o) => fetch(u, o), now: () => Date.now(), escapeHtml: escapeHtmlInline,
+        doc: document, fetch: (u, o) => fetch(u, o), now: () => Date.now(), escapeHtml: escapeHtmlInline, isStudio: studioOn,
         onSupervised: (sid, on, by) => composerLock.setSupervised(sid, on, by),
         enabledFlags: fetchEnabledExperimentalFlags, openChat: (sid) => loadChatSession(sid),
         closeMenus: () => closeAllSessionMenus(), confirm: (m) => window.confirm(m),
@@ -4045,7 +4045,25 @@
         );
     }
 
-    function messageHeaderBadgesHtml(chipList, isError, project) {
+    /** Studio display is on for this page (chat_display.js: pref AND the cached flag). */
+    function studioOn() {
+        return !!(window.CuttleChatDisplay && CuttleChatDisplay.isStudio());
+    }
+
+    /**
+     * Agent badge in a bubble header. Studio: identity dot + name, plus "Working"
+     * while the turn runs (CuttleWorkPanel). A failed turn keeps the Classic chip
+     * so its error styling still shows. Classic: the chip, unchanged.
+     */
+    function agentHeaderChipsHtml(agent, failed, working) {
+        const panel = window.CuttleWorkPanel;
+        if (!agent.length || failed || !studioOn() || !panel) {
+            return slashCommandChipsHeaderHtml(agent, failed, true);
+        }
+        return agent.map((c) => panel.agentHeaderHtml(c.category, { label: c.label, working })).join('');
+    }
+
+    function messageHeaderBadgesHtml(chipList, isError, project, working) {
         const projectHtml = projectChipHtml(project, { header: true });
         const ordered = sortChipsAgentThenCommand(chipList || []);
         const failed = !!isError;
@@ -4053,7 +4071,7 @@
         const command = ordered.filter((c) => !isAgentHeaderChip(c));
         return (
             projectHtml +
-            slashCommandChipsHeaderHtml(agent, failed, true) +
+            agentHeaderChipsHtml(agent, failed, !!working) +
             slashCommandChipsHeaderHtml(command, failed)
         );
     }
@@ -6171,7 +6189,7 @@
             ? currentTypingSlashMeta()
             : null;
         const chips = meta && meta.chips ? collapseCursorSlashChips(meta.chips) : [];
-        const html = messageHeaderBadgesHtml(chips, false, currentProject);
+        const html = messageHeaderBadgesHtml(chips, false, currentProject, true);
         ['typing-indicator', 'typing-indicator-remote'].forEach((id) => {
             const el = document.getElementById(id);
             if (!el) return;
@@ -11517,6 +11535,7 @@
     function addTypingIndicator(slashMeta) {
         const messagesContainer = document.getElementById('chatMessages');
         if (!messagesContainer) return;
+        orchestration.setWorking(true); // Studio pill: the turn is live
         const typingDiv = document.createElement('div');
         typingDiv.className = 'message assistant';
         typingDiv.id = 'typing-indicator';
@@ -11524,7 +11543,7 @@
             const chips = slashMeta && slashMeta.chips
                 ? collapseCursorSlashChips(slashMeta.chips)
                 : [];
-            return messageHeaderBadgesHtml(chips, false, currentProject);
+            return messageHeaderBadgesHtml(chips, false, currentProject, true);
         })();
         
         typingDiv.innerHTML = `
@@ -11831,6 +11850,7 @@
     }
 
     function removeTypingIndicator() {
+        orchestration.setWorking(false);
         clearConnectingWatchdog();
         clearStreamStatusPoll();
         const indicator = document.getElementById('typing-indicator');
@@ -12407,6 +12427,8 @@
     // Initialize on page load
     document.addEventListener('DOMContentLoaded', function() {
         LOG('DOMContentLoaded: Chat page initializing');
+        // Refresh the cached chat_studio_display flag so Studio can turn on (chat_display.js).
+        window.CuttleChatDisplay && CuttleChatDisplay.syncFlag();
         CuttleUsageLive.start(formatMessage);
 
         // Initialize theme
