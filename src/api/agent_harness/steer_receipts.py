@@ -324,6 +324,9 @@ class Receipts:
 # current turn. Both maps are taken while the emitting tracker's lock is held
 # (the lock order is always tracker → these, so it cannot deadlock), and
 # nothing under them touches the database: the writer thread does that.
+# The writer's exit decision is the one place that nests ``_write_lock`` →
+# ``_pending_lock``; nothing anywhere nests them the other way round, and
+# neither critical section calls out of this module.
 _pending_lock = threading.Lock()
 _pending = {}
 _live = {}
@@ -580,6 +583,12 @@ def _ensure_writer():
             _writer.start()
 
 
+def _retaining():
+    """Whether anything is still held (read inside ``_write_lock``; no I/O)."""
+    with _pending_lock:
+        return bool(_pending)
+
+
 def _writer_loop():
     global _inflight, _writer
     log = logging.getLogger(__name__)
@@ -588,14 +597,15 @@ def _writer_loop():
         _wake.clear()
         with _pending_lock:
             _purge_locked()  # time-bound retention even on an idle daemon
-            retaining = bool(_pending)
         with _write_lock:
             if not _queue:
-                if not retaining and not _inflight:
-                    # Nothing queued and nothing retained: stop waking up. The
-                    # next track()/changed() starts a fresh writer, and both
-                    # add their work under _write_lock before _ensure_writer,
-                    # so no handoff can be missed.
+                # Nothing queued and nothing retained: stop waking up. Both
+                # the exit decision and ``_ensure_writer`` happen under
+                # _write_lock, and retention is re-read inside it, so a
+                # ``track`` racing this exit either keeps the writer alive or
+                # sees it gone and starts a new one — the handoff cannot be
+                # missed in either order.
+                if not _inflight and not _retaining():
                     if _writer is threading.current_thread():
                         _writer = None
                     return
