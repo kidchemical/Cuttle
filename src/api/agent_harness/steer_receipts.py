@@ -268,6 +268,7 @@ _live = {}
 
 _write_lock = threading.Lock()
 _queue = {}
+_inflight = 0
 _wake = threading.Event()
 _writer = None
 
@@ -461,6 +462,7 @@ def _ensure_writer():
 
 
 def _writer_loop():
+    global _inflight
     log = logging.getLogger(__name__)
     while True:
         _wake.wait(timeout=_WRITER_IDLE_SEC)
@@ -470,28 +472,38 @@ def _writer_loop():
                 continue
             batch = dict(_queue)
             _queue.clear()
-        retry = {}
-        for items in _group_by_db(batch).values():
-            try:
-                items[0]['db'].patch_message_metadata(
-                    [(item['message_id'], {'steer': item['patch']}) for item in items])
-            except Exception:
-                log.warning("Steer receipt write failed for %d row(s)", len(items),
-                            exc_info=True)
-                for item in items:
-                    item['attempts'] += 1
-                    if item['attempts'] < _MAX_WRITE_ATTEMPTS:
-                        retry[item['steer_id']] = item
-                continue
-            for item in items:
-                if item['ended']:
-                    _release(item['steer_id'])
+            _inflight += 1
+        try:
+            retry = _write_batch(batch, log)
+        finally:
+            with _write_lock:
+                _inflight -= 1
         if retry:
             with _write_lock:
                 for steer_id, item in retry.items():
                     _queue.setdefault(steer_id, item)
             time.sleep(_RETRY_SLEEP_SEC)
             _wake.set()
+
+
+def _write_batch(batch, log):
+    """Persist one coalesced batch; returns the items worth another attempt."""
+    retry = {}
+    for items in _group_by_db(batch).values():
+        try:
+            items[0]['db'].patch_message_metadata(
+                [(item['message_id'], {'steer': item['patch']}) for item in items])
+        except Exception:
+            log.warning("Steer receipt write failed for %d row(s)", len(items), exc_info=True)
+            for item in items:
+                item['attempts'] += 1
+                if item['attempts'] < _MAX_WRITE_ATTEMPTS:
+                    retry[item['steer_id']] = item
+            continue
+        for item in items:
+            if item['ended']:
+                _release(item['steer_id'])
+    return retry
 
 
 def _group_by_db(batch):
@@ -519,7 +531,7 @@ def flush(timeout=5.0):
     deadline = time.monotonic() + timeout
     while True:
         with _write_lock:
-            if not _queue:
+            if not _queue and not _inflight:
                 return True
         if time.monotonic() >= deadline:
             return False
