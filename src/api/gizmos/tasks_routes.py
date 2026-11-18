@@ -68,7 +68,7 @@ def task_gizmo(gizmo_id):
         data = _body()
         ops = {**data, **(data.get('patch') if isinstance(data.get('patch'), dict) else {})}
         actor = _actor(data)
-        item_ops = any(key in ops for key in ('set_done', 'set_undone', 'set_text', 'items', 'add', 'remove'))
+        item_ops = any(key in ops for key in tasks.ITEM_EDIT_OPS)
         row = tasks.patch(gizmo_id, ops, user_id=uid, session_id=data.get('session_id'), actor=actor,
                           item_edit=item_ops and actor['source'] == 'ui')
     if request.args.get('summary', '').strip().lower() in ('1', 'true', 'yes'):
@@ -91,11 +91,23 @@ def task_related(gizmo_id):
 @tasks_bp.route('/<gizmo_id>/items/<item_id>', methods=['PATCH'])
 @authenticated_required
 def task_item(gizmo_id, item_id):
+    """Body: ``done`` (bool), ``owner`` (object or null), ``in_progress`` (bool).
+
+    ``done`` stays required unless ``owner`` or ``in_progress`` is sent.
+    """
     data = _body()
-    if not isinstance(data.get('done'), bool):
-        raise GizmoError('done must be a boolean')
-    row = tasks.patch(gizmo_id, {'set_done' if data['done'] else 'set_undone': [item_id]},
-                      user_id=current_user()['id'], session_id=data.get('session_id'),
+    ops = {}
+    if ('owner' not in data and 'in_progress' not in data) or 'done' in data:
+        if not isinstance(data.get('done'), bool):
+            raise GizmoError('done must be a boolean')
+        ops['set_done' if data['done'] else 'set_undone'] = [item_id]
+    if 'owner' in data:
+        ops['set_owner'] = {item_id: data['owner']}
+    if 'in_progress' in data:
+        if not isinstance(data['in_progress'], bool):
+            raise GizmoError('in_progress must be a boolean')
+        ops['set_in_progress' if data['in_progress'] else 'clear_in_progress'] = [item_id]
+    row = tasks.patch(gizmo_id, ops, user_id=current_user()['id'], session_id=data.get('session_id'),
                       actor=_actor(data), item_edit=True)
     return jsonify(success=True, gizmo=row)
 

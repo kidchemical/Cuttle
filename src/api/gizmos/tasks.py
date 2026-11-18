@@ -5,6 +5,7 @@ all task semantics to Gizmos transports; auth_db owns transactions and audit.
 Tasks are established behavior and remain available without the usage flag.
 """
 from __future__ import annotations
+import copy
 from api.gizmos import tasks_model as model
 from api.gizmos.service import GizmoError
 from core.agent_cli_env import operation_actor
@@ -30,14 +31,71 @@ def session_context(session_id, *, user_id=None, db=None):
 
 
 MAX_LINKS = 50
+# Ops that change which items are done (these reactivate an archived list).
+DONE_ITEM_OPS = ('items', 'add', 'remove', 'set_done', 'set_undone')
+# Every op that edits items; the UI may send these only on a shared list.
+ITEM_EDIT_OPS = DONE_ITEM_OPS + ('set_text', 'set_owner', 'set_in_progress', 'clear_in_progress')
+
+
+def _chat_handle(session_id):
+    # Same CH-NNNNNN form as api.subagents.types.chat_handle (not imported: that
+    # package pulls in the whole sub-agent service).
+    return f'CH-{int(session_id):06d}'
+
+
+def _fill_chat_owner(owner, *, user_id, db):
+    """Owner of kind chat → canonical handle of one of ``user_id``'s chats.
+
+    Missing label defaults to the chat title. Anything else is returned as-is
+    for the pure model to validate.
+    """
+    if not isinstance(owner, dict) or str(owner.get('kind') or '').strip().lower() != 'chat':
+        return owner
+    handle = str(owner.get('id') or '').strip()
+    if not handle:
+        raise GizmoError('a chat owner needs the chat handle as id')
+    _, sid, _ = session_context(handle, user_id=user_id, db=db)
+    out = dict(owner)
+    out['kind'] = 'chat'
+    out['id'] = _chat_handle(sid)
+    if not str(out.get('label') or '').strip():
+        row = database(db).get_chat_session_by_id(sid) or {}
+        out['label'] = str(row.get('session_name') or out['id'])[:model.OWNER_LABEL_MAX]
+    return out
+
+
+def _fill_owner_nodes(nodes, *, user_id, db):
+    for node in nodes or []:
+        if not isinstance(node, dict):
+            continue
+        if node.get('owner') is not None:
+            node['owner'] = _fill_chat_owner(node['owner'], user_id=user_id, db=db)
+        _fill_owner_nodes(node.get('children') or [], user_id=user_id, db=db)
+
+
+def _canonical_owner_ops(ops, *, user_id, db):
+    """Copy of ``ops`` with every chat owner resolved and checked (see above)."""
+    ops = copy.deepcopy(ops)
+    if isinstance(ops.get('set_owner'), dict):
+        ops['set_owner'] = {iid: _fill_chat_owner(owner, user_id=user_id, db=db)
+                            for iid, owner in ops['set_owner'].items()}
+    for entry in ops.get('add') or []:
+        if isinstance(entry, dict):
+            node = entry.get('item') if isinstance(entry.get('item'), dict) else entry
+            _fill_owner_nodes([node], user_id=user_id, db=db)
+    if isinstance(ops.get('items'), list):
+        _fill_owner_nodes(ops['items'], user_id=user_id, db=db)
+    return ops
 
 
 def public(row):
+    payload = row.get('payload') or {}
     return {**row, 'linked_sessions': list(row.get('linked_sessions') or []),
             'placement': {'dock': 'composer'},
+            'origin_turn_id': str(payload.get('origin_turn_id') or ''),
             'config': {k: row.get(k) for k in ('scope', 'session_id', 'project_path',
                                               'description', 'edit_mode', 'status')}
-                      | {'items': (row.get('payload') or {}).get('items', []),
+                      | {'items': payload.get('items', []),
                          'linked_sessions': list(row.get('linked_sessions') or [])}}
 
 
@@ -117,7 +175,11 @@ def create(*, gizmo_id=None, title='Tasks', items=None, description='', scope='s
         raise GizmoError('project-scoped Tasks require a chat with a project')
     if not isinstance(items, list) or not items:
         raise GizmoError('create Tasks with a nonempty items array')
-    payload = model.normalize_tasks_payload({'items': items})
+    items = _canonical_owner_ops({'items': items}, user_id=uid, db=db)['items']
+    try:
+        payload = model.normalize_tasks_payload({'items': items}, strict=True)
+    except ValueError as exc:
+        raise GizmoError(str(exc)) from exc
     if not payload['items']:
         raise GizmoError('create Tasks with real items')
     _validate(payload)
@@ -155,11 +217,13 @@ def patch(gizmo_id, ops, *, user_id=None, session_id=None, actor=None, db=None, 
     if not isinstance(ops, dict):
         raise GizmoError('patch must be an object')
     db = database(db)
-    for key in ('set_done', 'set_undone', 'remove', 'add', 'items', 'link', 'unlink', 'linked_sessions'):
+    for key in ('set_done', 'set_undone', 'remove', 'add', 'items', 'link', 'unlink', 'linked_sessions',
+                'set_in_progress', 'clear_in_progress'):
         if key in ops and not isinstance(ops[key], list):
             raise GizmoError(f'{key} must be an array')
-    if 'set_text' in ops and not isinstance(ops['set_text'], dict):
-        raise GizmoError('set_text must be an object')
+    for key in ('set_text', 'set_owner'):
+        if key in ops and not isinstance(ops[key], dict):
+            raise GizmoError(f'{key} must be an object')
     if 'status' in ops and ops['status'] not in ('active', 'archived'):
         raise GizmoError('status must be active or archived')
     if session_id is not None:
@@ -191,14 +255,18 @@ def patch(gizmo_id, ops, *, user_id=None, session_id=None, actor=None, db=None, 
         target_project = project if scope != row['scope'] else row.get('project_path', '')
         if scope == 'project' and not target_project:
             raise GizmoError('project-scoped Tasks require a project')
-        payload = model.apply_tasks_patch(row['payload'], ops)
+        ops_c = _canonical_owner_ops(ops, user_id=uid, db=db)
+        try:
+            payload = model.apply_tasks_patch(row['payload'], ops_c)
+        except ValueError as exc:
+            raise GizmoError(str(exc)) from exc
         _validate(payload)
         links = _apply_link_ops(row.get('linked_sessions'), ops, user_id=uid, db=db)
         home = sid if scope != row['scope'] else row.get('session_id')
         if links is not None and scope == 'session':
             links = [l for l in links if l != home]
         requested = ops.get('status')
-        item_ops = any(key in ops for key in ('items', 'add', 'remove', 'set_done', 'set_undone'))
+        item_ops = any(key in ops for key in DONE_ITEM_OPS)
         if requested is None and not item_ops:
             requested = row['status']
         try:
