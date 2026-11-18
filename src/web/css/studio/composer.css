@@ -21,9 +21,10 @@
     box-shadow: var(--studio-focus-ring), var(--studio-shadow-composer);
 }
 
-/* Slash menu: the typed prefix reads as the mock's bold accent ("/orch"). */
+/* Slash menu: the typed prefix in the item title reads as the mock's purple ("**orch**estrate").
+   Colour only: the title keeps its own weight. */
 :root.cuttle-studio .slash-prefix-hit {
-    font-weight: var(--studio-weight-heavy);
+    font-weight: inherit;
     color: var(--studio-accent);
 }
 

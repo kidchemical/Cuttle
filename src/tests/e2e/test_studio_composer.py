@@ -114,7 +114,8 @@ def test_studio_palette_bolds_the_typed_prefix(browser, static_server):  # noqa:
     try:
         assert page.evaluate("document.documentElement.classList.contains('cuttle-studio')")
         item = _type_slash(page)
-        expect(item.locator(".slash-cmd-meta .slash-prefix-hit")).to_have_text(re.compile(r"^/?orc$"))
+        expect(item.locator(".slash-cmd-title .slash-prefix-hit")).to_have_text("orc")
+        assert item.locator(".slash-cmd-meta .slash-prefix-hit").count() == 0  # the command column stays plain
         _settle_rows(page)
         _shot(page, "composer-palette-studio")
         # Picking the command leaves the same orchestrate chip in the composer.
