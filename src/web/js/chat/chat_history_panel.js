@@ -1240,7 +1240,7 @@
                 html += '</div>';
             };
 
-            paintTier('__search_titles__', 'Matching titles', titleEntries.concat(termEntries));
+            paintTier('__search_titles__', 'Matching titles', titleEntries);
             paintTier('__search_content__', 'In messages', contentEntries);
 
             view.paint(historyContainer, html, () => {

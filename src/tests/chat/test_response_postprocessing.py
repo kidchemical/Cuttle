@@ -120,6 +120,22 @@ def test_interactive_cards_ride_through_after_processed_prose(settings, monkeypa
     assert body['postprocessing']['original_response'] == original
 
 
+def test_tags_quoted_in_markdown_code_stay_in_the_prose(settings, monkeypatch):
+    # Regression: a reply quoting a rule ("emit one `<cuttle_action_form>` …") was
+    # cut at the quote; the rest rode outside the original-response wrapper.
+    form = '<cuttle_action_form>{"id": "f1"}</cuttle_action_form>'
+    prose = ('Rule 2: emit one Q&A `<cuttle_action_form>` with `"resume": true`.\n\n'
+             '```xml\n<cuttle_confirm action="git.push">\n```\n\nRule 9 says more.')
+    seen = []
+    monkeypatch.setattr(bg, 'generate', lambda t, req, **kw: seen.append(req.user) or TextResult('TLDR'))
+    body = {'success': True, 'response': prose + '\n\n' + form}
+    pp.process_result(body)
+    assert seen == [prose]
+    assert body['response'] == (
+        '<cuttle_original_response>' + __import__('json').dumps(prose)
+        + '</cuttle_original_response>\n\nTLDR\n\n' + form)
+
+
 @pytest.mark.parametrize('outcome', [None, TextResult(''), TextResult('<cuttle_confirm action="x">'), RuntimeError('secret')])
 def test_failure_keeps_original(settings, monkeypatch, outcome):
     def generate(*a, **kw):
