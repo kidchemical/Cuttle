@@ -54,11 +54,16 @@
         var inProgress = studio && !done && item.in_progress === true;
         var shared = !!opts.shared;
         var disabled = shared ? '' : ' disabled';
-        var owner = '';
-        if (studio && item.owner && typeof item.owner === 'object') {
-            owner = '<div class="chat-widget-task-owner-row">'
-                + (typeof opts.ownerHtml === 'function' ? opts.ownerHtml(item.owner) : defaultOwnerHtml(item.owner))
-                + '</div>';
+        var textHtml = '<div class="chat-widget-task-text">' + text + '</div>';
+        var body = textHtml;
+        if (studio) {
+            // Studio: the owner sits on the text's line, right-aligned (dot + name, muted).
+            var owner = (item.owner && typeof item.owner === 'object')
+                ? '<span class="chat-widget-task-owner">'
+                    + (typeof opts.ownerHtml === 'function' ? opts.ownerHtml(item.owner) : defaultOwnerHtml(item.owner))
+                    + '</span>'
+                : '';
+            body = '<div class="chat-widget-task-line">' + textHtml + owner + '</div>';
         }
         return (
             '<li class="chat-widget-task' + (done ? ' is-done' : '') + (inProgress ? ' is-in-progress' : '')
@@ -66,8 +71,7 @@
             '<input type="checkbox" ' + (done ? 'checked ' : '') + disabled +
             ' aria-label="' + (shared ? 'Toggle task' : 'Agent-managed task') + '"/>' +
             '<div style="flex:1;min-width:0">' +
-            '<div class="chat-widget-task-text">' + text + '</div>' +
-            owner +
+            body +
             (opts.childrenHtml || '') +
             '</div></li>'
         );
