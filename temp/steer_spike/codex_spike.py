@@ -12,7 +12,7 @@ async def main():
     out.unlink(missing_ok=True)
     task = asyncio.create_task(run_codex_turn_app_server(
         'Inspect the repository: list files, read three source files in separate shell commands, then summarize each briefly. Do not change files.',
-        cwd=str(Path.cwd()), resume=None, model='gpt-5.1-codex-mini', reasoning_effort='low',
+        cwd=str(Path.cwd()), resume=None, model='gpt-5.6-sol', reasoning_effort='low',
         chat_session_id='steer-spike-isolated', timeout=120, on_event=lambda e: record('event', e)))
     for delay, msg in [(10, 'Briefly acknowledge this request: mention the color amber.'), (1, 'Also mention the word cobalt.'), (15, 'Please mention the word jade in your summary.')]:
         await asyncio.sleep(delay)
