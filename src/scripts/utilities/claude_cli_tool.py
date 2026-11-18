@@ -785,6 +785,9 @@ class ClaudeCliTool:
                 try:
                     proc.stdin.write(_user_line(text))
                 except Exception as exc:
+                    # A failed pipe write is not the CLI refusing the line: part
+                    # of it may already have been flushed, so acceptance is
+                    # unknown and an in-scope echo may still be this send's own.
                     st["delivery"].acknowledge(receipt, succeeded=False)
                     out.set_result((False, str(exc)))
                     return

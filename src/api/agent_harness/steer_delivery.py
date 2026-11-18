@@ -16,7 +16,9 @@ several identical sends are confirmed only when each one can be paired with a
 distinct echo that could have been its own. A send the transport then rejects
 claims a held echo that could only have been its own — the agent read it, so
 the client must not send it again — and the remaining echoes are re-checked
-against the sends that are left.
+against the sends that are left. A send the vendor **explicitly refuses** is
+different: it was definitely not read, so it claims nothing and the echo goes
+to the sibling it must have belonged to (``acknowledge(..., refused=True)``).
 """
 
 from dataclasses import dataclass
@@ -65,10 +67,22 @@ class SteerDelivery:
         self._held.append({"key": key, "scope": {id(r) for r in candidates}})
         return self._resolve(key)
 
-    def acknowledge(self, receipt: SteerReceipt, *, succeeded: bool) -> bool:
-        # An echoed request survives a lost/late RPC reply. Rejecting it would
-        # cause the client to enqueue input the running agent already received.
-        if not succeeded and not receipt.received:
+    def acknowledge(self, receipt: SteerReceipt, *, succeeded: bool,
+                    refused: bool = False) -> bool:
+        """Record the transport's answer for one send. True when it is accepted.
+
+        ``refused=True`` is the **vendor's own** answer that it did not take
+        this send (a ``turn/steer`` error response, a closed input the CLI
+        reported): the send was definitely not read, so it claims no held echo
+        and the echoes in flight are re-checked against the sends that are
+        left — an identical sibling may now own one unambiguously.
+
+        ``succeeded=False`` with ``refused=False`` is an **ambiguous** failure
+        (timeout, lost or late reply, transport error): acceptance is unknown,
+        so an in-scope held echo is claimed as this send's own. Rejecting it
+        instead would make the client enqueue input the agent already received.
+        """
+        if not succeeded and not refused and not receipt.received:
             self._claim_held(receipt)
         receipt.accepted = succeeded or receipt.received
         receipt.rejected = not receipt.accepted
@@ -170,6 +184,17 @@ def _pair_each(candidates, echoes):
         if not assign(index, set()):
             return None
     return pairs
+
+
+def vendor_refused(error: object) -> bool:
+    """True when ``error`` is the vendor's own refusal of a send, not an unknown.
+
+    A JSON-RPC error object answering the request carries a ``code``: the
+    server saw the send and declined it. Failures synthesized locally (the loop
+    closed, stdin gone, no reply at all) carry only a message, and acceptance
+    is then unknown — the conservative branch of ``acknowledge``.
+    """
+    return isinstance(error, dict) and error.get('code') is not None
 
 
 def _identical_phrase(texts: List[str], totals: Optional[Dict[str, int]]) -> str:

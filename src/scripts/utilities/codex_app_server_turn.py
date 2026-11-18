@@ -217,7 +217,7 @@ async def run_codex_turn_app_server(
     rid = (resume or "").strip()
 
     from api.agent_harness import steer as steer_registry
-    from api.agent_harness.steer_delivery import SteerDelivery
+    from api.agent_harness.steer_delivery import SteerDelivery, vendor_refused
     from api.agent_harness.activity import ActivityEmitter, TextActivityLog, ToolActivityLog, text_preview
 
     from api.agent_harness import codex_thread_ownership as _ownership
@@ -356,8 +356,10 @@ async def run_codex_turn_app_server(
         def _done(_result: Optional[Dict[str, Any]], error: Optional[Dict[str, Any]]) -> None:
             if out.done():
                 return
+            # A vendor error *answer* refuses the send; a synthesized failure
+            # (loop closed, no reply) leaves acceptance unknown.
             accepted = receipt[0] is not None and delivery.acknowledge(
-                receipt[0], succeeded=error is None)
+                receipt[0], succeeded=error is None, refused=vendor_refused(error))
             if not accepted:
                 out.set_result((False, rpc_error_text(error)))
             else:

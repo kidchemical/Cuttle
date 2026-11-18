@@ -1008,3 +1008,55 @@ def test_recorded_muse_steered_item_and_agent_message():
     assert receipt['state'] == 'delivered'
     assert receipt['reply']['text'] == 'Command finished with output `READY`.'
     assert delivery.undelivered == []
+
+
+# ── explicit rejection vs ambiguous failure ─────────────────────────────────
+
+def test_an_explicit_vendor_rejection_credits_the_echo_to_the_other_send():
+    """Codex final 1: a refusal is proof the send was NOT read.
+
+    Identical A and B outstanding, one echo. B's RPC answers with the vendor's
+    own rejection, so the echo can only have been A's line: A is delivered, B
+    is not, and B's ack reports failure so the client keeps it on the queue.
+    """
+    from api.agent_harness.steer_delivery import SteerDelivery
+
+    confirmed = []
+    delivery = SteerDelivery(confirmed=lambda rs: confirmed.extend(r.steer_id for r in rs))
+    first = delivery.begin('same', 'A')
+    second = delivery.begin('same', 'B')
+    assert delivery.acknowledge(first, succeeded=True) is True
+    assert delivery.receive('same', 'u1') == [], 'either send could own this echo'
+
+    assert delivery.acknowledge(second, succeeded=False, refused=True) is False
+    assert confirmed == ['A'], 'the echo belongs to the send that was accepted'
+    assert first.received is True and second.received is False
+    assert second.rejected is True
+    assert delivery.undelivered == [], 'A is confirmed, B was never accepted'
+    assert delivery.accepted_count == 1
+
+
+def test_an_ambiguous_failure_still_claims_its_own_held_echo():
+    """A timeout/transport error leaves acceptance unknown: no double send."""
+    from api.agent_harness.steer_delivery import SteerDelivery
+
+    delivery = SteerDelivery()
+    first = delivery.begin('same', 'A')
+    second = delivery.begin('same', 'B')
+    delivery.acknowledge(first, succeeded=True)
+    assert delivery.receive('same', 'u1') == []
+    # No vendor answer at all: the held echo may well have been B's own line.
+    assert delivery.acknowledge(second, succeeded=False) is True
+    assert second.received is True and first.received is False
+    assert delivery.undelivered == ['same']
+
+
+def test_only_the_vendors_own_error_answer_counts_as_a_refusal():
+    """The runners' discriminator: a synthesized local failure is ambiguous."""
+    from api.agent_harness.steer_delivery import vendor_refused
+
+    assert vendor_refused({'code': -32602, 'message': 'no such turn'}) is True
+    assert vendor_refused({'message': 'event loop closed: ...'}) is False
+    assert vendor_refused({'message': 'server connection closed'}) is False
+    assert vendor_refused(None) is False
+    assert vendor_refused('boom') is False

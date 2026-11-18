@@ -147,8 +147,15 @@ after a reload the user row is the only source of truth.
   held echo is evidence **scoped to the sends outstanding when it arrived**: it
   can never confirm a send made later, identical sends are confirmed only when
   each can be paired with a distinct echo that could have been its own, and a
-  send the transport then rejects claims a held echo from its own scope (the
-  agent read it, so the client must not re-send it).
+  send whose outcome is **unknown** (timeout, lost reply, transport error)
+  claims a held echo from its own scope — the agent may well have read it, so
+  the client must not re-send it. A send the **vendor itself refuses** (an
+  error answer to `turn/steer`) is the opposite case: it was definitely not
+  read, so it claims nothing, and the echo in flight is credited to the
+  identical sibling it must have belonged to. `acknowledge(receipt,
+  succeeded=…, refused=…)` carries that distinction, and `vendor_refused()`
+  is where the runners draw the line (an error object with a `code` is the
+  vendor's answer; a locally synthesized message is an unknown).
 - **A delivery timeout after the echo still reports `steered: true`.** The echo
   proves the agent read the text; reporting failure would make the client send
   it again.
