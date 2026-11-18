@@ -333,6 +333,8 @@ def test_a_superseded_turn_publishes_and_persists_nothing(tmp_path):
         assert steer_receipts.flush(2.0)
         assert db.writes == []
         assert steer_receipts.live('945') == []
+        assert steer_receipts.snapshot(info['steer_id']) is None
+        assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
     finally:
         chat_delivery.end(945)
         steer_receipts.discard(info['steer_id'])

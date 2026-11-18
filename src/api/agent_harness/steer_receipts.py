@@ -355,9 +355,12 @@ def _superseded(snapshot):
 
 def changed(snapshot):
     """Publish a snapshot to live status and queue its write. Never blocks."""
-    if _superseded(snapshot):
-        return
     steer_id = snapshot['steer_id']
+    if _superseded(snapshot):
+        # A newer turn owns the chat: this receipt can never land, so it is
+        # neither published nor saved — and nothing is kept for it.
+        discard(steer_id)
+        return
     contract = {key: snapshot[key] for key in
                 ('v', 'steer_id', 'state', 'delivered_at', 'mode', 'reply', 'covers')}
     with _pending_lock:
@@ -467,6 +470,8 @@ def _writer_loop():
     while True:
         _wake.wait(timeout=_WRITER_IDLE_SEC)
         _wake.clear()
+        with _pending_lock:
+            _purge_locked()  # time-bound retention even on an idle daemon
         with _write_lock:
             if not _queue:
                 continue
