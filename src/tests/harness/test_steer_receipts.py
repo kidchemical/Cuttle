@@ -465,6 +465,30 @@ def test_a_receipt_callback_that_raises_never_stops_the_turn(caplog):
     assert 'Steer receipt update failed' in caplog.text
 
 
+def test_real_auth_db_patches_a_batch_without_losing_other_metadata():
+    """The writer's one transaction, against the production patcher."""
+    from api.auth_db import get_auth_db
+
+    db = get_auth_db()
+    user = db.create_user('steer-receipts@example.com', 'Steer', 'local')
+    user_id = user['id'] if isinstance(user, dict) else user
+    session_id = db.create_chat_session(user_id, 'receipts')
+    first = db.add_message(session_id, 'user', 'one', metadata={'steered': True})
+    second = db.add_message(session_id, 'user', 'two', metadata={'steered': True})
+    assert db.patch_message_metadata([
+        (first, {'steer': steer_receipts.insert_shape('a')}),
+        (second, {'steer': steer_receipts.insert_shape('b')}),
+    ]) == 2
+    rows = {row['id']: row['metadata'] for row in db.get_messages(session_id) if row['role'] == 'user'}
+    assert rows[first]['steer']['steer_id'] == 'a'
+    assert rows[first]['steered'] is True, 'the patch merges, never replaces the row metadata'
+    assert rows[second]['steer']['state'] == 'pending'
+    assert db.patch_message_metadata([(first, {'steer': None})]) == 1
+    assert 'steer' not in {row['id']: row['metadata'] for row in db.get_messages(session_id)}[first]
+    assert db.patch_message_metadata([]) == 0
+    assert db.patch_message_metadata([(999999, {'steer': {}})]) == 0
+
+
 # ── recorded vendor streams (the runners' own parsing) ──────────────────────
 
 def _fixture(name):
