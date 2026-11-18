@@ -27,7 +27,7 @@ import os
 import shutil
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from core.agent_cli_env import agent_cli_env
 from scripts.utilities.agent_process import (
@@ -594,6 +594,7 @@ class ClaudeCliTool:
         steerable: bool = False,
         background: Any = None,
         extra_env: Optional[Dict[str, str]] = None,
+        on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
         _ctl: Optional[_Detach] = None,
     ) -> Dict[str, Any]:
         if background is not None and steerable and _ctl is None:
@@ -602,7 +603,7 @@ class ClaudeCliTool:
                 prompt, cwd=cwd, resume=resume, status_queue=status_queue,
                 chat_session_id=chat_session_id, timeout=timeout,
                 permission_mode=permission_mode, cancel_event=cancel_event,
-                steerable=True, background=background, extra_env=extra_env, _ctl=ctl,
+                steerable=True, background=background, extra_env=extra_env, on_event=on_event, _ctl=ctl,
             ))
         ctl = _ctl
         if not (prompt or "").strip():
@@ -846,6 +847,11 @@ class ClaudeCliTool:
                 return
             if not isinstance(obj, dict):
                 return
+            if on_event is not None:
+                try:
+                    on_event(obj)
+                except Exception:
+                    pass  # Observation must not interrupt transport.
             detached = ctl is not None and ctl.detached
             if (detached and obj.get("type") in ("assistant", "stream_event")
                     and not obj.get("parent_tool_use_id")):

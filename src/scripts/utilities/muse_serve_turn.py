@@ -17,7 +17,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from scripts.utilities.agent_process import (
     attach_to_chat_run,
@@ -171,6 +171,7 @@ async def run_muse_turn_serve(
     chat_session_id: Optional[str] = None,
     timeout: Optional[float] = None,
     cancel_event: Any = None,
+    on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
     if not (prompt or "").strip():
         return {"success": False, "error": "No prompt provided", "output": ""}
@@ -468,6 +469,11 @@ async def run_muse_turn_serve(
             msg = json.loads(raw.decode("utf-8", errors="replace").strip())
         except (json.JSONDecodeError, UnicodeDecodeError):
             return
+        if isinstance(msg, dict) and on_event is not None:
+            try:
+                on_event(msg)
+            except Exception:
+                pass  # Observation must not interrupt transport.
         if not isinstance(msg, dict) or rpc.dispatch_reply(msg):
             return
         method = str(msg.get("method") or "")
