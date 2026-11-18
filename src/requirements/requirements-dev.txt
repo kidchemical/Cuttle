@@ -3,8 +3,8 @@
 # Install alongside the runtime file:
 # .venv/bin/pip install -r src/requirements/requirements.txt -r src/requirements/requirements-dev.txt
 
-pytest>=9.1.1
+pytest>=9.2.0
 # pytest.ini uses --timeout=90.
 pytest-timeout>=2.4.0
-pytest-asyncio>=1.4.0,<2.0
-playwright>=1.63.0
+pytest-asyncio>=1.4.1,<2.0
+playwright>=1.64.1
