@@ -30,6 +30,8 @@ def project(session, *, before=None, limit=50, include_quiet=False):
                               'detail': '', 'refs': {'pid': pid}, 'source': 'check'})
         for row in rows:
             outcome, d = row['outcome'], row['detail']
+            if outcome == 'checkpoint' and d.get('checkpoint') != 'milestone':
+                continue
             if outcome in ('skipped', 'unchanged', 'note', 'acted', 'early_wake') and not include_quiet:
                 continue
             kind = {'violation':'guard','checkpoint':'milestone','paused_alert':'paused',
@@ -49,6 +51,16 @@ def project(session, *, before=None, limit=50, include_quiet=False):
             items.append({'schema_version':1,'id':f'check:{oid}:{row["at"]}:{outcome}','at':row['at'],'kind':kind,
                           'chat':f"CH-{int(op['target']):06d}",'headline':headline,'detail':text,
                           'refs':{k: v for k, v in {'branch': branch, 'command': command}.items() if v},'source':'check'})
+    from api.orchestration_telemetry import store as telemetry
+    for event in telemetry.events(kinds=('sup_schedule',)):
+        if event['session_id'] != sid or event['batch_id'] not in schedules:
+            continue
+        kind = {'pause': 'paused', 'resume': 'resumed'}.get(event['status'])
+        if kind:
+            op = schedules[event['batch_id']]
+            items.append({'schema_version': 1, 'id': f"telemetry:{event['id']}", 'at': event['at'],
+                          'kind': kind, 'chat': f"CH-{int(op['target']):06d}",
+                          'headline': f'Supervision {kind}', 'detail': '', 'refs': {}, 'source': 'telemetry'})
     for op in store.listing(sid):
         if (op['kind'] != 'send' or op['state'] not in ('delivered', 'done')
                 or op['target'] not in {s['target'] for s in schedules.values()}):
