@@ -747,7 +747,7 @@ def build_parser() -> argparse.ArgumentParser:
                             formatter_class=argparse.RawDescriptionHelpFormatter)
         if verb == 'timeline':
             op.add_argument('--limit', type=int, default=50)
-            op.add_argument('--before', type=float, default=None)
+            op.add_argument('--before', default=None)
             op.add_argument('--include-quiet', action='store_true')
         op.add_argument('--as', dest='as_chat', help='Acting chat (default CUTTLE_CHAT_SESSION_ID); same owner required')
         if verb not in _OPERATION_VERBS:

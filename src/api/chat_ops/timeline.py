@@ -7,11 +7,12 @@ from api.chat_ops import store
 def project(session, *, before=None, limit=50, include_quiet=False):
     sid = int(session)
     limit = max(1, min(200, int(limit)))
-    ops = [o for o in store.listing(sid) if o['kind'] == 'supervise']
+    operations = store.timeline_operations(sid)
+    ops = [o for o in operations if o['kind'] == 'supervise']
     schedules = {o['id']: o for o in ops}
     items = []
     for oid, op in schedules.items():
-        rows = store.checks(oid, limit=10000)
+        rows = store.timeline_checks(oid)
         snapshots = [row for row in reversed(rows) if 'process_snapshot' in row['detail']]
         from api.chat_ops.system_care import _size
         for previous, current in zip(snapshots, snapshots[1:]):
@@ -48,7 +49,7 @@ def project(session, *, before=None, limit=50, include_quiet=False):
             headline = {'guard': guard_headline,
                         'nudged':'Nudge delivered', 'stalled':'Chat stalled', 'milestone':'Task milestone reached',
                         'paused':'Supervision paused', 'resumed':'Supervision resumed', 'error':'Supervision check failed'}.get(kind, 'Supervision activity')
-            items.append({'schema_version':1,'id':f'check:{oid}:{row["at"]}:{outcome}','at':row['at'],'kind':kind,
+            items.append({'schema_version':1,'id':f'check:{row["id"]}','at':row['at'],'kind':kind,
                           'chat':f"CH-{int(op['target']):06d}",'headline':headline,'detail':text,
                           'refs':{k: v for k, v in {'branch': branch, 'command': command}.items() if v},'source':'check'})
     from api.orchestration_telemetry import store as telemetry
@@ -61,7 +62,7 @@ def project(session, *, before=None, limit=50, include_quiet=False):
             items.append({'schema_version': 1, 'id': f"telemetry:{event['id']}", 'at': event['at'],
                           'kind': kind, 'chat': f"CH-{int(op['target']):06d}",
                           'headline': f'Supervision {kind}', 'detail': '', 'refs': {}, 'source': 'telemetry'})
-    for op in store.listing(sid):
+    for op in operations:
         if (op['kind'] != 'send' or op['state'] not in ('delivered', 'done')
                 or op['target'] not in {s['target'] for s in schedules.values()}):
             continue
@@ -73,5 +74,12 @@ def project(session, *, before=None, limit=50, include_quiet=False):
     for x in items:
         if x['id'] in seen: continue
         seen.add(x['id']); unique.append(x)
-    if before is not None: unique=[x for x in unique if x['at'] < float(before)]
-    return {'schema_version':1,'items':unique[:limit], 'next_before':unique[limit-1]['at'] if len(unique)>limit else None}
+    if before is not None:
+        try:
+            timestamp, separator, ident = str(before).partition('|')
+            key = (float(timestamp), ident if separator else '')
+        except ValueError:
+            raise ValueError('Invalid timeline cursor') from None
+        unique = [x for x in unique if (x['at'], x['id']) < key]
+    cursor = f"{unique[limit-1]['at']}|{unique[limit-1]['id']}" if len(unique) > limit else None
+    return {'schema_version': 1, 'items': unique[:limit], 'next_before': cursor}

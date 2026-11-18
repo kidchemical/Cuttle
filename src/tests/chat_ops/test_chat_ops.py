@@ -1324,6 +1324,6 @@ def test_timeline_cli_handle_and_output(monkeypatch, capsys):
     monkeypatch.setattr(timeline, 'project', project)
     assert main(['timeline', 'CH-002620', '--limit', '3', '--before', '99', '--include-quiet']) == 0
     assert capsys.readouterr().out == '42  stalled  Chat stalled\n'
-    assert calls == [(2620, {'limit': 3, 'before': 99.0, 'include_quiet': True})]
+    assert calls == [(2620, {'limit': 3, 'before': '99', 'include_quiet': True})]
     assert main(['timeline', 'CH-002620', '--json']) == 0
     assert json.loads(capsys.readouterr().out)['items'][0]['kind'] == 'stalled'

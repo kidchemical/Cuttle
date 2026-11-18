@@ -69,6 +69,21 @@ def listing(actor):
         return [public(r) for r in conn.execute('SELECT * FROM operations WHERE actor=? ORDER BY updated DESC LIMIT 100', (actor,))]
 
 
+def timeline_operations(actor):
+    """All operations owned by the supervisor, without the UI listing cap."""
+    with connection() as conn:
+        return [public(r) for r in conn.execute(
+            "SELECT * FROM operations WHERE actor=? AND kind IN ('supervise','send')", (actor,))]
+
+
+def timeline_checks(schedule_id):
+    with connection() as conn:
+        return [{'id': r['rowid'], 'at': r['at'], 'outcome': r['outcome'],
+                 'detail': json.loads(r['detail'])} for r in conn.execute(
+                     'SELECT rowid, * FROM checks WHERE schedule_id=? ORDER BY at DESC, rowid DESC',
+                     (schedule_id,))]
+
+
 def involving(session_id, *, states=('pending', 'dispatching', 'verifying', 'paused')):
     """Live operations where the chat is the actor or the target."""
     marks = ','.join('?' * len(states))
