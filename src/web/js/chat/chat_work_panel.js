@@ -48,7 +48,11 @@
         return STATES.OPEN;
     }
 
-    /** {color, name} for an item owner: a chat or agent takes its harness colour; a person or group is neutral. Pure. */
+    /**
+     * {color, name, title} for an item owner. A chat or agent shows its agent
+     * identity (harness colour and agent name), the child chat's title only as
+     * `title` (tooltip); a person or group is neutral. Pure.
+     */
     function ownerIdentity(owner, rows) {
         const A = identityLib();
         const o = owner && typeof owner === 'object' ? owner : {};
@@ -56,14 +60,16 @@
         const kind = String(o.kind || '');
         if (kind === 'chat' || kind === 'agent') {
             const id = A.forAgent(o.agent || '', rows);
-            return { color: id.color, name: label || id.name };
+            return { color: id.color, name: o.agent ? id.name : (label || id.name), title: label };
         }
-        return { color: A.NEUTRAL_COLOR, name: label || (kind === 'user' ? 'You' : 'Group') };
+        return { color: A.NEUTRAL_COLOR, name: label || (kind === 'user' ? 'You' : 'Group'), title: '' };
     }
 
-    /** The owner as dot + name (escaped). */
+    /** The owner as dot + agent name (escaped); the child title rides as the app's data-tooltip. */
     function ownerHtml(owner) {
-        return identityLib().labelHtml(ownerIdentity(owner, catalog));
+        const id = ownerIdentity(owner, catalog);
+        const tip = id.title && id.title !== id.name ? ' data-tooltip="' + esc(id.title) + '"' : '';
+        return '<span class="work-owner"' + tip + '>' + identityLib().labelHtml(id) + '</span>';
     }
 
     function listItems(list) {

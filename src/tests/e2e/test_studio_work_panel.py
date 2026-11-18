@@ -198,7 +198,8 @@ def test_studio_panel_mounts_in_the_turn_bubble(browser, static_server):  # noqa
         row = panel.locator(".chat-widget-task.is-in-progress")
         expect(row).to_have_count(1)
         assert row.locator("input[type=checkbox]").is_checked() is False
-        assert row.locator(".agent-identity-name").inner_text() == "Scout"
+        assert row.locator(".agent-identity-name").inner_text() == "Codex"  # agent name; the child title is the tooltip
+        expect(row.locator(".work-owner")).to_have_attribute("data-tooltip", "Scout")
         # Owner dot in the harness colour from the catalog (#10a37f).
         dot_bg = row.locator(".agent-dot").evaluate("el => getComputedStyle(el).backgroundColor")
         assert dot_bg == "rgb(16, 163, 127)", dot_bg  # #10a37f
@@ -264,7 +265,7 @@ def test_live_tasks_change_repaints_in_place(browser, static_server):  # noqa: F
         panel = page.locator("#typing-indicator .work-panel")
         expect(panel.locator(".chat-widget-task")).to_have_count(4)
         expect(panel.locator(".chat-widget-task.is-done")).to_have_count(2)
-        expect(panel.locator(".chat-widget-task.is-in-progress .agent-identity-name")).to_have_text("Fin")
+        expect(panel.locator(".chat-widget-task.is-in-progress .agent-identity-name")).to_have_text("Claude Code")
         # New row eases in; the panel root is the same element (no remount).
         assert panel.locator(".chat-widget-task.is-entering").count() >= 1
         assert page.evaluate("() => document.querySelector('#typing-indicator .work-panel') === window.__panel")
