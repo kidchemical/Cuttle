@@ -143,6 +143,16 @@ class BackgroundWait:
     def running(self) -> bool:
         return self._state == "running"
 
+    @property
+    def base_turn(self) -> str:
+        """Turn id (query id) of the turn this detached run still belongs to.
+
+        A steer into this wait joins that turn, and its receipt is fenced
+        against it (``api.agent_harness.steer_receipts``).
+        """
+        with self._lock:
+            return str((self._base or {}).get("query_id") or "")
+
     def progress(self, label: str) -> None:
         if self.running:
             self._write("running", label)
@@ -509,8 +519,8 @@ def steer_detached(chat_session_id: Any, agent_id: Optional[str], text: str) -> 
     if steer.active_agent(chat_session_id) != agent_id:
         return None
     # Capture the original turn before sending; it may finish during delivery.
+    base_turn = wait.base_turn
     with wait._lock:
-        base_turn = str((wait._base or {}).get("query_id") or "")
         was_waiting = wait.phase == "waiting"
     info = steer.steer(chat_session_id, text, turn_id=base_turn or None)
     if not info.get("steered"):

@@ -30,10 +30,18 @@ def _bind_steer(db, message_id, metadata):
 
 
 def _discard_unwritten_steer(metadata):
-    steer = (metadata or {}).get('steer') or {}
-    if steer.get('steer_id'):
-        from api.agent_harness.steer_receipts import discard
-        discard(steer['steer_id'])
+    from api.agent_harness.steer_receipts import discard_meta
+    discard_meta(metadata)
+
+
+def discard_steered_user_receipt(metadata) -> None:
+    """No user row will be written for this steer: forget its receipt.
+
+    The unauthenticated steer path saves no row (``api.chat_turn_workflow``),
+    so the receipt has nothing to live on; keeping it would retain the whole
+    turn's tracker for the life of the daemon.
+    """
+    _discard_unwritten_steer(metadata)
 
 
 def persist_auth_user_message(

@@ -52,33 +52,83 @@ response and the user-row insert. The vendor item IDs and turn/session IDs do
 not themselves identify Cuttle's steer ID or persisted user row. Buffer events
 until the row is bound and preserve distinct IDs for identical text.
 
-### Receipt fields for clients
+### Receipt contract (`metadata.steer`)
 
-A saved steered user message has `metadata.steer` with `steer_id`,
-`delivered` (true after a vendor echo, or on accepted input to an idle
-detached wait as described below), `delivered_at` (ISO timestamp or
-null), `state` (`delivered`, `undelivered`, or null while awaiting an echo),
-`reply` (`{text, at}` or null), and `covers` (the steer IDs sharing that reply).
-The first paragraph of the first agent message after the echo is clipped to 280
-characters; the full agent message remains in the main reply. Several echoes
-before that message share the same reply and `covers` list. An accepted steer
-without an echo at turn end is `undelivered`; an echoed steer without a later
-agent message keeps `reply: null`.
+A steered user row carries `metadata.steer`, written **in full at insert**
+(`api.chat_coordinator.steered_user_meta`) and from then on only ever replaced
+wholesale by the receipt owner, `api.agent_harness.steer_receipts`:
 
-`/api/chat-live-status` extras include `steers`, an array of these fields plus
-`message_id` and `turn_id`, allowing the open thread to match each update to its
-user row. Registration precedes delivery; event observations are buffered
-until the user row is saved and bound. The bounded live array is transient;
-the user row is the history source after reload.
+```json
+{
+  "v": 1,
+  "steer_id": "hex",
+  "state": "pending" | "delivered" | "undelivered",
+  "delivered_at": "2026-11-18T12:00:00+00:00" | null,
+  "mode": "live" | "detached",
+  "reply": {"text": "…", "at": "…"} | null,
+  "covers": [message_id, …]
+}
+```
 
-The first paragraph is an excerpt, not proof of an acknowledgement. In the Muse
-tool trial the full first subsequent message addressed the steer in its second
-paragraph, while the stored excerpt says “Command finished with output `READY`.”
-The UI should label it as the agent's response, not assert its semantic content.
+- `state` is the **only** status field. There is no separate `delivered` bool;
+  a reader derives it as `state == "delivered"`. The shape never grows a key
+  mid-life, so a client can render a row without defaulting anything.
+  - `pending` — accepted by the transport, no vendor echo yet.
+  - `delivered` — the agent read it: the vendor echoed that exact send back
+    (`delivered_at` is when), or the input was accepted into a detached run
+    that was only waiting (`mode: "detached"`; the accepted input starts the
+    follow-up).
+  - `undelivered` — the turn ended without that echo. The reply also lists it
+    (`undelivered_steers`); both read the same matcher, so they agree.
+- `mode` distinguishes a steer into a live turn from input accepted by an idle
+  detached wait, which the copy must not describe the same way.
+- `reply` is the first paragraph (clipped to 280 characters) of the first agent
+  output item that **started after** this steer's echo. It is the agent's
+  response, not a confirmed acknowledgement: label it that way (in one recorded
+  Muse trial the excerpt was `Command finished with output \`READY\`.` while the
+  acknowledgement came in the message's second paragraph). The full message is
+  in the main reply either way. An echoed steer with no later output item keeps
+  `reply: null`; so does a detached run's acceptance until the CLI replays the
+  follow-up, so an unrelated background completion can never claim it.
+- `covers` lists the message ids of the rows that share one grouped reply
+  (several steers echoed before the same agent message). The reply itself is
+  carried by the **last** covered row only, so a client renders it once; the
+  earlier rows carry `covers` with `reply: null`. Binding a later row moves the
+  reply to it.
 
-For a steer accepted while a detached Claude run is idle in its background
-wait, `delivered` is true on acceptance: the accepted input starts the detached
-follow-up. This is distinct from a steer into an actively running turn, where
-delivery requires the vendor echo. The receipt retains the same field shape;
-the subsequent replay is still correlated and cannot consume a later steer
-with identical text.
+`/api/chat-live-status` extras include `steers`: the same objects plus
+`message_id` and `turn_id`, for the **current turn only**, so an open thread can
+match each update to its user row while the turn runs. That array is transient;
+after a reload the user row is the only source of truth.
+
+### Receipt mechanics (what the owner guarantees)
+
+- **No database on the reader path.** The tracker mutates memory only. Vendor
+  reader threads (`_on_line`), `POST /api/chat-steer` and turn teardown never
+  open SQLite and never wait on it: one daemon writer thread persists the
+  latest snapshot per `steer_id`, batching a turn's rows into a single
+  `AuthDatabase.patch_message_metadata` transaction, with bounded retries. A
+  busy database therefore cannot stall an agent event loop or time a steer out
+  into a double delivery.
+- **Correlation by id, not by text.** Each send carries its `steer_id` into the
+  runner, whose own matcher (`api.agent_harness.steer_delivery.SteerDelivery`)
+  reports `note_echo(steer_id)` when the vendor echoes that exact send. There is
+  one matcher per run. The turn's own initial input is excluded before the
+  matcher sees it, and identical concurrent steers stay unconfirmed while an
+  echo could belong to either — a receipt is never attributed by a guess.
+- **A delivery timeout after the echo still reports `steered: true`.** The echo
+  proves the agent read the text; reporting failure would make the client send
+  it again.
+- **Stop/resend fence.** Each registration pins its run identity (the turn's
+  query id and the `chat_delivery` guard token) at `register()`, and `steer()`
+  never reads the chat's ambient turn afterwards. A receipt whose turn was
+  superseded is neither published to live status nor saved.
+- **Retention.** A receipt is released once it has ended and been saved; one
+  that no row will ever carry (unauthenticated steer path, a failed insert, a
+  turn that ended during delivery) is dropped. Live status keeps only the
+  current turn's.
+
+Tests: `src/tests/harness/test_steer_receipts.py`,
+`src/tests/harness/test_agent_steer.py`,
+`src/tests/harness/test_muse_steer_delivery.py`,
+`src/tests/harness/test_claude_background_detach.py`.

@@ -56,7 +56,8 @@ def test_registry_normalizes_chat_handles_and_forwards_text():
     assert steer.active_agent(77) == "codex"
     assert steer.active_agent("CH-000077") == "codex"
     info = steer.steer(77, "/codex keep going")
-    assert {k: info[k] for k in ("steered", "agent", "text")} == {"steered": True, "agent": "codex", "text": "keep going"}
+    assert {k: info[k] for k in ("steered", "agent", "text")} == {
+        "steered": True, "agent": "codex", "text": "keep going"}
     assert info["steer_id"]
     assert sent == ["keep going"]
     steer.unregister("77", token)
@@ -220,8 +221,7 @@ pytestmark_posix = pytest.mark.skipif(os.name == "nt", reason="fake server scrip
 
 
 @pytestmark_posix
-@pytest.mark.parametrize("observe", [False, True, "raises"])
-def test_codex_app_server_turn_accepts_steer(tmp_path, monkeypatch, observe):
+def test_codex_app_server_turn_accepts_steer(tmp_path, monkeypatch):
     import scripts.utilities.codex_app_server_turn as mod
 
     monkeypatch.setattr(mod, "codex_executable", lambda: _fake_bin(tmp_path, "codex", _FAKE_CODEX))
@@ -233,23 +233,15 @@ def test_codex_app_server_turn_accepts_steer(tmp_path, monkeypatch, observe):
         "scripts.utilities.codex_cli_session_store.save_codex_context_snapshot",
         lambda sid, snap: snaps.append((sid, snap)),
     )
-    events = []
-    def observer(event):
-        events.append(event)
-        if observe == "raises":
-            raise RuntimeError("observer failed")
     results = []
     t = _steer_when_live(4242, "/codex add BANANA", results)
     res = asyncio.run(
         mod.run_codex_turn_app_server(
             "go", cwd=str(tmp_path), resume=None, model=None, reasoning_effort=None,
-            chat_session_id="db_session_4242", timeout=30, on_event=observer if observe else None,
+            chat_session_id="db_session_4242", timeout=30,
         )
     )
     t.join(5)
-    assert bool(events) is bool(observe)
-    if observe:
-        assert any(e.get("method") == "turn/completed" for e in events)
     assert results and results[0]["steered"] is True
     assert res["success"] is True
     assert res["output"] == "saw: add BANANA"
@@ -421,8 +413,7 @@ def test_codex_app_server_turn_falls_back_when_server_missing(tmp_path, monkeypa
 
 
 @pytestmark_posix
-@pytest.mark.parametrize("observe", [False, True])
-def test_muse_serve_turn_accepts_steer(tmp_path, monkeypatch, observe):
+def test_muse_serve_turn_accepts_steer(tmp_path, monkeypatch):
     import scripts.utilities.muse_serve_turn as mod
 
     monkeypatch.setattr(mod, "_which_muse_native", lambda: _fake_bin(tmp_path, "muse", _FAKE_MUSE))
@@ -430,12 +421,11 @@ def test_muse_serve_turn_accepts_steer(tmp_path, monkeypatch, observe):
         "scripts.utilities.muse_cli_session_store.save_muse_resume_id", lambda *a, **k: None
     )
     results = []
-    events = []
     t = _steer_when_live(4343, "/muse add BANANA", results)
     res = asyncio.run(
         mod.run_muse_turn_serve(
             "go", cwd=str(tmp_path), resume="s-1", model="m", reasoning_effort="low",
-            chat_session_id="4343", timeout=30, on_event=events.append if observe else None,
+            chat_session_id="4343", timeout=30,
         )
     )
     t.join(5)
@@ -443,7 +433,6 @@ def test_muse_serve_turn_accepts_steer(tmp_path, monkeypatch, observe):
     assert res["success"] is True
     assert res["output"] == "saw: add BANANA"
     assert res["steered"] == 1
-    assert bool(events) is observe
     assert res["muse_session_id"] == "s-1"
     assert res["usage"]["input_tokens"] == 10
     assert steer.active_agent(4343) is None
@@ -652,7 +641,7 @@ while q.get(timeout=6) is not None:
 '''
 
 
-def _run_fake_claude(tmp_path, monkeypatch, mode, chat_id, message, on_event=None):
+def _run_fake_claude(tmp_path, monkeypatch, mode, chat_id, message):
     import scripts.utilities.claude_cli_tool as mod
 
     monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
@@ -664,7 +653,7 @@ def _run_fake_claude(tmp_path, monkeypatch, mode, chat_id, message, on_event=Non
     t = _steer_when_live(chat_id, message, results)
     res = asyncio.run(
         mod.ClaudeCliTool().execute_prompt(
-            "go", cwd=str(tmp_path), chat_session_id=str(chat_id), timeout=30, steerable=True, on_event=on_event,
+            "go", cwd=str(tmp_path), chat_session_id=str(chat_id), timeout=30, steerable=True,
         )
     )
     t.join(5)
@@ -672,12 +661,10 @@ def _run_fake_claude(tmp_path, monkeypatch, mode, chat_id, message, on_event=Non
 
 
 @pytestmark_posix
-@pytest.mark.parametrize("observe", [False, True])
-def test_claude_turn_accepts_mid_turn_steer(tmp_path, monkeypatch, observe):
-    events = []
-    res, results = _run_fake_claude(tmp_path, monkeypatch, "mid", 5151, "/claude add BANANA", events.append if observe else None)
-    assert bool(events) is observe
-    assert results and {k: results[0][k] for k in ("steered", "agent", "text")} == {"steered": True, "agent": "claude", "text": "add BANANA"}
+def test_claude_turn_accepts_mid_turn_steer(tmp_path, monkeypatch):
+    res, results = _run_fake_claude(tmp_path, monkeypatch, "mid", 5151, "/claude add BANANA")
+    assert results and {k: results[0][k] for k in ("steered", "agent", "text")} == {
+        "steered": True, "agent": "claude", "text": "add BANANA"}
     assert results[0]["steer_id"]
     assert res["success"] is True
     assert res["output"] == "saw: add BANANA"

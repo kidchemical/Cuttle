@@ -17,7 +17,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from scripts.utilities.agent_process import (
     attach_to_chat_run,
@@ -171,7 +171,6 @@ async def run_muse_turn_serve(
     chat_session_id: Optional[str] = None,
     timeout: Optional[float] = None,
     cancel_event: Any = None,
-    on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
     if not (prompt or "").strip():
         return {"success": False, "error": "No prompt provided", "output": ""}
@@ -259,7 +258,16 @@ async def run_muse_turn_serve(
             st["setup_error"] = message
         _finish_connection()
 
-    def _steer_send(text: str) -> "concurrent.futures.Future":
+    def _note(fn: Any, *args: Any) -> None:
+        """Receipt capture must never interrupt the reader."""
+        if st["steer_token"] is None:
+            return
+        try:
+            fn(chat_session_id, st["steer_token"], *args)
+        except Exception:
+            pass
+
+    def _steer_send(text: str, steer_id: Optional[str] = None) -> "concurrent.futures.Future":
         out: "concurrent.futures.Future" = concurrent.futures.Future()
         receipt = None
 
@@ -280,7 +288,7 @@ async def run_muse_turn_serve(
             # callback was scheduled. Completion may have happened meanwhile.
             if not accepting_steers or st["terminal"] is not None:
                 raise RuntimeError("turn is no longer active")
-            receipt = delivery.begin(text)
+            receipt = delivery.begin(text, steer_id)
             params: Dict[str, Any] = {
                 "commandId": command_id(),
                 "sessionId": st["session_id"],
@@ -419,19 +427,27 @@ async def run_muse_turn_serve(
         if kind in ("agentMessage", "reasoning"):
             text_kinds[item.get("itemId")] = "writing" if kind == "agentMessage" else "thinking"
         if kind == "userMessage":
+            # Only a ``steered`` user item is a steer echo; the turn's own
+            # input must never confirm one.
             if method == "item/completed" and item.get("steered") and accepting_steers:
                 text = str(item.get("text") or "")
-                if delivery.receive(text, item.get("itemId")):
+                confirmed = delivery.receive(text, item.get("itemId"))
+                for receipt in confirmed:
+                    if receipt.steer_id:
+                        _note(steer_registry.note_echo, receipt.steer_id)
+                if confirmed:
                     activity.emit(f"steer received: {_first_line(text, 100)}", force=True)
             return
         if kind == "agentMessage":
             if method == "item/started":
                 text_log.start("writing", item.get("itemId"))
+                _note(steer_registry.note_output_start, item.get("itemId"))
             if method == "item/completed":
                 text = str(item.get("text") or "").strip()
                 text_log.save("writing", text, item.get("itemId"))
                 if text:
                     messages.append(text)
+                    _note(steer_registry.note_output_text, item.get("itemId"), text)
                     activity.emit(f"writing: {text_preview(text)}", force=True)
                 st["writing"].pop(item.get("itemId"), None)
             return
@@ -469,11 +485,6 @@ async def run_muse_turn_serve(
             msg = json.loads(raw.decode("utf-8", errors="replace").strip())
         except (json.JSONDecodeError, UnicodeDecodeError):
             return
-        if isinstance(msg, dict) and on_event is not None:
-            try:
-                on_event(msg)
-            except Exception:
-                pass  # Observation must not interrupt transport.
         if not isinstance(msg, dict) or rpc.dispatch_reply(msg):
             return
         method = str(msg.get("method") or "")
@@ -483,15 +494,6 @@ async def run_muse_turn_serve(
         params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
         if st["session_id"] and params.get("sessionId") not in (None, st["session_id"]):
             return
-        if st["steer_token"] is not None:
-            item = params.get("item") or {}
-            event_turn = params.get("turnId") or (item.get("turnId") if isinstance(item, dict) else None)
-            if not st["turn_id"] or event_turn in (None, st["turn_id"]):
-                try:
-                    steer_registry.observe(chat_session_id, st["steer_token"], msg)
-                except Exception:
-                    pass  # Receipt capture must never interrupt the reader.
-
         if method in ("item/started", "item/completed"):
             item = params.get("item") if isinstance(params.get("item"), dict) else {}
             _on_item(method, item)

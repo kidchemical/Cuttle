@@ -1486,6 +1486,7 @@ def build_harness_stream_turn(
     imports the entry module.
     """
     from api.chat_coordinator import PreparedAgentTurn, StreamTurnIO
+    from api.chat_turn_persist import discard_steered_user_receipt
 
     def _format_shortcut(kind, sel):
         if kind == "harness_empty_prompt":
@@ -1504,7 +1505,10 @@ def build_harness_stream_turn(
         ),
         notify_mobile=lambda b: notify_mobile(session_id, b),
         format_shortcut=_format_shortcut,
-        persist_steered_user=lambda meta: (persist_user_turn(session_id, meta) if auth_user else None),
+        # No auth user → no row is written, so the steer receipt has nothing to
+        # live on: drop it instead of retaining the turn's tracker forever.
+        persist_steered_user=lambda meta: (persist_user_turn(session_id, meta) if auth_user
+                                           else discard_steered_user_receipt(meta)),
     )
     prepared = PreparedAgentTurn(
         message=message_content, session_id=session_id,
@@ -1543,6 +1547,7 @@ def run_harness_sync_turn(
         PreparedAgentTurn,
         submit_agent_turn,
     )
+    from api.chat_turn_persist import discard_steered_user_receipt
 
     def _guarded_saver():
         saver = make_saver(session_id, project_path=project_path)
@@ -1568,7 +1573,10 @@ def run_harness_sync_turn(
         should_save=lambda b: bool(auth_user and result_kept_for_history(b)),
         notify_mobile=lambda b: notify_mobile(session_id, b),
         format_shortcut=_unreachable,
-        persist_steered_user=lambda meta: (persist_user_turn(session_id, meta) if auth_user else None),
+        # No auth user → no row is written, so the steer receipt has nothing to
+        # live on: drop it instead of retaining the turn's tracker forever.
+        persist_steered_user=lambda meta: (persist_user_turn(session_id, meta) if auth_user
+                                           else discard_steered_user_receipt(meta)),
     )
     out = submit_agent_turn(
         PreparedAgentTurn(

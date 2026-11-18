@@ -1,315 +1,539 @@
+"""Steer receipts: the ``metadata.steer`` contract, correlation and retention.
+
+Owner: ``api.agent_harness.steer_receipts`` (guide: ``docs/guides/AGENT_STEERING.md``).
+"""
+import concurrent.futures
+import json
+import sqlite3
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+from api.agent_harness import steer, steer_receipts
 from api.agent_harness.steer_receipts import Receipts
 
 
-def test_rapid_echoes_buffer_until_bound_and_share_clipped_reply():
-    changes = []
-    tracker = Receipts(changes.append)
-    a = tracker.begin('one', 'turn')
-    b = tracker.begin('two', 'turn')
-    tracker.echo('one', 'item1')
-    tracker.echo('two', 'item2')
-    tracker.reply('x' * 300 + '\n\nignored')
-    tracker.accepted(a, True)
-    tracker.accepted(b, True)
-    tracker.bind(a, 10)
-    tracker.bind(b, 11)
-    assert changes[-2]['message_id'] == 10
-    assert changes[-1]['message_id'] == 11
-    assert changes[-1]['reply'] == {'text': 'x' * 280, 'at': changes[-1]['reply']['at'], 'covers': [a, b]}
-    assert tracker.snapshot(a)['reply'] == tracker.snapshot(b)['reply']
+@pytest.fixture(autouse=True)
+def _clean_receipt_state():
+    yield
+    steer_receipts.flush(2.0)
+    with steer_receipts._write_lock:
+        steer_receipts._queue.clear()
+    with steer_receipts._pending_lock:
+        steer_receipts._pending.clear()
+        steer_receipts._live.clear()
 
 
-def test_completion_before_delivery_response_marks_undelivered():
-    tracker = Receipts()
-    a = tracker.begin('late', 'turn')
-    tracker.finish()
-    tracker.accepted(a, True)
-    assert tracker.snapshot(a)['state'] == 'undelivered'
-    assert tracker.snapshot(a)['reply'] is None
+def _future(value):
+    out = concurrent.futures.Future()
+    out.set_result(value)
+    return out
 
 
-def test_recorded_codex_rapid_steers():
-    import json
-    from pathlib import Path
+class FakeDb:
+    """Stands in for ``AuthDatabase``: one batched metadata patch per write."""
 
-    events = json.loads((Path(__file__).parent / 'fixtures/codex_rapid_steers.json').read_text())
-    tracker = Receipts()
-    ids = [tracker.begin(event['text'], 'turn') for event in events if event['kind'] == 'echo']
-    for event in events:
-        if event['kind'] == 'echo':
-            tracker.echo(event['text'], event['item_id'])
-        else:
-            tracker.reply(event['text'])
-    assert tracker.snapshot(ids[0])['reply']['covers'] == ids
-    assert tracker.snapshot(ids[1])['reply']['text'].startswith('Acknowledged: amber and cobalt')
+    def __init__(self, path, gate=None):
+        self.path = path
+        self.gate = gate
+        self.writes = []
+        conn = sqlite3.connect(path)
+        conn.execute('CREATE TABLE chat_messages (id INTEGER PRIMARY KEY, role TEXT, metadata TEXT)')
+        conn.commit()
+        conn.close()
+
+    def add_message(self, _sid, role, _text, metadata=None):
+        conn = sqlite3.connect(self.path)
+        cur = conn.execute('INSERT INTO chat_messages (role, metadata) VALUES (?, ?)',
+                           (role, json.dumps(metadata)))
+        conn.commit()
+        conn.close()
+        return cur.lastrowid
+
+    def patch_message_metadata(self, updates):
+        if self.gate is not None:
+            self.gate.wait(10)
+        self.writes.append([mid for mid, _ in updates])
+        conn = sqlite3.connect(self.path)
+        for message_id, patch in updates:
+            row = conn.execute('SELECT metadata FROM chat_messages WHERE id=?', (message_id,)).fetchone()
+            meta = (json.loads(row[0]) if row and row[0] else None) or {}
+            meta.update(patch)
+            conn.execute('UPDATE chat_messages SET metadata=? WHERE id=?', (json.dumps(meta), message_id))
+        conn.commit()
+        conn.close()
+        return len(updates)
+
+    def steer_meta(self, message_id):
+        conn = sqlite3.connect(self.path)
+        row = conn.execute('SELECT metadata FROM chat_messages WHERE id=?', (message_id,)).fetchone()
+        conn.close()
+        return json.loads(row[0])['steer']
 
 
-def test_registry_buffers_echo_and_reply_before_row_insert(tmp_path):
-    import concurrent.futures
-    import json
-    import sqlite3
-    from api.agent_harness import steer, steer_receipts
+# ── the contract ────────────────────────────────────────────────────────────
+
+def test_full_contract_shape_is_written_at_insert():
     from api.chat_coordinator import steered_user_meta
-    from api.chat_turn_persist import persist_auth_user_message
 
-    class DB:
-        def _get_connection(self):
-            conn = sqlite3.connect(tmp_path / 'test.db')
-            conn.row_factory = sqlite3.Row
-            return conn
-        def add_message(self, sid, role, text, metadata):
-            conn = self._get_connection()
-            cur = conn.execute('INSERT INTO chat_messages (role, metadata) VALUES (?, ?)', (role, json.dumps(metadata)))
-            conn.commit()
-            conn.close()
-            return cur.lastrowid
-
-    db = DB()
-    conn = db._get_connection()
-    conn.execute('CREATE TABLE chat_messages (id INTEGER PRIMARY KEY, role TEXT, metadata TEXT)')
-    conn.commit()
-    conn.close()
-    token = None
-    def send(text):
-        steer.observe('901', token, {'method': 'item/completed', 'params': {'item': {'type': 'userMessage', 'id': 'u1', 'content': [{'type': 'text', 'text': text}]}}})
-        steer.observe('901', token, {'method': 'item/completed', 'params': {'item': {'type': 'agentMessage', 'text': 'Acknowledged.\n\nFurther text.'}}})
-        f = concurrent.futures.Future()
-        f.set_result((True, None))
-        return f
-    token = steer.register('901', 'codex', send)
-    info = steer.steer('901', 'do it')
-    persist_auth_user_message(db, 901, 'do it', metadata=steered_user_meta(info), project_merge_fn=lambda m, *_: m)
-    conn = db._get_connection()
-    meta = json.loads(conn.execute('SELECT metadata FROM chat_messages').fetchone()['metadata'])
-    conn.close()
-    assert meta['steer']['reply']['text'] == 'Acknowledged.'
-    assert meta['steer']['covers'] == [info['steer_id']]
-    assert meta['steer']['delivered'] is True
-    assert steer_receipts.live('901')[-1]['message_id'] == 1
-    steer.unregister('901', token)
+    meta = steered_user_meta({'steered': True, 'agent': 'codex', 'steer_id': 'abc'})
+    assert meta['steer'] == {'v': 1, 'steer_id': 'abc', 'state': 'pending',
+                             'delivered_at': None, 'mode': 'live',
+                             'reply': None, 'covers': []}
+    idle = steered_user_meta({'steered': True, 'agent': 'claude', 'steer_id': 'xyz',
+                              'delivered': True, 'background_idle': True})
+    assert idle['steer']['state'] == 'delivered' and idle['steer']['mode'] == 'detached'
+    assert idle['steer']['delivered_at']
 
 
-def test_no_ack_and_accepted_after_turn_end():
+def test_snapshot_keys_never_change_through_the_life_of_a_steer():
     tracker = Receipts()
-    first = tracker.begin('read', 'turn')
+    first = tracker.begin('one')
+    keys = set(steer_receipts.insert_shape(first))
+    for step in (lambda: tracker.accepted(first, True),
+                 lambda: tracker.echo(first),
+                 lambda: tracker.bind(first, 7),
+                 lambda: tracker.output_text('a1', 'Seen.'),
+                 tracker.finish):
+        step()
+        snap = tracker.snapshot(first)
+        assert keys <= set(snap)
+        assert snap['state'] in ('pending', 'delivered', 'undelivered')
+        assert 'delivered' not in snap  # one status field only
+
+
+def test_grouped_reply_belongs_to_the_last_covered_row_only():
+    tracker = Receipts()
+    first, second = tracker.begin('one'), tracker.begin('two')
     tracker.accepted(first, True)
-    tracker.echo('read', 'one')
-    late = tracker.begin('late', 'turn')
-    tracker.finish()
-    tracker.accepted(late, True)
+    tracker.accepted(second, True)
+    tracker.echo(first)
+    tracker.echo(second)
+    tracker.bind(first, 10)
+    tracker.bind(second, 11)
+    tracker.output_text('a1', 'Both done.\n\nMore detail.')
+    assert tracker.snapshot(first)['covers'] == [10, 11]
+    assert tracker.snapshot(second)['covers'] == [10, 11]
     assert tracker.snapshot(first)['reply'] is None
-    assert tracker.snapshot(first)['state'] == 'delivered'
-    assert tracker.snapshot(late)['state'] == 'undelivered'
+    assert tracker.snapshot(second)['reply']['text'] == 'Both done.'
 
 
-def test_recorded_claude_and_muse_stream_events():
-    import concurrent.futures
-    import json
-    from pathlib import Path
-    from api.agent_harness import steer, steer_receipts
+def test_a_row_bound_after_the_reply_takes_the_reply_over():
+    tracker = Receipts()
+    first, second = tracker.begin('one'), tracker.begin('two')
+    for sid in (first, second):
+        tracker.accepted(sid, True)
+        tracker.echo(sid)
+    tracker.bind(first, 10)
+    tracker.output_text('a1', 'Both done.')
+    assert tracker.snapshot(first)['reply']['text'] == 'Both done.'
+    tracker.bind(second, 11)
+    assert tracker.snapshot(first)['reply'] is None
+    assert tracker.snapshot(second)['reply']['text'] == 'Both done.'
 
-    for agent, name in [('claude', 'claude-tool'), ('muse', 'muse-tool')]:
-        fixture = json.loads((Path(__file__).parent / 'fixtures' / (name + '.json')).read_text())
-        token = None
-        def send(text):
-            for event in fixture['events']:
-                steer.observe('902', token, event)
-            future = concurrent.futures.Future()
-            future.set_result((True, None))
-            return future
-        token = steer.register('902', agent, send)
-        info = steer.steer('902', fixture['sent'])
-        with steer_receipts._pending_lock:
-            tracker = steer_receipts._pending[info['steer_id']]['tracker']
-        receipt = tracker.snapshot(info['steer_id'])
-        assert receipt['delivered_at']
-        assert receipt['reply']['text'] == ('Noted, marigold. The shell command finished: it waited 8 seconds and printed `READY`. I haven\'t edited any files.' if agent == 'claude' else 'Command finished with output `READY`.')
-        steer.unregister('902', token)
+
+# ── no SQLite on the reader / teardown path ─────────────────────────────────
+
+def test_a_blocked_writer_never_delays_the_reader_or_a_steer(tmp_path):
+    gate = threading.Event()
+    db = FakeDb(tmp_path / 'slow.db', gate=gate)
+    sent = []
+
+    def send(text, steer_id=None):
+        sent.append((text, steer_id))
+        return _future((True, None))
+
+    token = steer.register('940', 'codex', send)
+    try:
+        info = steer.steer('940', 'one')
+        message_id = db.add_message(940, 'user', 'one')
+        steer_receipts.bind(info['steer_id'], db, message_id)
+        steer_receipts.flush(0.2)  # wakes the writer, which is now blocked
+        started = time.monotonic()
+        # Everything a vendor reader thread, a second steer and teardown do,
+        # while the writer sits inside the database:
+        steer.note_echo('940', token, info['steer_id'])
+        steer.note_output_start('940', token, 'a1')
+        steer.note_output_text('940', token, 'a1', 'Seen.')
+        second = steer.steer('940', 'two')
+        steer.unregister('940', token)
+        elapsed = time.monotonic() - started
+        assert second['steered'] is True
+        assert elapsed < 1.0, f"reader path waited on the database for {elapsed:.2f}s"
+    finally:
+        gate.set()
+    assert steer_receipts.flush(5.0)
+    assert db.writes, "the receipt is still persisted, just not on the reader thread"
+
+
+def test_grouped_rows_are_written_in_one_batch(tmp_path):
+    db = FakeDb(tmp_path / 'batch.db')
+    tracker = Receipts(steer_receipts.changed, session='941')
+    ids = [tracker.begin(text) for text in ('one', 'two')]
+    for index, steer_id in enumerate(ids):
+        steer_receipts.track('941', tracker, steer_id)
+        tracker.accepted(steer_id, True)
+        tracker.echo(steer_id)
+        steer_receipts.bind(steer_id, db, db.add_message(941, 'user', 'x'))
+    assert steer_receipts.flush(5.0)
+    db.writes.clear()
+    tracker.output_text('a1', 'Both done.')
+    assert steer_receipts.flush(5.0)
+    assert db.writes == [[1, 2]], "one transaction covers the grouped rows"
+    assert db.steer_meta(2)['reply']['text'] == 'Both done.'
+    assert db.steer_meta(1)['reply'] is None
+    assert db.steer_meta(1)['covers'] == [1, 2]
+    tracker.finish()
+    assert steer_receipts.flush(5.0)
+
+
+def test_a_failing_write_is_retried_then_given_up(tmp_path, monkeypatch):
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+
+    class BrokenDb:
+        attempts = 0
+
+        def patch_message_metadata(self, updates):
+            BrokenDb.attempts += 1
+            raise sqlite3.OperationalError('database is locked')
+
+    tracker = Receipts(steer_receipts.changed, session='942')
+    steer_id = tracker.begin('one')
+    steer_receipts.track('942', tracker, steer_id)
+    tracker.accepted(steer_id, True)
+    steer_receipts.bind(steer_id, BrokenDb(), 5)
+    assert steer_receipts.flush(5.0)
+    assert BrokenDb.attempts == steer_receipts._MAX_WRITE_ATTEMPTS
+
+
+# ── echo correlation ────────────────────────────────────────────────────────
+
+def test_initial_input_echo_cannot_confirm_an_identical_steer():
+    from api.agent_harness.steer_delivery import SteerDelivery
+
+    delivery = SteerDelivery()
+    receipt = delivery.begin('go', 'S1')
+    delivery.acknowledge(receipt, succeeded=True)
+    # The runner excludes the turn's own prompt before the matcher sees it.
+    assert delivery.undelivered == ['go']
+    assert [r.steer_id for r in delivery.receive('go', 'u2')] == ['S1']
+
+
+def test_identical_concurrent_steers_stay_unconfirmed_while_ambiguous():
+    from api.agent_harness.steer_delivery import SteerDelivery
+
+    delivery = SteerDelivery()
+    for steer_id in ('A', 'B'):
+        delivery.acknowledge(delivery.begin('again', steer_id), succeeded=True)
+    assert delivery.receive('again', 'u1') == []
+    assert delivery.undelivered == ['again', 'again']
+    assert [r.steer_id for r in delivery.receive('again', 'u2')] == ['A', 'B']
+    assert delivery.undelivered == []
+
+
+def test_an_echo_confirms_only_the_send_it_was_reported_for():
+    tracker = Receipts()
+    first, second = tracker.begin('same'), tracker.begin('same')
+    tracker.accepted(first, True)
+    tracker.accepted(second, True)
+    tracker.echo(second)
+    assert tracker.snapshot(first)['state'] == 'pending'
+    assert tracker.snapshot(second)['state'] == 'delivered'
+
+
+def test_echo_before_a_delivery_timeout_still_reports_steered():
+    pending = concurrent.futures.Future()
+    holder = {}
+
+    def send(text, steer_id=None):
+        holder['steer_id'] = steer_id
+        # The CLI replays the line before its RPC reply (or never replies).
+        steer.note_echo('943', holder['token'], steer_id)
+        return pending
+
+    holder['token'] = steer.register('943', 'codex', send)
+    try:
+        info = steer.steer('943', 'one', timeout=0.05)
+        assert info['steered'] is True and info['delivered'] is True
+        assert info['steer_id'] == holder['steer_id']
+    finally:
+        pending.set_result((True, None))
+        steer.unregister('943', holder['token'])
+
+
+def test_a_rejected_send_without_an_echo_is_not_a_receipt():
+    token = steer.register('944', 'codex', lambda text, sid=None: _future((False, 'no turn')))
+    try:
+        info = steer.steer('944', 'one')
+        assert info == {'steered': False, 'reason': 'rejected', 'error': 'no turn', 'agent': 'codex'}
+        assert steer_receipts.retained()['pending'] == 0
+    finally:
+        steer.unregister('944', token)
+
+
+# ── reply attribution ───────────────────────────────────────────────────────
+
+def test_output_that_started_before_the_echo_is_not_the_reply():
+    tracker = Receipts()
+    tracker.output_start('a1')  # already writing when the steer lands
+    steer_id = tracker.begin('one')
+    tracker.accepted(steer_id, True)
+    tracker.echo(steer_id)
+    tracker.output_text('a1', 'Unrelated answer.')
+    assert tracker.snapshot(steer_id)['reply'] is None
+    tracker.output_start('a2')
+    tracker.output_text('a2', 'Seen, one.')
+    assert tracker.snapshot(steer_id)['reply']['text'] == 'Seen, one.'
+
+
+def test_detached_acceptance_alone_never_claims_a_reply():
+    tracker = Receipts()
+    steer_id = tracker.begin('follow up')
+    tracker.accepted(steer_id, True)
+    tracker.accepted_detached(steer_id)
+    # A background task's own completion follow-up, with no replay linking it.
+    tracker.output_start('a1')
+    tracker.output_text('a1', 'The build finished.')
+    assert tracker.snapshot(steer_id)['state'] == 'delivered'
+    assert tracker.snapshot(steer_id)['mode'] == 'detached'
+    assert tracker.snapshot(steer_id)['reply'] is None
+    # Once the CLI replays the follow-up, later output is its reply.
+    tracker.echo(steer_id)
+    tracker.output_start('a2')
+    tracker.output_text('a2', 'Answering your message.')
+    assert tracker.snapshot(steer_id)['reply']['text'] == 'Answering your message.'
+
+
+def test_reply_is_the_first_paragraph_clipped():
+    tracker = Receipts()
+    steer_id = tracker.begin('one')
+    tracker.echo(steer_id)
+    tracker.output_text('a1', 'x' * 300 + '\n\nignored')
+    assert tracker.snapshot(steer_id)['reply']['text'] == 'x' * 280
+
+
+# ── Stop / resend fence ─────────────────────────────────────────────────────
+
+def test_a_superseded_turn_publishes_and_persists_nothing(tmp_path):
+    from api import chat_delivery
+
+    db = FakeDb(tmp_path / 'fence.db')
+    chat_delivery.try_begin(945)
+    token = steer.register('945', 'codex', lambda text, sid=None: _future((True, None)))
+    info = steer.steer('945', 'one')
+    message_id = db.add_message(945, 'user', 'one')
+    chat_delivery.end(945)
+    assert chat_delivery.try_begin(945), 'Stop → re-send: a newer turn owns the chat'
+    try:
+        steer_receipts.bind(info['steer_id'], db, message_id)
+        steer.note_echo('945', token, info['steer_id'])
+        steer.unregister('945', token)
+        assert steer_receipts.flush(2.0)
+        assert db.writes == []
+        assert steer_receipts.live('945') == []
+    finally:
+        chat_delivery.end(945)
         steer_receipts.discard(info['steer_id'])
 
 
-def test_detached_turn_id_is_registered_before_delivery(monkeypatch):
-    import concurrent.futures
-    from api.agent_harness import steer, steer_receipts
-    def send(text):
-        f = concurrent.futures.Future()
-        f.set_result((True, None))
-        return f
-    token = steer.register('903', 'claude', send)
-    info = steer.steer('903', 'follow up', turn_id='original-turn')
-    with steer_receipts._pending_lock:
-        tracker = steer_receipts._pending[info['steer_id']]['tracker']
-    assert tracker.snapshot(info['steer_id'])['turn_id'] == 'original-turn'
-    steer.unregister('903', token)
-    steer_receipts.discard(info['steer_id'])
+def test_live_status_only_carries_the_current_turn(tmp_path, monkeypatch):
+    turn = {'query_id': 'q-one'}
+    monkeypatch.setattr('api.chat_turn_row.current', lambda sid: dict(turn))
+    db = FakeDb(tmp_path / 'live.db')
+    token = steer.register('946', 'codex', lambda text, sid=None: _future((True, None)))
+    try:
+        info = steer.steer('946', 'one')
+        assert info['turn_id'] == 'q-one'
+        steer_receipts.bind(info['steer_id'], db, db.add_message(946, 'user', 'one'))
+        rows = steer_receipts.live('946')
+        assert [row['steer_id'] for row in rows] == [info['steer_id']]
+        assert rows[0]['message_id'] == 1 and rows[0]['turn_id'] == 'q-one'
+        turn['query_id'] = 'q-two'
+        assert steer_receipts.live('946') == []
+    finally:
+        steer.unregister('946', token)
 
 
-def test_bound_rows_update_for_grouped_reply_and_undelivered(tmp_path):
-    import concurrent.futures
-    import json
-    import sqlite3
-    from api.agent_harness import steer, steer_receipts
+# ── retention ───────────────────────────────────────────────────────────────
+
+def test_an_ended_persisted_receipt_is_released(tmp_path):
+    db = FakeDb(tmp_path / 'release.db')
+    token = steer.register('947', 'codex', lambda text, sid=None: _future((True, None)))
+    info = steer.steer('947', 'one')
+    steer_receipts.bind(info['steer_id'], db, db.add_message(947, 'user', 'one'))
+    steer.note_echo('947', token, info['steer_id'])
+    steer.unregister('947', token)
+    assert steer_receipts.flush(5.0)
+    assert db.steer_meta(1)['state'] == 'delivered'
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+    assert steer_receipts.snapshot(info['steer_id']) is None
+
+
+def test_an_unbound_receipt_is_dropped_after_the_turn_ends(monkeypatch):
+    monkeypatch.setattr(steer_receipts, '_PENDING_GRACE_SEC', 0.0)
+    token = steer.register('948', 'codex', lambda text, sid=None: _future((True, None)))
+    info = steer.steer('948', 'one')
+    assert steer_receipts.retained()['pending'] == 1
+    steer.unregister('948', token)  # turn ended; no row ever carried it
+    assert steer_receipts.retained()['pending'] == 0
+
+
+def test_an_unauthenticated_steer_keeps_no_receipt():
+    from api.chat_coordinator import steered_user_meta
+    from api.chat_turn_persist import discard_steered_user_receipt
+
+    token = steer.register('949', 'claude', lambda text, sid=None: _future((True, None)))
+    try:
+        info = steer.steer('949', 'one')
+        assert steer_receipts.retained()['pending'] == 1
+        # The unauthenticated lane writes no user row (api.chat_turn_workflow).
+        discard_steered_user_receipt(steered_user_meta(info))
+        assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+    finally:
+        steer.unregister('949', token)
+
+
+def test_a_row_that_was_never_written_discards_its_receipt():
     from api.chat_coordinator import steered_user_meta
     from api.chat_turn_persist import persist_auth_user_message
 
-    class DB:
-        def _get_connection(self):
-            conn = sqlite3.connect(tmp_path / 'group.db')
-            conn.row_factory = sqlite3.Row
-            return conn
-        def add_message(self, sid, role, text, metadata):
-            conn = self._get_connection()
-            cur = conn.execute('INSERT INTO chat_messages (role, metadata) VALUES (?, ?)', (role, json.dumps(metadata)))
-            conn.commit()
-            conn.close()
-            return cur.lastrowid
-
-    db = DB()
-    conn = db._get_connection()
-    conn.execute('CREATE TABLE chat_messages (id INTEGER PRIMARY KEY, role TEXT, metadata TEXT)')
-    conn.commit()
-    conn.close()
-    def send(text):
-        future = concurrent.futures.Future()
-        future.set_result((True, None))
-        return future
-    token = steer.register('904', 'codex', send)
-    infos = []
-    for text in ('one', 'two', 'never echoed'):
-        info = steer.steer('904', text)
-        infos.append(info)
-        persist_auth_user_message(db, 904, text, metadata=steered_user_meta(info), project_merge_fn=lambda m, *_: m)
-    for i, text in enumerate(('one', 'two')):
-        steer.observe('904', token, {'method': 'item/completed', 'params': {'item': {'type': 'userMessage', 'id': f'u{i}', 'content': [{'type': 'text', 'text': text}]}}})
-    steer.observe('904', token, {'method': 'item/completed', 'params': {'item': {'type': 'agentMessage', 'text': 'Both done.\n\nMore detail.'}}})
-    steer.unregister('904', token)
-    conn = db._get_connection()
-    records = [json.loads(r['metadata'])['steer'] for r in conn.execute('SELECT metadata FROM chat_messages ORDER BY id')]
-    conn.close()
-    covers = [infos[0]['steer_id'], infos[1]['steer_id']]
-    assert [r['covers'] for r in records[:2]] == [covers, covers]
-    assert [r['reply']['text'] for r in records[:2]] == ['Both done.', 'Both done.']
-    assert records[2]['state'] == 'undelivered'
-    assert records[2]['delivered'] is False and records[2]['reply'] is None
-    assert steer_receipts.live('CH-000904')[-1]['state'] == 'undelivered'
-
-
-def test_turn_completes_during_delivery_before_binding(tmp_path):
-    import concurrent.futures
-    from api.agent_harness import steer, steer_receipts
-    token = None
-    def send(text):
-        steer.unregister('905', token)
-        future = concurrent.futures.Future()
-        future.set_result((True, None))
-        return future
-    token = steer.register('905', 'codex', send)
-    info = steer.steer('905', 'too late')
-    with steer_receipts._pending_lock:
-        tracker = steer_receipts._pending[info['steer_id']]['tracker']
-    assert tracker.snapshot(info['steer_id'])['state'] == 'undelivered'
-    steer_receipts.discard(info['steer_id'])
-
-
-def test_failed_persistence_callback_does_not_stop_turn(caplog):
-    def fail(_entry):
-        raise RuntimeError('storage unavailable')
-    tracker = Receipts(fail)
-    steer_id = tracker.begin('one', 'turn')
-    tracker.accepted(steer_id, True)
-    tracker.echo('one', 'one-item')
-    tracker.reply('Seen.')
-    tracker.finish()
-    assert tracker.snapshot(steer_id)['reply']['text'] == 'Seen.'
-    assert 'Steer receipt update failed' in caplog.text
-
-
-def test_failed_write_is_retried_on_live_poll(tmp_path):
-    import sqlite3
-    from api.agent_harness import steer_receipts
-
-    class DB:
-        failures = 1
-        def _get_connection(self):
-            if self.failures:
-                self.failures -= 1
-                raise sqlite3.OperationalError('temporary failure')
-            conn = sqlite3.connect(tmp_path / 'retry.db')
-            conn.row_factory = sqlite3.Row
-            return conn
-    conn = sqlite3.connect(tmp_path / 'retry.db')
-    conn.execute('CREATE TABLE chat_messages (id INTEGER PRIMARY KEY, role TEXT, metadata TEXT)')
-    conn.execute("INSERT INTO chat_messages VALUES (1, 'user', '{}')")
-    conn.commit()
-    conn.close()
-    db = DB()
-    tracker = Receipts(steer_receipts.changed)
-    sid = tracker.begin('one', 'turn')
-    steer_receipts.track('906', tracker, sid)
-    tracker.accepted(sid, True)
-    tracker.echo('one', 'u1')
-    steer_receipts.bind(sid, db, 1)
-    assert steer_receipts.live('906')[0]['delivered'] is True
-    conn = db._get_connection()
-    assert '"delivered": true' in conn.execute('SELECT metadata FROM chat_messages').fetchone()['metadata']
-    conn.close()
-    tracker.finish()
-
-
-def test_unpersisted_user_message_discards_registration():
-    import concurrent.futures
-    from api.agent_harness import steer, steer_receipts
-    from api.chat_coordinator import steered_user_meta
-    from api.chat_turn_persist import persist_auth_user_message
-    class BrokenDB:
-        def add_message(self, *args, **kwargs):
+    class BrokenDb:
+        def add_message(self, *_a, **_k):
             raise RuntimeError('insert failed')
-    def send(_text):
-        f = concurrent.futures.Future()
-        f.set_result((True, None))
-        return f
-    token = steer.register('907', 'codex', send)
-    info = steer.steer('907', 'message')
-    persist_auth_user_message(BrokenDB(), 907, 'message', metadata=steered_user_meta(info), project_merge_fn=lambda m, *_: m)
-    with steer_receipts._pending_lock:
-        assert info['steer_id'] not in steer_receipts._pending
-    steer.unregister('907', token)
+
+    token = steer.register('950', 'codex', lambda text, sid=None: _future((True, None)))
+    try:
+        info = steer.steer('950', 'one')
+        persist_auth_user_message(BrokenDb(), 950, 'one', metadata=steered_user_meta(info),
+                                  project_merge_fn=lambda m, *_: m)
+        assert steer_receipts.snapshot(info['steer_id']) is None
+    finally:
+        steer.unregister('950', token)
 
 
-def test_bind_failure_does_not_discard_inserted_receipt(monkeypatch):
+def test_bind_failure_does_not_discard_an_inserted_receipt(monkeypatch):
     from api import chat_turn_persist as persist
+
     discarded = []
-    class DB:
-        def add_message(self, *args, **kwargs):
+
+    class Db:
+        def add_message(self, *_a, **_k):
             return 42
-    def fail(*args):
+
+    def fail(*_a):
         raise RuntimeError('bind failed')
+
     monkeypatch.setattr(persist, '_bind_steer', fail)
     monkeypatch.setattr(persist, '_discard_unwritten_steer', discarded.append)
-    meta = {'steer': {'steer_id': 'receipt'}}
-    merge = lambda m, *_: m
-    persist.persist_auth_user_message(DB(), 1, 'hello', metadata=meta, project_merge_fn=merge)
-    persist.persist_user_turn(DB(), 1, message_text='hello', history_text='hello',
+    meta = {'steer': steer_receipts.insert_shape('receipt')}
+    merge = (lambda m, *_: m)
+    persist.persist_auth_user_message(Db(), 1, 'hello', metadata=meta, project_merge_fn=merge)
+    persist.persist_user_turn(Db(), 1, message_text='hello', history_text='hello',
                               base_meta=meta, badge_fn=lambda *a, **kw: None,
                               project_merge_fn=merge)
     assert discarded == []
 
 
-def test_detached_acceptance_survives_bind_and_replay_of_duplicate_text():
-    updates = []
-    tracker = Receipts(updates.append)
-    first = tracker.begin('same', 'turn')
-    tracker.accepted(first, True)
-    tracker.accepted_detached(first)
-    tracker.bind(first, 11)
-    assert updates[-1]['state'] == 'delivered'
-    assert updates[-1]['delivered_at'] is not None
-    assert updates[-1]['reply'] is None
-    second = tracker.begin('same', 'turn')
-    tracker.accepted(second, True)
-    tracker.echo('same', 'first-replay')
-    assert tracker.snapshot(second)['delivered_at'] is None
-    tracker.echo('same', 'second-replay')
-    assert tracker.snapshot(second)['delivered_at'] is not None
+# ── turn lifetime ───────────────────────────────────────────────────────────
+
+def test_a_turn_that_ends_during_delivery_reports_undelivered():
+    holder = {}
+
+    def send(text, steer_id=None):
+        steer.unregister('951', holder['token'])
+        return _future((True, None))
+
+    holder['token'] = steer.register('951', 'codex', send)
+    info = steer.steer('951', 'too late')
+    assert steer_receipts.snapshot(info['steer_id'])['state'] == 'undelivered'
+    steer_receipts.discard(info['steer_id'])
+
+
+def test_a_receipt_callback_that_raises_never_stops_the_turn(caplog):
+    def fail(_entry):
+        raise RuntimeError('storage unavailable')
+
+    tracker = Receipts(fail)
+    steer_id = tracker.begin('one')
+    tracker.accepted(steer_id, True)
+    tracker.echo(steer_id)
+    tracker.output_text('a1', 'Seen.')
     tracker.finish()
-    assert tracker.snapshot(first)['state'] == 'delivered'
+    assert tracker.snapshot(steer_id)['reply']['text'] == 'Seen.'
+    assert 'Steer receipt update failed' in caplog.text
+
+
+# ── recorded vendor streams (the runners' own parsing) ──────────────────────
+
+def _fixture(name):
+    return json.loads((Path(__file__).parent / 'fixtures' / name).read_text())
+
+
+def test_recorded_codex_rapid_steers():
+    events = _fixture('codex_rapid_steers.json')
+    tracker = Receipts()
+    ids = [tracker.begin(event['text']) for event in events if event['kind'] == 'echo']
+    index = 0
+    for event in events:
+        if event['kind'] == 'echo':
+            tracker.echo(ids[index])
+            tracker.bind(ids[index], 10 + index)
+            index += 1
+        else:
+            tracker.output_start('a1')
+            tracker.output_text('a1', event['text'])
+    assert tracker.snapshot(ids[0])['covers'] == [10, 11]
+    assert tracker.snapshot(ids[0])['reply'] is None
+    assert tracker.snapshot(ids[1])['reply']['text'].startswith('Acknowledged: amber and cobalt')
+
+
+def test_recorded_claude_replay_and_assistant_block():
+    from scripts.utilities.claude_cli_tool import _replay_text
+    from api.agent_harness.steer_delivery import SteerDelivery
+
+    fixture = _fixture('claude-tool.json')
+    delivery = SteerDelivery()
+    tracker = Receipts()
+    steer_id = tracker.begin(fixture['sent'])
+    tracker.accepted(steer_id, True)
+    delivery.acknowledge(delivery.begin(fixture['sent'], steer_id), succeeded=True)
+    for event in fixture['events']:
+        replay = _replay_text(event)
+        if replay is not None:
+            for receipt in delivery.receive(replay, event.get('uuid')):
+                tracker.echo(receipt.steer_id)
+        elif event.get('type') == 'assistant' and not event.get('parent_tool_use_id'):
+            message = event.get('message') or {}
+            for block in message.get('content') or []:
+                if block.get('type') == 'text':
+                    tracker.output_text(str(message.get('id') or ''), block['text'])
+                    break
+    tracker.bind(steer_id, 12)
+    receipt = tracker.snapshot(steer_id)
+    assert receipt['state'] == 'delivered'
+    assert receipt['reply']['text'].startswith('Noted, marigold.')
+
+
+def test_recorded_muse_steered_item_and_agent_message():
+    from api.agent_harness.steer_delivery import SteerDelivery
+
+    fixture = _fixture('muse-tool.json')
+    delivery = SteerDelivery()
+    tracker = Receipts()
+    steer_id = tracker.begin(fixture['sent'])
+    tracker.accepted(steer_id, True)
+    delivery.acknowledge(delivery.begin(fixture['sent'], steer_id), succeeded=True)
+    for event in fixture['events']:
+        item = (event.get('params') or {}).get('item') or {}
+        if item.get('kind') == 'userMessage' and item.get('steered'):
+            for receipt in delivery.receive(item.get('text') or '', item.get('itemId')):
+                tracker.echo(receipt.steer_id)
+        elif item.get('kind') == 'agentMessage':
+            tracker.output_text(item.get('itemId'), item.get('text'))
+    tracker.bind(steer_id, 13)
+    receipt = tracker.snapshot(steer_id)
+    assert receipt['state'] == 'delivered'
+    assert receipt['reply']['text'] == 'Command finished with output `READY`.'
+    assert delivery.undelivered == []

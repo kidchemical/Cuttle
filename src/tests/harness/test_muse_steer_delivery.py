@@ -148,7 +148,7 @@ def test_rejected_send_cannot_consume_an_identical_retry_receipt():
     assert delivery.acknowledge(failed, succeeded=False) is False
     retry = delivery.begin("potato")
     assert delivery.acknowledge(retry, succeeded=True) is True
-    assert delivery.receive("potato", "u2") is True
+    assert delivery.receive("potato", "u2") == [retry]
     assert delivery.received_count == 1
     assert delivery.undelivered == []
 
@@ -157,10 +157,10 @@ def test_history_echo_cannot_confirm_a_future_identical_send():
     from api.agent_harness.steer_delivery import SteerDelivery
 
     delivery = SteerDelivery()
-    assert delivery.receive("potato", "history-item") is False
+    assert delivery.receive("potato", "history-item") == []
     receipt = delivery.begin("potato")
     delivery.acknowledge(receipt, succeeded=True)
-    assert delivery.receive("potato", "history-item") is False
+    assert delivery.receive("potato", "history-item") == []
     assert delivery.received_count == 0
     assert delivery.undelivered == ["potato"]
 

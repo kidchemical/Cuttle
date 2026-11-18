@@ -149,7 +149,15 @@ def steered_user_meta(info: Dict[str, Any]) -> Dict[str, Any]:
     """Metadata of the user row a steer saves: flag, agent, and the turn it joined."""
     meta: Dict[str, Any] = {"steered": True, "steered_agent": info.get("agent")}
     if info.get("steer_id"):
-        meta["steer"] = {"steer_id": info["steer_id"], "reply": None, "covers": [], "delivered": bool(info.get("delivered"))}
+        from api.agent_harness.steer_receipts import insert_shape
+
+        # The receipt contract is written in full at insert; later vendor events
+        # only ever replace it (api.agent_harness.steer_receipts).
+        meta["steer"] = insert_shape(
+            info["steer_id"],
+            delivered=bool(info.get("delivered")),
+            mode="detached" if info.get("background_idle") else "live",
+        )
     if info.get("turn_id"):
         meta["turn_id"] = str(info["turn_id"])
     if info.get("background_idle"):
