@@ -404,25 +404,29 @@ def update_child(
     if not sets:
         return
     args.append(child_id)
-    conn = db._get_connection()
-    cur = conn.cursor()
     if status is not None and status != STATUS_PENDING:
-        cur.execute(
-            "SELECT status FROM subagent_children WHERE id = ?",
-            (child_id,),
-        )
-        row = cur.fetchone()
-        current = str(row["status"] or "") if row else ""
-        if current == STATUS_CANCELLED:
-            conn.close()
+        if not _status_may_change(db, child_id, status, live_turn_id):
             return
-        if status == STATUS_RUNNING and current in TERMINAL_CHILD:
-            conn.close()
-            return
+        # An explicit Tasks assignment follows the child's status (turn end, cancel,
+        # orphan reconcile, external round). It settles BEFORE the status commits, so
+        # whoever reads the child as done or failed also reads its item as settled.
+        # The Tasks rows commit on their own connections, so this runs before our write.
+        from api.subagents import extras
+
+        try:
+            extras.settle_child_task(db, child_id, status)
+        except Exception as exc:  # best effort: the child's own status must still land
+            print(f"[SUBAGENTS] Tasks settle failed for {child_id[:8]}: {exc}", flush=True)
     guard = ""
     if live_turn_id is not None:
         guard = " AND live_turn_id = ? AND status = ?"
         args.extend([live_turn_id, STATUS_RUNNING])
+    if status is not None and status not in (STATUS_PENDING, STATUS_CANCELLED):
+        # Cancelled is final even if a Stop lands between the check above and this write.
+        guard += " AND status != ?"
+        args.append(STATUS_CANCELLED)
+    conn = db._get_connection()
+    cur = conn.cursor()
     cur.execute(
         f"UPDATE subagent_children SET {', '.join(sets)} WHERE id = ?{guard}",
         tuple(args),
@@ -434,12 +438,34 @@ def update_child(
         from api.orchestration_telemetry import record
 
         record.child_round(db, child_id, started=started, finished=finished)
-    if changed and status is not None:
-        # Every status path (turn end, cancel, orphan reconcile, external round)
-        # lands here, so an explicit Tasks assignment follows the child's status.
-        from api.subagents import extras
 
-        extras.settle_child_task(db, child_id, status)
+
+def _status_may_change(db, child_id: str, status: str, live_turn_id: Optional[str]) -> bool:
+    """The guards ``update_child`` applies, read ahead of its write.
+
+    A cancelled child is final, a finished child does not restart, and a
+    turn-guarded write only lands while that turn still owns the child.
+    """
+    conn = db._get_connection()
+    try:
+        row = conn.execute(
+            "SELECT status, live_turn_id FROM subagent_children WHERE id = ?",
+            (child_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return True  # nothing to update; the write itself is a no-op
+    current = str(row["status"] or "")
+    if current == STATUS_CANCELLED:
+        return False
+    if status == STATUS_RUNNING and current in TERMINAL_CHILD:
+        return False
+    if live_turn_id is not None and (
+        current != STATUS_RUNNING or str(row["live_turn_id"] or "") != live_turn_id
+    ):
+        return False
+    return True
 
 
 def request_stop(db, child_id: str, *, at: Optional[float] = None) -> None:
