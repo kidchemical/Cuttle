@@ -35,10 +35,13 @@ does not report done while one exists.
 
 **An unexpected error in this bookkeeping fails closed.** Only a refused
 database write is retried. Any other exception while a group is planned or
-settled is a bug: it is logged once and the group is dropped from memory whole
-(bindings, queue entries, live status), with no retry and nothing written after
-it. Its rows keep the last committed state, and a ``pending`` row whose turn is
-not live reads as "not confirmed". No other group is affected.
+settled is a bug: it is logged once and the group, as it stood at the fault, is dropped
+from memory whole (bindings, queue entries, live status), with no retry and
+nothing written after it. Its tracker forgets those steers too, so they never
+join a later reply's group: a steer that shares a reply with them afterwards is
+regrouped without them and saved normally. The failed rows keep the last
+committed state, and a ``pending`` row whose turn is not live reads as "not
+confirmed". No other group is affected.
 
 Contract on the saved user row, written in full at insert
 (``api.chat_coordinator.steered_user_meta``) and only ever replaced wholesale:
@@ -288,6 +291,28 @@ class Receipts:
                 entry['ended'] = True
             self._emit_many(list(self._entries))
 
+    def forget(self, steer_ids):
+        """Stop tracking these steers: their group failed closed in the writer.
+
+        They leave ``_entries``, so no later reply groups them, and they leave
+        any group they are in, so they are in nobody's ``covers`` and never
+        hold the excerpt. A member left behind (it joined after the fault) is
+        republished: its group is now only the healthy steers. Idempotent.
+        """
+        with self._lock:
+            ids = set(steer_ids)
+            groups = []
+            for entry in [e for e in self._entries if e['steer_id'] in ids]:
+                self._entries.remove(entry)
+                group, entry['group'] = entry['group'], None
+                if group is not None:
+                    group['members'] = [m for m in group['members'] if m is not entry]
+                    if not any(group is other for other in groups):
+                        groups.append(group)
+            left = [member for group in groups for member in group['members']]
+            if left:
+                self._emit_many(left)
+
     # ── reads ───────────────────────────────────────────────────────────────
     def snapshot(self, steer_id):
         with self._lock:
@@ -393,6 +418,11 @@ _live = {}
 _write_lock = threading.Lock()
 _queue = {}
 _inflight = 0
+# The steers of the batch that is inside its database call right now. Set and
+# cleared by the writer under ``_pending_lock`` around that one call, so the
+# grace purge and ``flush()`` see a write in progress whatever the revisions
+# say.
+_db_call = frozenset()
 _wake = threading.Event()
 _writer = None
 
@@ -417,9 +447,7 @@ def track(session, tracker, steer_id):
 def discard(steer_id):
     """Forget a steer whose user row will never be written."""
     with _pending_lock:
-        binding = _pending.pop(steer_id, None)
-        if binding is not None:
-            _unpublish_locked(binding['session'], steer_id)
+        _release_locked([steer_id])
 
 
 def discard_meta(metadata):
@@ -434,8 +462,8 @@ def _purge_locked():
 
     A group goes as one: dropping a single member would leave the others
     waiting for a bind that can no longer be seen. A dirty group (a member's
-    latest revision is not settled, which includes one being written right
-    now) is left to the writer, which settles or releases it.
+    latest revision is not settled) or one inside the writer's database call
+    is left to the writer, which settles or releases it.
     """
     now = time.monotonic()
     seen = set()
@@ -445,6 +473,8 @@ def _purge_locked():
         ids = {steer_id, *binding['group']}
         members = {sid: _pending[sid] for sid in ids if sid in _pending}
         seen.update(members)
+        if not _db_call.isdisjoint(members):
+            continue
         if any(m['ended_at'] is None or m['rev'] != m['settled'] for m in members.values()):
             continue
         if now - max(m['ended_at'] for m in members.values()) >= _PENDING_GRACE_SEC:
@@ -452,10 +482,18 @@ def _purge_locked():
 
 
 def _release_locked(steer_ids):
-    for steer_id in list(steer_ids):
-        binding = _pending.pop(steer_id, None)
-        if binding is not None:
-            _unpublish_locked(binding['session'], steer_id)
+    """Forget these steers' live entries and bindings, each by steer id.
+
+    The live entry is found by id, not through the binding, so a release that
+    failed part way can simply be done again: nothing is left that only the
+    lost binding could name.
+    """
+    steer_ids = list(steer_ids)
+    for session in list(_live):
+        for steer_id in steer_ids:
+            _unpublish_locked(session, steer_id)
+    for steer_id in steer_ids:
+        _pending.pop(steer_id, None)
 
 
 def _superseded(snapshot):
@@ -682,28 +720,40 @@ def _queue_owed():
 def _fail_closed(steer_ids, log):
     """An unexpected error in planning or settling: a bug, never retried.
 
-    The group is only marked here. From this statement on nothing is planned
-    or written for it, and the writer's next pass drops it from memory; its
-    rows keep the last committed state.
+    The group is only marked here, as it stands now: these steers and whoever
+    shares their group at this moment. From this statement on nothing is
+    planned or written for them, and the writer's next pass drops them from
+    memory; their rows keep the last committed state. A steer that joins the
+    group later is not part of the failure.
     """
     _doomed.update(steer_ids)
     log.exception("Steer receipt bookkeeping failed; the group is dropped and "
                   "its rows keep the last committed state")
     _wake.set()
+    with _pending_lock:
+        for steer_id in list(steer_ids):
+            _doomed.update(_pending.get(steer_id, {}).get('group', ()))
 
 
 def _drop_doomed():
-    """Forget every doomed group: bindings, live entries and queue entries.
+    """Forget every doomed steer: tracker entry, binding, live and queue entry.
 
-    Idempotent, and ``_doomed`` is cleared last, so a drop that fails part way
-    is simply done again on the next pass. No other group is touched.
+    Exactly the steers marked at the fault go. Their tracker forgets them
+    first (lock order tracker → ``_pending_lock``), which regroups and
+    republishes a healthy steer that joined them since; then the bindings and
+    live entries are removed by id. Every step is idempotent and ``_doomed``
+    is cleared last, so a drop that fails part way is simply done again on the
+    next pass. No other group is touched.
     """
     if not _doomed:
         return
+    gone = set(_doomed)
     with _pending_lock:
-        gone = set(_doomed)
-        gone.update(steer_id for steer_id, binding in _pending.items()
-                    if not _doomed.isdisjoint(binding['group']))
+        trackers = {id(_pending[steer_id]['tracker']): _pending[steer_id]['tracker']
+                    for steer_id in gone if steer_id in _pending}
+    for tracker in trackers.values():
+        tracker.forget(gone)
+    with _pending_lock:
         _release_locked(gone)
     with _write_lock:
         for steer_id in gone:
@@ -771,26 +821,42 @@ def _write_batch(batch, retry, log):
     A plan is plain data and holds nothing: a group that is planned is dirty
     until ``_settle``, and dirty is what keeps it from the grace purge and
     ``flush()`` from reporting done. A refused database write is retried within
-    the group's budget; any other exception fails the group closed.
+    the group's budget; any other exception — building the arguments, or after
+    the commit — fails the batch's groups closed.
     """
+    global _db_call
     by_db = {}
     for plan in _plan_groups(batch, log):
         by_db.setdefault(id(plan['db']), []).append(plan)
     for plans in by_db.values():
         try:
-            plans[0]['db'].patch_message_metadata(
-                [(message_id, {'steer': contract})
-                 for plan in plans for message_id, contract in plan['rows']])
-            saved = True
-        except Exception:
-            log.warning("Steer receipt write failed for %d group(s)", len(plans),
-                        exc_info=True)
-            saved = False
-        for plan in plans:
+            # Built before the database is asked: only an exception raised by
+            # the database call itself is a refusal.
+            write = plans[0]['db'].patch_message_metadata
+            payload = [(message_id, {'steer': contract})
+                       for plan in plans for message_id, contract in plan['rows']]
+            with _pending_lock:
+                _db_call = frozenset(s for plan in plans for s in plan['members'])
             try:
-                _requeue(retry, _settle(plan) if saved else _fail(plan, retry))
+                write(payload)
             except Exception:
-                _fail_closed(plan['members'], log)
+                log.warning("Steer receipt write failed for %d group(s)", len(plans),
+                            exc_info=True)
+                saved = False
+            else:
+                saved = True
+            finally:
+                with _pending_lock:
+                    _db_call = frozenset()
+            for plan in plans:
+                try:
+                    _requeue(retry, _settle(plan) if saved else _fail(plan, retry))
+                except Exception:
+                    _fail_closed(plan['members'], log)
+        except Exception:
+            # Not the database: nothing here is retried, so what a commit just
+            # saved is never queued again.
+            _fail_closed([s for plan in plans for s in plan['members']], log)
 
 
 def _fail(plan, retry):
@@ -866,6 +932,10 @@ def _plan(tracker, steer_id, attempts):
     facts frozen before Stop. ``revs`` is the revision this plan was made
     from; ``_settle`` compares it with the group's revision after the write.
 
+    A group with no unsettled revision owes no write and gets no plan: a
+    second queue entry for a group an earlier plan already saved up to date
+    must not write it again.
+
     Planning changes nothing (but for a steer with no row left to write, which
     is settled on the spot), so an exception in here leaves nothing behind.
     """
@@ -899,6 +969,9 @@ def _plan(tracker, steer_id, attempts):
                 if binding is not None:
                     binding['settled'] = binding['rev']
                 return None
+            if all(_pending[member]['rev'] == _pending[member]['settled']
+                   for member in revs):
+                return None   # clean: already saved (or given up) as it is
             rows.sort(key=lambda row: row[0])
             return {'db': db, 'rows': rows, 'revs': revs, 'members': members,
                     'final': final, 'attempts': attempts}
@@ -939,11 +1012,12 @@ def _give_up(plan):
 
 def _write_owed():
     with _pending_lock:
-        return any(binding['rev'] != binding['settled'] for binding in _pending.values())
+        return bool(_db_call) or any(binding['rev'] != binding['settled'] for binding in _pending.values())
 
 
 def flush(timeout=5.0):
-    """Wait until no write is owed: nothing queued, in flight, dirty or to drop.
+    """Wait until no write is owed: nothing queued, in flight, dirty, inside a
+    database call or to drop.
 
     For tests and shutdown.
     """

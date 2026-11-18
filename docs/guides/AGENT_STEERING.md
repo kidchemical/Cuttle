@@ -211,8 +211,9 @@ after a reload the user row is the only source of truth.
   receipt that no row will ever carry (unauthenticated steer path, a failed
   insert) is dropped. A group with a member that never binds (a turn that
   ended during delivery) is purged a grace period after it ended, unless a
-  write is still owed to it (dirty), by the writer itself, so cleanup never
-  depends on later traffic. The writer exits when
+  write is still owed to it (dirty) or its batch is inside the database call,
+  by the writer itself, so cleanup never depends on later traffic. A group
+  with no unsettled change is never written again. The writer exits when
   there is nothing queued and nothing retained, restarts on demand, and drains
   what it has at interpreter exit. That drain is an orderly-exit hook only: a
   hard stop (`SIGTERM` with no handler, `SIGKILL`) can leave a queued row
@@ -220,12 +221,19 @@ after a reload the user row is the only source of truth.
   a client has to treat as special. Live status keeps only the current turn's,
   and is a transient overlay: after it disappears, reconcile against refreshed
   history, where the user row is the only source of truth.
-- **Internal errors fail closed.** Only a refused database write is retried.
-  Any other exception while the writer plans or settles a group is a bug: it
-  is logged once and that group is dropped from memory whole (bindings, queue
-  entries, live status), with no retry and nothing written after the fault.
+- **Internal errors fail closed.** Only an exception raised by the database
+  call itself is a refused write and is retried. Any other exception while the
+  writer plans a group, builds its write or settles it (including right after
+  a commit) is a bug: it is logged once and that group, as it stood at the
+  fault, is dropped from memory whole (tracker entries, bindings, queue
+  entries, live status, each removed by steer id so a drop that failed part
+  way is simply redone), with no retry and nothing written after the fault.
   Its rows keep the last committed state (a `pending` row whose turn is not
-  live reads as *not confirmed*), and no other group is affected.
+  live reads as *not confirmed*), and no other group is affected: the tracker
+  forgets the dropped steers (`Receipts.forget`), so a later reply never
+  groups them, lists them in `covers` or puts its excerpt on their row, and a
+  steer that joined them after the fault is regrouped without them and saved
+  normally.
 
 Tests: `src/tests/harness/test_steer_receipts.py`,
 `src/tests/harness/test_agent_steer.py`,

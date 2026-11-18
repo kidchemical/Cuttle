@@ -2035,3 +2035,312 @@ def test_any_interleaving_leaves_the_excerpt_on_exactly_one_row(monkeypatch):
             steer_receipts._live.clear()
     assert all(count >= 20 for count in in_flight.values()), in_flight
     assert strong >= 100, strong
+
+
+# ── round 9: the four gaps the round-8 gate found ───────────────────────────
+
+def test_a_second_queue_entry_for_a_saved_group_is_not_written_again(monkeypatch):
+    """Codex gate 8, 1a: a plan for a group with no unsettled revision is skipped.
+
+    A is bound and B never binds. While the writer is about to plan A, the
+    reply and the turn's end land, which queue A again. The first plan reads
+    the latest revision and commits it; the second queue entry used to write
+    the clean group once more.
+    """
+    db = _MemoryDb()
+    _no_writer()
+    plan, events = steer_receipts._plan, []
+    with monkeypatch.context() as staged:
+        staged.setattr(steer_receipts, '_ensure_writer', lambda: None)
+        tracker, ids = _echoed_group('9901', 'AB')
+        a = _insert(db, '9901', 'A', ids['A'])
+        steer_receipts.bind(ids['A'], db, a)
+
+    def overtaken(owner, steer_id, attempts):
+        if not events:
+            events.append('landed while the batch was being planned')
+            _reply_and_finish(tracker)
+            assert ids['A'] in steer_receipts._queue
+        return plan(owner, steer_id, attempts)
+
+    monkeypatch.setattr(steer_receipts, '_plan', overtaken)
+    assert steer_receipts.flush(5.0)
+    assert db.attempts == [[a]], 'the clean group was not written a second time'
+    assert _held(db, a) == ('Both noted.', [a])
+    assert steer_receipts.retained()['pending'] == 2, 'kept for B, inside its grace'
+
+
+def test_a_batch_inside_its_database_call_is_seen_by_flush_and_the_purge(monkeypatch):
+    """Codex gate 8, 1b: the database call itself keeps the group, not only "dirty".
+
+    The write is held inside the database, the group's revisions are marked
+    settled behind the writer's back and the clock passes the grace period.
+    The purge used to drop both bindings in the middle of that write.
+    """
+    from types import SimpleNamespace
+
+    offset = [0.0]
+    monkeypatch.setattr(steer_receipts, 'time', SimpleNamespace(
+        monotonic=lambda: time.monotonic() + offset[0], sleep=time.sleep))
+    writing, commit = threading.Event(), threading.Event()
+
+    def before_write(_attempt):
+        writing.set()
+        assert commit.wait(5)
+
+    db = _MemoryDb(before_write)
+    tracker, ids = _echoed_group('9902', 'AB')
+    a = _insert(db, '9902', 'A', ids['A'])
+    _reply_and_finish(tracker)                          # B never binds
+    try:
+        steer_receipts.bind(ids['A'], db, a)
+        assert writing.wait(5)
+        with steer_receipts._pending_lock:
+            for binding in steer_receipts._pending.values():
+                binding['settled'] = binding['rev']
+        offset[0] = steer_receipts._PENDING_GRACE_SEC + 1
+        assert steer_receipts._write_owed(), 'flush() sees the database call'
+        assert steer_receipts.retained()['pending'] == 2, 'not purged mid-write'
+    finally:
+        commit.set()
+    assert steer_receipts.flush(5.0)
+    assert steer_receipts._db_call == frozenset()
+    assert _held(db, a) == ('Both noted.', [a])
+    assert steer_receipts.retained() == _NOTHING
+
+
+class _AuthRows:
+    """The production ``AuthDatabase`` behind the writer, recording its calls."""
+
+    def __init__(self):
+        import uuid
+
+        from api.auth_db import get_auth_db
+
+        self.auth = get_auth_db()
+        user = self.auth.create_user(f'steer-{uuid.uuid4().hex}@example.com', 'Steer', 'local')
+        self.session = self.auth.create_chat_session(
+            user['id'] if isinstance(user, dict) else user, 'receipts')
+        self.attempts = []
+
+    def add_message(self, _sid, role, text, metadata=None):
+        return self.auth.add_message(self.session, role, text, metadata=metadata)
+
+    def patch_message_metadata(self, updates):
+        self.attempts.append([mid for mid, _ in updates])
+        return self.auth.patch_message_metadata(updates)
+
+    def view(self, message_id):
+        row = next(row['metadata']['steer'] for row in self.auth.get_messages(self.session)
+                   if row['id'] == message_id)
+        return row['state'], (row['reply'] or {}).get('text'), row['covers']
+
+
+@pytest.mark.parametrize('order', ['b-first', 'a-first', 'pre-drop'])
+def test_a_dropped_steer_never_joins_a_later_reply_group(monkeypatch, order):
+    """Both experts, gate 8: real steer path, real ``AuthDatabase``.
+
+    A and B are two echoed follow-ups of one live turn. A's first write hits
+    an exception in ``_plan`` and A fails closed. Then one agent message
+    answers both. The tracker used to group the dropped A with B: the excerpt
+    went to A's dropped row (``b-first``: zero holders), or B saved
+    ``covers [A, B]`` against a pending A (``a-first``), or — the reply landing
+    between the fault and the drop (``pre-drop``) — B was dropped too and its
+    confirmed echo lost. B is saved as its own group every time.
+    """
+    from api import chat_delivery
+
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    db = _AuthRows()
+    session = str(db.session)
+    monkeypatch.setattr('api.chat_turn_row.current', lambda _sid: {'query_id': 'turn-1'})
+    plan, fail_closed = steer_receipts._plan, steer_receipts._fail_closed
+    faults, late, state = [], [], {}
+
+    def faulty_plan(tracker, steer_id, attempts):
+        if steer_id == state.get('a') and not faults:
+            faults.append(steer_id)
+            raise RuntimeError('injected internal exception in _plan')
+        return plan(tracker, steer_id, attempts)
+
+    def answer():
+        steer.note_output_start(session, token, 'reply')
+        steer.note_output_text(session, token, 'reply', 'Both noted.')
+
+    def answered_before_the_drop(steer_ids, log):
+        fail_closed(steer_ids, log)
+        if order == 'pre-drop' and not late:
+            late.append('reply and B bind between the fault and the drop')
+            worker = threading.Thread(
+                target=lambda: (answer(), steer_receipts.bind(state['b'], db, state['row_b'])))
+            worker.start()
+            worker.join(5)
+
+    monkeypatch.setattr(steer_receipts, '_plan', faulty_plan)
+    monkeypatch.setattr(steer_receipts, '_fail_closed', answered_before_the_drop)
+    assert chat_delivery.try_begin(session)
+    token = steer.register(session, 'codex', lambda text, sid: _future((True, None)))
+    try:
+        a = steer.steer(session, 'A')['steer_id']
+        b = steer.steer(session, 'B')['steer_id']
+        state.update(a=a, b=b)
+        steer.note_echo(session, token, a)
+        steer.note_echo(session, token, b)
+        if order == 'b-first':
+            row_b = _insert(db, session, 'B', b)
+            row_a = _insert(db, session, 'A', a)
+        else:
+            row_a = _insert(db, session, 'A', a)
+            row_b = _insert(db, session, 'B', b)
+        state['row_b'] = row_b
+        steer_receipts.bind(a, db, row_a)            # A's write: fault, fail closed
+        assert steer_receipts.flush(5.0)
+        if order != 'pre-drop':
+            answer()                                 # one message answers A and B
+            steer_receipts.bind(b, db, row_b)
+            assert steer_receipts.flush(5.0)
+        live = {row['message_id']: (row['state'], (row['reply'] or {}).get('text'), row['covers'])
+                for row in steer_receipts.live(session)}
+    finally:
+        steer.unregister(session, token)             # the turn ends
+        chat_delivery.end(session)
+    assert steer_receipts.flush(5.0)
+    assert len(faults) == 1 and (order != 'pre-drop' or late)
+    assert steer_receipts.snapshot(a) is None
+    assert db.view(row_a) == ('pending', None, []), 'the failed row keeps its last state'
+    assert db.view(row_b) == ('delivered', 'Both noted.', [row_b]), 'B is its own group'
+    assert live == {row_b: ('delivered', 'Both noted.', [row_b])}
+    assert all(row_a not in attempt for attempt in db.attempts), 'nothing written to A'
+    assert steer_receipts.retained() == _NOTHING
+
+
+def test_forget_regroups_only_the_healthy_members():
+    """The tracker side of a drop: forgotten steers leave groups, covers and the excerpt."""
+    published = []
+    tracker = Receipts(many=lambda snaps: published.append(snaps) or False)
+    a, b, c = (tracker.begin(label) for label in 'ABC')
+    for row, steer_id in enumerate((a, b, c), 1):
+        tracker.accepted(steer_id, True)
+        tracker.echo(steer_id)
+        tracker.bind(steer_id, row)
+    tracker.output_start('reply')
+    tracker.output_text('reply', 'Both noted.')
+    del published[:]
+    tracker.forget([c])                              # C held the excerpt
+    tracker.forget([c])                              # idempotent
+    assert [[snap['steer_id'] for snap in snaps] for snaps in published] == [[a, b]]
+    assert tracker.snapshot(c) is None and tracker.group(c) is None
+    assert tracker.snapshot(a)['covers'] == [1, 2] and tracker.snapshot(a)['reply'] is None
+    assert tracker.snapshot(b)['reply']['text'] == 'Both noted.'
+    assert tracker.snapshot(b)['group'] == (a, b)
+
+
+@pytest.mark.parametrize('during', ['settle', 'drop'])
+def test_a_partial_release_never_strands_a_live_entry(monkeypatch, during):
+    """Gate 8, 3: a fault between removing a binding and its live entry.
+
+    The live entry used to stay for ever (the drop found it through the
+    binding, which was gone), surviving the writer's restart and able to evict
+    a healthy receipt of the same chat. ``settle``: the fault hits the release
+    after A's commit. ``drop``: A's plan fails and the fault hits the drop's
+    own release. C is a healthy live receipt of the same chat.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    db = _MemoryDb()
+    healthy, ids = _echoed_group('9903', 'C')
+    c = _insert(db, '9903', 'C', ids['C'])
+    steer_receipts.bind(ids['C'], db, c)
+    assert steer_receipts.flush(5.0)
+    tracker, new = _echoed_group('9903', 'A')
+    a = _insert(db, '9903', 'A', new['A'])
+    _reply_and_finish(tracker)
+    unpublish, plan, faults = steer_receipts._unpublish_locked, steer_receipts._plan, []
+
+    def faulty_unpublish(session, steer_id):
+        if steer_id == new['A'] and not faults:
+            faults.append(steer_id)
+            raise RuntimeError('injected while A is being released')
+        return unpublish(session, steer_id)
+
+    def faulty_plan(owner, steer_id, attempts):
+        if during == 'drop' and steer_id == new['A']:
+            raise RuntimeError('injected planning A')
+        return plan(owner, steer_id, attempts)
+
+    monkeypatch.setattr(steer_receipts, '_unpublish_locked', faulty_unpublish)
+    monkeypatch.setattr(steer_receipts, '_plan', faulty_plan)
+    steer_receipts.bind(new['A'], db, a)
+    assert steer_receipts.flush(5.0)
+    assert faults == [new['A']]
+    assert db.steer_meta(a)['state'] == ('delivered' if during == 'settle' else 'pending')
+    assert set(steer_receipts._live.get('9903', {})) == {ids['C']}, 'only the healthy one'
+    assert steer_receipts.retained() == {'pending': 1, 'sessions': 1, 'live': 1}
+    healthy.finish()
+    assert steer_receipts.flush(5.0)
+    assert steer_receipts.retained() == _NOTHING
+
+
+class _BrokenRows(list):
+    """Plan rows whose first read raises: a fault building the write's arguments."""
+
+    broken = True
+
+    def __iter__(self):
+        if self.broken:
+            self.broken = False
+            raise RuntimeError('injected building the metadata payload')
+        return super().__iter__()
+
+
+def test_a_fault_building_the_payload_is_not_retried_as_a_database_refusal(monkeypatch):
+    """Codex gate 8, 4: only the database call's own exception is a refusal.
+
+    The exception is raised while the batch's arguments are built, before the
+    database is called. It used to be caught as a refused write and retried,
+    so A was written after an internal fault.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    db = _MemoryDb()
+    plan, faults = steer_receipts._plan, []
+
+    def broken_rows(owner, steer_id, attempts):
+        out = plan(owner, steer_id, attempts)
+        if out is not None and not faults:
+            faults.append(steer_id)                     # once: a retry would succeed
+            out['rows'] = _BrokenRows(out['rows'])
+        return out
+
+    monkeypatch.setattr(steer_receipts, '_plan', broken_rows)
+    tracker, ids = _echoed_group('9904', 'A')
+    a = _insert(db, '9904', 'A', ids['A'])
+    _reply_and_finish(tracker)
+    steer_receipts.bind(ids['A'], db, a)
+    assert steer_receipts.flush(5.0)
+    assert len(faults) == 1
+    assert db.attempts == [], 'failed closed: no database call after the fault'
+    assert db.steer_meta(a)['state'] == 'pending'
+    assert steer_receipts.retained() == _NOTHING
+
+
+@pytest.mark.parametrize('spot', ['saved = True', 'for plan in plans:'])
+def test_a_fault_right_after_the_commit_never_replays_it(monkeypatch, spot):
+    """Claude gate 8 follow-up: the statements after a commit fail closed too.
+
+    A fault there used to count as a refused write, or to escape to the
+    writer's general handler, and the committed batch was written again.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    db = _MemoryDb()
+    _no_writer()
+    with monkeypatch.context() as staged:
+        staged.setattr(steer_receipts, '_ensure_writer', lambda: None)
+        tracker, ids = _echoed_group('9905', 'A')
+        a = _insert(db, '9905', 'A', ids['A'])
+        _reply_and_finish(tracker)
+        steer_receipts.bind(ids['A'], db, a)
+    fault = _fault_at(monkeypatch, '_write_batch', spot, lambda *_: True)
+    assert steer_receipts.flush(5.0)
+    assert len(fault.injected) == 1
+    assert db.attempts == [[a]], 'committed once, never queued again'
+    assert _held(db, a) == ('Both noted.', [a])
+    assert steer_receipts.retained() == _NOTHING
