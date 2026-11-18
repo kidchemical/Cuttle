@@ -1,0 +1,46 @@
+/* ================================================================
+   Studio composer (L7): the intro mock's composer, slash menu and
+   /orchestrate chip, at app density. Owner: this file only.
+
+   Everything is scoped to `:root.cuttle-studio`; Classic never matches.
+   Tokens only (studio_tokens.css). The orchestrate chip is matched by its
+   label (`data-full-label` starts "Orchestrate"), so the composer chip and
+   the sent-bubble chip share one rule with no markup change. Loaded by
+   chat_page.html (integration step), after chat_page.css.
+   ================================================================ */
+
+/* Composer box: the mock's large radius and layered shadow, no hard border. */
+:root.cuttle-studio .input-wrapper {
+    border-color: transparent;
+    border-radius: var(--studio-radius-xl);
+    box-shadow: var(--studio-shadow-composer);
+}
+
+:root.cuttle-studio .input-wrapper:focus-within {
+    border-color: transparent;
+    box-shadow: var(--studio-focus-ring), var(--studio-shadow-composer);
+}
+
+/* Slash menu: the typed prefix reads as the mock's bold accent ("/orch"). */
+:root.cuttle-studio .slash-prefix-hit {
+    font-weight: var(--studio-weight-heavy);
+    color: var(--studio-accent);
+}
+
+/* /orchestrate chip, composer and sent bubble: the mock's lavender pill. */
+:root.cuttle-studio .slash-command-chip[data-full-label^="Orchestrate - "],
+:root.cuttle-studio .slash-command-chip[data-full-label="Orchestrate"] {
+    background: var(--studio-accent-soft);
+    border-color: transparent;
+    color: var(--studio-accent-ink);
+    border-radius: var(--studio-radius-pill);
+    box-shadow: 0 6px 16px -10px rgba(76, 58, 168, 0.5);
+    max-width: min(100%, 22rem);
+}
+
+/* The sent bubble is already accent-coloured: its chip reads as translucent white. */
+:root.cuttle-studio .user-message-with-slash .orch-bubble-chip .slash-command-chip[data-full-label^="Orchestrate"] {
+    background: color-mix(in srgb, var(--studio-bubble-user-ink) 20%, transparent);
+    color: var(--studio-bubble-user-ink);
+    box-shadow: none;
+}

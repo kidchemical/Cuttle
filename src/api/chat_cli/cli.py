@@ -504,7 +504,7 @@ Supervisor model / effort / harness:
   harness catalog; on a rejection, read the error and pick a listed model.
 """
 
-_CHAT_OP_VERBS = ('send', 'status', 'snapshot', 'stop', 'supervise', 'context', 'compact') + _OPERATION_VERBS
+_CHAT_OP_VERBS = ('send', 'status', 'snapshot', 'stop', 'supervise', 'context', 'compact', 'timeline') + _OPERATION_VERBS
 
 
 FOCUS_NOTICE = ('Note: --instructions sets the Focus note, the user’s own free text in the Supervise dialog. '
@@ -575,6 +575,11 @@ def cmd_operation(args: argparse.Namespace) -> int:
             payload = service.agent_context(args.handle, agent=args.agent or None, **kwargs)
         elif verb == 'compact':
             payload = service.compact(args.handle, mode=args.mode, agent=args.agent or None, **kwargs)
+        elif verb == 'timeline':
+            from api.chat_ops.timeline import project
+            sid = service.session_id(args.handle)
+            service.context(sid, sid, db=db)
+            payload = {'ok': True, **project(sid, before=args.before, limit=args.limit, include_quiet=args.include_quiet)}
         else:
             payload = service.supervise(args.handle, every=args.every, instructions=args.instructions,
                 required_branch=args.require_branch, required_path=args.require_path,
@@ -586,7 +591,7 @@ def cmd_operation(args: argparse.Namespace) -> int:
     if verb in ('supervise', 'edit-operation'):
         _focus_notice(args, payload)
     _emit_text_once(payload, as_json=args.json,
-                    text_fn=lambda p: json.dumps(p, indent=2, ensure_ascii=False, default=str))
+                    text_fn=lambda p: ('\n'.join(f"{i['at']}  {i['kind']}  {i['headline']}" for i in p['items']) if verb == 'timeline' else json.dumps(p, indent=2, ensure_ascii=False, default=str)))
     return 0 if payload.get('ok', True) else 1
 
 
@@ -728,6 +733,7 @@ def build_parser() -> argparse.ArgumentParser:
         ('context', "Context-window fill of the target chat's agent session"),
         ('compact', "Compact the target chat's agent session between turns (native or fresh)"),
         ('supervise', 'Create durable recurring check-ins in the acting chat'),
+        ('timeline', 'Show supervision events for a chat you own'),
         ('operations', 'List your delivery requests and supervision profiles'),
         ('operation', 'Inspect one delivery request or supervision profile'),
         ('cancel-operation', 'Cancel a pending delivery or recurring supervision profile'),
@@ -739,6 +745,10 @@ def build_parser() -> argparse.ArgumentParser:
         op = sub.add_parser(verb, parents=[common], help=help_text,
                             epilog=_SUPERVISE_EPILOG if verb in ('supervise', 'edit-operation') else None,
                             formatter_class=argparse.RawDescriptionHelpFormatter)
+        if verb == 'timeline':
+            op.add_argument('--limit', type=int, default=50)
+            op.add_argument('--before', default=None)
+            op.add_argument('--include-quiet', action='store_true')
         op.add_argument('--as', dest='as_chat', help='Acting chat (default CUTTLE_CHAT_SESSION_ID); same owner required')
         if verb not in _OPERATION_VERBS:
             op.add_argument('handle', help='Target session CH-…')

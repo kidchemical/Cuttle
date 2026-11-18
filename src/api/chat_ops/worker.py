@@ -378,7 +378,8 @@ def _violations(op, branch, path, *, db=None, commands=()):
     forbidden = cfg.get('forbidden_branches') or []
     if forbidden and path:
         worktrees = rules.worktree_branches(path) if commands else {}
-        for sid, command in commands:
+        for sid, entry in commands:
+            command = entry[0] if isinstance(entry, tuple) else entry
             if rules.forbidden_command(command, forbidden, worktrees):
                 moved.append(f'CH-{sid:06d} ran a git write against a forbidden branch: `{command[:2000]}`')
         tips = rules.branch_tips(path, forbidden)
@@ -554,8 +555,19 @@ def guard_check(op, db=None, request=None, *, trigger='', commands=()):
         return False  # already raised; the interval check repeats it
     snap = service.snapshot(row['id'], actor, db=db, request=request or transport.request,
                             task_pick=service.task_pick(cfg))
-    store.record_check(op['id'], 'violation', {'state': snap['state'], 'branch': snap['branch'],
-                                               'violations': violations, 'trigger': trigger})
+    detail = {'state': snap['state'], 'branch': snap['branch'],
+              'violations': violations, 'trigger': trigger}
+    trees = rules.worktree_branches(path) if path else {}
+    for _sid, entry in commands:
+        command, failed = entry if isinstance(entry, tuple) else (entry, False)
+        matched = next((b for b in cfg.get('forbidden_branches', [])
+                        if rules.forbidden_command(command, [b], trees)), None)
+        if matched:
+            detail.update(command=command, branch=matched)
+            if failed:
+                detail['blocked'] = True
+            break
+    store.record_check(op['id'], 'violation', detail)
     if _respond(op, db, actor, row, snap, [v for v in violations if v not in reported]):
         store.create('checkin', actor, actor, {'text': checkin_text(cfg, snap, violations), 'schedule_id': op['id']})
     store.patch_result(op['id'], guard_reported=violations)
@@ -613,6 +625,9 @@ def _check_in(op, db, actor, sid, request):
     tracking['stuck_reported'] = [i for i in told if i in stuck_ids]
     tracking.update(care['tracking'])
     seen.update(care['seen'])
+    seen['process_snapshot'] = {'measured': care.get('measured', False),
+                                'leftover': [{k: r.get(k) for k in ('name', 'pid', 'create_time', 'rss')}
+                                             for r in care['leftover']]}
     if stuck_ids:
         seen['undelivered'] = len(stuck_ids)
     if stalled:
@@ -641,7 +656,7 @@ def _check_in(op, db, actor, sid, request):
         return
     if _template_nudge(op, cfg, snap, previous, request, db=db, actor=actor, quiet=not (
             violations or briefing or stalled or changes or failure or new_stuck or care['alert']),
-            result={**previous, **tracking, 'signature': signature, 'last_check': time.time(),
+            seen=seen, result={**previous, **tracking, 'signature': signature, 'last_check': time.time(),
                     'last_seen': seen, 'guard_reported': found}, due=nxt):
         return
     active = _active_checkins(actor, op['id'])
@@ -661,7 +676,7 @@ def _check_in(op, db, actor, sid, request):
                                         'guard_reported': found}, due=nxt)
 
 
-def _template_nudge(op, cfg, snap, previous, request, *, db, actor, quiet, result, due):
+def _template_nudge(op, cfg, snap, previous, request, *, db, actor, quiet, result, due, seen):
     """``nudge: template``: send an idle chat its next open Tasks item without a
     supervisor turn. Only when nothing else needs judgment (``quiet``), and at most
     ``TEMPLATE_NUDGE_LIMIT`` times in a row without Tasks progress; then the
@@ -679,7 +694,7 @@ def _template_nudge(op, cfg, snap, previous, request, *, db, actor, quiet, resul
     except Exception as exc:
         store.record_check(op['id'], 'error', {'entry': 'nudge', 'error': str(exc)[:300]})
         return False
-    store.record_check(op['id'], 'nudged', {'state': snap['state'], 'streak': streak, 'text': text[:300]})
+    store.record_check(op['id'], 'nudged', {**seen, 'state': snap['state'], 'streak': streak, 'text': text[:300]})
     store.finish(op['id'], 'pending', {**result, 'template_nudges': streak, 'nudge_tasks': tsig}, due=due)
     return True
 
