@@ -864,8 +864,9 @@
     }
 
     function panelHeaderHtml(h) {
+        const title = esc(h.title).replace(/(CH-\d+)/g, '<span class="sup-handle">$1</span>');
         return '<div class="sup-studio-head"><span class="sup-studio-eye" aria-hidden="true"><i></i></span>'
-            + '<div class="sup-studio-titles"><div class="sup-studio-title">' + esc(h.title) + '</div>'
+            + '<div class="sup-studio-titles"><div class="sup-studio-title">' + title + '</div>'
             + (h.subline ? '<div class="sup-studio-sub">' + esc(h.subline) + '</div>' : '') + '</div>'
             + '<span class="sup-studio-status is-' + esc(h.status) + '">' + esc(h.status) + '</span></div>';
     }

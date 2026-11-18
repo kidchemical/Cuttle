@@ -90,6 +90,10 @@
     overflow-wrap: anywhere;
 }
 
+:root.cuttle-studio .sup-handle {
+    white-space: nowrap;
+}
+
 :root.cuttle-studio .sup-studio-sub {
     margin-top: 2px;
     font-size: var(--studio-text-xs);
