@@ -1,0 +1,268 @@
+/* ================================================================
+   Studio supervision panel (lane L5): the supervision chip and the worker's
+   "Supervised by" badge open one clean timeline panel instead of the Classic
+   popover (chat_supervision.css keeps that one).
+
+   Every rule is under `:root.cuttle-studio`, so Classic is untouched. Colour
+   and type come from studio_tokens.css. The four status tones (warn, bad, ok,
+   and the accent for nudges) have no token yet, so they are local variables
+   here; L0 can promote them to studio_tokens.css.
+
+   Layout: a fixed panel anchored under the chip. Rows are time | icon | text;
+   below 640px the time moves above the headline. Motion uses the duration
+   tokens (zeroed by reduced motion) and an explicit reduced-motion override.
+   ================================================================ */
+
+:root.cuttle-studio {
+    --sup-tone-warn: #b45309;
+    --sup-tone-bad: #b91c1c;
+    --sup-tone-ok: #047857;
+}
+
+:root.cuttle-studio.dark-mode,
+:root.cuttle-studio.midnight-mode {
+    --sup-tone-warn: #fbbf24;
+    --sup-tone-bad: #f87171;
+    --sup-tone-ok: #34d399;
+}
+
+@keyframes sup-studio-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+}
+
+:root.cuttle-studio .sup-studio-panel {
+    position: fixed;
+    z-index: 170;
+    box-sizing: border-box;
+    width: min(440px, calc(100vw - 16px));
+    max-height: min(600px, calc(100dvh - 80px));
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--studio-space-3);
+    padding: var(--studio-space-4);
+    background: var(--studio-card-bg);
+    color: var(--studio-ink);
+    border-radius: var(--studio-radius-lg);
+    box-shadow: var(--studio-shadow-raised);
+    font-family: var(--studio-font-sans);
+    animation: sup-studio-in var(--studio-dur-base) var(--studio-ease-out) both;
+}
+
+/* ── Header: eye mark, title and subline, status pill ─────────────── */
+
+:root.cuttle-studio .sup-studio-head {
+    display: flex;
+    align-items: center;
+    gap: var(--studio-space-3);
+    min-width: 0;
+}
+
+:root.cuttle-studio .sup-studio-eye {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: var(--studio-accent-soft);
+}
+
+:root.cuttle-studio .sup-studio-eye i {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--studio-accent);
+    box-shadow: 0 0 0 5px var(--studio-accent-soft);
+}
+
+:root.cuttle-studio .sup-studio-titles {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+:root.cuttle-studio .sup-studio-title {
+    font-size: var(--studio-text-md);
+    font-weight: var(--studio-weight-bold);
+    letter-spacing: var(--studio-tracking-tight);
+    color: var(--studio-ink);
+    overflow-wrap: anywhere;
+}
+
+:root.cuttle-studio .sup-studio-sub {
+    margin-top: 2px;
+    font-size: var(--studio-text-xs);
+    color: var(--studio-ink-muted);
+}
+
+:root.cuttle-studio .sup-studio-status {
+    flex: 0 0 auto;
+    padding: 3px 10px;
+    border-radius: var(--studio-radius-pill);
+    background: var(--studio-accent-soft);
+    color: var(--studio-accent-ink);
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-bold);
+}
+
+:root.cuttle-studio .sup-studio-status.is-paused {
+    background: transparent;
+    color: var(--studio-ink-muted);
+    box-shadow: inset 0 0 0 1px var(--studio-card-ring);
+}
+
+/* ── Timeline rows: time | icon | text ───────────────────────────── */
+
+:root.cuttle-studio .sup-tl-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--studio-space-2);
+}
+
+:root.cuttle-studio .sup-tl {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+:root.cuttle-studio .sup-tl-row {
+    display: grid;
+    grid-template-columns: 74px 26px minmax(0, 1fr);
+    column-gap: var(--studio-space-3);
+    align-items: start;
+    padding: var(--studio-space-3) 0;
+    border-top: 1px solid var(--studio-card-ring);
+}
+
+:root.cuttle-studio .sup-tl-row:first-child {
+    border-top: 0;
+}
+
+:root.cuttle-studio .sup-tl-time {
+    padding-top: 3px;
+    color: var(--studio-ink-faint);
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-bold);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+:root.cuttle-studio .sup-tl-icon {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--studio-ink-faint);
+    color: #ffffff;
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-bold);
+}
+
+:root.cuttle-studio .sup-tl-row.tone-warn .sup-tl-icon { background: var(--sup-tone-warn); }
+:root.cuttle-studio .sup-tl-row.tone-bad .sup-tl-icon { background: var(--sup-tone-bad); }
+:root.cuttle-studio .sup-tl-row.tone-ok .sup-tl-icon { background: var(--sup-tone-ok); }
+:root.cuttle-studio .sup-tl-row.tone-accent .sup-tl-icon { background: var(--studio-accent); }
+
+:root.cuttle-studio .sup-tl-text {
+    min-width: 0;
+}
+
+:root.cuttle-studio .sup-tl-headline {
+    color: var(--studio-ink);
+    font-size: var(--studio-text-sm);
+    font-weight: var(--studio-weight-semibold);
+    line-height: var(--studio-leading-tight);
+    overflow-wrap: anywhere;
+}
+
+:root.cuttle-studio .sup-tl-chat {
+    margin-left: 4px;
+    color: var(--studio-ink-muted);
+    font-size: var(--studio-text-2xs);
+    font-weight: var(--studio-weight-medium);
+    white-space: nowrap;
+}
+
+:root.cuttle-studio .sup-tl-detail {
+    margin-top: 2px;
+    color: var(--studio-ink-muted);
+    font-size: var(--studio-text-xs);
+    line-height: var(--studio-leading-base);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* ── States and paging ───────────────────────────────────────────── */
+
+:root.cuttle-studio .sup-tl-state {
+    padding: var(--studio-space-3) 0;
+    color: var(--studio-ink-muted);
+    font-size: var(--studio-text-xs);
+    line-height: var(--studio-leading-base);
+}
+
+:root.cuttle-studio .sup-tl-state.is-error {
+    color: var(--sup-tone-bad);
+}
+
+:root.cuttle-studio .sup-tl-more {
+    align-self: flex-start;
+    padding: 5px 12px;
+    border: 0;
+    border-radius: var(--studio-radius-pill);
+    background: var(--studio-accent-soft);
+    color: var(--studio-accent-ink);
+    font: inherit;
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-semibold);
+    cursor: pointer;
+    transition: opacity var(--studio-dur-fast) var(--studio-ease-out);
+}
+
+:root.cuttle-studio .sup-tl-more:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+:root.cuttle-studio .sup-tl-more:focus-visible {
+    outline: none;
+    box-shadow: var(--studio-focus-ring);
+}
+
+/* ── Narrow panes: time above the headline ───────────────────────── */
+
+@media (max-width: 640px) {
+    :root.cuttle-studio .sup-tl-row {
+        grid-template-columns: 26px minmax(0, 1fr);
+    }
+
+    :root.cuttle-studio .sup-tl-time {
+        grid-column: 2;
+        grid-row: 1;
+        padding-top: 0;
+    }
+
+    :root.cuttle-studio .sup-tl-icon {
+        grid-column: 1;
+        grid-row: 2;
+    }
+
+    :root.cuttle-studio .sup-tl-text {
+        grid-column: 2;
+        grid-row: 2;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root.cuttle-studio .sup-studio-panel,
+    :root.cuttle-studio .sup-tl-more {
+        animation: none;
+        transition: none;
+    }
+}
