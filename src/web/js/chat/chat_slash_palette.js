@@ -39,11 +39,47 @@
            autoResizeTextarea, autoResizeWelcomeTextarea,
            renderSlashChips, markStickyAgentCleared,
            persistStickySlashForCurrentSession, isOrphanedCompanionChip,
-           onCursorModelPick }.
+           onCursorModelPick }, plus optional `isStudio()`. When `isStudio` is
+   absent the palette asks `CuttleChatDisplay.isStudio()` (the shared helper).
+
+   Studio-only (Classic output is unchanged): the typed prefix is bolded in
+   each entry's command text (`highlightTypedPrefixHtml`, pure and escape-safe).
    Loaded before chat_page.js.
    ================================================================ */
 (function (root) {
     'use strict';
+
+    function escapeTextPlain(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    /**
+     * Bold the part of a palette entry's command text that the user has typed.
+     * Pure. `query` is the palette filter without its leading `/` (`cu` for
+     * `/cu`). The entry's own leading `/` counts as part of the match, so
+     * `/cu` against `/cursor` gives `<strong>/cu</strong>rsor`. Matching is a
+     * case-insensitive character walk, not a RegExp, so regex metacharacters in
+     * the query are plain text. Returns escaped HTML only: the query is never
+     * injected. An entry the query does not prefix comes back as escaped text.
+     */
+    function highlightTypedPrefixHtml(text, query, escapeFn) {
+        const esc = typeof escapeFn === 'function' ? escapeFn : escapeTextPlain;
+        const s = String(text == null ? '' : text);
+        const q = String(query == null ? '' : query).toLowerCase();
+        if (!q) return esc(s);
+        const lead = s.charAt(0) === '/' ? 1 : 0;
+        const limit = Math.min(s.length - lead, q.length);
+        let k = 0;
+        while (k < limit && s.charAt(lead + k).toLowerCase() === q.charAt(k)) k++;
+        if (!k) return esc(s);
+        const end = lead + k;
+        return '<strong class="slash-prefix-hit">' + esc(s.slice(0, end)) + '</strong>' + esc(s.slice(end));
+    }
 
     const SLASH_PALETTE_TYPE_ORDER = [
         'command',
@@ -103,6 +139,9 @@
         const persistStickySlashForCurrentSession = deps.persistStickySlashForCurrentSession;
         const isOrphanedCompanionChip = deps.isOrphanedCompanionChip;
         const onCursorModelPick = deps.onCursorModelPick;
+        const isStudio = typeof deps.isStudio === 'function'
+            ? deps.isStudio
+            : () => !!(root.CuttleChatDisplay && root.CuttleChatDisplay.isStudio && root.CuttleChatDisplay.isStudio());
 
         const ctx = {
             welcome: {
@@ -418,6 +457,8 @@
             state.selectedIndex = items.length ? sel : 0;
 
             const filterBar = buildFilterBarHtml(typeCounts);
+            // The filter that produced `items` (set in syncFromInput); null = Classic.
+            const studioPrefix = isStudio() ? String(state.lastFilter || '') : null;
             let listHtml = '';
             if (!items.length) {
                 listHtml =
@@ -446,11 +487,15 @@
                                                 ? ' slash-command-item--codex'
                                           : ' slash-command-item--command';
                         const kind = escapeHtmlInline(S.slashPaletteCategoryLabel(cat));
-                        const meta =
+                        const metaText =
                             cat === 'command' || cat === 'cursor' || cat === 'muse'
                                 || cat === 'hermes' || cat === 'opencode' || cat === 'codex'
-                                ? escapeHtmlInline(cmd.prefix.replace(/\s+$/, ''))
-                                : escapeHtmlInline(cmd.meta || cmd.prefix.trim());
+                                ? cmd.prefix.replace(/\s+$/, '')
+                                : (cmd.meta || cmd.prefix.trim());
+                        // Studio bolds the typed prefix; Classic keeps the plain text.
+                        const meta = studioPrefix != null
+                            ? highlightTypedPrefixHtml(metaText, studioPrefix, escapeHtmlInline)
+                            : escapeHtmlInline(metaText);
                         const hint = cmd.hint ? escapeHtmlInline(cmd.hint) : '';
                         const hintBlock = hint
                             ? '<span class="slash-cmd-hint">' + hint + '</span>'
@@ -1068,7 +1113,7 @@
         };
     }
 
-    const api = { create };
+    const api = { create, highlightTypedPrefixHtml };
 
     const ns = (root.CuttleChatSlashPalette = root.CuttleChatSlashPalette || {});
     Object.assign(ns, api);
