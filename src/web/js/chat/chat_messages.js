@@ -906,9 +906,19 @@
         if (!orch || typeof orch.bubblePrefixOf !== 'function') return null;
         const found = orch.bubblePrefixOf(content);
         if (!found) return null;
-        const isStudio = deps.isStudio || (() => !!(root.CuttleChatDisplay && root.CuttleChatDisplay.isStudio
-            && root.CuttleChatDisplay.isStudio()));
+        const isStudio = deps.isStudio || studioNow;
         return isStudio() ? found : null;
+    }
+
+    /**
+     * Studio check when the page passes none: the shared helper if loaded, else
+     * the `cuttle-studio` class ui_boot.js puts on <html>. Reads no storage here.
+     */
+    function studioNow() {
+        const helper = root.CuttleChatDisplay;
+        if (helper && typeof helper.isStudio === 'function') return !!helper.isStudio();
+        const doc = root.document;
+        return !!(doc && doc.documentElement && doc.documentElement.classList.contains('cuttle-studio'));
     }
 
     /**
@@ -945,7 +955,7 @@
      *   collapseCursorSlashChips, slashCommandChipHistoryHtml.
      * - shared util (page): escapeHtmlInline.
      * - Studio orchestrate chip (optional `isStudio()`; default
-     *   `CuttleChatDisplay.isStudio()`): a leading `/orchestrate @<id>`
+     *   `studioNow()`: the shared helper, else the <html> class): a leading `/orchestrate @<id>`
      *   renders as the chip. Classic keeps the raw prefix.
      *
      * Preserves the page contract exactly: `Selected:` / button /

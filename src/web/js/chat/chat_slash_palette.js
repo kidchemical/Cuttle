@@ -40,7 +40,8 @@
            renderSlashChips, markStickyAgentCleared,
            persistStickySlashForCurrentSession, isOrphanedCompanionChip,
            onCursorModelPick }, plus optional `isStudio()`. When `isStudio` is
-   absent the palette asks `CuttleChatDisplay.isStudio()` (the shared helper).
+   absent it uses `CuttleChatDisplay.isStudio()` if loaded, else the
+   `cuttle-studio` class on <html> (see `studioNow`).
 
    Studio-only (Classic output is unchanged): the typed prefix is bolded in
    each entry's command text (`highlightTypedPrefixHtml`, pure and escape-safe).
@@ -48,6 +49,18 @@
    ================================================================ */
 (function (root) {
     'use strict';
+
+    /**
+     * Studio check when the host passes none: the shared helper if loaded, else
+     * the `cuttle-studio` class ui_boot.js puts on <html> (same two keys, same
+     * pre-paint decision the CSS uses). Reads no storage here.
+     */
+    function studioNow(win) {
+        const helper = root.CuttleChatDisplay;
+        if (helper && typeof helper.isStudio === 'function') return !!helper.isStudio();
+        const doc = win && win.document;
+        return !!(doc && doc.documentElement && doc.documentElement.classList.contains('cuttle-studio'));
+    }
 
     function escapeTextPlain(s) {
         return String(s == null ? '' : s)
@@ -139,9 +152,7 @@
         const persistStickySlashForCurrentSession = deps.persistStickySlashForCurrentSession;
         const isOrphanedCompanionChip = deps.isOrphanedCompanionChip;
         const onCursorModelPick = deps.onCursorModelPick;
-        const isStudio = typeof deps.isStudio === 'function'
-            ? deps.isStudio
-            : () => !!(root.CuttleChatDisplay && root.CuttleChatDisplay.isStudio && root.CuttleChatDisplay.isStudio());
+        const isStudio = typeof deps.isStudio === 'function' ? deps.isStudio : () => studioNow(win);
 
         const ctx = {
             welcome: {
