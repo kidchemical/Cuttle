@@ -511,6 +511,7 @@ def steer_detached(chat_session_id: Any, agent_id: Optional[str], text: str) -> 
     # Capture the original turn before sending; it may finish during delivery.
     with wait._lock:
         base_turn = str((wait._base or {}).get("query_id") or "")
+        was_waiting = wait.phase == "waiting"
     info = steer.steer(chat_session_id, text, turn_id=base_turn or None)
     if not info.get("steered"):
         return None
@@ -519,7 +520,12 @@ def steer_detached(chat_session_id: Any, agent_id: Optional[str], text: str) -> 
         info["turn_id"] = base_turn
     # Sent while the chat looked idle (only background tasks running): to the
     # user this is a new message, not a reply to the old turn's bubble.
-    info["background_idle"] = wait.phase == "waiting"
+    info["background_idle"] = was_waiting
+    if was_waiting:
+        from api.agent_harness.steer_receipts import accepted_detached
+
+        accepted_detached(info.get("steer_id"))
+        info["delivered"] = True
     wait.log("status", f"Message steered in: {(text or '').strip()[:500]}")
     # The answer is on its way: show the typing bubble now, not at the echo.
     wait.working(f"{wait.label} is answering your message…", force=True)

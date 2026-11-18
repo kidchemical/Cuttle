@@ -55,7 +55,8 @@ until the row is bound and preserve distinct IDs for identical text.
 ### Receipt fields for clients
 
 A saved steered user message has `metadata.steer` with `steer_id`,
-`delivered` (true only after a vendor echo), `delivered_at` (ISO timestamp or
+`delivered` (true after a vendor echo, or on accepted input to an idle
+detached wait as described below), `delivered_at` (ISO timestamp or
 null), `state` (`delivered`, `undelivered`, or null while awaiting an echo),
 `reply` (`{text, at}` or null), and `covers` (the steer IDs sharing that reply).
 The first paragraph of the first agent message after the echo is clipped to 280
@@ -74,3 +75,10 @@ The first paragraph is an excerpt, not proof of an acknowledgement. In the Muse
 tool trial the full first subsequent message addressed the steer in its second
 paragraph, while the stored excerpt says “Command finished with output `READY`.”
 The UI should label it as the agent's response, not assert its semantic content.
+
+For a steer accepted while a detached Claude run is idle in its background
+wait, `delivered` is true on acceptance: the accepted input starts the detached
+follow-up. This is distinct from a steer into an actively running turn, where
+delivery requires the vendor echo. The receipt retains the same field shape;
+the subsequent replay is still correlated and cannot consume a later steer
+with identical text.

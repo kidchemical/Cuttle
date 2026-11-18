@@ -32,7 +32,7 @@ class Receipts:
         with self._lock:
             entry = {'steer_id': uuid.uuid4().hex, 'text': text, 'turn_id': turn_id,
                      'message_id': None, 'accepted': False, 'ended': self._finished,
-                     'delivered_at': None, 'reply': None, 'state': None}
+                     'delivered_at': None, 'echoed': False, 'reply': None, 'state': None}
             self._entries.append(entry)
             return entry['steer_id']
 
@@ -77,6 +77,15 @@ class Receipts:
                 e['state'] = 'undelivered'
                 self._notify(steer_id)
 
+    def accepted_detached(self, steer_id):
+        """A follow-up accepted into an idle detached wait is delivered input."""
+        with self._lock:
+            e = self._find(steer_id)
+            if e is not None:
+                e['delivered_at'] = e['delivered_at'] or _now()
+                e['state'] = 'delivered'
+                self._notify(steer_id)
+
     def echo(self, text, item_id=None):
         with self._lock:
             if item_id and item_id in self._items:
@@ -84,8 +93,9 @@ class Receipts:
             if item_id:
                 self._items.add(item_id)
             for e in self._entries:
-                if not e['delivered_at'] and not e['ended'] and e['text'].strip() == text.strip():
-                    e['delivered_at'] = _now()
+                if not e['echoed'] and not e['ended'] and e['text'].strip() == text.strip():
+                    e['echoed'] = True
+                    e['delivered_at'] = e['delivered_at'] or _now()
                     e['state'] = 'delivered'
                     self._notify(e['steer_id'])
                     return
@@ -182,6 +192,14 @@ def bind(steer_id, db, message_id):
         binding['db'] = db
         tracker = binding['tracker']
     tracker.bind(steer_id, message_id)
+
+
+def accepted_detached(steer_id):
+    with _pending_lock:
+        binding = _pending.get(steer_id)
+        tracker = binding['tracker'] if binding else None
+    if tracker is not None:
+        tracker.accepted_detached(steer_id)
 
 
 def discard(steer_id):

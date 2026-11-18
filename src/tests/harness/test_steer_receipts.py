@@ -274,3 +274,23 @@ def test_unpersisted_user_message_discards_registration():
     with steer_receipts._pending_lock:
         assert info['steer_id'] not in steer_receipts._pending
     steer.unregister('907', token)
+
+
+def test_detached_acceptance_survives_bind_and_replay_of_duplicate_text():
+    updates = []
+    tracker = Receipts(updates.append)
+    first = tracker.begin('same', 'turn')
+    tracker.accepted(first, True)
+    tracker.accepted_detached(first)
+    tracker.bind(first, 11)
+    assert updates[-1]['state'] == 'delivered'
+    assert updates[-1]['delivered_at'] is not None
+    assert updates[-1]['reply'] is None
+    second = tracker.begin('same', 'turn')
+    tracker.accepted(second, True)
+    tracker.echo('same', 'first-replay')
+    assert tracker.snapshot(second)['delivered_at'] is None
+    tracker.echo('same', 'second-replay')
+    assert tracker.snapshot(second)['delivered_at'] is not None
+    tracker.finish()
+    assert tracker.snapshot(first)['state'] == 'delivered'
