@@ -219,7 +219,7 @@ pytestmark_posix = pytest.mark.skipif(os.name == "nt", reason="fake server scrip
 
 
 @pytestmark_posix
-@pytest.mark.parametrize("observe", [False, True])
+@pytest.mark.parametrize("observe", [False, True, "raises"])
 def test_codex_app_server_turn_accepts_steer(tmp_path, monkeypatch, observe):
     import scripts.utilities.codex_app_server_turn as mod
 
@@ -233,16 +233,20 @@ def test_codex_app_server_turn_accepts_steer(tmp_path, monkeypatch, observe):
         lambda sid, snap: snaps.append((sid, snap)),
     )
     events = []
+    def observer(event):
+        events.append(event)
+        if observe == "raises":
+            raise RuntimeError("observer failed")
     results = []
     t = _steer_when_live(4242, "/codex add BANANA", results)
     res = asyncio.run(
         mod.run_codex_turn_app_server(
             "go", cwd=str(tmp_path), resume=None, model=None, reasoning_effort=None,
-            chat_session_id="db_session_4242", timeout=30, on_event=events.append if observe else None,
+            chat_session_id="db_session_4242", timeout=30, on_event=observer if observe else None,
         )
     )
     t.join(5)
-    assert bool(events) is observe
+    assert bool(events) is bool(observe)
     if observe:
         assert any(e.get("method") == "turn/completed" for e in events)
     assert results and results[0]["steered"] is True

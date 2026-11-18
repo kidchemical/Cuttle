@@ -494,7 +494,10 @@ async def run_codex_turn_app_server(
         except (json.JSONDecodeError, UnicodeDecodeError):
             return
         if isinstance(msg, dict) and on_event is not None:
-            on_event(msg)
+            try:
+                on_event(msg)
+            except Exception:
+                pass  # Instrumentation must never interrupt the transport.
         if not isinstance(msg, dict) or rpc.dispatch_reply(msg):
             return
         method = str(msg.get("method") or "")
