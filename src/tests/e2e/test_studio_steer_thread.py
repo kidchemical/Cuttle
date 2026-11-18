@@ -239,12 +239,17 @@ def test_studio_steer_reply_shows_receipt_and_excerpt_once(browser, static_serve
         expect(receipt).to_have_count(1)
         expect(receipt.locator(".chat-thread-receipt-text")).to_have_text(LABEL_DELIVERED)
         expect(receipt.locator(".chat-thread-receipt-icon")).to_have_text("↳")
-        expect(receipt.locator(".chat-thread-excerpt-label")).to_have_text(EXCERPT_LABEL)
-        expect(receipt.locator(".chat-thread-excerpt-text")).to_have_text(REPLY)
+        # The label is the receipt; the excerpt is a separate block below the bubble.
+        assert receipt.locator(".chat-thread-excerpt").count() == 0
+        excerpt = _steer_row(page).locator(".chat-thread-excerpt")
+        expect(excerpt).to_have_count(1)
+        expect(excerpt.locator(".chat-thread-excerpt-label")).to_have_text(EXCERPT_LABEL)
+        expect(excerpt.locator(".chat-thread-excerpt-text")).to_have_text(REPLY)
         # The excerpt appears exactly once in the thread.
         assert page.locator("#chatMessages .chat-thread-excerpt-text").count() == 1
-        # The receipt sits under the steer bubble's own content.
-        assert _steer_row(page).locator(".message-content-wrapper > .message-content + .chat-thread-receipt").count() == 1
+        # Placement: the label sits above the steer bubble, the excerpt below it.
+        assert _steer_row(page).locator(".message-content-wrapper > .chat-thread-receipt + .message-content").count() == 1
+        assert _steer_row(page).locator(".message-content-wrapper > .message-content + .chat-thread-excerpt").count() == 1
         assert errors == []
     finally:
         page.close()
