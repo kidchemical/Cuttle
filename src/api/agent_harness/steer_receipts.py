@@ -296,9 +296,13 @@ class Receipts:
         group = entry['group']
         binding = bool(group is not None
                        and any(m['message_id'] is None for m in group['members']))
+        members = group['members'] if group is not None else [entry]
         return {**self._public(entry), 'message_id': entry['message_id'],
                 'turn_id': entry['turn_id'], 'ended': entry['ended'],
                 'group_binding': binding,
+                # Who else shares this excerpt: a member already let go of
+                # cannot be rewritten, so the rest must not copy its excerpt.
+                'group_ids': [m['steer_id'] for m in members],
                 'session': self.session, 'guard_turn': self.guard_turn}
 
     def _emit(self, entry):
@@ -330,6 +334,13 @@ class Receipts:
 _pending_lock = threading.Lock()
 _pending = {}
 _live = {}
+# Steer ids this owner has let go of (saved, given up on, or purged), newest
+# last and bounded. A grouped excerpt lives on exactly one row: once a member
+# is released its row is frozen as it stands, so a member that binds later must
+# not publish a second copy of the group's excerpt. Read and written under
+# ``_pending_lock``.
+_released = {}
+_MAX_RELEASED = 500
 
 _write_lock = threading.Lock()
 _queue = {}
@@ -378,6 +389,7 @@ def _purge_locked():
             continue  # bound: the writer releases it once it is saved
         if now - ended_at >= _PENDING_GRACE_SEC:
             _pending.pop(steer_id, None)
+            _note_released_locked(steer_id)
             _unpublish_locked(binding['session'], steer_id)
 
 
@@ -475,6 +487,10 @@ def _apply(snapshot):
         binding = _pending.get(steer_id)
         if binding is None:
             return None, stale
+        if _group_let_go_locked(snapshot):
+            # The excerpt belongs to the row that was let go of holding it.
+            # This row keeps the insert shape; its state is its own facts.
+            contract = {**contract, 'reply': None, 'covers': []}
         if ended:
             binding['ended_at'] = binding.get('ended_at') or time.monotonic()
         binding['held_for_group'] = False  # a fresh snapshot is on its way
@@ -499,6 +515,25 @@ def _apply(snapshot):
              'guard_turn': snapshot.get('guard_turn'),
              'group_binding': bool(snapshot.get('group_binding')),
              'attempts': 0}, stale)
+
+
+def _note_released_locked(steer_id):
+    """Remember that this receipt was let go of (under ``_pending_lock``)."""
+    _released[steer_id] = True
+    while len(_released) > _MAX_RELEASED:
+        _released.pop(next(iter(_released)))
+
+
+def _group_let_go_locked(snapshot):
+    """True when a row sharing this excerpt was already let go of.
+
+    Its saved row cannot be rewritten (the writer gave up on it, or its grace
+    period expired), so it keeps the excerpt it carries and this member must
+    fall back to the insert shape rather than render a second copy.
+    """
+    own = snapshot['steer_id']
+    return any(other != own and other in _released
+               for other in (snapshot.get('group_ids') or ()))
 
 
 def _unpublish_locked(session, steer_id):
@@ -679,6 +714,7 @@ def _release(steer_id):
     """The receipt is final and saved: nothing needs to be kept for it."""
     with _pending_lock:
         binding = _pending.pop(steer_id, None)
+        _note_released_locked(steer_id)
         if binding is None:
             return
         _unpublish_locked(binding['session'], steer_id)

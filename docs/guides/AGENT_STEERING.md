@@ -122,7 +122,12 @@ wholesale by the receipt owner, `api.agent_harness.steer_receipts`:
     renders it once; the earlier rows carry the full `covers` with
     `reply: null`. Binding a later row moves the reply to it and updates every
     member's `covers`; the owner keeps a group writable until every member has
-    bound, so there is never more than one excerpt holder.
+    bound, so there is never more than one excerpt holder. When a member is
+    let go of while holding the excerpt — the writer gave up on its row after
+    bounded retries, or its grace period expired — that row keeps the excerpt
+    as it stands and a member binding afterwards keeps the insert shape
+    (`reply: null`, `covers: []`) with its own terminal `state`. One row ever
+    holds one excerpt.
 
 `/api/chat-live-status` extras include `steers`: the same objects plus
 `message_id` and `turn_id`, for the **current turn only**, so an open thread can

@@ -24,6 +24,7 @@ def _clean_receipt_state():
     with steer_receipts._pending_lock:
         steer_receipts._pending.clear()
         steer_receipts._live.clear()
+        steer_receipts._released.clear()
 
 
 def _future(value):
@@ -60,6 +61,7 @@ class FakeDb:
         self.path = path
         self.gate = gate
         self.writes = []
+        self.broken = False   # the database refuses writes while set
         conn = sqlite3.connect(path)
         conn.execute('CREATE TABLE chat_messages (id INTEGER PRIMARY KEY, role TEXT, metadata TEXT)')
         conn.commit()
@@ -76,6 +78,8 @@ class FakeDb:
     def patch_message_metadata(self, updates):
         if self.gate is not None:
             self.gate.wait(10)
+        if self.broken:
+            raise sqlite3.OperationalError('database is locked')
         self.writes.append([mid for mid, _ in updates])
         conn = sqlite3.connect(self.path)
         for message_id, patch in updates:
@@ -1060,3 +1064,46 @@ def test_only_the_vendors_own_error_answer_counts_as_a_refusal():
     assert vendor_refused({'message': 'server connection closed'}) is False
     assert vendor_refused(None) is False
     assert vendor_refused('boom') is False
+
+
+def test_a_late_bind_after_a_given_up_group_never_duplicates_the_excerpt(tmp_path, monkeypatch):
+    """Codex final 2: one row ever holds the excerpt, give-up or not.
+
+    The excerpt is saved on the first row while the second is unbound; every
+    write at turn finish then fails, so the first row is given up with the
+    excerpt it already carries and can never be rewritten. The second row
+    binding afterwards must not publish a second copy of it.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    db = FakeDb(tmp_path / 'given-up.db')
+    tracker = Receipts(steer_receipts.changed, many=steer_receipts.changed_many,
+                       session='967')
+    first, second = tracker.begin('one'), tracker.begin('two')
+    for steer_id in (first, second):
+        steer_receipts.track('967', tracker, steer_id)
+        tracker.accepted(steer_id, True)
+        tracker.echo(steer_id)
+    first_id = db.add_message(967, 'user', 'one')
+    steer_receipts.bind(first, db, first_id)
+    tracker.output_start('a1')
+    tracker.output_text('a1', 'Both noted.')     # one excerpt covers both sends
+    assert steer_receipts.flush(5.0)
+    assert db.steer_meta(first_id)['reply']['text'] == 'Both noted.'
+
+    db.broken = True                             # the turn ends, writes fail 3x
+    tracker.finish()
+    assert steer_receipts.flush(5.0)
+    assert steer_receipts.snapshot(first) is None, 'the given-up receipt is released'
+
+    db.broken = False                            # writes come back
+    second_id = db.add_message(967, 'user', 'two')
+    steer_receipts.bind(second, db, second_id)   # the second row binds late
+    assert steer_receipts.flush(5.0)
+
+    late = db.steer_meta(second_id)
+    assert late['reply'] is None, 'the excerpt already lives on the given-up row'
+    assert late['covers'] == [], 'a late bind keeps the insert shape'
+    assert late['state'] == 'delivered', 'terminal state by its own facts'
+    holders = [mid for mid in (first_id, second_id) if db.steer_meta(mid)['reply']]
+    assert holders == [first_id], 'exactly one excerpt holder, ever'
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
