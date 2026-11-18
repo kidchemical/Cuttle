@@ -1600,6 +1600,183 @@ def test_grace_expiring_during_a_write_never_drops_the_newer_revision(monkeypatc
     assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
 
 
+def test_giving_up_on_planning_never_settles_a_newer_revision(monkeypatch):
+    """Codex gate 6, 1: the planning give-up obeys the revision rule of a write.
+
+    A's first three plans fail and the writer is paused just before it gives
+    up. The grouped reply arrives, the turn ends with B unbound and the clock
+    passes the grace period. Giving up used to settle A's *newer* revision, so
+    the purge dropped the group and ``flush()`` reported done with no write at
+    all and A left at ``pending/null/[]``.
+    """
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    offset = [0.0]
+    monkeypatch.setattr(steer_receipts, 'time', SimpleNamespace(
+        monotonic=lambda: time.monotonic() + offset[0], sleep=time.sleep))
+    db = _MemoryDb()
+    tracker, ids = _echoed_group('9811', 'AB')
+    a = _insert(db, '9811', 'A', ids['A'])
+    failures, exhausted, proceed = [], threading.Event(), threading.Event()
+    plan, forgive = steer_receipts._plan, steer_receipts._forgive
+
+    def fail_first_three(owner, steer_id, attempts):
+        if owner is tracker and len(failures) < 3:
+            failures.append(attempts)
+            with owner.lock:
+                raise RuntimeError('injected planning failure')
+        return plan(owner, steer_id, attempts)
+
+    def pause_before_giving_up(steer_id):
+        exhausted.set()
+        assert proceed.wait(5)
+        forgive(steer_id)
+
+    monkeypatch.setattr(steer_receipts, '_plan', fail_first_three)
+    monkeypatch.setattr(steer_receipts, '_forgive', pause_before_giving_up)
+    try:
+        steer_receipts.bind(ids['A'], db, a)
+        assert exhausted.wait(5)
+        assert failures == [0, 1, 2]
+        tracker.output_start('reply')
+        tracker.output_text('reply', 'Both noted.')
+        tracker.finish()                                # B never binds
+        offset[0] = steer_receipts._PENDING_GRACE_SEC + 1
+        assert steer_receipts.retained()['pending'] == 2, 'purge leaves an owed group'
+        assert not steer_receipts.flush(0.05), 'a write is owed'
+    finally:
+        proceed.set()
+    assert steer_receipts.flush(5.0)
+    assert db.writes == [[a]], 'the newer revision is planned again and saved'
+    assert db.steer_meta(a)['state'] == 'delivered'
+    assert _held(db, a) == ('Both noted.', [a])
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+def _raise_once_after_a_hold(monkeypatch, steer_id):
+    """Raise inside ``_plan`` at the first line that runs after it took a hold."""
+    import sys
+
+    plan = steer_receipts._plan
+    injected = []
+
+    def trace(frame, event, _arg):
+        if frame.f_code is not plan.__code__:
+            return None
+        if event == 'line' and not injected:
+            binding = steer_receipts._pending.get(steer_id)
+            if binding is not None and binding['writing'] > 0:
+                injected.append(frame.f_lineno)
+                raise RuntimeError('injected exception after a hold')
+        return trace
+
+    def traced(owner, sid, attempts):
+        if injected:
+            return plan(owner, sid, attempts)
+        sys.settrace(trace)
+        try:
+            return plan(owner, sid, attempts)
+        finally:
+            sys.settrace(None)
+
+    monkeypatch.setattr(steer_receipts, '_plan', traced)
+    return injected
+
+
+def test_an_exception_after_a_plan_took_its_holds_releases_them(monkeypatch):
+    """Codex gate 6, 2: a plan that dies holding its group leaks nothing.
+
+    One exception is raised inside ``_plan`` right after it marked a member as
+    being written. The retry saved A, but the hold stayed, so ``flush()`` timed
+    out forever and the grace purge kept the group.
+    """
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    offset = [0.0]
+    monkeypatch.setattr(steer_receipts, 'time', SimpleNamespace(
+        monotonic=lambda: time.monotonic() + offset[0], sleep=time.sleep))
+    db = _MemoryDb()
+    tracker, ids = _echoed_group('9812', 'AB')
+    a = _insert(db, '9812', 'A', ids['A'])
+    tracker.output_start('reply')
+    tracker.output_text('reply', 'Both noted.')
+    tracker.finish()                                    # B never binds
+    injected = _raise_once_after_a_hold(monkeypatch, ids['A'])
+    steer_receipts.bind(ids['A'], db, a)
+    assert steer_receipts.flush(5.0), 'no hold is left behind'
+    assert injected, 'the exception really was raised with a hold taken'
+    assert _held(db, a) == ('Both noted.', [a]), 'the retry saved it'
+    with steer_receipts._pending_lock:
+        assert [b['writing'] for b in steer_receipts._pending.values()] == [0, 0]
+    offset[0] = steer_receipts._PENDING_GRACE_SEC + 1
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+def test_an_error_while_settling_a_saved_plan_releases_its_holds(monkeypatch):
+    """Any failure after ``_plan`` returned still drops the plan's holds."""
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    db = _MemoryDb()
+    tracker, ids = _echoed_group('9814', 'A')
+    a = _insert(db, '9814', 'A', ids['A'])
+    settle, raised = steer_receipts._settle, []
+
+    def settle_fails_once(plan):
+        if not raised:
+            raised.append(True)
+            raise RuntimeError('injected settle failure')
+        return settle(plan)
+
+    monkeypatch.setattr(steer_receipts, '_settle', settle_fails_once)
+    steer_receipts.bind(ids['A'], db, a)
+    tracker.finish()
+    assert steer_receipts.flush(5.0), 'no hold is left behind'
+    assert raised and db.steer_meta(a)['state'] == 'delivered'
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+def test_a_group_whose_planning_keeps_failing_has_one_retry_budget(monkeypatch):
+    """Codex gate 6, 3: three planning attempts per group, not per member.
+
+    Both members of one group are dirty while its planning fails for good. The
+    budget used to be spent per receipt: six attempts, alternating A and B.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    writing, commit = threading.Event(), threading.Event()
+
+    def before_write(attempt):
+        if attempt == 1:
+            writing.set()
+            assert commit.wait(5)
+
+    db = _MemoryDb(before_write)
+    tracker, ids = _echoed_group('9813', 'AB')
+    a = _insert(db, '9813', 'A', ids['A'])
+    b = _insert(db, '9813', 'B', ids['B'])
+    tracker.output_start('reply')
+    tracker.output_text('reply', 'Both noted.')
+    calls, group = [], Receipts.group
+
+    def failing_group_read(owner, steer_id):
+        if owner is tracker and writing.is_set():
+            calls.append(steer_id)
+            raise RuntimeError('injected persistent planning failure')
+        return group(owner, steer_id)
+
+    monkeypatch.setattr(Receipts, 'group', failing_group_read)
+    try:
+        steer_receipts.bind(ids['A'], db, a)
+        assert writing.wait(5)
+        steer_receipts.bind(ids['B'], db, b)
+        tracker.finish()
+    finally:
+        commit.set()
+    assert steer_receipts.flush(5.0), 'given up, so nothing is owed'
+    assert len(calls) == steer_receipts._MAX_WRITE_ATTEMPTS, calls
+    assert db.writes == [[a]]
+
+
 def test_any_interleaving_leaves_the_excerpt_on_exactly_one_row(monkeypatch):
     """Property: 300 seeded schedules, with events landing during in-flight writes.
 

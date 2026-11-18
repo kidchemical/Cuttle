@@ -32,6 +32,11 @@ revision moved meanwhile. Otherwise it stays dirty and retained and is planned
 again. The grace purge never drops a group that is dirty or being written, and
 ``flush()`` does not report done while any write is owed.
 
+**Failing to plan follows the same rules as failing to write.** A group has one
+retry budget however many of its members are dirty; giving up settles only the
+revisions that failed, so a change that landed meanwhile is still written; and a
+plan's holds are released on every path out, including an unexpected error.
+
 Contract on the saved user row, written in full at insert
 (``api.chat_coordinator.steered_user_meta``) and only ever replaced wholesale:
 
@@ -728,31 +733,47 @@ def _write_batch(batch, retry, log):
     one write of one group. The database is written outside every lock, so a
     plan can be overtaken while it is in flight: ``_settle`` then leaves the
     group dirty and it is planned again.
+
+    A plan holds its members (``writing``) from the moment it exists. Whatever
+    happens after that — a refused write or any unexpected error — every plan
+    that was not settled is failed here, which drops its hold, so ``flush()``
+    and the grace purge always see the true state.
     """
-    by_db = {}
-    for plan in _plan_groups(batch, retry, log):
-        by_db.setdefault(id(plan['db']), []).append(plan)
-    for plans in by_db.values():
-        try:
-            plans[0]['db'].patch_message_metadata(
-                [(message_id, {'steer': contract})
-                 for plan in plans for message_id, contract in plan['rows']])
-        except Exception:
-            log.warning("Steer receipt write failed for %d group(s)", len(plans),
-                        exc_info=True)
+    unsettled = {}
+    try:
+        _plan_groups(batch, retry, log, unsettled)
+        by_db = {}
+        for plan in unsettled.values():
+            by_db.setdefault(id(plan['db']), []).append(plan)
+        for plans in by_db.values():
+            try:
+                plans[0]['db'].patch_message_metadata(
+                    [(message_id, {'steer': contract})
+                     for plan in plans for message_id, contract in plan['rows']])
+            except Exception:
+                log.warning("Steer receipt write failed for %d group(s)", len(plans),
+                            exc_info=True)
+                continue   # still unsettled: failed below
             for plan in plans:
-                attempts = plan['attempts'] + 1
-                if attempts < _MAX_WRITE_ATTEMPTS:
-                    _unhold(plan)
-                    for steer_id in plan['revs']:
-                        retry[steer_id] = attempts
-                else:
-                    # Given up, as a group: its rows keep the last state a
-                    # transaction committed, which is self-consistent.
-                    _requeue(retry, _give_up(plan))
-            continue
-        for plan in plans:
-            _requeue(retry, _settle(plan))
+                _requeue(retry, _settle(plan))
+                unsettled.pop(id(plan), None)
+    finally:
+        for plan in list(unsettled.values()):
+            unsettled.pop(id(plan), None)
+            _fail(plan, retry)
+
+
+def _fail(plan, retry):
+    """This plan was not saved: retry it within its budget, else give it up."""
+    attempts = plan['attempts'] + 1
+    if attempts < _MAX_WRITE_ATTEMPTS:
+        _unhold(plan)
+        for steer_id in plan['revs']:
+            retry[steer_id] = attempts
+    else:
+        # Given up, as a group: its rows keep the last state a transaction
+        # committed, which is self-consistent.
+        _requeue(retry, _give_up(plan))
 
 
 def _requeue(retry, steer_ids):
@@ -760,42 +781,90 @@ def _requeue(retry, steer_ids):
         retry[steer_id] = 0   # a newer revision is a fresh write
 
 
-def _plan_groups(batch, retry, log):
-    """Dirty steers → one plan per group, each read in one critical section."""
-    plans, planned = {}, {}
+def _plan_groups(batch, retry, log, plans):
+    """Dirty steers → one plan per group in ``plans``, keyed by ``id(plan)``.
+
+    Each group is read in one critical section. ``plans`` belongs to the
+    caller and holds every plan from the moment it exists, so the caller can
+    release the holds of all of them whatever fails afterwards.
+
+    A group whose planning raises has **one** retry budget, like a group whose
+    write fails: the failure is counted once for the whole group (its other
+    members in this batch are not planned again), and giving up settles only
+    the revisions that failed to plan.
+    """
+    planned, failed = {}, set()
     for steer_id, attempts in batch.items():
-        key = planned.get(steer_id)
-        if key in plans:
+        if steer_id in failed:
+            continue   # its group's planning already failed in this batch
+        plan = plans.get(planned.get(steer_id))
+        if plan is not None:
             # Its group is already planned in this batch, from a read that is
             # at least as new; the freshest request sets the retry budget.
-            plans[key]['attempts'] = min(plans[key]['attempts'], attempts)
+            plan['attempts'] = min(plan['attempts'], attempts)
             continue
         with _pending_lock:
             binding = _pending.get(steer_id)
             tracker = binding['tracker'] if binding else None
+            # The revisions this attempt starts from, for the whole group: if
+            # it cannot be planned, these (and nothing newer) are what failed.
+            revs = _group_revs_locked(steer_id)
         if tracker is None:
             continue   # released or discarded since: nothing left to write
         try:
             plan = _plan(tracker, steer_id, attempts)
         except Exception:
             log.warning("Steer receipt planning failed", exc_info=True)
-            if attempts + 1 < _MAX_WRITE_ATTEMPTS:
-                retry[steer_id] = attempts + 1
-            else:
-                _forgive(steer_id)
+            failed.update(revs)
+            _planning_failed(steer_id, revs, batch, retry)
             continue
         if plan is None:
             continue
+        plans[id(plan)] = plan
         for member in plan['held']:
             # The group grew since an earlier plan of this batch read it: the
             # newer read replaces that plan.
-            older = plans.pop(planned.get(member), None)
-            if older is not None:
-                _unhold(older)
-                plan['attempts'] = min(plan['attempts'], older['attempts'])
-            planned[member] = steer_id
-        plans[steer_id] = plan
-    return list(plans.values())
+            if planned.get(member) != id(plan):
+                older = plans.pop(planned.get(member), None)
+                if older is not None:
+                    _unhold(older)
+                    plan['attempts'] = min(plan['attempts'], older['attempts'])
+            planned[member] = id(plan)
+
+
+def _group_revs_locked(steer_id):
+    """``{member: rev}`` for this steer's retained group, as last published."""
+    binding = _pending.get(steer_id)
+    if binding is None:
+        return {}
+    return {member: _pending[member]['rev']
+            for member in dict.fromkeys((steer_id, *binding['group']))
+            if member in _pending}
+
+
+def _planning_failed(steer_id, revs, batch, retry):
+    """Count one failed planning attempt against the group's single budget."""
+    # The freshest request among the group's members sets the budget, as it
+    # does for a plan that succeeds.
+    attempts = min(batch.get(member, _MAX_WRITE_ATTEMPTS) for member in revs) + 1
+    if attempts < _MAX_WRITE_ATTEMPTS:
+        with _pending_lock:
+            owed = [member for member in revs
+                    if member in _pending and _pending[member]['rev'] != _pending[member]['settled']]
+        # Every dirty member carries the group's count, so none of them comes
+        # back as a fresh request with a budget of its own.
+        for member in {steer_id, *owed}:
+            retry[member] = attempts
+        return
+    with _pending_lock:
+        for member, rev in revs.items():
+            if member in _pending:
+                _pending[member]['unplanned'] = rev
+    _forgive(steer_id)
+    with _pending_lock:
+        newer = [member for member in revs
+                 if member in _pending and _pending[member]['rev'] != _pending[member]['settled']]
+    _requeue(retry, newer)   # changed while planning failed: a fresh write
 
 
 def _plan(tracker, steer_id, attempts):
@@ -810,6 +879,10 @@ def _plan(tracker, steer_id, attempts):
     ``covers``, and a superseded member's terminal state is built from the
     facts frozen before Stop. ``revs`` is the revision this plan was made
     from; ``_settle`` compares it with the group's revision after the write.
+
+    The holds (``writing``) are taken last, once the plan is complete, and are
+    undone if taking them fails: an exception anywhere in here leaves no hold
+    behind.
     """
     rows, revs, held, db, final = [], {}, [], None, True
     with tracker.lock:
@@ -842,11 +915,20 @@ def _plan(tracker, steer_id, attempts):
                 if binding is not None:
                     binding['settled'] = binding['rev']
                 return None
-            for member_id in held:
-                _pending[member_id]['writing'] += 1
-    rows.sort(key=lambda row: row[0])
-    return {'db': db, 'rows': rows, 'revs': revs, 'held': held,
-            'final': final, 'attempts': attempts}
+            rows.sort(key=lambda row: row[0])
+            plan = {'db': db, 'rows': rows, 'revs': revs, 'held': held,
+                    'final': final, 'attempts': attempts}
+            # ``_pending_lock`` is held, so restoring the counts read here is
+            # exact wherever the failure lands.
+            before = {member_id: _pending[member_id]['writing'] for member_id in held}
+            try:
+                for member_id in held:
+                    _pending[member_id]['writing'] = before[member_id] + 1
+                return plan
+            except BaseException:
+                for member_id in held:
+                    _pending[member_id]['writing'] = before[member_id]
+                raise
 
 
 def _unhold_locked(plan):
@@ -863,11 +945,24 @@ def _unhold(plan):
 
 
 def _forgive(steer_id):
-    """Stop owing a write that could not even be planned (bounded, like a write)."""
+    """Give up on a group that could not even be planned (bounded, like a write).
+
+    The same revision rule as ``_settle``: only the revision whose planning
+    failed (``unplanned``) is settled. A member that changed since then keeps
+    owing its newer revision, so the purge leaves the group alone and the
+    caller plans it again with a fresh budget.
+    """
     with _pending_lock:
         binding = _pending.get(steer_id)
-        if binding is not None:
-            binding['settled'] = binding['rev']
+        if binding is None:
+            return
+        for member in dict.fromkeys((steer_id, *binding['group'])):
+            owner = _pending.get(member)
+            if owner is None:
+                continue
+            failed = owner.pop('unplanned', None)
+            if failed is not None and owner['rev'] == failed:
+                owner['settled'] = failed
 
 
 def _settle(plan):
