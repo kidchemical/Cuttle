@@ -1,0 +1,60 @@
+/* ================================================================
+   Studio sub-agent tray (L4): the nested child chat opens as a `push` layout.
+   The tray slides in at the right and the thread shifts left (the frame's
+   body gives up the tray's width). No backdrop, so the thread stays live.
+   Classic keeps its side/center overlay; this file only matches under
+   `:root.cuttle-studio`, and the push rules only with `data-layout="push"`
+   (chat_subagent_peek.js sets it at ≥900px of pane width, else `side`).
+   ================================================================ */
+:root.cuttle-studio {
+    --studio-peek-push-width: min(460px, 42vw);
+}
+
+:root.cuttle-studio.cuttle-peek-push body {
+    margin-right: calc(var(--studio-peek-push-width) + var(--studio-space-2));
+    transition: margin-right var(--studio-dur-base) var(--studio-ease-out);
+}
+
+:root.cuttle-studio .subagent-peek[data-layout="push"] {
+    pointer-events: none;
+    justify-content: flex-end;
+}
+
+:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-backdrop {
+    display: none;
+}
+
+:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-panel {
+    pointer-events: auto;
+    width: var(--studio-peek-push-width);
+    max-width: none;
+    height: calc(100% - 2 * var(--studio-space-2));
+    margin: var(--studio-space-2) var(--studio-space-2) var(--studio-space-2) 0;
+    border: 0;
+    border-radius: var(--studio-radius-lg);
+    background: var(--studio-surface-base);
+    box-shadow: var(--studio-shadow-raised);
+}
+
+/* Parent header: identity (dot + name) first, then the title and the handle. */
+:root.cuttle-studio .subagent-peek-identity {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    max-width: 40%;
+}
+
+:root.cuttle-studio .subagent-peek-identity[hidden] {
+    display: none;
+}
+
+:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-head {
+    padding: var(--studio-space-3) var(--studio-space-4);
+    gap: var(--studio-space-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root.cuttle-studio.cuttle-peek-push body {
+        transition: none;
+    }
+}

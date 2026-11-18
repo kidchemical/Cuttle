@@ -8,11 +8,16 @@
    or the backdrop close it.
 
    Layout: a side drawer (default) or a centred dialog, chosen in
-   Settings → Chat (`cuttleSubagentPeekLayout`), read on each open.
+   Settings → Chat (`cuttleSubagentPeekLayout`), read on each open. Studio
+   (L4) uses `push`: the tray sits at the right and the thread shifts left,
+   with no backdrop and the same frame. Below ~900px of pane width Studio falls
+   back to the side overlay. Esc closes; focus returns to the card.
 
    Interface: `create(deps)` → { open(handle, opts), close(), isOpen(),
-   current() }. deps: { win, doc, parseChatHandleToken, navigate(handle) }. `peekSrc` / `headerModel` are pure (no DOM).
-   The page owns the click → open call site. Loaded before chat_page.js.
+   current() }. deps: { win, doc, parseChatHandleToken, navigate(handle),
+   isStudio? }. `peekSrc` / `headerModel` / `layoutFor` / `layoutForMode` are
+   pure (no DOM). The page owns the click → open call site; the tray header's
+   identity is copied from the clicked card. Loaded before chat_page.js.
    ================================================================ */
 (function (root) {
     'use strict';
@@ -24,10 +29,23 @@
 
     // Settings → Chat → "Sub-agent chat opens": 'side' (default) or 'center'.
     const LAYOUT_KEY = 'cuttleSubagentPeekLayout';
+    // Studio's push tray needs this much pane width; narrower panes overlay.
+    const PUSH_MIN_WIDTH = 900;
+    const PUSH_CLASS = 'cuttle-peek-push';
 
     /** Layout name from a stored value; anything unknown is the side drawer. Pure. */
     function layoutFor(raw) {
         return raw === 'center' ? 'center' : 'side';
+    }
+
+    /**
+     * The layout to open with. Classic keeps the Settings choice. Studio pushes
+     * the thread when the pane is wide enough, else overlays the side drawer. Pure.
+     */
+    function layoutForMode(raw, opts) {
+        const o = opts || {};
+        if (!o.studio) return layoutFor(raw);
+        return Number(o.width) >= PUSH_MIN_WIDTH ? 'push' : 'side';
     }
 
     /** Frame URL for a parsed handle; `-N` bubble refs carry through as `msg`. */
@@ -78,6 +96,7 @@
             el.innerHTML = '<div class="subagent-peek-backdrop" data-peek-close></div>'
                 + '<section class="subagent-peek-panel" role="dialog" aria-modal="true" aria-label="Sub-agent chat">'
                 + '<header class="subagent-peek-head">'
+                + '<span class="subagent-peek-identity" hidden></span>'
                 + '<span class="subagent-peek-title"></span>'
                 + '<span class="subagent-peek-handle"></span>'
                 + '<span class="subagent-peek-status"></span>'
@@ -106,6 +125,27 @@
             doc.body.appendChild(el);
         }
 
+        function studioOn() {
+            if (typeof deps.isStudio === 'function') return !!deps.isStudio();
+            const display = root.CuttleChatDisplay;
+            return !!(display && typeof display.isStudio === 'function' && display.isStudio());
+        }
+
+        /** The clicked card's identity (dot + name), copied from its markup. '' when none. */
+        function identityHtmlFor(handle) {
+            const cards = doc.querySelectorAll('.subagent-fleet-card[data-chat-handle]');
+            for (let i = 0; i < cards.length; i++) {
+                if (cards[i].getAttribute('data-chat-handle') !== handle) continue;
+                const id = cards[i].querySelector('.agent-identity');
+                return id ? id.outerHTML : '';
+            }
+            return '';
+        }
+
+        function setPush(on) {
+            if (doc.documentElement) doc.documentElement.classList.toggle(PUSH_CLASS, !!on);
+        }
+
         function open(raw, opts) {
             const parsed = deps.parseChatHandleToken(raw);
             const src = peekSrc(parsed);
@@ -117,9 +157,17 @@
             const status = el.querySelector('.subagent-peek-status');
             status.textContent = head.status;
             status.hidden = !head.status;
+            const identity = el.querySelector('.subagent-peek-identity');
+            identity.innerHTML = identityHtmlFor(parsed.display);
+            identity.hidden = !identity.innerHTML;
             el.querySelector('.subagent-peek-panel').setAttribute('aria-label', 'Sub-agent chat: ' + head.title);
             if (frame.getAttribute('src') !== src) frame.setAttribute('src', src);
-            el.dataset.layout = layoutFor(readLayoutSetting());
+            const layout = layoutForMode(readLayoutSetting(), {
+                studio: studioOn(),
+                width: win.innerWidth,
+            });
+            el.dataset.layout = layout;
+            setPush(layout === 'push');
             openHandle = parsed.display;
             if (el.hidden) lastFocus = doc.activeElement;
             el.hidden = false;
@@ -131,6 +179,7 @@
             if (!el || el.hidden) return;
             el.hidden = true;
             openHandle = '';
+            setPush(false);
             // Drop the nested chat: it stops polling and streaming while closed.
             frame.removeAttribute('src');
             try { frame.contentWindow.location.replace('about:blank'); } catch (_) {}
@@ -143,7 +192,7 @@
         return { open, close, isOpen: () => !!openHandle, current: () => openHandle };
     }
 
-    const api = { create, peekSrc, headerModel, layoutFor, LAYOUT_KEY };
+    const api = { create, peekSrc, headerModel, layoutFor, layoutForMode, LAYOUT_KEY, PUSH_MIN_WIDTH, PUSH_CLASS };
 
     const ns = (root.CuttleChatSubagentPeek = root.CuttleChatSubagentPeek || {});
     Object.assign(ns, api);

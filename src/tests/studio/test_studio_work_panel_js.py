@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -159,3 +160,40 @@ def test_identity_module_is_loaded_by_the_panel_under_test():
     # The pure panel reads the identity helper; if its path moves, the driver breaks loudly.
     assert IDENTITY.exists()
     assert "module.exports" in IDENTITY.read_text(encoding="utf-8")
+
+
+PEEK = WEB / "js" / "chat" / "chat_subagent_peek.js"
+TRAY_CSS = WEB / "css" / "studio" / "tray.css"
+
+
+@node_only
+def test_tray_layout_is_push_in_studio_when_wide_and_overlay_below_900():
+    driver = r"""
+const P = require(process.env.PEEK);
+const out = [
+  P.layoutForMode('side', { studio: true, width: 1400 }),
+  P.layoutForMode('center', { studio: true, width: 1400 }),
+  P.layoutForMode('side', { studio: true, width: 899 }),
+  P.layoutForMode('side', { studio: true, width: 900 }),
+  P.layoutForMode('center', { studio: false, width: 1400 }),
+  P.layoutForMode(null, { studio: false, width: 300 }),
+];
+console.log(JSON.stringify(out));
+"""
+    env = {"PEEK": str(PEEK), "PATH": "/usr/bin:/bin"}
+    result = subprocess.run([shutil.which("node"), "-e", driver], env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == '["push","push","side","push","center","side"]'
+
+
+def test_tray_css_is_studio_scoped_and_push_only():
+    css = TRAY_CSS.read_text(encoding="utf-8")
+    body = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    for prelude in re.findall(r"([^{};]+)\{", body):
+        text = prelude.strip()
+        if not text or text.startswith("@"):
+            continue
+        for part in text.split(","):
+            assert part.strip().startswith(":root.cuttle-studio"), part
+    assert '[data-layout="push"]' in css
+    assert "cuttle-peek-push" in css
