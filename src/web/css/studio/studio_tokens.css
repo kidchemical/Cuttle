@@ -134,12 +134,22 @@
         0 16px 36px -14px rgba(52, 36, 120, 0.22);
     --studio-shadow-avatar: 0 4px 12px -4px rgba(52, 36, 120, 0.35);
 
-    /* Chat bubbles. Studio forces bubbles on (ui_boot.js drops flat messages). */
-    --studio-bubble-user-bg: linear-gradient(120deg, #7c5cf0, #9d6bf5);
+    /* Chat bubbles. Studio forces bubbles on (ui_boot.js drops flat messages).
+       Body text is 1.125em of the user's text size (16px default -> 18px), so the
+       text prefs still apply. Padding is the mock's generous inset at app density. */
+    --studio-bubble-user-bg: linear-gradient(135deg, #7048e8 0%, #4f46e5 100%);
     --studio-bubble-user-ink: #ffffff;
+    --studio-bubble-user-shadow: 0 10px 24px -12px rgba(79, 70, 229, 0.55);
     --studio-bubble-bot-bg: #ffffff;
     --studio-bubble-bot-ink: #191b45;
-    --studio-bubble-radius: var(--studio-radius-lg);
+    --studio-bubble-radius: var(--studio-radius-xl);
+    --studio-bubble-tail: 8px;
+    --studio-bubble-text-size: 1.125em;
+    --studio-bubble-padding: 16px 20px;
+    --studio-bubble-shadow: 0 2px 4px rgba(25, 27, 69, 0.04), 0 14px 32px -16px rgba(52, 36, 120, 0.28);
+
+    /* Page backdrop: the warm-to-lavender-to-blue wash of the promo kit (kit.css body). */
+    --studio-backdrop: var(--studio-surface-gradient);
 
     /* Motion. Reduced motion zeroes the durations below. */
     --studio-ease-out: cubic-bezier(0.2, 0.9, 0.25, 1);
@@ -170,6 +180,8 @@
     --studio-shadow-avatar: 0 4px 12px -4px rgba(0, 0, 0, 0.5);
     --studio-bubble-bot-bg: #1d1f38;
     --studio-bubble-bot-ink: #eceefe;
+    --studio-bubble-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), 0 14px 32px -16px rgba(0, 0, 0, 0.6);
+    --studio-bubble-user-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.6);
 }
 
 @media (prefers-reduced-motion: reduce) {

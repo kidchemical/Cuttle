@@ -1,4 +1,5 @@
-/* Studio reply threads (lane L6): the steer receipt under a steer bubble.
+/* Studio reply threads (lane L6): the steer receipt under a steer bubble,
+   plus the Studio page backdrop and message bubble look (polish 1, bottom of file).
    Owner: chat_threads.js (receipt markup). Every rule is under
    :root.cuttle-studio, so Classic never sees these. Tokens from studio_tokens.css. */
 
@@ -119,4 +120,35 @@
     :root.cuttle-studio .thinking-block--live > summary::before {
         transition: none;
     }
+}
+
+/* Page backdrop and message bubbles (Studio polish 1). The backdrop is the promo
+   kit's warm-to-lavender-to-blue wash (token --studio-backdrop, dark variant in
+   studio_tokens.css). Bubbles are white cards with the mock's large radius and a
+   diffuse shadow, no hard border; the user bubble is the purple-to-indigo gradient.
+   Owner of the bubble look in Studio: this file. Classic rules in chat_page.css are untouched. */
+:root.cuttle-studio body,
+:root.cuttle-studio .chat-main {
+    background: var(--studio-backdrop);
+}
+
+:root.cuttle-studio .message.assistant .message-content {
+    background: var(--studio-bubble-bot-bg);
+    color: var(--studio-bubble-bot-ink);
+    border: 0;
+    border-radius: var(--studio-bubble-radius);
+    border-bottom-left-radius: var(--studio-bubble-tail);
+    box-shadow: var(--studio-bubble-shadow);
+    padding: var(--studio-bubble-padding);
+    font-size: var(--studio-bubble-text-size);
+}
+
+:root.cuttle-studio .message.user .message-content {
+    background: var(--studio-bubble-user-bg);
+    color: var(--studio-bubble-user-ink);
+    border-radius: var(--studio-bubble-radius);
+    border-bottom-right-radius: var(--studio-bubble-tail);
+    box-shadow: var(--studio-bubble-user-shadow);
+    padding: var(--studio-bubble-padding);
+    font-size: var(--studio-bubble-text-size);
 }
