@@ -833,13 +833,15 @@
     }
 
     /**
-     * Panel header from the schedules a panel covers. Schedules carry no goal
-     * text, so the goal is the chats they check: "CH-001548" or "CH-001548 and 2 more".
+     * Panel header from the schedules a panel covers. The goal is the supervisor's
+     * Tasks list title when the server names one (schedule.goal); otherwise the chats
+     * they check: "CH-001548" or "CH-001548 and 2 more".
      * opts.title replaces the title (the worker badge says who supervises it).
      */
     function panelHeader(schedules, opts) {
         const list = (Array.isArray(schedules) ? schedules : []).filter((s) => s && typeof s === 'object');
         const targets = [...new Set(list.map((s) => String(s.target || '')).filter(Boolean))];
+        const named = list.map((s) => String(s.goal || '').trim()).find(Boolean) || '';
         const everies = [...new Set(list.map((s) => Math.round(Number(s.every) || 0)).filter((n) => n > 0))]
             .sort((a, b) => a - b);
         let cadenceLabel = '';
@@ -848,7 +850,8 @@
             cadenceLabel = 'check-ins every ' + cadencePart(everies[0]) + ' to ' + cadencePart(everies[everies.length - 1]);
         }
         const chatCount = targets.length;
-        const goal = targets.length <= 2 ? targets.join(' and ') : targets[0] + ' and ' + (targets.length - 1) + ' more';
+        const chatsGoal = targets.length <= 2 ? targets.join(' and ') : targets[0] + ' and ' + (targets.length - 1) + ' more';
+        const goal = named || chatsGoal;
         const bits = [];
         if (chatCount) bits.push(chatCount + (chatCount === 1 ? ' chat' : ' chats'));
         if (cadenceLabel) bits.push(cadenceLabel);

@@ -68,6 +68,7 @@ console.log(JSON.stringify({
   mixedCadence: M.panelHeader([sched({every: 300}), sched({target: 'CH-000009', every: 3600})]),
   badgeTitle: M.panelHeader([sched({})], {title: 'Supervised by CH-000042'}),
   emptyHeader: M.panelHeader([]),
+  namedHeader: M.panelHeader([sched({goal: 'Release v0.8'}), sched({target: 'CH-000009', goal: 'Release v0.8'})]),
   headerHtml: M.panelHeaderHtml(M.panelHeader([sched({target: 'CH-<i>'})], {title: 'Supervising <b>x</b>'})),
   merged: M.mergeItems([{id: 'a', at: 5}, {id: 'b', at: 3}], [{id: 'b', at: 3}, {id: 'c', at: 9}, {id: 'd', at: 3}])
     .map((x) => x.id),
@@ -151,6 +152,9 @@ def test_header_aggregates_chats_and_cadence_across_schedules():
     assert m["subline"] == "3 chats · check-in every 15 min"
     mixed = r["mixedCadence"]
     assert mixed["cadenceLabel"] == "check-ins every 5 min to 1 h" and mixed["chatCount"] == 2
+    named = r["namedHeader"]
+    assert named["title"] == "Supervising Release v0.8" and named["goal"] == "Release v0.8"
+    assert named["subline"] == "2 chats · check-in every 15 min"
     assert r["badgeTitle"]["title"] == "Supervised by CH-000042"
     assert r["badgeTitle"]["subline"] == "1 chat · check-in every 15 min"
 
