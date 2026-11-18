@@ -10,6 +10,13 @@
    bubble is replaced by the saved message, whose <think> block renders
    collapsed (chat_messages.js).
 
+   Studio (`host.isStudio()`, default CuttleChatDisplay.isStudio()): the block
+   opens by default as a compact THINKING box (CSS in studio/threads.css) with
+   a faded top edge, so the newest lines show and older ones fade. The reader's
+   own choice still wins for the turn. The live bubble only ever receives status
+   and reasoning; the answer arrives as the saved reply that replaces the bubble,
+   so the box goes with the bubble when the answer lands or the turn ends.
+
    A poll with no thinking never removes the block: reasoning does not vanish
    mid-turn, and a missed poll must not flicker it. Only another turn's
    (query id) block is dropped.
@@ -25,6 +32,12 @@
         // The reader's choice for the running turn: { queryId, open }.
         let choice = { queryId: '', open: false };
 
+        function studioOn() {
+            if (typeof host.isStudio === 'function') return !!host.isStudio();
+            const display = root.CuttleChatDisplay;
+            return !!(display && display.isStudio && display.isStudio());
+        }
+
         function liveBubble() {
             return doc.getElementById('typing-indicator')
                 || doc.getElementById('typing-indicator-remote');
@@ -39,7 +52,8 @@
             block.className = 'thinking-block ' + LIVE_CLASS;
             block.dataset.queryId = queryId;
             block.innerHTML = '<summary>Thinking</summary><div class="thinking-live-body"></div>';
-            block.open = choice.queryId === queryId && choice.open;
+            // Classic: collapsed unless the reader opened it. Studio: open unless the reader closed it.
+            block.open = choice.queryId === queryId ? choice.open : studioOn();
             block.addEventListener('toggle', () => {
                 choice = { queryId: block.dataset.queryId || '', open: block.open };
                 if (block.open) scrollToEnd(block.querySelector('.thinking-live-body'));
@@ -76,6 +90,10 @@
             const following = created
                 || (body.scrollHeight - body.scrollTop - body.clientHeight) < 24;
             body.innerHTML = host.formatThinking(text);
+            if (studioOn()) {
+                // The faded top edge only when there is more above the visible lines.
+                body.classList.toggle('is-clipped', body.scrollHeight > body.clientHeight + 1);
+            }
             if (following) scrollToEnd(body);
             if (created || block.open) {
                 try { host.afterPaint && host.afterPaint(); } catch (_) {}

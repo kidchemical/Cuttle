@@ -23,9 +23,18 @@
    Reveal: dispatch `cuttle:reveal` (bubbling) on a row to open its
    thread first (message-nav jumps, find-in-chat).
 
+   Studio (`host.isStudio()`, default CuttleChatDisplay.isStudio()): a steer
+   reply shows its receipt under the steer bubble — the label line (↳) and,
+   on the last covered row only, the agent's reply excerpt — from the row's
+   saved `data-steer` JSON (`metadata.steer`), overlaid by the live `steers`
+   extra for the current turn. Classic adds no markup at all.
+   The integration calls `refreshReceipts()` when live status changes; that
+   re-renders receipts only, never the transcript.
+
    host: { doc, win, container(), sessionId(), storage, escapeHtml,
            renderHandleLink(handle), avatarHtml(avatar),
-           isFollowingLatest(), revealTop(el) }
+           isFollowingLatest(), revealTop(el),
+           isStudio(), liveSteers(), liveTurnId() }
    Loaded after chat_thread_model.js, before chat_page.js.
    ================================================================ */
 (function (root) {
@@ -54,6 +63,7 @@
         let rafId = 0;
         let saveTimer = 0;
         let applying = false;
+        let unsubscribeDisplay = null;
 
         // Per-chat state, swapped when the chat changes.
         let sid = null;
@@ -149,7 +159,7 @@
             delete el.dataset.threadKey;
             const wrap = el.querySelector(':scope > .message-content-wrapper');
             if (!wrap) return;
-            wrap.querySelectorAll(':scope > .chat-thread-bar, :scope > .chat-thread-subagents, :scope > .chat-thread-tail')
+            wrap.querySelectorAll(':scope > .chat-thread-bar, :scope > .chat-thread-subagents, :scope > .chat-thread-tail, :scope > .chat-thread-receipt')
                 .forEach((n) => n.remove());
         }
 
@@ -241,6 +251,84 @@
             bar.dataset.threadKey = thread.key;
 
 
+        }
+
+        function studioOn() {
+            if (typeof h.isStudio === 'function') return !!h.isStudio();
+            const display = root.CuttleChatDisplay;
+            return !!(display && display.isStudio && display.isStudio());
+        }
+
+        function liveSteerState() {
+            const steers = typeof h.liveSteers === 'function' ? h.liveSteers() : null;
+            const turnId = typeof h.liveTurnId === 'function' ? h.liveTurnId() : null;
+            return { steers: Array.isArray(steers) ? steers : [], turnId: turnId == null ? '' : String(turnId) };
+        }
+
+        /** The receipt view for one steer row (chat_thread_model.js), or null. */
+        function receiptFor(el, live) {
+            const M = model();
+            if (!M || !M.steerReceipt) return null;
+            let steer = null;
+            try { steer = el.dataset.steer ? JSON.parse(el.dataset.steer) : null; } catch (_) { steer = null; }
+            const mid = el.dataset.messageId;
+            const row = {
+                messageId: mid != null && mid !== '' ? Number(mid) : null,
+                turnId: String(el.dataset.turnId || el.dataset.queryId || ''),
+                steerIdle: el.dataset.steerIdle === '1',
+                metadata: steer ? { steer } : undefined,
+            };
+            return M.steerReceipt(row, live.steers, live.turnId);
+        }
+
+        function receiptHtml(view) {
+            const M = model();
+            let html = '<div class="chat-thread-receipt-label"><span class="chat-thread-receipt-icon" aria-hidden="true">↳</span>'
+                + '<span class="chat-thread-receipt-text">' + esc(view.label) + '</span></div>';
+            if (view.excerpt) {
+                html += '<blockquote class="chat-thread-excerpt"><div class="chat-thread-excerpt-label">'
+                    + esc(M.EXCERPT_LABEL) + '</div><p class="chat-thread-excerpt-text">' + esc(view.excerpt) + '</p></blockquote>';
+            }
+            return html;
+        }
+
+        /** Mount (or remove, when view is null) the receipt under a steer row's content. */
+        function mountReceipt(el, view) {
+            const wrap = el.querySelector(':scope > .message-content-wrapper');
+            if (!wrap) return;
+            const content = wrap.querySelector(':scope > .message-content');
+            let node = wrap.querySelector(':scope > .chat-thread-receipt');
+            if (!view || !content) {
+                if (node) node.remove();
+                return;
+            }
+            if (!node) {
+                node = h.doc.createElement('div');
+                node.className = 'chat-thread-receipt';
+                node.setAttribute('data-chat-find-skip', '');
+            }
+            if (node.previousElementSibling !== content) content.insertAdjacentElement('afterend', node);
+            node.dataset.state = view.state || '';
+            const html = receiptHtml(view);
+            if (node.__cuttleReceiptHtml !== html) {
+                node.innerHTML = html;
+                node.__cuttleReceiptHtml = html;
+            }
+        }
+
+        /** Re-paint receipts of the current steer rows only (live steers changed). */
+        function renderReceipts(box, live) {
+            const on = studioOn();
+            const state = live || liveSteerState();
+            box.querySelectorAll('.message.thread-reply--steer').forEach((el) => {
+                mountReceipt(el, on ? receiptFor(el, state) : null);
+            });
+        }
+
+        function refreshReceipts() {
+            const box = h.container && h.container();
+            if (!box || !enabled) return;
+            renderReceipts(box);
         }
 
         function priorKeys(els) {
@@ -391,6 +479,8 @@
                 if (threadOf[i] < 0) clearRow(el);
             });
             const followLatest = !!(h.isFollowingLatest && h.isFollowingLatest());
+            const studio = studioOn();
+            const live = studio ? liveSteerState() : null;
             grouped.threads.forEach((thread) => {
                 const rootEl = rows[thread.root];
                 const memberEls = [rootEl].concat(thread.replies.map((r) => rows[r.index]));
@@ -425,6 +515,7 @@
                     el.classList.toggle('thread-reply-hidden', !open);
                     el.dataset.threadKey = thread.key;
                     elKey.set(el, thread.key);
+                    mountReceipt(el, studio && r.kind === 'steer' ? receiptFor(el, live) : null);
                 });
                 const preview = (!open && (unreadCount || thread.live)) ? previewFor(thread, rows) : '';
                 mountBar(rootEl, thread, open, unreadCount, preview);
@@ -447,7 +538,7 @@
 
         function insideOwnUi(node) {
             const el = node && (node.nodeType === 1 ? node : node.parentElement);
-            return !!(el && el.closest && el.closest('.chat-thread-bar, .chat-thread-subagents'));
+            return !!(el && el.closest && el.closest('.chat-thread-bar, .chat-thread-subagents, .chat-thread-receipt'));
         }
 
         function onMutations(list) {
@@ -543,6 +634,11 @@
             started = true;
             const box = h.container && h.container();
             if (box) observe(box);
+            // Studio on/off changes which rows carry a receipt: re-settle at once.
+            const display = root.CuttleChatDisplay;
+            if (!unsubscribeDisplay && display && typeof display.onChange === 'function') {
+                unsubscribeDisplay = display.onChange(() => reconcile());
+            }
             reconcile();
         }
 
@@ -572,7 +668,7 @@
                 .catch(() => enabled);
         }
 
-        return { start, setEnabled, syncFlag, reconcile, reveal, flush: flushSave,
+        return { start, setEnabled, syncFlag, reconcile, reveal, refreshReceipts, flush: flushSave,
             resetView: (id) => loadSession(id == null ? null : String(id)) };
     }
 
