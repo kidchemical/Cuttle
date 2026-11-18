@@ -115,6 +115,13 @@ class BackgroundWait:
         self._row: Optional[Dict[str, Any]] = None
         # Run-log events before the first reply's query id is known (bind).
         self._log_pending: List[Dict[str, Any]] = []
+        # This run's own steer registration (api.agent_harness.steer): a send
+        # into the wait must reach *this* CLI, never a replacement's.
+        self.steer_token: Optional[int] = None
+
+    def claim_steer(self, token: Optional[int]) -> None:
+        """The CLI's steer registration token (None once it unregisters)."""
+        self.steer_token = token
 
     # -- CLI side ---------------------------------------------------------
 
@@ -522,7 +529,10 @@ def steer_detached(chat_session_id: Any, agent_id: Optional[str], text: str) -> 
     base_turn = wait.base_turn
     with wait._lock:
         was_waiting = wait.phase == "waiting"
-    info = steer.steer(chat_session_id, text, turn_id=base_turn or None)
+    # Target this wait's own registration: another run may have replaced it
+    # between the lookup above and the send.
+    info = steer.steer(chat_session_id, text, turn_id=base_turn or None,
+                       expect_token=wait.steer_token)
     if not info.get("steered"):
         return None
     # The detached run is still the first reply's turn: the steer threads there.

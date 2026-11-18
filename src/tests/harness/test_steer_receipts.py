@@ -316,7 +316,8 @@ def test_reply_is_the_first_paragraph_clipped():
 
 # ── Stop / resend fence ─────────────────────────────────────────────────────
 
-def test_a_superseded_turn_publishes_and_persists_nothing(tmp_path):
+def test_a_superseded_turn_stops_publishing_and_writes_one_terminal_state(tmp_path):
+    """N2: the user's own row is never left on the non-terminal ``pending``."""
     from api import chat_delivery
 
     db = FakeDb(tmp_path / 'fence.db')
@@ -328,16 +329,107 @@ def test_a_superseded_turn_publishes_and_persists_nothing(tmp_path):
     assert chat_delivery.try_begin(945), 'Stop → re-send: a newer turn owns the chat'
     try:
         steer_receipts.bind(info['steer_id'], db, message_id)
+        # An echo observed only after Stop is not a fact of this turn.
         steer.note_echo('945', token, info['steer_id'])
         steer.unregister('945', token)
         assert steer_receipts.flush(2.0)
-        assert db.writes == []
-        assert steer_receipts.live('945') == []
-        assert steer_receipts.snapshot(info['steer_id']) is None
+        assert db.steer_meta(message_id)['state'] == 'undelivered'
+        assert db.steer_meta(message_id)['delivered_at'] is None
+        assert steer_receipts.live('945') == [], 'a superseded receipt is not published'
         assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
     finally:
         chat_delivery.end(945)
         steer_receipts.discard(info['steer_id'])
+
+
+def test_a_confirmed_echo_before_stop_is_kept_when_the_turn_is_superseded(tmp_path):
+    """N2: Stop then re-send must not turn a delivered row back into ``pending``."""
+    from api import chat_delivery
+
+    db = FakeDb(tmp_path / 'keep.db')
+    chat_delivery.try_begin(9450)
+    token = steer.register('9450', 'codex', lambda text, sid=None: _future((True, None)))
+    info = steer.steer('9450', 'one')
+    message_id = db.add_message(9450, 'user', 'one')
+    steer_receipts.bind(info['steer_id'], db, message_id)
+    steer.note_echo('9450', token, info['steer_id'])  # the agent read it
+    try:
+        chat_delivery.end(9450)
+        assert chat_delivery.try_begin(9450), 'Stop → re-send'
+        steer.unregister('9450', token)  # the old runner finishes afterwards
+        assert steer_receipts.flush(2.0)
+        saved = db.steer_meta(message_id)
+        assert saved['state'] == 'delivered' and saved['delivered_at']
+    finally:
+        chat_delivery.end(9450)
+        steer_receipts.discard(info['steer_id'])
+
+
+def test_an_excerpt_captured_before_the_turn_ended_survives_a_late_bind(tmp_path, monkeypatch):
+    """Codex 1 (inverse): a normal turn end plus a new turn must not drop the excerpt."""
+    turn = {'query_id': 'q-one'}
+    monkeypatch.setattr('api.chat_turn_row.current', lambda sid: dict(turn))
+    db = FakeDb(tmp_path / 'late.db')
+    token = steer.register('9451', 'codex', lambda text, sid=None: _future((True, None)))
+    info = steer.steer('9451', 'one')
+    steer.note_echo('9451', token, info['steer_id'])
+    steer.note_output_start('9451', token, 'a1')
+    steer.note_output_text('9451', token, 'a1', 'Included amber.')
+    steer.unregister('9451', token)      # the turn ends normally
+    turn['query_id'] = 'q-two'           # and another turn starts
+    message_id = db.add_message(9451, 'user', 'one')
+    steer_receipts.bind(info['steer_id'], db, message_id)  # the HTTP request binds late
+    assert steer_receipts.flush(2.0)
+    saved = db.steer_meta(message_id)
+    assert saved['state'] == 'delivered'
+    assert saved['reply']['text'] == 'Included amber.'
+    assert saved['covers'] == [message_id]
+
+
+def test_an_observation_made_after_stop_is_never_recorded(tmp_path):
+    """Codex 1: the old CLI's later output is not this receipt's reply."""
+    from api import chat_delivery
+
+    db = FakeDb(tmp_path / 'stale.db')
+    chat_delivery.try_begin(9452)
+    token = steer.register('9452', 'codex', lambda text, sid=None: _future((True, None)))
+    info = steer.steer('9452', 'one')
+    message_id = db.add_message(9452, 'user', 'one')
+    steer_receipts.bind(info['steer_id'], db, message_id)
+    try:
+        chat_delivery.end(9452)
+        assert chat_delivery.try_begin(9452), 'Stop → re-send'
+        steer.note_output_start('9452', token, 'a1')
+        steer.note_output_text('9452', token, 'a1', 'Still running from the old turn.')
+        steer.note_echo('9452', token, info['steer_id'])
+        steer.unregister('9452', token)
+        assert steer_receipts.flush(2.0)
+        saved = db.steer_meta(message_id)
+        assert saved['reply'] is None and saved['state'] == 'undelivered'
+    finally:
+        chat_delivery.end(9452)
+        steer_receipts.discard(info['steer_id'])
+
+
+def test_a_detached_send_only_reaches_its_own_registration():
+    """Codex 1: a replacement run must never receive the wait's steer."""
+    from api.agent_harness.background_wait import BackgroundWait, steer_detached
+
+    first, second = [], []
+    wait = BackgroundWait(9453, 'claude')
+    wait._state = 'running'
+    token = steer.register('9453', 'claude',
+                           lambda text, sid=None: (first.append(text), _future((True, None)))[1])
+    wait.claim_steer(token)
+    try:
+        replacement = steer.register('9453', 'claude',
+                                     lambda text, sid=None: (second.append(text), _future((True, None)))[1])
+        assert steer_detached(9453, 'claude', 'hello') is None
+        assert first == [] and second == [], 'the swapped-in CLI is not the wait\'s run'
+        steer.unregister('9453', replacement)
+    finally:
+        steer.unregister('9453', token)
+        wait._state = 'done'
 
 
 def test_live_status_only_carries_the_current_turn(tmp_path, monkeypatch):

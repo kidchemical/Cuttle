@@ -721,6 +721,8 @@ class ClaudeCliTool:
             if st["token"] is not None:
                 steer_registry.unregister(chat_session_id, st["token"])
                 st["token"] = None
+                if ctl is not None:
+                    ctl.wait.claim_steer(None)
             if st["open"]:
                 st["open"] = False
                 try:
@@ -969,6 +971,9 @@ class ClaudeCliTool:
                 st["open"] = True
                 if chat_session_id:
                     st["token"] = steer_registry.register(chat_session_id, "claude", _steer_send)
+                    if ctl is not None:
+                        # A detached send must reach this CLI's registration.
+                        ctl.wait.claim_steer(st["token"])
             elif use_stdin and proc.stdin is not None:
                 proc.stdin.write(prompt.encode("utf-8"))
                 await proc.stdin.drain()

@@ -30,9 +30,14 @@ the rows that share one grouped reply, and that reply is carried by the **last**
 covered row only, so a client renders it once.
 
 Supersession: each registration pins its run identity (the turn's query id and
-the delivery guard token). A receipt whose turn was superseded — Stop then
-re-send, or another turn taking the chat from a detached run — is neither
-published to live status nor persisted.
+the delivery guard token). Once a newer turn owns the chat — Stop then re-send,
+or another turn taking the chat from a detached run — the tracker **freezes**:
+no vendor event after that point records a new fact, nothing is published to
+live status any more, and the row the user already sees gets exactly one
+terminal write carrying the facts established while the turn was still its own
+(a confirmed echo, a captured excerpt). A row bound late, after its turn ended
+and another began, therefore still keeps its excerpt instead of losing it to
+the fence.
 """
 from __future__ import annotations
 
@@ -45,6 +50,8 @@ import time
 import uuid
 
 CONTRACT_VERSION = 1
+
+_CONTRACT_KEYS = ('v', 'steer_id', 'state', 'delivered_at', 'mode', 'reply', 'covers')
 
 PENDING = 'pending'
 DELIVERED = 'delivered'
@@ -95,16 +102,42 @@ def insert_shape(steer_id, *, delivered=False, mode='live'):
 class Receipts:
     """One live registration's receipts. Memory only; never touches the DB."""
 
-    def __init__(self, changed=None, *, session=None, turn_id='', guard_turn=None):
+    def __init__(self, changed=None, *, many=None, stale=None,
+                 session=None, turn_id='', guard_turn=None):
         self._lock = threading.RLock()
         self._entries = []
         self._starts = {}
         self._seq = 0
         self._finished = False
+        self._frozen = False
         self._changed = changed or (lambda entry: None)
+        self._many = many
+        self._stale = stale if stale is not None else superseded
         self.session = '' if session is None else str(session)
         self.turn_id = str(turn_id or '')
         self.guard_turn = guard_turn
+
+    @property
+    def frozen(self):
+        """True once a newer turn owns the chat: facts are closed, not changed."""
+        with self._lock:
+            return self._frozen
+
+    def _fresh(self):
+        """False when this run no longer owns the chat, so no new fact may land.
+
+        Checked **before** recording, so an observation made after Stop (output
+        the old CLI was still producing) never becomes a fact, while everything
+        established before it persists.
+        """
+        if self._frozen:
+            return False
+        try:
+            if self._stale(self.session, self.turn_id, self.guard_turn):
+                self._frozen = True
+        except Exception:
+            pass
+        return not self._frozen
 
     # ── registration ────────────────────────────────────────────────────────
     def begin(self, text, turn_id=None):
@@ -140,7 +173,7 @@ class Receipts:
         """A follow-up accepted into an idle detached wait is delivered input."""
         with self._lock:
             entry = self._find(steer_id)
-            if entry is None:
+            if entry is None or not self._fresh():
                 return
             entry['mode'] = 'detached'
             entry['delivered_at'] = entry['delivered_at'] or _now()
@@ -153,16 +186,16 @@ class Receipts:
                 return
             entry['message_id'] = message_id
             # A grouped reply belongs to the last covered row: binding a later
-            # row moves it, so every member is republished.
-            for member in self._group_members(entry):
-                self._emit(member)
+            # row moves it, so every member is republished — in one batch, so
+            # one transaction covers the whole group.
+            self._emit_many(self._group_members(entry))
 
     # ── vendor correlation (by steer id; never by matching text again) ──────
     def echo(self, steer_id):
         """The runner's own matcher confirmed the agent read this exact send."""
         with self._lock:
             entry = self._find(steer_id)
-            if entry is None or entry['echo_seq'] is not None:
+            if entry is None or entry['echo_seq'] is not None or not self._fresh():
                 return
             entry['echo_seq'] = self._next()
             entry['delivered_at'] = entry['delivered_at'] or _now()
@@ -191,6 +224,8 @@ class Receipts:
         if not clipped:
             return
         with self._lock:
+            if not self._fresh():
+                return
             started = self._starts.get(str(item_id or ''))
             if started is None:
                 started = self._next()
@@ -202,15 +237,14 @@ class Receipts:
             group = {'members': waiting, 'reply': {'text': clipped, 'at': _now()}}
             for entry in waiting:
                 entry['group'] = group
-            for entry in waiting:
-                self._emit(entry)
+            self._emit_many(waiting)
 
     def finish(self):
         with self._lock:
             self._finished = True
             for entry in self._entries:
                 entry['ended'] = True
-                self._emit(entry)
+            self._emit_many(list(self._entries))
 
     # ── reads ───────────────────────────────────────────────────────────────
     def snapshot(self, steer_id):
@@ -252,13 +286,27 @@ class Receipts:
                 'mode': entry['mode'], 'reply': reply, 'covers': covers}
 
     def _snapshot(self, entry):
+        group = entry['group']
+        binding = bool(group is not None
+                       and any(m['message_id'] is None for m in group['members']))
         return {**self._public(entry), 'message_id': entry['message_id'],
                 'turn_id': entry['turn_id'], 'ended': entry['ended'],
+                'group_binding': binding,
                 'session': self.session, 'guard_turn': self.guard_turn}
 
     def _emit(self, entry):
+        self._emit_many([entry])
+
+    def _emit_many(self, entries):
+        """Publish these entries' snapshots as one update (one transaction)."""
+        snapshots = [self._snapshot(entry) for entry in entries]
         try:
-            self._changed(self._snapshot(entry))
+            if self._many is not None:
+                stale = self._many(snapshots)
+            else:
+                stale = any([self._changed(snap) for snap in snapshots])
+            if stale:
+                self._frozen = True
         except Exception:
             logging.getLogger(__name__).exception("Steer receipt update failed")
 
@@ -295,13 +343,8 @@ def discard(steer_id):
     """Forget a steer whose user row will never be written."""
     with _pending_lock:
         binding = _pending.pop(steer_id, None)
-        session = binding['session'] if binding else None
-        if session is not None:
-            bucket = _live.get(session)
-            if bucket is not None:
-                bucket.pop(steer_id, None)
-                if not bucket:
-                    _live.pop(session, None)
+        if binding is not None:
+            _unpublish_locked(binding['session'], steer_id)
     with _write_lock:
         _queue.pop(steer_id, None)
 
@@ -324,11 +367,7 @@ def _purge_locked():
             continue
         if now - ended_at >= _PENDING_GRACE_SEC:
             _pending.pop(steer_id, None)
-            bucket = _live.get(binding['session'])
-            if bucket is not None:
-                bucket.pop(steer_id, None)
-                if not bucket:
-                    _live.pop(binding['session'], None)
+            _unpublish_locked(binding['session'], steer_id)
 
 
 def _superseded(snapshot):
@@ -364,41 +403,98 @@ def _superseded(snapshot):
     return bool(base) and base != turn
 
 
+def superseded(session, turn_id, guard_turn):
+    """True when a newer turn owns this chat (the receipt's generation is over)."""
+    return _superseded({'session': session, 'turn_id': turn_id, 'guard_turn': guard_turn})
+
+
+def _terminal(contract):
+    """One terminal state for the user's own row, keeping the established facts.
+
+    Called when the turn was superseded: the facts were finalized while the run
+    still owned the chat (the tracker freezes at that point, so nothing newer
+    is in here), and the row the user is looking at must not be left on the
+    non-terminal ``pending``.
+    """
+    delivered_at = contract.get('delivered_at')
+    return {**contract,
+            'state': DELIVERED if delivered_at else UNDELIVERED}
+
+
 def changed(snapshot):
-    """Publish a snapshot to live status and queue its write. Never blocks."""
+    """Publish one snapshot; True when the run no longer owns the chat."""
+    return changed_many([snapshot])
+
+
+def changed_many(snapshots):
+    """Publish snapshots to live status and queue their writes. Never blocks.
+
+    Everything a group emits arrives here together, so one transaction covers
+    it. Returns True when any snapshot's turn was superseded, which freezes the
+    emitting tracker.
+    """
+    writes, stale = [], False
+    for snapshot in snapshots:
+        item, gone = _apply(snapshot)
+        stale = stale or gone
+        if item is not None:
+            writes.append(item)
+    if writes:
+        with _write_lock:
+            for item in writes:
+                _queue[item['steer_id']] = item
+        _ensure_writer()
+        _wake.set()
+    return stale
+
+
+def _apply(snapshot):
+    """Live-status side of one snapshot → (queue item or None, superseded)."""
     steer_id = snapshot['steer_id']
-    if _superseded(snapshot):
-        # A newer turn owns the chat: this receipt can never land, so it is
-        # neither published nor saved — and nothing is kept for it.
-        discard(steer_id)
-        return
-    contract = {key: snapshot[key] for key in
-                ('v', 'steer_id', 'state', 'delivered_at', 'mode', 'reply', 'covers')}
+    contract = {key: snapshot[key] for key in _CONTRACT_KEYS}
+    stale = _superseded(snapshot)
+    if stale:
+        # A newer turn owns the chat: stop publishing, but never throw away a
+        # fact the user's own row has already earned. Exactly one terminal
+        # state lands there (this is the user's row, not the stale run's reply,
+        # so the turn guard is untouched).
+        contract = _terminal(contract)
+    ended = bool(snapshot.get('ended')) or stale
     with _pending_lock:
         binding = _pending.get(steer_id)
         if binding is None:
-            return
-        if snapshot.get('ended'):
+            return None, stale
+        if ended:
             binding['ended_at'] = binding.get('ended_at') or time.monotonic()
         session, db = binding['session'], binding['db']
         message_id = snapshot.get('message_id')
         binding['message_id'] = message_id
-        if message_id is not None:
+        if stale:
+            _unpublish_locked(session, steer_id)
+        elif message_id is not None:
             bucket = _live.setdefault(session, {})
             bucket[steer_id] = {**contract, 'message_id': message_id,
                                 'turn_id': snapshot.get('turn_id') or ''}
             while len(bucket) > 100:
                 bucket.pop(next(iter(bucket)))
-        if snapshot.get('ended') and message_id is None:
+        if ended and message_id is None:
             _purge_locked()
     if db is None or message_id is None:
-        return
-    with _write_lock:
-        _queue[steer_id] = {'db': db, 'message_id': message_id, 'patch': contract,
-                            'session': session, 'ended': bool(snapshot.get('ended')),
-                            'attempts': 0}
-    _ensure_writer()
-    _wake.set()
+        return None, stale
+    return ({'steer_id': steer_id, 'db': db, 'message_id': message_id,
+             'patch': contract, 'session': session, 'ended': ended,
+             'turn_id': snapshot.get('turn_id') or '',
+             'guard_turn': snapshot.get('guard_turn'),
+             'group_binding': bool(snapshot.get('group_binding')),
+             'attempts': 0}, stale)
+
+
+def _unpublish_locked(session, steer_id):
+    bucket = _live.get(session)
+    if bucket is not None:
+        bucket.pop(steer_id, None)
+        if not bucket:
+            _live.pop(session, None)
 
 
 def bind(steer_id, db, message_id):
@@ -538,8 +634,8 @@ def _write_batch(batch, retry, log):
 
 def _group_by_db(batch):
     groups = {}
-    for steer_id, item in batch.items():
-        groups.setdefault(id(item['db']), []).append({**item, 'steer_id': steer_id})
+    for item in batch.values():
+        groups.setdefault(id(item['db']), []).append(item)
     return groups
 
 
@@ -549,11 +645,7 @@ def _release(steer_id):
         binding = _pending.pop(steer_id, None)
         if binding is None:
             return
-        bucket = _live.get(binding['session'])
-        if bucket is not None:
-            bucket.pop(steer_id, None)
-            if not bucket:
-                _live.pop(binding['session'], None)
+        _unpublish_locked(binding['session'], steer_id)
 
 
 def flush(timeout=5.0):

@@ -138,7 +138,8 @@ def register(chat_session_id: Any, agent_id: str, send: SteerSend) -> Optional[i
     except Exception:
         guard_turn = None
     receipts = steer_receipts.Receipts(
-        steer_receipts.changed, session=key, turn_id=turn_id, guard_turn=guard_turn
+        steer_receipts.changed, many=steer_receipts.changed_many,
+        session=key, turn_id=turn_id, guard_turn=guard_turn
     )
     with _lock:
         previous = _active.get(key)
@@ -202,8 +203,14 @@ def steer_text_for(message: str, agent_id: str) -> Optional[str]:
     return body
 
 
-def steer(chat_session_id: Any, message: str, *, timeout: float = 10.0, turn_id: Optional[str] = None) -> Dict[str, Any]:
-    """Forward ``message`` to the live turn for this chat."""
+def steer(chat_session_id: Any, message: str, *, timeout: float = 10.0, turn_id: Optional[str] = None,
+          expect_token: Optional[int] = None) -> Dict[str, Any]:
+    """Forward ``message`` to the live turn for this chat.
+
+    ``expect_token`` names the registration the caller means: a detached wait
+    passes its own token, so a send never reaches the replacement CLI of a run
+    that was swapped out while the caller was looking the wait up.
+    """
     key = _key(chat_session_id)
     if key is None:
         return {"steered": False, "reason": "no_session"}
@@ -211,6 +218,8 @@ def steer(chat_session_id: Any, message: str, *, timeout: float = 10.0, turn_id:
         entry = _active.get(key)
     if entry is None:
         return {"steered": False, "reason": "no_steerable_run"}
+    if expect_token is not None and entry.token != expect_token:
+        return {"steered": False, "reason": "stale_registration", "agent": entry.agent_id}
     text = steer_text_for(message, entry.agent_id)
     if text is None:
         return {"steered": False, "reason": "not_steerable_text", "agent": entry.agent_id}
