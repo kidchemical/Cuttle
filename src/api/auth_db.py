@@ -311,6 +311,10 @@ class AuthDatabase:
             # round was started in; its cards bind to the row of that turn.
             'ALTER TABLE subagent_batches ADD COLUMN turn_id TEXT',
             'ALTER TABLE subagent_children ADD COLUMN card_turn_id TEXT',
+            # Explicit Tasks assignment (api.subagents.extras): the list and item
+            # this child works on; the item's owner says who holds it now.
+            'ALTER TABLE subagent_children ADD COLUMN task_gizmo_id TEXT',
+            'ALTER TABLE subagent_children ADD COLUMN task_item_id TEXT',
         ):
             try:
                 cursor.execute(col_sql)
