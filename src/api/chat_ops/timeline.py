@@ -33,9 +33,9 @@ def project(session, *, before=None, limit=50, include_quiet=False):
             if outcome in ('skipped', 'unchanged', 'note', 'acted', 'early_wake') and not include_quiet:
                 continue
             kind = {'violation':'guard','checkpoint':'milestone','paused_alert':'paused',
-                    'resumed':'resumed','nudged':'nudged','stalled':'stalled','error':'error',
+                    'resumed':'resumed','stalled':'stalled','error':'error',
                     'paused':'paused'}.get(outcome)
-            if not kind and include_quiet: kind = 'error'
+            if outcome in ('skipped', 'unchanged') and include_quiet: kind = outcome
             if not kind: continue
             text = str(d.get('text') or d.get('error') or ', '.join(d.get('lines') or []))
             branch = d.get('branch') or (d.get('state') or {}).get('branch')
@@ -50,7 +50,8 @@ def project(session, *, before=None, limit=50, include_quiet=False):
                           'chat':f"CH-{int(op['target']):06d}",'headline':headline,'detail':text,
                           'refs':{k: v for k, v in {'branch': branch, 'command': command}.items() if v},'source':'check'})
     for op in store.listing(sid):
-        if op['kind'] != 'send' or op['state'] not in ('delivered','done'):
+        if (op['kind'] != 'send' or op['state'] not in ('delivered', 'done')
+                or op['target'] not in {s['target'] for s in schedules.values()}):
             continue
         items.append({'schema_version':1,'id':'send:'+op['id'],'at':op['updated'],'kind':'nudged',
                       'chat':f"CH-{int(op['target']):06d}",'headline':'Nudge delivered',
