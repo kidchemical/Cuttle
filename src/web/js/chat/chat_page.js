@@ -2928,6 +2928,10 @@
                 if (slashPaletteSupplement.harnessAgentsPath !== path) return;
                 slashPaletteSupplement.harnessAgents =
                     j && j.success && Array.isArray(j.agents) ? j.agents : [];
+                // Studio bubble headers take their identity colour from this catalog (chat_work_panel.js).
+                if (window.CuttleWorkPanel && slashPaletteSupplement.harnessAgents.length) {
+                    CuttleWorkPanel.setCatalog(slashPaletteSupplement.harnessAgents);
+                }
             })
             .catch(() => {
                 if (slashPaletteSupplement.harnessAgentsPath === path) {
