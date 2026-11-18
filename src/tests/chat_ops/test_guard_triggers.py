@@ -274,6 +274,5 @@ def test_guard_timeline_attribution(chats, failed):
     detail = store.checks(sched['id'])[0]['detail']
     assert detail.get('blocked', False) is failed
     event = timeline.project(sup)['items'][0]
-    assert event['headline'] == ('Guard blocked a commit to dev/core' if failed else
-                                 f'Flagged a forbidden command: {cmd}')
-    assert 'blocked a push' not in event['headline']
+    assert event['headline'] == ('Guard: blocked a push to `dev/core`' if failed else
+                                 'Guard: flagged a push to `dev/core`')

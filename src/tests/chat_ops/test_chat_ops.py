@@ -1315,7 +1315,8 @@ def test_undelivered_send_wakes_the_supervisor_once_even_mid_turn(chats, monkeyp
 def test_timeline_cli_handle_and_output(monkeypatch, capsys):
     from api.chat_cli.cli import main
     from api.chat_ops import timeline
-    monkeypatch.setattr('api.chat_cli.cli._open_db', lambda _: object())
+    cli_db = object()
+    monkeypatch.setattr('api.chat_cli.cli._open_db', lambda _: cli_db)
     monkeypatch.setattr(service, 'context', lambda *a, **kw: None)
     calls = []
     def project(sid, **kwargs):
@@ -1324,7 +1325,8 @@ def test_timeline_cli_handle_and_output(monkeypatch, capsys):
     monkeypatch.setattr(timeline, 'project', project)
     assert main(['timeline', 'CH-002620', '--limit', '3', '--before', '99', '--include-quiet']) == 0
     assert capsys.readouterr().out == '42  stalled  Chat stalled\n'
-    assert calls == [(2620, {'limit': 3, 'before': '99', 'include_quiet': True})]
+    # Names resolve against the DB the CLI opened, not the process default.
+    assert calls == [(2620, {'limit': 3, 'before': '99', 'include_quiet': True, 'db': cli_db})]
     assert main(['timeline', 'CH-002620', '--json']) == 0
     assert json.loads(capsys.readouterr().out)['items'][0]['kind'] == 'stalled'
 

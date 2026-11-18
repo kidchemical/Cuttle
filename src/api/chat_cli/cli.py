@@ -579,7 +579,8 @@ def cmd_operation(args: argparse.Namespace) -> int:
             from api.chat_ops.timeline import project
             sid = service.session_id(args.handle)
             service.context(sid, sid, db=db)
-            payload = {'ok': True, **project(sid, before=args.before, limit=args.limit, include_quiet=args.include_quiet)}
+            payload = {'ok': True, **project(sid, before=args.before, limit=args.limit,
+                                             include_quiet=args.include_quiet, db=db)}
         else:
             payload = service.supervise(args.handle, every=args.every, instructions=args.instructions,
                 required_branch=args.require_branch, required_path=args.require_path,

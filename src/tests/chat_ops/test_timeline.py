@@ -128,12 +128,11 @@ def test_legacy_checks_only_before_retained_history(chats):
 
 def test_cli_timeline_prints_the_projection_headline(chats, monkeypatch, capsys):
     """Not a stub: the CLI runs the real projection and prints its headline."""
-    from api import auth_db
     from api.chat_cli.cli import main
     db, _, sup, _, _ = chats
     sched = _schedule(chats)
     store.record_check(sched['id'], 'stalled', {'stalled_min': 45, 'state': 'idle_with_work'})
+    # Only the CLI's DB knows these sessions: the process default must not be consulted.
     monkeypatch.setattr('api.chat_cli.cli._open_db', lambda _path=None: db)
-    monkeypatch.setattr(auth_db, 'get_auth_db', lambda: db)
     assert main(['timeline', f'CH-{sup:06d}']) == 0
     assert 'stalled  worker has been stuck for 45 min' in capsys.readouterr().out
