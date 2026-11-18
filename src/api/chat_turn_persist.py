@@ -22,6 +22,13 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Optional
 
 
+def _bind_steer(db, message_id, metadata):
+    steer = (metadata or {}).get('steer') or {}
+    if message_id and steer.get('steer_id'):
+        from api.agent_harness.steer_receipts import bind
+        bind(steer['steer_id'], db, message_id)
+
+
 def persist_auth_user_message(
     db: Any,
     chat_session_id: Any,
@@ -40,7 +47,8 @@ def persist_auth_user_message(
         metadata = dict(metadata or {}, **native_control_metadata(request_data, message=message_text),
                         **chat_op_metadata(request_data, chat_session_id))
         metadata = project_merge_fn(metadata, request_data, chat_session_id)
-        db.add_message(chat_session_id, 'user', message_text, metadata=metadata or None)
+        message_id = db.add_message(chat_session_id, 'user', message_text, metadata=metadata or None)
+        _bind_steer(db, message_id, metadata)
     except Exception as e:
         print(f"[CHAT] persist user message failed: {e}")
 
@@ -75,7 +83,8 @@ def persist_user_turn(
         pass
     try:
         metadata = project_merge_fn(turn_meta or None, request_data, session_id)
-        db.add_message(session_id, 'user', history_text, metadata=metadata or None)
+        message_id = db.add_message(session_id, 'user', history_text, metadata=metadata or None)
+        _bind_steer(db, message_id, metadata)
     except Exception as e:
         print(f"[CHAT] persist user turn failed: {e}")
 

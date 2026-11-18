@@ -56,7 +56,8 @@ def test_registry_normalizes_chat_handles_and_forwards_text():
     assert steer.active_agent(77) == "codex"
     assert steer.active_agent("CH-000077") == "codex"
     info = steer.steer(77, "/codex keep going")
-    assert info == {"steered": True, "agent": "codex", "text": "keep going"}
+    assert {k: info[k] for k in ("steered", "agent", "text")} == {"steered": True, "agent": "codex", "text": "keep going"}
+    assert info["steer_id"]
     assert sent == ["keep going"]
     steer.unregister("77", token)
     assert steer.active_agent(77) is None
@@ -676,7 +677,8 @@ def test_claude_turn_accepts_mid_turn_steer(tmp_path, monkeypatch, observe):
     events = []
     res, results = _run_fake_claude(tmp_path, monkeypatch, "mid", 5151, "/claude add BANANA", events.append if observe else None)
     assert bool(events) is observe
-    assert results and results[0] == {"steered": True, "agent": "claude", "text": "add BANANA"}
+    assert results and {k: results[0][k] for k in ("steered", "agent", "text")} == {"steered": True, "agent": "claude", "text": "add BANANA"}
+    assert results[0]["steer_id"]
     assert res["success"] is True
     assert res["output"] == "saw: add BANANA"
     assert res["steered"] == 1

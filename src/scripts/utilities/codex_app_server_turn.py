@@ -498,6 +498,11 @@ async def run_codex_turn_app_server(
                 on_event(msg)
             except Exception:
                 pass  # Instrumentation must never interrupt the transport.
+        if isinstance(msg, dict) and st["steer_token"] is not None:
+            try:
+                steer_registry.observe(chat_session_id, st["steer_token"], msg)
+            except Exception:
+                pass  # Receipt capture must never interrupt the reader.
         if not isinstance(msg, dict) or rpc.dispatch_reply(msg):
             return
         method = str(msg.get("method") or "")

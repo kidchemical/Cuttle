@@ -42,6 +42,7 @@ class _Entry:
     agent_id: str
     token: int
     send: SteerSend
+    receipts: Any
 
 
 _lock = threading.Lock()
@@ -115,9 +116,12 @@ def register(chat_session_id: Any, agent_id: str, send: SteerSend) -> Optional[i
     key = _key(chat_session_id)
     if key is None:
         return None
+    from api.agent_harness import steer_receipts
+
     token = next(_tokens)
+    receipts = steer_receipts.Receipts(steer_receipts.changed)
     with _lock:
-        _active[key] = _Entry(agent_id=agent_id, token=token, send=send)
+        _active[key] = _Entry(agent_id=agent_id, token=token, send=send, receipts=receipts)
     return token
 
 
@@ -130,6 +134,10 @@ def unregister(chat_session_id: Any, token: Optional[int]) -> None:
         entry = _active.get(key)
         if entry is not None and entry.token == token:
             del _active[key]
+        else:
+            entry = None
+    if entry is not None:
+        entry.receipts.finish()
 
 
 def active_agent(chat_session_id: Any) -> Optional[str]:
@@ -183,29 +191,66 @@ def steer(chat_session_id: Any, message: str, *, timeout: float = 10.0) -> Dict[
     text = steer_text_for(message, entry.agent_id)
     if text is None:
         return {"steered": False, "reason": "not_steerable_text", "agent": entry.agent_id}
+    # Capture the turn and registration before the transport can echo the send.
+    try:
+        from api.chat_turn_id import ambient
+        turn_id = ambient(chat_session_id)
+    except Exception:
+        turn_id = ""
+    from api.agent_harness import steer_receipts
+    steer_id = entry.receipts.begin(text, turn_id)
+    steer_receipts.track(key, entry.receipts, steer_id)
     try:
         fut = entry.send(text)
         ok, err = fut.result(timeout=timeout)
     except concurrent.futures.TimeoutError:
+        entry.receipts.accepted(steer_id, False)
+        steer_receipts.discard(steer_id)
         return {"steered": False, "reason": "timeout", "agent": entry.agent_id}
     except Exception as exc:
+        entry.receipts.accepted(steer_id, False)
+        steer_receipts.discard(steer_id)
         return {"steered": False, "reason": "error", "error": str(exc), "agent": entry.agent_id}
+    entry.receipts.accepted(steer_id, ok)
     if not ok:
-        return {
-            "steered": False,
-            "reason": "rejected",
-            "error": err,
-            "agent": entry.agent_id,
-        }
-    # The turn this steer joins (api.chat_turn_id): the chat's open turn row.
-    # Saved on the steered user row so the transcript threads it under that turn.
-    try:
-        from api.chat_turn_id import ambient
-
-        turn_id = ambient(chat_session_id)
-    except Exception:
-        turn_id = ""
-    out = {"steered": True, "agent": entry.agent_id, "text": text}
+        steer_receipts.discard(steer_id)
+        return {"steered": False, "reason": "rejected", "error": err, "agent": entry.agent_id}
+    out = {"steered": True, "agent": entry.agent_id, "text": text, "steer_id": steer_id}
     if turn_id:
         out["turn_id"] = turn_id
     return out
+
+
+def observe(chat_session_id: Any, token: Optional[int], event: Dict[str, Any]) -> None:
+    """Feed a vendor event only to the registration that owns the turn."""
+    with _lock:
+        entry = _active.get(_key(chat_session_id))
+        if entry is None or entry.token != token:
+            return
+    if entry.agent_id == "claude":
+        from scripts.utilities.claude_cli_tool import _replay_text
+        echoed = _replay_text(event)
+        if echoed is not None:
+            entry.receipts.echo(echoed, event.get("uuid"))
+        elif event.get("type") == "assistant" and not event.get("parent_tool_use_id"):
+            blocks = (event.get("message") or {}).get("content") or []
+            for block in blocks:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    entry.receipts.reply(block.get("text"))
+                    break
+        return
+    params = event.get("params") or {}
+    item = params.get("item") or {}
+    if event.get("method") != "item/completed" or not isinstance(item, dict):
+        return
+    kind = item.get("type") if entry.agent_id == "codex" else item.get("kind")
+    if kind == "userMessage":
+        if entry.agent_id == "muse" and not item.get("steered"):
+            return
+        if entry.agent_id == "codex":
+            text = next((p.get("text", "") for p in item.get("content", []) if p.get("type") == "text"), "")
+        else:
+            text = item.get("text", "")
+        entry.receipts.echo(text, item.get("id") or item.get("itemId"))
+    elif kind == "agentMessage":
+        entry.receipts.reply(item.get("text"))

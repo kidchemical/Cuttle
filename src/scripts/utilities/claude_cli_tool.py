@@ -852,6 +852,11 @@ class ClaudeCliTool:
                     on_event(obj)
                 except Exception:
                     pass  # Observation must not interrupt transport.
+            if st["token"] is not None:
+                try:
+                    steer_registry.observe(chat_session_id, st["token"], obj)
+                except Exception:
+                    pass  # Receipt capture must never interrupt the reader.
             detached = ctl is not None and ctl.detached
             if (detached and obj.get("type") in ("assistant", "stream_event")
                     and not obj.get("parent_tool_use_id")):

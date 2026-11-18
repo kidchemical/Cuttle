@@ -55,5 +55,10 @@ def live_status_extras(session_id: Any) -> Dict[str, Any]:
             thinking = live_thinking(live["query_id"])
     except Exception:
         thinking = ""
-    return {"subagents": subagents, "background": background, "orchestration": orchestration,
+    try:
+        from api.agent_harness.steer_receipts import live
+        steers = live(session_id)
+    except Exception:
+        steers = []
+    return {"steers": steers, "subagents": subagents, "background": background, "orchestration": orchestration,
             "thinking": thinking}
