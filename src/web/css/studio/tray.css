@@ -100,6 +100,14 @@
 :root.cuttle-studio .subagent-peek-line--2 .subagent-peek-parent {
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: pre;
+}
+
+/* Line 1 reads as one bold line: the agent name takes the line's size and weight. */
+:root.cuttle-studio .subagent-peek-line--1 .agent-identity {
+    font-size: inherit;
+    font-weight: inherit;
+    line-height: inherit;
 }
 
 :root.cuttle-studio .subagent-peek-sep {

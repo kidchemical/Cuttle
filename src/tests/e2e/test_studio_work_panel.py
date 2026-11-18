@@ -44,13 +44,19 @@ FIXTURE = """<!DOCTYPE html><html><head>
 <link rel="stylesheet" href="/css/studio/identity.css">
 <link rel="stylesheet" href="/css/studio/work_panel.css">
 <link rel="stylesheet" href="/css/studio/tray.css">
-<style>body{margin:0;background:#fbf8f3;font-family:'Cuttle Inter',Inter,system-ui,sans-serif}</style>
+<style>
+/* Stand-ins for the real Studio page: its surface, and a light reply card (the
+   Studio bubble skin is not in this lane). The reply text sits above the panel. */
+body{margin:0;min-height:100vh;background:var(--studio-surface-gradient);font-family:var(--font-sans)}
+html body #typing-indicator .message-content-wrapper{background:var(--studio-bubble-bot-bg);color:var(--studio-bubble-bot-ink);border-radius:var(--studio-bubble-radius);box-shadow:var(--studio-shadow-card);padding:22px 24px;box-sizing:border-box}
+html body #typing-indicator .message-content{font-size:17px;line-height:1.5;margin-bottom:16px;background:transparent;color:inherit;box-shadow:none;border:0;padding:0}
+</style>
 </head><body>
 <div id="chatWidgetsStrip" style="padding:12px 24px" hidden></div>
 <span class="chat-supervision-slot" id="chatOrchestrationSlot" hidden></span>
 <div id="chatMessages" style="width:100%;max-width:820px;padding:24px;box-sizing:border-box">
   <div id="typing-indicator" class="message assistant" data-turn-id="turn40">
-    <div class="message-content-wrapper"><div class="message-content">Cutting the v0.8 release.</div></div>
+    <div class="message-content-wrapper"><div class="message-content">Plan's set. Three workers on it; a supervisor checks in every 15 minutes.</div></div>
   </div>
 </div>
 <div id="hdr" style="padding:24px"></div>
