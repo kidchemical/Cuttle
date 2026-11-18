@@ -2,6 +2,7 @@ id: deepseek
 label: DeepSeek Harness
 slash: /deepseek
 icon: "≈"
+color: "#f43f5e"  # Settings/Studio identity dot; #rrggbb
 requires_cloud: true
 sticky: true
 # Empty — unpinned turns use the dsh CLI default (no model patch).

@@ -117,6 +117,14 @@ register_flag(FlagSpec(
 ))
 
 register_flag(FlagSpec(
+    id="chat_studio_display", label="Studio chat display",
+    description="Adds a Studio option to Settings → Appearance → Display: a second chat look with a new type scale, layered cards, agent colour dots and the Studio layout pieces as they ship. Classic stays the default look. Turning this off returns every chat to Classic.",
+    # Default off: a second look is opt-in. The per-browser Display choice is
+    # only offered while this flag is on.
+    default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
     id="composer_prompt_enhance", label="Composer prompt enhancer",
     description="Show the wand button in the chat composer that rewrites your draft prompt with AI (click again to undo).",
     default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
