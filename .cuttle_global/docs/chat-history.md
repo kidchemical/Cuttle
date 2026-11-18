@@ -159,6 +159,16 @@ reporting the new setting. Do not contact the target's child chats.
 Sends and supervision need the host up (Flask on loopback); read-only `get` /
 `session` / `search` do not. Library: `api.chat_ops` (service, store, worker, rules, triggers).
 
+## Supervision timeline
+
+`PYTHONPATH=src .venv/bin/python -m api.chat_cli timeline CH-001548 --limit 50 --json`
+reads the supervisor chat's combined feed. Use `--before <next_before>` for the
+next page and `--include-quiet` to include skipped and unchanged checks. The
+owner-only route is `GET /api/chat-ops/sessions/<session>/timeline`, with the
+same `limit`, `before`, and `include_quiet=1` options. Events include `stalled`,
+`nudged`, `guard`, `care`, `milestone`, `paused`, `resumed`, and `error`.
+Older telemetry contains only the fields originally recorded.
+
 ## This chat vs other chats
 
 - Display id `CH-<zero-padded number>` → numeric `chat_sessions.id` (strip `CH-` and leading zeros).
