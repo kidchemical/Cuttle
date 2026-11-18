@@ -735,8 +735,174 @@
         return fmtHead(text);
     }
 
+    // ---- Studio panel (lane L5): timeline rows and the panel header. Pure. ----
+
+    // Timeline kind → icon key and tone. Kinds the projection adds later fall back to neutral.
+    const TIMELINE_KINDS = {
+        stalled: { icon: 'stalled', tone: 'warn' },
+        nudged: { icon: 'nudged', tone: 'accent' },
+        guard: { icon: 'guard', tone: 'bad' },
+        care: { icon: 'care', tone: 'ok' },
+        milestone: { icon: 'milestone', tone: 'ok' },
+        paused: { icon: 'paused', tone: 'muted' },
+        resumed: { icon: 'resumed', tone: 'ok' },
+        error: { icon: 'error', tone: 'bad' },
+        skipped: { icon: 'quiet', tone: 'muted' },
+        unchanged: { icon: 'quiet', tone: 'muted' },
+    };
+    const NEUTRAL_ICON = { icon: 'neutral', tone: 'muted' };
+    const ICON_GLYPH = { stalled: '!', nudged: '→', guard: '✕', care: '✓', milestone: '✓', paused: '‖',
+        resumed: '▶', error: '!', quiet: '·', neutral: '•' };
+
+    function ownKey(map, key) {
+        return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null;
+    }
+
+    function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+    /** Local 24-hour clock, plus the day ("Nov 3") only when the row is not from today. */
+    function timeLabel(at, now, opts) {
+        const n = Number(at);
+        if (!Number.isFinite(n) || n <= 0) return { clock: '', day: '' };
+        const d = new Date(n * 1000);
+        const clock = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+        const today = new Date(Number(now) * 1000);
+        if (Number.isFinite(today.getTime()) && d.toDateString() === today.toDateString()) return { clock, day: '' };
+        let day;
+        try {
+            day = d.toLocaleDateString((opts && opts.locale) || undefined, { month: 'short', day: 'numeric' });
+        } catch (_) {
+            day = d.toISOString().slice(5, 10);
+        }
+        return { clock, day };
+    }
+
+    /** Timeline items (api.chat_ops.timeline) → display rows. Headline and detail are server text; they stay raw here and are escaped in timelineHtml. */
+    function timelineRows(items, now, opts) {
+        return (Array.isArray(items) ? items : []).filter((it) => it && typeof it === 'object').map((it) => {
+            const kind = String(it.kind || '');
+            const spec = ownKey(TIMELINE_KINDS, kind) || NEUTRAL_ICON;
+            const when = timeLabel(it.at, now, opts);
+            return {
+                id: String(it.id || ''),
+                at: Number(it.at) || 0,
+                kind,
+                time: when.clock,
+                day: when.day,
+                icon: spec.icon,
+                tone: spec.tone,
+                headline: String(it.headline || '') || 'Supervision activity',
+                detail: String(it.detail || ''),
+                chat: String(it.chat || ''),
+            };
+        });
+    }
+
+    /** One worker's rows out of a supervisor's timeline (the server returns every chat it runs). */
+    function filterChat(items, chat) {
+        const want = String(chat || '');
+        return (Array.isArray(items) ? items : []).filter((it) => it && String(it.chat || '') === want);
+    }
+
+    function newestFirst(a, b) {
+        const d = Number(b.at) - Number(a.at);
+        if (d) return d;
+        const x = String(a.id);
+        const y = String(b.id);
+        return x < y ? 1 : x > y ? -1 : 0;
+    }
+
+    /** Pages merged newest first, one row per id (a refresh can overlap pages already loaded). */
+    function mergeItems(...lists) {
+        const seen = new Set();
+        const out = [];
+        lists.forEach((list) => (Array.isArray(list) ? list : []).forEach((it) => {
+            if (!it || typeof it !== 'object' || seen.has(String(it.id))) return;
+            seen.add(String(it.id));
+            out.push(it);
+        }));
+        return out.sort(newestFirst);
+    }
+
+    /** "15 min", "1 h", "90 s": one check-in interval in words. */
+    function cadencePart(seconds) {
+        const s = Math.max(0, Math.round(Number(seconds) || 0));
+        if (s >= 3600 && s % 3600 === 0) return (s / 3600) + ' h';
+        if (s >= 60) return Math.round(s / 60) + ' min';
+        return s + ' s';
+    }
+
+    /**
+     * Panel header from the schedules a panel covers. Schedules carry no goal
+     * text, so the goal is the chats they check: "CH-001548" or "CH-001548 and 2 more".
+     * opts.title replaces the title (the worker badge says who supervises it).
+     */
+    function panelHeader(schedules, opts) {
+        const list = (Array.isArray(schedules) ? schedules : []).filter((s) => s && typeof s === 'object');
+        const targets = [...new Set(list.map((s) => String(s.target || '')).filter(Boolean))];
+        const everies = [...new Set(list.map((s) => Math.round(Number(s.every) || 0)).filter((n) => n > 0))]
+            .sort((a, b) => a - b);
+        let cadenceLabel = '';
+        if (everies.length === 1) cadenceLabel = 'check-in every ' + cadencePart(everies[0]);
+        else if (everies.length > 1) {
+            cadenceLabel = 'check-ins every ' + cadencePart(everies[0]) + ' to ' + cadencePart(everies[everies.length - 1]);
+        }
+        const chatCount = targets.length;
+        const goal = targets.length <= 2 ? targets.join(' and ') : targets[0] + ' and ' + (targets.length - 1) + ' more';
+        const bits = [];
+        if (chatCount) bits.push(chatCount + (chatCount === 1 ? ' chat' : ' chats'));
+        if (cadenceLabel) bits.push(cadenceLabel);
+        const paused = list.length > 0 && list.every((s) => s.state === 'paused');
+        return {
+            title: String((opts && opts.title) || (goal ? 'Supervising ' + goal : 'Supervision')),
+            goal,
+            chatCount,
+            cadenceLabel,
+            subline: bits.join(' · '),
+            status: paused ? 'paused' : 'active',
+        };
+    }
+
+    function panelHeaderHtml(h) {
+        return '<div class="sup-studio-head"><span class="sup-studio-eye" aria-hidden="true"><i></i></span>'
+            + '<div class="sup-studio-titles"><div class="sup-studio-title">' + esc(h.title) + '</div>'
+            + (h.subline ? '<div class="sup-studio-sub">' + esc(h.subline) + '</div>' : '') + '</div>'
+            + '<span class="sup-studio-status is-' + esc(h.status) + '">' + esc(h.status) + '</span></div>';
+    }
+
+    function timelineRowHtml(r, showChat) {
+        const when = r.day ? r.day + ' ' + r.time : r.time;
+        return '<li class="sup-tl-row tone-' + esc(r.tone) + '" data-kind="' + esc(r.kind) + '">'
+            + '<time class="sup-tl-time">' + esc(when) + '</time>'
+            + '<span class="sup-tl-icon" aria-hidden="true">' + esc(ICON_GLYPH[r.icon] || ICON_GLYPH.neutral) + '</span>'
+            + '<div class="sup-tl-text"><div class="sup-tl-headline">' + esc(r.headline)
+            + (showChat && r.chat ? ' <span class="sup-tl-chat">' + esc(r.chat) + '</span>' : '') + '</div>'
+            + (r.detail ? '<div class="sup-tl-detail">' + esc(r.detail) + '</div>' : '') + '</div></li>';
+    }
+
+    /**
+     * The timeline body: rows (newest first), or the loading / empty / error copy,
+     * then "Show older" while the server has more. state: {loading, error, more, showChat}.
+     */
+    function timelineHtml(rows, state) {
+        const st = state || {};
+        const list = Array.isArray(rows) ? rows : [];
+        const errLine = st.error ? '<div class="sup-tl-state is-error">Couldn’t load the timeline. ' + esc(st.error) + '</div>' : '';
+        let body;
+        if (list.length) body = '<ol class="sup-tl">' + list.map((r) => timelineRowHtml(r, st.showChat)).join('') + '</ol>' + errLine;
+        else if (st.error) body = errLine;
+        else if (st.loading) body = '<div class="sup-tl-state">Loading timeline…</div>';
+        else body = '<div class="sup-tl-state">No supervision events yet.</div>';
+        const more = st.more
+            ? '<button type="button" class="sup-tl-more" data-sup-more' + (st.loading ? ' disabled' : '') + '>'
+                + (st.loading ? 'Loading…' : 'Show older') + '</button>'
+            : '';
+        return '<div class="sup-tl-body">' + body + more + '</div>';
+    }
+
     const api = {
         chatOpBadge, checkinParts, checkinFacts, checkinHtml, noticeFacts, noticeHtml, foldPreview, foldHtml, userBubbleHtml, stateText, wakesText,
+        timelineRows, filterChat, mergeItems, panelHeader, panelHeaderHtml, timelineHtml, timeLabel, cadencePart, TIMELINE_KINDS,
         SCHEMA_VERSION, INTERVALS, PAUSE_CHOICES, fmtInterval, fmtClock, fmtWhen, nextLabel,
         chipText, badgeText, pausedText, pauseBody,
         historyRow, view, isSupervised, supervisorOf, dialogDefaults, supervisePayload, pinChoices, scheduleById,
