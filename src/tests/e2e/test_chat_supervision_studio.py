@@ -9,7 +9,7 @@ The fake server answers the timeline route with the projection's own cursor
 semantics (``next_before`` = "at|id" of the last row returned). It caps a page at
 PAGE rows so paging is exercised with a small fixture.
 
-Screenshots for the side-by-side go to temp/studio_shots/L5/ (gitignored):
+Screenshots for the side-by-side go to temp/studio_shots/L5b/ (gitignored):
 supervision-studio.png, supervision-studio-dark.png, supervision-classic.png,
 supervision-mock.png (scene supervise.html at ~3 s).
 """
@@ -28,7 +28,7 @@ from tests.e2e.test_chat_supervision import SupervisionWorld
 from tests.e2e.test_shared_diff_modal import apply_request_guard, browser, static_server  # noqa: F401
 
 REPO = Path(__file__).resolve().parents[3]
-SHOTS = REPO / "temp" / "studio_shots" / "L5"
+SHOTS = REPO / "temp" / "studio_shots" / "L5b"
 WEB = REPO / "src" / "web"
 MOCK = Path("/mnt/galaxy/Dev/Cuttle Promo/v4/project/film/scenes/supervise.html")
 PAGE = 5
@@ -42,18 +42,21 @@ def _item(i, at, kind, chat, headline, detail=""):
 
 
 def _chip_items(now):
-    """The supervisor's (chat 42) timeline: every kind, two chats, one old day."""
+    """The supervisor's (chat 42) timeline: the mock's four events first (worded as
+    api.chat_ops.timeline words them), then the other kinds, two chats, one old day."""
     return [
-        _item(9, now - 60, "stalled", "CH-001548", "Chat stalled", "Same failing test, three runs in a row."),
-        _item(8, now - 180, "nudged", "CH-001548", "Nudge delivered",
-              "Quarantine <b>test_render_timeout</b>, then continue."),
-        _item(7, now - 400, "care", "CH-001549", "Leftover process ended: blender (PID 48213, 3.1 GB)"),
-        _item(6, now - 900, "guard", "CH-001548", "Guard blocked a commit to main"),
-        _item(5, now - 1500, "milestone", "CH-001549", "Task milestone reached"),
-        _item(4, now - 2000, "paused", "CH-001549", "Supervision paused"),
-        _item(3, now - 2600, "resumed", "CH-001549", "Supervision resumed"),
-        _item(2, now - 3000, "error", "CH-001548", "Supervision check failed", "boom"),
-        _item(1, now - 3 * 86400, "stalled", "CH-001548", "Chat stalled", "From three days ago."),
+        _item(9, now - 60, "stalled", "CH-001548", "Cursor Agent has been stuck for 45 min",
+              "Idle with open Tasks items"),
+        _item(8, now - 180, "nudged", "CH-001548", "Nudged Cursor Agent with the next task",
+              '"Quarantine `test_render_timeout`, then continue."'),
+        _item(7, now - 400, "care", "CH-001549", "System care: a leftover process ended",
+              "`blender` · PID 48213 · 3.1 GB"),
+        _item(6, now - 900, "guard", "CH-001548", "Guard: blocked a push to `main`", "`git push origin main`"),
+        _item(5, now - 1500, "milestone", "CH-001549", "Quarantine flaky test done", "Checked off in `Release v0.8`"),
+        _item(4, now - 2000, "paused", "CH-001549", "Supervision paused", ""),
+        _item(3, now - 2600, "resumed", "CH-001549", "Supervision resumed", ""),
+        _item(2, now - 3000, "error", "CH-001548", "Supervision check failed", "<b>boom</b>"),
+        _item(1, now - 3 * 86400, "stalled", "CH-001548", "Cursor Agent looks stuck", "From three days ago."),
     ]
 
 
@@ -83,7 +86,8 @@ class StudioWorld(SupervisionWorld):
     def __init__(self):
         super().__init__(flag=True)
         now = time.time()
-        # A second schedule so the chip panel aggregates two chats.
+        # The supervisor's open Tasks list names the goal; a second schedule makes the panel aggregate two chats.
+        self.overview["supervising"][0]["goal"] = "Release v0.8"
         self.overview["supervising"].append(dict(self.overview["supervising"][0], id="sup3", target="CH-001549"))
         self.timelines = {"42": _chip_items(now), "1581": _badge_items(now)}
         self.timeline_calls = []
@@ -142,6 +146,8 @@ def _shot(page, name, settle=None):
     # The panel fades in; wait for that to finish so the shot shows the settled look.
     if settle is not None:
         settle.evaluate("e => Promise.all(e.getAnimations().map(a => a.finished))")
+    # Leave the chip: its native title tooltip would sit over the header in the shot.
+    page.mouse.move(1000, 700)
     SHOTS.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(SHOTS / name))
 
@@ -155,9 +161,14 @@ def test_studio_chip_panel_shows_timeline_pages_and_refreshes(browser, static_se
         frame.locator("#chatSupervisionSlot [data-sup-open=chip]").first.click()
         panel = frame.locator(".sup-studio-panel")
         expect(panel).to_be_visible()
-        expect(panel.locator(".sup-studio-title")).to_have_text("Supervising CH-001548 and CH-001549")
+        expect(panel.locator(".sup-studio-title")).to_have_text("Supervising Release v0.8")
         expect(panel.locator(".sup-studio-sub")).to_have_text("2 chats · check-in every 15 min")
         expect(panel.locator(".sup-studio-status")).to_have_text("active")
+        # The header reads on one line: a long goal ellipsises instead of wrapping.
+        assert panel.locator(".sup-studio-title").evaluate("e => getComputedStyle(e).whiteSpace") == "nowrap"
+        assert panel.locator(".sup-studio-title").evaluate("e => getComputedStyle(e).textOverflow") == "ellipsis"
+        # active reads green (success tone), not the accent.
+        assert panel.locator(".sup-studio-status").evaluate("e => getComputedStyle(e).color") == "rgb(4, 120, 87)"
         # Studio replaces the Classic popover; this panel is the only surface.
         expect(frame.locator(".chat-supervision-popover")).to_have_count(0)
 
@@ -167,12 +178,24 @@ def test_studio_chip_panel_shows_timeline_pages_and_refreshes(browser, static_se
         assert kinds == ["stalled", "nudged", "care", "guard", "milestone"]
         assert panel.locator(".sup-tl-row.tone-warn .sup-tl-icon").count() == 1
         assert panel.locator(".sup-tl-row.tone-bad .sup-tl-icon").count() == 1
+        # Time | icon | text on one line; the icon sits beside the time, not under it.
+        first_row = panel.locator(".sup-tl-row").first
+        assert first_row.evaluate("e => getComputedStyle(e).gridTemplateColumns.split(' ').length") == 3
+        time_box = first_row.locator(".sup-tl-time").bounding_box()
+        icon_box = first_row.locator(".sup-tl-icon").bounding_box()
+        assert icon_box["x"] >= time_box["x"] + 50 and abs(icon_box["y"] - time_box["y"]) < 12
+        # Thin divider between rows (the first row has none).
+        assert panel.locator(".sup-tl-row").nth(1).evaluate("e => getComputedStyle(e).borderTopStyle") == "solid"
+        # Care is blue, not the success green the milestone uses.
+        care_icon = panel.locator(".sup-tl-row.tone-info .sup-tl-icon")
+        assert care_icon.count() == 1
+        assert care_icon.evaluate("e => getComputedStyle(e).backgroundColor") == "rgb(37, 99, 235)"
         # Two chats in view: each row names its chat.
         assert panel.locator(".sup-tl-chat").count() == PAGE
-        # Server text is shown as text, never as markup.
-        expect(panel.locator(".sup-tl-row").nth(1).locator(".sup-tl-detail")).to_contain_text(
-            "Quarantine <b>test_render_timeout</b>, then continue.")
-        assert panel.locator(".sup-tl-detail b").count() == 0
+        # Backtick spans render as code; the text around them stays plain.
+        nudge_detail = panel.locator(".sup-tl-row").nth(1).locator(".sup-tl-detail")
+        expect(nudge_detail).to_have_text('"Quarantine test_render_timeout, then continue."')
+        expect(nudge_detail.locator("code.sup-tl-code")).to_have_text("test_render_timeout")
         _shot(page, "supervision-studio.png", panel)
 
         # Dark mode: same markup, the studio dark tokens apply.
@@ -186,6 +209,9 @@ def test_studio_chip_panel_shows_timeline_pages_and_refreshes(browser, static_se
         more.click()
         expect(panel.locator(".sup-tl-row")).to_have_count(PAGE + 4)
         expect(panel.locator(".sup-tl-more")).to_have_count(0)
+        # Markup in server text is shown as text on the older page too.
+        expect(panel.locator(".sup-tl-detail").filter(has_text="<b>boom</b>")).to_have_count(1)
+        assert panel.locator(".sup-tl-detail b").count() == 0
         older = panel.locator(".sup-tl-row").last.locator(".sup-tl-time")
         three_days = datetime.fromtimestamp(time.time() - 3 * 86400)
         expect(older).to_contain_text(f"{three_days:%b} {three_days.day}")

@@ -742,7 +742,7 @@
         stalled: { icon: 'stalled', tone: 'warn' },
         nudged: { icon: 'nudged', tone: 'accent' },
         guard: { icon: 'guard', tone: 'bad' },
-        care: { icon: 'care', tone: 'ok' },
+        care: { icon: 'care', tone: 'info' },
         milestone: { icon: 'milestone', tone: 'ok' },
         paused: { icon: 'paused', tone: 'muted' },
         resumed: { icon: 'resumed', tone: 'ok' },
@@ -874,14 +874,19 @@
             + '<span class="sup-studio-status is-' + esc(h.status) + '">' + esc(h.status) + '</span></div>';
     }
 
+    /** Server text with `code` spans: escaped first, so the text never injects markup. */
+    function inlineHtml(value) {
+        return esc(value).replace(/`([^`\n]+)`/g, '<code class="sup-tl-code">$1</code>');
+    }
+
     function timelineRowHtml(r, showChat) {
         const when = r.day ? r.day + ' ' + r.time : r.time;
         return '<li class="sup-tl-row tone-' + esc(r.tone) + '" data-kind="' + esc(r.kind) + '">'
             + '<time class="sup-tl-time">' + esc(when) + '</time>'
             + '<span class="sup-tl-icon" aria-hidden="true">' + esc(ICON_GLYPH[r.icon] || ICON_GLYPH.neutral) + '</span>'
-            + '<div class="sup-tl-text"><div class="sup-tl-headline">' + esc(r.headline)
+            + '<div class="sup-tl-text"><div class="sup-tl-headline">' + inlineHtml(r.headline)
             + (showChat && r.chat ? ' <span class="sup-tl-chat">' + esc(r.chat) + '</span>' : '') + '</div>'
-            + (r.detail ? '<div class="sup-tl-detail">' + esc(r.detail) + '</div>' : '') + '</div></li>';
+            + (r.detail ? '<div class="sup-tl-detail">' + inlineHtml(r.detail) + '</div>' : '') + '</div></li>';
     }
 
     /**
