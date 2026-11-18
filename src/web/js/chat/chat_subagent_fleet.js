@@ -5,7 +5,9 @@
    (queued / running / done / failed / cancelled / lost) and a
    one-line result whose full text rides the tooltip. Outcome and
    summary come from the server (`api.subagents.fleet`); this module
-   never infers success. Pure: no document, no window, no fetch.
+   never infers success. Studio (L4) uses `renderStudioCardsHtml`: the
+   same server data as identity + name + one line of status, for the work
+   panel's right column (chat_work_panel.js). Pure: no document, no window, no fetch.
    The page owns mounting and click → open-chat (`data-chat-handle`).
    Experimental: `subagent_fleet_cards`. Loaded before chat_page.js.
    ================================================================ */
@@ -128,7 +130,46 @@
             + esc('Sub-agent fleet: ' + done + ' of ' + items.length + ' done') + '">' + cards + more + '</div>';
     }
 
-    const api = { hasFleet, renderFleetHtml, formatDuration, OUTCOMES };
+    /**
+     * Studio fleet cards (the work panel's right column; no wrapper, cards only).
+     * Identity (dot + plain agent name, `opts.identityHtml(entry)`), the display
+     * name, ONE line of live status while running or the result while finished,
+     * and the outcome with its duration once finished. No progress bar and no
+     * percentages: the server's outcome and text only. Pure.
+     */
+    function renderStudioCardsHtml(list, opts) {
+        const esc = opts.esc;
+        const identityHtml = typeof opts.identityHtml === 'function'
+            ? opts.identityHtml
+            : (s) => '<span class="agent-identity-name">' + esc(s.agent || '') + '</span>';
+        const items = (Array.isArray(list) ? list : []).filter(Boolean);
+        return items.slice(0, MAX_CARDS).map((s) => {
+            const state = OUTCOMES[s.outcome] ? s.outcome : (s.generating ? 'running' : 'unknown');
+            const meta = OUTCOMES[state];
+            const live = state === 'running' || state === 'queued';
+            const name = String(s.displayName || s.label || s.handle);
+            const duration = live ? '' : formatDuration(s.startedAt, s.finishedAt);
+            const outcomeText = live ? '' : meta.label + (duration ? ' · ' + duration : '');
+            const line = String(s.summary || '').replace(/\s+/g, ' ').trim();
+            const tip = name + ' · ' + s.handle + ' · ' + meta.label + (s.detail ? '\n\n' + String(s.detail) : '');
+            return (
+                '<button type="button" class="subagent-fleet-card studio-fleet-card is-' + state + '"'
+                + ' data-chat-handle="' + esc(s.handle) + '" data-agent="' + esc(s.agent || '') + '"'
+                + ' data-tooltip="' + esc(tip) + '" aria-label="' + esc('Open ' + name + ' (' + meta.label + ')') + '">'
+                + '<span class="subagent-fleet-head">' + identityHtml(s)
+                + '<span class="subagent-fleet-outcome is-' + state + '" title="' + esc(meta.label) + '">'
+                + (live ? '<span class="studio-live-dot" aria-hidden="true"></span>' : '<i aria-hidden="true">' + esc(meta.icon) + '</i>')
+                + (outcomeText ? '<span>' + esc(outcomeText) + '</span>' : '')
+                + '</span></span>'
+                + '<span class="subagent-fleet-name">' + esc(name) + '</span>'
+                + '<span class="subagent-fleet-summary' + (live ? ' subagent-fleet-summary--live' : '') + '">' + esc(line) + '</span>'
+                + '<span class="subagent-fleet-foot"><span>' + esc(s.handle) + '</span></span>'
+                + '</button>'
+            );
+        }).join('');
+    }
+
+    const api = { hasFleet, renderFleetHtml, renderStudioCardsHtml, formatDuration, OUTCOMES };
 
     const ns = (root.CuttleChatSubagentFleet = root.CuttleChatSubagentFleet || {});
     Object.assign(ns, api);
