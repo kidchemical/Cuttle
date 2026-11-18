@@ -29,6 +29,13 @@ def _bind_steer(db, message_id, metadata):
         bind(steer['steer_id'], db, message_id)
 
 
+def _discard_unwritten_steer(metadata):
+    steer = (metadata or {}).get('steer') or {}
+    if steer.get('steer_id'):
+        from api.agent_harness.steer_receipts import discard
+        discard(steer['steer_id'])
+
+
 def persist_auth_user_message(
     db: Any,
     chat_session_id: Any,
@@ -50,6 +57,7 @@ def persist_auth_user_message(
         message_id = db.add_message(chat_session_id, 'user', message_text, metadata=metadata or None)
         _bind_steer(db, message_id, metadata)
     except Exception as e:
+        _discard_unwritten_steer(metadata)
         print(f"[CHAT] persist user message failed: {e}")
 
 
@@ -86,6 +94,7 @@ def persist_user_turn(
         message_id = db.add_message(session_id, 'user', history_text, metadata=metadata or None)
         _bind_steer(db, message_id, metadata)
     except Exception as e:
+        _discard_unwritten_steer(turn_meta)
         print(f"[CHAT] persist user turn failed: {e}")
 
 

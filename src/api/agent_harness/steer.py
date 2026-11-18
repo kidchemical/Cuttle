@@ -202,7 +202,9 @@ def steer(chat_session_id: Any, message: str, *, timeout: float = 10.0, turn_id:
         turn_id = turn_id or ""
     from api.agent_harness import steer_receipts
     steer_id = entry.receipts.begin(text, turn_id)
-    steer_receipts.track(key, entry.receipts, steer_id)
+    from api.cuttle_ui_capabilities import numeric_chat_session_id
+    if numeric_chat_session_id(key) is not None:
+        steer_receipts.track(key, entry.receipts, steer_id)
     try:
         fut = entry.send(text)
         ok, err = fut.result(timeout=timeout)

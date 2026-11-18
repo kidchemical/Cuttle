@@ -254,3 +254,23 @@ def test_failed_write_is_retried_on_live_poll(tmp_path):
     assert '"delivered": true' in conn.execute('SELECT metadata FROM chat_messages').fetchone()['metadata']
     conn.close()
     tracker.finish()
+
+
+def test_unpersisted_user_message_discards_registration():
+    import concurrent.futures
+    from api.agent_harness import steer, steer_receipts
+    from api.chat_coordinator import steered_user_meta
+    from api.chat_turn_persist import persist_auth_user_message
+    class BrokenDB:
+        def add_message(self, *args, **kwargs):
+            raise RuntimeError('insert failed')
+    def send(_text):
+        f = concurrent.futures.Future()
+        f.set_result((True, None))
+        return f
+    token = steer.register('907', 'codex', send)
+    info = steer.steer('907', 'message')
+    persist_auth_user_message(BrokenDB(), 907, 'message', metadata=steered_user_meta(info), project_merge_fn=lambda m, *_: m)
+    with steer_receipts._pending_lock:
+        assert info['steer_id'] not in steer_receipts._pending
+    steer.unregister('907', token)
