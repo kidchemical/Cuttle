@@ -250,6 +250,7 @@ only** so a missing CLI answers with an actionable message:
 
 ```yaml
 icon: "○"  # optional single-glyph Settings tile; empty falls back to the label initial
+color: "#4f46e5"  # identity dot in chat (Studio look); #rrggbb only, empty = neutral grey
 executable_names: [tool-name]
 missing_cli_hint: >-
   Install Tool and ensure `tool` is on PATH (see https://…/docs/).

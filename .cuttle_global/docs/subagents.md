@@ -36,7 +36,16 @@ PYTHONPATH=src .venv/bin/python -m api.subagents spawn --parent CH-000535 --wait
 (harness id: `cursor`, `codex`, `muse`, …), `model`, `effort`, `route` (bool),
 `profile` (catalog id or inline `{name,avatar,agent}`), `avatar`, `tier`
 (orchestrator chats: a playbook tier; Cuttle runs its first agent with budget
-left — `features/orchestrator/docs/orchestrator.md`).
+left — `features/orchestrator/docs/orchestrator.md`), `task` (`"<gizmo>:<item>"`).
+
+`task` assigns the child to one item of one of your Tasks lists (`gizmos.md`).
+On spawn the item gets this child as its owner and shows in progress. When the
+child finishes, the item is checked off; when it fails, is cancelled or is lost,
+the item is no longer in progress but keeps its owner and stays open. Only the
+child that currently owns an item can move it, so an older child cannot finish
+an item that was handed to a newer one. A spawn with a missing list, a missing
+item or an already-done item is refused before any chat is created. Linking a
+list to a chat only shows it there; it does not assign anything.
 
 A pinned child whose account is out of usage (a recent quota failure, or the
 cached `/usage` plan windows at their limit) is refused before any chat is
