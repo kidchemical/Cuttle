@@ -897,6 +897,37 @@
     }
 
     /**
+     * Studio: a leading `/orchestrate @<playbook> ` in a sent user bubble,
+     * as { head, playbookId, body } (null = not that prefix, or Classic).
+     * Display only: the stored message text is never changed.
+     */
+    function studioOrchestrateOf(content, deps) {
+        const orch = root.CuttleChatOrchestrateChip;
+        if (!orch || typeof orch.bubblePrefixOf !== 'function') return null;
+        const found = orch.bubblePrefixOf(content);
+        if (!found) return null;
+        const isStudio = deps.isStudio || (() => !!(root.CuttleChatDisplay && root.CuttleChatDisplay.isStudio
+            && root.CuttleChatDisplay.isStudio()));
+        return isStudio() ? found : null;
+    }
+
+    /**
+     * The user bubble's orchestrate chip: the same history-style chip the
+     * page paints for slash commands (`slashCommandChipHistoryHtml`), wrapped
+     * by the chip owner so its playbook name is patched in once the list loads.
+     */
+    function orchestrateBubbleHtml(orch, renderBody, deps) {
+        const owner = root.CuttleChatOrchestrateChip;
+        // Loads the playbook list once (shared cache); the name is patched in later.
+        owner.ensurePlaybooks();
+        const chip = deps.slashCommandChipHistoryHtml(owner.bubbleLabel(orch.playbookId), orch.head, 'project-cmd');
+        const inline = '<span class="slash-chips-inline">' + owner.bubbleChipHtml(orch.playbookId, chip) + '</span>';
+        if (!orch.body) return '<div class="user-message-with-slash">' + inline + '</div>';
+        return '<div class="user-message-with-slash">' + inline
+            + '<div class="user-slash-body">' + renderBody(orch.body) + '</div></div>';
+    }
+
+    /**
      * User-bubble display dispatch: which body HTML a user turn paints.
      * Owns the branch order only — every leaf renderer stays in its
      * owner and arrives via `deps` (all required):
@@ -913,6 +944,9 @@
      * - slash chip leaves (page, shared with badge/palette paths):
      *   collapseCursorSlashChips, slashCommandChipHistoryHtml.
      * - shared util (page): escapeHtmlInline.
+     * - Studio orchestrate chip (optional `isStudio()`; default
+     *   `CuttleChatDisplay.isStudio()`): a leading `/orchestrate @<id>`
+     *   renders as the chip. Classic keeps the raw prefix.
      *
      * Preserves the page contract exactly: `Selected:` / button /
      * form-reply shortcuts win over slash parsing; chips already in
@@ -956,8 +990,11 @@
                     bodyHtml = `<div class="cuttle-button-selection">Selected: <strong>${escapeHtmlInline(btnClick.label)}</strong></div>`;
                 } else {
                     const renderBody = (text) => formatFormReplyHtml(text) || formatMessage(text);
-                    const parsed = parseStoredSlashCommandMessage(displayContent);
-                    if (!parsed) {
+                    const orch = studioOrchestrateOf(displayContent, d);
+                    const parsed = orch ? null : parseStoredSlashCommandMessage(displayContent);
+                    if (orch) {
+                        bodyHtml = orchestrateBubbleHtml(orch, renderBody, d);
+                    } else if (!parsed) {
                         bodyHtml = renderBody(displayContent);
                     } else if (o.suppressInlineSlashChips) {
                         // Chips already shown in the message header row; just render the body.

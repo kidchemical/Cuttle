@@ -1,24 +1,38 @@
 /* ================================================================
    Cuttle Chat — /orchestrate composer chip (chat_orchestrate_chip.js).
    Owner: the segmented "Orchestrate · <playbook>" chip a picked
-   `/orchestrate` project command shows, and the popup its click opens
-   (choose the playbook, make it the default, jump to Apps → Orchestrator).
+   `/orchestrate` project command shows, the popup its click opens
+   (choose the playbook, make it the default, jump to Apps → Orchestrator),
+   and the same chip drawn in a sent user bubble (Studio only; the caller
+   decides when).
 
    The chip's state is its prefix: `/orchestrate @<id> ` pins a playbook,
    bare `/orchestrate ` uses the user's default — the same text the
    command parses, so the composed turn needs no extra plumbing.
    Playbooks and the default come from /api/orchestrator (authoritative).
+   One playbook cache per page, shared by the composer controllers and
+   the bubble chips.
 
    Pure helpers (node-testable): `isChip`, `playbookOf`, `withPlaybook`,
-   `labelFor`. Controller: `create(host)` → `{ isChip, label, open }`.
+   `labelFor`, `bubblePrefixOf`, `bubbleLabel`. Controller: `create(host)`
+   → `{ isChip, label, open }`.
    host: { escapeHtml, openModal(title, subtitle, html, onMount), close,
            rerender(), navigate(page), showToast(msg, kind) }.
    Composed once by chat_page.js; it never reads page scope.
+   Bubble chips: `bubbleChipHtml(playbookId, chipHtml)` wraps the history
+   chip the caller renders; once the playbook list lands,
+   `refreshBubbleChips()` patches the name in place (no re-render needed).
    ================================================================ */
 (function (root) {
     'use strict';
 
     const PREFIX_RE = /^\/(?:cmd\s+)?orchestrate(?:\s+@([a-z][a-z0-9_-]{0,39}))?\s*$/i;
+    // Leading `/orchestrate @<id>` in a sent message; the rest is the body.
+    const BUBBLE_RE = /^(\/(?:cmd\s+)?orchestrate\s+@([a-z][a-z0-9_-]{0,39}))(?=\s|$)\s*([\s\S]*)$/i;
+    const BUBBLE_ATTR = 'data-orch-playbook';
+
+    /** Page-wide playbook cache: one /api/orchestrator/playbooks fetch. */
+    const cache = { playbooks: null, defaultId: 'default', loading: null, failed: false };
 
     function isChip(chip) {
         return !!chip && PREFIX_RE.test(String(chip.prefix || ''));
@@ -38,33 +52,96 @@
     }
 
     /** "Orchestrate - <name>": the agent-badge shape, so it renders as two segments. */
+    function titleOf(name) {
+        return 'Orchestrate - ' + String(name).replace(/\s+[-–—·]\s+/g, ' ');
+    }
+
+    /** Chip label for a composer chip: the playbook name, or the default's. */
     function labelFor(chip, playbooks, defaultId) {
         const id = playbookOf(chip) || defaultId || '';
         const pb = (playbooks || []).find((p) => p && p.id === id);
         const name = pb ? (pb.name || pb.id) : (playbookOf(chip) ? '@' + playbookOf(chip) : '');
-        return name ? 'Orchestrate - ' + name.replace(/\s+[-–—·]\s+/g, ' ') : 'Orchestrate';
+        return name ? titleOf(name) : 'Orchestrate';
+    }
+
+    /**
+     * Leading `/orchestrate @<id>` of a sent message. Returns
+     * { head, playbookId, body } or null. `head` is the prefix as typed
+     * (kept as the chip's tooltip); `body` is the rest of the message.
+     */
+    function bubblePrefixOf(text) {
+        const m = BUBBLE_RE.exec(String(text == null ? '' : text).trim());
+        if (!m) return null;
+        return { head: m[1], playbookId: m[2].toLowerCase(), body: m[3] || '' };
+    }
+
+    /**
+     * Name shown for a bubble chip. Resolved the way the composer resolves
+     * it (playbook name, else its id); an id not in the list shows as the
+     * plain id, and so does every id before the list has loaded.
+     */
+    function bubbleName(playbookId) {
+        const id = String(playbookId || '').trim().toLowerCase();
+        const pb = (cache.playbooks || []).find((p) => p && p.id === id);
+        return pb ? (pb.name || pb.id) : id;
+    }
+
+    /** Full chip label for a bubble (what the composer chip would say). */
+    function bubbleLabel(playbookId) {
+        const name = bubbleName(playbookId);
+        return name ? titleOf(name) : 'Orchestrate';
+    }
+
+    /** Wrap a history-style chip (rendered by the caller) so its name can be patched later. */
+    function bubbleChipHtml(playbookId, chipHtml) {
+        const id = String(playbookId || '').replace(/[^a-z0-9_-]/gi, '');
+        return '<span class="orch-bubble-chip" ' + BUBBLE_ATTR + '="' + id + '">' + String(chipHtml || '') + '</span>';
+    }
+
+    /** Fetch the playbook list once; resolves with the shared cache. */
+    function loadPlaybooks(force) {
+        if (cache.loading) return cache.loading;
+        if (cache.playbooks && !force) return Promise.resolve(cache);
+        cache.loading = fetch('/api/orchestrator/playbooks', { credentials: 'include', cache: 'no-store' })
+            .then((r) => r.json().catch(() => ({})))
+            .then((data) => {
+                cache.failed = !(data && data.success);
+                cache.playbooks = (data && data.playbooks) || [];
+                cache.defaultId = (data && data.default_id) || 'default';
+                refreshBubbleChips();
+                return cache;
+            })
+            .catch(() => { cache.failed = true; cache.playbooks = cache.playbooks || []; return cache; })
+            .finally(() => { cache.loading = null; });
+        return cache.loading;
+    }
+
+    /** Bubble code calls this at render time; the list is shared, so it loads once. */
+    function ensurePlaybooks() {
+        return loadPlaybooks(false);
+    }
+
+    /** Patch the name of every bubble chip on the page once the list is known. */
+    function refreshBubbleChips() {
+        if (typeof document === 'undefined' || !document.querySelectorAll) return;
+        document.querySelectorAll('[' + BUBBLE_ATTR + ']').forEach((wrap) => {
+            const chip = wrap.querySelector('.slash-command-chip');
+            if (!chip) return;
+            const id = wrap.getAttribute(BUBBLE_ATTR) || '';
+            const name = bubbleName(id);
+            const target = chip.querySelector('.slash-chip-seg--model') || chip.querySelector('.slash-chip-label');
+            if (target && name) {
+                target.textContent = name;
+                if (target.hasAttribute('title')) target.setAttribute('title', name);
+            }
+            chip.setAttribute('data-full-label', bubbleLabel(id));
+        });
     }
 
     function create(host) {
         const h = host || {};
         const esc = typeof h.escapeHtml === 'function' ? h.escapeHtml : (s) => String(s == null ? '' : s);
-        const cache = { playbooks: null, defaultId: 'default', loading: null, failed: false };
-
-        function load(force) {
-            if (cache.loading) return cache.loading;
-            if (cache.playbooks && !force) return Promise.resolve(cache);
-            cache.loading = fetch('/api/orchestrator/playbooks', { credentials: 'include', cache: 'no-store' })
-                .then((r) => r.json().catch(() => ({})))
-                .then((data) => {
-                    cache.failed = !(data && data.success);
-                    cache.playbooks = (data && data.playbooks) || [];
-                    cache.defaultId = (data && data.default_id) || 'default';
-                    return cache;
-                })
-                .catch(() => { cache.failed = true; cache.playbooks = cache.playbooks || []; return cache; })
-                .finally(() => { cache.loading = null; });
-            return cache.loading;
-        }
+        const load = loadPlaybooks;
 
         /** Chip label; the first call loads playbooks and re-renders once they land. */
         function label(chip) {
@@ -164,7 +241,10 @@
         return { isChip, label, open };
     }
 
-    const api = { create, isChip, playbookOf, withPlaybook, labelFor };
+    const api = {
+        create, isChip, playbookOf, withPlaybook, labelFor,
+        bubblePrefixOf, bubbleLabel, bubbleChipHtml, ensurePlaybooks, refreshBubbleChips,
+    };
     root.CuttleChatOrchestrateChip = api;
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);
