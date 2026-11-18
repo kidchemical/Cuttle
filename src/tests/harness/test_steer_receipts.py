@@ -438,6 +438,129 @@ def test_bind_failure_does_not_discard_an_inserted_receipt(monkeypatch):
     assert discarded == []
 
 
+# ── writer lifecycle ───────────────────────────────────────────────────────
+
+def test_a_bound_receipt_whose_write_keeps_failing_is_released(monkeypatch):
+    """N1: three failed final writes must not retain the turn for the daemon's life."""
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    monkeypatch.setattr(steer_receipts, '_PENDING_GRACE_SEC', 0.0)
+
+    class LockedDb:
+        attempts = 0
+
+        def patch_message_metadata(self, _updates):
+            LockedDb.attempts += 1
+            raise sqlite3.OperationalError('database is locked')
+
+    tracker = Receipts(steer_receipts.changed, session='960')
+    steer_id = tracker.begin('one')
+    steer_receipts.track('960', tracker, steer_id)
+    tracker.accepted(steer_id, True)
+    steer_receipts.bind(steer_id, LockedDb(), 42)
+    tracker.echo(steer_id)
+    tracker.finish()
+    assert steer_receipts.flush(5.0)
+    assert LockedDb.attempts >= steer_receipts._MAX_WRITE_ATTEMPTS
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+def test_the_writer_purges_a_retained_receipt_without_any_further_traffic(monkeypatch):
+    """Codex 3 / N5: grace purging never depends on another write arriving."""
+    monkeypatch.setattr(steer_receipts, '_PENDING_GRACE_SEC', 0.0)
+    monkeypatch.setattr(steer_receipts, '_WRITER_IDLE_SEC', 0.01)
+    tracker = Receipts(steer_receipts.changed, session='961')
+    steer_id = tracker.begin('one')
+    steer_receipts.track('961', tracker, steer_id)  # starts the writer by itself
+    tracker.accepted(steer_id, True)
+    tracker.finish()  # ended, never bound: no write is ever queued for it
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        with steer_receipts._pending_lock:
+            if not steer_receipts._pending:
+                break
+        time.sleep(0.01)
+    with steer_receipts._pending_lock:
+        assert not steer_receipts._pending, "the idle writer never purged it"
+
+
+def test_flush_cannot_report_success_while_a_failed_write_is_requeued(tmp_path, monkeypatch):
+    """Codex 3: the retry requeue is atomic with the drain accounting."""
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.0)
+
+    class FlakyDb(FakeDb):
+        def __init__(self, path):
+            super().__init__(path)
+            self.fail_next = False
+
+        def patch_message_metadata(self, updates):
+            if self.fail_next:
+                self.fail_next = False
+                raise sqlite3.OperationalError('database is locked')
+            return super().patch_message_metadata(updates)
+
+    db = FlakyDb(tmp_path / 'flaky.db')
+    for round_no in range(20):
+        tracker = Receipts(steer_receipts.changed, session='962')
+        steer_id = tracker.begin('one')
+        steer_receipts.track('962', tracker, steer_id)
+        tracker.accepted(steer_id, True)
+        tracker.echo(steer_id)
+        message_id = db.add_message(962, 'user', 'one')
+        db.fail_next = True
+        steer_receipts.bind(steer_id, db, message_id)
+        tracker.finish()
+        deadline = time.monotonic() + 5.0
+        while not steer_receipts.flush(0.0):
+            assert time.monotonic() < deadline, f"round {round_no} never drained"
+        # flush() said the queue is empty with nothing in flight: the write it
+        # was waiting for must really have landed, not be mid-requeue.
+        assert db.steer_meta(message_id)['state'] == 'delivered', f"round {round_no}"
+
+
+def test_an_idle_writer_exits_and_is_restarted_on_demand(tmp_path, monkeypatch):
+    """N5: no thread wakes every few seconds for the life of the daemon."""
+    monkeypatch.setattr(steer_receipts, '_WRITER_IDLE_SEC', 0.01)
+    db = FakeDb(tmp_path / 'idle.db')
+    tracker = Receipts(steer_receipts.changed, session='963')
+    steer_id = tracker.begin('one')
+    steer_receipts.track('963', tracker, steer_id)
+    tracker.accepted(steer_id, True)
+    steer_receipts.bind(steer_id, db, db.add_message(963, 'user', 'one'))
+    tracker.finish()
+    assert steer_receipts.flush(5.0)
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and steer_receipts._writer is not None:
+        time.sleep(0.01)
+    assert steer_receipts._writer is None, "the idle writer never exited"
+
+    # On demand it comes back and the next receipt still persists.
+    tracker2 = Receipts(steer_receipts.changed, session='963')
+    second = tracker2.begin('two')
+    steer_receipts.track('963', tracker2, second)
+    tracker2.accepted(second, True)
+    tracker2.echo(second)
+    second_id = db.add_message(963, 'user', 'two')
+    steer_receipts.bind(second, db, second_id)
+    tracker2.finish()
+    assert steer_receipts.flush(5.0)
+    assert db.steer_meta(second_id)['state'] == 'delivered'
+
+
+def test_orderly_shutdown_drains_queued_receipt_metadata(tmp_path):
+    """Codex 3: an atexit drain, so a restart does not lose final metadata."""
+    db = FakeDb(tmp_path / 'exit.db')
+    tracker = Receipts(steer_receipts.changed, session='964')
+    steer_id = tracker.begin('one')
+    steer_receipts.track('964', tracker, steer_id)
+    tracker.accepted(steer_id, True)
+    tracker.echo(steer_id)
+    message_id = db.add_message(964, 'user', 'one')
+    steer_receipts.bind(steer_id, db, message_id)
+    tracker.finish()
+    steer_receipts._drain_at_exit()
+    assert db.steer_meta(message_id)['state'] == 'delivered'
+
+
 # ── turn lifetime ───────────────────────────────────────────────────────────
 
 def test_a_turn_that_ends_during_delivery_reports_undelivered():

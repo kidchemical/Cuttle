@@ -36,6 +36,7 @@ published to live status nor persisted.
 """
 from __future__ import annotations
 
+import atexit
 from datetime import datetime, timezone
 import logging
 import re
@@ -53,10 +54,16 @@ UNDELIVERED = 'undelivered'
 # that never binds (the turn ended during delivery, so the row insert may still
 # be in flight) is dropped this long after the turn ended.
 _PENDING_GRACE_SEC = 60.0
-# Write attempts per snapshot before the receipt is left at its insert shape.
+# Write attempts per snapshot before the receipt is given up (and, when it has
+# ended, released: nothing is retained for a row that cannot be written).
 _MAX_WRITE_ATTEMPTS = 3
 _RETRY_SLEEP_SEC = 0.05
+# How long an idle writer waits before purging again; with nothing queued and
+# nothing retained it exits, and the next ``track``/``changed`` restarts it.
 _WRITER_IDLE_SEC = 5.0
+# Bounded drain at interpreter exit, so an orderly restart does not lose the
+# metadata still queued. Never kills or restarts anything itself.
+_EXIT_DRAIN_SEC = 2.0
 # Output items whose start we remember, for reply attribution.
 _MAX_TRACKED_ITEMS = 200
 
@@ -278,6 +285,10 @@ def track(session, tracker, steer_id):
         _purge_locked()
         _pending[steer_id] = {'tracker': tracker, 'session': str(session),
                               'db': None, 'ended_at': None}
+    # Anything retained needs the writer running: grace purging must not
+    # depend on later traffic (a process whose only receipt ends unbound).
+    _ensure_writer()
+    _wake.set()
 
 
 def discard(steer_id):
@@ -465,35 +476,46 @@ def _ensure_writer():
 
 
 def _writer_loop():
-    global _inflight
+    global _inflight, _writer
     log = logging.getLogger(__name__)
     while True:
         _wake.wait(timeout=_WRITER_IDLE_SEC)
         _wake.clear()
         with _pending_lock:
             _purge_locked()  # time-bound retention even on an idle daemon
+            retaining = bool(_pending)
         with _write_lock:
             if not _queue:
+                if not retaining and not _inflight:
+                    # Nothing queued and nothing retained: stop waking up. The
+                    # next track()/changed() starts a fresh writer, and both
+                    # add their work under _write_lock before _ensure_writer,
+                    # so no handoff can be missed.
+                    if _writer is threading.current_thread():
+                        _writer = None
+                    return
                 continue
             batch = dict(_queue)
             _queue.clear()
             _inflight += 1
+        retry = {}
         try:
-            retry = _write_batch(batch, log)
+            _write_batch(batch, retry, log)
         finally:
-            with _write_lock:
-                _inflight -= 1
-        if retry:
+            # Requeue under the same lock hold that drops the in-flight count,
+            # so flush() can never see an empty queue with no writer in flight
+            # while a failed batch is still waiting to be put back.
             with _write_lock:
                 for steer_id, item in retry.items():
                     _queue.setdefault(steer_id, item)
+                _inflight -= 1
+        if retry:
             time.sleep(_RETRY_SLEEP_SEC)
             _wake.set()
 
 
-def _write_batch(batch, log):
-    """Persist one coalesced batch; returns the items worth another attempt."""
-    retry = {}
+def _write_batch(batch, retry, log):
+    """Persist one coalesced batch, filling ``retry`` with another attempt's items."""
     for items in _group_by_db(batch).values():
         try:
             items[0]['db'].patch_message_metadata(
@@ -504,11 +526,14 @@ def _write_batch(batch, log):
                 item['attempts'] += 1
                 if item['attempts'] < _MAX_WRITE_ATTEMPTS:
                     retry[item['steer_id']] = item
+                elif item['ended']:
+                    # Given up: the row keeps whatever it last had, and nothing
+                    # is retained in memory for a receipt that cannot land.
+                    _release(item['steer_id'])
             continue
         for item in items:
             if item['ended']:
                 _release(item['steer_id'])
-    return retry
 
 
 def _group_by_db(batch):
@@ -543,3 +568,21 @@ def flush(timeout=5.0):
         _ensure_writer()
         _wake.set()
         time.sleep(0.005)
+
+
+def _drain_at_exit():
+    """Bounded drain on orderly shutdown: queued metadata is not worth losing.
+
+    This only waits for the writer; it never stops, kills or restarts anything
+    (Flask and the daemon own their own lifetime).
+    """
+    try:
+        with _write_lock:
+            if not _queue and not _inflight:
+                return
+        flush(_EXIT_DRAIN_SEC)
+    except Exception:
+        pass
+
+
+atexit.register(_drain_at_exit)
