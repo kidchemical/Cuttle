@@ -10,7 +10,9 @@
     --studio-peek-push-width: min(460px, 42vw);
 }
 
-:root.cuttle-studio.cuttle-peek-push body {
+/* The page's scroll column is `.chat-main` (a flex child of `.chat-layout`), not
+   body, which is fixed to the viewport. Its margin shrinks the transcript and composer. */
+:root.cuttle-studio.cuttle-peek-push .chat-main {
     margin-right: calc(var(--studio-peek-push-width) + var(--studio-space-2));
     transition: margin-right var(--studio-dur-base) var(--studio-ease-out);
 }
@@ -157,7 +159,19 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-    :root.cuttle-studio.cuttle-peek-push body {
+    :root.cuttle-studio.cuttle-peek-push .chat-main {
         transition: none;
     }
+}
+
+/* Embed (?peek=1 in the tray iframe; chat_page.js sets html.cuttle-peek-frame at boot):
+   the child chat is its transcript and composer. The top bar, the sidebar and the
+   header buttons stay with the parent chat. */
+:root.cuttle-studio.cuttle-peek-frame #chatHistoryPanel,
+:root.cuttle-studio.cuttle-peek-frame #chatHistoryPanelOverlay,
+:root.cuttle-studio.cuttle-peek-frame .chat-session-title,
+:root.cuttle-studio.cuttle-peek-frame .new-chat-corner-button,
+:root.cuttle-studio.cuttle-peek-frame .chat-history-panel-button,
+:root.cuttle-studio.cuttle-peek-frame .chat-chrome-menu {
+    display: none !important;
 }

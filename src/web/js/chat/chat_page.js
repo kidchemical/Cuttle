@@ -2857,6 +2857,8 @@
         chipCategoryClass: slashCommandChipCategoryClass,
     });
 
+    // Tray frame (?peek=1): one class lets tray.css drop the chrome around the transcript.
+    if (new URLSearchParams(location.search).has('peek')) document.documentElement.classList.add('cuttle-peek-frame');
     // Fleet-card peek drawer; off inside a peek frame so drawers never nest.
     let peekCtl = null;
     const subagentPeek = () => (window.CuttleChatSubagentPeek && !new URLSearchParams(location.search).has('peek')
@@ -7105,6 +7107,7 @@
             try { subagentLaunchers.paintLive(); } catch (_) {}
         }
         try { liveThinking.sync(live, sessionId); } catch (_) {}
+        cacheLiveSteers(live, sessionId);
 
         if (live.status && (isLoadingThisSession() || document.getElementById('typing-indicator-remote'))) {
             updateTypingStatus(live.status);
@@ -8430,6 +8433,7 @@
                 const data = await response.json();
                 if (data && data.success) {
                     try { liveThinking.sync(data, sessionId); } catch (_) {}
+                    cacheLiveSteers(data, sessionId);
                     return data;
                 }
             } catch (_) {}
@@ -11004,6 +11008,7 @@
         if (role === 'user' && opts.steered) {
             messageDiv.classList.add('is-steered');
             if (opts.steer_idle) messageDiv.dataset.steerIdle = '1'; // new message, not a thread reply
+            if (opts.steer && CuttleChatDisplay.isStudio()) messageDiv.dataset.steer = JSON.stringify(opts.steer); // receipt, Studio only
         }
         if (
             role === 'assistant'
@@ -11398,6 +11403,15 @@
         copyText: copyTextToClipboard,
     });
 
+    // Live steers of the chat on screen (steer receipts in chat_threads.js), from the latest live-status payload.
+    // Called from the live-status pollers, which run after this block has been evaluated.
+    let liveSteerCache = null;
+    function cacheLiveSteers(live, sid) {
+        liveSteerCache = { sessionId: String(sid), steers: Array.isArray(live.steers) ? live.steers : [], turnId: String(live.query_id || '') };
+        try { replyThreads.refreshReceipts(); } catch (_) {}
+    }
+    const liveSteersNow = () => (liveSteerCache && sessionIdsEqual(liveSteerCache.sessionId, session.current()) ? liveSteerCache : null);
+
     // Steers, follow-ups and sub-agent replies fold under their turn's bubble
     // (chat_threads.js; experimental `chat_reply_threads`, default on).
     const replyThreads = CuttleChatThreads.create({
@@ -11405,6 +11419,9 @@
         sessionId: () => session.current(), storage: localStorage, escapeHtml: escapeHtmlInline,
         renderHandleLink: renderChatHandleLink, avatarHtml: profileAvatarInnerHtml,
         isFollowingLatest: () => transcriptNav.isFollowingLatest(), revealTop: (el) => transcriptNav.revealMessageTop(el),
+        isStudio: () => !!(window.CuttleChatDisplay && CuttleChatDisplay.isStudio()),
+        liveSteers: () => (liveSteersNow() || {}).steers || null,
+        liveTurnId: () => (liveSteersNow() || {}).turnId || '',
     });
     replyThreads.start(true);
     replyThreads.syncFlag((u, o) => fetch(u, o));
