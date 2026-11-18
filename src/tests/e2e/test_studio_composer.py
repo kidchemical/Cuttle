@@ -117,15 +117,7 @@ def test_studio_palette_bolds_the_typed_prefix(browser, static_server):  # noqa:
         expect(item.locator(".slash-cmd-meta .slash-prefix-hit")).to_have_text(re.compile(r"^/?orc$"))
         _settle_rows(page)
         _shot(page, "composer-palette-studio")
-        page.evaluate("""() => {
-            document.documentElement.classList.add('dark-mode');
-            document.body.classList.add('dark-mode');
-        }""")
-        page.wait_for_timeout(200)
-        _shot(page, "composer-palette-studio-dark")
-        page.evaluate("() => document.documentElement.classList.remove('dark-mode')")
         # Picking the command leaves the same orchestrate chip in the composer.
-        page.evaluate("() => document.body.classList.remove('dark-mode')")
         item.click()
         composer_chip = page.locator("#chatSlashChipsRow .slash-command-chip[data-chip-index]").first
         expect(composer_chip.locator(".slash-chip-seg--model")).to_have_text("Default org chart")
