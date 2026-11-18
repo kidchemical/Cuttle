@@ -171,7 +171,28 @@
             } catch (error) { if (mine === processorGeneration) hide(); }
         }
         function refreshProcessorAvailability() { return mountProcessor(processorContainer, true); }
-        return {mountGlobal, agentEditor, mountProcessor, refreshProcessorAvailability};
+        /**
+         * Settings → Appearance → Display (Classic | Studio). The row stays hidden
+         * until the experimental flag is on. `display` is the CuttleChatDisplay
+         * helper (js/shared/chat_display.js), which owns the per-browser pref,
+         * the <html> class and the sync to other panes. This only renders the
+         * choice and forwards it. Returns the unsubscribe function.
+         */
+        function bindChatDisplay(row, select, display, onChanged) {
+            if (!row || !select || !display || typeof display.onChange !== 'function') return () => {};
+            function show(s) {
+                row.hidden = !s.flag;
+                if (select.value !== s.pref) select.value = s.pref;
+            }
+            select.addEventListener('change', () => {
+                display.setMode(select.value);
+                if (typeof onChanged === 'function') onChanged(display.state());
+            });
+            const off = display.onChange(show);
+            show(display.state());
+            return off;
+        }
+        return {mountGlobal, agentEditor, mountProcessor, refreshProcessorAvailability, bindChatDisplay};
     }
     root.CuttleSettingsChatPreferences = {create};
     if (typeof module !== 'undefined' && module.exports) module.exports = root.CuttleSettingsChatPreferences;
