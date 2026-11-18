@@ -6,6 +6,7 @@ the latest snapshot is retained until then, including echo and reply races.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 import threading
 import re
 import uuid
@@ -35,6 +36,12 @@ class Receipts:
             self._entries.append(entry)
             return entry['steer_id']
 
+    def _notify(self, steer_id):
+        try:
+            self._changed(self.snapshot(steer_id))
+        except Exception:
+            logging.getLogger(__name__).exception("Steer receipt update failed")
+
     def _find(self, steer_id):
         return next((e for e in self._entries if e['steer_id'] == steer_id), None)
 
@@ -45,13 +52,18 @@ class Receipts:
                 return None
             return {**e, 'reply': dict(e['reply']) if e['reply'] else None}
 
+    def refresh(self, steer_id):
+        with self._lock:
+            if self._find(steer_id) is not None:
+                self._notify(steer_id)
+
     def bind(self, steer_id, message_id):
         with self._lock:
             e = self._find(steer_id)
             if e is None:
                 return
             e['message_id'] = message_id
-            self._changed(self.snapshot(steer_id))
+            self._notify(steer_id)
 
     def accepted(self, steer_id, accepted):
         with self._lock:
@@ -63,7 +75,7 @@ class Receipts:
                 self._entries.remove(e)
             elif e['ended'] and not e['delivered_at']:
                 e['state'] = 'undelivered'
-                self._changed(self.snapshot(steer_id))
+                self._notify(steer_id)
 
     def echo(self, text, item_id=None):
         with self._lock:
@@ -75,7 +87,7 @@ class Receipts:
                 if not e['delivered_at'] and not e['ended'] and e['text'].strip() == text.strip():
                     e['delivered_at'] = _now()
                     e['state'] = 'delivered'
-                    self._changed(self.snapshot(e['steer_id']))
+                    self._notify(e['steer_id'])
                     return
 
     def reply(self, text):
@@ -88,7 +100,7 @@ class Receipts:
             at = _now()
             for e in waiting:
                 e['reply'] = {'text': clipped, 'at': at, 'covers': covers}
-                self._changed(self.snapshot(e['steer_id']))
+                self._notify(e['steer_id'])
 
     def finish(self):
         with self._lock:
@@ -97,7 +109,7 @@ class Receipts:
                 e['ended'] = True
                 if e['accepted'] and not e['delivered_at']:
                     e['state'] = 'undelivered'
-                self._changed(self.snapshot(e['steer_id']))
+                self._notify(e['steer_id'])
 
 # Pending associations survive unregister until the post-delivery row is bound.
 # Access to these maps never nests with the per-turn tracker lock.
@@ -117,7 +129,7 @@ def public(entry):
 
 def track(session, tracker, steer_id):
     with _pending_lock:
-        _pending[steer_id] = {'tracker': tracker, 'session': str(session), 'db': None}
+        _pending[steer_id] = {'tracker': tracker, 'session': str(session), 'db': None, 'dirty': False}
 
 
 def changed(entry):
@@ -126,6 +138,8 @@ def changed(entry):
         if binding is None:
             return
         session, db = binding['session'], binding['db']
+        if db is not None and entry.get('message_id') is not None:
+            binding['dirty'] = True
         if entry.get('message_id') is not None:
             bucket = _live.setdefault(session, {})
             bucket[entry['steer_id']] = {'message_id': entry['message_id'],
@@ -152,9 +166,12 @@ def changed(entry):
             notify_changed()
         except Exception:
             pass
-        if entry.get('ended') and entry.get('accepted'):
-            with _pending_lock:
-                _pending.pop(entry['steer_id'], None)
+        with _pending_lock:
+            current = _pending.get(entry['steer_id'])
+            if current is not None:
+                current['dirty'] = False
+                if entry.get('ended') and entry.get('accepted'):
+                    _pending.pop(entry['steer_id'], None)
 
 
 def bind(steer_id, db, message_id):
@@ -174,5 +191,13 @@ def discard(steer_id):
 
 def live(session):
     from api.agent_harness.steer import _key
+    key = str(_key(session))
+    # Retry a failed metadata write when the client polls. The tracker lock
+    # serializes this retry with later stream updates for the same turn.
     with _pending_lock:
-        return [dict(value) for value in _live.get(str(_key(session)), {}).values()]
+        retries = [(sid, binding['tracker']) for sid, binding in _pending.items()
+                   if binding['session'] == key and binding['dirty']]
+    for sid, tracker in retries:
+        tracker.refresh(sid)
+    with _pending_lock:
+        return [dict(value) for value in _live.get(key, {}).values()]

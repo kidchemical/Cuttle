@@ -209,3 +209,48 @@ def test_turn_completes_during_delivery_before_binding(tmp_path):
         tracker = steer_receipts._pending[info['steer_id']]['tracker']
     assert tracker.snapshot(info['steer_id'])['state'] == 'undelivered'
     steer_receipts.discard(info['steer_id'])
+
+
+def test_failed_persistence_callback_does_not_stop_turn(caplog):
+    def fail(_entry):
+        raise RuntimeError('storage unavailable')
+    tracker = Receipts(fail)
+    steer_id = tracker.begin('one', 'turn')
+    tracker.accepted(steer_id, True)
+    tracker.echo('one', 'one-item')
+    tracker.reply('Seen.')
+    tracker.finish()
+    assert tracker.snapshot(steer_id)['reply']['text'] == 'Seen.'
+    assert 'Steer receipt update failed' in caplog.text
+
+
+def test_failed_write_is_retried_on_live_poll(tmp_path):
+    import sqlite3
+    from api.agent_harness import steer_receipts
+
+    class DB:
+        failures = 1
+        def _get_connection(self):
+            if self.failures:
+                self.failures -= 1
+                raise sqlite3.OperationalError('temporary failure')
+            conn = sqlite3.connect(tmp_path / 'retry.db')
+            conn.row_factory = sqlite3.Row
+            return conn
+    conn = sqlite3.connect(tmp_path / 'retry.db')
+    conn.execute('CREATE TABLE chat_messages (id INTEGER PRIMARY KEY, role TEXT, metadata TEXT)')
+    conn.execute("INSERT INTO chat_messages VALUES (1, 'user', '{}')")
+    conn.commit()
+    conn.close()
+    db = DB()
+    tracker = Receipts(steer_receipts.changed)
+    sid = tracker.begin('one', 'turn')
+    steer_receipts.track('906', tracker, sid)
+    tracker.accepted(sid, True)
+    tracker.echo('one', 'u1')
+    steer_receipts.bind(sid, db, 1)
+    assert steer_receipts.live('906')[0]['delivered'] is True
+    conn = db._get_connection()
+    assert '"delivered": true' in conn.execute('SELECT metadata FROM chat_messages').fetchone()['metadata']
+    conn.close()
+    tracker.finish()
