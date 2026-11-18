@@ -579,7 +579,7 @@ def cmd_operation(args: argparse.Namespace) -> int:
             from api.chat_ops.timeline import project
             sid = service.session_id(args.handle)
             service.context(sid, sid, db=db)
-            payload = {'ok': True, **project(sid, before=args.before, limit=args.limit)}
+            payload = {'ok': True, **project(sid, before=args.before, limit=args.limit, include_quiet=args.include_quiet)}
         else:
             payload = service.supervise(args.handle, every=args.every, instructions=args.instructions,
                 required_branch=args.require_branch, required_path=args.require_path,
@@ -591,7 +591,7 @@ def cmd_operation(args: argparse.Namespace) -> int:
     if verb in ('supervise', 'edit-operation'):
         _focus_notice(args, payload)
     _emit_text_once(payload, as_json=args.json,
-                    text_fn=lambda p: json.dumps(p, indent=2, ensure_ascii=False, default=str))
+                    text_fn=lambda p: ('\n'.join(f"{i['at']}  {i['kind']}  {i['headline']}" for i in p['items']) if verb == 'timeline' else json.dumps(p, indent=2, ensure_ascii=False, default=str)))
     return 0 if payload.get('ok', True) else 1
 
 
@@ -748,8 +748,9 @@ def build_parser() -> argparse.ArgumentParser:
         if verb == 'timeline':
             op.add_argument('--limit', type=int, default=50)
             op.add_argument('--before', type=float, default=None)
+            op.add_argument('--include-quiet', action='store_true')
         op.add_argument('--as', dest='as_chat', help='Acting chat (default CUTTLE_CHAT_SESSION_ID); same owner required')
-        if verb not in _OPERATION_VERBS and verb != 'timeline':
+        if verb not in _OPERATION_VERBS:
             op.add_argument('handle', help='Target session CH-…')
         elif verb != 'operations':
             op.add_argument('id', help='Operation id from send/supervise')
