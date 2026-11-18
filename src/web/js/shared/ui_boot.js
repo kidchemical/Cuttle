@@ -9,7 +9,7 @@
  * localStorage keys: theme, cuttleVideoBackgroundActive,
  * cuttleBackgroundEffectBlend, cuttleUiAnimations, cuttleUiTransitionMs,
  * cuttleVideoBackgroundList, cuttleVideoBackgroundEnabled, cuttleChatBubbles,
- * cuttleActivityStatusStyle
+ * cuttleActivityStatusStyle, cuttleChatDisplay, cuttleChatStudioFlag
  */
 (function () {
     'use strict';
@@ -23,6 +23,11 @@
     var ANIM_MS_KEY = 'cuttleUiTransitionMs';
     /* '0' = flat chat messages (no bubbles); css/chat_flat_messages.css. */
     var CHAT_BUBBLES_KEY = 'cuttleChatBubbles';
+    /* Studio chat look: effective only when the pref is 'studio' AND the cached
+       flag chat_studio_display is '1' (written by js/shared/chat_display.js). The
+       same two keys are read there; keep the names in step. */
+    var CHAT_DISPLAY_KEY = 'cuttleChatDisplay';
+    var CHAT_STUDIO_FLAG_KEY = 'cuttleChatStudioFlag';
     /* 'sweep' (default) | 'rise'; css/chat_activity_status.css. */
     var ACTIVITY_STATUS_KEY = 'cuttleActivityStatusStyle';
 
@@ -591,7 +596,10 @@
         applyTo(document.body);
         root.classList.toggle('in-shell', framed);
         root.classList.toggle('cuttle-anim', animationsEnabled());
-        root.classList.toggle('cuttle-flat-messages', read(CHAT_BUBBLES_KEY) === '0');
+        /* Studio forces bubbles on: it ignores the flat-messages pref. */
+        var studio = read(CHAT_DISPLAY_KEY) === 'studio' && read(CHAT_STUDIO_FLAG_KEY) === '1';
+        root.classList.toggle('cuttle-studio', studio);
+        root.classList.toggle('cuttle-flat-messages', !studio && read(CHAT_BUBBLES_KEY) === '0');
         root.setAttribute('data-activity-status', read(ACTIVITY_STATUS_KEY) === 'rise' ? 'rise' : 'sweep');
         applyTextPrefs();
         applyInterfaceTextScale();
