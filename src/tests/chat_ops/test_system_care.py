@@ -130,4 +130,5 @@ def test_timeline_process_disappearance(chats, monkeypatch, second, expected):
     events = [x for x in timeline.project(chats[2])['items'] if x['kind'] == 'care']
     assert len(events) == expected
     if events:
-        assert events[0]['headline'] == 'Leftover process ended: Unity (PID 4242, 3.0 GB)'
+        assert events[0]['headline'] == 'System care: a leftover process ended'
+        assert events[0]['detail'] == '`Unity` · PID 4242 · 3.0 GB'
