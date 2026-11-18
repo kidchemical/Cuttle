@@ -75,6 +75,7 @@
 
     /** Lists as the page last saw them (tasks only), for the work panels. */
     var latestLists = [];
+    var lastListsSig = '';
 
     /** Work panels repaint from this when the lists change (chat_subagent_launchers.js). */
     function notifyPanels() {
@@ -175,7 +176,7 @@
             var ids = {};
             var scope = (root && root.querySelectorAll) ? root : document;
             if (!scope || !scope.querySelectorAll) return ids;
-            scope.querySelectorAll('.work-panel[data-list-id]').forEach(function (el) {
+            scope.querySelectorAll('.work-panel .work-list[data-list-id]').forEach(function (el) {
                 ids[el.getAttribute('data-list-id')] = true;
             });
             return ids;
@@ -188,6 +189,12 @@
                 return w && w.type === 'tasks' && (w.status || 'active') === 'active';
             });
             latestLists = tasks;
+            // Work panels repaint only when the lists really changed (not on every poll).
+            var listsSig = JSON.stringify(tasks);
+            if (listsSig !== lastListsSig) {
+                lastListsSig = listsSig;
+                notifyPanels();
+            }
             // Studio: a list the turn's work panel already shows is not repeated in the dock.
             var inPanel = studio ? panelShownIds() : {};
             var dock = tasks.filter(function (w) { return !inPanel[String(w.id)]; });
@@ -198,7 +205,6 @@
                     lastRenderedHtml = '';
                 }
             }
-            notifyPanels();
             if (!el || !dock.length) return;
             el.hidden = false;
             var html = dock.map(function (w) {
@@ -455,6 +461,15 @@
         }
 
         bind();
+
+        // A work panel mounted or removed in the chat (Studio) changes which lists the dock shows.
+        if (typeof document !== 'undefined' && document.addEventListener) {
+            document.addEventListener('cuttle-work-panels-changed', function () { render(); });
+        }
+        // Studio switched on or off: the owner line and the panel hiding follow at once.
+        if (!options.isStudio && global.CuttleChatDisplay && typeof global.CuttleChatDisplay.onChange === 'function') {
+            global.CuttleChatDisplay.onChange(function () { render(); });
+        }
 
         return {
             refresh: refresh,

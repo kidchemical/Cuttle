@@ -112,6 +112,10 @@
     border-radius: 5px;
 }
 
+:root.cuttle-studio .work-panel .chat-widget-task-text {
+    color: var(--studio-ink);
+}
+
 :root.cuttle-studio .work-panel .chat-widget-task.is-done .chat-widget-task-text {
     color: var(--studio-ink-faint);
     text-decoration: line-through;
@@ -197,6 +201,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: var(--studio-text-xs);
+    font-style: normal;
     color: var(--studio-ink-muted);
 }
 
@@ -258,6 +263,38 @@
     display: inline-flex;
     align-items: center;
     gap: var(--studio-space-2);
+    color: var(--studio-ink-muted);
+    font-family: var(--font-sans);
+    font-size: var(--studio-text-xs);
+}
+
+/* The chip reads on the light Studio surface: a card, ink text (Classic's pill is light-on-dark). */
+:root.cuttle-studio .chat-orch-studio-pill > .chat-supervision-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border: 0;
+    border-radius: var(--studio-radius-pill);
+    background: var(--studio-card-bg);
+    box-shadow: var(--studio-card-ring), var(--studio-shadow-card);
+    color: var(--studio-ink);
+    font: inherit;
+    font-weight: var(--studio-weight-semibold);
+    cursor: pointer;
+}
+
+:root.cuttle-studio .chat-orch-studio-pill > .chat-supervision-pill.is-warn {
+    color: #9a5b00;
+}
+
+:root.cuttle-studio .chat-orch-studio-pill > .chat-supervision-pill.is-paused {
+    opacity: 0.75;
+}
+
+:root.cuttle-studio .chat-orch-studio-pill > .chat-supervision-pill:focus-visible {
+    outline: none;
+    box-shadow: var(--studio-focus-ring);
 }
 
 :root.cuttle-studio .chat-orch-studio-pill .studio-live-dot {

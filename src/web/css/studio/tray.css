@@ -51,6 +51,48 @@
 :root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-head {
     padding: var(--studio-space-3) var(--studio-space-4);
     gap: var(--studio-space-2);
+    color: var(--studio-ink);
+}
+
+/* The identity takes the header's colour in every layout (light overlay or Studio push). */
+:root.cuttle-studio .subagent-peek-identity .agent-identity {
+    color: inherit;
+}
+
+/* Header text and buttons read on the light Studio surface (Classic's are light-on-dark). */
+:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-title {
+    color: var(--studio-ink);
+    font-weight: var(--studio-weight-semibold);
+    font-size: var(--studio-text-sm);
+}
+
+:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-handle,
+:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-status {
+    color: var(--studio-ink-muted);
+    font-size: var(--studio-text-xs);
+}
+
+:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-open {
+    padding: 4px 12px;
+    border: 0;
+    border-radius: var(--studio-radius-pill);
+    background: var(--studio-accent);
+    color: #ffffff;
+    font: inherit;
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-semibold);
+}
+
+:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-close {
+    border: 0;
+    background: transparent;
+    color: var(--studio-ink-muted);
+}
+
+:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-open:focus-visible,
+:root.cuttle-studio .subagent-peek[data-layout="push"] .subagent-peek-close:focus-visible {
+    outline: none;
+    box-shadow: var(--studio-focus-ring);
 }
 
 @media (prefers-reduced-motion: reduce) {

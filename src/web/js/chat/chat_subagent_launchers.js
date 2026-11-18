@@ -200,6 +200,12 @@
             return '<div class="' + wrapClass + '" role="group" aria-label="' + aria + '">' + buttons + '</div>';
         }
 
+        /** The Tasks dock hides a list a panel now shows: tell it when panels come and go. */
+        function announcePanels() {
+            if (!frameDoc || typeof frameDoc.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+            frameDoc.dispatchEvent(new CustomEvent('cuttle-work-panels-changed'));
+        }
+
         /** Studio: the panel's card and row state repaints in place; new rows and cards ease in. */
         function repaintPanel(existing, next) {
             const focusKey = (el) => {
@@ -265,7 +271,11 @@
             const html = renderSubagentLaunchersHtml(subagents, renderOpts);
             let existing = wrap.querySelector('.subagent-launchers, .work-panel');
             if (!html) {
-                if (existing) existing.remove();
+                if (existing) {
+                    const wasPanel = existing.classList.contains('work-panel');
+                    existing.remove();
+                    if (wasPanel) announcePanels();
+                }
                 return;
             }
             // Tooltips promote title attributes after mounting. Comparing outerHTML
@@ -279,6 +289,7 @@
             if (existing && nextPanel !== existing.classList.contains('work-panel')) {
                 existing.remove();
                 existing = null;
+                announcePanels();
             }
             if (existing && nextPanel) {
                 repaintPanel(existing, next);
@@ -327,6 +338,7 @@
             const footer = wrap.querySelector('.message-footer');
             if (footer) wrap.insertBefore(next, footer);
             else wrap.appendChild(next);
+            if (nextPanel) announcePanels();
         }
 
         function mountMessageLaunchers(messageEl, role, opts) {
