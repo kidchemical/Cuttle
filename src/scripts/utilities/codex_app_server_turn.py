@@ -299,7 +299,7 @@ async def run_codex_turn_app_server(
         "steer_token": None,
         "own_token": own_token,
         "own_tid": own_tid,
-        "user_items": 0,
+        # The turn's own input is echoed back as the first userMessage item.
         "prompt_echoed": False,
         "reasoning_buf": "",
         "writing_buf": "",
@@ -548,7 +548,6 @@ async def run_codex_turn_app_server(
                 st["compacted"] = True
             if itype == "userMessage":
                 if method == "item/completed":
-                    st["user_items"] += 1
                     text = _codex_user_item_text(item)
                     if not st["prompt_echoed"] and text.strip() == (prompt or "").strip():
                         # The turn's own input, echoed back: it must never
