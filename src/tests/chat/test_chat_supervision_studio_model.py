@@ -68,6 +68,9 @@ console.log(JSON.stringify({
   mixedCadence: M.panelHeader([sched({every: 300}), sched({target: 'CH-000009', every: 3600})]),
   badgeTitle: M.panelHeader([sched({})], {title: 'Supervised by CH-000042'}),
   emptyHeader: M.panelHeader([]),
+  namedHeader: M.panelHeader([sched({goal: 'Release v0.8'}), sched({target: 'CH-000009', goal: 'Release v0.8'})]),
+  codeHtml: M.timelineHtml([Object.assign({}, byId.z2, {headline: 'Guard: blocked a push to `main` <i>x</i>',
+    detail: 'Quarantine `test_render_timeout` then `<img src=x onerror=alert(1)>`'})], {}),
   headerHtml: M.panelHeaderHtml(M.panelHeader([sched({target: 'CH-<i>'})], {title: 'Supervising <b>x</b>'})),
   merged: M.mergeItems([{id: 'a', at: 5}, {id: 'b', at: 3}], [{id: 'b', at: 3}, {id: 'c', at: 9}, {id: 'd', at: 3}])
     .map((x) => x.id),
@@ -91,13 +94,22 @@ def test_kind_maps_to_icon_and_tone_with_neutral_fallback():
     r = _run()
     assert r["icons"] == {
         "stalled": ["stalled", "warn"], "nudged": ["nudged", "accent"], "guard": ["guard", "bad"],
-        "care": ["care", "ok"], "milestone": ["milestone", "ok"], "paused": ["paused", "muted"],
+        "care": ["care", "info"], "milestone": ["milestone", "ok"], "paused": ["paused", "muted"],
         "resumed": ["resumed", "ok"], "error": ["error", "bad"], "skipped": ["quiet", "muted"],
         "unchanged": ["quiet", "muted"],
     }
     # Kinds the projection may add later, and prototype names, read as neutral.
     assert r["unknown"] == ["neutral", "muted", "neutral", "neutral"]
     assert r["blankHeadline"] == "Supervision activity"
+
+
+def test_backtick_spans_render_as_code_after_escaping():
+    html = _run()["codeHtml"]
+    assert 'Guard: blocked a push to <code class="sup-tl-code">main</code> &lt;i&gt;x&lt;/i&gt;' in html
+    assert 'Quarantine <code class="sup-tl-code">test_render_timeout</code> then' in html
+    # Markup inside a code span is still text: the span is cut from escaped output only.
+    assert '<code class="sup-tl-code">&lt;img src=x onerror=alert(1)&gt;</code>' in html
+    assert "<img" not in html and "<i>" not in html
 
 
 def test_rows_carry_local_clock_and_day_only_when_not_today():
@@ -151,6 +163,9 @@ def test_header_aggregates_chats_and_cadence_across_schedules():
     assert m["subline"] == "3 chats · check-in every 15 min"
     mixed = r["mixedCadence"]
     assert mixed["cadenceLabel"] == "check-ins every 5 min to 1 h" and mixed["chatCount"] == 2
+    named = r["namedHeader"]
+    assert named["title"] == "Supervising Release v0.8" and named["goal"] == "Release v0.8"
+    assert named["subline"] == "2 chats · check-in every 15 min"
     assert r["badgeTitle"]["title"] == "Supervised by CH-000042"
     assert r["badgeTitle"]["subline"] == "1 chat · check-in every 15 min"
 

@@ -742,7 +742,7 @@
         stalled: { icon: 'stalled', tone: 'warn' },
         nudged: { icon: 'nudged', tone: 'accent' },
         guard: { icon: 'guard', tone: 'bad' },
-        care: { icon: 'care', tone: 'ok' },
+        care: { icon: 'care', tone: 'info' },
         milestone: { icon: 'milestone', tone: 'ok' },
         paused: { icon: 'paused', tone: 'muted' },
         resumed: { icon: 'resumed', tone: 'ok' },
@@ -833,13 +833,15 @@
     }
 
     /**
-     * Panel header from the schedules a panel covers. Schedules carry no goal
-     * text, so the goal is the chats they check: "CH-001548" or "CH-001548 and 2 more".
+     * Panel header from the schedules a panel covers. The goal is the supervisor's
+     * Tasks list title when the server names one (schedule.goal); otherwise the chats
+     * they check: "CH-001548" or "CH-001548 and 2 more".
      * opts.title replaces the title (the worker badge says who supervises it).
      */
     function panelHeader(schedules, opts) {
         const list = (Array.isArray(schedules) ? schedules : []).filter((s) => s && typeof s === 'object');
         const targets = [...new Set(list.map((s) => String(s.target || '')).filter(Boolean))];
+        const named = list.map((s) => String(s.goal || '').trim()).find(Boolean) || '';
         const everies = [...new Set(list.map((s) => Math.round(Number(s.every) || 0)).filter((n) => n > 0))]
             .sort((a, b) => a - b);
         let cadenceLabel = '';
@@ -848,7 +850,8 @@
             cadenceLabel = 'check-ins every ' + cadencePart(everies[0]) + ' to ' + cadencePart(everies[everies.length - 1]);
         }
         const chatCount = targets.length;
-        const goal = targets.length <= 2 ? targets.join(' and ') : targets[0] + ' and ' + (targets.length - 1) + ' more';
+        const chatsGoal = targets.length <= 2 ? targets.join(' and ') : targets[0] + ' and ' + (targets.length - 1) + ' more';
+        const goal = named || chatsGoal;
         const bits = [];
         if (chatCount) bits.push(chatCount + (chatCount === 1 ? ' chat' : ' chats'));
         if (cadenceLabel) bits.push(cadenceLabel);
@@ -871,14 +874,19 @@
             + '<span class="sup-studio-status is-' + esc(h.status) + '">' + esc(h.status) + '</span></div>';
     }
 
+    /** Server text with `code` spans: escaped first, so the text never injects markup. */
+    function inlineHtml(value) {
+        return esc(value).replace(/`([^`\n]+)`/g, '<code class="sup-tl-code">$1</code>');
+    }
+
     function timelineRowHtml(r, showChat) {
         const when = r.day ? r.day + ' ' + r.time : r.time;
         return '<li class="sup-tl-row tone-' + esc(r.tone) + '" data-kind="' + esc(r.kind) + '">'
             + '<time class="sup-tl-time">' + esc(when) + '</time>'
             + '<span class="sup-tl-icon" aria-hidden="true">' + esc(ICON_GLYPH[r.icon] || ICON_GLYPH.neutral) + '</span>'
-            + '<div class="sup-tl-text"><div class="sup-tl-headline">' + esc(r.headline)
+            + '<div class="sup-tl-text"><div class="sup-tl-headline">' + inlineHtml(r.headline)
             + (showChat && r.chat ? ' <span class="sup-tl-chat">' + esc(r.chat) + '</span>' : '') + '</div>'
-            + (r.detail ? '<div class="sup-tl-detail">' + esc(r.detail) + '</div>' : '') + '</div></li>';
+            + (r.detail ? '<div class="sup-tl-detail">' + inlineHtml(r.detail) + '</div>' : '') + '</div></li>';
     }
 
     /**
