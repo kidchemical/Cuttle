@@ -54,6 +54,7 @@ html body #typing-indicator .message-content-wrapper{background:var(--studio-bub
 html body #typing-indicator .message-content{font-size:17px;line-height:1.5;margin-bottom:16px;background:transparent;color:inherit;box-shadow:none;border:0;padding:0}
 </style>
 </head><body>
+<main class="chat-main">
 <div id="chatWidgetsStrip" style="padding:12px 24px" hidden></div>
 <span class="chat-supervision-slot" id="chatOrchestrationSlot" hidden></span>
 <div id="chatMessages" style="width:100%;max-width:820px;padding:24px;box-sizing:border-box">
@@ -61,6 +62,7 @@ html body #typing-indicator .message-content{font-size:17px;line-height:1.5;marg
     <div class="message-content-wrapper"><div class="message-content">Plan's set. Three workers on it; a supervisor checks in every 15 minutes.</div></div>
   </div>
 </div>
+</main>
 <div id="hdr" style="padding:24px"></div>
 </body></html>"""
 
@@ -282,10 +284,10 @@ def test_card_opens_a_push_tray_and_escape_returns_focus(browser, static_server)
         expect(tray).to_be_visible()
         assert tray.get_attribute("data-layout") == "push"
         assert page.evaluate("document.documentElement.classList.contains('cuttle-peek-push')")
-        # The thread shifts left by the tray's width; no backdrop.
+        # The transcript column (.chat-main, as on the real page) shifts left by the tray's width; no backdrop.
         # The thread shift transitions; wait for it to settle before measuring.
-        page.wait_for_function("parseFloat(getComputedStyle(document.body).marginRight) > 400")
-        margin = page.evaluate("parseFloat(getComputedStyle(document.body).marginRight)")
+        page.wait_for_function("parseFloat(getComputedStyle(document.querySelector('.chat-main')).marginRight) > 400")
+        margin = page.evaluate("parseFloat(getComputedStyle(document.querySelector('.chat-main')).marginRight)")
         assert margin > 400, margin
         assert page.locator(".subagent-peek-backdrop").evaluate("el => getComputedStyle(el).display") == "none"
         thread_right = page.locator("#chatMessages").bounding_box()["x"] + page.locator("#chatMessages").bounding_box()["width"]
