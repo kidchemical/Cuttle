@@ -2,6 +2,7 @@ id: hermes
 label: Hermes Agent
 slash: /hermes
 icon: "⬣"
+color: "#a16207"  # Settings/Studio identity dot; #rrggbb
 requires_cloud: false
 # Auth is the CLI's own login; no Cuttle-managed credential.
 sticky: true

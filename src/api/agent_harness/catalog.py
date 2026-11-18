@@ -105,6 +105,19 @@ def _load_manifest_dict(agent_dir: Path) -> Dict[str, Any]:
     return data
 
 
+_IDENTITY_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _identity_color(raw: Any) -> str:
+    """A manifest ``color`` as ``#rrggbb``, or ``""`` (frontend grey) if invalid.
+
+    Strict on purpose: the value reaches inline CSS in the chat UI, so only a
+    six-digit hex colour passes. Anything else is dropped, not repaired.
+    """
+    value = str(raw or "").strip()
+    return value.lower() if _IDENTITY_COLOR_RE.match(value) else ""
+
+
 def _manifest_from_dict(
     data: Dict[str, Any],
     *,
@@ -177,12 +190,14 @@ def _manifest_from_dict(
     # Single short glyph only — never prose or a path. Keeps the wire shape
     # boring for drop-ins that set something odd.
     icon = icon_raw[:8]
+    color = _identity_color(data.get("color"))
     return AgentManifest(
         permissions=permissions(data.get("permissions")),
         provenance=provenance(data.get("provenance"), agent_dir),
         id=mid,
         label=str(data.get("label") or mid).strip(),
         icon=icon,
+        color=color,
         slash=_canonical_slash(str(data.get("slash") or ""), mid),
         requires_cloud=bool(data.get("requires_cloud", True)),
         sticky=bool(data.get("sticky", True)),

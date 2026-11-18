@@ -2,6 +2,7 @@ id: claude
 label: Claude Code
 slash: /claude
 icon: "✳"
+color: "#d97757"  # Settings/Studio identity dot; #rrggbb
 requires_cloud: true
 auth_command: claude auth login
 sticky: true
