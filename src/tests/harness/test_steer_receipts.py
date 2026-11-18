@@ -136,6 +136,50 @@ def test_a_row_bound_after_the_reply_takes_the_reply_over():
 
 # ── no SQLite on the reader / teardown path ─────────────────────────────────
 
+def test_a_group_is_not_released_until_every_member_is_bound(tmp_path):
+    """N4 / Codex 2: a late bind must not leave two copies of one excerpt."""
+    db = FakeDb(tmp_path / 'group.db')
+    tracker = Receipts(steer_receipts.changed, many=steer_receipts.changed_many, session='965')
+    first, second = tracker.begin('one'), tracker.begin('two')
+    for steer_id in (first, second):
+        steer_receipts.track('965', tracker, steer_id)
+        tracker.accepted(steer_id, True)
+        tracker.echo(steer_id)
+    first_id = db.add_message(965, 'user', 'one')
+    steer_receipts.bind(first, db, first_id)
+    tracker.output_text('a1', 'Both noted.')   # one reply covers both sends
+    tracker.finish()                           # the turn ends mid-delivery
+    assert steer_receipts.flush(5.0)
+    assert db.steer_meta(first_id)['reply']['text'] == 'Both noted.'
+
+    second_id = db.add_message(965, 'user', 'two')
+    steer_receipts.bind(second, db, second_id)  # the second row binds late
+    assert steer_receipts.flush(5.0)
+    assert db.steer_meta(second_id)['reply']['text'] == 'Both noted.'
+    assert db.steer_meta(first_id)['reply'] is None, 'exactly one excerpt holder'
+    assert db.steer_meta(first_id)['covers'] == [first_id, second_id]
+    assert db.steer_meta(second_id)['covers'] == [first_id, second_id]
+    assert db.writes[-1] == [first_id, second_id], 'one transaction covers the group'
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+def test_a_group_member_that_never_binds_still_lets_the_others_go(monkeypatch, tmp_path):
+    """The grace purge is the backstop when a late bind never comes."""
+    monkeypatch.setattr(steer_receipts, '_PENDING_GRACE_SEC', 0.0)
+    db = FakeDb(tmp_path / 'group-gone.db')
+    tracker = Receipts(steer_receipts.changed, many=steer_receipts.changed_many, session='966')
+    first, second = tracker.begin('one'), tracker.begin('two')
+    for steer_id in (first, second):
+        steer_receipts.track('966', tracker, steer_id)
+        tracker.accepted(steer_id, True)
+        tracker.echo(steer_id)
+    steer_receipts.bind(first, db, db.add_message(966, 'user', 'one'))
+    tracker.output_text('a1', 'Both noted.')
+    tracker.finish()
+    assert steer_receipts.flush(5.0)
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
 def test_a_blocked_writer_never_delays_the_reader_or_a_steer(tmp_path):
     gate = threading.Event()
     db = FakeDb(tmp_path / 'slow.db', gate=gate)

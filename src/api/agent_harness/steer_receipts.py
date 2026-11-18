@@ -363,8 +363,9 @@ def _purge_locked():
         ended_at = binding.get('ended_at')
         if ended_at is None:
             continue
-        if binding.get('db') is not None and binding.get('message_id') is not None:
-            continue
+        if (binding.get('db') is not None and binding.get('message_id') is not None
+                and not binding.get('held_for_group')):
+            continue  # bound: the writer releases it once it is saved
         if now - ended_at >= _PENDING_GRACE_SEC:
             _pending.pop(steer_id, None)
             _unpublish_locked(binding['session'], steer_id)
@@ -466,6 +467,7 @@ def _apply(snapshot):
             return None, stale
         if ended:
             binding['ended_at'] = binding.get('ended_at') or time.monotonic()
+        binding['held_for_group'] = False  # a fresh snapshot is on its way
         session, db = binding['session'], binding['db']
         message_id = snapshot.get('message_id')
         binding['message_id'] = message_id
@@ -629,7 +631,7 @@ def _write_batch(batch, retry, log):
             continue
         for item in items:
             if item['ended']:
-                _release(item['steer_id'])
+                _settle(item['steer_id'], group_binding=item['group_binding'])
 
 
 def _group_by_db(batch):
@@ -637,6 +639,23 @@ def _group_by_db(batch):
     for item in batch.values():
         groups.setdefault(id(item['db']), []).append(item)
     return groups
+
+
+def _settle(steer_id, *, group_binding):
+    """An ended receipt was saved: release it unless its group is still binding.
+
+    A grouped reply moves to the last covered row as members bind, and every
+    member is rewritten when it does — so releasing a member early would
+    freeze its row with a second copy of the excerpt and a short ``covers``.
+    The grace purge is the backstop for a member that never binds.
+    """
+    if not group_binding:
+        _release(steer_id)
+        return
+    with _pending_lock:
+        binding = _pending.get(steer_id)
+        if binding is not None:
+            binding['held_for_group'] = True
 
 
 def _release(steer_id):
