@@ -1327,3 +1327,12 @@ def test_timeline_cli_handle_and_output(monkeypatch, capsys):
     assert calls == [(2620, {'limit': 3, 'before': '99', 'include_quiet': True})]
     assert main(['timeline', 'CH-002620', '--json']) == 0
     assert json.loads(capsys.readouterr().out)['items'][0]['kind'] == 'stalled'
+
+
+def test_timeline_route_requires_session_owner(client, chats, monkeypatch):
+    _flag(monkeypatch, True)
+    db, _, sup, _, foreign = chats
+    _schedule(chats)
+    assert client.get(f'/api/chat-ops/sessions/{sup}/timeline').status_code == 200
+    assert client.get(f'/api/chat-ops/sessions/{foreign}/timeline').status_code == 404
+    assert client.get('/api/chat-ops/sessions/99999999/timeline').status_code == 404

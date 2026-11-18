@@ -45,7 +45,9 @@ def session_overview(session: str):
 def session_timeline(session: str):
     def read():
         sid = service.session_id(session)
-        db, _, _ = service.context(sid, sid)
+        from api.auth_db import get_auth_db
+        if not get_auth_db().get_chat_session(sid, _uid()):
+            raise LookupError('Chat not found')
         from api.chat_ops.timeline import project
         return project(sid, before=request.args.get('before'), limit=request.args.get('limit', 50),
                        include_quiet=request.args.get('include_quiet') == '1')
