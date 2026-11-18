@@ -5,6 +5,7 @@ scripts that speak just enough of each protocol to start a turn, accept a
 ``turn/steer`` while it is running, and fold the steer into the final reply.
 """
 
+import json
 import asyncio
 import concurrent.futures
 import os
@@ -56,7 +57,9 @@ def test_registry_normalizes_chat_handles_and_forwards_text():
     assert steer.active_agent(77) == "codex"
     assert steer.active_agent("CH-000077") == "codex"
     info = steer.steer(77, "/codex keep going")
-    assert info == {"steered": True, "agent": "codex", "text": "keep going"}
+    assert {k: info[k] for k in ("steered", "agent", "text")} == {
+        "steered": True, "agent": "codex", "text": "keep going"}
+    assert info["steer_id"]
     assert sent == ["keep going"]
     steer.unregister("77", token)
     assert steer.active_agent(77) is None
@@ -301,7 +304,8 @@ def test_codex_turn_reports_steer_it_never_read(tmp_path, monkeypatch):
     assert res["success"] is False
     assert res["undelivered_steers"] == ["you stopped, continue"]
     assert res["steered"] == 0
-    assert "before reading your follow-up" in res["output"]
+    assert "without confirming it read your follow-up" in res["output"]
+    assert "Delivery is not confirmed" in res["output"]
     assert "you stopped, continue" in res["output"]
     lines = []
     while not statuses.empty():
@@ -661,7 +665,9 @@ def _run_fake_claude(tmp_path, monkeypatch, mode, chat_id, message):
 @pytestmark_posix
 def test_claude_turn_accepts_mid_turn_steer(tmp_path, monkeypatch):
     res, results = _run_fake_claude(tmp_path, monkeypatch, "mid", 5151, "/claude add BANANA")
-    assert results and results[0] == {"steered": True, "agent": "claude", "text": "add BANANA"}
+    assert results and {k: results[0][k] for k in ("steered", "agent", "text")} == {
+        "steered": True, "agent": "claude", "text": "add BANANA"}
+    assert results[0]["steer_id"]
     assert res["success"] is True
     assert res["output"] == "saw: add BANANA"
     assert res["steered"] == 1
@@ -719,13 +725,90 @@ def test_claude_late_steer_extra_turn_merges_into_reply(tmp_path, monkeypatch):
     assert res["steered"] == 1
 
 
+# An answer already in flight when the steer lands, then a second one after
+# it. ``message_start`` boundaries only exist with --include-partial-messages:
+# without the flag this script emits none, and the ordering test below fails.
+_FAKE_CLAUDE_ORDER = r'''
+import json, os, sys, threading, queue
+partial = "--include-partial-messages" in sys.argv
+open(os.environ["FAKE_CLAUDE_ARGV"], "w").write(json.dumps(sys.argv))
+q = queue.Queue()
+def rd():
+    for line in sys.stdin:
+        q.put(json.loads(line))
+    q.put(None)
+threading.Thread(target=rd, daemon=True).start()
+def out(msg):
+    msg.setdefault("session_id", "cs-1")
+    sys.stdout.write(json.dumps(msg) + "\n"); sys.stdout.flush()
+def start(mid):
+    if partial:
+        out({"type": "stream_event", "event": {"type": "message_start",
+                                               "message": {"id": mid}}})
+def text(mid, body):
+    out({"type": "assistant", "parent_tool_use_id": None,
+         "message": {"id": mid, "content": [{"type": "text", "text": body}]}})
+first = q.get()
+out({"type": "system", "subtype": "init", "model": "fake"})
+out({"type": "user", "isReplay": True, "parent_tool_use_id": None, "message": first["message"]})
+start("m1")                                  # this answer is already writing
+steer = q.get(timeout=6)
+out({"type": "user", "isReplay": True, "parent_tool_use_id": None, "message": steer["message"]})
+text("m1", "Already writing this paragraph.")   # completes after the echo
+start("m2")
+text("m2", "About your note: done.")
+out({"type": "result", "subtype": "success", "result": "ok", "total_cost_usd": 0.01,
+     "usage": {"input_tokens": 10, "output_tokens": 2}})
+while q.get(timeout=6) is not None:
+    pass
+'''
+
+
+@pytestmark_posix
+def test_claude_reader_only_attributes_output_that_started_after_the_echo(tmp_path, monkeypatch):
+    """Codex 5: a pre-echo item completing after the echo is not the reply.
+
+    Runs the real reader. The boundary comes from ``--include-partial-messages``
+    (``message_start``): drop that flag and the fake emits no boundaries, the
+    excerpt becomes the wrong paragraph, and this test fails.
+    """
+    import scripts.utilities.claude_cli_tool as mod
+    from api.agent_harness import steer_receipts
+
+    argv_path = tmp_path / "argv.json"
+    monkeypatch.setenv("FAKE_CLAUDE_ARGV", str(argv_path))
+    monkeypatch.setattr(mod, "claude_executable",
+                        lambda: _fake_bin(tmp_path, "claude", _FAKE_CLAUDE_ORDER))
+    monkeypatch.setattr(
+        "scripts.utilities.claude_cli_session_store.save_claude_resume_id", lambda *a, **k: None)
+    snaps = []
+    monkeypatch.setattr(steer_receipts, "changed_many",
+                        lambda batch: (snaps.extend(batch), False)[1])
+    monkeypatch.setattr(steer_receipts, "changed", lambda snap: snaps.append(snap))
+    results = []
+    thread = _steer_when_live(5454, "note this", results)
+    res = asyncio.run(mod.ClaudeCliTool().execute_prompt(
+        "go", cwd=str(tmp_path), chat_session_id="5454", timeout=30, steerable=True))
+    thread.join(5)
+    assert res["success"] is True and results and results[0]["steered"] is True
+    assert "--include-partial-messages" in json.loads(argv_path.read_text())
+
+    final = snaps[-1]
+    assert final["state"] == "delivered"
+    assert final["reply"] is not None, "the post-echo answer is the excerpt"
+    assert final["reply"]["text"] == "About your note: done."
+    assert not any((snap["reply"] or {}).get("text") == "Already writing this paragraph."
+                   for snap in snaps), "an item already writing never claims the reply"
+
+
 @pytestmark_posix
 def test_claude_turn_reports_steer_it_never_read(tmp_path, monkeypatch):
     res, results = _run_fake_claude(tmp_path, monkeypatch, "deaf", 5353, "too late")
     assert results and results[0]["steered"] is True
     assert res["steered"] == 0
     assert res["undelivered_steers"] == ["too late"]
-    assert "before reading your follow-up" in res["output"]
+    assert "without confirming it read your follow-up" in res["output"]
+    assert "Delivery is not confirmed" in res["output"]
     assert "- too late" in res["output"]
 
 

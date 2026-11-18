@@ -1,0 +1,16 @@
+[
+  {
+    "kind": "echo",
+    "text": "Briefly acknowledge this request: mention the color amber.",
+    "item_id": "01a1ede6-2a31-7f01-a185-2fe730ed362a"
+  },
+  {
+    "kind": "echo",
+    "text": "Also mention the word cobalt.",
+    "item_id": "01a1ede6-2a33-7291-92f0-72acb4ce36a3"
+  },
+  {
+    "kind": "reply",
+    "text": "Acknowledged: amber and cobalt. I\u2019m continuing the requested read-only inspection."
+  }
+]

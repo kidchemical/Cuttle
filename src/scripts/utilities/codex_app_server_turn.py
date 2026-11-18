@@ -60,12 +60,12 @@ def _delta_preview(buf: str, limit: int = 120) -> str:
     return re.sub(r"\s+", " ", buf or "").strip()[-limit:]
 
 
-def _undelivered_notice(texts: List[str]) -> str:
-    lines = "\n".join(f"- {_first_line(t, 200)}" for t in texts)
-    return (
-        "Codex ended this turn before reading your follow-up"
-        f"{'s' if len(texts) > 1 else ''}:\n{lines}\nSend it again to continue."
-    )
+def _codex_user_item_text(item: Dict[str, Any]) -> str:
+    """Text of a ``userMessage`` item (the turn's prompt, or a steer echoed back)."""
+    for part in item.get("content") or []:
+        if isinstance(part, dict) and part.get("type") == "text":
+            return str(part.get("text") or "")
+    return ""
 
 
 def _snake(item_type: str) -> str:
@@ -217,6 +217,7 @@ async def run_codex_turn_app_server(
     rid = (resume or "").strip()
 
     from api.agent_harness import steer as steer_registry
+    from api.agent_harness.steer_delivery import SteerDelivery, vendor_refused
     from api.agent_harness.activity import ActivityEmitter, TextActivityLog, ToolActivityLog, text_preview
 
     from api.agent_harness import codex_thread_ownership as _ownership
@@ -290,12 +291,8 @@ async def run_codex_turn_app_server(
         "steer_token": None,
         "own_token": own_token,
         "own_tid": own_tid,
-        "steered": 0,
-        "user_items": 0,
-        # Codex only splices steer input in at its next sampling step, and echoes
-        # each one as a userMessage item (possibly before the turn/steer reply).
-        "steers_accepted": [],
-        "user_texts": [],
+        # The turn's own input is echoed back as the first userMessage item.
+        "prompt_echoed": False,
         "reasoning_buf": "",
         "writing_buf": "",
         "snapshot_at": 0.0,
@@ -306,6 +303,11 @@ async def run_codex_turn_app_server(
     from scripts.utilities.codex_cli_tool import _capture_codex_question
 
     questions = QuestionBridge()
+    # Codex only splices steer input in at its next sampling step, and echoes
+    # each one as a userMessage item (possibly before the turn/steer reply).
+    # One matcher owns delivery for this run: the turn's notice and the chat
+    # receipt both read it (api.agent_harness.steer_delivery).
+    delivery = SteerDelivery()
     messages: List[str] = []
     reap_handle: List[Optional[asyncio.TimerHandle]] = [None]
 
@@ -322,37 +324,62 @@ async def run_codex_turn_app_server(
         if reap_handle[0] is None:
             reap_handle[0] = loop.call_later(_REAP_GRACE_SEC, _reap)
 
+    def _note(fn: Any, *args: Any) -> None:
+        """Receipt capture must never interrupt the reader."""
+        if st["steer_token"] is None:
+            return
+        try:
+            fn(chat_session_id, st["steer_token"], *args)
+        except Exception:
+            pass
+
+    def _note_echo(steer_id: str) -> None:
+        _note(steer_registry.note_echo, steer_id)
+
+    def _note_echoes(receipts: List[Any]) -> None:
+        """Every confirmation the matcher makes, however it was reached."""
+        for receipt in receipts:
+            if receipt.steer_id:
+                _note_echo(receipt.steer_id)
+
+    delivery.confirmed = _note_echoes
+
     def _fail_setup(message: str) -> None:
         if st["setup_error"] is None and st["turn_id"] is None:
             st["setup_error"] = message
         _finish_connection()
 
-    def _steer_send(text: str) -> "concurrent.futures.Future":
+    def _steer_send(text: str, steer_id: Optional[str] = None) -> "concurrent.futures.Future":
         out: "concurrent.futures.Future" = concurrent.futures.Future()
+        receipt: List[Any] = [None]
 
         def _done(_result: Optional[Dict[str, Any]], error: Optional[Dict[str, Any]]) -> None:
             if out.done():
                 return
-            if error is not None:
+            # A vendor error *answer* refuses the send; a synthesized failure
+            # (loop closed, no reply) leaves acceptance unknown.
+            accepted = receipt[0] is not None and delivery.acknowledge(
+                receipt[0], succeeded=error is None, refused=vendor_refused(error))
+            if not accepted:
                 out.set_result((False, rpc_error_text(error)))
             else:
-                st["steered"] += 1
-                st["steers_accepted"].append(text)
                 activity.emit(
                     f"steer queued: {_first_line(text, 80)} (Codex reads it after its current step)",
                     force=True,
                 )
                 out.set_result((True, None))
 
-        rpc.request_threadsafe(
-            "turn/steer",
-            lambda: {
+        def _params() -> Dict[str, Any]:
+            # On the event loop, before the request goes out: the echo can
+            # arrive before the reply, so the receipt must exist first.
+            receipt[0] = delivery.begin(text, steer_id)
+            return {
                 "threadId": st["thread_id"],
                 "expectedTurnId": st["turn_id"],
                 "input": [{"type": "text", "text": text}],
-            },
-            _done,
-        )
+            }
+
+        rpc.request_threadsafe("turn/steer", _params, _done)
         return out
 
     def _on_turn(result: Optional[Dict[str, Any]], error: Optional[Dict[str, Any]]) -> None:
@@ -501,7 +528,6 @@ async def run_codex_turn_app_server(
         params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
         if not _mine(params):
             return
-
         if method == "turn/started":
             turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
             if turn.get("id") and not st["turn_id"]:
@@ -524,20 +550,24 @@ async def run_codex_turn_app_server(
                 st["compacted"] = True
             if itype == "userMessage":
                 if method == "item/completed":
-                    st["user_items"] += 1
-                    text = ""
-                    for part in item.get("content") or []:
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            text = str(part.get("text") or "")
-                            break
-                    st["user_texts"].append(text.strip())
-                    if st["user_items"] > 1:
+                    text = _codex_user_item_text(item)
+                    if not st["prompt_echoed"] and text.strip() == (prompt or "").strip():
+                        # The turn's own input, echoed back: it must never
+                        # confirm a steer that happens to carry the same text.
+                        st["prompt_echoed"] = True
+                        return
+                    confirmed = delivery.receive(text, item.get("id"))
+                    if confirmed:
                         activity.emit(f"steer received: {_first_line(text, 100)}", force=True)
                 return
-            if itype == "agentMessage" and method == "item/completed":
-                text = str(item.get("text") or "").strip()
-                if text and (params.get("turnId") in (None, st["turn_id"])):
-                    messages.append(text)
+            if itype == "agentMessage":
+                if method == "item/started":
+                    _note(steer_registry.note_output_start, item.get("id"))
+                elif method == "item/completed":
+                    text = str(item.get("text") or "").strip()
+                    if text and (params.get("turnId") in (None, st["turn_id"])):
+                        messages.append(text)
+                        _note(steer_registry.note_output_text, item.get("id"), text)
             if method == "item/started":
                 st["reasoning_buf"] = ""
                 st["writing_buf"] = ""
@@ -666,15 +696,10 @@ async def run_codex_turn_app_server(
 
     thread_id = st["thread_id"]
     display = "\n\n".join(messages).strip()
-    echoed = list(st["user_texts"])
-    undelivered: List[str] = []
-    for text in st["steers_accepted"]:
-        if text.strip() in echoed:
-            echoed.remove(text.strip())
-        else:
-            undelivered.append(text)
-    if undelivered:
-        display = f"{display}\n\n{_undelivered_notice(undelivered)}".strip()
+    undelivered: List[str] = list(delivery.undelivered)
+    notice = delivery.closing_notice("Codex")
+    if notice:
+        display = f"{display}\n\n{notice}".strip()
     # Per-turn tokens come from the accumulated per-request deltas; the
     # thread-cumulative total is only a fallback for older servers.
     usage = _usage_from_turn_tokens(st) or _usage_from_token_usage(st["token_usage"])
@@ -683,7 +708,7 @@ async def run_codex_turn_app_server(
         "usage": usage,
         "codex_session_id": thread_id,
         "token_usage": token_usage,
-        "steered": st["steered"] - len(undelivered),
+        "steered": delivery.received_count,
         "undelivered_steers": undelivered,
         "transport": "app-server",
         "compacted": bool(st["compacted"]),

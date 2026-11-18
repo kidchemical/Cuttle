@@ -11,7 +11,7 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timedelta, timezone
 
 # Lazy: read-only agent tools (python -m api.chat_cli) must not require bcrypt
@@ -2083,6 +2083,59 @@ class AuthDatabase:
             if metadata is not None and target is not None and target['role'] == 'assistant':
                 self._bind_turn_cards(target['chat_session_id'], int(message_id), metadata)
         return affected > 0
+
+    def patch_message_metadata(
+        self,
+        updates: List[Tuple[int, Dict[str, Any]]],
+    ) -> int:
+        """Merge metadata patches into existing messages in one transaction.
+
+        ``updates`` is ``[(message_id, patch)]``; a key whose value is None is
+        removed. One connection and one transaction for the whole batch, so a
+        turn's steer receipts (``api.agent_harness.steer_receipts``) cost one
+        write however many rows they cover. Returns the rows changed.
+        """
+        rows = [(int(mid), patch) for mid, patch in (updates or []) if mid is not None]
+        if not rows:
+            return 0
+        conn = self._get_connection()
+        try:
+            conn.execute('BEGIN IMMEDIATE')
+            sessions = set()
+            changed = 0
+            for message_id, patch in rows:
+                existing = conn.execute(
+                    'SELECT chat_session_id, metadata FROM chat_messages WHERE id = ?',
+                    (message_id,),
+                ).fetchone()
+                if existing is None:
+                    continue
+                try:
+                    meta = json.loads(existing['metadata'] or '{}')
+                except (TypeError, ValueError):
+                    meta = {}
+                if not isinstance(meta, dict):
+                    meta = {}
+                for key, value in (patch or {}).items():
+                    if value is None:
+                        meta.pop(key, None)
+                    else:
+                        meta[key] = value
+                conn.execute('UPDATE chat_messages SET metadata = ? WHERE id = ?',
+                             (json.dumps(meta), message_id))
+                changed += 1
+                if existing['chat_session_id'] is not None:
+                    sessions.add(existing['chat_session_id'])
+            from api.chat_attention import refresh
+            for session_id in sessions:
+                refresh(conn, session_id)
+            conn.commit()
+        finally:
+            conn.close()
+        if changed:
+            from api.chat_live_status import notify_changed
+            notify_changed()
+        return changed
 
     def merge_message_metadata_by_query(
         self,
