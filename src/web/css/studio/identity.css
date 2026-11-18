@@ -1,0 +1,35 @@
+/* ================================================================
+   Studio agent identity (L4): the colour dot and plain agent name that
+   replace the agent chip in Studio. Markup comes from
+   shared/agent_identity.js (`dotHtml` / `labelHtml`); the dot colour is its
+   inline `background:` (the manifest colour, grey when unknown).
+   Everything is scoped to `:root.cuttle-studio`: Classic never matches.
+   Owned by L4 (chat_work_panel.js, fleet cards, tray header, bubble header).
+   ================================================================ */
+:root.cuttle-studio .agent-dot {
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+:root.cuttle-studio .agent-identity {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--studio-space-2);
+    min-width: 0;
+    max-width: 100%;
+    color: var(--studio-ink);
+    font-family: var(--font-sans);
+    font-size: var(--studio-text-sm);
+    font-weight: var(--studio-weight-semibold);
+    line-height: var(--studio-leading-tight);
+    white-space: nowrap;
+}
+
+:root.cuttle-studio .agent-identity-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}

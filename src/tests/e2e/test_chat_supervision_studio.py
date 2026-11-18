@@ -95,6 +95,12 @@ class StudioWorld(SupervisionWorld):
 
     def handle(self, route):
         path = urlparse(route.request.url).path
+        if path == "/api/experimental/flags":
+            # The page reads chat_studio_display at boot; a missing flag reads as off.
+            flags = [{"id": "chat_studio_display", "enabled": True},
+                     {"id": "chat_supervision", "enabled": self.flag}]
+            return route.fulfill(status=200, content_type="application/json",
+                                 body=json.dumps({"success": True, "flags": flags}))
         match = re.fullmatch(r"/api/chat-ops/sessions/(\d+)/timeline", path)
         if match and self.flag:
             query = parse_qs(urlparse(route.request.url).query)
@@ -134,12 +140,8 @@ def _chat_frame(page):
 
 
 def _load_studio_assets(page):
-    """The Studio parts this lane ships. The chat page wires them in the integration step."""
-    chat = _chat_frame(page)
-    chat.add_script_tag(path=str(WEB / "js" / "shared" / "chat_display.js"))
-    chat.add_style_tag(path=str(WEB / "css" / "studio" / "studio_tokens.css"))
-    chat.add_style_tag(path=str(WEB / "css" / "studio" / "supervision.css"))
-    return chat
+    """The chat page loads its Studio assets itself (chat_page.html); only the frame is needed."""
+    return _chat_frame(page)
 
 
 def _shot(page, name, settle=None):
