@@ -51,7 +51,18 @@ def _row_child(row: Any) -> ChildRecord:
         card_message_id=d.get("card_message_id"),
         card_pending=bool(d.get("card_pending")),
         card_turn_id=str(d.get("card_turn_id") or ""),
+        task_gizmo_id=str(d.get("task_gizmo_id") or ""),
+        task_item_id=str(d.get("task_item_id") or ""),
     )
+
+
+def _task_columns(task: str) -> tuple:
+    """(gizmo id, item id) for an assignment ref, or (None, None)."""
+    if not task:
+        return None, None
+    from api.subagents.spec import parse_task_ref
+
+    return parse_task_ref(task)
 
 
 def _float_or_none(value: Any) -> Optional[float]:
@@ -171,9 +182,9 @@ def insert_child(
         """
         INSERT INTO subagent_children (
             id, batch_id, session_id, sort_index, label, agent, model, effort,
-            prompt, status, profile_id, display_name, avatar
+            prompt, status, profile_id, display_name, avatar, task_gizmo_id, task_item_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
         """,
         (
             cid,
@@ -188,6 +199,7 @@ def insert_child(
             spec.profile_id or None,
             (spec.display_name or spec.title) or None,
             spec.avatar or None,
+            *(_task_columns(spec.task)),
         ),
     )
     conn.commit()
@@ -206,6 +218,8 @@ def insert_child(
         profile_id=spec.profile_id,
         display_name=spec.display_name or spec.title,
         avatar=spec.avatar,
+        task_gizmo_id=_task_columns(spec.task)[0] or "",
+        task_item_id=_task_columns(spec.task)[1] or "",
     )
     from api.orchestration_telemetry import record
 
@@ -420,6 +434,12 @@ def update_child(
         from api.orchestration_telemetry import record
 
         record.child_round(db, child_id, started=started, finished=finished)
+    if changed and status is not None:
+        # Every status path (turn end, cancel, orphan reconcile, external round)
+        # lands here, so an explicit Tasks assignment follows the child's status.
+        from api.subagents import extras
+
+        extras.settle_child_task(db, child_id, status)
 
 
 def request_stop(db, child_id: str, *, at: Optional[float] = None) -> None:
