@@ -379,6 +379,87 @@
             .format(new Date(n * 1000));
     }
 
+    // ── Studio org chart (read-only view of a playbook's tiers) ───────────
+
+    function intOrNull(v) {
+        if (typeof v !== 'number' && typeof v !== 'string') return null;
+        const n = Number(v);
+        return v !== '' && Number.isInteger(n) ? n : null;
+    }
+
+    function plural(n, one, many) {
+        return `${n} ${n === 1 ? one : many}`;
+    }
+
+    /**
+     * Tiers in escalation order (the stored array order: a task climbs it top
+     * to bottom). Each member is resolved to display fields from the saved
+     * profile or the temporary pin. A profile that no longer exists is shown as
+     * missing, not dropped. `agent` is a harness id ('' = any harness); the page
+     * hands it to CuttleAgentIdentity. Pure: profiles are passed in.
+     */
+    function chartTiers(pb, profiles) {
+        const byId = new Map((profiles || []).filter((p) => p && p.id).map((p) => [p.id, p]));
+        const tiers = (pb && pb.tiers) || [];
+        return tiers.map((tier, index) => {
+            const members = tierMembers(tier);
+            const defaultIndex = members.findIndex(isOn);
+            const rows = members.map((m, i) => {
+                const temp = isTemporary(m);
+                const p = temp ? null : byId.get(m.profile) || null;
+                const pin = temp ? m : p;
+                const agent = pin && pin.agent && pin.agent !== 'none' ? String(pin.agent) : '';
+                const detail = pin ? [pin.model, pin.effort].filter(Boolean).join(' · ') : '';
+                return {
+                    key: memberKey(m),
+                    name: temp ? (m.name || pinLabel(null, m)) : (p ? p.name : String(m.profile || '')),
+                    agent,
+                    anyHarness: !!pin && !agent,
+                    detail,
+                    on: isOn(m),
+                    isDefault: i === defaultIndex,
+                    temporary: temp,
+                    missing: !temp && !p,
+                };
+            });
+            return {
+                id: String(tier.id || `tier-${index + 1}`),
+                index,
+                label: String(tier.label || ROLE_LABELS[tier.role] || `Tier ${index + 1}`),
+                role: ROLES.indexOf(tier.role) >= 0 ? tier.role : 'worker',
+                roleLabel: ROLE_LABELS[tier.role] || '',
+                hint: String(tier.use_for || ''),
+                skipped: rows.length > 0 && defaultIndex < 0,
+                members: rows,
+            };
+        });
+    }
+
+    /**
+     * Rule chips for the org chart, one per stored playbook field that is
+     * present. A field that is absent or not a whole number gets no chip, so the
+     * chart never states a rule the playbook does not set. Pause / Stop / Resume
+     * are live controls, not playbook fields, and are not listed here.
+     */
+    function ruleChips(pb) {
+        const limits = (pb && pb.limits) || {};
+        const sup = (pb && pb.supervisor) || {};
+        const chips = [];
+        const tries = intOrNull(limits.solo_attempts);
+        if (tries != null) chips.push({ id: 'grind', text: `Grind limit · ${plural(tries, 'try', 'tries')}` });
+        const minutes = intOrNull(limits.solo_minutes);
+        if (minutes != null) chips.push({ id: 'stall', text: `No progress · ${minutes} min` });
+        const retries = intOrNull(limits.child_retries);
+        if (retries != null) {
+            chips.push({ id: 'escalate', text: retries === 0
+                ? 'Escalate on first failure'
+                : `Escalate after ${plural(retries, 'same-tier retry', 'same-tier retries')}` });
+        }
+        const every = intOrNull(sup.every_sec);
+        if (every != null && every > 0) chips.push({ id: 'supervisor', text: `Supervisor · every ${Math.round(every / 60)} min` });
+        return chips;
+    }
+
     const api = {
         ROLES, ROLE_LABELS, LIMIT_FIELDS,
         esc, slug, validId, clone,
@@ -388,7 +469,7 @@
         MAX_MEMBERS, isTemporary, isOn, tierMembers, memberKey, temporaryMember,
         addMember, removeMember, replaceMember, toggleMember, promoteMember,
         newTier, newPlaybook, duplicatePlaybook, moveItem, moveItemTo, moveMember, memberDropProblem, parseBranches,
-        playbookProblems, formatTime,
+        playbookProblems, formatTime, chartTiers, ruleChips,
     };
     root.CuttleOrchestrator = api;
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
