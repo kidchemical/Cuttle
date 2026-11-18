@@ -97,6 +97,64 @@ class FakeDb:
         return json.loads(row[0])['steer']
 
 
+class _MemoryDb:
+    """An in-memory ``AuthDatabase`` stand-in whose every write can be scripted.
+
+    ``before_write(attempt_no)`` runs on the writer thread before each attempt
+    and may block or raise; a patch is applied all-or-nothing, like the real
+    transaction.
+    """
+
+    def __init__(self, before_write=None):
+        self.rows = {}
+        self.before_write = before_write
+        self.attempts = []     # row ids of every attempt, failed or not
+        self.writes = []       # row ids of every committed transaction
+        self.reply_saved = False
+
+    def add_message(self, _sid, _role, _text, metadata=None):
+        message_id = len(self.rows) + 1
+        self.rows[message_id] = json.loads(json.dumps(metadata or {}))
+        return message_id
+
+    def patch_message_metadata(self, updates):
+        self.attempts.append([mid for mid, _ in updates])
+        if self.before_write is not None:
+            self.before_write(len(self.attempts))
+        for message_id, patch in updates:
+            self.rows[message_id].update(json.loads(json.dumps(patch)))
+        self.writes.append([mid for mid, _ in updates])
+        self.reply_saved = self.reply_saved or any(
+            patch['steer']['reply'] for _, patch in updates)
+        return len(updates)
+
+    def steer_meta(self, message_id):
+        return self.rows[message_id]['steer']
+
+
+def _echoed_group(session, labels):
+    """A tracker whose steers were all echoed, so one agent message covers them."""
+    tracker = Receipts(steer_receipts.changed, many=steer_receipts.changed_many,
+                       session=session)
+    ids = {}
+    for label in labels:
+        ids[label] = tracker.begin(label)
+        steer_receipts.track(session, tracker, ids[label])
+        tracker.accepted(ids[label], True)
+        tracker.echo(ids[label])
+    return tracker, ids
+
+
+def _insert(db, session, label, steer_id):
+    return db.add_message(session, 'user', label,
+                          {'steer': steer_receipts.insert_shape(steer_id)})
+
+
+def _held(db, message_id):
+    row = db.steer_meta(message_id)
+    return ((row['reply'] or {}).get('text'), row['covers'])
+
+
 # ── the contract ────────────────────────────────────────────────────────────
 
 def test_full_contract_shape_is_written_at_insert():
@@ -1065,13 +1123,13 @@ def test_only_the_vendors_own_error_answer_counts_as_a_refusal():
     assert vendor_refused('boom') is False
 
 
-def test_a_late_bind_after_a_given_up_group_never_duplicates_the_excerpt(tmp_path, monkeypatch):
+def test_a_late_bind_after_a_given_up_write_never_duplicates_the_excerpt(tmp_path, monkeypatch):
     """Codex final 2: one row ever holds the excerpt, give-up or not.
 
     The excerpt is saved on the first row while the second is unbound; every
-    write at turn finish then fails, so the first row is given up with the
-    excerpt it already carries and can never be rewritten. The second row
-    binding afterwards must not publish a second copy of it.
+    write at turn finish then fails and is given up. The group is still
+    retained whole, so the second row binding afterwards rewrites **both** rows
+    in one transaction: the excerpt moves, it is never copied.
     """
     monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
     db = FakeDb(tmp_path / 'given-up.db')
@@ -1092,19 +1150,20 @@ def test_a_late_bind_after_a_given_up_group_never_duplicates_the_excerpt(tmp_pat
     db.broken = True                             # the turn ends, writes fail 3x
     tracker.finish()
     assert steer_receipts.flush(5.0)
-    assert steer_receipts.snapshot(first) is None, 'the given-up receipt is released'
+    assert steer_receipts.snapshot(first) is not None, 'the group is retained whole'
+    assert db.steer_meta(first_id)['reply']['text'] == 'Both noted.'
 
     db.broken = False                            # writes come back
     second_id = db.add_message(967, 'user', 'two')
     steer_receipts.bind(second, db, second_id)   # the second row binds late
     assert steer_receipts.flush(5.0)
 
-    late = db.steer_meta(second_id)
-    assert late['reply'] is None, 'the excerpt already lives on the given-up row'
-    assert late['covers'] == [], 'a late bind keeps the insert shape'
-    assert late['state'] == 'delivered', 'terminal state by its own facts'
-    holders = [mid for mid in (first_id, second_id) if db.steer_meta(mid)['reply']]
-    assert holders == [first_id], 'exactly one excerpt holder, ever'
+    late, early = db.steer_meta(second_id), db.steer_meta(first_id)
+    assert late['reply']['text'] == 'Both noted.', 'the last covered row carries it'
+    assert early['reply'] is None, 'and the earlier row gave it up in the same write'
+    assert early['covers'] == late['covers'] == [first_id, second_id]
+    assert early['state'] == late['state'] == 'delivered'
+    assert db.writes[-1] == [first_id, second_id], 'one transaction covers the group'
     assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
 
 
@@ -1172,10 +1231,10 @@ def test_unrelated_traffic_cannot_move_a_groups_excerpt(tmp_path, monkeypatch):
     """Codex gate F1: the group's state is the group's, not a global LRU's.
 
     The excerpt is saved on the first row while the second is unbound; the
-    first row's terminal writes then fail and it is given up holding the
-    excerpt. Hundreds of unrelated receipts are released before the second row
-    binds, inside its grace period. The outcome must be the same as with no
-    other traffic at all: one row holds the excerpt.
+    group's terminal writes then fail and are given up. Hundreds of unrelated
+    receipts come and go before the second row binds, inside its grace period.
+    The outcome must be the same as with no other traffic at all: the excerpt
+    moves to the last covered row, and one row holds it.
     """
     monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
     db = FakeDb(tmp_path / 'lru.db')
@@ -1197,11 +1256,19 @@ def test_unrelated_traffic_cannot_move_a_groups_excerpt(tmp_path, monkeypatch):
     db.broken = True                     # the turn ends, the writes fail 3x
     tracker.finish()
     assert steer_receipts.flush(5.0)
-    assert steer_receipts.snapshot(first) is None, 'the given-up receipt is released'
 
     # Unrelated chats come and go: far more releases than any bounded set holds.
+    noise_db = _MemoryDb()
+    noise = Receipts(steer_receipts.changed, many=steer_receipts.changed_many,
+                     session='9680')
     for index in range(600):
-        steer_receipts._release(f'noise-{index}')
+        steer_id = noise.begin(f'noise {index}')
+        steer_receipts.track('9680', noise, steer_id)
+        noise.accepted(steer_id, True)
+        steer_receipts.bind(steer_id, noise_db, noise_db.add_message(9680, 'user', 'n'))
+    noise.finish()
+    assert steer_receipts.flush(5.0)
+    assert steer_receipts.retained()['pending'] == 2, 'only the group is still held'
 
     db.broken = False                    # writes recover, then the row binds
     second_id = db.add_message(968, 'user', 'two',
@@ -1209,12 +1276,11 @@ def test_unrelated_traffic_cannot_move_a_groups_excerpt(tmp_path, monkeypatch):
     steer_receipts.bind(second, db, second_id)
     assert steer_receipts.flush(5.0)
     late = db.steer_meta(second_id)
-    assert late['reply'] is None, 'unrelated traffic must not duplicate the excerpt'
-    assert late['covers'] == []
-    assert late['state'] == 'delivered', 'terminal state by its own facts'
-    assert db.steer_meta(first_id)['reply']['text'] == 'Both noted.'
+    assert late['reply']['text'] == 'Both noted.'
+    assert late['covers'] == [first_id, second_id]
+    assert late['state'] == 'delivered'
     holders = [mid for mid in (first_id, second_id) if db.steer_meta(mid)['reply']]
-    assert holders == [first_id], 'exactly one excerpt holder, ever'
+    assert holders == [second_id], 'exactly one excerpt holder, ever'
     assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
 
 
@@ -1245,7 +1311,6 @@ def test_an_excerpt_no_row_ever_saved_lands_on_the_late_bound_row(tmp_path, monk
     assert steer_receipts.flush(5.0)
     tracker.finish()                     # and so does the terminal write
     assert steer_receipts.flush(5.0)
-    assert steer_receipts.snapshot(first) is None, 'the given-up receipt is released'
     assert db.steer_meta(first_id)['reply'] is None, 'no row carries the excerpt'
 
     db.broken = False                    # writes recover, then the row binds
@@ -1261,3 +1326,185 @@ def test_an_excerpt_no_row_ever_saved_lands_on_the_late_bound_row(tmp_path, monk
     holders = [mid for mid in (first_id, second_id) if db.steer_meta(mid)['reply']]
     assert holders == [second_id], 'exactly one excerpt holder, ever'
     assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+# ── the group is the unit of writing ────────────────────────────────────────
+
+def test_a_reply_no_write_ever_saved_is_not_lost_to_a_reverse_order_bind(monkeypatch):
+    """Codex gate 4, zero holders: the given-up row is the last covered one.
+
+    B's row is inserted first but binds last. A (the later row) binds, and
+    every write of the excerpt and of the turn's end fails. The database
+    recovers, then B binds. The excerpt belongs on A, the last covered row;
+    A used to be released at give-up, so B wrote ``reply: null`` with the full
+    ``covers`` and no row carried the reply at all.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    locked = [False]
+
+    def before_write(_attempt):
+        if locked[0]:
+            raise sqlite3.OperationalError('database is locked')
+
+    db = _MemoryDb(before_write)
+    tracker, ids = _echoed_group('970', 'AB')
+    b = _insert(db, '970', 'B', ids['B'])            # row 1, bind delayed
+    a = _insert(db, '970', 'A', ids['A'])            # row 2
+    steer_receipts.bind(ids['A'], db, a)
+    assert steer_receipts.flush(5.0)
+
+    locked[0] = True
+    tracker.output_start('reply')
+    tracker.output_text('reply', 'Both noted.')
+    assert steer_receipts.flush(5.0)
+    tracker.finish()
+    assert steer_receipts.flush(5.0)
+    assert _held(db, a) == (None, []), 'nothing was ever saved'
+
+    locked[0] = False
+    steer_receipts.bind(ids['B'], db, b)
+    assert steer_receipts.flush(5.0)
+    assert _held(db, a) == ('Both noted.', [b, a])
+    assert _held(db, b) == (None, [b, a])
+    assert db.writes[-1] == [b, a], 'one transaction covers the group'
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+def test_binds_during_a_failing_and_a_recovering_write_leave_one_holder(monkeypatch):
+    """Codex gate 4, two holders: binds landing while writes are in flight.
+
+    Rows B, A, C. A binds and every excerpt write fails. B binds while A's
+    last terminal attempt is inside the database; that attempt then fails. C
+    binds while the recovered write of A and B is inside the database, before
+    it commits. A used to be released by the failed attempt, so the recovered
+    write froze the excerpt on A while C's write put a second copy on C.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    locked = [True]
+    base = [None]
+    last_attempt, fail_it = threading.Event(), threading.Event()
+    recovering, commit_it = threading.Event(), threading.Event()
+
+    def before_write(attempt):
+        if base[0] is not None:
+            turn_end_attempt = attempt - base[0]
+            if turn_end_attempt == 3:
+                last_attempt.set()
+                assert fail_it.wait(5)
+                raise sqlite3.OperationalError('last terminal attempt failed')
+            if turn_end_attempt == 4:
+                locked[0] = False
+                recovering.set()
+                assert commit_it.wait(5)
+        if locked[0]:
+            raise sqlite3.OperationalError('database is locked')
+
+    db = _MemoryDb()
+    tracker, ids = _echoed_group('971', 'ABC')
+    b = _insert(db, '971', 'B', ids['B'])
+    a = _insert(db, '971', 'A', ids['A'])
+    c = _insert(db, '971', 'C', ids['C'])
+    steer_receipts.bind(ids['A'], db, a)
+    assert steer_receipts.flush(5.0)
+
+    db.before_write = before_write
+    tracker.output_start('reply')
+    tracker.output_text('reply', 'Both noted.')
+    assert steer_receipts.flush(5.0)
+    assert all(_held(db, mid) == (None, []) for mid in (a, b, c))
+
+    base[0] = len(db.attempts)
+    tracker.finish()
+    try:
+        assert last_attempt.wait(5)
+        steer_receipts.bind(ids['B'], db, b)     # during A's 3rd terminal attempt
+        fail_it.set()
+        assert recovering.wait(5)
+        steer_receipts.bind(ids['C'], db, c)     # before the A+B write commits
+    finally:
+        fail_it.set()
+        commit_it.set()
+    assert steer_receipts.flush(5.0)
+
+    assert db.writes[-2:] == [[b, a], [b, a, c]], 'whole-group transactions only'
+    assert _held(db, c) == ('Both noted.', [b, a, c])
+    assert _held(db, a) == (None, [b, a, c])
+    assert _held(db, b) == (None, [b, a, c])
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+def test_any_interleaving_leaves_the_excerpt_on_exactly_one_row(monkeypatch):
+    """Property: bind order x write failures x recovery point, 300 seeded cases.
+
+    Three steers are echoed before one agent message. Their rows are inserted
+    and bound in random orders around the agent's output and the turn's end,
+    while each write attempt randomly fails or stalls and the database may
+    recover before the last event. Whatever happened, the saved rows must be
+    one committed whole-group state: the excerpt on exactly one row iff a write
+    carrying it ever succeeded, that row being the last of the rows the write
+    covered, all of which list the same ``covers``. When the database is
+    healthy for the last event, that state is the complete one.
+    """
+    import random
+
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.0)
+    rng = random.Random(20261118)
+    for case in range(300):
+        fail_rate = rng.choice([0.0, 0.3, 0.6, 0.9, 1.0])
+        healed = [False]
+        write_rng = random.Random(rng.random())
+
+        def before_write(_attempt, fail_rate=fail_rate, healed=healed,
+                         write_rng=write_rng):
+            if write_rng.random() < 0.3:
+                time.sleep(write_rng.random() * 0.002)   # events land mid-write
+            if not healed[0] and write_rng.random() < fail_rate:
+                raise sqlite3.OperationalError('database is locked')
+
+        db = _MemoryDb(before_write)
+        session = str(98000 + case)
+        tracker, ids = _echoed_group(session, 'ABC')
+        rows = {}
+        for label in rng.sample('ABC', 3):               # row id order
+            rows[label] = _insert(db, session, label, ids[label])
+        steps = rng.sample(['A', 'B', 'C', 'output', 'finish'], 5)
+        heal_before_last = rng.random() < 0.6
+        for index, step in enumerate(steps):
+            if index == len(steps) - 1 and heal_before_last:
+                if rng.random() < 0.5:
+                    assert steer_receipts.flush(5.0)
+                healed[0] = True
+            if step == 'output':
+                tracker.output_start('reply')
+                tracker.output_text('reply', 'All noted.')
+            elif step == 'finish':
+                tracker.finish()
+            else:
+                steer_receipts.bind(ids[step], db, rows[step])
+            if rng.random() < 0.5:
+                assert steer_receipts.flush(5.0)
+        assert steer_receipts.flush(5.0)
+
+        where = f'case {case}: rows {rows}, steps {steps}, fail {fail_rate}, ' \
+                f'healed {heal_before_last}, attempts {db.attempts}, writes {db.writes}'
+        saved = {mid: db.steer_meta(mid) for mid in rows.values()}
+        holders = [mid for mid, row in saved.items() if row['reply']]
+        covered = sorted(mid for mid, row in saved.items() if row['covers'])
+        assert len(holders) == (1 if db.reply_saved else 0), where
+        if holders:
+            assert saved[holders[0]]['reply']['text'] == 'All noted.', where
+            assert holders[0] == covered[-1], 'the last covered row holds it: ' + where
+        for mid, row in saved.items():
+            assert row['covers'] == (covered if mid in covered else []), where
+        replied = steps.index('output') < steps.index('finish')
+        if not replied:
+            assert not holders and not covered, where
+        elif heal_before_last:
+            # Any write eventually succeeds: the complete state is the saved one.
+            assert holders == [max(rows.values())], where
+            assert covered == sorted(rows.values()), where
+            assert all(row['state'] == 'delivered' for row in saved.values()), where
+            assert steer_receipts.retained()['pending'] == 0, where
+        with steer_receipts._pending_lock:
+            steer_receipts._pending.clear()
+            steer_receipts._live.clear()

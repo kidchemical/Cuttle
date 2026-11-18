@@ -6,10 +6,20 @@ can be bound later; the latest snapshot is retained until then.
 
 **The tracker only changes memory.** Vendor reader threads (``_on_line``),
 ``steer()`` and turn teardown never open SQLite and never wait on it: one
-background writer thread persists the latest snapshot per ``steer_id``, batching
-a turn's rows into a single transaction
+background writer thread persists receipts
 (``AuthDatabase.patch_message_metadata``). A busy database therefore delays no
 agent event loop.
+
+**The group is the unit of writing.** Steers answered by one agent message form
+a group (an ungrouped steer is a group of one). An event never queues a row
+patch: it only marks its group dirty. The writer then reads the group's state
+as it is *at write time* and saves every bound member in one transaction — the
+excerpt and full ``covers`` on the last bound row, ``reply: null`` on the
+others. Writes are serialized on the one writer thread, so whichever
+transaction commits last is self-consistent whatever failed, was retried or
+bound in between: there is no per-row write that could leave the excerpt on two
+rows or on none. A group is retained as a whole — until every member has ended
+and bound and that state is committed (or given up on), or its grace expires.
 
 Contract on the saved user row, written in full at insert
 (``api.chat_coordinator.steered_user_meta``) and only ever replaced wholesale:
@@ -57,12 +67,13 @@ PENDING = 'pending'
 DELIVERED = 'delivered'
 UNDELIVERED = 'undelivered'
 
-# A bound row keeps its binding until the receipt ends and is persisted. One
-# that never binds (the turn ended during delivery, so the row insert may still
-# be in flight) is dropped this long after the turn ended.
+# A group is retained until every member has ended and bound and that state is
+# saved. One with a member that never binds (the turn ended during delivery, so
+# the row insert may still be in flight) is dropped this long after it ended.
 _PENDING_GRACE_SEC = 60.0
-# Write attempts per snapshot before the receipt is given up (and, when it has
-# ended, released: nothing is retained for a row that cannot be written).
+# Attempts per group write before it is given up. The whole group is given up
+# at once and its rows keep the last committed (self-consistent) state; a group
+# that can still change stays retained, and its next change is a fresh write.
 _MAX_WRITE_ATTEMPTS = 3
 _RETRY_SLEEP_SEC = 0.05
 # How long an idle writer waits before purging again; with nothing queued and
@@ -246,12 +257,7 @@ class Receipts:
                        and e['group'] is None and not e['ended']]
             if not waiting:
                 return
-            # ``saved`` is the group's own fact, shared by every member's
-            # entry and snapshot: which row, if any, durably holds this
-            # excerpt. It lives exactly as long as a member is retained, so no
-            # unrelated traffic can evict it.
-            group = {'members': waiting, 'reply': {'text': clipped, 'at': _now()},
-                     'saved': {'holder': None}}
+            group = {'members': waiting, 'reply': {'text': clipped, 'at': _now()}}
             for entry in waiting:
                 entry['group'] = group
             self._emit_many(waiting)
@@ -273,6 +279,18 @@ class Receipts:
         with self._lock:
             entry = self._find(steer_id)
             return bool(entry and entry['delivered_at'])
+
+    def group(self, steer_id):
+        """Every member of this steer's group as it stands now (one consistent read).
+
+        The writer builds a group's transaction from this, at write time, so a
+        write never carries a row computed before the group last changed.
+        """
+        with self._lock:
+            entry = self._find(steer_id)
+            if entry is None:
+                return None
+            return [self._snapshot(member) for member in self._group_members(entry)]
 
     # ── internals ───────────────────────────────────────────────────────────
     def _next(self):
@@ -303,16 +321,10 @@ class Receipts:
                 'mode': entry['mode'], 'reply': reply, 'covers': covers}
 
     def _snapshot(self, entry):
-        group = entry['group']
-        binding = bool(group is not None
-                       and any(m['message_id'] is None for m in group['members']))
         return {**self._public(entry), 'message_id': entry['message_id'],
                 'turn_id': entry['turn_id'], 'ended': entry['ended'],
-                'group_binding': binding,
-                # The group's own fact (shared, not copied): which row durably
-                # holds this excerpt. A holder that can no longer be rewritten
-                # keeps it, so no other member publishes a second copy.
-                'group_saved': group['saved'] if group is not None else None,
+                # Who is retained (and purged) together with this steer.
+                'group': tuple(m['steer_id'] for m in self._group_members(entry)),
                 'session': self.session, 'guard_turn': self.guard_turn}
 
     def _emit(self, entry):
@@ -333,14 +345,17 @@ class Receipts:
 
 
 # ── pending bindings, live status and the background writer ─────────────────
-# ``_pending`` keeps a steer's binding until its row is written and its final
-# snapshot saved; ``_live`` is what ``/api/chat-live-status`` shows for the
-# current turn. Both maps are taken while the emitting tracker's lock is held
-# (the lock order is always tracker → these, so it cannot deadlock), and
-# nothing under them touches the database: the writer thread does that.
-# The writer's exit decision is the one place that nests ``_write_lock`` →
-# ``_pending_lock``; nothing anywhere nests them the other way round, and
-# neither critical section calls out of this module.
+# ``_pending`` keeps each steer's binding (its tracker, database handle and
+# retention facts) for as long as its group is retained; ``_live`` is what
+# ``/api/chat-live-status`` shows for the current turn. Both maps are taken
+# while the emitting tracker's lock is held (the lock order is always tracker →
+# these, so it cannot deadlock), and nothing under them touches the database:
+# the writer thread does that.
+# ``_queue`` holds no row data at all: only "this steer's group needs writing"
+# and the attempts already spent on it. The writer's exit decision is the one
+# place that nests ``_write_lock`` → ``_pending_lock``; nothing anywhere nests
+# them the other way round, and neither critical section calls out of this
+# module.
 _pending_lock = threading.Lock()
 _pending = {}
 _live = {}
@@ -356,7 +371,12 @@ def track(session, tracker, steer_id):
     with _pending_lock:
         _purge_locked()
         _pending[steer_id] = {'tracker': tracker, 'session': str(session),
-                              'db': None, 'ended_at': None}
+                              'db': None, 'message_id': None, 'ended_at': None,
+                              'stale': False, 'group': (steer_id,),
+                              # ``rev`` counts the changes that asked for a
+                              # write; ``settled`` is the one the writer last
+                              # finished with (saved or given up).
+                              'rev': 0, 'settled': 0}
     # Anything retained needs the writer running: grace purging must not
     # depend on later traffic (a process whose only receipt ends unbound).
     _ensure_writer()
@@ -369,8 +389,6 @@ def discard(steer_id):
         binding = _pending.pop(steer_id, None)
         if binding is not None:
             _unpublish_locked(binding['session'], steer_id)
-    with _write_lock:
-        _queue.pop(steer_id, None)
 
 
 def discard_meta(metadata):
@@ -381,17 +399,31 @@ def discard_meta(metadata):
 
 
 def _purge_locked():
-    """Drop bindings of ended receipts that no row will ever carry."""
+    """Drop whole groups that ended a grace period ago and are not being written.
+
+    A group goes as one: dropping a single member would leave the others
+    waiting for a bind that can no longer be seen. A group with a write still
+    owed is left to the writer, which releases or settles it.
+    """
     now = time.monotonic()
+    seen = set()
     for steer_id, binding in list(_pending.items()):
-        ended_at = binding.get('ended_at')
-        if ended_at is None:
+        if steer_id in seen:
             continue
-        if (binding.get('db') is not None and binding.get('message_id') is not None
-                and not binding.get('held_for_group')):
-            continue  # bound: the writer releases it once it is saved
-        if now - ended_at >= _PENDING_GRACE_SEC:
-            _pending.pop(steer_id, None)
+        ids = {steer_id, *binding['group']}
+        members = {sid: _pending[sid] for sid in ids if sid in _pending}
+        seen.update(members)
+        if any(m['ended_at'] is None or m['rev'] != m['settled']
+               for m in members.values()):
+            continue
+        if now - max(m['ended_at'] for m in members.values()) >= _PENDING_GRACE_SEC:
+            _release_locked(members)
+
+
+def _release_locked(steer_ids):
+    for steer_id in list(steer_ids):
+        binding = _pending.pop(steer_id, None)
+        if binding is not None:
             _unpublish_locked(binding['session'], steer_id)
 
 
@@ -452,29 +484,29 @@ def changed(snapshot):
 
 
 def changed_many(snapshots):
-    """Publish snapshots to live status and queue their writes. Never blocks.
+    """Publish snapshots to live status and mark their groups dirty. Never blocks.
 
-    Everything a group emits arrives here together, so one transaction covers
-    it. Returns True when any snapshot's turn was superseded, which freezes the
-    emitting tracker.
+    Nothing computed here is ever written: the writer reads each dirty group
+    afresh. Returns True when any snapshot's turn was superseded, which freezes
+    the emitting tracker.
     """
-    writes, stale = [], False
+    dirty, stale = [], False
     for snapshot in snapshots:
-        item, gone = _apply(snapshot)
+        writable, gone = _apply(snapshot)
         stale = stale or gone
-        if item is not None:
-            writes.append(item)
-    if writes:
+        if writable:
+            dirty.append(snapshot['steer_id'])
+    if dirty:
         with _write_lock:
-            for item in writes:
-                _queue[item['steer_id']] = item
+            for steer_id in dirty:
+                _queue[steer_id] = 0   # a newer change is a fresh write
         _ensure_writer()
         _wake.set()
     return stale
 
 
 def _apply(snapshot):
-    """Live-status side of one snapshot → (queue item or None, superseded)."""
+    """Live-status and retention side of one snapshot → (row writable, superseded)."""
     steer_id = snapshot['steer_id']
     contract = {key: snapshot[key] for key in _CONTRACT_KEYS}
     stale = _superseded(snapshot)
@@ -488,17 +520,17 @@ def _apply(snapshot):
     with _pending_lock:
         binding = _pending.get(steer_id)
         if binding is None:
-            return None, stale
-        if _excerpt_is_elsewhere_locked(snapshot):
-            # The excerpt is durably on a row that can no longer be rewritten.
-            # This row keeps the insert shape; its state is its own facts.
-            contract = {**contract, 'reply': None, 'covers': []}
+            return False, stale
+        binding['stale'] = binding['stale'] or stale
+        binding['group'] = tuple(snapshot.get('group') or (steer_id,))
         if ended:
             binding['ended_at'] = binding.get('ended_at') or time.monotonic()
-        binding['held_for_group'] = False  # a fresh snapshot is on its way
-        session, db = binding['session'], binding['db']
+        session = binding['session']
         message_id = snapshot.get('message_id')
         binding['message_id'] = message_id
+        writable = binding['db'] is not None and message_id is not None
+        if writable:
+            binding['rev'] += 1
         if stale:
             _unpublish_locked(session, steer_id)
         elif message_id is not None:
@@ -509,31 +541,7 @@ def _apply(snapshot):
                 bucket.pop(next(iter(bucket)))
         if ended and message_id is None:
             _purge_locked()
-    if db is None or message_id is None:
-        return None, stale
-    return ({'steer_id': steer_id, 'db': db, 'message_id': message_id,
-             'patch': contract, 'session': session, 'ended': ended,
-             'turn_id': snapshot.get('turn_id') or '',
-             'guard_turn': snapshot.get('guard_turn'),
-             'group_binding': bool(snapshot.get('group_binding')),
-             'group_saved': snapshot.get('group_saved'),
-             'attempts': 0}, stale)
-
-
-def _excerpt_is_elsewhere_locked(snapshot):
-    """True when another row durably holds this excerpt and is beyond rewriting.
-
-    The group's own fact names the row a successful write put the excerpt on.
-    While that row is still retained the excerpt can move to a later-bound
-    member (every member is rewritten in one transaction); once it is let go of
-    — given up after bounded retries, or saved and settled — its row keeps the
-    excerpt as it stands and this member falls back to the insert shape. When
-    no row holds it (every write failed, or none carried it yet) this member
-    takes it, so the reply is never lost.
-    """
-    holder = (snapshot.get('group_saved') or {}).get('holder')
-    return bool(holder is not None and holder != snapshot['steer_id']
-                and holder not in _pending)
+    return writable, stale
 
 
 def _unpublish_locked(session, steer_id):
@@ -651,13 +659,16 @@ def _writer_loop():
         retry = {}
         try:
             _write_batch(batch, retry, log)
+        except Exception:
+            log.exception("Steer receipt writer failed")
         finally:
             # Requeue under the same lock hold that drops the in-flight count,
             # so flush() can never see an empty queue with no writer in flight
-            # while a failed batch is still waiting to be put back.
+            # while a failed batch is still waiting to be put back. A change
+            # queued meanwhile wins: it is a newer write of the same group.
             with _write_lock:
-                for steer_id, item in retry.items():
-                    _queue.setdefault(steer_id, item)
+                for steer_id, attempts in retry.items():
+                    _queue.setdefault(steer_id, attempts)
                 _inflight -= 1
         if retry:
             time.sleep(_RETRY_SLEEP_SEC)
@@ -665,79 +676,112 @@ def _writer_loop():
 
 
 def _write_batch(batch, retry, log):
-    """Persist one coalesced batch, filling ``retry`` with another attempt's items."""
-    for items in _group_by_db(batch).values():
+    """Write every dirty group in ``batch`` whole; fill ``retry`` with failures.
+
+    ``batch`` is ``{steer_id: attempts}``. Each steer resolves to its group as
+    it is now, so several dirty members — or a retry and a newer change — are
+    one write of one group.
+    """
+    by_db = {}
+    for plan in _plan_groups(batch):
+        by_db.setdefault(id(plan['db']), []).append(plan)
+    for plans in by_db.values():
         try:
-            items[0]['db'].patch_message_metadata(
-                [(item['message_id'], {'steer': item['patch']}) for item in items])
+            plans[0]['db'].patch_message_metadata(
+                [(message_id, {'steer': contract})
+                 for plan in plans for message_id, contract in plan['rows']])
         except Exception:
-            log.warning("Steer receipt write failed for %d row(s)", len(items), exc_info=True)
-            for item in items:
-                item['attempts'] += 1
-                if item['attempts'] < _MAX_WRITE_ATTEMPTS:
-                    retry[item['steer_id']] = item
-                elif item['ended']:
-                    # Given up: the row keeps whatever it last had, and nothing
-                    # is retained in memory for a receipt that cannot land.
-                    _release(item['steer_id'])
+            log.warning("Steer receipt write failed for %d group(s)", len(plans),
+                        exc_info=True)
+            for plan in plans:
+                attempts = plan['attempts'] + 1
+                if attempts < _MAX_WRITE_ATTEMPTS:
+                    for steer_id in plan['revs']:
+                        retry[steer_id] = attempts
+                else:
+                    # Given up, as a group: its rows keep the last state a
+                    # transaction committed, which is self-consistent.
+                    _settle(plan)
             continue
-        _note_saved(items)
-        for item in items:
-            if item['ended']:
-                _settle(item['steer_id'], group_binding=item['group_binding'])
+        for plan in plans:
+            _settle(plan)
 
 
-def _note_saved(items):
-    """Update each group's fact from writes that **succeeded**.
+def _plan_groups(batch):
+    """Dirty steers → one plan per group, read from the group's state right now."""
+    plans = {}
+    for steer_id, attempts in batch.items():
+        with _pending_lock:
+            binding = _pending.get(steer_id)
+            tracker = binding['tracker'] if binding else None
+        if tracker is None:
+            continue   # released or discarded since: nothing left to write
+        members = tracker.group(steer_id)
+        if not members:
+            continue
+        key = members[0]['steer_id']
+        if key in plans:
+            # The same group again; the freshest request sets the retry budget.
+            plans[key]['attempts'] = min(plans[key]['attempts'], attempts)
+            continue
+        plan = _plan(members, attempts)
+        if plan is not None:
+            plans[key] = plan
+    return list(plans.values())
 
-    A row becomes its group's excerpt holder only once a patch carrying the
-    reply has landed; a holder rewritten without it (the excerpt moved to a
-    later-bound row, in the same transaction) stops being one. Clears run
-    before sets, so a move within one batch leaves exactly one holder.
+
+def _plan(members, attempts):
+    """One group's transaction: every bound member, as the group stands.
+
+    ``members`` is one consistent read of the tracker, so exactly one row (the
+    last bound) carries the excerpt and all carry the same ``covers``. The
+    bindings are read under one lock hold, and groups are purged whole, so the
+    plan covers either every bound member or none.
+    """
+    rows, revs, held, db, final = [], {}, [], None, True
+    with _pending_lock:
+        for member in members:
+            steer_id = member['steer_id']
+            binding = _pending.get(steer_id)
+            if binding is None:
+                continue   # discarded: no row will ever carry this steer
+            held.append(steer_id)
+            if not (member['ended'] or binding['stale']):
+                final = False
+            message_id = member['message_id']
+            if binding['db'] is None or message_id is None:
+                final = False   # still to bind: the group will be rewritten
+                continue
+            contract = {key: member[key] for key in _CONTRACT_KEYS}
+            if binding['stale']:
+                contract = _terminal(contract)
+            rows.append((message_id, contract))
+            revs[steer_id] = binding['rev']
+            # One handle writes the whole group, so it is one transaction
+            # (every handle is the same database).
+            db = db if db is not None else binding['db']
+    if not rows:
+        return None
+    rows.sort(key=lambda row: row[0])
+    return {'db': db, 'rows': rows, 'revs': revs, 'held': held,
+            'final': final, 'attempts': attempts}
+
+
+def _settle(plan):
+    """The writer is done with this plan (saved, or given up after retries).
+
+    A group that can no longer change — every member ended and bound — is
+    released whole. Any other stays retained with all its bindings, so the next
+    change (a late bind, the turn's end) rewrites every row again; the grace
+    purge is the backstop for a member that never binds.
     """
     with _pending_lock:
-        for item in items:
-            fact = item.get('group_saved')
-            if fact is not None and not item['patch'].get('reply'):
-                if fact.get('holder') == item['steer_id']:
-                    fact['holder'] = None
-        for item in items:
-            fact = item.get('group_saved')
-            if fact is not None and item['patch'].get('reply'):
-                fact['holder'] = item['steer_id']
-
-
-def _group_by_db(batch):
-    groups = {}
-    for item in batch.values():
-        groups.setdefault(id(item['db']), []).append(item)
-    return groups
-
-
-def _settle(steer_id, *, group_binding):
-    """An ended receipt was saved: release it unless its group is still binding.
-
-    A grouped reply moves to the last covered row as members bind, and every
-    member is rewritten when it does — so releasing a member early would
-    freeze its row with a second copy of the excerpt and a short ``covers``.
-    The grace purge is the backstop for a member that never binds.
-    """
-    if not group_binding:
-        _release(steer_id)
-        return
-    with _pending_lock:
-        binding = _pending.get(steer_id)
-        if binding is not None:
-            binding['held_for_group'] = True
-
-
-def _release(steer_id):
-    """The receipt is final and saved: nothing needs to be kept for it."""
-    with _pending_lock:
-        binding = _pending.pop(steer_id, None)
-        if binding is None:
-            return
-        _unpublish_locked(binding['session'], steer_id)
+        for steer_id, rev in plan['revs'].items():
+            binding = _pending.get(steer_id)
+            if binding is not None:
+                binding['settled'] = max(binding['settled'], rev)
+        if plan['final']:
+            _release_locked(plan['held'])
 
 
 def flush(timeout=5.0):

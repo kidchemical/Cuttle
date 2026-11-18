@@ -122,17 +122,19 @@ wholesale by the receipt owner, `api.agent_harness.steer_receipts`:
   - A single ungrouped steer that has a reply carries `[own_id]`.
   - The reply itself is carried by the **last** covered row only, so a client
     renders it once; the earlier rows carry the full `covers` with
-    `reply: null`. Binding a later row moves the reply to it and updates every
-    member's `covers`; the owner keeps a group writable until every member has
-    bound, so there is never more than one excerpt holder. The holder is
-    whichever row a **successful** write put the excerpt on, a fact the group
-    keeps for as long as any member is retained. Once that row is let go of —
-    given up after bounded retries, or saved and settled — it keeps the
-    excerpt as it stands and a member binding afterwards keeps the insert
-    shape (`reply: null`, `covers: []`) with its own terminal `state`. When no
-    row holds it (every write failed), the late-bound row takes the excerpt
-    instead, so the reply is never lost. One row ever holds one excerpt, and
-    unrelated chats' traffic never changes which.
+    `reply: null`. Binding a later row moves the reply to the last covered
+    row and updates every member's `covers`, in the same transaction.
+  - **One holder, by construction.** The group is the unit of writing: every
+    save rewrites all of the group's bound rows in one transaction, computed
+    from the group's state at write time, and saves are serialized. Whatever
+    failed, was retried or bound in between, the saved rows are always one
+    whole-group state, so the excerpt is never on two rows and never on none
+    once a write carrying it has succeeded.
+  - A row whose bind came after the last successful write keeps the insert
+    shape (`reply: null`, `covers: []`): the rows that do list `covers` agree
+    with each other, and the last of them carries the reply. This only
+    outlasts the turn when the database stayed unwritable or the bind came
+    after the group's grace period.
 
 `/api/chat-live-status` extras include `steers`: the same objects plus
 `message_id` and `turn_id`, for the **current turn only**, so an open thread can
@@ -143,11 +145,18 @@ after a reload the user row is the only source of truth.
 
 - **No database on the reader path.** The tracker mutates memory only. Vendor
   reader threads (`_on_line`), `POST /api/chat-steer` and turn teardown never
-  open SQLite and never wait on it: one daemon writer thread persists the
-  latest snapshot per `steer_id`, batching a turn's rows into a single
-  `AuthDatabase.patch_message_metadata` transaction, with bounded retries. A
-  busy database therefore cannot stall an agent event loop or time a steer out
-  into a double delivery.
+  open SQLite and never wait on it: one daemon writer thread persists
+  receipts through `AuthDatabase.patch_message_metadata`, with bounded
+  retries. A busy database therefore cannot stall an agent event loop or time
+  a steer out into a double delivery.
+- **Whole-group writes.** An event only marks its group dirty (an ungrouped
+  steer is a group of one); no row patch is ever queued. The writer reads the
+  group as it is when it writes and saves every bound member in one
+  transaction. At most one write is pending per group: a newer change replaces
+  it, and a retry is recomputed from current state. After three failed
+  attempts the write is given up for the whole group at once, leaving the
+  last committed state; the group's next change is a fresh write of all its
+  rows.
 - **Correlation by id, not by text.** Each send carries its `steer_id` into the
   runner, whose own matcher (`api.agent_harness.steer_delivery.SteerDelivery`)
   reports `note_echo(steer_id)` when the vendor echoes that exact send. There is
@@ -183,12 +192,14 @@ after a reload the user row is the only source of truth.
   the same identity again **at the write**, because teardown can happen while
   the send callback waits on its event loop, and writes nothing once its own
   registration is gone.
-- **Retention.** A receipt is released once it has ended and been saved — or
-  given up on after bounded write retries; a group is held until every member
-  has bound. One that no row will ever carry (unauthenticated steer path, a
-  failed insert, a turn that ended during delivery) is dropped, and anything
-  still retained is purged a grace period after its turn ended, by the writer
-  itself, so cleanup never depends on later traffic. The writer exits when
+- **Retention.** A group is retained and released as a whole, with every
+  member's row binding: released once every member has ended and bound and
+  that state has been saved (or given up on after bounded write retries). A
+  receipt that no row will ever carry (unauthenticated steer path, a failed
+  insert) is dropped. A group with a member that never binds (a turn that
+  ended during delivery) is purged a grace period after it ended, unless a
+  write is still owed to it, by the writer itself, so cleanup never depends on
+  later traffic. The writer exits when
   there is nothing queued and nothing retained, restarts on demand, and drains
   what it has at interpreter exit. That drain is an orderly-exit hook only: a
   hard stop (`SIGTERM` with no handler, `SIGKILL`) can leave a queued row
