@@ -24,6 +24,7 @@ def _clean_receipt_state():
     with steer_receipts._pending_lock:
         steer_receipts._pending.clear()
         steer_receipts._live.clear()
+    steer_receipts._doomed.clear()
 
 
 def _future(value):
@@ -1600,181 +1601,279 @@ def test_grace_expiring_during_a_write_never_drops_the_newer_revision(monkeypatc
     assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
 
 
-def test_giving_up_on_planning_never_settles_a_newer_revision(monkeypatch):
-    """Codex gate 6, 1: the planning give-up obeys the revision rule of a write.
+# ── an exception in the bookkeeping itself fails closed ─────────────────────
 
-    A's first three plans fail and the writer is paused just before it gives
-    up. The grouped reply arrives, the turn ends with B unbound and the clock
-    passes the grace period. Giving up used to settle A's *newer* revision, so
-    the purge dropped the group and ``flush()`` reported done with no write at
-    all and A left at ``pending/null/[]``.
+_NOTHING = {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+def _no_writer():
+    """Let the idle writer of an earlier test exit, so a batch can be staged."""
+    steer_receipts._wake.set()
+    writer = steer_receipts._writer
+    if writer is not None:
+        writer.join(5)
+    assert steer_receipts._writer is None
+
+
+def _fault_at(monkeypatch, name, spot, hit, times=1):
+    """Raise inside ``steer_receipts.<name>`` at ``spot``, up to ``times`` times.
+
+    ``spot`` is ``'start'`` (its first line), ``'return'`` (as it returns, with
+    everything it does already done) or the start of one of its source lines.
+    Only calls for which ``hit(*args)`` is true are traced.
     """
+    import inspect
+    import sys
     from types import SimpleNamespace
 
-    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
-    offset = [0.0]
-    monkeypatch.setattr(steer_receipts, 'time', SimpleNamespace(
-        monotonic=lambda: time.monotonic() + offset[0], sleep=time.sleep))
-    db = _MemoryDb()
-    tracker, ids = _echoed_group('9811', 'AB')
-    a = _insert(db, '9811', 'A', ids['A'])
-    failures, exhausted, proceed = [], threading.Event(), threading.Event()
-    plan, forgive = steer_receipts._plan, steer_receipts._forgive
-
-    def fail_first_three(owner, steer_id, attempts):
-        if owner is tracker and len(failures) < 3:
-            failures.append(attempts)
-            with owner.lock:
-                raise RuntimeError('injected planning failure')
-        return plan(owner, steer_id, attempts)
-
-    def pause_before_giving_up(steer_id):
-        exhausted.set()
-        assert proceed.wait(5)
-        forgive(steer_id)
-
-    monkeypatch.setattr(steer_receipts, '_plan', fail_first_three)
-    monkeypatch.setattr(steer_receipts, '_forgive', pause_before_giving_up)
-    try:
-        steer_receipts.bind(ids['A'], db, a)
-        assert exhausted.wait(5)
-        assert failures == [0, 1, 2]
-        tracker.output_start('reply')
-        tracker.output_text('reply', 'Both noted.')
-        tracker.finish()                                # B never binds
-        offset[0] = steer_receipts._PENDING_GRACE_SEC + 1
-        assert steer_receipts.retained()['pending'] == 2, 'purge leaves an owed group'
-        assert not steer_receipts.flush(0.05), 'a write is owed'
-    finally:
-        proceed.set()
-    assert steer_receipts.flush(5.0)
-    assert db.writes == [[a]], 'the newer revision is planned again and saved'
-    assert db.steer_meta(a)['state'] == 'delivered'
-    assert _held(db, a) == ('Both noted.', [a])
-    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
-
-
-def _raise_once_after_a_hold(monkeypatch, steer_id):
-    """Raise inside ``_plan`` at the first line that runs after it took a hold."""
-    import sys
-
-    plan = steer_receipts._plan
-    injected = []
+    real = getattr(steer_receipts, name)
+    lines, first = inspect.getsourcelines(real)
+    lineno = None
+    if spot not in ('start', 'return'):
+        lineno = first + next(i for i, line in enumerate(lines)
+                              if line.lstrip().startswith(spot))
+    seen = SimpleNamespace(injected=[], calls=0)
 
     def trace(frame, event, _arg):
-        if frame.f_code is not plan.__code__:
+        if frame.f_code is not real.__code__:
             return None
-        if event == 'line' and not injected:
-            binding = steer_receipts._pending.get(steer_id)
-            if binding is not None and binding['writing'] > 0:
-                injected.append(frame.f_lineno)
-                raise RuntimeError('injected exception after a hold')
+        here = (event == 'return' if spot == 'return' else
+                event == 'line' and (lineno is None or frame.f_lineno == lineno))
+        if here and len(seen.injected) < times and not seen.armed:
+            seen.armed = True               # once per call
+            seen.injected.append(frame.f_lineno)
+            raise RuntimeError(f'injected at {spot} of {name}')
         return trace
 
-    def traced(owner, sid, attempts):
-        if injected:
-            return plan(owner, sid, attempts)
+    def traced(*args):
+        if not hit(*args):
+            return real(*args)
+        seen.calls += 1
+        if len(seen.injected) >= times:
+            return real(*args)
+        seen.armed = False
         sys.settrace(trace)
         try:
-            return plan(owner, sid, attempts)
+            return real(*args)
         finally:
             sys.settrace(None)
 
-    monkeypatch.setattr(steer_receipts, '_plan', traced)
-    return injected
+    monkeypatch.setattr(steer_receipts, name, traced)
+    return seen
 
 
-def test_an_exception_after_a_plan_took_its_holds_releases_them(monkeypatch):
-    """Codex gate 6, 2: a plan that dies holding its group leaks nothing.
-
-    One exception is raised inside ``_plan`` right after it marked a member as
-    being written. The retry saved A, but the hold stayed, so ``flush()`` timed
-    out forever and the grace purge kept the group.
-    """
-    from types import SimpleNamespace
-
-    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
-    offset = [0.0]
-    monkeypatch.setattr(steer_receipts, 'time', SimpleNamespace(
-        monotonic=lambda: time.monotonic() + offset[0], sleep=time.sleep))
-    db = _MemoryDb()
-    tracker, ids = _echoed_group('9812', 'AB')
-    a = _insert(db, '9812', 'A', ids['A'])
+def _reply_and_finish(tracker):
     tracker.output_start('reply')
     tracker.output_text('reply', 'Both noted.')
-    tracker.finish()                                    # B never binds
-    injected = _raise_once_after_a_hold(monkeypatch, ids['A'])
-    steer_receipts.bind(ids['A'], db, a)
-    assert steer_receipts.flush(5.0), 'no hold is left behind'
-    assert injected, 'the exception really was raised with a hold taken'
-    assert _held(db, a) == ('Both noted.', [a]), 'the retry saved it'
-    with steer_receipts._pending_lock:
-        assert [b['writing'] for b in steer_receipts._pending.values()] == [0, 0]
-    offset[0] = steer_receipts._PENDING_GRACE_SEC + 1
-    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
-
-
-def test_an_error_while_settling_a_saved_plan_releases_its_holds(monkeypatch):
-    """Any failure after ``_plan`` returned still drops the plan's holds."""
-    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
-    db = _MemoryDb()
-    tracker, ids = _echoed_group('9814', 'A')
-    a = _insert(db, '9814', 'A', ids['A'])
-    settle, raised = steer_receipts._settle, []
-
-    def settle_fails_once(plan):
-        if not raised:
-            raised.append(True)
-            raise RuntimeError('injected settle failure')
-        return settle(plan)
-
-    monkeypatch.setattr(steer_receipts, '_settle', settle_fails_once)
-    steer_receipts.bind(ids['A'], db, a)
     tracker.finish()
-    assert steer_receipts.flush(5.0), 'no hold is left behind'
-    assert raised and db.steer_meta(a)['state'] == 'delivered'
-    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
 
 
-def test_a_group_whose_planning_keeps_failing_has_one_retry_budget(monkeypatch):
-    """Codex gate 6, 3: three planning attempts per group, not per member.
+def _bookkeeping_logs(caplog):
+    return [r for r in caplog.records if 'bookkeeping failed' in r.getMessage()]
 
-    Both members of one group are dirty while its planning fails for good. The
-    budget used to be spent per receipt: six attempts, alternating A and B.
+
+@pytest.mark.parametrize('drop_fault', [False, True], ids=['', 'second fault in the drop'])
+@pytest.mark.parametrize('where', ['plan start', 'plan return', 'settle start', 'settle return'])
+def test_a_bookkeeping_exception_drops_its_group_and_nothing_else(
+        monkeypatch, caplog, where, drop_fault):
+    """Round 8: an exception in planning or settlement is a bug, not a retry.
+
+    Group 1 (A, B) and an unrelated group 2 (C) are dirty in one batch. One
+    exception is raised in group 1's bookkeeping; with ``drop_fault`` a second
+    one is raised half way through dropping it. Group 1 is logged once and
+    forgotten whole, nothing is written for it after the fault, group 2 saves
+    as usual, ``flush()`` is true with nothing retained, and the writer serves
+    a new receipt afterwards.
     """
     monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
-    writing, commit = threading.Event(), threading.Event()
+    db = _MemoryDb()
+    _no_writer()
+    with monkeypatch.context() as staged:
+        staged.setattr(steer_receipts, '_ensure_writer', lambda: None)
+        one, ids = _echoed_group('9821', 'AB')
+        two, other = _echoed_group('9822', 'C')
+        ids.update(other)
+        rows = {label: _insert(db, '982', label, ids[label]) for label in 'ABC'}
+        for label in 'ABC':
+            steer_receipts.bind(ids[label], db, rows[label])
+        _reply_and_finish(one)
+        _reply_and_finish(two)
+    a, b, c = (rows[label] for label in 'ABC')
 
-    def before_write(attempt):
-        if attempt == 1:
-            writing.set()
-            assert commit.wait(5)
+    function, spot = where.split()
+    if function == 'plan':
+        fault = _fault_at(monkeypatch, '_plan', spot, lambda owner, *_: owner is one)
+    else:
+        fault = _fault_at(monkeypatch, '_settle', spot,
+                          lambda plan: ids['A'] in plan['members'])
+    drop = _fault_at(monkeypatch, '_drop_doomed', 'with _write_lock',
+                     lambda: bool(steer_receipts._doomed)) if drop_fault else None
 
-    db = _MemoryDb(before_write)
-    tracker, ids = _echoed_group('9813', 'AB')
-    a = _insert(db, '9813', 'A', ids['A'])
-    b = _insert(db, '9813', 'B', ids['B'])
+    with caplog.at_level('ERROR', logger=steer_receipts.__name__):
+        assert steer_receipts.flush(5.0), 'a dropped group owes nothing'
+    assert len(fault.injected) == 1 and fault.calls == 1, 'no retry, no replay'
+    assert len(_bookkeeping_logs(caplog)) == 1, 'logged once for the group'
+    if drop_fault:
+        assert len(drop.injected) == 1
+    if function == 'plan':
+        assert db.attempts == [[c]], 'nothing was ever written for the failed group'
+        for row in (a, b):
+            assert db.steer_meta(row)['state'] == 'pending'
+            assert _held(db, row) == (None, [])
+    else:
+        assert db.attempts == [[a, b, c]], 'committed once, never replayed'
+        assert _held(db, a) == (None, [a, b]) and _held(db, b) == ('Both noted.', [a, b])
+    assert db.steer_meta(c)['state'] == 'delivered'
+    assert _held(db, c) == ('Both noted.', [c]), 'the other group saved normally'
+    assert steer_receipts.retained() == _NOTHING
+    assert not steer_receipts._queue and not steer_receipts._doomed
+    assert all(steer_receipts.snapshot(ids[label]) is None for label in 'ABC')
+
+    later, new = _echoed_group('9823', 'D')             # the writer still serves
+    d = _insert(db, '9823', 'D', new['D'])
+    steer_receipts.bind(new['D'], db, d)
+    _reply_and_finish(later)
+    assert steer_receipts.flush(5.0)
+    assert _held(db, d) == ('Both noted.', [d])
+    assert steer_receipts.retained() == _NOTHING
+    assert len(_bookkeeping_logs(caplog)) == 1
+
+
+def test_an_event_after_its_group_was_dropped_writes_nothing(monkeypatch):
+    """A dropped group stays dropped: a late bind and the turn's end are no-ops."""
+    db = _MemoryDb()
+    tracker, ids = _echoed_group('9824', 'AB')
+    a = _insert(db, '9824', 'A', ids['A'])
+    b = _insert(db, '9824', 'B', ids['B'])
     tracker.output_start('reply')
-    tracker.output_text('reply', 'Both noted.')
-    calls, group = [], Receipts.group
+    tracker.output_text('reply', 'Both noted.')         # A and B are one group
+    fault = _fault_at(monkeypatch, '_plan', 'start', lambda owner, *_: owner is tracker)
+    steer_receipts.bind(ids['A'], db, a)
+    assert steer_receipts.flush(5.0) and fault.injected
+    steer_receipts.bind(ids['B'], db, b)                # after the drop
+    tracker.finish()
+    assert steer_receipts.flush(5.0)
+    assert db.attempts == [] and fault.calls == 1
+    assert steer_receipts.retained() == _NOTHING
 
-    def failing_group_read(owner, steer_id):
-        if owner is tracker and writing.is_set():
-            calls.append(steer_id)
-            raise RuntimeError('injected persistent planning failure')
-        return group(owner, steer_id)
 
-    monkeypatch.setattr(Receipts, 'group', failing_group_read)
-    try:
+def _two_single_groups(monkeypatch, db, attempts=0):
+    """Groups A and B (two chats), ended, bound and staged as one batch."""
+    _no_writer()
+    out = {}
+    with monkeypatch.context() as staged:
+        staged.setattr(steer_receipts, '_ensure_writer', lambda: None)
+        for label, session in (('A', '98701'), ('B', '98702')):
+            tracker, ids = _echoed_group(session, label)
+            row = _insert(db, session, label, ids[label])
+            tracker.output_start('reply')
+            tracker.output_text('reply', 'Both noted.')
+            steer_receipts.bind(ids[label], db, row)
+            tracker.finish()
+            out[label] = (ids[label], row)
+        with steer_receipts._write_lock:
+            assert set(steer_receipts._queue) == {out['A'][0], out['B'][0]}
+            for steer_id in steer_receipts._queue:
+                steer_receipts._queue[steer_id] = attempts
+    return out['A'], out['B']
+
+
+def test_a_fault_after_settlement_never_replays_the_committed_batch(monkeypatch):
+    """Codex gate 7, 1: no second release, no replay of what was just committed.
+
+    A and B commit in one transaction. An exception is raised as ``_settle``
+    returns for A. The cleanup used to release A's hold a second time and
+    write the whole committed batch again.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    db = _MemoryDb()
+    (sid_a, a), (_sid_b, b) = _two_single_groups(monkeypatch, db)
+    fault = _fault_at(monkeypatch, '_settle', 'return', lambda plan: sid_a in plan['members'])
+    assert steer_receipts.flush(5.0)
+    assert fault.injected and db.attempts == [[a, b]]
+    assert all(_held(db, row) == ('Both noted.', [row]) for row in (a, b))
+    assert steer_receipts.retained() == _NOTHING
+
+
+def test_faults_at_the_retry_limit_never_strand_another_group(monkeypatch):
+    """Codex gate 7, 2: with the budget spent, a fault settling A leaves B clean.
+
+    Both groups are on their last attempt and ``_settle`` may fail for A as
+    often as it is called. A second fault used to abort the cleanup and leave
+    B, already committed, marked as being written for ever: ``flush()`` false,
+    B kept past its grace.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    db = _MemoryDb()
+    (sid_a, a), (_sid_b, b) = _two_single_groups(
+        monkeypatch, db, attempts=steer_receipts._MAX_WRITE_ATTEMPTS - 1)
+    fault = _fault_at(monkeypatch, '_settle', 'start',
+                      lambda plan: sid_a in plan['members'], times=5)
+    assert steer_receipts.flush(5.0), 'nothing is stranded'
+    assert len(fault.injected) == 1 and fault.calls == 1, 'A is never settled again'
+    assert db.attempts == [[a, b]]
+    assert steer_receipts.retained() == _NOTHING, 'before any grace period'
+
+
+def test_a_fault_as_a_plan_returns_leaves_nothing_behind(monkeypatch):
+    """Codex gate 7, 3: an exception at ``_plan``'s return used to leak both holds.
+
+    A is bound, B never binds, the turn ended. The plan is complete when the
+    exception is raised. There is nothing left to leak now: the group is
+    dropped, with no write and without waiting for the grace period.
+    """
+    db = _MemoryDb()
+    _no_writer()
+    with monkeypatch.context() as staged:
+        staged.setattr(steer_receipts, '_ensure_writer', lambda: None)
+        tracker, ids = _echoed_group('98703', 'AB')
+        a = _insert(db, '98703', 'A', ids['A'])
+        _reply_and_finish(tracker)
         steer_receipts.bind(ids['A'], db, a)
-        assert writing.wait(5)
-        steer_receipts.bind(ids['B'], db, b)
-        tracker.finish()
-    finally:
-        commit.set()
-    assert steer_receipts.flush(5.0), 'given up, so nothing is owed'
-    assert len(calls) == steer_receipts._MAX_WRITE_ATTEMPTS, calls
-    assert db.writes == [[a]]
+    fault = _fault_at(monkeypatch, '_plan', 'return', lambda owner, *_: owner is tracker)
+    assert steer_receipts.flush(5.0)
+    assert fault.injected and fault.calls == 1 and db.attempts == []
+    assert db.steer_meta(a)['state'] == 'pending', 'read as "not confirmed"'
+    assert steer_receipts.retained() == _NOTHING
+
+
+def test_a_fault_planning_a_grown_group_cancels_its_older_plan(monkeypatch):
+    """No write after the fault, not even a plan read before the group grew.
+
+    One batch holds A and B. A is planned alone; then the grouped reply lands
+    and B binds, so B's plan covers both — and raises. A's older plan, still
+    waiting in the batch, must not be written.
+    """
+    db = _MemoryDb()
+    _no_writer()
+    plan, calls = steer_receipts._plan, []
+    with monkeypatch.context() as staged:
+        staged.setattr(steer_receipts, '_ensure_writer', lambda: None)
+        tracker, ids = _echoed_group('98704', 'AB')
+        a = _insert(db, '98704', 'A', ids['A'])
+        b = _insert(db, '98704', 'B', ids['B'])
+        steer_receipts.bind(ids['A'], db, a)
+        with steer_receipts._write_lock:
+            steer_receipts._queue[ids['B']] = 0          # same batch, after A
+
+    def grow_then_fail(owner, steer_id, attempts):
+        calls.append(steer_id)
+        if steer_id == ids['A']:
+            older = plan(owner, steer_id, attempts)
+            assert older['members'] == [ids['A']]
+            tracker.output_start('reply')
+            tracker.output_text('reply', 'Both noted.')
+            steer_receipts.bind(ids['B'], db, b)
+            tracker.finish()
+            return older
+        assert plan(owner, steer_id, attempts)['members'] == [ids['A'], ids['B']]
+        raise RuntimeError('injected after planning the grown group')
+
+    monkeypatch.setattr(steer_receipts, '_plan', grow_then_fail)
+    assert steer_receipts.flush(5.0)
+    assert calls == [ids['A'], ids['B']]
+    assert db.attempts == [], 'the older plan was not written after the fault'
+    assert steer_receipts.retained() == _NOTHING
 
 
 def test_any_interleaving_leaves_the_excerpt_on_exactly_one_row(monkeypatch):

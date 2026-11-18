@@ -166,9 +166,10 @@ after a reload the user row is the only source of truth.
   write happens outside every lock, so events may land while it is in flight.
   When it returns, the group is settled (and, if final, released) only when no
   member's revision moved meanwhile; otherwise it stays dirty and retained and
-  is planned again. The grace purge skips a group that is dirty or has a plan
-  in flight, and `flush()` reports done only when nothing is queued, in flight
-  or dirty. The one bounded exception is a write given up after its retries.
+  is planned again. A group being written is dirty until that settlement, so
+  the grace purge skips every dirty group, and `flush()` reports done only
+  when nothing is queued, in flight or dirty. The one bounded exception is a
+  write given up after its retries.
 - **Correlation by id, not by text.** Each send carries its `steer_id` into the
   runner, whose own matcher (`api.agent_harness.steer_delivery.SteerDelivery`)
   reports `note_echo(steer_id)` when the vendor echoes that exact send. There is
@@ -210,8 +211,8 @@ after a reload the user row is the only source of truth.
   receipt that no row will ever carry (unauthenticated steer path, a failed
   insert) is dropped. A group with a member that never binds (a turn that
   ended during delivery) is purged a grace period after it ended, unless a
-  write is still owed to it (dirty, or in flight), by the writer itself, so cleanup never depends on
-  later traffic. The writer exits when
+  write is still owed to it (dirty), by the writer itself, so cleanup never
+  depends on later traffic. The writer exits when
   there is nothing queued and nothing retained, restarts on demand, and drains
   what it has at interpreter exit. That drain is an orderly-exit hook only: a
   hard stop (`SIGTERM` with no handler, `SIGKILL`) can leave a queued row
@@ -219,6 +220,12 @@ after a reload the user row is the only source of truth.
   a client has to treat as special. Live status keeps only the current turn's,
   and is a transient overlay: after it disappears, reconcile against refreshed
   history, where the user row is the only source of truth.
+- **Internal errors fail closed.** Only a refused database write is retried.
+  Any other exception while the writer plans or settles a group is a bug: it
+  is logged once and that group is dropped from memory whole (bindings, queue
+  entries, live status), with no retry and nothing written after the fault.
+  Its rows keep the last committed state (a `pending` row whose turn is not
+  live reads as *not confirmed*), and no other group is affected.
 
 Tests: `src/tests/harness/test_steer_receipts.py`,
 `src/tests/harness/test_agent_steer.py`,
