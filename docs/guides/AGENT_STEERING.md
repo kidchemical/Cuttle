@@ -157,6 +157,18 @@ after a reload the user row is the only source of truth.
   attempts the write is given up for the whole group at once, leaving the
   last committed state; the group's next change is a fresh write of all its
   rows.
+- **A write settles only the revision it was planned from.** The writer
+  plans a group in one critical section (the tracker's lock, then the binding
+  lock, the order events use): tracker facts, membership, row bindings, the
+  superseded flags and each bound member's revision are read together. A
+  terminal state after Stop is therefore always built from the facts frozen
+  before it, never from an older membership plus a newer flag. The database
+  write happens outside every lock, so events may land while it is in flight.
+  When it returns, the group is settled (and, if final, released) only when no
+  member's revision moved meanwhile; otherwise it stays dirty and retained and
+  is planned again. The grace purge skips a group that is dirty or has a plan
+  in flight, and `flush()` reports done only when nothing is queued, in flight
+  or dirty. The one bounded exception is a write given up after its retries.
 - **Correlation by id, not by text.** Each send carries its `steer_id` into the
   runner, whose own matcher (`api.agent_harness.steer_delivery.SteerDelivery`)
   reports `note_echo(steer_id)` when the vendor echoes that exact send. There is
@@ -198,7 +210,7 @@ after a reload the user row is the only source of truth.
   receipt that no row will ever carry (unauthenticated steer path, a failed
   insert) is dropped. A group with a member that never binds (a turn that
   ended during delivery) is purged a grace period after it ended, unless a
-  write is still owed to it, by the writer itself, so cleanup never depends on
+  write is still owed to it (dirty, or in flight), by the writer itself, so cleanup never depends on
   later traffic. The writer exits when
   there is nothing queued and nothing retained, restarts on demand, and drains
   what it has at interpreter exit. That drain is an orderly-exit hook only: a

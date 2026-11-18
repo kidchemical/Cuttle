@@ -1433,60 +1433,305 @@ def test_binds_during_a_failing_and_a_recovering_write_leave_one_holder(monkeypa
     assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
 
 
-def test_any_interleaving_leaves_the_excerpt_on_exactly_one_row(monkeypatch):
-    """Property: bind order x write failures x recovery point, 300 seeded cases.
+# ── a plan must not go stale while its write is in flight ───────────────────
 
-    Three steers are echoed before one agent message. Their rows are inserted
-    and bound in random orders around the agent's output and the turn's end,
-    while each write attempt randomly fails or stalls and the database may
-    recover before the last event. Whatever happened, the saved rows must be
-    one committed whole-group state: the excerpt on exactly one row iff a write
-    carrying it ever succeeded, that row being the last of the rows the write
-    covered, all of which list the same ``covers``. When the database is
-    healthy for the last event, that state is the complete one.
+def _pause_first_group_read(monkeypatch, pause_sec=0.4):
+    """Pause the writer inside its first read of a group, as gate 5 did.
+
+    Returns ``(sampled, resume)``. Before round 6 the pause sat between the
+    membership read and the binding read, so events landed in between. Now the
+    read is inside the planning critical section: the events wait for it, and
+    the pause simply runs out.
+    """
+    sampled, resume = threading.Event(), threading.Event()
+    group = Receipts.group
+
+    def paused(tracker, steer_id):
+        members = group(tracker, steer_id)
+        if not sampled.is_set():
+            sampled.set()
+            resume.wait(pause_sec)
+        return members
+
+    monkeypatch.setattr(Receipts, 'group', paused)
+    return sampled, resume
+
+
+def test_stop_while_the_writer_plans_keeps_the_confirmed_echo_and_excerpt(monkeypatch):
+    """Codex gate 5, race 1: a pre-Stop membership must not meet a post-Stop flag.
+
+    The writer samples A as a pending group of one and is paused. B binds, both
+    echoes are confirmed, the agent's reply is captured, then Stop and a
+    re-send supersede the turn. The old singleton snapshot used to be combined
+    with the newer ``stale`` flag: A was written ``undelivered`` with no reply
+    and released, and B then saved ``reply: null`` with the full ``covers``.
+    """
+    from api import chat_delivery
+
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    turn = {'query_id': 'old-turn'}
+    monkeypatch.setattr('api.chat_turn_row.current', lambda sid: dict(turn))
+    db = _MemoryDb()
+    session = '9801'
+    assert chat_delivery.try_begin(session)
+    token = steer.register(session, 'codex', lambda text, sid=None: _future((True, None)))
+    a = steer.steer(session, 'A')['steer_id']
+    b = steer.steer(session, 'B')['steer_id']
+    row_b = _insert(db, session, 'B', b)
+    row_a = _insert(db, session, 'A', a)
+    sampled, resume = _pause_first_group_read(monkeypatch)
+    try:
+        steer_receipts.bind(a, db, row_a)
+        assert sampled.wait(5)
+        steer_receipts.bind(b, db, row_b)
+        steer.note_echo(session, token, a)
+        steer.note_echo(session, token, b)
+        steer.note_output_start(session, token, 'reply')
+        steer.note_output_text(session, token, 'reply', 'Both noted.')
+        chat_delivery.cancel_current_turn(session)      # Stop …
+        turn['query_id'] = 'replacement-turn'
+        assert chat_delivery.try_begin(session)         # … and re-send
+        steer.unregister(session, token)
+        resume.set()
+        assert steer_receipts.flush(5.0)
+    finally:
+        resume.set()
+        steer.unregister(session, token)
+        chat_delivery.end(session)
+    saved_a, saved_b = db.steer_meta(row_a), db.steer_meta(row_b)
+    assert saved_a['state'] == 'delivered' and saved_b['state'] == 'delivered'
+    assert _held(db, row_a) == ('Both noted.', [row_b, row_a]), 'the last bound row'
+    assert _held(db, row_b) == (None, [row_b, row_a])
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+def test_stop_during_an_in_flight_write_ends_on_the_frozen_facts(monkeypatch):
+    """The same supersession, landing while the old plan is inside the database."""
+    from api import chat_delivery
+
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    turn = {'query_id': 'old-turn'}
+    monkeypatch.setattr('api.chat_turn_row.current', lambda sid: dict(turn))
+    writing, commit = threading.Event(), threading.Event()
+
+    def before_write(attempt):
+        if attempt == 1:
+            writing.set()
+            assert commit.wait(5)
+
+    db = _MemoryDb(before_write)
+    session = '9802'
+    assert chat_delivery.try_begin(session)
+    token = steer.register(session, 'codex', lambda text, sid=None: _future((True, None)))
+    a = steer.steer(session, 'A')['steer_id']
+    b = steer.steer(session, 'B')['steer_id']
+    row_b = _insert(db, session, 'B', b)
+    row_a = _insert(db, session, 'A', a)
+    try:
+        steer_receipts.bind(a, db, row_a)
+        assert writing.wait(5)                          # A: pending, alone
+        steer_receipts.bind(b, db, row_b)
+        steer.note_echo(session, token, a)
+        steer.note_echo(session, token, b)
+        steer.note_output_start(session, token, 'reply')
+        steer.note_output_text(session, token, 'reply', 'Both noted.')
+        chat_delivery.cancel_current_turn(session)
+        turn['query_id'] = 'replacement-turn'
+        assert chat_delivery.try_begin(session)
+        steer.unregister(session, token)
+        assert not steer_receipts.flush(0.05), 'a write is owed while one is in flight'
+        commit.set()
+        assert steer_receipts.flush(5.0)
+    finally:
+        commit.set()
+        steer.unregister(session, token)
+        chat_delivery.end(session)
+    assert db.attempts[0] == [row_a]
+    assert db.writes[-1] == [row_b, row_a], 'the newer revision was planned again'
+    assert db.steer_meta(row_a)['state'] == db.steer_meta(row_b)['state'] == 'delivered'
+    assert _held(db, row_a) == ('Both noted.', [row_b, row_a])
+    assert _held(db, row_b) == (None, [row_b, row_a])
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+def test_grace_expiring_during_a_write_never_drops_the_newer_revision(monkeypatch):
+    """Codex gate 5, race 2: the purge must not take a group that still owes a write.
+
+    The writer samples A (bound, no reply yet) and is paused. The grouped reply
+    arrives and the turn ends with B unbound. The old write is held inside the
+    database while the clock passes the grace period. That write used to settle
+    A's *newer* revision, so the purge dropped the group together with the
+    queued excerpt write and ``flush()`` reported done with A at ``null/[]``.
+    """
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    offset = [0.0]
+    monkeypatch.setattr(steer_receipts, 'time', SimpleNamespace(
+        monotonic=lambda: time.monotonic() + offset[0], sleep=time.sleep))
+    writing, commit = threading.Event(), threading.Event()
+
+    def before_write(attempt):
+        if attempt == 1:
+            writing.set()
+            assert commit.wait(5)
+
+    db = _MemoryDb(before_write)
+    tracker, ids = _echoed_group('9803', 'AB')
+    a = _insert(db, '9803', 'A', ids['A'])
+    sampled, resume = _pause_first_group_read(monkeypatch)
+    try:
+        steer_receipts.bind(ids['A'], db, a)
+        assert sampled.wait(5)
+        tracker.output_start('reply')
+        tracker.output_text('reply', 'Both noted.')
+        tracker.finish()                                # B never binds
+        resume.set()
+        assert writing.wait(5)
+        offset[0] = steer_receipts._PENDING_GRACE_SEC + 1
+        assert steer_receipts.retained()['pending'] == 2, 'purge leaves an owed group'
+        assert not steer_receipts.flush(0.05), 'a write is owed'
+    finally:
+        resume.set()
+        commit.set()
+    assert steer_receipts.flush(5.0)
+    assert db.steer_meta(a)['state'] == 'delivered'
+    assert _held(db, a) == ('Both noted.', [a]), 'saved before anything is purged'
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+def test_any_interleaving_leaves_the_excerpt_on_exactly_one_row(monkeypatch):
+    """Property: 300 seeded schedules, with events landing during in-flight writes.
+
+    Three steers are accepted. Their echoes, their row binds (in a random row
+    order), the agent's one output, the turn's end, a Stop/re-send supersession
+    and the clock passing the grace period are shuffled into one schedule.
+    Every write attempt randomly fails, and the database may recover before the
+    last event. Each event either lands freely, after a flush, or **while a
+    write attempt is held inside the database** (the writer's plan is then old
+    by the time it commits).
+
+    Whatever happened, the saved rows must be one committed whole-group state:
+    the excerpt on exactly one row iff a write carrying it ever succeeded, that
+    row being the last of the rows the write covered, all of which list the
+    same ``covers``. And ``flush()`` reporting done means no write is owed:
+    unless a write was given up after its retries, every bound row equals the
+    tracker's final state.
     """
     import random
+    from types import SimpleNamespace
 
     monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.0)
+    offset = [0.0]
+    monkeypatch.setattr(steer_receipts, 'time', SimpleNamespace(
+        monotonic=lambda: time.monotonic() + offset[0], sleep=time.sleep))
+    stopped = set()
+    monkeypatch.setattr(steer_receipts, '_superseded',
+                        lambda snapshot: snapshot.get('session') in stopped)
+    gave_up = []
+    give_up = steer_receipts._give_up
+    monkeypatch.setattr(steer_receipts, '_give_up',
+                        lambda plan: (gave_up.append(plan), give_up(plan))[1])
+
+    def owed():
+        with steer_receipts._write_lock:
+            if steer_receipts._queue or steer_receipts._inflight:
+                return True
+        return steer_receipts._write_owed()
+
     rng = random.Random(20261118)
+    in_flight = {'bind': 0, 'echo': 0, 'output': 0, 'finish': 0, 'stop': 0, 'grace': 0}
+    strong = 0
     for case in range(300):
-        fail_rate = rng.choice([0.0, 0.3, 0.6, 0.9, 1.0])
+        fail_rate = rng.choice([0.0, 0.0, 0.3, 0.6, 0.9, 1.0])
         healed = [False]
         write_rng = random.Random(rng.random())
+        gate = threading.Condition()
+        closed, held = [False], [False]
+        del gave_up[:]
 
         def before_write(_attempt, fail_rate=fail_rate, healed=healed,
-                         write_rng=write_rng):
-            if write_rng.random() < 0.3:
-                time.sleep(write_rng.random() * 0.002)   # events land mid-write
+                         write_rng=write_rng, gate=gate, closed=closed, held=held):
+            with gate:
+                held[0] = True
+                gate.notify_all()
+                assert gate.wait_for(lambda: not closed[0], 10)
+                held[0] = False
             if not healed[0] and write_rng.random() < fail_rate:
                 raise sqlite3.OperationalError('database is locked')
 
+        def hold_a_write():
+            """Close the database; True when an attempt is now held inside it."""
+            with gate:
+                closed[0] = True
+                if owed():
+                    gate.wait_for(lambda: held[0], 0.5)
+                return held[0]
+
+        def let_writes_through():
+            with gate:
+                closed[0] = False
+                gate.notify_all()
+
         db = _MemoryDb(before_write)
         session = str(98000 + case)
-        tracker, ids = _echoed_group(session, 'ABC')
-        rows = {}
+        tracker = Receipts(steer_receipts.changed, many=steer_receipts.changed_many,
+                           session=session)
+        ids, rows = {}, {}
+        for label in 'ABC':
+            ids[label] = tracker.begin(label)
+            steer_receipts.track(session, tracker, ids[label])
+            tracker.accepted(ids[label], True)
         for label in rng.sample('ABC', 3):               # row id order
             rows[label] = _insert(db, session, label, ids[label])
-        steps = rng.sample(['A', 'B', 'C', 'output', 'finish'], 5)
+        steps = [('bind', label) for label in 'ABC'] + [('echo', label) for label in 'ABC']
+        steps += [('output', ''), ('finish', '')]
+        if rng.random() < 0.5:
+            steps.append(('stop', ''))
+        if rng.random() < 0.5:
+            steps.append(('grace', ''))
+        rng.shuffle(steps)
         heal_before_last = rng.random() < 0.6
-        for index, step in enumerate(steps):
-            if index == len(steps) - 1 and heal_before_last:
-                if rng.random() < 0.5:
+        finished = False
+        try:
+            for index, (step, label) in enumerate(steps):
+                if index == len(steps) - 1 and heal_before_last:
+                    healed[0] = True
+                mode = rng.choice(['free', 'flushed', 'in flight', 'in flight'])
+                if mode == 'flushed':
+                    let_writes_through()
                     assert steer_receipts.flush(5.0)
-                healed[0] = True
-            if step == 'output':
-                tracker.output_start('reply')
-                tracker.output_text('reply', 'All noted.')
-            elif step == 'finish':
-                tracker.finish()
-            else:
-                steer_receipts.bind(ids[step], db, rows[step])
-            if rng.random() < 0.5:
-                assert steer_receipts.flush(5.0)
+                elif mode == 'in flight':
+                    if hold_a_write():
+                        in_flight[step] += 1
+                else:
+                    let_writes_through()
+                if step == 'bind':
+                    steer_receipts.bind(ids[label], db, rows[label])
+                elif step == 'echo':
+                    if not finished:     # a runner that ended reports no echo
+                        tracker.echo(ids[label])
+                elif step == 'output':
+                    tracker.output_start('reply')
+                    tracker.output_text('reply', 'All noted.')
+                elif step == 'finish':
+                    tracker.finish()
+                    finished = True
+                elif step == 'stop':
+                    stopped.add(session)
+                else:
+                    offset[0] += steer_receipts._PENDING_GRACE_SEC + 1
+                    if rng.random() < 0.5:
+                        steer_receipts.retained()        # purge right now
+                    else:
+                        steer_receipts._wake.set()       # or let the writer
+        finally:
+            let_writes_through()
         assert steer_receipts.flush(5.0)
 
         where = f'case {case}: rows {rows}, steps {steps}, fail {fail_rate}, ' \
                 f'healed {heal_before_last}, attempts {db.attempts}, writes {db.writes}'
+        assert not owed(), where
         saved = {mid: db.steer_meta(mid) for mid in rows.values()}
         holders = [mid for mid, row in saved.items() if row['reply']]
         covered = sorted(mid for mid, row in saved.items() if row['covers'])
@@ -1496,15 +1741,21 @@ def test_any_interleaving_leaves_the_excerpt_on_exactly_one_row(monkeypatch):
             assert holders[0] == covered[-1], 'the last covered row holds it: ' + where
         for mid, row in saved.items():
             assert row['covers'] == (covered if mid in covered else []), where
-        replied = steps.index('output') < steps.index('finish')
-        if not replied:
-            assert not holders and not covered, where
-        elif heal_before_last:
-            # Any write eventually succeeds: the complete state is the saved one.
-            assert holders == [max(rows.values())], where
-            assert covered == sorted(rows.values()), where
-            assert all(row['state'] == 'delivered' for row in saved.values()), where
-            assert steer_receipts.retained()['pending'] == 0, where
+        if not gave_up:
+            # flush() true ⇒ the saved rows are the final in-memory state.
+            strong += 1
+            for label, mid in rows.items():
+                final = tracker.snapshot(ids[label])
+                if final['message_id'] is None:
+                    # Bound only after its group's grace ran out: never written.
+                    assert saved[mid] == {**saved[mid], 'state': 'pending',
+                                          'reply': None, 'covers': []}, where
+                    continue
+                expected = {key: final[key] for key in steer_receipts._CONTRACT_KEYS}
+                assert saved[mid] == expected, f'{label} is not the final state: ' + where
+        stopped.discard(session)
         with steer_receipts._pending_lock:
             steer_receipts._pending.clear()
             steer_receipts._live.clear()
+    assert all(count >= 20 for count in in_flight.values()), in_flight
+    assert strong >= 100, strong

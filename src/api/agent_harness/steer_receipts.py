@@ -21,6 +21,17 @@ bound in between: there is no per-row write that could leave the excerpt on two
 rows or on none. A group is retained as a whole — until every member has ended
 and bound and that state is committed (or given up on), or its grace expires.
 
+**A write settles only the revision it was planned from.** The writer plans a
+group in one critical section (the tracker's lock, then ``_pending_lock``): the
+tracker's facts, the membership, the bindings, their superseded flags and the
+revision of every bound member are read together, so a plan never combines a
+membership from before Stop with a flag from after it. The database is written
+outside every lock, so events keep landing while a write is in flight; when it
+returns, the group is settled (and possibly released) only if no member's
+revision moved meanwhile. Otherwise it stays dirty and retained and is planned
+again. The grace purge never drops a group that is dirty or being written, and
+``flush()`` does not report done while any write is owed.
+
 Contract on the saved user row, written in full at insert
 (``api.chat_coordinator.steered_user_meta``) and only ever replaced wholesale:
 
@@ -280,11 +291,22 @@ class Receipts:
             entry = self._find(steer_id)
             return bool(entry and entry['delivered_at'])
 
+    @property
+    def lock(self):
+        """Held by the writer while it plans, so no event lands mid-plan.
+
+        Every event that changes a receipt (and so its binding's revision and
+        superseded flag) runs under this lock; lock order is tracker →
+        ``_pending_lock``, as for the events themselves.
+        """
+        return self._lock
+
     def group(self, steer_id):
         """Every member of this steer's group as it stands now (one consistent read).
 
-        The writer builds a group's transaction from this, at write time, so a
-        write never carries a row computed before the group last changed.
+        The writer builds a group's transaction from this, at write time and
+        under :attr:`lock`, so a write never carries a row computed before the
+        group last changed.
         """
         with self._lock:
             entry = self._find(steer_id)
@@ -375,8 +397,9 @@ def track(session, tracker, steer_id):
                               'stale': False, 'group': (steer_id,),
                               # ``rev`` counts the changes that asked for a
                               # write; ``settled`` is the one the writer last
-                              # finished with (saved or given up).
-                              'rev': 0, 'settled': 0}
+                              # finished with (saved or given up); ``writing``
+                              # counts the plans holding it right now.
+                              'rev': 0, 'settled': 0, 'writing': 0}
     # Anything retained needs the writer running: grace purging must not
     # depend on later traffic (a process whose only receipt ends unbound).
     _ensure_writer()
@@ -403,7 +426,8 @@ def _purge_locked():
 
     A group goes as one: dropping a single member would leave the others
     waiting for a bind that can no longer be seen. A group with a write still
-    owed is left to the writer, which releases or settles it.
+    owed — dirty (its latest revision is not settled) or held by a plan in
+    flight — is left to the writer, which releases or settles it.
     """
     now = time.monotonic()
     seen = set()
@@ -413,11 +437,15 @@ def _purge_locked():
         ids = {steer_id, *binding['group']}
         members = {sid: _pending[sid] for sid in ids if sid in _pending}
         seen.update(members)
-        if any(m['ended_at'] is None or m['rev'] != m['settled']
-               for m in members.values()):
+        if any(m['ended_at'] is None or _owed(m) for m in members.values()):
             continue
         if now - max(m['ended_at'] for m in members.values()) >= _PENDING_GRACE_SEC:
             _release_locked(members)
+
+
+def _owed(binding):
+    """A write is owed to this binding: dirty, or a plan holding it is in flight."""
+    return binding['rev'] != binding['settled'] or binding['writing'] > 0
 
 
 def _release_locked(steer_ids):
@@ -632,6 +660,22 @@ def _retaining():
         return bool(_pending)
 
 
+def _queue_owed():
+    """Queue every dirty steer nobody queued (the writer's work is its state).
+
+    ``changed_many`` and a settlement that found a newer revision both queue
+    what they dirty; this keeps "dirty" and "will be written" the same thing
+    even if a batch was lost to an unexpected error.
+    """
+    with _pending_lock:
+        dirty = [steer_id for steer_id, binding in _pending.items()
+                 if binding['rev'] != binding['settled'] and not binding['writing']]
+    if dirty:
+        with _write_lock:
+            for steer_id in dirty:
+                _queue.setdefault(steer_id, 0)
+
+
 def _writer_loop():
     global _inflight, _writer
     log = logging.getLogger(__name__)
@@ -640,6 +684,7 @@ def _writer_loop():
         _wake.clear()
         with _pending_lock:
             _purge_locked()  # time-bound retention even on an idle daemon
+        _queue_owed()
         with _write_lock:
             if not _queue:
                 # Nothing queued and nothing retained: stop waking up. Both
@@ -676,14 +721,16 @@ def _writer_loop():
 
 
 def _write_batch(batch, retry, log):
-    """Write every dirty group in ``batch`` whole; fill ``retry`` with failures.
+    """Write every dirty group in ``batch`` whole; fill ``retry`` with what is owed.
 
     ``batch`` is ``{steer_id: attempts}``. Each steer resolves to its group as
     it is now, so several dirty members — or a retry and a newer change — are
-    one write of one group.
+    one write of one group. The database is written outside every lock, so a
+    plan can be overtaken while it is in flight: ``_settle`` then leaves the
+    group dirty and it is planned again.
     """
     by_db = {}
-    for plan in _plan_groups(batch):
+    for plan in _plan_groups(batch, retry, log):
         by_db.setdefault(id(plan['db']), []).append(plan)
     for plans in by_db.values():
         try:
@@ -696,101 +743,183 @@ def _write_batch(batch, retry, log):
             for plan in plans:
                 attempts = plan['attempts'] + 1
                 if attempts < _MAX_WRITE_ATTEMPTS:
+                    _unhold(plan)
                     for steer_id in plan['revs']:
                         retry[steer_id] = attempts
                 else:
                     # Given up, as a group: its rows keep the last state a
                     # transaction committed, which is self-consistent.
-                    _settle(plan)
+                    _requeue(retry, _give_up(plan))
             continue
         for plan in plans:
-            _settle(plan)
+            _requeue(retry, _settle(plan))
 
 
-def _plan_groups(batch):
-    """Dirty steers → one plan per group, read from the group's state right now."""
-    plans = {}
+def _requeue(retry, steer_ids):
+    for steer_id in steer_ids:
+        retry[steer_id] = 0   # a newer revision is a fresh write
+
+
+def _plan_groups(batch, retry, log):
+    """Dirty steers → one plan per group, each read in one critical section."""
+    plans, planned = {}, {}
     for steer_id, attempts in batch.items():
+        key = planned.get(steer_id)
+        if key in plans:
+            # Its group is already planned in this batch, from a read that is
+            # at least as new; the freshest request sets the retry budget.
+            plans[key]['attempts'] = min(plans[key]['attempts'], attempts)
+            continue
         with _pending_lock:
             binding = _pending.get(steer_id)
             tracker = binding['tracker'] if binding else None
         if tracker is None:
             continue   # released or discarded since: nothing left to write
-        members = tracker.group(steer_id)
-        if not members:
+        try:
+            plan = _plan(tracker, steer_id, attempts)
+        except Exception:
+            log.warning("Steer receipt planning failed", exc_info=True)
+            if attempts + 1 < _MAX_WRITE_ATTEMPTS:
+                retry[steer_id] = attempts + 1
+            else:
+                _forgive(steer_id)
             continue
-        key = members[0]['steer_id']
-        if key in plans:
-            # The same group again; the freshest request sets the retry budget.
-            plans[key]['attempts'] = min(plans[key]['attempts'], attempts)
+        if plan is None:
             continue
-        plan = _plan(members, attempts)
-        if plan is not None:
-            plans[key] = plan
+        for member in plan['held']:
+            # The group grew since an earlier plan of this batch read it: the
+            # newer read replaces that plan.
+            older = plans.pop(planned.get(member), None)
+            if older is not None:
+                _unhold(older)
+                plan['attempts'] = min(plan['attempts'], older['attempts'])
+            planned[member] = steer_id
+        plans[steer_id] = plan
     return list(plans.values())
 
 
-def _plan(members, attempts):
-    """One group's transaction: every bound member, as the group stands.
+def _plan(tracker, steer_id, attempts):
+    """One group's transaction, read in ONE critical section.
 
-    ``members`` is one consistent read of the tracker, so exactly one row (the
-    last bound) carries the excerpt and all carry the same ``covers``. The
-    bindings are read under one lock hold, and groups are purged whole, so the
-    plan covers either every bound member or none.
+    The tracker's lock is held across the whole read, then ``_pending_lock``
+    inside it (the same order the events use). Every event that changes a
+    receipt — and with it the binding's revision and superseded flag — runs
+    under the tracker's lock, so the facts, the membership, the bindings, the
+    flags and the revisions in a plan all describe the same instant: exactly
+    one row (the last bound) carries the excerpt, all carry the same
+    ``covers``, and a superseded member's terminal state is built from the
+    facts frozen before Stop. ``revs`` is the revision this plan was made
+    from; ``_settle`` compares it with the group's revision after the write.
     """
     rows, revs, held, db, final = [], {}, [], None, True
-    with _pending_lock:
-        for member in members:
-            steer_id = member['steer_id']
-            binding = _pending.get(steer_id)
-            if binding is None:
-                continue   # discarded: no row will ever carry this steer
-            held.append(steer_id)
-            if not (member['ended'] or binding['stale']):
-                final = False
-            message_id = member['message_id']
-            if binding['db'] is None or message_id is None:
-                final = False   # still to bind: the group will be rewritten
-                continue
-            contract = {key: member[key] for key in _CONTRACT_KEYS}
-            if binding['stale']:
-                contract = _terminal(contract)
-            rows.append((message_id, contract))
-            revs[steer_id] = binding['rev']
-            # One handle writes the whole group, so it is one transaction
-            # (every handle is the same database).
-            db = db if db is not None else binding['db']
-    if not rows:
-        return None
+    with tracker.lock:
+        members = tracker.group(steer_id) or []
+        with _pending_lock:
+            for member in members:
+                member_id = member['steer_id']
+                binding = _pending.get(member_id)
+                if binding is None:
+                    continue   # discarded: no row will ever carry this steer
+                held.append(member_id)
+                if not (member['ended'] or binding['stale']):
+                    final = False
+                message_id = member['message_id']
+                if binding['db'] is None or message_id is None:
+                    final = False   # still to bind: the group will be rewritten
+                    continue
+                contract = {key: member[key] for key in _CONTRACT_KEYS}
+                if binding['stale']:
+                    contract = _terminal(contract)
+                rows.append((message_id, contract))
+                revs[member_id] = binding['rev']
+                # One handle writes the whole group, so it is one transaction
+                # (every handle is the same database).
+                db = db if db is not None else binding['db']
+            if not rows:
+                # No row to write (the tracker no longer knows the steer):
+                # nothing is owed for it.
+                binding = _pending.get(steer_id)
+                if binding is not None:
+                    binding['settled'] = binding['rev']
+                return None
+            for member_id in held:
+                _pending[member_id]['writing'] += 1
     rows.sort(key=lambda row: row[0])
     return {'db': db, 'rows': rows, 'revs': revs, 'held': held,
             'final': final, 'attempts': attempts}
 
 
+def _unhold_locked(plan):
+    for steer_id in plan['held']:
+        binding = _pending.get(steer_id)
+        if binding is not None and binding['writing'] > 0:
+            binding['writing'] -= 1
+
+
+def _unhold(plan):
+    """This plan is no longer in flight (it failed and will be planned again)."""
+    with _pending_lock:
+        _unhold_locked(plan)
+
+
+def _forgive(steer_id):
+    """Stop owing a write that could not even be planned (bounded, like a write)."""
+    with _pending_lock:
+        binding = _pending.get(steer_id)
+        if binding is not None:
+            binding['settled'] = binding['rev']
+
+
 def _settle(plan):
     """The writer is done with this plan (saved, or given up after retries).
 
-    A group that can no longer change — every member ended and bound — is
-    released whole. Any other stays retained with all its bindings, so the next
-    change (a late bind, the turn's end) rewrites every row again; the grace
-    purge is the backstop for a member that never binds.
+    Only the revision the plan was made from is settled. If any member's
+    revision moved while the write was in flight, what was just saved is
+    already old: the group stays dirty and retained, nothing is released, and
+    the moved members are returned to be planned again.
+
+    Otherwise a group that can no longer change — every member ended and
+    bound — is released whole. Any other stays retained with all its bindings,
+    so the next change (a late bind, the turn's end) rewrites every row again;
+    the grace purge is the backstop for a member that never binds.
     """
+    moved = []
     with _pending_lock:
+        _unhold_locked(plan)
         for steer_id, rev in plan['revs'].items():
             binding = _pending.get(steer_id)
-            if binding is not None:
-                binding['settled'] = max(binding['settled'], rev)
-        if plan['final']:
+            if binding is None:
+                continue
+            if binding['rev'] == rev:
+                binding['settled'] = rev
+            else:
+                moved.append(steer_id)
+        if plan['final'] and not moved:
             _release_locked(plan['held'])
+    return moved
+
+
+def _give_up(plan):
+    """Stop retrying this plan's revision; the rows keep the last committed state."""
+    return _settle(plan)
+
+
+def _write_owed():
+    with _pending_lock:
+        return any(_owed(binding) for binding in _pending.values())
 
 
 def flush(timeout=5.0):
-    """Wait for the writer to drain its queue. For tests and shutdown."""
+    """Wait until no write is owed: nothing queued, in flight or dirty.
+
+    For tests and shutdown.
+    """
     deadline = time.monotonic() + timeout
     while True:
         with _write_lock:
-            if not _queue and not _inflight:
-                return True
+            idle = not _queue and not _inflight
+        if idle and not _write_owed():
+            return True
         if time.monotonic() >= deadline:
             return False
         _ensure_writer()
