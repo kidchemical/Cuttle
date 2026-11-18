@@ -1,0 +1,307 @@
+/* ================================================================
+   Studio work panel (L4): the turn's Tasks (left) and sub-agent cards (right)
+   inside the assistant bubble, the composer dock's owner line, the bubble's
+   "Working" tag and the header pill's live dot. Scoped to `:root.cuttle-studio`;
+   Classic never matches. Tokens only (studio_tokens.css); no px copies of the mock.
+   Motion: the panel reveals on insert (`@starting-style`), new rows and cards ease
+   in (`.is-entering`), and reduced motion turns all of it off.
+   ================================================================ */
+
+/* ---- panel root: reveal on insert, two columns when wide enough ---------- */
+:root.cuttle-studio .work-panel {
+    display: grid;
+    grid-template-rows: 1fr;
+    margin: var(--studio-space-3) 0 var(--studio-space-1);
+    container-type: inline-size;
+    transition: grid-template-rows var(--studio-dur-base) var(--studio-ease-out);
+}
+
+@starting-style {
+    :root.cuttle-studio .work-panel {
+        grid-template-rows: 0fr;
+    }
+}
+
+:root.cuttle-studio .work-panel-cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--studio-space-3);
+    min-height: 0;
+    overflow: hidden;
+    padding: 2px;
+}
+
+@container (min-width: 640px) {
+    :root.cuttle-studio .work-panel-cols.is-two {
+        grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+        align-items: start;
+    }
+}
+
+:root.cuttle-studio .work-panel-tasks,
+:root.cuttle-studio .work-panel-cards {
+    min-width: 0;
+    display: grid;
+    gap: var(--studio-space-3);
+    padding: var(--studio-space-3);
+    border-radius: var(--studio-radius-md);
+    background: var(--studio-card-bg);
+    box-shadow: var(--studio-card-ring), var(--studio-shadow-card);
+}
+
+/* ---- Tasks list ----------------------------------------------------------- */
+:root.cuttle-studio .work-list {
+    display: grid;
+    gap: var(--studio-space-2);
+    min-width: 0;
+}
+
+:root.cuttle-studio .work-list-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--studio-space-2);
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-semibold);
+    color: var(--studio-ink-muted);
+}
+
+:root.cuttle-studio .work-list-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+:root.cuttle-studio .work-list-count {
+    font-variant-numeric: tabular-nums;
+    color: var(--studio-ink-faint);
+}
+
+:root.cuttle-studio .work-panel .work-task-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: var(--studio-space-2);
+}
+
+:root.cuttle-studio .work-panel .work-task-list .work-task-list {
+    padding-left: var(--studio-space-5);
+}
+
+:root.cuttle-studio .work-panel .chat-widget-task {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--studio-space-2);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: var(--studio-text-sm);
+    line-height: var(--studio-leading-base);
+    color: var(--studio-ink);
+}
+
+:root.cuttle-studio .work-panel .chat-widget-task input[type="checkbox"] {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    margin: 2px 0 0;
+    accent-color: var(--studio-accent);
+    border-radius: 5px;
+}
+
+:root.cuttle-studio .work-panel .chat-widget-task.is-done .chat-widget-task-text {
+    color: var(--studio-ink-faint);
+    text-decoration: line-through;
+}
+
+/* In progress: an unticked box that glows (not a tick, not a spinner). */
+:root.cuttle-studio .work-panel .chat-widget-task.is-in-progress input[type="checkbox"] {
+    box-shadow: 0 0 0 0 var(--studio-accent-soft);
+    animation: studio-work-glow 1.8s var(--studio-ease-out) infinite;
+}
+
+@keyframes studio-work-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(112, 72, 232, 0.0); }
+    50% { box-shadow: 0 0 0 5px rgba(112, 72, 232, 0.28); }
+}
+
+:root.cuttle-studio .chat-widget-task-owner-row {
+    margin-top: 2px;
+    font-size: var(--studio-text-xs);
+}
+
+/* ---- Sub-agent cards (Studio fleet markup, chat_subagent_fleet.js) --------- */
+:root.cuttle-studio .work-panel .studio-fleet-card {
+    display: grid;
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    padding: var(--studio-space-3);
+    border: 0;
+    border-radius: var(--studio-radius-sm);
+    background: var(--studio-card-bg);
+    box-shadow: var(--studio-card-ring), var(--studio-shadow-card);
+    color: var(--studio-ink);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: box-shadow var(--studio-dur-fast) var(--studio-ease-out), transform var(--studio-dur-fast) var(--studio-ease-out);
+}
+
+:root.cuttle-studio .work-panel .studio-fleet-card:hover {
+    box-shadow: var(--studio-card-ring), var(--studio-shadow-raised);
+    transform: translateY(-1px);
+}
+
+:root.cuttle-studio .work-panel .studio-fleet-card:focus-visible {
+    outline: none;
+    box-shadow: var(--studio-focus-ring);
+}
+
+:root.cuttle-studio .work-panel .subagent-fleet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--studio-space-2);
+    min-width: 0;
+}
+
+:root.cuttle-studio .work-panel .subagent-fleet-outcome {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    font-size: var(--studio-text-2xs);
+    color: var(--studio-ink-muted);
+    white-space: nowrap;
+}
+
+:root.cuttle-studio .work-panel .subagent-fleet-outcome i {
+    font-style: normal;
+}
+
+:root.cuttle-studio .work-panel .subagent-fleet-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--studio-text-sm);
+    font-weight: var(--studio-weight-semibold);
+}
+
+:root.cuttle-studio .work-panel .subagent-fleet-summary {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--studio-text-xs);
+    color: var(--studio-ink-muted);
+}
+
+:root.cuttle-studio .work-panel .subagent-fleet-foot {
+    display: flex;
+    gap: var(--studio-space-2);
+    font-size: var(--studio-text-2xs);
+    color: var(--studio-ink-faint);
+}
+
+/* ---- Entrance (new rows and cards only; reduced motion turns it off) -------- */
+@keyframes studio-work-enter {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
+}
+
+:root.cuttle-studio .work-panel .is-entering {
+    animation: studio-work-enter var(--studio-dur-base) var(--studio-ease-out) both;
+}
+
+/* ---- live dot, bubble header agent + working tag, header pill ---------------- */
+:root.cuttle-studio .studio-live-dot {
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--studio-accent);
+    animation: studio-live-pulse 1.6s var(--studio-ease-out) infinite;
+}
+
+@keyframes studio-live-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
+:root.cuttle-studio .studio-agent-header {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--studio-space-2);
+    min-width: 0;
+    max-width: 100%;
+}
+
+:root.cuttle-studio .studio-working-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border-radius: var(--studio-radius-pill);
+    background: var(--studio-accent-soft);
+    color: var(--studio-accent-ink);
+    font-size: var(--studio-text-2xs);
+    font-weight: var(--studio-weight-semibold);
+    white-space: nowrap;
+}
+
+:root.cuttle-studio .chat-orch-studio-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--studio-space-2);
+}
+
+:root.cuttle-studio .chat-orch-studio-pill .studio-live-dot {
+    margin-left: 2px;
+}
+
+:root.cuttle-studio .chat-orch-quick {
+    padding: 2px 10px;
+    border: 0;
+    border-radius: var(--studio-radius-pill);
+    background: var(--studio-accent-soft);
+    color: var(--studio-accent-ink);
+    font: inherit;
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-semibold);
+    cursor: pointer;
+}
+
+:root.cuttle-studio .chat-orch-quick:hover {
+    filter: brightness(0.97);
+}
+
+:root.cuttle-studio .chat-orch-quick:focus-visible {
+    outline: none;
+    box-shadow: var(--studio-focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root.cuttle-studio .work-panel {
+        transition: none;
+    }
+
+    :root.cuttle-studio .work-panel .is-entering,
+    :root.cuttle-studio .studio-live-dot {
+        animation: none;
+    }
+
+    /* Still marks the item as in progress, without the pulse. */
+    :root.cuttle-studio .work-panel .chat-widget-task.is-in-progress input[type="checkbox"] {
+        animation: none;
+        box-shadow: 0 0 0 3px rgba(112, 72, 232, 0.28);
+    }
+
+    :root.cuttle-studio .work-panel .studio-fleet-card:hover {
+        transform: none;
+    }
+}

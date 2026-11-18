@@ -7,11 +7,16 @@
    unchanged cards (and focus) mounted across history polls, and the live
    list painted onto the in-progress typing bubbles.
 
+   Studio (L4): the same mount point renders the work panel
+   (chat_work_panel.js): the turn's Tasks lists left, fleet cards right. Studio
+   panels repaint in place when the Tasks lists change (`cuttle-work-lists-changed`).
+
    Interface: `create(deps)` → one controller per chat frame.
    deps: { win, escapeHtmlInline, parseChatHandleToken, avatarHtml,
-           chipCategoryClass }. The page keeps chat-handle parsing, avatars
-   and slash chip styling, and click → open chat (`data-chat-handle`).
-   Loaded before chat_page.js.
+           chipCategoryClass, isStudio?, workPanel?, tasksLists? }. The page keeps
+   chat-handle parsing, avatars and slash chip styling, and click → open chat
+   (`data-chat-handle`). The Studio hooks default to the browser globals
+   (CuttleChatDisplay, CuttleWorkPanel, CuttleTaskGizmos). Loaded before chat_page.js.
    ================================================================ */
 (function (root) {
     'use strict';
@@ -29,6 +34,48 @@
         const chipCategoryClass = deps.chipCategoryClass;
         /** Sub-agents attached to the in-progress turn (live status). */
         let liveList = [];
+        let catalogRequested = false;
+
+        function studioOn() {
+            if (typeof deps.isStudio === 'function') return !!deps.isStudio();
+            const display = globalThis.CuttleChatDisplay;
+            return !!(display && typeof display.isStudio === 'function' && display.isStudio());
+        }
+
+        function workPanel() {
+            return deps.workPanel || globalThis.CuttleWorkPanel || null;
+        }
+
+        function tasksLists() {
+            if (typeof deps.tasksLists === 'function') return deps.tasksLists();
+            const tasks = globalThis.CuttleTaskGizmos;
+            return tasks && typeof tasks.activeLists === 'function' ? tasks.activeLists() : [];
+        }
+
+        /** Agent colours for the identity dots: one fetch of the catalog, Studio only. */
+        function ensureCatalog() {
+            const panel = workPanel();
+            const win = deps.win;
+            if (catalogRequested || !panel || !win || typeof win.fetch !== 'function') return;
+            catalogRequested = true;
+            win.fetch('/api/agents', { credentials: 'include', cache: 'no-store' })
+                .then((r) => r.json())
+                .then((j) => {
+                    if (j && j.success && Array.isArray(j.agents)) {
+                        panel.setCatalog(j.agents);
+                        repaintPanels();
+                    }
+                })
+                .catch(() => {});
+        }
+
+        /** Studio work panel for a reply's (or live bubble's) cards and its turn's Tasks lists. */
+        function studioPanelHtml(list, opts) {
+            const panel = workPanel();
+            if (!panel) return '';
+            ensureCatalog();
+            return panel.html(panel.model(tasksLists(), list, opts && opts.turnId));
+        }
 
         function normalizeSubagentList(raw) {
             if (!raw) return [];
@@ -126,8 +173,9 @@
 
         function renderSubagentLaunchersHtml(subagents, opts) {
             const list = normalizeSubagentList(subagents);
-            if (!list.length) return '';
             const isParent = !!(opts && opts.kind === 'parent');
+            if (!isParent && studioOn()) return studioPanelHtml(list, opts);
+            if (!list.length) return '';
             const fleet = globalThis.CuttleChatSubagentFleet;
             if (!isParent && fleet && fleet.hasFleet(list)) {
                 return fleet.renderFleetHtml(list, { esc: escapeHtmlInline, avatarHtml, chipHtml: fleetAgentChipHtml });
@@ -152,18 +200,70 @@
             return '<div class="' + wrapClass + '" role="group" aria-label="' + aria + '">' + buttons + '</div>';
         }
 
+        /** Studio: the panel's card and row state repaints in place; new rows and cards ease in. */
+        function repaintPanel(existing, next) {
+            const focusKey = (el) => {
+                const card = el && el.closest ? el.closest('[data-chat-handle]') : null;
+                return card ? card.getAttribute('data-chat-handle') : null;
+            };
+            const focused = frameDoc.activeElement;
+            const key = focused && existing.contains(focused) ? focusKey(focused) : null;
+            const before = panelKeys(existing);
+            existing.setAttribute('aria-label', next.getAttribute('aria-label') || '');
+            existing.setAttribute('data-turn-id', next.getAttribute('data-turn-id') || '');
+            existing.innerHTML = next.innerHTML;
+            panelRows(existing).forEach((el) => {
+                if (!before.has(panelKeyOf(el))) el.classList.add('is-entering');
+            });
+            if (key) {
+                const back = Array.from(existing.querySelectorAll('[data-chat-handle]'))
+                    .find((el) => el.getAttribute('data-chat-handle') === key);
+                if (back && typeof back.focus === 'function') back.focus({ preventScroll: true });
+            }
+        }
+
+        /** A panel's keyed rows and cards: a list row, or a fleet card. */
+        function panelRows(panel) {
+            return panel && panel.querySelectorAll ? Array.from(panel.querySelectorAll('[data-item-id], [data-chat-handle]')) : [];
+        }
+
+        function panelKeyOf(el) {
+            const handle = el.getAttribute('data-chat-handle');
+            if (handle) return 'c:' + handle;
+            const list = el.closest('[data-list-id]');
+            return 'i:' + (list ? list.getAttribute('data-list-id') : '') + ':' + el.getAttribute('data-item-id');
+        }
+
+        function panelKeys(panel) {
+            return new Set(panelRows(panel).map(panelKeyOf));
+        }
+
+        /** Studio panels on screen, repainted from the arguments each bubble mounted with. */
+        function repaintPanels() {
+            if (!frameDoc || !frameDoc.querySelectorAll) return;
+            frameDoc.querySelectorAll('.work-panel').forEach((panel) => {
+                const msg = panel.closest('.message');
+                const args = msg && msg.__cuttleMountArgs;
+                if (args) mountSubagentLaunchers(msg, args.subagents, args.opts);
+            });
+        }
+
         function mountSubagentLaunchers(messageEl, subagents, opts) {
             if (!messageEl) return;
+            // The turn a panel belongs to: this bubble's own turn (saved or live).
+            const turnId = String((opts && opts.turnId) || (messageEl.dataset && messageEl.dataset.turnId) || '');
+            const renderOpts = Object.assign({}, opts || {}, { turnId: turnId });
             if (!(opts && opts.kind === 'parent')) {
                 // Reply threads (chat_threads.js) list finished children from these.
                 const list = Array.isArray(subagents) && subagents[0] && subagents[0].sessionId !== undefined
                     ? subagents : normalizeSubagentList(subagents);
                 messageEl.__cuttleSubagentCards = list.length ? list : null;
+                messageEl.__cuttleMountArgs = { subagents: subagents, opts: renderOpts };
             }
             const wrap = messageEl.querySelector('.message-content-wrapper');
             if (!wrap) return;
-            const html = renderSubagentLaunchersHtml(subagents, opts);
-            const existing = wrap.querySelector('.subagent-launchers');
+            const html = renderSubagentLaunchersHtml(subagents, renderOpts);
+            let existing = wrap.querySelector('.subagent-launchers, .work-panel');
             if (!html) {
                 if (existing) existing.remove();
                 return;
@@ -174,6 +274,17 @@
             const template = frameDoc.createElement('template');
             template.innerHTML = html;
             const next = template.content.firstElementChild;
+            const nextPanel = next.classList.contains('work-panel');
+            // Classic ↔ Studio (the flag flipped live): rebuild rather than diff across shapes.
+            if (existing && nextPanel !== existing.classList.contains('work-panel')) {
+                existing.remove();
+                existing = null;
+            }
+            if (existing && nextPanel) {
+                repaintPanel(existing, next);
+                existing.__cuttleLaunchersHtml = html;
+                return;
+            }
             if (existing) {
                 // Keep the group and its buttons mounted. Re-focusing replacement
                 // buttons can scroll an iPad iframe back to a fleet above the reader.
@@ -221,7 +332,8 @@
         function mountMessageLaunchers(messageEl, role, opts) {
             if (!messageEl) return;
             if (role === 'assistant') {
-                mountSubagentLaunchers(messageEl, opts && opts.subagents);
+                mountSubagentLaunchers(messageEl, opts && opts.subagents,
+                    { turnId: opts && (opts.turn_id || opts.query_id) ? String(opts.turn_id || opts.query_id) : '' });
                 return;
             }
             if (role === 'user') {
@@ -298,6 +410,11 @@
             });
             // Cards no live bubble of their turn carries are shown by the pinned
             // background card (chat_background_work.js, from live `subagents`).
+        }
+
+        // Tasks changed (chat_widgets / tasks_gizmo.js): Studio panels repaint their turn's lists.
+        if (frameDoc && typeof frameDoc.addEventListener === 'function') {
+            frameDoc.addEventListener('cuttle-work-lists-changed', repaintPanels);
         }
 
         return {
