@@ -277,6 +277,85 @@ def test_identical_concurrent_steers_stay_unconfirmed_while_ambiguous():
     assert delivery.undelivered == []
 
 
+def test_a_held_echo_can_never_confirm_a_later_send():
+    """Codex 4: evidence is scoped to the sends outstanding when it arrived."""
+    from api.agent_harness.steer_delivery import SteerDelivery
+
+    delivery = SteerDelivery()
+    first = delivery.begin('same', 'A')
+    second = delivery.begin('same', 'B')
+    delivery.acknowledge(first, succeeded=True)
+    delivery.acknowledge(second, succeeded=True)
+    assert delivery.receive('same', 'u1') == [], 'either send could own this echo'
+    # B's RPC errors; its held echo is proof B was read, not evidence for A.
+    assert delivery.acknowledge(second, succeeded=False) is True
+    assert second.received is True
+    assert delivery.undelivered == ['same'], 'A is still unconfirmed'
+
+    # A third identical send echoes: that echo is its own, and A stays unproven.
+    third = delivery.begin('same', 'C')
+    delivery.acknowledge(third, succeeded=True)
+    assert delivery.receive('same', 'u2') == [], 'A and C cannot share one echo'
+    assert delivery.undelivered == ['same', 'same']
+    assert first.received is False and third.received is False
+
+
+def test_a_rejection_rechecks_the_held_echo():
+    """N3: a held echo with one candidate left confirms that candidate."""
+    from api.agent_harness.steer_delivery import SteerDelivery
+
+    confirmed = []
+    delivery = SteerDelivery(confirmed=lambda rs: confirmed.extend(r.steer_id for r in rs))
+    first = delivery.begin('same', 'A')
+    second = delivery.begin('same', 'B')
+    delivery.acknowledge(first, succeeded=True)
+    assert delivery.receive('same', 'u1') == []
+    # B is rejected: the one held echo can only have been B's own line.
+    assert delivery.acknowledge(second, succeeded=False) is True
+    assert confirmed == ['B']
+    assert delivery.received_count == 1
+    assert delivery.undelivered == ['same'], "A was never echoed"
+
+
+def test_the_closing_notice_counts_identical_sends_and_never_asks_for_a_resend():
+    """Codex 4: unconfirmed is not "send it again" — that would run it twice."""
+    from api.agent_harness.steer_delivery import SteerDelivery
+
+    delivery = SteerDelivery()
+    for steer_id in ('A', 'B', 'C'):
+        delivery.acknowledge(delivery.begin('same', steer_id), succeeded=True)
+    assert delivery.receive('same', 'u1') == []
+    notice = delivery.closing_notice('Codex')
+    assert 'it read 3 of 3 identical follow-ups' in notice
+    assert 'Delivery is not confirmed' in notice
+    assert 'again' not in notice.lower()
+
+    one = SteerDelivery()
+    one.acknowledge(one.begin('fix the typo', 'A'), succeeded=True)
+    single = one.closing_notice('Claude Code')
+    assert single.startswith('Claude Code ended this turn without confirming it read your follow-up:')
+    assert 'again' not in single.lower()
+    assert SteerDelivery().closing_notice('Codex') is None
+
+
+def test_identical_sends_are_confirmed_once_each_has_its_own_echo():
+    """Three identical sends, three echoes: every one is accounted for."""
+    from api.agent_harness.steer_delivery import SteerDelivery
+
+    delivery = SteerDelivery()
+    first = delivery.begin('same', 'A')
+    second = delivery.begin('same', 'B')
+    delivery.acknowledge(first, succeeded=True)
+    delivery.acknowledge(second, succeeded=True)
+    assert delivery.receive('same', 'u1') == []       # scope {A, B}
+    third = delivery.begin('same', 'C')
+    delivery.acknowledge(third, succeeded=True)
+    assert delivery.receive('same', 'u2') == []       # scope {A, B, C}
+    ids = sorted(r.steer_id for r in delivery.receive('same', 'u3'))
+    assert ids == ['A', 'B', 'C']
+    assert delivery.undelivered == []
+
+
 def test_an_echo_confirms_only_the_send_it_was_reported_for():
     tracker = Receipts()
     first, second = tracker.begin('same'), tracker.begin('same')

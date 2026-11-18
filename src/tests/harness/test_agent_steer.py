@@ -303,7 +303,8 @@ def test_codex_turn_reports_steer_it_never_read(tmp_path, monkeypatch):
     assert res["success"] is False
     assert res["undelivered_steers"] == ["you stopped, continue"]
     assert res["steered"] == 0
-    assert "before reading your follow-up" in res["output"]
+    assert "without confirming it read your follow-up" in res["output"]
+    assert "Delivery is not confirmed" in res["output"]
     assert "you stopped, continue" in res["output"]
     lines = []
     while not statuses.empty():
@@ -729,7 +730,8 @@ def test_claude_turn_reports_steer_it_never_read(tmp_path, monkeypatch):
     assert results and results[0]["steered"] is True
     assert res["steered"] == 0
     assert res["undelivered_steers"] == ["too late"]
-    assert "before reading your follow-up" in res["output"]
+    assert "without confirming it read your follow-up" in res["output"]
+    assert "Delivery is not confirmed" in res["output"]
     assert "- too late" in res["output"]
 
 

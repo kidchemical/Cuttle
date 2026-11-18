@@ -395,14 +395,6 @@ def _merge_results(parsed: List[Dict[str, Any]]) -> Dict[str, Any]:
     return last
 
 
-def _undelivered_notice(texts: List[str]) -> str:
-    lines = "\n".join(f"- {' '.join(t.split())[:200]}" for t in texts)
-    return (
-        "Claude Code ended this turn before reading your follow-up"
-        f"{'s' if len(texts) > 1 else ''}:\n{lines}\nSend it again to continue."
-    )
-
-
 def _waiting_label(tasks: List[Dict[str, Any]]) -> str:
     from api.agent_harness.background_wait import waiting_label
 
@@ -416,13 +408,18 @@ def _unread_steers(st: Dict[str, Any]) -> List[str]:
     return list(st["delivery"].undelivered)
 
 
+def _closing_notice(st: Dict[str, Any]) -> Optional[str]:
+    """The run's one notice for follow-ups it never confirmed reading."""
+    return st["delivery"].closing_notice("Claude Code")
+
+
 def _finish_detached(wait: Any, run: Any, st: Dict[str, Any], bg_wait: float,
                      chat_session_id: Optional[str] = None) -> None:
     """End of a run that outlived its turn: terminal card state + closing notice bubble."""
     notes: List[str] = []
-    undelivered = _unread_steers(st)
-    if undelivered:
-        notes.append(_undelivered_notice(undelivered))
+    notice = _closing_notice(st)
+    if notice:
+        notes.append(notice)
     if run.cancelled:
         wait.finish("failed", "Stopped")
         return
@@ -742,6 +739,14 @@ class ClaudeCliTool:
             except Exception:
                 pass
 
+        def _note_echoes(receipts: List[Any]) -> None:
+            """Every confirmation the matcher makes, however it was reached."""
+            for receipt in receipts:
+                if receipt.steer_id:
+                    _note(steer_registry.note_echo, receipt.steer_id)
+
+        st["delivery"].confirmed = _note_echoes
+
         def _note_output(obj: Dict[str, Any]) -> None:
             """Root output boundaries, so only text that STARTED after a steer's
             replay can be reported as its reply."""
@@ -898,9 +903,6 @@ class ClaudeCliTool:
                     st["prompt_replayed"] = True
                 else:
                     confirmed = st["delivery"].receive(echoed, obj.get("uuid"))
-                    for receipt in confirmed:
-                        if receipt.steer_id:
-                            _note(steer_registry.note_echo, receipt.steer_id)
                     if confirmed:
                         stream.activity.emit(
                             f"steer received: {' '.join(echoed.split())[:100]}", force=True)
@@ -1023,8 +1025,9 @@ class ClaudeCliTool:
         # only detached follow-ups, which bypass it, wrap their own.
         display = carry_ui_blocks(stream.earlier_writing(), display)
         undelivered: List[str] = _unread_steers(st)
-        if undelivered:
-            display = f"{display}\n\n{_undelivered_notice(undelivered)}".strip()
+        notice = _closing_notice(st)
+        if notice:
+            display = f"{display}\n\n{notice}".strip()
         handed = _hand_off(st, chat_session_id, bg_wait) if st["abandoned"] and not run.cancelled else None
         if handed is not None:
             display = f"{display}\n\n{handed[0]}".strip()

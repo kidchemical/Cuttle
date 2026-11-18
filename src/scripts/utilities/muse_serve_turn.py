@@ -190,7 +190,7 @@ async def run_muse_turn_serve(
     meta_provider = not prov or prov.lower() == "meta"
 
     from api.agent_harness import steer as steer_registry
-    from api.agent_harness.steer_delivery import SteerDelivery, undelivered_notice
+    from api.agent_harness.steer_delivery import SteerDelivery
     from api.agent_harness.activity import ActivityEmitter, TextActivityLog, ToolActivityLog, text_preview
 
     argv = [muse_bin, "serve", "--trust-workspace"]
@@ -266,6 +266,14 @@ async def run_muse_turn_serve(
             fn(chat_session_id, st["steer_token"], *args)
         except Exception:
             pass
+
+    def _note_echoes(receipts: List[Any]) -> None:
+        """Every confirmation the matcher makes, however it was reached."""
+        for receipt in receipts:
+            if receipt.steer_id:
+                _note(steer_registry.note_echo, receipt.steer_id)
+
+    delivery.confirmed = _note_echoes
 
     def _steer_send(text: str, steer_id: Optional[str] = None) -> "concurrent.futures.Future":
         out: "concurrent.futures.Future" = concurrent.futures.Future()
@@ -432,9 +440,6 @@ async def run_muse_turn_serve(
             if method == "item/completed" and item.get("steered") and accepting_steers:
                 text = str(item.get("text") or "")
                 confirmed = delivery.receive(text, item.get("itemId"))
-                for receipt in confirmed:
-                    if receipt.steer_id:
-                        _note(steer_registry.note_echo, receipt.steer_id)
                 if confirmed:
                     activity.emit(f"steer received: {_first_line(text, 100)}", force=True)
             return
@@ -580,8 +585,9 @@ async def run_muse_turn_serve(
     if not display and st["writing"]:
         display = "\n\n".join(v for v in st["writing"].values() if v).strip()
     undelivered = delivery.undelivered
-    if undelivered:
-        display = f"{display}\n\n{undelivered_notice('Muse Code', undelivered)}".strip()
+    notice = delivery.closing_notice("Muse Code")
+    if notice:
+        display = f"{display}\n\n{notice}".strip()
     stderr = (run.stderr if run is not None else b"").decode("utf-8", errors="replace").strip()
     base: Dict[str, Any] = {
         "usage": _usage_from_turn(st["turn_usage"], st["prompt_tokens"]),

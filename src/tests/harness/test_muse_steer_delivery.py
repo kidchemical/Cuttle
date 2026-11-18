@@ -114,9 +114,14 @@ def test_accepted_but_unread_followup_is_visible(tmp_path, monkeypatch, mode):
     assert result["success"] is True
     assert result["steered"] == (1 if mode == "duplicate_echo" else 0)
     assert result["undelivered_steers"] == ["potato"]
-    assert "Muse Code ended this turn without confirming it read your follow-up" in result["output"]
+    if mode == "duplicate_echo":
+        # Two identical sends, one confirmed: the notice counts, never guesses.
+        assert "it read 1 of 2 identical follow-ups" in result["output"]
+    else:
+        assert "without confirming it read your follow-up" in result["output"]
     assert "- potato" in result["output"]
-    assert "Send it again to continue." in result["output"]
+    assert "Delivery is not confirmed" in result["output"]
+    assert "Send it again" not in result["output"], "a resend would run the request twice"
     assert any("steer queued: potato" in str(status) for status in statuses)
 
 

@@ -60,14 +60,6 @@ def _delta_preview(buf: str, limit: int = 120) -> str:
     return re.sub(r"\s+", " ", buf or "").strip()[-limit:]
 
 
-def _undelivered_notice(texts: List[str]) -> str:
-    lines = "\n".join(f"- {_first_line(t, 200)}" for t in texts)
-    return (
-        "Codex ended this turn before reading your follow-up"
-        f"{'s' if len(texts) > 1 else ''}:\n{lines}\nSend it again to continue."
-    )
-
-
 def _codex_user_item_text(item: Dict[str, Any]) -> str:
     """Text of a ``userMessage`` item (the turn's prompt, or a steer echoed back)."""
     for part in item.get("content") or []:
@@ -344,6 +336,14 @@ async def run_codex_turn_app_server(
     def _note_echo(steer_id: str) -> None:
         _note(steer_registry.note_echo, steer_id)
 
+    def _note_echoes(receipts: List[Any]) -> None:
+        """Every confirmation the matcher makes, however it was reached."""
+        for receipt in receipts:
+            if receipt.steer_id:
+                _note_echo(receipt.steer_id)
+
+    delivery.confirmed = _note_echoes
+
     def _fail_setup(message: str) -> None:
         if st["setup_error"] is None and st["turn_id"] is None:
             st["setup_error"] = message
@@ -555,9 +555,6 @@ async def run_codex_turn_app_server(
                         st["prompt_echoed"] = True
                         return
                     confirmed = delivery.receive(text, item.get("id"))
-                    for receipt in confirmed:
-                        if receipt.steer_id:
-                            _note_echo(receipt.steer_id)
                     if confirmed:
                         activity.emit(f"steer received: {_first_line(text, 100)}", force=True)
                 return
@@ -698,8 +695,9 @@ async def run_codex_turn_app_server(
     thread_id = st["thread_id"]
     display = "\n\n".join(messages).strip()
     undelivered: List[str] = list(delivery.undelivered)
-    if undelivered:
-        display = f"{display}\n\n{_undelivered_notice(undelivered)}".strip()
+    notice = delivery.closing_notice("Codex")
+    if notice:
+        display = f"{display}\n\n{notice}".strip()
     # Per-turn tokens come from the accumulated per-request deltas; the
     # thread-cumulative total is only a fallback for older servers.
     usage = _usage_from_turn_tokens(st) or _usage_from_token_usage(st["token_usage"])
