@@ -183,7 +183,29 @@
         return s;
     }
 
-    const api = { KIND, group, summary, previewText, threadKeyFor };
+    /** Project a versioned steer receipt into truthful, display-ready copy. */
+    function steerReceipt(row, liveSteers, liveTurnId) {
+        const receipt = row && row.metadata && row.metadata.steer;
+        if (!receipt || receipt.v !== 1) return null;
+        let current = receipt;
+        const live = Array.isArray(liveSteers) && liveSteers.find((item) =>
+            String(item.message_id) === String(row.messageId));
+        if (live) current = live;
+        let label = 'Not confirmed';
+        if (current.mode === 'live' && current.state === 'delivered') label = 'Steered into the live turn · no restart';
+        else if (current.mode === 'live' && current.state === 'pending') {
+            label = String(row.turnId || '') === String(liveTurnId || '') && !!liveTurnId
+                ? 'Sending into the live turn…' : 'Not confirmed';
+        } else if (current.mode === 'detached' && current.state === 'pending') label = 'Accepted into the background run';
+        else if (current.mode === 'detached' && current.state === 'delivered') label = 'Read by the background run';
+        else if (current.state === 'undelivered') label = 'Ended without confirmation';
+        const excerpt = !row.steerIdle && current.reply && current.reply.text
+            && Array.isArray(current.covers) && current.covers.length
+            ? String(current.reply.text) : null;
+        return { label, state: current.state, excerpt };
+    }
+
+    const api = { KIND, group, summary, previewText, threadKeyFor, steerReceipt };
 
     const ns = (root.CuttleChatThreadModel = root.CuttleChatThreadModel || {});
     Object.assign(ns, api);

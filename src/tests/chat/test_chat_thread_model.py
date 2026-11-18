@@ -70,6 +70,8 @@ out.preview = [
   M.previewText('<think>hmm</think> Done: ```code``` tests pass'),
   M.previewText('x'.repeat(200), 20),
 ];
+const receipt = (state, mode, reply, covers) => M.steerReceipt({messageId: 12, turnId:'T1', metadata:{steer:{v:1,state,mode,reply,covers}}, steerIdle:false}, [], 'T1');
+out.receipts = [receipt('pending','live',null,[]), receipt('delivered','live',{text:'ok'},[12]), receipt('pending','detached',null,[]), receipt('delivered','detached',{text:'ok'},[12]), receipt('undelivered','live',null,[]), M.steerReceipt({metadata:{steer:{state:'delivered'}}}, [], 'T1')];
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -144,3 +146,13 @@ def test_idle_steer_starts_a_new_thread_instead_of_joining_the_old_turn(out):
     t = g["threads"][0]
     assert t["root"] == 3 and t["key"] == "t:T1#1"
     assert [r["index"] for r in t["replies"]] == [4, 5]
+
+
+def test_steer_receipt_copy_and_legacy_shape(out):
+    assert [item["label"] if item else None for item in out["receipts"]] == [
+        "Sending into the live turn…", "Steered into the live turn · no restart",
+        "Accepted into the background run", "Read by the background run",
+        "Ended without confirmation", None,
+    ]
+    assert out["receipts"][1]["excerpt"] == "ok"
+    assert out["receipts"][0]["excerpt"] is None
