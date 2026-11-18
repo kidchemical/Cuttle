@@ -46,7 +46,7 @@ before and after any change (`meta.layer_chars`).
 | Path | Role vs compiler |
 |---|---|
 | `{Cuttle}/.cuttle_global/rules/` | **Always-on global** guidelines — compiled for every registered project. |
-| `<home>/personal/` (Cuttle home) | **Install-local global overlay** (gitignored) — same layout; personal markdown appends as a delta, other files win by basename. |
+| `<home>/personal/` (Cuttle home) | **Install-local global overlay** (gitignored) — same layout; personal markdown appends as a delta, other files win by basename. A personal rule with no tracked twin compiles whole under an `Install-local (personal/rules/…)` marker, so an agent can say where it came from. Role-specific guidance (supervisors, sub-agents) is not a rule: see `rule-authoring.md`. |
 | `{project}/.cuttle/rules/` | **Always-on project** guidelines — compiled after global rules. |
 | `{Cuttle}/.cuttle/rules/` | **Cuttle-repo-only** rules — compiled only when the chat targets Cuttle itself. |
 | `commands/*.md` | **On-demand** via `/name` expand (`project_commands`). Listed in inventory; not dumped every turn. |

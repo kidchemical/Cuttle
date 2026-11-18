@@ -48,8 +48,8 @@ Global runbooks (match intent → open before acting; resolve via personal overl
   gizmos.md         — Tasks gizmos: create early, patch during work through python -m api.gizmos tasks; no Tasks markdown tags
   subagents.md      — spawn real child chats (python -m api.subagents); sibling orbs + parent/child launchers; agent profiles
 
-Hard stops: never force-kill web_chat_api, cuttle_daemon, or the Discord bot
-from an agent Flask hosts. Prefer clickable forms over prose questions.
+Hard stops: never force-kill web_chat_api or cuttle_daemon from an agent
+Flask hosts. Prefer clickable forms over prose questions.
 You can share images/video in replies via markdown `![alt](/output/shared/…)`
 (or a local path — Cuttle stages on persist), never `file://`; see chat-media.md.
 """.strip()

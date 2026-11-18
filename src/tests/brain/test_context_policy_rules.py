@@ -149,6 +149,30 @@ def test_personal_overlay_appends_explicitly(
     assert "Overlay marker" in env
 
 
+def test_personal_only_rule_is_labelled_install_local(
+        tmp_path, _no_providers_and_isolated_install):
+    """A personal rule with no tracked twin must not read as shipped guidance:
+    an agent quoting it has to be able to say where it came from."""
+    personal = personal_dir()
+    (personal / "rules").mkdir(parents=True, exist_ok=True)
+    (personal / "rules" / "10-local-only.md").write_text(
+        "# Local\n\nLocal-only marker.\n", encoding="utf-8")
+    env = _env("hello", _guest(tmp_path))
+    head, _, body = env.partition("Local-only marker")
+    assert body and "Install-local (`personal/rules/10-local-only.md`" in head[-200:]
+
+
+def test_shipped_always_on_text_names_no_retired_process(tmp_path):
+    """Discord is REST-only agent-ops: there is no bot process to protect, and a
+    kill prohibition naming one sends agents hunting for it."""
+    from api.cuttle_ui_capabilities import cuttle_ui_capabilities_block
+    from api.restart_safety_policy import RESTART_SAFETY_BRIEF
+
+    shipped = _env("hello", _guest(tmp_path)) + cuttle_ui_capabilities_block() + RESTART_SAFETY_BRIEF
+    assert "discord bot" not in shipped.lower()
+    assert "cuttle_daemon" in shipped and "web_chat_api" in shipped
+
+
 def test_global_rule_body_budget_with_counts(tmp_path, capsys):
     bodies = dict(_compiler.load_global_rules())
     total = sum(len(text) for text in bodies.values())

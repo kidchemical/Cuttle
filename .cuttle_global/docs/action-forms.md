@@ -267,7 +267,7 @@ recipe remains for standalone callers. Native `/restart` and the owner-only
 restart endpoint are independent recovery paths.
 
 
-Never kill Flask, the daemon, or the Discord bot (`kill`/`pkill`, `taskkill`/`Stop-Process`) from an agent
+Never kill Flask or the daemon (`kill`/`pkill`, `taskkill`/`Stop-Process`) from an agent
 Flask is hosting. After Python changes need a restart, emit the stub (preferred —
 any agent, any project):
 
