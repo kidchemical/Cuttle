@@ -308,6 +308,22 @@
         watched_paths: { on: false, do: 'stop,wake', regex: '' },
     };
 
+    // System care: what the host measures about the machine for the supervisor.
+    const SYSTEM_CARE = [
+        { id: 'processes', label: 'Clean up leftover processes',
+          hint: 'Lists processes this chat or its sub-agents left running after their turns ended; the supervisor ends the ones nothing needs.' },
+        { id: 'memory', label: 'Watch machine memory',
+          hint: 'Wakes the supervisor when memory runs low or the system kills a process for memory, even mid-turn.' },
+    ];
+    const SYSTEM_DEFAULTS = { processes: true, memory: false };
+
+    function systemFields(stored) {
+        const s = stored && typeof stored === 'object' ? stored : null;
+        const out = {};
+        SYSTEM_CARE.forEach((c) => { out[c.id] = s ? !!s[c.id] : SYSTEM_DEFAULTS[c.id]; });
+        return out;
+    }
+
     function checkpointFields(stored) {
         const out = {};
         CHECKPOINTS.forEach((c) => {
@@ -359,6 +375,7 @@
             instructions: '',
             involveUser: 'blocked',
             nudge: 'agent',
+            system: systemFields(null),
             branches: splitList(d.branches),
             requiredBranch: d.branch || '',
             requiredPath: d.worktree ? (d.execution_path || '') : '',
@@ -405,6 +422,7 @@
             instructions: s.instructions || '',
             involveUser: s.involve_user || base.involveUser,
             nudge: s.nudge || base.nudge,
+            system: systemFields(s.system),
             requiredBranch: s.required_branch || '',
             requiredPath: s.required_path || '',
             forbidden: splitList(s.forbidden_branches),
@@ -472,6 +490,7 @@
                 instructions: String(f.instructions || '').trim(),
                 involve_user: f.involveUser || 'blocked',
                 nudge: f.nudge || 'agent',
+                system: systemFields(f.system),
                 required_branch: String(f.requiredBranch || '').trim(),
                 required_path: String(f.requiredPath || '').trim(),
                 forbidden_branches: forbidden,
@@ -721,7 +740,7 @@
         SCHEMA_VERSION, INTERVALS, PAUSE_CHOICES, fmtInterval, fmtClock, fmtWhen, nextLabel,
         chipText, badgeText, pausedText, pauseBody,
         historyRow, view, isSupervised, supervisorOf, dialogDefaults, supervisePayload, pinChoices, scheduleById,
-        CHECKPOINTS, checkpointFields, checkpointsBody,
+        CHECKPOINTS, checkpointFields, checkpointsBody, SYSTEM_CARE, systemFields,
         INVOLVE_CHOICES, NUDGE_CHOICES, TASKS_SHOWN, taskPickerView, branchOptions,
     };
     if (typeof module === 'object' && module.exports) module.exports = api;

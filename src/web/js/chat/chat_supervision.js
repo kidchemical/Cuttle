@@ -360,6 +360,12 @@
                     + M.CHECKPOINTS.map(cpRow).join('')
                     + '<p class="chat-supervision-meta">On top of the interval and the usual stops (question, error, open'
                     + ' Tasks, branch rules). “Stop the chat” halts it until the supervisor or you send it on.</p></fieldset>'
+                + '<fieldset class="chat-supervision-tasks"><legend>System care</legend>'
+                    + M.SYSTEM_CARE.map((c) => '<label class="chat-supervision-task"><span>'
+                        + esc(c.label) + ' <small>' + esc(c.hint) + '</small></span><input type="checkbox" role="switch" name="sys_'
+                        + c.id + '"' + (d.system[c.id] ? ' checked' : '') + '></label>').join('')
+                    + '<p class="chat-supervision-meta">The host measures; the supervisor decides what to end. It never'
+                    + ' ends a working chat’s processes or a Cuttle host.</p></fieldset>'
                 + '<details class="chat-supervision-advanced"><summary>Advanced: Focus notes and model guidance</summary>'
                 + '<div class="chat-supervision-focus"><div class="chat-supervision-focus-head"><span>Focus (optional)</span>'
                 + '<button type="button" class="chat-supervision-focus-edit" data-sup-focus-edit aria-label="Edit Focus" title="Edit Focus">✎</button></div>'
@@ -473,6 +479,7 @@
                     agent: fd.get('agent'), model: fd.get('model'), effort: fd.get('effort'), every: Number(fd.get('every')), instructions: fd.get('instructions'),
                     requiredBranch: fd.get('requiredBranch'), forbidden: forbidden.slice(),
                     involveUser: fd.get('involveUser'), nudge: fd.get('nudge'),
+                    system: Object.fromEntries(M.SYSTEM_CARE.map((c) => [c.id, fd.get('sys_' + c.id) != null])),
                     worker: fd.get('worker'), expert: fd.get('expert'), taskIds: fd.getAll('taskIds'),
                     checkpoints: Object.fromEntries(M.CHECKPOINTS.map((c) => [c.id, {
                         on: fd.get('cp_on_' + c.id) != null, do: fd.get('cp_do_' + c.id) || 'wake',

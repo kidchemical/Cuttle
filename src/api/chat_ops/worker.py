@@ -199,7 +199,7 @@ def undelivered_section(undelivered):
     return lines
 
 
-def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, changes=None):
+def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, changes=None, system=None):
     """The check-in turn as markdown: it renders as a readable Cuttle bubble in the
     supervisor chat and reads as a brief to the agent. Full data: `status --json`."""
     handle = snap['handle']
@@ -229,6 +229,9 @@ def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, chang
     if violations:
         lines += ['', '**Rule violations:**'] + [f'- {v}' for v in violations]
     lines += undelivered_section(snap.get('undelivered'))
+    if system:
+        from api.chat_ops.system_care import section
+        lines += section(system)
     if checkpoint:
         from api.chat_ops.checkpoints import checkin_section
         lines += checkin_section(*checkpoint)
@@ -578,6 +581,9 @@ def _check_in(op, db, actor, sid, request):
         moved = []
     children = _children_progress(db, sid)
     signature = _signature(snap, violations, children)
+    # System care (setting ``system``): leftover processes and machine memory, measured here.
+    from api.chat_ops import system_care
+    care = system_care.read(cfg, sid, snap['state'], op.get('result') or {}, children=[c[0] for c in children])
     nxt = time.time() + cfg['every']
     seen = {'state': snap['state'], 'branch': snap['branch'], 'violations': violations,
             'tasks': [{'title': t['title'], 'done': t['done'], 'total': t['total']} for t in snap['tasks']]}
@@ -605,6 +611,8 @@ def _check_in(op, db, actor, sid, request):
     told = previous.get('stuck_reported') or []
     new_stuck = [i for i in stuck_ids if i not in told]
     tracking['stuck_reported'] = [i for i in told if i in stuck_ids]
+    tracking.update(care['tracking'])
+    seen.update(care['seen'])
     if stuck_ids:
         seen['undelivered'] = len(stuck_ids)
     if stalled:
@@ -623,7 +631,7 @@ def _check_in(op, db, actor, sid, request):
         return
     # A working target or an unchanged picture costs no supervisor tokens;
     # a picture whose wake the supervisor never answered is not "seen".
-    if not violations and not briefing and not stalled and not changes and not new_stuck and (
+    if not violations and not briefing and not stalled and not changes and not new_stuck and not care['alert'] and (
             snap['state'] in ('busy', 'waiting_background')
             or (signature == previous.get('signature') and not failure)):
         reason = snap['state'] if snap['state'] in ('busy', 'waiting_background') else 'unchanged'
@@ -632,7 +640,7 @@ def _check_in(op, db, actor, sid, request):
                                             'last_seen': seen, 'skipped': reason, 'guard_reported': found}, due=nxt)
         return
     if _template_nudge(op, cfg, snap, previous, request, db=db, actor=actor, quiet=not (
-            violations or briefing or stalled or changes or failure or new_stuck),
+            violations or briefing or stalled or changes or failure or new_stuck or care['alert']),
             result={**previous, **tracking, 'signature': signature, 'last_check': time.time(),
                     'last_seen': seen, 'guard_reported': found}, due=nxt):
         return
@@ -643,7 +651,8 @@ def _check_in(op, db, actor, sid, request):
                        {**seen, 'already_waiting': bool(active), **({'retry': True} if failure else {})})
     # A moved forbidden branch is reported once, so it never waits behind a queued check-in.
     if not active or moved:
-        text = checkin_text(cfg, snap, violations, stalled_min=seen.get('stalled_min'), changes=changes)
+        text = checkin_text(cfg, snap, violations, stalled_min=seen.get('stalled_min'), changes=changes,
+                            system=care)
         store.create('checkin', actor, actor, {'text': text, 'schedule_id': op['id']})
         if changes:
             store.clear_pending_changes(op['id'], (cfg.get('pending_changes') or {}).get('rev'))

@@ -67,6 +67,7 @@ def start_supervision():
             task_ids=data.get("task_ids") if isinstance(data.get("task_ids"), list) else None,
             checkpoints=data.get("checkpoints") if isinstance(data.get("checkpoints"), dict) else None,
             involve_user=str(data.get("involve_user") or ""), nudge=str(data.get("nudge") or ""),
+            system=data.get("system"),
         )
 
     return _call(run)
