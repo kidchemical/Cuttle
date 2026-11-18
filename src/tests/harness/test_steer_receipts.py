@@ -24,7 +24,6 @@ def _clean_receipt_state():
     with steer_receipts._pending_lock:
         steer_receipts._pending.clear()
         steer_receipts._live.clear()
-        steer_receipts._released.clear()
 
 
 def _future(value):
@@ -1167,3 +1166,98 @@ def test_a_superseded_idle_detached_send_keeps_its_detached_mode(tmp_path, monke
     finally:
         steer.unregister('9455', token)
         _drop_detached_wait(wait)
+
+
+def test_unrelated_traffic_cannot_move_a_groups_excerpt(tmp_path, monkeypatch):
+    """Codex gate F1: the group's state is the group's, not a global LRU's.
+
+    The excerpt is saved on the first row while the second is unbound; the
+    first row's terminal writes then fail and it is given up holding the
+    excerpt. Hundreds of unrelated receipts are released before the second row
+    binds, inside its grace period. The outcome must be the same as with no
+    other traffic at all: one row holds the excerpt.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    db = FakeDb(tmp_path / 'lru.db')
+    tracker = Receipts(steer_receipts.changed, many=steer_receipts.changed_many,
+                       session='968')
+    first, second = tracker.begin('one'), tracker.begin('two')
+    for steer_id in (first, second):
+        steer_receipts.track('968', tracker, steer_id)
+        tracker.accepted(steer_id, True)
+        tracker.echo(steer_id)
+    first_id = db.add_message(968, 'user', 'one',
+                              {'steer': steer_receipts.insert_shape(first)})
+    steer_receipts.bind(first, db, first_id)
+    tracker.output_start('a1')
+    tracker.output_text('a1', 'Both noted.')
+    assert steer_receipts.flush(5.0)
+    assert db.steer_meta(first_id)['reply']['text'] == 'Both noted.'
+
+    db.broken = True                     # the turn ends, the writes fail 3x
+    tracker.finish()
+    assert steer_receipts.flush(5.0)
+    assert steer_receipts.snapshot(first) is None, 'the given-up receipt is released'
+
+    # Unrelated chats come and go: far more releases than any bounded set holds.
+    for index in range(600):
+        steer_receipts._release(f'noise-{index}')
+
+    db.broken = False                    # writes recover, then the row binds
+    second_id = db.add_message(968, 'user', 'two',
+                               {'steer': steer_receipts.insert_shape(second)})
+    steer_receipts.bind(second, db, second_id)
+    assert steer_receipts.flush(5.0)
+    late = db.steer_meta(second_id)
+    assert late['reply'] is None, 'unrelated traffic must not duplicate the excerpt'
+    assert late['covers'] == []
+    assert late['state'] == 'delivered', 'terminal state by its own facts'
+    assert db.steer_meta(first_id)['reply']['text'] == 'Both noted.'
+    holders = [mid for mid in (first_id, second_id) if db.steer_meta(mid)['reply']]
+    assert holders == [first_id], 'exactly one excerpt holder, ever'
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
+
+
+def test_an_excerpt_no_row_ever_saved_lands_on_the_late_bound_row(tmp_path, monkeypatch):
+    """Codex gate F2: a reply nothing persisted is not lost, it moves.
+
+    Every write for the first row fails — the excerpt reaches no row and the
+    receipt is given up — and the database then recovers before the second row
+    binds. The group's reply has no durable holder, so the late row takes it
+    rather than saving the insert shape and dropping the agent's answer.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    db = FakeDb(tmp_path / 'never-saved.db')
+    tracker = Receipts(steer_receipts.changed, many=steer_receipts.changed_many,
+                       session='969')
+    first, second = tracker.begin('one'), tracker.begin('two')
+    for steer_id in (first, second):
+        steer_receipts.track('969', tracker, steer_id)
+        tracker.accepted(steer_id, True)
+        tracker.echo(steer_id)
+    first_id = db.add_message(969, 'user', 'one',
+                              {'steer': steer_receipts.insert_shape(first)})
+    steer_receipts.bind(first, db, first_id)
+
+    db.broken = True                     # the excerpt's own write fails 3x
+    tracker.output_start('a1')
+    tracker.output_text('a1', 'Both noted.')
+    assert steer_receipts.flush(5.0)
+    tracker.finish()                     # and so does the terminal write
+    assert steer_receipts.flush(5.0)
+    assert steer_receipts.snapshot(first) is None, 'the given-up receipt is released'
+    assert db.steer_meta(first_id)['reply'] is None, 'no row carries the excerpt'
+
+    db.broken = False                    # writes recover, then the row binds
+    second_id = db.add_message(969, 'user', 'two',
+                               {'steer': steer_receipts.insert_shape(second)})
+    steer_receipts.bind(second, db, second_id)
+    assert steer_receipts.flush(5.0)
+    late = db.steer_meta(second_id)
+    assert late['reply'] and late['reply']['text'] == 'Both noted.', \
+        "the agent's reply must not vanish"
+    assert late['covers'] == [first_id, second_id]
+    assert late['state'] == 'delivered'
+    holders = [mid for mid in (first_id, second_id) if db.steer_meta(mid)['reply']]
+    assert holders == [second_id], 'exactly one excerpt holder, ever'
+    assert steer_receipts.retained() == {'pending': 0, 'sessions': 0, 'live': 0}
