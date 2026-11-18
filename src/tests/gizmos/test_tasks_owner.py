@@ -135,3 +135,31 @@ def test_item_patch_route_rejects_a_foreign_chat_owner(client, task_db):
     res = client.patch('/api/gizmos/tasks/plan/items/a', json={
         'owner': {'kind': 'chat', 'id': f'CH-{other_sid:06d}', 'label': 'x'}, 'session_id': sid})
     assert res.status_code == 404
+
+
+def test_origin_turn_id_is_stamped_at_create_from_the_turn_and_survives_patches(task_db, monkeypatch):
+    from core.agent_cli_env import agent_operation_context, operation_actor
+    db, uid, sid, *_ = task_db
+    monkeypatch.delenv('CUTTLE_TURN_ID', raising=False)
+    assert operation_actor(session_id=sid, user_id=uid)['turn_id'] == ''
+    with agent_operation_context(session_id=sid, agent_id='codex', run_id='query-7'):
+        assert operation_actor(session_id=sid, user_id=uid)['turn_id'] == 'query-7'
+        _create(sid, user_id=uid)
+    row = tasks.get('plan', user_id=uid)
+    assert row['origin_turn_id'] == 'query-7'
+    assert row['payload']['origin_turn_id'] == 'query-7'
+    tasks.patch('plan', {'set_done': ['a']}, user_id=uid, session_id=sid)
+    assert tasks.get('plan', user_id=uid)['origin_turn_id'] == 'query-7'
+    # A list made outside any turn (or by the UI) has no origin.
+    tasks.create(gizmo_id='manual', session_id=sid, user_id=uid, items=[{'id': 'a', 'text': 'x'}])
+    assert tasks.get('manual', user_id=uid)['origin_turn_id'] == ''
+    assert 'origin_turn_id' not in tasks.get('manual', user_id=uid)['payload']
+
+
+def test_origin_turn_id_cannot_be_declared_over_http(client, task_db):
+    _, uid, sid, *_ = task_db
+    res = client.post('/api/gizmos/tasks', json={
+        'id': 'forge', 'session_id': sid, 'items': [{'id': 'a', 'text': 'x'}],
+        'actor': {'turn_id': 'forged', 'agent_id': 'codex'}})
+    assert res.status_code == 201
+    assert res.get_json()['gizmo']['origin_turn_id'] == ''

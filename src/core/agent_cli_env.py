@@ -18,6 +18,9 @@ def operation_actor(*, source="cli", session_id=None, agent_id=None, user_id=Non
         "agent_id": str(agent_id if agent_id is not None else env.get("CUTTLE_AGENT_ID", ""))[:80],
         "model": env.get("CUTTLE_AGENT_MODEL", "")[:160] if source != "ui" else "",
         "run_id": env.get("CUTTLE_AGENT_RUN_ID", "")[:160] if source != "ui" else "",
+        # The chat turn that issued this operation (CUTTLE_TURN_ID); lets a
+        # Tasks list record which turn created it.
+        "turn_id": env.get("CUTTLE_TURN_ID", "")[:160] if source != "ui" else "",
         "project_path": env.get("CUTTLE_AGENT_PROJECT_PATH", "")[:2000] if source != "ui" else "",
         "user_id": user_id,
     }

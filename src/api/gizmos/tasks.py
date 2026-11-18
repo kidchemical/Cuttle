@@ -183,6 +183,11 @@ def create(*, gizmo_id=None, title='Tasks', items=None, description='', scope='s
     if not payload['items']:
         raise GizmoError('create Tasks with real items')
     _validate(payload)
+    actor = actor or operation_actor(session_id=sid, user_id=uid)
+    # The turn that created the list (CUTTLE_TURN_ID); empty for UI or manual use.
+    origin = model._norm_origin_turn(actor.get('turn_id'))
+    if origin:
+        payload['origin_turn_id'] = origin
     links = [l for l in (_resolve_links(linked_sessions, user_id=uid, db=db) or [])
              if not (scope == 'session' and l == sid)]
     try:
@@ -191,7 +196,7 @@ def create(*, gizmo_id=None, title='Tasks', items=None, description='', scope='s
             project_path=project, payload=payload,
             status=model.resolve_tasks_widget_status(payload), edit_mode=edit_mode,
             description=model._norm_description(description), expected_revision=0,
-            actor=actor or operation_actor(session_id=sid, user_id=uid), operation='create')
+            actor=actor, operation='create')
     except ValueError as exc:
         raise GizmoError(str(exc), 'conflict') from exc
     return public(row)
