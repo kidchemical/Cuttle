@@ -9,6 +9,7 @@ from contextlib import contextmanager
 
 # Per-schedule check history kept for the UI; older rows are pruned on write.
 HISTORY_KEEP = 50
+SKIPPED_KEEP = 10
 
 
 @contextmanager
@@ -355,9 +356,12 @@ def record_check(schedule_id, outcome, detail=None):
     now = time.time()
     with connection() as conn:
         conn.execute('INSERT INTO checks VALUES (?,?,?,?)', (schedule_id, now, outcome, json.dumps(detail or {})))
-        conn.execute('DELETE FROM checks WHERE schedule_id=? AND at < (SELECT MIN(at) FROM '
-                     '(SELECT at FROM checks WHERE schedule_id=? ORDER BY at DESC LIMIT ?))',
-                     (schedule_id, schedule_id, HISTORY_KEEP))
+        conn.execute("DELETE FROM checks WHERE schedule_id=? AND outcome='skipped' AND at < "
+                     "(SELECT MIN(at) FROM (SELECT at FROM checks WHERE schedule_id=? AND outcome='skipped' "
+                     "ORDER BY at DESC LIMIT ?))", (schedule_id, schedule_id, SKIPPED_KEEP))
+        conn.execute("DELETE FROM checks WHERE schedule_id=? AND outcome!='skipped' AND at < "
+                     "(SELECT MIN(at) FROM (SELECT at FROM checks WHERE schedule_id=? AND outcome!='skipped' "
+                     "ORDER BY at DESC LIMIT ?))", (schedule_id, schedule_id, HISTORY_KEEP))
     # The checks table keeps the last HISTORY_KEEP per schedule; telemetry keeps them all.
     from api.orchestration_telemetry import record
     record.supervision_check(schedule_id, outcome, detail)

@@ -40,6 +40,18 @@ def session_overview(session: str):
     return _call(service.overview, session, _uid())
 
 
+@chat_ops_bp.get("/sessions/<session>/timeline")
+@authenticated_required
+def session_timeline(session: str):
+    def read():
+        sid = service.session_id(session)
+        db, _, _ = service.context(sid, sid)
+        from api.chat_ops.timeline import project
+        return project(sid, before=request.args.get('before'), limit=request.args.get('limit', 50),
+                       include_quiet=request.args.get('include_quiet') == '1')
+    return _call(read)
+
+
 @chat_ops_bp.get("/sessions/<session>/defaults")
 @authenticated_required
 def supervise_defaults(session: str):
