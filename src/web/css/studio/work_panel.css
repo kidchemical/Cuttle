@@ -38,22 +38,22 @@
     }
 }
 
-/* The Tasks list is its own subtle bordered card inside the reply. */
+/* The Tasks list is a soft-shadowed card inside the reply (no hard border). */
 :root.cuttle-studio .work-panel-tasks {
     min-width: 0;
     display: grid;
     align-content: start;
-    gap: var(--studio-space-4);
-    padding: var(--studio-space-4) var(--studio-space-5);
-    border: 1px solid color-mix(in srgb, var(--studio-ink) 9%, transparent);
-    border-radius: var(--studio-radius-lg);
+    gap: var(--studio-space-5);
+    padding: var(--studio-space-5) var(--studio-space-6);
+    border-radius: var(--studio-radius-xl);
     background: var(--studio-card-bg);
+    box-shadow: var(--studio-card-ring), var(--studio-shadow-raised);
 }
 
 /* ---- Tasks list ----------------------------------------------------------- */
 :root.cuttle-studio .work-list {
     display: grid;
-    gap: var(--studio-space-2);
+    gap: var(--studio-space-3);
     min-width: 0;
 }
 
@@ -62,7 +62,7 @@
     align-items: baseline;
     justify-content: space-between;
     gap: var(--studio-space-2);
-    font-size: var(--studio-text-md);
+    font-size: var(--studio-text-lg);
     font-weight: var(--studio-weight-bold);
     color: var(--studio-ink-muted);
 }
@@ -85,22 +85,22 @@
     margin: 0;
     padding: 0;
     display: grid;
-    gap: var(--studio-space-2);
+    gap: var(--studio-space-3);
 }
 
 :root.cuttle-studio .work-panel .work-task-list .work-task-list {
-    padding-left: var(--studio-space-5);
+    padding-left: var(--studio-space-6);
 }
 
 :root.cuttle-studio .work-panel .chat-widget-task {
     display: flex;
     align-items: flex-start;
-    gap: var(--studio-space-2);
+    gap: var(--studio-space-3);
     margin: 0;
     padding: 0;
     border: 0;
     background: none;
-    font-size: var(--studio-text-sm);
+    font-size: var(--studio-text-md);
     line-height: var(--studio-leading-base);
     color: var(--studio-ink);
 }
@@ -124,7 +124,7 @@
     align-items: center;
     flex: 0 0 auto;
     max-width: 45%;
-    font-size: var(--studio-text-xs);
+    font-size: var(--studio-text-sm);
     font-weight: var(--studio-weight-semibold);
     color: var(--studio-ink-muted);
     white-space: nowrap;
@@ -141,15 +141,15 @@
     appearance: none;
     -webkit-appearance: none;
     flex: 0 0 auto;
-    width: 18px;
-    height: 18px;
-    margin: 2px 0 0;
-    border: 1.5px solid var(--studio-ink-faint);
-    border-radius: 6px;
+    width: 22px;
+    height: 22px;
+    margin: 1px 0 0;
+    border: 2px solid var(--studio-ink-faint);
+    border-radius: 7px;
     background-color: var(--studio-card-bg);
     background-repeat: no-repeat;
     background-position: center;
-    background-size: 12px;
+    background-size: 14px;
     transition: border-color var(--studio-dur-fast) var(--studio-ease-out),
         background-color var(--studio-dur-fast) var(--studio-ease-out);
 }
@@ -172,13 +172,13 @@
 /* In progress: an empty box with an accent ring and a soft halo that breathes. */
 :root.cuttle-studio .work-panel .chat-widget-task.is-in-progress input[type="checkbox"] {
     border-color: var(--studio-accent);
-    box-shadow: 0 0 0 3px var(--studio-accent-soft);
+    box-shadow: 0 0 0 3px var(--studio-accent-soft), 0 0 12px 2px rgba(112, 72, 232, 0.3);
     animation: studio-work-glow 2.2s var(--studio-ease-out) infinite;
 }
 
 @keyframes studio-work-glow {
-    0%, 100% { box-shadow: 0 0 0 2px var(--studio-accent-soft), 0 0 0 0 rgba(112, 72, 232, 0); }
-    50% { box-shadow: 0 0 0 3px var(--studio-accent-soft), 0 0 10px 3px rgba(112, 72, 232, 0.28); }
+    0%, 100% { box-shadow: 0 0 0 3px var(--studio-accent-soft), 0 0 8px 1px rgba(112, 72, 232, 0.18); }
+    50% { box-shadow: 0 0 0 4px var(--studio-accent-soft), 0 0 16px 4px rgba(112, 72, 232, 0.36); }
 }
 
 /* ---- Sub-agent cards (Studio fleet markup, chat_subagent_fleet.js) --------- */
@@ -195,13 +195,13 @@
 /* Two lines: identity + handle, then status. */
 :root.cuttle-studio .work-panel .studio-fleet-card {
     display: grid;
-    gap: 6px;
+    gap: var(--studio-space-2);
     width: 100%;
     min-width: 0;
     margin: 0;
-    padding: 14px 16px;
-    border: 1.5px solid transparent;
-    border-radius: var(--studio-radius-md);
+    padding: var(--studio-space-4) var(--studio-space-5);
+    border: 0;
+    border-radius: var(--studio-radius-lg);
     background: var(--studio-card-bg);
     box-shadow: var(--studio-card-ring), var(--studio-shadow-card);
     color: var(--studio-ink);
@@ -223,10 +223,9 @@
     box-shadow: var(--studio-focus-ring);
 }
 
-/* The card whose tray is open: accent border, cleared when the tray closes. */
+/* The card whose tray is open: an accent ring in shadow, cleared when the tray closes. */
 :root.cuttle-studio .work-panel .studio-fleet-card.is-selected {
-    border-color: var(--studio-accent);
-    box-shadow: var(--studio-card-ring), 0 0 0 3px var(--studio-accent-soft);
+    box-shadow: 0 0 0 2px var(--studio-accent), 0 0 0 6px var(--studio-accent-soft), var(--studio-shadow-card);
 }
 
 :root.cuttle-studio .work-panel .subagent-fleet-head {
@@ -239,7 +238,7 @@
 
 :root.cuttle-studio .work-panel .subagent-fleet-head .agent-identity {
     min-width: 0;
-    font-size: var(--studio-text-sm);
+    font-size: var(--studio-text-base);
     font-weight: var(--studio-weight-bold);
 }
 
@@ -265,7 +264,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--studio-text-xs);
+    font-size: var(--studio-text-sm);
     font-style: normal;
     color: var(--studio-ink-muted);
 }

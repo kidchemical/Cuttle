@@ -70,7 +70,7 @@
     gap: 8px;
     list-style: none;
     cursor: pointer;
-    font-size: var(--studio-text-2xs, 11px);
+    font-size: var(--studio-text-xs, 12px);
     font-weight: var(--studio-weight-bold, 700);
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -101,7 +101,7 @@
     margin-top: 6px;
     overflow-y: auto;
     scrollbar-width: none;
-    font-size: var(--studio-text-sm, 13px);
+    font-size: var(--studio-text-md, 16px);
     line-height: var(--studio-leading-base, 1.5);
     font-style: italic;
     color: var(--studio-ink-muted, #5d5f7e);
