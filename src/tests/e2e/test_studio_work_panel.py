@@ -38,6 +38,8 @@ SCRIPTS = [
 
 FIXTURE = """<!DOCTYPE html><html><head>
 <meta charset="utf-8">
+<link rel="stylesheet" href="/css/ui_boot.css">
+<script src="/js/shared/ui_boot.js"></script>
 <link rel="stylesheet" href="/css/chat_page.css">
 <link rel="stylesheet" href="/css/chat_supervision.css">
 <link rel="stylesheet" href="/css/studio/studio_tokens.css">
@@ -98,7 +100,7 @@ CARDS_JSON = json.dumps([
 ])
 
 
-def _open(browser, base, *, studio=True, width=1280, state=None, orch_binding=None):
+def _open(browser, base, *, studio=True, width=1280, state=None, orch_binding=None, theme="light"):
     """A context with the mocked network, the fixture page, and the owners loaded."""
     context = browser.new_context(viewport={"width": width, "height": 860})
     store = {"tasks": state if state is not None else _tasks_payload(BASE_ITEMS), "hold_calls": [],
@@ -130,11 +132,13 @@ def _open(browser, base, *, studio=True, width=1280, state=None, orch_binding=No
     page.on("pageerror", lambda exc: errors.append(str(exc)))
     page.goto(base + "/settings_page.html")
     page.evaluate(
-        """(studio) => {
+        """([studio, theme]) => {
             localStorage.setItem('cuttleChatDisplay', studio ? 'studio' : 'classic');
             localStorage.setItem('cuttleChatStudioFlag', '1');
+            // ui_boot.js reads this before first paint: `dark` puts dark-mode on <html>.
+            localStorage.setItem('theme', theme);
         }""",
-        studio,
+        [studio, theme],
     )
     page.set_content(FIXTURE)
     for src in SCRIPTS:
@@ -159,7 +163,8 @@ def _open(browser, base, *, studio=True, width=1280, state=None, orch_binding=No
                 if (!card) return;
                 e.preventDefault();
                 window.PEEK.open(card.getAttribute('data-chat-handle'), {
-                    title: null, status: card.querySelector('.subagent-fleet-outcome').getAttribute('title') });
+                    title: null, status: (() => { const st = card.querySelector('.subagent-fleet-outcome');
+                        return st && (st.getAttribute('title') || st.getAttribute('data-tooltip')); })() });
             });
         }""",
         json.loads(CARDS_JSON),
@@ -203,10 +208,36 @@ def test_studio_panel_mounts_in_the_turn_bubble(browser, static_server):  # noqa
         expect(cards).to_have_count(3)
         assert panel.locator("progress, [role=progressbar], .progress").count() == 0
         assert "%" not in panel.inner_text()
-        assert cards.nth(1).locator(".subagent-fleet-outcome").get_attribute("title") == "Done"
+        outcome = cards.nth(1).locator(".subagent-fleet-outcome")
+        assert (outcome.get_attribute("title") or outcome.get_attribute("data-tooltip")) == "Done"
         # The composer dock does not repeat a list the panel shows.
         assert page.is_hidden("#chatWidgetsStrip")
         _shot(page, "work-panel-studio.png")
+        assert errors == []
+    finally:
+        context.close()
+
+
+def _mean_channel(rgb: str) -> float:
+    nums = [float(x) for x in re.findall(r"[\d.]+", rgb)[:3]]
+    return sum(nums) / len(nums)
+
+
+def test_dark_mode_panel_uses_the_dark_tokens(browser, static_server):  # noqa: F811
+    """The page's own dark mode: ui_boot.js puts dark-mode on <html> from the theme pref."""
+    context, page, errors, _store = _open(browser, static_server, theme="dark")
+    try:
+        assert page.evaluate("document.documentElement.classList.contains('dark-mode')")
+        assert page.evaluate("document.documentElement.classList.contains('cuttle-studio')")
+        _mount_turn(page)
+        tasks_bg = page.locator(".work-panel-tasks").evaluate("el => getComputedStyle(el).backgroundColor")
+        assert _mean_channel(tasks_bg) < 80, tasks_bg
+        title_ink = page.locator(".work-list-title").evaluate("el => getComputedStyle(el).color")
+        assert _mean_channel(title_ink) > 180, title_ink
+        card_bg = page.locator("#typing-indicator .studio-fleet-card").first.evaluate(
+            "el => getComputedStyle(el).backgroundColor")
+        assert _mean_channel(card_bg) < 80, card_bg
+        _shot(page, "work-panel-studio-dark.png")
         assert errors == []
     finally:
         context.close()
@@ -319,6 +350,29 @@ def test_classic_keeps_the_fleet_block_and_the_dock(browser, static_server):  # 
         context.close()
 
 
+def test_classic_tray_header_stays_one_flat_row(browser, static_server):  # noqa: F811
+    """Classic's header keeps its flat row: title, handle and status on one line; no Studio lines."""
+    context, page, errors, _store = _open(browser, static_server)
+    try:
+        page.evaluate("() => CuttleChatDisplay.setMode('classic')")
+        page.evaluate("async () => { await TG.refresh(); L.syncLive(CARDS); }")
+        page.locator("#typing-indicator .subagent-fleet-card[data-chat-handle='CH-000041']").click()
+        tray = page.locator(".subagent-peek")
+        expect(tray).to_be_visible()
+        assert tray.get_attribute("data-layout") == "side"
+        title_y = page.locator(".subagent-peek-title").bounding_box()["y"]
+        status = page.locator(".subagent-peek-status")
+        expect(status).to_be_visible()  # Classic shows the outcome beside the title
+        assert abs(title_y - status.bounding_box()["y"]) < 4, (title_y, status.bounding_box())
+        assert page.locator(".subagent-peek-identity").is_hidden()
+        assert page.locator(".subagent-peek-parent").is_hidden()
+        # Classic cards carry no Studio selection.
+        assert page.locator("#typing-indicator .is-selected").count() == 0
+        assert errors == []
+    finally:
+        context.close()
+
+
 def test_reduced_motion_stops_the_entrance_and_the_glow(browser, static_server):  # noqa: F811
     context, page, errors, _store = _open(browser, static_server)
     try:
@@ -386,7 +440,9 @@ def test_mock_frame_for_side_by_side(browser, static_server):  # noqa: F811
     page = browser.new_page(viewport={"width": 1920, "height": 1080})
     try:
         page.goto(scene.as_uri())
-        page.wait_for_timeout(6000)
+        # The scene's own release trigger, then the frame the review compares against.
+        page.evaluate("() => { if (window.__release) window.__release(); }")
+        page.wait_for_timeout(5500)
         _shot(page, "work-panel-mock.png")
     finally:
         page.close()
