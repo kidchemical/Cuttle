@@ -378,7 +378,8 @@ def _violations(op, branch, path, *, db=None, commands=()):
     forbidden = cfg.get('forbidden_branches') or []
     if forbidden and path:
         worktrees = rules.worktree_branches(path) if commands else {}
-        for sid, command in commands:
+        for sid, entry in commands:
+            command = entry[0] if isinstance(entry, tuple) else entry
             if rules.forbidden_command(command, forbidden, worktrees):
                 moved.append(f'CH-{sid:06d} ran a git write against a forbidden branch: `{command[:2000]}`')
         tips = rules.branch_tips(path, forbidden)
@@ -554,8 +555,19 @@ def guard_check(op, db=None, request=None, *, trigger='', commands=()):
         return False  # already raised; the interval check repeats it
     snap = service.snapshot(row['id'], actor, db=db, request=request or transport.request,
                             task_pick=service.task_pick(cfg))
-    store.record_check(op['id'], 'violation', {'state': snap['state'], 'branch': snap['branch'],
-                                               'violations': violations, 'trigger': trigger})
+    detail = {'state': snap['state'], 'branch': snap['branch'],
+              'violations': violations, 'trigger': trigger}
+    trees = rules.worktree_branches(path) if path else {}
+    for _sid, entry in commands:
+        command, failed = entry if isinstance(entry, tuple) else (entry, False)
+        matched = next((b for b in cfg.get('forbidden_branches', [])
+                        if rules.forbidden_command(command, [b], trees)), None)
+        if matched:
+            detail.update(command=command, branch=matched)
+            if failed:
+                detail['blocked'] = True
+            break
+    store.record_check(op['id'], 'violation', detail)
     if _respond(op, db, actor, row, snap, [v for v in violations if v not in reported]):
         store.create('checkin', actor, actor, {'text': checkin_text(cfg, snap, violations), 'schedule_id': op['id']})
     store.patch_result(op['id'], guard_reported=violations)

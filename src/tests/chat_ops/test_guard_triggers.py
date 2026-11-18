@@ -260,3 +260,20 @@ def test_schedule_without_baseline_adopts_current_tips(chats, repo):
         conn.execute("UPDATE operations SET payload=? WHERE id=?", (json.dumps(payload), sched["id"]))
     assert triggers.run_checks({target: "tool"}, db=db, request=_host) == 0
     assert store.get(sched["id"], sup)["payload"]["forbidden_tips"].keys() == {"dev/core", "master"}
+
+
+@pytest.mark.parametrize('failed', [True, False])
+def test_guard_timeline_attribution(chats, failed):
+    from api.chat_ops import timeline
+    db, _owner, sup, target, _child = chats
+    sched = _schedule(chats)
+    cmd = 'git push origin dev/core'
+    triggers.on_session_event('tool', target, {'command': cmd, 'failed': failed})
+    events, commands = triggers._drain_all()
+    assert triggers.run_checks(events, commands=commands, db=db, request=_host) == 1
+    detail = store.checks(sched['id'])[0]['detail']
+    assert detail.get('blocked', False) is failed
+    event = timeline.project(sup)['items'][0]
+    assert event['headline'] == ('Guard blocked a commit to dev/core' if failed else
+                                 f'Flagged a forbidden command: {cmd}')
+    assert 'blocked a push' not in event['headline']

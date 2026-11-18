@@ -22,12 +22,16 @@ def project(session, *, before=None, limit=50, include_quiet=False):
             if not kind: continue
             text = str(d.get('text') or d.get('error') or ', '.join(d.get('lines') or []))
             branch = d.get('branch') or (d.get('state') or {}).get('branch')
-            headline = {'guard': f"Guard flagged activity on {branch}" if branch else 'Guard flagged a forbidden command',
+            command = d.get('command')
+            guard_headline = (f'Guard blocked a commit to {branch}' if d.get('blocked') and branch
+                              else f'Flagged a forbidden command: {command}' if command
+                              else 'Guard flagged a violation')
+            headline = {'guard': guard_headline,
                         'nudged':'Nudge delivered', 'stalled':'Chat stalled', 'milestone':'Task milestone reached',
                         'paused':'Supervision paused', 'resumed':'Supervision resumed', 'error':'Supervision check failed'}.get(kind, 'Supervision activity')
             items.append({'schema_version':1,'id':f'check:{oid}:{row["at"]}:{outcome}','at':row['at'],'kind':kind,
                           'chat':f"CH-{int(op['target']):06d}",'headline':headline,'detail':text,
-                          'refs':{'branch':branch} if branch else {},'source':'check'})
+                          'refs':{k: v for k, v in {'branch': branch, 'command': command}.items() if v},'source':'check'})
     for op in store.listing(sid):
         if op['kind'] != 'send' or op['state'] not in ('delivered','done'):
             continue
