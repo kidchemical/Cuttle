@@ -20,10 +20,8 @@ the test's send text correlates an echo, but production `steer_id` and saved
 user message id are not present in the vendor event. They would need explicit
 registration before delivery and an unambiguous matching strategy.
 
-This is preliminary evidence, not a reliability result: mid-text, completion
-races, reconnect, timeout, and repeated runs remain untested. Claude and Muse
-are installed but have not yet been spiked. No receipt or acknowledgement
-persistence should be inferred from this experiment.
+This initial run was preliminary; subsequent boundary trials are recorded below.
+No receipt or acknowledgement persistence is implemented by these experiments.
 
 ### Follow-up boundary trials
 
