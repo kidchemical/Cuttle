@@ -25,9 +25,9 @@ def observe(event):
     method = event.get('method', '')
     item = event.get('params', {}).get('item', {})
     typ = event.get('type', '')
-    tool = (method == 'item/started' and item.get('type') in ('commandExecution', 'toolCall')) or (typ == 'assistant' and 'tool_use' in json.dumps(event))
-    text = ('agentMessage/delta' in method or typ == 'stream_event' and 'text_delta' in json.dumps(event))
-    end = method == 'item/completed' and item.get('type') == 'agentMessage' or typ == 'result'
+    tool = (method == 'item/started' and (item.get('type') or item.get('kind')) in ('commandExecution', 'toolCall')) or (typ == 'assistant' and 'tool_use' in json.dumps(event))
+    text = ('agentMessage/delta' in method or (method == 'item/delta' and event.get('params', {}).get('field') == 'text') or typ == 'stream_event' and 'text_delta' in json.dumps(event))
+    end = method == 'item/completed' and (item.get('type') or item.get('kind')) == 'agentMessage' and (item.get('phase') == 'final_answer' or item.get('messagePhase') == 'finalAnswer') or typ == 'result'
     if not sent and ((case == 'tool' and tool) or (case == 'text' and text) or (case == 'end' and end)):
         sent = True
         loop.create_task(send())
