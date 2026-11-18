@@ -24,3 +24,32 @@ This is preliminary evidence, not a reliability result: mid-text, completion
 races, reconnect, timeout, and repeated runs remain untested. Claude and Muse
 are installed but have not yet been spiked. No receipt or acknowledgement
 persistence should be inferred from this experiment.
+
+### Follow-up boundary trials
+
+These are isolated CLI runs, with a short acknowledgement request. Times are
+monotonic send-to-first-echo, not acknowledgement latency. A grouped reply is
+acceptable for all steers echoed since the previous agent message.
+
+| Harness / boundary | Echo | First subsequent agent message and judgment |
+|---|---:|---|
+| Codex, two rapid sends | 2.244 s / 1.241 s | “Acknowledged: amber and cobalt.” Both addressed by one item. |
+| Codex, tool running | 0.008 s | “Steer acknowledged — I’ll include ‘marigold’...” Addressed. |
+| Codex, text streaming | 1.739 s | “Acknowledged—marigold.” Addressed. |
+| Codex, final item completed | 0.019 s | “Acknowledged—marigold.” Addressed in another item. |
+| Claude, tool running | 8.127 s | “Noted, marigold.” Addressed in the next assistant block. |
+| Claude, text streaming | 6.971 s | “Acknowledged, marigold.” Addressed in the next assistant block. |
+| Claude, result | — | Send rejected: no steerable run. |
+| Muse, tool running | 8.021 s | “Command finished with output `READY`.” followed by acknowledgement in the same message; addressed. |
+| Muse, text streaming | 8.544 s | “Acknowledged — continuing the prior task, with marigold included as requested.” Addressed. |
+| Muse, final item completed | — | Accepted but reported undelivered at turn end; no echo. |
+
+All observed echoed steers were addressed by the first subsequent completed
+agent item or assistant block. This supports implementing capture for the three
+harnesses, not assuming that accepted means delivered. The small samples do not
+establish a general reliability rate; timeout, reconnect, identical concurrent
+steers and Stop/resend still need explicit coverage. Capture must register the
+steer and its turn before the delivery wait: an echo can precede the delivery
+response and the user-row insert. The vendor item IDs and turn/session IDs do
+not themselves identify Cuttle's steer ID or persisted user row. Buffer events
+until the row is bound and preserve distinct IDs for identical text.
