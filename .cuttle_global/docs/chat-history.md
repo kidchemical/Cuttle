@@ -77,18 +77,28 @@ or to its target that has waited 15 minutes ("Not delivered"), even while the
 target is busy. Before assuming a lane got its brief, read `undelivered`.
 
 **Settings, not prose.** Every check-in states the supervisor's job and each
-setting (Tasks lists, branch rules, `--involve`, checkpoints, `--nudge`) from the
+setting (Tasks lists, branch rules, `--involve`, checkpoints, `--nudge`, `--system`) from the
 schedule itself (`api.chat_ops.brief`); settings win. `--instructions` is the
 optional **Focus**: the user's job-specific notes (e.g. "animation first;
 verify runtime IK exceptions"), shown under Advanced in the Supervise dialog.
 Don't put models, branches, intervals, when to involve the user, milestone
-reviews or per-check-in procedures there — use the flags (or a rule/runbook);
+reviews, process cleanup or per-check-in procedures there — use the flags (or name
+a runbook);
 the CLI prints why on stderr and the result carries `warnings`. Only set or
 change Focus when the user asked for that guidance. `--involve`: `blocked`
 (default: logins, payments, irreversible steps), `never`, `questions`.
 `--nudge template`: an idle chat with open Tasks items gets its next item from
 the host with no supervisor turn (twice without Tasks progress, then the
 supervisor is woken); errors, questions, stalls and violations always wake it.
+`--system` is **System care**, comma-separated (default `processes`; `none` = off):
+`processes` lists the processes the chat or its sub-agents left running after
+their turns ended (PID, create time, memory) and wakes the supervisor once per new
+one, to end with `python -m api.jobs end-process`; `memory` wakes it when
+available machine memory drops under 10% (once per episode) or the kernel kills a
+process for memory (every time), a working target included, with the largest
+agent-owned processes. The host only measures; with it off, process and memory
+cleanup are not part of the job. A supervisor never ends a working chat's
+processes or a Cuttle host.
 
 | Verb | Use |
 |---|---|
