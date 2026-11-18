@@ -904,9 +904,13 @@ def overview(session, user_id, *, db=None):
     if not db.get_chat_session(sid, int(user_id)):
         raise LookupError('Chat not found')
     supervising, supervised_by, queued = [], [], []
-    for op in store.involving(sid):
+    ops = store.involving(sid)
+    # The goal a supervisor's panel names is its own Tasks list; read it once, and only if it supervises.
+    goal = (_supervisor_goal(db, int(user_id), sid)
+            if any(o['kind'] == 'supervise' and o['actor'] == sid for o in ops) else '')
+    for op in ops:
         if op['kind'] == 'supervise':
-            item = _schedule_view(op)
+            item = _schedule_view(op, goal=goal if op['actor'] == sid else '')
             (supervising if op['actor'] == sid else supervised_by).append(item)
         elif op['kind'] == 'send' and op['target'] == sid:
             queued.append({'id': op['id'], 'from': f"CH-{op['actor']:06d}", 'state': op['state'],
@@ -1013,11 +1017,27 @@ def _system_view(cfg):
         return dict(brief.DEFAULT_SYSTEM)
 
 
-def _schedule_view(op):
+def _supervisor_goal(db, uid, sid):
+    """Title of the supervisor chat's Tasks list that still has open items (its own
+    lists first), or '' when none does. Schedules carry no goal text of their own."""
+    from api.gizmos import tasks as gizmo_tasks
+    try:
+        lists = gizmo_tasks.list_tasks(user_id=uid, session_id=sid, db=db)
+    except Exception:
+        return ''
+    for task in sorted(lists, key=lambda t: t.get('session_id') != sid):
+        done, total = _count_items((task.get('config') or {}).get('items'))
+        if total and done < total:
+            return str(task.get('title') or '').strip()
+    return ''
+
+
+def _schedule_view(op, goal=''):
     cfg, result = op['payload'], op['result'] or {}
     seen = result.get('last_seen') or {}
     return {'id': op['id'], 'state': op['state'], 'supervisor': f"CH-{op['actor']:06d}",
             'target': f"CH-{op['target']:06d}", 'every': cfg.get('every'), 'next_check': op['due'],
+            **({'goal': goal} if goal else {}),
             'agent': cfg.get('agent') or '', 'required_branch': cfg.get('required_branch') or '',
             'model': cfg.get('model') or '', 'effort': cfg.get('effort') or '',
             'instructions': cfg.get('instructions') or '', 'involve_user': cfg.get('involve_user') or 'blocked',
