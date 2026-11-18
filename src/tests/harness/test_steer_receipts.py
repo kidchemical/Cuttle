@@ -142,3 +142,70 @@ def test_detached_turn_id_is_registered_before_delivery(monkeypatch):
     assert tracker.snapshot(info['steer_id'])['turn_id'] == 'original-turn'
     steer.unregister('903', token)
     steer_receipts.discard(info['steer_id'])
+
+
+def test_bound_rows_update_for_grouped_reply_and_undelivered(tmp_path):
+    import concurrent.futures
+    import json
+    import sqlite3
+    from api.agent_harness import steer, steer_receipts
+    from api.chat_coordinator import steered_user_meta
+    from api.chat_turn_persist import persist_auth_user_message
+
+    class DB:
+        def _get_connection(self):
+            conn = sqlite3.connect(tmp_path / 'group.db')
+            conn.row_factory = sqlite3.Row
+            return conn
+        def add_message(self, sid, role, text, metadata):
+            conn = self._get_connection()
+            cur = conn.execute('INSERT INTO chat_messages (role, metadata) VALUES (?, ?)', (role, json.dumps(metadata)))
+            conn.commit()
+            conn.close()
+            return cur.lastrowid
+
+    db = DB()
+    conn = db._get_connection()
+    conn.execute('CREATE TABLE chat_messages (id INTEGER PRIMARY KEY, role TEXT, metadata TEXT)')
+    conn.commit()
+    conn.close()
+    def send(text):
+        future = concurrent.futures.Future()
+        future.set_result((True, None))
+        return future
+    token = steer.register('904', 'codex', send)
+    infos = []
+    for text in ('one', 'two', 'never echoed'):
+        info = steer.steer('904', text)
+        infos.append(info)
+        persist_auth_user_message(db, 904, text, metadata=steered_user_meta(info), project_merge_fn=lambda m, *_: m)
+    for i, text in enumerate(('one', 'two')):
+        steer.observe('904', token, {'method': 'item/completed', 'params': {'item': {'type': 'userMessage', 'id': f'u{i}', 'content': [{'type': 'text', 'text': text}]}}})
+    steer.observe('904', token, {'method': 'item/completed', 'params': {'item': {'type': 'agentMessage', 'text': 'Both done.\n\nMore detail.'}}})
+    steer.unregister('904', token)
+    conn = db._get_connection()
+    records = [json.loads(r['metadata'])['steer'] for r in conn.execute('SELECT metadata FROM chat_messages ORDER BY id')]
+    conn.close()
+    covers = [infos[0]['steer_id'], infos[1]['steer_id']]
+    assert [r['covers'] for r in records[:2]] == [covers, covers]
+    assert [r['reply']['text'] for r in records[:2]] == ['Both done.', 'Both done.']
+    assert records[2]['state'] == 'undelivered'
+    assert records[2]['delivered'] is False and records[2]['reply'] is None
+    assert steer_receipts.live('CH-000904')[-1]['state'] == 'undelivered'
+
+
+def test_turn_completes_during_delivery_before_binding(tmp_path):
+    import concurrent.futures
+    from api.agent_harness import steer, steer_receipts
+    token = None
+    def send(text):
+        steer.unregister('905', token)
+        future = concurrent.futures.Future()
+        future.set_result((True, None))
+        return future
+    token = steer.register('905', 'codex', send)
+    info = steer.steer('905', 'too late')
+    with steer_receipts._pending_lock:
+        tracker = steer_receipts._pending[info['steer_id']]['tracker']
+    assert tracker.snapshot(info['steer_id'])['state'] == 'undelivered'
+    steer_receipts.discard(info['steer_id'])
