@@ -174,12 +174,13 @@ def read(cfg: Mapping[str, Any], sid: Any, state: str, previous: Mapping[str, An
     tracking, seen}``. ``children``: the target's sub-agent chat ids. ``tracking``
     goes into the schedule result; ``alert`` wakes the supervisor."""
     on = brief.system(cfg.get('system'))
-    out: Dict[str, Any] = {'leftover': [], 'alert': False, 'tracking': {}, 'seen': {}}
+    out: Dict[str, Any] = {'leftover': [], 'measured': False, 'alert': False, 'tracking': {}, 'seen': {}}
     tree = None
     if on['processes'] and state not in _WORKING:
         try:
             tree = _work_tree()
             out['leftover'] = leftover(tree, [sid, *children])
+            out['measured'] = True
         except Exception:
             pass
         ids = sorted(f"{r['pid']}:{r['create_time']}" for r in out['leftover'])

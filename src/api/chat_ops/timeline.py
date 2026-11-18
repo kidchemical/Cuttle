@@ -11,7 +11,24 @@ def project(session, *, before=None, limit=50, include_quiet=False):
     schedules = {o['id']: o for o in ops}
     items = []
     for oid, op in schedules.items():
-        for row in store.checks(oid, limit=10000):
+        rows = store.checks(oid, limit=10000)
+        snapshots = [row for row in reversed(rows) if 'process_snapshot' in row['detail']]
+        from api.chat_ops.system_care import _size
+        for previous, current in zip(snapshots, snapshots[1:]):
+            old, new = previous['detail']['process_snapshot'], current['detail']['process_snapshot']
+            if not old.get('measured') or not new.get('measured'):
+                continue
+            live = {(r['pid'], r['create_time']) for r in new['leftover']}
+            for process in old['leftover']:
+                identity = (process['pid'], process['create_time'])
+                if identity in live or not all(identity):
+                    continue
+                pid = process['pid']
+                items.append({'schema_version': 1, 'id': f'care:{oid}:{current["at"]}:{pid}:{identity[1]}',
+                              'at': current['at'], 'kind': 'care', 'chat': f"CH-{int(op['target']):06d}",
+                              'headline': f"Leftover process ended: {process['name']} (PID {pid}, {_size(process['rss'])})",
+                              'detail': '', 'refs': {'pid': pid}, 'source': 'check'})
+        for row in rows:
             outcome, d = row['outcome'], row['detail']
             if outcome in ('skipped', 'unchanged', 'note', 'acted', 'early_wake') and not include_quiet:
                 continue
