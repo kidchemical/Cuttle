@@ -297,21 +297,34 @@ class Receipts:
         They leave ``_entries``, so no later reply groups them, and they leave
         any group they are in, so they are in nobody's ``covers`` and never
         hold the excerpt. A member left behind (it joined after the fault) is
-        republished: its group is now only the healthy steers. Idempotent.
+        republished: its group is now only the healthy steers.
+
+        Idempotent, also for a run that failed part way. The groups are found
+        by steer id and pruned first, and a pruned group stays marked until
+        its members were republished, so doing it again finishes the job.
         """
         with self._lock:
             ids = set(steer_ids)
-            groups = []
+            for entry in self._entries:
+                group = entry['group']
+                if group is not None and any(m['steer_id'] in ids for m in group['members']):
+                    group['members'] = [m for m in group['members']
+                                        if m['steer_id'] not in ids]
+                    group['regroup'] = True
             for entry in [e for e in self._entries if e['steer_id'] in ids]:
+                entry['group'] = None
                 self._entries.remove(entry)
-                group, entry['group'] = entry['group'], None
-                if group is not None:
-                    group['members'] = [m for m in group['members'] if m is not entry]
-                    if not any(group is other for other in groups):
-                        groups.append(group)
-            left = [member for group in groups for member in group['members']]
+            owed = []
+            for entry in self._entries:
+                group = entry['group']
+                if (group is not None and group.get('regroup')
+                        and not any(group is other for other in owed)):
+                    owed.append(group)
+            left = [member for group in owed for member in group['members']]
             if left:
                 self._emit_many(left)
+            for group in owed:
+                group.pop('regroup', None)
 
     # ── reads ───────────────────────────────────────────────────────────────
     def snapshot(self, steer_id):
@@ -720,19 +733,39 @@ def _queue_owed():
 def _fail_closed(steer_ids, log):
     """An unexpected error in planning or settling: a bug, never retried.
 
-    The group is only marked here, as it stands now: these steers and whoever
-    shares their group at this moment. From this statement on nothing is
-    planned or written for them, and the writer's next pass drops them from
-    memory; their rows keep the last committed state. A steer that joins the
-    group later is not part of the failure.
+    ``steer_ids`` is the failed group as it stood **at the fault**: captured by
+    the faulting code under the lock it held (``_fault_group``), or the
+    membership the writer read before the fault. Nothing is read again here, so
+    a reply that lands after the fault cannot widen the failure: a steer it
+    groups with these is regrouped by the drop and saved normally. The first
+    statement records the whole set — from it on nothing is planned or written
+    for these steers, and the writer's next pass drops them from memory; their
+    rows keep the last committed state. Logging comes last.
     """
     _doomed.update(steer_ids)
+    _wake.set()
     log.exception("Steer receipt bookkeeping failed; the group is dropped and "
                   "its rows keep the last committed state")
-    _wake.set()
-    with _pending_lock:
-        for steer_id in list(steer_ids):
-            _doomed.update(_pending.get(steer_id, {}).get('group', ()))
+
+
+def _mark_fault_locked(exc, steer_ids):
+    """Attach the failed group to ``exc``. Caller holds ``_pending_lock``.
+
+    Called where the fault happened, before any lock is released: these
+    steers plus whoever shares their group at this instant.
+    """
+    try:
+        group = set(steer_ids)
+        for steer_id in steer_ids:
+            group.update(_pending.get(steer_id, {}).get('group', ()))
+        exc.steer_group = tuple(group)
+    except Exception:
+        pass   # the caller's own membership is used instead
+
+
+def _fault_group(exc, known):
+    """The group that failed with ``exc``: captured at the fault, else ``known``."""
+    return tuple(getattr(exc, 'steer_group', None) or known)
 
 
 def _drop_doomed():
@@ -771,9 +804,17 @@ def _writer_loop():
             _drop_doomed()
         except Exception:
             log.exception("Steer receipt drop failed; it is done again on the next pass")
-        with _pending_lock:
-            _purge_locked()  # time-bound retention even on an idle daemon
-        _queue_owed()
+        # Neither may end the writer: a queued write would then wait for the
+        # next event. Each is simply done again on the next pass.
+        try:
+            with _pending_lock:
+                _purge_locked()  # time-bound retention even on an idle daemon
+        except Exception:
+            log.exception("Steer receipt purge failed; it is done again on the next pass")
+        try:
+            _queue_owed()
+        except Exception:
+            log.exception("Steer receipt queueing failed; it is done again on the next pass")
         with _write_lock:
             if not _queue:
                 # Nothing queued and nothing retained: stop waking up. Both
@@ -835,28 +876,32 @@ def _write_batch(batch, retry, log):
             write = plans[0]['db'].patch_message_metadata
             payload = [(message_id, {'steer': contract})
                        for plan in plans for message_id, contract in plan['rows']]
-            with _pending_lock:
-                _db_call = frozenset(s for plan in plans for s in plan['members'])
             try:
-                write(payload)
-            except Exception:
-                log.warning("Steer receipt write failed for %d group(s)", len(plans),
-                            exc_info=True)
-                saved = False
-            else:
-                saved = True
-            finally:
                 with _pending_lock:
-                    _db_call = frozenset()
+                    _db_call = frozenset(s for plan in plans for s in plan['members'])
+                try:
+                    write(payload)
+                except Exception:
+                    log.warning("Steer receipt write failed for %d group(s)", len(plans),
+                                exc_info=True)
+                    saved = False
+                else:
+                    saved = True
+            finally:
+                # A plain rebind, no lock to take: it cannot fail, on any way
+                # out of the database call.
+                _db_call = frozenset()
             for plan in plans:
                 try:
                     _requeue(retry, _settle(plan) if saved else _fail(plan, retry))
-                except Exception:
-                    _fail_closed(plan['members'], log)
-        except Exception:
+                except Exception as exc:
+                    _fail_closed(_fault_group(exc, plan['members']), log)
+        except Exception as exc:
             # Not the database: nothing here is retried, so what a commit just
             # saved is never queued again.
-            _fail_closed([s for plan in plans for s in plan['members']], log)
+            _db_call = frozenset()
+            _fail_closed(_fault_group(exc, [s for plan in plans for s in plan['members']]),
+                         log)
 
 
 def _fail(plan, retry):
@@ -886,6 +931,7 @@ def _plan_groups(batch, log):
     """
     plans = {}   # member steer id → its group's plan
     for steer_id, attempts in batch.items():
+        known = (steer_id,)   # its group as last read here, before any fault
         try:
             plan = plans.get(steer_id)
             if plan is not None:
@@ -898,9 +944,11 @@ def _plan_groups(batch, log):
                 if binding is None or not _doomed.isdisjoint(binding['group']):
                     continue   # released, discarded or failed closed
                 tracker = binding['tracker']
+                known = (steer_id, *binding['group'])
             plan = _plan(tracker, steer_id, attempts)
             if plan is None:
                 continue
+            known = (steer_id, *plan['members'])
             for member in plan['members']:
                 older = plans.get(member)
                 if older is not None and older is not plan:
@@ -910,8 +958,8 @@ def _plan_groups(batch, log):
                     plans = {key: value for key, value in plans.items()
                              if value is not older}
                 plans[member] = plan
-        except Exception:
-            _fail_closed([steer_id], log)
+        except Exception as exc:
+            _fail_closed(_fault_group(exc, known), log)
     with _pending_lock:
         return [plan for plan in {id(plan): plan for plan in plans.values()}.values()
                 if all(steer_id in _pending
@@ -942,39 +990,44 @@ def _plan(tracker, steer_id, attempts):
     rows, revs, members, db, final = [], {}, [], None, True
     with tracker.lock:
         with _pending_lock:
-            for member in tracker.group(steer_id) or []:
-                member_id = member['steer_id']
-                binding = _pending.get(member_id)
-                if binding is None:
-                    continue   # discarded: no row will ever carry this steer
-                members.append(member_id)
-                if not (member['ended'] or binding['stale']):
-                    final = False
-                message_id = member['message_id']
-                if binding['db'] is None or message_id is None:
-                    final = False   # still to bind: the group will be rewritten
-                    continue
-                contract = {key: member[key] for key in _CONTRACT_KEYS}
-                if binding['stale']:
-                    contract = _terminal(contract)
-                rows.append((message_id, contract))
-                revs[member_id] = binding['rev']
-                # One handle writes the whole group, so it is one transaction
-                # (every handle is the same database).
-                db = db if db is not None else binding['db']
-            if not rows:
-                # No row to write (the tracker no longer knows the steer):
-                # nothing is owed for it.
-                binding = _pending.get(steer_id)
-                if binding is not None:
-                    binding['settled'] = binding['rev']
-                return None
-            if all(_pending[member]['rev'] == _pending[member]['settled']
-                   for member in revs):
-                return None   # clean: already saved (or given up) as it is
-            rows.sort(key=lambda row: row[0])
-            return {'db': db, 'rows': rows, 'revs': revs, 'members': members,
-                    'final': final, 'attempts': attempts}
+            try:
+                for member in tracker.group(steer_id) or []:
+                    member_id = member['steer_id']
+                    binding = _pending.get(member_id)
+                    if binding is None:
+                        continue   # discarded: no row will ever carry this steer
+                    members.append(member_id)
+                    if not (member['ended'] or binding['stale']):
+                        final = False
+                    message_id = member['message_id']
+                    if binding['db'] is None or message_id is None:
+                        final = False   # still to bind: the group will be rewritten
+                        continue
+                    contract = {key: member[key] for key in _CONTRACT_KEYS}
+                    if binding['stale']:
+                        contract = _terminal(contract)
+                    rows.append((message_id, contract))
+                    revs[member_id] = binding['rev']
+                    # One handle writes the whole group, so it is one transaction
+                    # (every handle is the same database).
+                    db = db if db is not None else binding['db']
+                if not rows:
+                    # No row to write (the tracker no longer knows the steer):
+                    # nothing is owed for it.
+                    binding = _pending.get(steer_id)
+                    if binding is not None:
+                        binding['settled'] = binding['rev']
+                    return None
+                if all(_pending[member]['rev'] == _pending[member]['settled']
+                       for member in revs):
+                    return None   # clean: already saved (or given up) as it is
+                rows.sort(key=lambda row: row[0])
+                return {'db': db, 'rows': rows, 'revs': revs, 'members': members,
+                        'final': final, 'attempts': attempts}
+            except Exception as exc:
+                # Both locks are still held: this is the group at the fault.
+                _mark_fault_locked(exc, (steer_id, *members))
+                raise
 
 
 def _settle(plan):
@@ -992,16 +1045,21 @@ def _settle(plan):
     """
     moved = []
     with _pending_lock:
-        for steer_id, rev in plan['revs'].items():
-            binding = _pending.get(steer_id)
-            if binding is None:
-                continue
-            if binding['rev'] == rev:
-                binding['settled'] = rev
-            else:
-                moved.append(steer_id)
-        if plan['final'] and not moved:
-            _release_locked(plan['members'])
+        try:
+            for steer_id, rev in plan['revs'].items():
+                binding = _pending.get(steer_id)
+                if binding is None:
+                    continue
+                if binding['rev'] == rev:
+                    binding['settled'] = rev
+                else:
+                    moved.append(steer_id)
+            if plan['final'] and not moved:
+                _release_locked(plan['members'])
+        except Exception as exc:
+            # The lock is still held: this is the group at the fault.
+            _mark_fault_locked(exc, plan['members'])
+            raise
     return moved
 
 

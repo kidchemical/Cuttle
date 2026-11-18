@@ -4,6 +4,7 @@ Owner: ``api.agent_harness.steer_receipts`` (guide: ``docs/guides/AGENT_STEERING
 """
 import concurrent.futures
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -1673,7 +1674,8 @@ def _bookkeeping_logs(caplog):
 
 
 @pytest.mark.parametrize('drop_fault', [False, True], ids=['', 'second fault in the drop'])
-@pytest.mark.parametrize('where', ['plan start', 'plan return', 'settle start', 'settle return'])
+@pytest.mark.parametrize('where', ['plan start', 'plan return', 'settle start', 'settle return',
+                                   'plan rows.sort(', "settle if plan['final']"])
 def test_a_bookkeeping_exception_drops_its_group_and_nothing_else(
         monkeypatch, caplog, where, drop_fault):
     """Round 8: an exception in planning or settlement is a bug, not a retry.
@@ -1700,7 +1702,7 @@ def test_a_bookkeeping_exception_drops_its_group_and_nothing_else(
         _reply_and_finish(two)
     a, b, c = (rows[label] for label in 'ABC')
 
-    function, spot = where.split()
+    function, spot = where.split(' ', 1)   # the last two fault under the lock
     if function == 'plan':
         fault = _fault_at(monkeypatch, '_plan', spot, lambda owner, *_: owner is one)
     else:
@@ -2344,3 +2346,234 @@ def test_a_fault_right_after_the_commit_never_replays_it(monkeypatch, spot):
     assert db.attempts == [[a]], 'committed once, never queued again'
     assert _held(db, a) == ('Both noted.', [a])
     assert steer_receipts.retained() == _NOTHING
+
+
+# ── round 10: the failed group is the one captured at the fault ─────────────
+
+
+@pytest.mark.parametrize('lands', ['before the mark', 'while it is logged'])
+def test_a_reply_after_the_fault_never_widens_the_failure(monkeypatch, lands):
+    """Claude gate 9, blocker: the failed group is the one that stood at the fault.
+
+    A and B are separate groups and B's echo is committed. A's plan faults.
+    One agent message answering both then lands before ``_fail_closed`` runs,
+    or while it logs. ``_fail_closed`` used to read A's group again after the
+    fault, found (A, B), and dropped the healthy B with its excerpt.
+    """
+    db = _MemoryDb()
+    tracker, ids = _echoed_group('9911', 'AB')
+    a = _insert(db, '9911', 'A', ids['A'])
+    b = _insert(db, '9911', 'B', ids['B'])
+    steer_receipts.bind(ids['B'], db, b)
+    assert steer_receipts.flush(5.0)
+    assert db.steer_meta(b)['state'] == 'delivered' and _held(db, b) == (None, [])
+    plan, fail_closed = steer_receipts._plan, steer_receipts._fail_closed
+    faults, landed = [], []
+
+    def answer():
+        if not landed:
+            landed.append(lands)
+            worker = threading.Thread(target=lambda: (
+                tracker.output_start('reply'), tracker.output_text('reply', 'Both noted.')))
+            worker.start()
+            worker.join(5)
+
+    def faulty_plan(owner, steer_id, attempts):
+        if steer_id == ids['A'] and not faults:
+            faults.append(steer_id)
+            raise RuntimeError('injected internal exception in _plan')
+        return plan(owner, steer_id, attempts)
+
+    def answered_before_the_mark(steer_ids, log):
+        if lands == 'before the mark':
+            answer()
+        fail_closed(steer_ids, log)
+
+    class AnsweredWhileLogging(logging.Handler):
+        def emit(self, record):
+            if lands == 'while it is logged' and 'bookkeeping failed' in record.getMessage():
+                answer()
+
+    handler = AnsweredWhileLogging()
+    logger = logging.getLogger(steer_receipts.__name__)
+    logger.addHandler(handler)
+    monkeypatch.setattr(steer_receipts, '_plan', faulty_plan)
+    monkeypatch.setattr(steer_receipts, '_fail_closed', answered_before_the_mark)
+    try:
+        steer_receipts.bind(ids['A'], db, a)             # A's write: fault
+        assert steer_receipts.flush(5.0)
+        tracker.finish()
+        assert steer_receipts.flush(5.0)
+    finally:
+        logger.removeHandler(handler)
+    assert len(faults) == 1 and landed == [lands]
+    assert steer_receipts.snapshot(ids['A']) is None, 'A failed closed'
+    assert db.steer_meta(a)['state'] == 'pending' and _held(db, a) == (None, [])
+    assert db.steer_meta(b)['state'] == 'delivered'
+    assert _held(db, b) == ('Both noted.', [b]), 'B was healthy at the fault: saved'
+    assert all(a not in attempt for attempt in db.attempts), 'nothing written to A'
+    assert steer_receipts.retained() == _NOTHING
+
+
+def test_a_second_fault_inside_fail_closed_still_drops_the_whole_group(monkeypatch):
+    """Claude gate 9: the first statement of ``_fail_closed`` records the full set.
+
+    A and B are one group; A's plan faults, then ``_fail_closed`` itself faults
+    right after its first statement. The group expansion used to come last, so
+    it never ran and B was written alone after its group had failed.
+    """
+    monkeypatch.setattr(steer_receipts, '_RETRY_SLEEP_SEC', 0.001)
+    db = _MemoryDb()
+    _no_writer()
+    with monkeypatch.context() as staged:
+        staged.setattr(steer_receipts, '_ensure_writer', lambda: None)
+        tracker, ids = _echoed_group('9912', 'AB')
+        a = _insert(db, '9912', 'A', ids['A'])
+        b = _insert(db, '9912', 'B', ids['B'])
+        steer_receipts.bind(ids['A'], db, a)
+        steer_receipts.bind(ids['B'], db, b)
+        _reply_and_finish(tracker)
+    first = _fault_at(monkeypatch, '_plan', 'start', lambda owner, *_: owner is tracker)
+    second = _fault_at(monkeypatch, '_fail_closed', '_wake.set()', lambda *_: True)
+    assert steer_receipts.flush(5.0)
+    assert len(first.injected) == 1 and len(second.injected) == 1
+    assert db.attempts == [], 'nothing is written for a member of the failed group'
+    assert all(steer_receipts.snapshot(ids[label]) is None for label in 'AB')
+    assert steer_receipts.retained() == _NOTHING
+    assert not steer_receipts._queue and not steer_receipts._doomed
+
+
+@pytest.mark.parametrize('name', ['_purge_locked', '_queue_owed'])
+def test_a_fault_in_the_writers_housekeeping_never_ends_the_writer(monkeypatch, caplog, name):
+    """Claude gate 9: the purge and the owed-queue pass run inside the pass handler.
+
+    Both were called bare from the writer loop: one exception ended the writer
+    thread and a queued write waited for the next steer event or ``flush()``.
+    """
+    monkeypatch.setattr(steer_receipts, '_WRITER_IDLE_SEC', 0.01)
+    db = _MemoryDb()
+    _no_writer()
+    with monkeypatch.context() as staged:
+        staged.setattr(steer_receipts, '_ensure_writer', lambda: None)
+        tracker, ids = _echoed_group('9913', 'A')
+        a = _insert(db, '9913', 'A', ids['A'])
+        _reply_and_finish(tracker)
+        steer_receipts.bind(ids['A'], db, a)
+    real, faults = getattr(steer_receipts, name), []
+
+    def once(*args):
+        if threading.current_thread().name == 'steer-receipts' and not faults:
+            faults.append(name)
+            raise RuntimeError(f'injected in {name}')
+        return real(*args)
+
+    monkeypatch.setattr(steer_receipts, name, once)
+    with caplog.at_level('ERROR', logger=steer_receipts.__name__):
+        steer_receipts._ensure_writer()
+        writer = steer_receipts._writer
+        steer_receipts._wake.set()
+        deadline = time.monotonic() + 5.0
+        while not db.writes and time.monotonic() < deadline:   # no flush(): it restarts
+            time.sleep(0.01)
+    assert faults == [name]
+    assert db.writes == [[a]], 'the queued write went out with no further traffic'
+    assert writer.is_alive() or steer_receipts._writer is None, 'it only ever exits idle'
+    assert [r for r in caplog.records if 'done again on the next pass' in r.getMessage()]
+    assert _held(db, a) == ('Both noted.', [a])
+    assert steer_receipts.flush(5.0) and steer_receipts.retained() == _NOTHING
+
+
+class _LockFailingInsideTheDbCall:
+    """``_pending_lock`` that cannot be taken once, by the writer, while a batch
+    is marked as inside its database call."""
+
+    def __init__(self, real):
+        self.real, self.faults = real, []
+
+    def __enter__(self):
+        if (not self.faults and steer_receipts._db_call
+                and threading.current_thread().name == 'steer-receipts'):
+            self.faults.append('take')
+            raise RuntimeError('injected taking _pending_lock')
+        return self.real.__enter__()
+
+    def __exit__(self, *exc):
+        return self.real.__exit__(*exc)
+
+
+def test_the_database_call_mark_is_cleared_on_every_way_out(monkeypatch):
+    """Claude gate 9: clearing ``_db_call`` cannot fail.
+
+    It was cleared under ``_pending_lock`` in the ``finally``: a fault taking
+    the lock left the mark set, so ``flush()`` stayed false and the exit drain
+    waited out its timeout.
+    """
+    db = _MemoryDb()
+    lock = _LockFailingInsideTheDbCall(steer_receipts._pending_lock)
+    monkeypatch.setattr(steer_receipts, '_pending_lock', lock)
+    tracker, ids = _echoed_group('9914', 'A')
+    a = _insert(db, '9914', 'A', ids['A'])
+    _reply_and_finish(tracker)
+    steer_receipts.bind(ids['A'], db, a)
+    assert steer_receipts.flush(2.0), 'no write is in its database call any more'
+    assert steer_receipts._db_call == frozenset()
+    assert db.attempts == [[a]] and _held(db, a) == ('Both noted.', [a])
+    assert steer_receipts.retained() == _NOTHING
+
+
+@pytest.mark.parametrize('spot', ['with _pending_lock:', 'write(payload)', 'saved = True'])
+def test_a_fault_around_the_database_call_leaves_no_mark(monkeypatch, spot):
+    """The mark is cleared whether the fault is setting it, in the call or after."""
+    db = _MemoryDb()
+    _no_writer()
+    with monkeypatch.context() as staged:
+        staged.setattr(steer_receipts, '_ensure_writer', lambda: None)
+        tracker, ids = _echoed_group('9915', 'A')
+        a = _insert(db, '9915', 'A', ids['A'])
+        _reply_and_finish(tracker)
+        steer_receipts.bind(ids['A'], db, a)
+    fault = _fault_at(monkeypatch, '_write_batch', spot, lambda *_: True)
+    assert steer_receipts.flush(5.0)
+    assert len(fault.injected) == 1
+    assert steer_receipts._db_call == frozenset()
+    assert steer_receipts.retained() == _NOTHING
+
+
+class _RemoveThenFail(list):
+    """A tracker's entries whose first removal happens and then raises."""
+
+    failed = False
+
+    def remove(self, item):
+        super().remove(item)
+        if not self.failed:
+            self.failed = True
+            raise RuntimeError('injected part way through forget')
+
+
+def test_a_forget_that_failed_part_way_is_finished_by_doing_it_again():
+    """Claude gate 9: ``forget`` is idempotent for a partial run too.
+
+    The first run removed A from the entries and raised before A left its
+    group. Done again it found nothing to forget, so B kept ``covers [A, B]``
+    against A's pending row.
+    """
+    published = []
+    tracker = Receipts(many=lambda snaps: published.append(snaps) or False)
+    a, b = (tracker.begin(label) for label in 'AB')
+    for row, steer_id in enumerate((a, b), 1):
+        tracker.accepted(steer_id, True)
+        tracker.echo(steer_id)
+        tracker.bind(steer_id, row)
+    tracker.output_start('reply')
+    tracker.output_text('reply', 'Both noted.')
+    tracker._entries = _RemoveThenFail(tracker._entries)
+    del published[:]
+    with pytest.raises(RuntimeError):
+        tracker.forget([a])
+    tracker.forget([a])                              # the drop is done again
+    tracker.forget([a])                              # and once more: nothing left to do
+    assert tracker.snapshot(a) is None and tracker.group(a) is None
+    assert tracker.snapshot(b)['group'] == (b,) and tracker.snapshot(b)['covers'] == [2]
+    assert tracker.snapshot(b)['reply']['text'] == 'Both noted.'
+    assert [[snap['steer_id'] for snap in snaps] for snaps in published] == [[b]]
