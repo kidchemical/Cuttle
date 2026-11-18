@@ -51,3 +51,26 @@ steer and its turn before the delivery wait: an echo can precede the delivery
 response and the user-row insert. The vendor item IDs and turn/session IDs do
 not themselves identify Cuttle's steer ID or persisted user row. Buffer events
 until the row is bound and preserve distinct IDs for identical text.
+
+### Receipt fields for clients
+
+A saved steered user message has `metadata.steer` with `steer_id`,
+`delivered` (true only after a vendor echo), `delivered_at` (ISO timestamp or
+null), `state` (`delivered`, `undelivered`, or null while awaiting an echo),
+`reply` (`{text, at}` or null), and `covers` (the steer IDs sharing that reply).
+The first paragraph of the first agent message after the echo is clipped to 280
+characters; the full agent message remains in the main reply. Several echoes
+before that message share the same reply and `covers` list. An accepted steer
+without an echo at turn end is `undelivered`; an echoed steer without a later
+agent message keeps `reply: null`.
+
+`/api/chat-live-status` extras include `steers`, an array of these fields plus
+`message_id` and `turn_id`, allowing the open thread to match each update to its
+user row. Registration precedes delivery; event observations are buffered
+until the user row is saved and bound. The bounded live array is transient;
+the user row is the history source after reload.
+
+The first paragraph is an excerpt, not proof of an acknowledgement. In the Muse
+tool trial the full first subsequent message addressed the steer in its second
+paragraph, while the stored excerpt says “Command finished with output `READY`.”
+The UI should label it as the agent's response, not assert its semantic content.

@@ -498,11 +498,6 @@ async def run_codex_turn_app_server(
                 on_event(msg)
             except Exception:
                 pass  # Instrumentation must never interrupt the transport.
-        if isinstance(msg, dict) and st["steer_token"] is not None:
-            try:
-                steer_registry.observe(chat_session_id, st["steer_token"], msg)
-            except Exception:
-                pass  # Receipt capture must never interrupt the reader.
         if not isinstance(msg, dict) or rpc.dispatch_reply(msg):
             return
         method = str(msg.get("method") or "")
@@ -512,6 +507,14 @@ async def run_codex_turn_app_server(
         params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
         if not _mine(params):
             return
+        if st["steer_token"] is not None:
+            item = params.get("item") or {}
+            event_turn = params.get("turnId") or (item.get("turnId") if isinstance(item, dict) else None)
+            if not st["turn_id"] or event_turn in (None, st["turn_id"]):
+                try:
+                    steer_registry.observe(chat_session_id, st["steer_token"], msg)
+                except Exception:
+                    pass  # Receipt capture must never interrupt the reader.
 
         if method == "turn/started":
             turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}

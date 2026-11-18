@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import threading
+import re
 import uuid
 
 
@@ -15,7 +16,7 @@ def _now():
 
 
 def _clip(text):
-    return str(text or '').strip().split('\n\n', 1)[0].strip()[:280]
+    return re.split(r'\n[ \t]*\n', str(text or '').strip(), maxsplit=1)[0].strip()[:280]
 
 
 class Receipts:
@@ -172,5 +173,6 @@ def discard(steer_id):
 
 
 def live(session):
+    from api.agent_harness.steer import _key
     with _pending_lock:
-        return [dict(value) for value in _live.get(str(session), {}).values()]
+        return [dict(value) for value in _live.get(str(_key(session)), {}).values()]

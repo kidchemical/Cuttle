@@ -474,11 +474,6 @@ async def run_muse_turn_serve(
                 on_event(msg)
             except Exception:
                 pass  # Observation must not interrupt transport.
-        if isinstance(msg, dict) and st["steer_token"] is not None:
-            try:
-                steer_registry.observe(chat_session_id, st["steer_token"], msg)
-            except Exception:
-                pass  # Receipt capture must never interrupt the reader.
         if not isinstance(msg, dict) or rpc.dispatch_reply(msg):
             return
         method = str(msg.get("method") or "")
@@ -488,6 +483,14 @@ async def run_muse_turn_serve(
         params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
         if st["session_id"] and params.get("sessionId") not in (None, st["session_id"]):
             return
+        if st["steer_token"] is not None:
+            item = params.get("item") or {}
+            event_turn = params.get("turnId") or (item.get("turnId") if isinstance(item, dict) else None)
+            if not st["turn_id"] or event_turn in (None, st["turn_id"]):
+                try:
+                    steer_registry.observe(chat_session_id, st["steer_token"], msg)
+                except Exception:
+                    pass  # Receipt capture must never interrupt the reader.
 
         if method in ("item/started", "item/completed"):
             item = params.get("item") if isinstance(params.get("item"), dict) else {}

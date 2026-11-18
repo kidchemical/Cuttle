@@ -1,0 +1,26 @@
+{
+  "sent": "Please acknowledge this steer and include the word marigold in your response.",
+  "events": [
+    {
+      "type": "user",
+      "isReplay": true,
+      "uuid": "42b9b586-b83f-4350-9cdb-decee7f7c15b",
+      "parent_tool_use_id": null,
+      "message": {
+        "content": "Please acknowledge this steer and include the word marigold in your response."
+      }
+    },
+    {
+      "type": "assistant",
+      "parent_tool_use_id": null,
+      "message": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Noted, marigold. The shell command finished: it waited 8 seconds and printed `READY`. I haven't edited any files.\n\n## Three ways to organize a small Python project"
+          }
+        ]
+      }
+    }
+  ]
+}

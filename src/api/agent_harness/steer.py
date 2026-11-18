@@ -121,7 +121,10 @@ def register(chat_session_id: Any, agent_id: str, send: SteerSend) -> Optional[i
     token = next(_tokens)
     receipts = steer_receipts.Receipts(steer_receipts.changed)
     with _lock:
+        previous = _active.get(key)
         _active[key] = _Entry(agent_id=agent_id, token=token, send=send, receipts=receipts)
+    if previous is not None:
+        previous.receipts.finish()
     return token
 
 
@@ -179,7 +182,7 @@ def steer_text_for(message: str, agent_id: str) -> Optional[str]:
     return body
 
 
-def steer(chat_session_id: Any, message: str, *, timeout: float = 10.0) -> Dict[str, Any]:
+def steer(chat_session_id: Any, message: str, *, timeout: float = 10.0, turn_id: Optional[str] = None) -> Dict[str, Any]:
     """Forward ``message`` to the live turn for this chat."""
     key = _key(chat_session_id)
     if key is None:
@@ -194,9 +197,9 @@ def steer(chat_session_id: Any, message: str, *, timeout: float = 10.0) -> Dict[
     # Capture the turn and registration before the transport can echo the send.
     try:
         from api.chat_turn_id import ambient
-        turn_id = ambient(chat_session_id)
+        turn_id = turn_id or ambient(chat_session_id)
     except Exception:
-        turn_id = ""
+        turn_id = turn_id or ""
     from api.agent_harness import steer_receipts
     steer_id = entry.receipts.begin(text, turn_id)
     steer_receipts.track(key, entry.receipts, steer_id)

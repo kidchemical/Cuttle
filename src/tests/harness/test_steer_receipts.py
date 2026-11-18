@@ -100,3 +100,45 @@ def test_no_ack_and_accepted_after_turn_end():
     assert tracker.snapshot(first)['reply'] is None
     assert tracker.snapshot(first)['state'] == 'delivered'
     assert tracker.snapshot(late)['state'] == 'undelivered'
+
+
+def test_recorded_claude_and_muse_stream_events():
+    import concurrent.futures
+    import json
+    from pathlib import Path
+    from api.agent_harness import steer, steer_receipts
+
+    for agent, name in [('claude', 'claude-tool'), ('muse', 'muse-tool')]:
+        fixture = json.loads((Path(__file__).parent / 'fixtures' / (name + '.json')).read_text())
+        token = None
+        def send(text):
+            for event in fixture['events']:
+                steer.observe('902', token, event)
+            future = concurrent.futures.Future()
+            future.set_result((True, None))
+            return future
+        token = steer.register('902', agent, send)
+        info = steer.steer('902', fixture['sent'])
+        with steer_receipts._pending_lock:
+            tracker = steer_receipts._pending[info['steer_id']]['tracker']
+        receipt = tracker.snapshot(info['steer_id'])
+        assert receipt['delivered_at']
+        assert receipt['reply']['text'] == ('Noted, marigold. The shell command finished: it waited 8 seconds and printed `READY`. I haven\'t edited any files.' if agent == 'claude' else 'Command finished with output `READY`.')
+        steer.unregister('902', token)
+        steer_receipts.discard(info['steer_id'])
+
+
+def test_detached_turn_id_is_registered_before_delivery(monkeypatch):
+    import concurrent.futures
+    from api.agent_harness import steer, steer_receipts
+    def send(text):
+        f = concurrent.futures.Future()
+        f.set_result((True, None))
+        return f
+    token = steer.register('903', 'claude', send)
+    info = steer.steer('903', 'follow up', turn_id='original-turn')
+    with steer_receipts._pending_lock:
+        tracker = steer_receipts._pending[info['steer_id']]['tracker']
+    assert tracker.snapshot(info['steer_id'])['turn_id'] == 'original-turn'
+    steer.unregister('903', token)
+    steer_receipts.discard(info['steer_id'])
