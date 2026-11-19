@@ -24,8 +24,8 @@
    thread first (message-nav jumps, find-in-chat).
 
    Studio (`host.isStudio()`, default CuttleChatDisplay.isStudio()): a steer
-   reply shows its receipt under the steer bubble — the label line (↳) and,
-   on the last covered row only, the agent's reply excerpt — from the row's
+   reply shows its receipt — the label line (↳) above the steer bubble and,
+   on the last covered row only, the agent's reply excerpt below it — from the row's
    saved `data-steer` JSON (`metadata.steer`), overlaid by the live `steers`
    extra for the current turn. Classic adds no markup at all.
    The integration calls `refreshReceipts()` when live status changes; that
@@ -159,7 +159,7 @@
             delete el.dataset.threadKey;
             const wrap = el.querySelector(':scope > .message-content-wrapper');
             if (!wrap) return;
-            wrap.querySelectorAll(':scope > .chat-thread-bar, :scope > .chat-thread-subagents, :scope > .chat-thread-tail, :scope > .chat-thread-receipt')
+            wrap.querySelectorAll(':scope > .chat-thread-bar, :scope > .chat-thread-subagents, :scope > .chat-thread-tail, :scope > .chat-thread-receipt, :scope > .chat-thread-excerpt')
                 .forEach((n) => n.remove());
         }
 
@@ -281,25 +281,32 @@
             return M.steerReceipt(row, live.steers, live.turnId);
         }
 
+        /** The label line (↳) that sits above the steer bubble. */
         function receiptHtml(view) {
-            const M = model();
-            let html = '<div class="chat-thread-receipt-label"><span class="chat-thread-receipt-icon" aria-hidden="true">↳</span>'
+            return '<div class="chat-thread-receipt-label"><span class="chat-thread-receipt-icon" aria-hidden="true">↳</span>'
                 + '<span class="chat-thread-receipt-text">' + esc(view.label) + '</span></div>';
-            if (view.excerpt) {
-                html += '<blockquote class="chat-thread-excerpt"><div class="chat-thread-excerpt-label">'
-                    + esc(M.EXCERPT_LABEL) + '</div><p class="chat-thread-excerpt-text">' + esc(view.excerpt) + '</p></blockquote>';
-            }
-            return html;
         }
 
-        /** Mount (or remove, when view is null) the receipt under a steer row's content. */
+        /** The agent's reply excerpt that sits below the steer bubble (last covered row only). */
+        function excerptHtml(view) {
+            const M = model();
+            return '<div class="chat-thread-excerpt-label">' + esc(M.EXCERPT_LABEL) + '</div>'
+                + '<p class="chat-thread-excerpt-text">' + esc(view.excerpt) + '</p>';
+        }
+
+        /**
+         * Mount (or remove, when view is null) the receipt around a steer row's
+         * bubble: the label above it, and the excerpt below it when the row carries the reply.
+         */
         function mountReceipt(el, view) {
             const wrap = el.querySelector(':scope > .message-content-wrapper');
             if (!wrap) return;
             const content = wrap.querySelector(':scope > .message-content');
             let node = wrap.querySelector(':scope > .chat-thread-receipt');
+            let tail = wrap.querySelector(':scope > .chat-thread-excerpt');
             if (!view || !content) {
                 if (node) node.remove();
+                if (tail) tail.remove();
                 return;
             }
             if (!node) {
@@ -307,12 +314,27 @@
                 node.className = 'chat-thread-receipt';
                 node.setAttribute('data-chat-find-skip', '');
             }
-            if (node.previousElementSibling !== content) content.insertAdjacentElement('afterend', node);
+            if (node.nextElementSibling !== content) content.insertAdjacentElement('beforebegin', node);
             node.dataset.state = view.state || '';
             const html = receiptHtml(view);
             if (node.__cuttleReceiptHtml !== html) {
                 node.innerHTML = html;
                 node.__cuttleReceiptHtml = html;
+            }
+            if (!view.excerpt) {
+                if (tail) tail.remove();
+                return;
+            }
+            if (!tail) {
+                tail = h.doc.createElement('blockquote');
+                tail.className = 'chat-thread-excerpt';
+                tail.setAttribute('data-chat-find-skip', '');
+            }
+            if (tail.previousElementSibling !== content) content.insertAdjacentElement('afterend', tail);
+            const excerpt = excerptHtml(view);
+            if (tail.__cuttleExcerptHtml !== excerpt) {
+                tail.innerHTML = excerpt;
+                tail.__cuttleExcerptHtml = excerpt;
             }
         }
 
@@ -538,7 +560,7 @@
 
         function insideOwnUi(node) {
             const el = node && (node.nodeType === 1 ? node : node.parentElement);
-            return !!(el && el.closest && el.closest('.chat-thread-bar, .chat-thread-subagents, .chat-thread-receipt'));
+            return !!(el && el.closest && el.closest('.chat-thread-bar, .chat-thread-subagents, .chat-thread-receipt, .chat-thread-excerpt'));
         }
 
         function onMutations(list) {

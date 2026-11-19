@@ -44,7 +44,8 @@
    `cuttle-studio` class on <html> (see `studioNow`).
 
    Studio-only (Classic output is unchanged): the typed prefix is bolded in
-   each entry's command text (`highlightTypedPrefixHtml`, pure and escape-safe).
+   each entry's title (`highlightTypedPrefixHtml`, pure and escape-safe); the
+   command column stays plain.
    Loaded before chat_page.js.
    ================================================================ */
 (function (root) {
@@ -503,10 +504,11 @@
                                 || cat === 'hermes' || cat === 'opencode' || cat === 'codex'
                                 ? cmd.prefix.replace(/\s+$/, '')
                                 : (cmd.meta || cmd.prefix.trim());
-                        // Studio bolds the typed prefix; Classic keeps the plain text.
-                        const meta = studioPrefix != null
-                            ? highlightTypedPrefixHtml(metaText, studioPrefix, escapeHtmlInline)
-                            : escapeHtmlInline(metaText);
+                        const meta = escapeHtmlInline(metaText);
+                        // Studio bolds the typed prefix in the title; Classic keeps the plain title.
+                        const titleHtml = studioPrefix != null
+                            ? highlightTypedPrefixHtml(cmd.label, studioPrefix, escapeHtmlInline)
+                            : escapeHtmlInline(cmd.label);
                         const hint = cmd.hint ? escapeHtmlInline(cmd.hint) : '';
                         const hintBlock = hint
                             ? '<span class="slash-cmd-hint">' + hint + '</span>'
@@ -569,7 +571,7 @@
                             kind +
                             '</span>' +
                             '<span class="slash-cmd-title">' +
-                            escapeHtmlInline(cmd.label) +
+                            titleHtml +
                             '</span>' +
                             '</span>' +
                             hintBlock +

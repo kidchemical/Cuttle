@@ -61,7 +61,8 @@ assert.strictEqual(P.model([bound], [], '').hasTasks, false);
 // --- rows, state, owners -------------------------------------------------------
 const rows = m.tasks[0].rows;
 assert.deepStrictEqual(rows.map((r) => r.state), ['done', 'in_progress', 'open', 'open']);
-assert.strictEqual(rows[1].owner.name, 'Scout');
+assert.strictEqual(rows[1].owner.name, 'Codex', 'agent name, not the child title');
+assert.strictEqual(rows[1].owner.title, 'Scout', 'child title rides as the tooltip');
 assert.strictEqual(rows[1].owner.color, '#10a37f', 'harness colour from the catalog');
 assert.strictEqual(rows[2].owner.name, 'You');
 assert.strictEqual(rows[2].owner.color, '#6b7280', 'a person is neutral');
@@ -78,7 +79,9 @@ assert.strictEqual(glow.length, 1, 'one in-progress row, one glow class: ' + bot
 assert.ok(/<li class="chat-widget-task is-done"[^>]*><input type="checkbox" checked/.test(both), 'done row ticked');
 assert.ok(/<input type="checkbox"\s+disabled/.test(both), 'panel checkboxes are read-only');
 assert.ok(both.includes('agent-dot') && both.includes('background:#10a37f'), 'owner dot in harness colour');
-assert.ok(both.includes('agent-identity-name">Scout<'), 'owner name plain');
+assert.ok(both.includes('agent-identity-name">Codex<'), 'owner shows the agent name');
+assert.ok(both.includes('<span class="work-owner" data-tooltip="Scout">'), 'child title is the tooltip');
+assert.ok(!both.includes('agent-identity-name">Scout<'), 'child title is not the owner name');
 assert.ok(!both.includes('<b>parser</b>'), 'item text is escaped');
 assert.ok(both.includes('Write &lt;b&gt;parser&lt;/b&gt;'));
 assert.ok(both.includes('subagent-fleet-card'), 'fleet cards in the right column');
