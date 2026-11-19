@@ -26,7 +26,7 @@
    Studio (`host.isStudio()`, default CuttleChatDisplay.isStudio()): a steer
    reply shows its receipt — the label line (↳) above the steer bubble and,
    on the last covered row only, the agent's reply excerpt below it — from the row's
-   saved `data-steer` JSON (`metadata.steer`), overlaid by the live `steers`
+   saved receipt (`metadata.steer`, kept on the row as `__cuttleSteer`), overlaid by the live `steers`
    extra for the current turn. Classic adds no markup at all.
    The integration calls `refreshReceipts()` when live status changes; that
    re-renders receipts only, never the transcript.
@@ -269,8 +269,7 @@
         function receiptFor(el, live) {
             const M = model();
             if (!M || !M.steerReceipt) return null;
-            let steer = null;
-            try { steer = el.dataset.steer ? JSON.parse(el.dataset.steer) : null; } catch (_) { steer = null; }
+            const steer = el.__cuttleSteer && typeof el.__cuttleSteer === 'object' ? el.__cuttleSteer : null;
             const mid = el.dataset.messageId;
             const row = {
                 messageId: mid != null && mid !== '' ? Number(mid) : null,
@@ -338,11 +337,17 @@
             }
         }
 
-        /** Re-paint receipts of the current steer rows only (live steers changed). */
+        /**
+         * Re-paint receipts of the current steer rows only (live steers changed).
+         * Covers steers folded into a thread and idle steers that stand on their own row.
+         */
         function renderReceipts(box, live) {
             const on = studioOn();
+            // Classic mounts nothing: skip the walk unless a receipt is still on screen.
+            if (!on && !box.querySelector('.chat-thread-receipt, .chat-thread-excerpt')) return;
             const state = live || liveSteerState();
-            box.querySelectorAll('.message.thread-reply--steer').forEach((el) => {
+            box.querySelectorAll('.message.thread-reply--steer, .message.is-steered').forEach((el) => {
+                if (!el.__cuttleSteer && !el.classList.contains('thread-reply--steer')) return;
                 mountReceipt(el, on ? receiptFor(el, state) : null);
             });
         }
@@ -351,6 +356,24 @@
             const box = h.container && h.container();
             if (!box || !enabled) return;
             renderReceipts(box);
+        }
+
+        /**
+         * A steer row learned its saved state (history sync, optimistic claim):
+         * copy the receipt and turn id from the server message onto the row and
+         * re-paint. Safe for any row; non-steer messages are left alone.
+         */
+        function stampSteer(el, msg) {
+            if (!el || !msg) return;
+            let meta = msg.metadata;
+            if (typeof meta === 'string') {
+                try { meta = JSON.parse(meta); } catch (_) { meta = null; }
+            }
+            if (!meta || typeof meta !== 'object' || !meta.steer) return;
+            el.__cuttleSteer = meta.steer;
+            const turnId = meta.turn_id || msg.turn_id;
+            if (turnId) el.dataset.turnId = String(turnId);
+            refreshReceipts();
         }
 
         function priorKeys(els) {
@@ -690,7 +713,7 @@
                 .catch(() => enabled);
         }
 
-        return { start, setEnabled, syncFlag, reconcile, reveal, refreshReceipts, flush: flushSave,
+        return { start, setEnabled, syncFlag, reconcile, reveal, refreshReceipts, stampSteer, flush: flushSave,
             resetView: (id) => loadSession(id == null ? null : String(id)) };
     }
 

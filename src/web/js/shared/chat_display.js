@@ -15,6 +15,8 @@
  *   CuttleChatDisplay.setMode(m)    persist 'classic'|'studio', apply here
  *   CuttleChatDisplay.syncFlag(f)   fetch the flag (f defaults to window.fetch)
  *   CuttleChatDisplay.onChange(cb)  cb(state) on any change; returns unsubscribe
+ *   CuttleChatDisplay.reloadOnFlip() reload this page when the effective mode flips
+ *                                   after load (pages with mode-specific mounted UI)
  *
  * Browser: `window.CuttleChatDisplay` is one instance per page, created from
  * window/document/localStorage. Node/tests: `module.exports.create(deps)` with
@@ -124,6 +126,20 @@
             return () => { listeners.delete(cb); };
         }
 
+        /**
+         * The chat page mounts mode-specific UI (work panels, the push tray, the
+         * supervision timeline, bubble headers) and ui_boot.js settles the
+         * flat-messages class at load. A flip after load reloads the page, so no
+         * piece of the other mode is left on screen. Returns unsubscribe.
+         */
+        function reloadOnFlip() {
+            const was = isStudio();
+            return onChange((s) => {
+                if (s.studio === was) return;
+                if (win.location && typeof win.location.reload === 'function') win.location.reload();
+            });
+        }
+
         function onStorage(e) {
             if (!e || e.key === null || e.key === MODE_KEY || e.key === FLAG_KEY) notifyIfChanged();
         }
@@ -143,7 +159,7 @@
         win.addEventListener('message', onMessage);
         notifyIfChanged();
 
-        return { mode, isStudio, state, setMode, syncFlag, onChange };
+        return { mode, isStudio, state, setMode, syncFlag, onChange, reloadOnFlip };
     }
 
     const api = { MODE_KEY, FLAG_KEY, FLAG_ID, CLASS, normalizeMode, effectiveMode, flagFromPayload, create };

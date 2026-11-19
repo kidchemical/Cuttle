@@ -18,8 +18,8 @@
     --sup-tone-bad: #b91c1c;
     --sup-tone-ok: #047857;
     --sup-tone-info: #2563eb;
-    --sup-code-bg: rgba(15, 23, 42, 0.07);
-    --sup-divider: rgba(25, 27, 69, 0.09);
+    --sup-code-bg: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    --sup-divider: color-mix(in srgb, var(--text-primary) 10%, transparent);
 }
 
 :root.cuttle-studio.dark-mode,
@@ -28,8 +28,6 @@
     --sup-tone-bad: #f87171;
     --sup-tone-ok: #34d399;
     --sup-tone-info: #60a5fa;
-    --sup-code-bg: rgba(255, 255, 255, 0.09);
-    --sup-divider: rgba(236, 238, 254, 0.1);
 }
 
 @keyframes sup-studio-in {
@@ -52,7 +50,6 @@
     color: var(--studio-ink);
     border-radius: var(--studio-radius-lg);
     box-shadow: var(--studio-shadow-raised);
-    font-family: var(--studio-font-sans);
     animation: sup-studio-in var(--studio-dur-base) var(--studio-ease-out) both;
 }
 
@@ -173,7 +170,7 @@
     height: 26px;
     border-radius: 50%;
     background: var(--studio-ink-faint);
-    color: #ffffff;
+    color: var(--studio-bubble-user-ink);
     font-size: var(--studio-text-xs);
     font-weight: var(--studio-weight-bold);
 }
@@ -262,6 +259,38 @@
 }
 
 :root.cuttle-studio .sup-tl-more:focus-visible {
+    outline: none;
+    box-shadow: var(--studio-focus-ring);
+}
+
+/* ── Schedule controls under the timeline (same markup as the Classic popover) ── */
+
+:root.cuttle-studio .sup-studio-panel .chat-supervision-actions {
+    margin-top: var(--studio-space-3);
+    padding-top: var(--studio-space-3);
+    border-top: 1px solid var(--sup-divider);
+}
+
+:root.cuttle-studio .sup-studio-panel .chat-supervision-actions button,
+:root.cuttle-studio .sup-studio-panel .chat-supervision-pause-menu button {
+    padding: 5px 12px;
+    border: 0;
+    border-radius: var(--studio-radius-pill);
+    background: var(--studio-accent-soft);
+    color: var(--studio-accent-ink);
+    font: inherit;
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-semibold);
+    cursor: pointer;
+}
+
+:root.cuttle-studio .sup-studio-panel .chat-supervision-actions button.is-danger {
+    background: color-mix(in srgb, var(--sup-tone-bad) 12%, transparent);
+    color: var(--sup-tone-bad);
+}
+
+:root.cuttle-studio .sup-studio-panel .chat-supervision-actions button:focus-visible,
+:root.cuttle-studio .sup-studio-panel .chat-supervision-pause-menu button:focus-visible {
     outline: none;
     box-shadow: var(--studio-focus-ring);
 }

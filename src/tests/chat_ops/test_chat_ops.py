@@ -115,7 +115,7 @@ def test_send_steers_a_live_turn(chats):
     out = service.send(_ch(target), "keep going", actor=_ch(sup), db=db, request=host)
     assert out["delivery"] == "steered"
     [op] = store.listing(sup)
-    assert op["state"] == "delivered" and op["result"] == {"steered": True}
+    assert op["state"] == "delivered" and op["result"] == {"steered": True, "confirmed": False}
     assert ("POST", "/api/chat-steer", target, {"message": "keep going", "chat_op_id": op["id"]}) in host.calls
     assert op["id"] not in [o["id"] for o in store.due()]
 

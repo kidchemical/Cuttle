@@ -262,7 +262,21 @@
                 + M.timelineHtml(rows, {
                     loading: studio.loading, error: studio.error, more: !!studio.nextBefore,
                     showChat: !scope.filterChat && chats.size > 1,
-                });
+                })
+                + studioControls();
+        }
+
+        // The schedule's own controls (Open, Edit, Pause/Resume, Cancel): the same
+        // markup and handlers as the Classic popover, under the timeline.
+        function studioControls() {
+            const v = overview && M.view(overview, now());
+            if (!v || !studio) return '';
+            if (studio.kind === 'chip') {
+                const c = v.chips.find((x) => x.id === studio.id);
+                return c ? controls(c.id, c.paused, c.target, 'Open ' + c.target) : '';
+            }
+            const b = v.badges.find((x) => x.id === studio.id);
+            return b ? controls(b.id, b.paused, b.supervisor, 'Open ' + b.supervisor) : '';
         }
 
         // First page on open and on each refresh (the poll path); "Show older" appends.
@@ -271,8 +285,13 @@
             const st = studio;
             if (!st || !popover || (older && !st.nextBefore)) return;
             const before = older ? st.nextBefore : '';
+            // A background refresh never interrupts a "Show older" request in flight.
+            if (!older && st.loadingOlder) return;
             const mine = ++st.seq;
-            st.loading = true;
+            // "Loading…" shows for the first page and for "Show older", not for a
+            // background refresh of rows already on screen.
+            st.loading = older || !st.items.length;
+            st.loadingOlder = !!older;
             st.error = '';
             studioPaint();
             const q = '?limit=50' + (before ? '&before=' + encodeURIComponent(before) : '');
@@ -292,9 +311,11 @@
                     st.items = M.mergeItems(page, st.items);
                 }
                 st.loading = false;
+                st.loadingOlder = false;
             } catch (e) {
                 if (studio !== st || st.seq !== mine) return;
                 st.loading = false;
+                st.loadingOlder = false;
                 st.error = String(e.message || e);
             }
             studioPaint();

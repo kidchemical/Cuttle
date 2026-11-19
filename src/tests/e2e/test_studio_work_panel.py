@@ -49,7 +49,7 @@ FIXTURE = """<!DOCTYPE html><html><head>
 <style>
 /* Stand-ins for the real Studio page: its surface, and a light reply card (the
    Studio bubble skin is not in this lane). The reply text sits above the panel. */
-body{margin:0;min-height:100vh;background:var(--studio-surface-gradient);font-family:var(--font-sans)}
+body{margin:0;min-height:100vh;background:var(--studio-backdrop), var(--bg-primary);font-family:var(--font-sans)}
 html body #typing-indicator .message-content-wrapper{background:var(--studio-bubble-bot-bg);color:var(--studio-bubble-bot-ink);border-radius:var(--studio-bubble-radius);box-shadow:var(--studio-shadow-card);padding:22px 24px;box-sizing:border-box}
 html body #typing-indicator .message-content{font-size:17px;line-height:1.5;margin-bottom:16px;background:transparent;color:inherit;box-shadow:none;border:0;padding:0}
 </style>
@@ -348,6 +348,98 @@ def test_classic_keeps_the_fleet_block_and_the_dock(browser, static_server):  # 
         # Classic dock rows carry no Studio hooks.
         assert page.locator("#chatWidgetsStrip .is-in-progress, #chatWidgetsStrip .agent-dot").count() == 0
         _shot(page, "work-panel-classic.png")
+        assert errors == []
+    finally:
+        context.close()
+
+
+def _constructor_list():
+    state = _tasks_payload(BASE_ITEMS)
+    state["gizmos"][0]["id"] = "constructor"
+    return state
+
+
+def test_classic_dock_shows_a_list_whose_id_is_an_object_builtin(browser, static_server):  # noqa: F811
+    """A list id such as "constructor" must not read as already shown in a panel."""
+    context, page, errors, _store = _open(browser, static_server, state=_constructor_list())
+    try:
+        page.evaluate("() => CuttleChatDisplay.setMode('classic')")
+        page.evaluate("async () => { await TG.refresh(); L.syncLive(CARDS); }")
+        expect(page.locator("#chatWidgetsStrip")).to_be_visible()
+        expect(page.locator("#chatWidgetsStrip")).to_contain_text("Release v0.8")
+        assert errors == []
+    finally:
+        context.close()
+
+
+def test_studio_keeps_a_shared_list_in_the_dock_so_it_stays_editable(browser, static_server):  # noqa: F811
+    state = _tasks_payload(BASE_ITEMS)
+    state["gizmos"][0]["edit_mode"] = "shared"
+    context, page, errors, _store = _open(browser, static_server, state=state)
+    try:
+        _mount_turn(page)
+        expect(page.locator("#typing-indicator .work-panel .work-list")).to_have_count(1)
+        expect(page.locator("#chatWidgetsStrip")).to_be_visible()
+        expect(page.locator("#chatWidgetsStrip")).to_contain_text("Release v0.8")
+        assert errors == []
+    finally:
+        context.close()
+
+
+def test_tasks_half_shows_once_per_turn_in_the_newest_bubble(browser, static_server):  # noqa: F811
+    """A detached run's follow-up bubble shares its turn id: the Tasks list moves to it, not into both."""
+    context, page, errors, _store = _open(browser, static_server)
+    try:
+        _mount_turn(page)
+        expect(page.locator("#typing-indicator .work-panel .work-list")).to_have_count(1)
+        page.evaluate("""() => {
+            const el = document.createElement('div');
+            el.className = 'message assistant';
+            el.id = 'followup';
+            el.dataset.turnId = 'turn40';
+            el.innerHTML = '<div class="message-content-wrapper"><div class="message-content">Follow-up.</div></div>';
+            document.getElementById('chatMessages').appendChild(el);
+            L.mountForMessage(el, 'assistant', { turn_id: 'turn40', subagents: [] });
+        }""")
+        expect(page.locator("#followup .work-panel .work-list")).to_have_count(1)
+        expect(page.locator("#typing-indicator .work-panel .work-list")).to_have_count(0)
+        # The first bubble keeps its own sub-agent cards.
+        expect(page.locator("#typing-indicator .work-panel [data-chat-handle]")).to_have_count(3)
+        assert errors == []
+    finally:
+        context.close()
+
+
+def test_a_tasks_list_created_late_gives_the_bubble_its_first_panel(browser, static_server):  # noqa: F811
+    empty = {"success": True, "revision": 1, "gizmos": []}
+    context, page, errors, store = _open(browser, static_server, state=empty)
+    try:
+        page.evaluate("""async () => {
+            await TG.refresh();
+            L.mountForMessage(document.getElementById('typing-indicator'), 'assistant', { turn_id: 'turn40', subagents: [] });
+        }""")
+        assert page.locator("#typing-indicator .work-panel").count() == 0
+        store["tasks"] = dict(_tasks_payload(BASE_ITEMS), revision=2)
+        page.evaluate("async () => { await TG.refresh(); }")
+        expect(page.locator("#typing-indicator .work-panel .work-list")).to_have_count(1)
+        assert errors == []
+    finally:
+        context.close()
+
+
+def test_a_stopped_bubble_drops_the_working_tag(browser, static_server):  # noqa: F811
+    context, page, errors, _store = _open(browser, static_server)
+    try:
+        out = page.evaluate("""() => {
+            const el = document.getElementById('hdr');
+            el.innerHTML = CuttleWorkPanel.agentHeaderHtml('codex', { label: 'Codex', working: true });
+            const before = el.querySelectorAll('.studio-working-tag').length;
+            CuttleWorkPanel.markStopped(el);
+            const head = el.querySelector('.studio-agent-header');
+            return { before, after: el.querySelectorAll('.studio-working-tag').length,
+                     stopped: head.classList.contains('is-stopped'), label: head.getAttribute('aria-label') };
+        }""")
+        assert out == {"before": 1, "after": 0, "stopped": True, "label": "Stopped: Codex"}
         assert errors == []
     finally:
         context.close()

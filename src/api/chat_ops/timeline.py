@@ -148,7 +148,8 @@ def project(session, *, before=None, limit=50, include_quiet=False, db=None):
                           'chat':f"CH-{int(op['target']):06d}",'headline':headline,'detail':detail,
                           'refs':{k: v for k, v in {'branch': branch, 'command': command}.items() if v},'source':'check'})
     from api.orchestration_telemetry import store as telemetry
-    for event in telemetry.events(kinds=('sup_schedule', 'sup_check')):
+    # Only this supervisor's rows: telemetry keeps every chat's events forever.
+    for event in telemetry.events(kinds=('sup_schedule', 'sup_check'), session_id=sid):
         if event['session_id'] != sid or event['batch_id'] not in schedules:
             continue
         if event['kind'] == 'sup_check':
@@ -173,10 +174,14 @@ def project(session, *, before=None, limit=50, include_quiet=False, db=None):
             continue
         text = str(op['payload'].get('text') or '')
         template = _TEMPLATE_NUDGE.match(text)
+        # A steer the live turn accepted is "delivered" before the agent has echoed
+        # it (steer receipts confirm the read later): say sent, not nudged.
+        result = op.get('result') or {}
+        verb = 'Sent a nudge to' if result.get('steered') and not result.get('confirmed') else 'Nudged'
         if template:
-            headline, detail = f'Nudged {names(op["target"])} with the next task', f'"{template.group(1)}"'
+            headline, detail = f'{verb} {names(op["target"])} with the next task', f'"{template.group(1)}"'
         else:
-            headline, detail = f'Nudged {names(op["target"])}', f'"{text[:_DETAIL_MAX]}"' if text else ''
+            headline, detail = f'{verb} {names(op["target"])}', f'"{text[:_DETAIL_MAX]}"' if text else ''
         items.append({'schema_version':1,'id':'send:'+op['id'],'at':op['updated'],'kind':'nudged',
                       'chat':f"CH-{int(op['target']):06d}",'headline':headline,
                       'detail':detail,'refs':{},'source':'operation'})

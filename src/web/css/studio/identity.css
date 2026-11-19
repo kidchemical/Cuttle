@@ -21,7 +21,6 @@
     min-width: 0;
     max-width: 100%;
     color: var(--studio-ink);
-    font-family: var(--font-sans);
     font-size: var(--studio-text-sm);
     font-weight: var(--studio-weight-semibold);
     line-height: var(--studio-leading-tight);

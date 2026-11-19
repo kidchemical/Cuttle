@@ -1,4 +1,4 @@
-"""Studio foundation (L0): Display row wiring, boot gate, drift checks, tokens, fonts."""
+"""Studio foundation (L0): Display row wiring, boot gate, drift checks, theme-derived tokens."""
 
 from __future__ import annotations
 
@@ -78,33 +78,45 @@ def test_tokens_are_scoped_to_the_studio_class():
     assert not re.search(r"^:root\s*[{,]", css, re.M)
 
 
-def test_tokens_define_the_studio_font_and_accent():
+def test_tokens_derive_colours_from_the_active_theme():
+    """Studio is a shape layer over the theme: its colours come from theme variables."""
     css = _read(TOKENS)
-    assert "--font-sans: var(--studio-font-sans);" in css
-    assert "'Cuttle Inter'" in css
-    assert "#7048e8" in css
-    # Classic keeps the global family name; Studio must not reuse it as @font-face.
-    assert "font-family: 'Inter'" not in css
+    assert not re.search(r"#[0-9a-fA-F]{6}\b", css), "fixed colour in studio_tokens.css"
+    for var in ("--accent-color", "--accent-hover", "--text-primary", "--text-secondary",
+                "--message-user-bg", "--message-assistant-bg", "--bubble-shadow"):
+        assert f"var({var}" in css, var
 
 
-def test_tokens_font_urls_resolve_and_fonts_are_woff2():
-    css = _read(TOKENS)
-    urls = re.findall(r'url\("([^"]+\.woff2)"\)', css)
-    assert len(urls) == 5
-    for url in urls:
-        target = (TOKENS.parent / url).resolve()
-        assert target.is_file(), url
-        assert target.read_bytes()[:4] == b"wOF2", url
+def test_studio_sets_no_font_so_theme_and_text_prefs_apply():
+    """No Studio stylesheet picks a typeface or bundles one (theme fonts and the
+    Text & fonts prefs own type). A monospace stack for code-like text is the one exception."""
+    for path in sorted((WEB / "css" / "studio").glob("*.css")):
+        css = _read(path)
+        assert "@font-face" not in css, path.name
+        assert "--font-sans:" not in css, path.name
+        for line in css.splitlines():
+            if "font-family:" in line:
+                assert "monospace" in line, f"{path.name}: {line.strip()}"
+    assert not (WEB / "css" / "fonts" / "inter").exists()
 
 
-def test_inter_weights_and_licence_are_vendored():
-    fonts = WEB / "css" / "fonts" / "inter"
-    for weight in (400, 500, 600, 700, 800):
-        assert (fonts / f"inter-latin-{weight}-normal.woff2").is_file(), weight
-    licence = _read(fonts / "LICENSE-OFL.txt")
-    assert "SIL OPEN FONT LICENSE" in licence.upper()
-    assert "Inter Project Authors" in licence
-    assert (fonts / "README.md").is_file()
+def test_studio_stylesheets_keep_fixed_colours_to_status_tones():
+    """Outside the semantic status tones (warn/bad/ok/info), Studio CSS uses theme-derived tokens."""
+    allowed = {
+        "supervision.css": ("--sup-tone-",),
+        "work_panel.css": ("is-failed", "is-warn", "is-danger"),
+    }
+    for path in sorted((WEB / "css" / "studio").glob("*.css")):
+        css = re.sub(r"/\*.*?\*/", "", _read(path), flags=re.S)
+        for block in re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+            selector, body = block.group(1), block.group(2)
+            for decl in body.split(";"):
+                if not re.search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(", decl):
+                    continue
+                if "mask-image" in decl:
+                    continue
+                marks = allowed.get(path.name, ())
+                assert any(m in decl or m in selector for m in marks), f"{path.name}: {decl.strip()}"
 
 
 def test_no_runtime_font_cdn_in_studio_assets():

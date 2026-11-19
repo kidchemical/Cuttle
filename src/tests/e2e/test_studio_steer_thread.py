@@ -2,7 +2,7 @@
 
 Owner-level harness, like test_chat_reply_threads.py: transcript rows shaped
 like the chat page's, the owner scripts, Studio on/off from the real
-chat_display.js. A steered row carries its receipt as ``data-steer`` (the JSON of
+chat_display.js. A steered row carries its receipt as its ``__cuttleSteer`` property (the object of
 ``metadata.steer``), the wiring the integration step adds in chat_page.js.
 
 Studio: the steer reply shows its label line and, on the last covered row only,
@@ -34,7 +34,7 @@ window.mkRow = (o) => {
   if (o.mid != null) el.dataset.messageId = String(o.mid);
   if (o.turn) el.dataset.turnId = o.turn;
   if (o.idle) el.dataset.steerIdle = '1';
-  if (o.steer) el.dataset.steer = JSON.stringify(o.steer);
+  if (o.steer) el.__cuttleSteer = o.steer;
   el.innerHTML = '<div class="message-avatar"></div><div class="message-content-wrapper">'
     + '<div class="message-header-row"><span class="message-sender">' + (o.sender || (o.role === 'user' ? 'You' : 'Codex'))
     + '</span><span class="message-timestamp" data-ts="' + (o.ts || 1700000000000) + '"></span></div>'
@@ -169,8 +169,9 @@ def test_steer_thread_scenario_in_studio(browser, static_server):  # noqa: F811
         expect(_row(page, 13).locator(".chat-thread-receipt-text")).to_have_text(LABEL_DELIVERED)
         assert _row(page, 13).locator(".chat-thread-excerpt").count() == 0
         expect(_row(page, 14).locator(".chat-thread-excerpt-text")).to_have_text(GROUP_REPLY)
-        # Idle steer into a background run: a plain row, never an excerpt; its answer is the bubble below.
-        assert _row(page, 15).locator(".chat-thread-receipt").count() == 0
+        # Idle steer into a background run: its own row says the run read it, never an excerpt;
+        # the answer is the bubble below.
+        expect(_row(page, 15).locator(".chat-thread-receipt-text")).to_have_text("Read by the background run")
         assert _row(page, 15).locator(".chat-thread-excerpt").count() == 0
         # Undelivered: ended without confirmation, nothing asks to resend.
         expect(_row(page, 17).locator(".chat-thread-receipt-text")).to_have_text(LABEL_UNDELIVERED)

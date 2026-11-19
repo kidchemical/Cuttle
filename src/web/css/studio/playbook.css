@@ -23,7 +23,6 @@
     flex-direction: column;
     gap: var(--studio-space-4);
     margin: 0 0 var(--studio-space-6);
-    font-family: var(--studio-font-sans);
     color: var(--studio-ink);
 }
 

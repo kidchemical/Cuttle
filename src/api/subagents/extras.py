@@ -226,6 +226,34 @@ def settle_child_task(db, child_id: str, status: str) -> None:
                 return
 
 
+def reopen_child_task(db, child_id: str) -> None:
+    """Undo a check-off whose child status never landed (``store.update_child``).
+
+    The item settles before the child's guarded status write; when that write
+    loses to a Stop, the child is not done and its item must not read as done.
+    Only the child that owns the item may reopen it. Best effort.
+    """
+    from api.subagents import store
+
+    child = store.get_child(db, child_id)
+    if child is None or not child.task_gizmo_id or not child.task_item_id or child.status == STATUS_DONE:
+        return
+    batch = store.get_batch(db, child.batch_id)
+    if batch is None:
+        return
+    from api.gizmos import tasks_model as model
+
+    row = _list_payload(db, child.task_gizmo_id, batch.user_id)
+    if row is None:
+        return
+    node = model._find_item(model.normalize_tasks_payload(row.get("payload"))["items"], child.task_item_id)
+    owner = (node or {}).get("owner") or {}
+    if not node or not node.get("done") or owner.get("kind") != "chat" or owner.get("id") != child.handle():
+        return
+    _write_list(db, child.task_gizmo_id, {"set_undone": [child.task_item_id]}, user_id=batch.user_id,
+                session_id=batch.parent_session_id, batch_id=batch.id)
+
+
 def ensure_parent_tasks(db, batch: BatchRecord) -> Optional[str]:
     """Mirror the batch's children into its Tasks list, incrementally.
 

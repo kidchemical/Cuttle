@@ -15,6 +15,7 @@ from api.subagents.types import (
     STATUS_PENDING,
     STATUS_RUNNING,
     STATUS_CANCELLED,
+    STATUS_DONE,
     STATUS_FAILED,
     TERMINAL_BATCH,
     TERMINAL_CHILD,
@@ -417,6 +418,7 @@ def update_child(
             extras.settle_child_task(db, child_id, status)
         except Exception as exc:  # best effort: the child's own status must still land
             print(f"[SUBAGENTS] Tasks settle failed for {child_id[:8]}: {exc}", flush=True)
+    settled_done = status == STATUS_DONE
     guard = ""
     if live_turn_id is not None:
         guard = " AND live_turn_id = ? AND status = ?"
@@ -434,6 +436,15 @@ def update_child(
     changed = cur.rowcount > 0
     conn.commit()
     conn.close()
+    if settled_done and not changed:
+        # The guarded write lost (a Stop or a newer turn landed between the check
+        # above and this write): the item checked off a moment ago is open again.
+        from api.subagents import extras
+
+        try:
+            extras.reopen_child_task(db, child_id)
+        except Exception as exc:
+            print(f"[SUBAGENTS] Tasks reopen failed for {child_id[:8]}: {exc}", flush=True)
     if changed and (started or finished):
         from api.orchestration_telemetry import record
 

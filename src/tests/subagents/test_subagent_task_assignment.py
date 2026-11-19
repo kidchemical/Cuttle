@@ -160,6 +160,33 @@ def test_stale_child_cannot_finish_an_item_reassigned_to_a_newer_child(tmp_path,
     assert node["done"] is True and node["owner"]["id"] == new_child.handle()
 
 
+def test_done_write_that_loses_to_a_stop_leaves_the_item_open(tmp_path, monkeypatch):
+    """The item settles before the guarded status write. When a Stop lands in between,
+    the child stays cancelled and its item must not stay checked off."""
+    db, owner, parent = _seed(tmp_path, monkeypatch)
+    gate = threading.Event()
+    spawned = _spawn(db, parent, [{"title": "Chef A", "message": "x", "task": "plan:a"}],
+                     _gated_runner({"Chef A": gate}))
+    child = _child(db, spawned["id"], "Chef A")
+    real_settle = extras.settle_child_task
+
+    def settle_then_stop(db_, child_id, status):
+        real_settle(db_, child_id, status)
+        if status == "done":  # the Stop commits after the check, before the done write
+            conn = db_._get_connection()
+            conn.execute("UPDATE subagent_children SET status = 'cancelled' WHERE id = ?", (child_id,))
+            conn.commit()
+            conn.close()
+
+    monkeypatch.setattr(extras, "settle_child_task", settle_then_stop)
+    store.update_child(db, child.id, status="done", finished=True)
+    gate.set()
+    assert _child(db, spawned["id"], "Chef A").status == "cancelled"
+    node = _item(db, owner, "a")
+    assert node["done"] is False
+    assert node["owner"]["id"] == child.handle()
+
+
 def test_settle_is_a_no_op_for_children_without_an_assignment(tmp_path, monkeypatch):
     db, owner, parent = _seed(tmp_path, monkeypatch)
     spawned = _spawn(db, parent, [{"title": "Plain", "message": "x"}], _gated_runner({}))

@@ -172,13 +172,13 @@
 /* In progress: an empty box with an accent ring and a soft halo that breathes. */
 :root.cuttle-studio .work-panel .chat-widget-task.is-in-progress input[type="checkbox"] {
     border-color: var(--studio-accent);
-    box-shadow: 0 0 0 3px var(--studio-accent-soft), 0 0 12px 2px rgba(112, 72, 232, 0.3);
+    box-shadow: 0 0 0 3px var(--studio-accent-soft), 0 0 12px 2px var(--studio-accent-glow);
     animation: studio-work-glow 2.2s var(--studio-ease-out) infinite;
 }
 
 @keyframes studio-work-glow {
-    0%, 100% { box-shadow: 0 0 0 3px var(--studio-accent-soft), 0 0 8px 1px rgba(112, 72, 232, 0.18); }
-    50% { box-shadow: 0 0 0 4px var(--studio-accent-soft), 0 0 16px 4px rgba(112, 72, 232, 0.36); }
+    0%, 100% { box-shadow: 0 0 0 3px var(--studio-accent-soft), 0 0 8px 1px color-mix(in srgb, var(--accent-color) 18%, transparent); }
+    50% { box-shadow: 0 0 0 4px var(--studio-accent-soft), 0 0 16px 4px var(--studio-accent-glow); }
 }
 
 /* ---- Sub-agent cards (Studio fleet markup, chat_subagent_fleet.js) --------- */
@@ -320,6 +320,12 @@
     max-width: 100%;
 }
 
+:root.cuttle-studio .studio-agent-header.is-stopped {
+    color: var(--studio-ink-muted);
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+}
+
 :root.cuttle-studio .studio-working-tag {
     display: inline-flex;
     align-items: center;
@@ -338,7 +344,6 @@
     align-items: center;
     gap: var(--studio-space-2);
     color: var(--studio-ink-muted);
-    font-family: var(--font-sans);
     font-size: var(--studio-text-xs);
 }
 
@@ -414,7 +419,7 @@
     /* Still marks the item as in progress: the static halo, no pulse. */
     :root.cuttle-studio .work-panel .chat-widget-task.is-in-progress input[type="checkbox"] {
         animation: none;
-        box-shadow: 0 0 0 3px var(--studio-accent-soft), 0 0 8px 2px rgba(112, 72, 232, 0.2);
+        box-shadow: 0 0 0 3px var(--studio-accent-soft), 0 0 8px 2px color-mix(in srgb, var(--accent-color) 20%, transparent);
     }
 
     :root.cuttle-studio .work-panel .studio-fleet-card:hover {

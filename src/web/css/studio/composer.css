@@ -35,7 +35,7 @@
     border-color: transparent;
     color: var(--studio-accent-ink);
     border-radius: var(--studio-radius-pill);
-    box-shadow: 0 6px 16px -10px rgba(76, 58, 168, 0.5);
+    box-shadow: 0 6px 16px -10px var(--studio-accent-glow);
     max-width: min(100%, 22rem);
 }
 

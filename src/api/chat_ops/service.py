@@ -365,7 +365,8 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
                 return {'schema_version': 1, 'ok': True, 'delivery': 'queued', 'operation': store.get(op['id'], actor),
                         'hint': 'Steer outcome unknown; the host checks the chat before resending'}
             if steered.get('steered'):
-                store.finish(op['id'], 'delivered', {'steered': True})
+                # `confirmed`: the agent already echoed the steer (its receipt is delivered).
+                store.finish(op['id'], 'delivered', {'steered': True, 'confirmed': bool(steered.get('delivered'))})
                 return {'schema_version': 1, 'ok': True, 'delivery': 'steered', 'handle': f"CH-{row['id']:06d}"}
             store.finish(op['id'], 'pending', {})
             # The turn is live but took nothing: the send waits for that turn to end,

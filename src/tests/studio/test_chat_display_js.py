@@ -272,6 +272,38 @@ console.log(JSON.stringify({ cls: t.doc.classes.has('cuttle-studio') }));
     assert json.loads(proc.stdout) == {"cls": True}
 
 
+def test_reload_on_flip_reloads_only_when_the_effective_mode_changes():
+    """The chat page opts in: a mode flip after load reloads it; a pref/flag change that
+    keeps the mode does not."""
+    if not shutil.which("node"):
+        pytest.skip("node not available")
+    script = HARNESS.split("async function main()")[0] + r"""
+const out = {};
+let t = make({ cuttleChatDisplay: 'studio', cuttleChatStudioFlag: '1' });
+let reloads = 0;
+t.win.location.reload = () => { reloads += 1; };
+t.d.reloadOnFlip();
+t.d.setMode('studio');
+out.sameMode = reloads;
+t.st._m.set('cuttleChatStudioFlag', '0');           // flag turned off elsewhere
+t.win.fire('storage', { key: 'cuttleChatStudioFlag' });
+out.flagOff = reloads;
+t = make({});                                        // Classic page, pref saved with the flag off
+reloads = 0;
+t.win.location.reload = () => { reloads += 1; };
+t.d.reloadOnFlip();
+t.d.setMode('studio');                               // still Classic: the flag is off
+out.prefOnlyStaysClassic = reloads;
+const off = t.d.reloadOnFlip();
+off();
+console.log(JSON.stringify(out));
+"""
+    proc = subprocess.run(["node", "-e", script], env={**os.environ, "MODEL": str(MODEL)},
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == {"sameMode": 0, "flagOff": 1, "prefOnlyStaysClassic": 0}
+
+
 def test_pure_exports(result):
     exp = result["exports"]
     assert exp["key"] == "cuttleChatDisplay"

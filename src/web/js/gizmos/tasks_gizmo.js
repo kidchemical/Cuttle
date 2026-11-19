@@ -177,7 +177,8 @@
 
         /** Tasks lists a work panel in this page already shows (Studio hides their dock card). */
         function panelShownIds() {
-            var ids = {};
+            // No prototype: a list id such as "constructor" must not read as present.
+            var ids = Object.create(null);
             var scope = (root && root.querySelectorAll) ? root : document;
             if (!scope || !scope.querySelectorAll) return ids;
             scope.querySelectorAll('.work-panel .work-list[data-list-id]').forEach(function (el) {
@@ -199,9 +200,17 @@
                 lastListsSig = listsSig;
                 notifyPanels();
             }
-            // Studio: a list the turn's work panel already shows is not repeated in the dock.
-            var inPanel = studio ? panelShownIds() : {};
-            var dock = tasks.filter(function (w) { return !inPanel[String(w.id)]; });
+            // Studio: a list the turn's work panel already shows is not repeated in the
+            // dock. A shared list stays, because the panel is read-only and the dock is
+            // where the user ticks its items. Classic never filters.
+            var dock = tasks;
+            if (studio) {
+                var inPanel = panelShownIds();
+                dock = tasks.filter(function (w) {
+                    if (String(w.edit_mode || 'agent').toLowerCase() === 'shared') return true;
+                    return !inPanel[String(w.id)];
+                });
+            }
             if (el) {
                 if (!dock.length) {
                     el.hidden = true;

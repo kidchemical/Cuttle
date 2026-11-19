@@ -76,7 +76,22 @@
             ensureCatalog();
             // The card whose tray is open keeps its selected state across repaints.
             const selectedHandle = frameDoc.documentElement ? frameDoc.documentElement.getAttribute('data-peek-handle') || '' : '';
-            return panel.html(panel.model(tasksLists(), list, opts && opts.turnId), { selectedHandle });
+            // A turn can have several bubbles (a detached run's follow-ups share its
+            // turn id): the Tasks half shows once, in the newest one. Cards stay per bubble.
+            const el = opts && opts.messageEl;
+            const turnId = opts && opts.turnId;
+            const lists = !el || turnTasksHolder(turnId, el) === el ? tasksLists() : [];
+            return panel.html(panel.model(lists, list, turnId), { selectedHandle });
+        }
+
+        /** The newest assistant bubble of a turn (saved or live); `el` itself while it is not attached yet. */
+        function turnTasksHolder(turnId, el) {
+            const turn = String(turnId || '');
+            if (!turn || !frameDoc || !frameDoc.querySelectorAll) return el;
+            if (el && el.isConnected === false) return el;
+            const rows = Array.from(frameDoc.querySelectorAll('.message[data-turn-id]')).filter((row) =>
+                String(row.dataset.turnId || '') === turn && !row.classList.contains('user'));
+            return rows.length ? rows[rows.length - 1] : el;
         }
 
         function normalizeSubagentList(raw) {
@@ -249,14 +264,27 @@
             return new Set(panelRows(panel).map(panelKeyOf));
         }
 
-        /** Studio panels on screen, repainted from the arguments each bubble mounted with. */
+        /**
+         * Studio panels, repainted from the arguments each bubble mounted with.
+         * Every assistant bubble is visited, not only those with a panel: a Tasks
+         * list created late in a turn gives a bubble its first panel.
+         */
         function repaintPanels() {
             if (!frameDoc || !frameDoc.querySelectorAll) return;
-            frameDoc.querySelectorAll('.work-panel').forEach((panel) => {
-                const msg = panel.closest('.message');
-                const args = msg && msg.__cuttleMountArgs;
+            if (!studioOn() && !frameDoc.querySelector('.work-panel')) return;
+            frameDoc.querySelectorAll('.message').forEach((msg) => {
+                const args = msg.__cuttleMountArgs;
                 if (args) mountSubagentLaunchers(msg, args.subagents, args.opts);
             });
+        }
+
+        let repaintQueued = false;
+        /** A new bubble joined a turn: the older bubbles of that turn give up the Tasks half. */
+        function queueRepaintPanels() {
+            const win = deps.win;
+            if (repaintQueued || !win || typeof win.setTimeout !== 'function') return;
+            repaintQueued = true;
+            win.setTimeout(() => { repaintQueued = false; repaintPanels(); }, 0);
         }
 
         function mountSubagentLaunchers(messageEl, subagents, opts) {
@@ -273,7 +301,7 @@
             }
             const wrap = messageEl.querySelector('.message-content-wrapper');
             if (!wrap) return;
-            const html = renderSubagentLaunchersHtml(subagents, renderOpts);
+            const html = renderSubagentLaunchersHtml(subagents, Object.assign({ messageEl: messageEl }, renderOpts));
             let existing = wrap.querySelector('.subagent-launchers, .work-panel');
             if (!html) {
                 if (existing) {
@@ -343,7 +371,10 @@
             const footer = wrap.querySelector('.message-footer');
             if (footer) wrap.insertBefore(next, footer);
             else wrap.appendChild(next);
-            if (nextPanel) announcePanels();
+            if (nextPanel) {
+                announcePanels();
+                queueRepaintPanels();
+            }
         }
 
         function mountMessageLaunchers(messageEl, role, opts) {

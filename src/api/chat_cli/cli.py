@@ -578,7 +578,8 @@ def cmd_operation(args: argparse.Namespace) -> int:
         elif verb == 'timeline':
             from api.chat_ops.timeline import project
             sid = service.session_id(args.handle)
-            service.context(sid, sid, db=db)
+            # Same-owner check against the acting chat, like every other verb.
+            service.context(sid, args.as_chat, db=db)
             payload = {'ok': True, **project(sid, before=args.before, limit=args.limit,
                                              include_quiet=args.include_quiet, db=db)}
         else:

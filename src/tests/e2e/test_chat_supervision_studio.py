@@ -205,6 +205,15 @@ def test_studio_chip_panel_shows_timeline_pages_and_refreshes(browser, static_se
         _shot(page, "supervision-studio-dark.png", panel)
         _chat_frame(page).evaluate("document.documentElement.classList.remove('dark-mode')")
 
+        # The schedule's controls sit under the timeline, as in the Classic popover.
+        actions = panel.locator(".chat-supervision-actions button")
+        assert actions.evaluate_all("els => els.map(e => e.textContent.trim())")[1:] == ["Edit…", "Pause…", "Cancel"]
+        expect(actions.first).to_contain_text("Open CH-")
+        panel.locator('[data-sup-act="pause-menu"]').click()
+        expect(panel.locator(".chat-supervision-pause-menu")).to_be_visible()
+        panel.locator('[data-sup-act="pause-menu"]').click()
+        expect(panel.locator(".chat-supervision-pause-menu")).to_have_count(0)
+
         # Show older follows the cursor; the day label appears only on the older row.
         more = panel.locator(".sup-tl-more")
         expect(more).to_have_text("Show older")

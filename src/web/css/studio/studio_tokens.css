@@ -1,71 +1,22 @@
 /* ================================================================
-   Studio chat look — design tokens (L0 foundation). Tokens only.
+   Studio chat look — design tokens. Tokens only.
 
    Everything here is scoped to `:root.cuttle-studio`, which ui_boot.js or
    chat_display.js sets only when the Studio pref AND chat_studio_display are
    on. Classic never matches a selector below, so its look is unchanged.
 
-   Derived from the v4 promo kit (film/kit.css), translated to app density:
-   the film is a 1920px canvas with 23–31px type and 22–30px radii. Here the
-   chat is ~15px type and ~14–20px radii; the proportions carry over, the
-   pixel values do not. Do not copy film px values into components.
+   Studio is a layout and shape layer (radii, spacing, shadows, motion) on top
+   of the active Cuttle theme. Every colour below derives from the theme's own
+   variables (--bg-*, --text-*, --accent-*, --message-*-bg, --bubble-*; see
+   chat_page.css and themes.css), so all themes, wallpapers and custom palettes
+   carry through. Studio sets no font: the theme's type and the user's
+   Text & fonts prefs (text_prefs.css) apply as in Classic.
 
-   Components read these via var(--studio-*), or via --font-sans, which this
-   file overrides for Studio. Owners do not restyle Classic from here.
-   User text prefs still win: text_prefs.css sets font-family with !important
-   under :root[data-pref-font-…], so a chosen font beats --font-sans.
-
-   Dark themes (dark-mode, midnight-mode) change token values only.
+   Do not add a fixed colour or a font-family to a Studio stylesheet; derive
+   it from a theme variable here.
    ================================================================ */
 
-/* Inter, vendored (see css/fonts/inter/README.md). Named "Cuttle Inter" so
-   the global `Inter` used by design_tokens.css is not replaced for Classic. */
-@font-face {
-    font-family: 'Cuttle Inter';
-    font-style: normal;
-    font-weight: 400;
-    font-display: swap;
-    src: url("../fonts/inter/inter-latin-400-normal.woff2") format("woff2");
-    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-    font-family: 'Cuttle Inter';
-    font-style: normal;
-    font-weight: 500;
-    font-display: swap;
-    src: url("../fonts/inter/inter-latin-500-normal.woff2") format("woff2");
-    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-    font-family: 'Cuttle Inter';
-    font-style: normal;
-    font-weight: 600;
-    font-display: swap;
-    src: url("../fonts/inter/inter-latin-600-normal.woff2") format("woff2");
-    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-    font-family: 'Cuttle Inter';
-    font-style: normal;
-    font-weight: 700;
-    font-display: swap;
-    src: url("../fonts/inter/inter-latin-700-normal.woff2") format("woff2");
-    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-    font-family: 'Cuttle Inter';
-    font-style: normal;
-    font-weight: 800;
-    font-display: swap;
-    src: url("../fonts/inter/inter-latin-800-normal.woff2") format("woff2");
-    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
 :root.cuttle-studio {
-    /* Type family. Overrides design_tokens.css --font-sans for Studio only. */
-    --studio-font-sans: 'Cuttle Inter', Inter, 'Segoe UI', system-ui, -apple-system, sans-serif;
-    --font-sans: var(--studio-font-sans);
-
     /* Type scale (app density; film 23–31px maps to about 12–16px here). */
     --studio-text-2xs: 11px;
     --studio-text-xs: 12px;
@@ -76,7 +27,7 @@
     --studio-text-xl: 22px;
     --studio-text-2xl: 28px;
 
-    /* Weights. Inter ships 400/500/600/700/800 (see the @font-face block). */
+    /* Weights. */
     --studio-weight-regular: 400;
     --studio-weight-medium: 500;
     --studio-weight-semibold: 600;
@@ -105,51 +56,50 @@
     --studio-radius-xl: 22px;
     --studio-radius-pill: 999px;
 
-    /* Ink and accent. */
-    --studio-ink: #191b45;
-    --studio-ink-muted: #5d5f7e;
-    --studio-ink-faint: #9a9cb5;
-    --studio-accent: #7048e8;
-    --studio-accent-2: #3b82f6;
-    --studio-accent-soft: #f1edff;
-    --studio-accent-ink: #4c3aa8;
-    --studio-accent-gradient: linear-gradient(135deg, #7048e8, #3b82f6);
-    --studio-focus-ring: 0 0 0 3px rgba(112, 72, 232, 0.45);
+    /* Ink and accent: the theme's text and accent colours. */
+    --studio-ink: var(--text-primary);
+    --studio-ink-muted: var(--text-secondary);
+    --studio-ink-faint: var(--text-tertiary, color-mix(in srgb, var(--text-secondary) 70%, transparent));
+    --studio-accent: var(--accent-color);
+    --studio-accent-2: var(--accent-hover);
+    --studio-accent-soft: color-mix(in srgb, var(--accent-color) 14%, transparent);
+    --studio-accent-ink: color-mix(in srgb, var(--accent-color) 70%, var(--text-primary));
+    --studio-accent-glow: color-mix(in srgb, var(--accent-color) 32%, transparent);
+    --studio-accent-gradient: linear-gradient(135deg, var(--accent-color), var(--accent-hover));
+    --studio-focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent-color) 45%, transparent);
 
-    /* Surfaces. The page is a warm off-white with soft radial washes (kit.css body). */
-    --studio-surface-base: #fbf8f3;
-    --studio-surface-gradient:
-        radial-gradient(ellipse at 12% 8%, #ffe6d6 0%, transparent 46%),
-        radial-gradient(ellipse at 58% 0%, #ece4ff 0%, transparent 52%),
-        radial-gradient(ellipse at 100% 100%, #d4e9ff 0%, transparent 60%),
-        radial-gradient(ellipse at 0% 100%, #fff4e4 0%, transparent 40%),
-        #fbf8f3;
-    --studio-card-bg: #ffffff;
-    --studio-card-ring: 0 0 0 1px rgba(25, 27, 69, 0.07);
+    /* Surfaces: the theme's page and card colours. The backdrop is a soft
+       accent wash laid over the theme's own page colour (see threads.css). */
+    --studio-surface-base: var(--bg-secondary);
+    --studio-backdrop:
+        radial-gradient(ellipse at 12% 8%, color-mix(in srgb, var(--accent-color) 11%, transparent) 0%, transparent 46%),
+        radial-gradient(ellipse at 100% 100%, color-mix(in srgb, var(--accent-hover) 9%, transparent) 0%, transparent 60%);
+    --studio-card-bg: var(--message-assistant-bg, var(--bg-secondary));
+    --studio-card-ring: 0 0 0 1px var(--studio-border-color);
+    --studio-thinking-bg: color-mix(in srgb, var(--text-primary) 5%, transparent);
 
-    /* Layered card shadows: a tight contact shadow plus a soft lavender lift. */
-    --studio-shadow-card: 0 1px 2px rgba(25, 27, 69, 0.05), 0 8px 20px -8px rgba(52, 36, 120, 0.2);
-    --studio-shadow-raised: 0 1px 2px rgba(25, 27, 69, 0.05), 0 16px 36px -14px rgba(52, 36, 120, 0.24);
-    --studio-shadow-composer: 0 0 0 1px rgba(25, 27, 69, 0.07), 0 2px 4px rgba(25, 27, 69, 0.04),
-        0 16px 36px -14px rgba(52, 36, 120, 0.22);
-    --studio-shadow-avatar: 0 4px 12px -4px rgba(52, 36, 120, 0.35);
+    /* Layered card shadows in the theme's shadow colour. The fallbacks cover
+       pages on shared_navigation.css (the Orchestrator playbook), which has no
+       bubble variables. */
+    --studio-shadow-color: var(--bubble-shadow, var(--card-shadow, color-mix(in srgb, black 20%, transparent)));
+    --studio-border-color: var(--bubble-border, var(--border-color));
+    --studio-shadow-card: 0 1px 2px var(--studio-shadow-color), 0 8px 20px -8px var(--studio-shadow-color);
+    --studio-shadow-raised: 0 1px 2px var(--studio-shadow-color), 0 16px 36px -14px var(--studio-shadow-color);
+    --studio-shadow-composer: 0 0 0 1px var(--studio-border-color), 0 16px 36px -14px var(--studio-shadow-color);
+    --studio-shadow-avatar: 0 4px 12px -4px var(--studio-shadow-color);
 
     /* Chat bubbles. Studio forces bubbles on (ui_boot.js drops flat messages).
-       Body text is 1.125em of the user's text size (16px default -> 18px), so the
-       text prefs still apply. Padding is the mock's generous inset at app density. */
-    --studio-bubble-user-bg: linear-gradient(135deg, #7048e8 0%, #4f46e5 100%);
-    --studio-bubble-user-ink: #ffffff;
-    --studio-bubble-user-shadow: 0 10px 24px -12px rgba(79, 70, 229, 0.55);
-    --studio-bubble-bot-bg: #ffffff;
-    --studio-bubble-bot-ink: #191b45;
+       Colours are the theme's bubble colours; Studio adds the shape. Text size
+       stays the user's (Text & fonts prefs). */
+    --studio-bubble-user-bg: linear-gradient(135deg, var(--message-user-bg), var(--accent-hover));
+    --studio-bubble-user-ink: var(--text-inverse, white);
+    --studio-bubble-user-shadow: 0 10px 24px -12px color-mix(in srgb, var(--message-user-bg) 55%, transparent);
+    --studio-bubble-bot-bg: var(--studio-card-bg);
+    --studio-bubble-bot-ink: var(--text-primary);
     --studio-bubble-radius: var(--studio-radius-xl);
     --studio-bubble-tail: 8px;
-    --studio-bubble-text-size: 1.125em;
     --studio-bubble-padding: 16px 20px;
-    --studio-bubble-shadow: 0 2px 4px rgba(25, 27, 69, 0.04), 0 14px 32px -16px rgba(52, 36, 120, 0.28);
-
-    /* Page backdrop: the warm-to-lavender-to-blue wash of the promo kit (kit.css body). */
-    --studio-backdrop: var(--studio-surface-gradient);
+    --studio-bubble-shadow: 0 2px 4px var(--studio-shadow-color), 0 14px 32px -16px var(--studio-shadow-color);
 
     /* Motion. Reduced motion zeroes the durations below. */
     --studio-ease-out: cubic-bezier(0.2, 0.9, 0.25, 1);
@@ -157,31 +107,6 @@
     --studio-dur-fast: 160ms;
     --studio-dur-base: 300ms;
     --studio-dur-slow: 480ms;
-}
-
-/* Dark themes: token values only. */
-:root.cuttle-studio.dark-mode,
-:root.cuttle-studio.midnight-mode {
-    --studio-ink: #eceefe;
-    --studio-ink-muted: #aab0cf;
-    --studio-ink-faint: #6f7396;
-    --studio-accent-soft: #2a2350;
-    --studio-accent-ink: #c4b5fd;
-    --studio-surface-base: #14152a;
-    --studio-surface-gradient:
-        radial-gradient(ellipse at 12% 8%, rgba(112, 72, 232, 0.22) 0%, transparent 46%),
-        radial-gradient(ellipse at 100% 100%, rgba(59, 130, 246, 0.16) 0%, transparent 60%),
-        #14152a;
-    --studio-card-bg: #1d1f38;
-    --studio-card-ring: 0 0 0 1px rgba(236, 238, 254, 0.08);
-    --studio-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 20px -8px rgba(0, 0, 0, 0.55);
-    --studio-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 36px -14px rgba(0, 0, 0, 0.6);
-    --studio-shadow-composer: 0 0 0 1px rgba(236, 238, 254, 0.08), 0 16px 36px -14px rgba(0, 0, 0, 0.6);
-    --studio-shadow-avatar: 0 4px 12px -4px rgba(0, 0, 0, 0.5);
-    --studio-bubble-bot-bg: #1d1f38;
-    --studio-bubble-bot-ink: #eceefe;
-    --studio-bubble-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), 0 14px 32px -16px rgba(0, 0, 0, 0.6);
-    --studio-bubble-user-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.6);
 }
 
 @media (prefers-reduced-motion: reduce) {

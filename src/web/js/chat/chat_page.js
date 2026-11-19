@@ -7744,6 +7744,7 @@
         const disclosure = el.querySelector('.supervised-activity-disclosure, .supervised-activity-card');
         if (disclosure) wireSupervisedActivityCard(disclosure);
         try { subagentLaunchers.mountForMessage(el, msg.role, opts); } catch (_) {}
+        replyThreads.stampSteer(el, msg);
         if (changed && notifyTerminal && opts.supervised_terminal) {
             showSupervisedJumpNotification({
                 task_id: opts.supervised_task_id,
@@ -8669,6 +8670,7 @@
                             } else {
                                 claimed.dataset.messageId = String(mid);
                                 claimed.dataset.rawContent = String(msg.content || '');
+                                replyThreads.stampSteer(claimed, msg);
                             }
                         }
                         continue;
@@ -11008,7 +11010,7 @@
         if (role === 'user' && opts.steered) {
             messageDiv.classList.add('is-steered');
             if (opts.steer_idle) messageDiv.dataset.steerIdle = '1'; // new message, not a thread reply
-            if (opts.steer && CuttleChatDisplay.isStudio()) messageDiv.dataset.steer = JSON.stringify(opts.steer); // receipt, Studio only
+            if (opts.steer) messageDiv.__cuttleSteer = opts.steer; // receipt data (no markup); chat_threads.js mounts it in Studio only
         }
         if (
             role === 'assistant'
@@ -11852,6 +11854,7 @@
                 chip.classList.add('slash-command-chip--error');
                 chip.setAttribute('aria-label', 'Stopped command: ' + (chip.dataset.fullLabel || chip.textContent));
             });
+            globalThis.CuttleWorkPanel && globalThis.CuttleWorkPanel.markStopped(bubble);
             const link = bubble.querySelector('.message-query-log-link');
             if (link) {
                 // Stop can beat query-id creation: retain a usable index link.
@@ -12449,7 +12452,7 @@
     document.addEventListener('DOMContentLoaded', function() {
         LOG('DOMContentLoaded: Chat page initializing');
         // Refresh the cached chat_studio_display flag so Studio can turn on (chat_display.js).
-        window.CuttleChatDisplay && CuttleChatDisplay.syncFlag();
+        window.CuttleChatDisplay && (CuttleChatDisplay.reloadOnFlip(), CuttleChatDisplay.syncFlag());
         CuttleUsageLive.start(formatMessage);
 
         // Initialize theme

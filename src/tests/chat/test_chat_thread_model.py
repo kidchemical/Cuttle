@@ -80,7 +80,14 @@ out.labels = {
   liveWinsOverSaved: label(M.steerReceipt(row({}, st({ state: 'pending' })), [{ message_id: 12, ...st({ state: 'delivered' }) }], 'T1')),
   liveWithoutSavedReceipt: label(M.steerReceipt(row({}, undefined), [{ message_id: 12, ...st({}) }], 'T1')),
   liveOtherRowIgnored: label(M.steerReceipt(row({}, st({ state: 'delivered' })), [{ message_id: 99, ...st({}) }], 'T1')),
-  // A row without an id never matches a live entry.
+  // A row sent from this page has no id yet: it follows live status by its steer id.
+  localRowFollowsLive: label(M.steerReceipt(row({ messageId: null }, M.sentReceipt({ steer_id: 'h' })), [{ message_id: 12, ...st({ state: 'delivered' }) }], 'T1')),
+  localRowPending: label(M.steerReceipt(row({ messageId: null }, M.sentReceipt({ steer_id: 'h' })), [], 'T1')),
+  localRowOtherSteer: label(M.steerReceipt(row({ messageId: null }, M.sentReceipt({ steer_id: 'x' })), [{ message_id: 12, ...st({ state: 'delivered' }) }], 'T1')),
+  sentDelivered: label(M.steerReceipt(row({ messageId: null }, M.sentReceipt({ steer_id: 'h', delivered: true })), [], 'T1')),
+  sentIdle: label(M.steerReceipt(row({ messageId: null, steerIdle: true }, M.sentReceipt({ steer_id: 'h', steer_idle: true })), [], '')),
+  sentNoId: M.sentReceipt({ steered: true }),
+  // A row without an id and without a receipt never matches a live entry.
   noIdNoLiveMatch: label(M.steerReceipt(row({ messageId: null }, undefined), [{ message_id: 12, ...st({}) }], 'T1')),
   // Pending on a live row whose turn is no longer live: not a spinner.
   pendingOtherTurn: label(M.steerReceipt(row({ turnId: 'T2' }, st({})), [], 'T1')),
@@ -198,6 +205,13 @@ def test_receipt_label_for_every_contract_state(out):
     assert labels["liveOtherRowIgnored"] == "Steered into the live turn · no restart"
     # A row without an id cannot be matched by a live entry, and has no saved receipt: nothing to show.
     assert labels["noIdNoLiveMatch"] is None
+    # A steer just sent from this page: pending, then delivered, by steer id.
+    assert labels["localRowPending"] == "Sending into the live turn…"
+    assert labels["localRowFollowsLive"] == "Steered into the live turn · no restart"
+    assert labels["localRowOtherSteer"] == "Sending into the live turn…"
+    assert labels["sentDelivered"] == "Steered into the live turn · no restart"
+    assert labels["sentIdle"] == "Accepted into the background run"
+    assert labels["sentNoId"] is None
     assert labels["pendingOtherTurn"] == "Not confirmed"
     assert labels["pendingNoLiveTurn"] == "Not confirmed"
     assert labels["undeliveredDetached"] == "Ended without confirmation"

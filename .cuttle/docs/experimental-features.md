@@ -73,7 +73,10 @@ Details and teardown owners: [chat-prompts.md](chat-prompts.md). The global kill
 switch also disables the pass.
 
 **Studio chat display:** flag `chat_studio_display` (default off). Adds a second
-chat look, Studio, that follows the v4 promo mocks; Classic is unchanged. Studio
+chat look, Studio, with the layout of the v4 promo mocks; Classic is unchanged. Studio is a
+shape layer over the active theme: its colours derive from the theme's variables and it
+sets no font, so every theme, wallpaper and Text & fonts pref carries through
+(`css/studio/studio_tokens.css`; guarded by `src/tests/studio/test_studio_foundation.py`). Studio
 shows the in-bubble work panel (tasks and sub-agent cards), the push tray for
 peeked children, the Working pill, steer receipts in the reply thread and the
 open THINKING box, the supervision timeline, the composer prefix highlight and
@@ -101,9 +104,8 @@ Plan and deferred work: [studio-display-plan.md](studio-display-plan.md).
 - Settings: the `chatDisplayRow` and `chatDisplaySelect` markup in
   `src/web/settings_page.html`, the `syncFlag` calls there, and
   `bindChatDisplay` in `src/web/js/settings/settings_chat_preferences.js`.
-- Styles and font: `src/web/css/studio/` (eight files), their links in
-  `src/web/chat_page.html` and `src/web/orchestrator_page.html`, and the vendored
-  Inter in `src/web/css/fonts/inter/` (only `studio_tokens.css` loads it).
+- Styles: `src/web/css/studio/` (eight files) and their links in
+  `src/web/chat_page.html` and `src/web/orchestrator_page.html`.
 - Owner files: `src/web/js/chat/chat_work_panel.js` and its tag in
   `chat_page.html`.
 - Studio branches (delete the branch, keep the Classic path): `chat_threads.js`,

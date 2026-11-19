@@ -134,5 +134,33 @@ def test_cli_timeline_prints_the_projection_headline(chats, monkeypatch, capsys)
     store.record_check(sched['id'], 'stalled', {'stalled_min': 45, 'state': 'idle_with_work'})
     # Only the CLI's DB knows these sessions: the process default must not be consulted.
     monkeypatch.setattr('api.chat_cli.cli._open_db', lambda _path=None: db)
-    assert main(['timeline', f'CH-{sup:06d}']) == 0
+    assert main(['timeline', f'CH-{sup:06d}', '--as', f'CH-{sup:06d}']) == 0
     assert 'stalled  worker has been stuck for 45 min' in capsys.readouterr().out
+
+
+def test_cli_timeline_refuses_a_chat_of_another_owner(chats, monkeypatch, capsys):
+    """The acting chat (--as / CUTTLE_CHAT_SESSION_ID) must own the timeline it reads."""
+    import pytest
+    from api.chat_cli.cli import main
+    db, _, sup, _, foreign = chats
+    sched = _schedule(chats)
+    store.record_check(sched['id'], 'stalled', {'stalled_min': 45})
+    monkeypatch.setattr('api.chat_cli.cli._open_db', lambda _path=None: db)
+    try:
+        code = main(['timeline', f'CH-{sup:06d}', '--as', f'CH-{foreign:06d}'])
+    except (ValueError, SystemExit) as exc:
+        code = getattr(exc, 'code', 1) or 1
+    assert code != 0
+    assert 'stuck for 45 min' not in capsys.readouterr().out
+
+
+def test_steer_accepted_but_unconfirmed_is_not_called_a_nudge(chats):
+    """A steered send is 'delivered' once the live turn accepts it; only a confirmed read is a nudge."""
+    _, _, sup, target, _ = chats
+    _schedule(chats)
+    op = store.create('send', sup, target, {'text': 'check the tests'}, state='steering')
+    store.finish(op['id'], 'delivered', {'steered': True, 'confirmed': False})
+    done = store.create('send', sup, target, {'text': 'rebase first'}, state='steering')
+    store.finish(done['id'], 'delivered', {'steered': True, 'confirmed': True})
+    heads = {i['detail']: i['headline'] for i in _items(chats, sup) if i['kind'] == 'nudged'}
+    assert heads == {'"check the tests"': 'Sent a nudge to worker', '"rebase first"': 'Nudged worker'}

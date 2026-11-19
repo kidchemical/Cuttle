@@ -5,6 +5,13 @@ Plan approved with changes by expert review (CH-002621 Codex, CH-002622 Claude),
 reconciled 2026-11-18 in CH-002620. Tasks list: `studio-display`.
 **The "Decisions" section below overrides the gap inventory where they differ.**
 
+**Revised 2026-11-19 (theme and font rework):** Studio no longer has its own palette or
+typeface. It is a shape layer (radii, spacing, shadows, motion, the work panel and timeline
+layouts) over the active Cuttle theme: every colour derives from theme variables and no
+Studio stylesheet sets a font, so themes, wallpapers and Text & fonts prefs apply as in
+Classic. The vendored Inter was removed. Where the sections below say "Inter", "lavender
+`#7048e8`" or "pastel backdrop", read "the theme's font, accent and page colour".
+
 Deferred to v2: review card, finished-Tasks result snapshot, usage meters, router
 notice, progress grid styling, Android parity, and the composer escalation notice.
 Feature entry and teardown list: [experimental-features.md](experimental-features.md)

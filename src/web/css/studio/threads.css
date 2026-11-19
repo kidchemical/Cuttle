@@ -6,8 +6,7 @@
 :root.cuttle-studio .chat-thread-receipt {
     /* The label sits above the steer bubble (the mock's order), so the gap is below it. */
     margin: 0 0 var(--studio-space-2, 8px);
-    font-family: var(--studio-font-sans, 'Cuttle Inter', Inter, system-ui, sans-serif);
-    color: var(--studio-ink, #191b45);
+    color: var(--studio-ink);
 }
 
 :root.cuttle-studio .chat-thread-receipt-label {
@@ -17,11 +16,11 @@
     font-size: var(--studio-text-base, 15px);
     font-weight: var(--studio-weight-bold, 700);
     line-height: var(--studio-leading-base, 1.5);
-    color: var(--studio-accent, #7048e8);
+    color: var(--studio-accent);
 }
 
 :root.cuttle-studio .chat-thread-receipt[data-state="undelivered"] .chat-thread-receipt-label {
-    color: var(--studio-ink-muted, #5d5f7e);
+    color: var(--studio-ink-muted);
 }
 
 :root.cuttle-studio .chat-thread-receipt-icon {
@@ -37,9 +36,9 @@
 :root.cuttle-studio .chat-thread-excerpt {
     margin: var(--studio-space-2, 8px) 0 0;
     padding: var(--studio-space-2, 8px) var(--studio-space-3, 12px);
-    border-left: 3px solid var(--studio-accent-soft, #f1edff);
+    border-left: 3px solid var(--studio-accent-soft);
     border-radius: var(--studio-radius-sm, 10px);
-    background: var(--studio-accent-soft, #f1edff);
+    background: var(--studio-accent-soft);
 }
 
 :root.cuttle-studio .chat-thread-excerpt-label {
@@ -47,14 +46,14 @@
     font-weight: var(--studio-weight-bold, 700);
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    color: var(--studio-ink-muted, #5d5f7e);
+    color: var(--studio-ink-muted);
 }
 
 :root.cuttle-studio .chat-thread-excerpt-text {
     margin: 4px 0 0;
     font-size: var(--studio-text-sm, 13px);
     line-height: var(--studio-leading-base, 1.5);
-    color: var(--studio-ink, #191b45);
+    color: var(--studio-ink);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
 }
@@ -65,9 +64,8 @@
     margin: 0 0 var(--studio-space-3, 12px);
     padding: var(--studio-space-2, 8px) var(--studio-space-3, 12px);
     border-radius: var(--studio-radius-md, 14px);
-    background: var(--studio-thinking-bg, #f7f6fb);
+    background: var(--studio-thinking-bg);
     box-shadow: none;
-    font-family: var(--studio-font-sans, 'Cuttle Inter', Inter, system-ui, sans-serif);
 }
 
 :root.cuttle-studio .thinking-block--live > summary {
@@ -80,7 +78,7 @@
     font-weight: var(--studio-weight-bold, 700);
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: var(--studio-ink-muted, #5d5f7e);
+    color: var(--studio-ink-muted);
 }
 
 :root.cuttle-studio .thinking-block--live > summary::-webkit-details-marker {
@@ -110,7 +108,7 @@
     font-size: var(--studio-text-md, 16px);
     line-height: var(--studio-leading-base, 1.5);
     font-style: italic;
-    color: var(--studio-ink-muted, #5d5f7e);
+    color: var(--studio-ink-muted);
 }
 
 :root.cuttle-studio .thinking-block--live .thinking-live-body::-webkit-scrollbar {
@@ -128,14 +126,14 @@
     }
 }
 
-/* Page backdrop and message bubbles (Studio polish 1). The backdrop is the promo
-   kit's warm-to-lavender-to-blue wash (token --studio-backdrop, dark variant in
-   studio_tokens.css). Bubbles are white cards with the mock's large radius and a
-   diffuse shadow, no hard border; the user bubble is the purple-to-indigo gradient.
+/* Page backdrop and message bubbles. The backdrop is a soft accent wash drawn
+   as an image over the theme's own page colour, so themes keep their page and a
+   video wallpaper (background: transparent !important) still shows through.
+   Bubbles keep the theme's colours; Studio adds the large radius, the diffuse
+   shadow and the roomier padding.
    Owner of the bubble look in Studio: this file. Classic rules in chat_page.css are untouched. */
-:root.cuttle-studio body,
 :root.cuttle-studio .chat-main {
-    background: var(--studio-backdrop);
+    background-image: var(--studio-backdrop);
 }
 
 :root.cuttle-studio .message.assistant .message-content {
@@ -146,7 +144,6 @@
     border-bottom-left-radius: var(--studio-bubble-tail);
     box-shadow: var(--studio-bubble-shadow);
     padding: var(--studio-bubble-padding);
-    font-size: var(--studio-bubble-text-size);
 }
 
 :root.cuttle-studio .message.user .message-content {
@@ -156,5 +153,4 @@
     border-bottom-right-radius: var(--studio-bubble-tail);
     box-shadow: var(--studio-bubble-user-shadow);
     padding: var(--studio-bubble-padding);
-    font-size: var(--studio-bubble-text-size);
 }

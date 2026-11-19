@@ -13,6 +13,7 @@
    model(lists, fleetEntries, turnId)  → {turnId, tasks, cards, hasTasks, hasCards, empty}
    html(model)                          → '' or the panel markup
    agentHeaderHtml(agent, opts)         → Studio bubble header: identity + working tag
+   markStopped(bubble)                  → a stopped live bubble drops its working tag
    setCatalog(rows) / ownerHtml(owner)  → agent colours from the /api/agents catalog
 
    Dependencies are read lazily: browser globals (CuttleAgentIdentity,
@@ -235,8 +236,21 @@
             + identityLib().labelHtml({ color, name }) + working + '</span>';
     }
 
+    /**
+     * A live bubble was stopped: its Studio header drops the "Working" tag and
+     * reads as stopped. No-op for a bubble without a Studio header (Classic).
+     */
+    function markStopped(bubble) {
+        if (!bubble || !bubble.querySelectorAll) return;
+        bubble.querySelectorAll('.studio-agent-header').forEach((head) => {
+            head.querySelectorAll('.studio-working-tag').forEach((tag) => tag.remove());
+            head.classList.add('is-stopped');
+            head.setAttribute('aria-label', 'Stopped: ' + (head.textContent || '').trim());
+        });
+    }
+
     const api = {
-        STATES, itemState, ownerIdentity, ownerHtml, listBound, model, html, agentHeaderHtml,
+        STATES, itemState, ownerIdentity, ownerHtml, listBound, model, html, agentHeaderHtml, markStopped,
         setCatalog, getCatalog,
     };
 
