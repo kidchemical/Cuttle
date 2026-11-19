@@ -1,8 +1,14 @@
 # Studio display mode — plan and gap inventory
 
-Status: plan approved with changes by expert review (CH-002621 Codex, CH-002622 Claude),
+Status: **shipped behind the experimental flag `chat_studio_display` (default off), 2026-11-18.**
+Plan approved with changes by expert review (CH-002621 Codex, CH-002622 Claude),
 reconciled 2026-11-18 in CH-002620. Tasks list: `studio-display`.
 **The "Decisions" section below overrides the gap inventory where they differ.**
+
+Deferred to v2: review card, finished-Tasks result snapshot, usage meters, router
+notice, progress grid styling, Android parity, and the composer escalation notice.
+Feature entry and teardown list: [experimental-features.md](experimental-features.md)
+("Studio chat display").
 
 ## Goal
 
