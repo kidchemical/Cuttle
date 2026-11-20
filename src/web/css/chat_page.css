@@ -7994,6 +7994,16 @@ button.cuttle-button.is-unselected {
     line-height: 1;
 }
 
+.quote-clip {
+    cursor: pointer;
+}
+
+.quote-clip:hover,
+.quote-clip:focus-visible {
+    border-color: var(--accent-color, #3b82f6);
+    outline: none;
+}
+
 .quote-clip-remove:hover {
     background: rgba(239, 68, 68, 0.15);
     color: #ef4444;

@@ -161,6 +161,53 @@ def test_reply_panel_adds_a_typed_clip(browser, static_server):
         page.close()
 
 
+def test_clicking_a_clip_edits_its_reply(browser, static_server):
+    page, errors = _open(browser, static_server)
+    try:
+        toolbar, panel, cards = page.locator('.quote-toolbar'), page.locator('.quote-reply-panel'), page.locator('.quote-clip')
+        page.evaluate(SELECT, 'p2')
+        toolbar.locator('[data-action="reply"]').click()
+        panel.locator('.quote-reply-input').fill('It serves stale rows.')
+        page.keyboard.press('Enter')
+        page.evaluate(SELECT, 'p1')
+        toolbar.locator('[data-action="agree"]').click()
+        expect(cards).to_have_count(2)
+
+        # The typed reply reopens prefilled; Save replaces it in place.
+        cards.nth(0).click()
+        expect(panel).to_be_visible()
+        expect(panel.locator('.quote-reply-quote')).to_have_text('The cache can stay as it is.')
+        expect(panel.locator('.quote-reply-input')).to_have_value('It serves stale rows.')
+        expect(panel.locator('.quote-reply-input')).to_be_focused()
+        expect(panel.locator('.quote-reply-accept')).to_have_text('Save')
+        panel.locator('.quote-reply-input').fill('It serves stale rows after a rename.')
+        panel.locator('.quote-reply-accept').click()
+        expect(panel).to_have_count(0)
+        expect(cards).to_have_count(2)
+        expect(cards.locator('.quote-clip-reply')).to_have_text(['↩ It serves stale rows after a rename.', '👍 Agree'])
+
+        # Escape leaves a clip as it was; an edited quick reply becomes a typed one.
+        cards.nth(1).click()
+        expect(panel.locator('.quote-reply-input')).to_have_value('I agree with this.')
+        page.keyboard.press('Escape')
+        expect(cards.locator('.quote-clip-reply')).to_have_text(['↩ It serves stale rows after a rename.', '👍 Agree'])
+        cards.nth(1).click()
+        panel.locator('.quote-reply-input').fill('Agreed, ship it.')
+        page.keyboard.press('Enter')
+        expect(cards.locator('.quote-clip-reply')).to_have_text(['↩ It serves stale rows after a rename.', '↩ Agreed, ship it.'])
+
+        # The remove button still removes without opening the editor.
+        cards.nth(1).locator('.quote-clip-remove').click()
+        expect(panel).to_have_count(0)
+        expect(cards).to_have_count(1)
+
+        page.click('#sendButton')
+        assert page.evaluate('sent') == ['> The cache can stay as it is.\n\nIt serves stale rows after a rename.']
+        assert errors == []
+    finally:
+        page.close()
+
+
 def test_toolbar_only_for_transcript_selections(browser, static_server):
     page, errors = _open(browser, static_server)
     try:
