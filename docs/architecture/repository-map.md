@@ -617,6 +617,8 @@ forge-worker dependency.
 
 Git push diagnostics: `.cuttle/scripts/git-hooks/pre-push` owns project policy;
 `core.git_push_diagnostics` owns per-commit/SQLite inspection and redacted reports;
+`core.prepush_tests` owns the test gate the hook runs after the secret scan
+(branch tier, release-check stamps; failure themes in `ci-failure-patterns.md`);
 `api.git_routes` composes HTTP responses; `CuttleGitPushReport` owns the shared
 report popup and delegates explicit commit-file views to `CuttleDiffModal`.
 

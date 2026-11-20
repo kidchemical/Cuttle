@@ -9,6 +9,13 @@ Pytest suite. Default entry (per AGENTS.md):
 .venv\Scripts\python.exe -m pytest src/tests/chat/test_chat_stream.py
 ```
 
+## Before pushing
+
+The pre-push hook runs `src/tests/quality` plus the tests touching the changed
+files, and refuses a release tag without a full-suite `release-check` pass
+(`core.prepush_tests`). Both treat `EncodingWarning` as an error. Recurring CI
+failures and the check that catches each: `docs/architecture/ci-failure-patterns.md`.
+
 ## Test tooling and artifacts
 
 Run tests with `pytest` (see above). Generated artifacts belong in the gitignored
