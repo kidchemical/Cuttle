@@ -426,3 +426,16 @@
         transform: none;
     }
 }
+
+/* ---- Narrow panes and phones --------------------------------------------------
+   chat_page.css lifts a message's parts into one wrapping flex row there
+   (`.message-content-wrapper { display: contents }`). Like the Classic fleet
+   block, the panel takes a full row of its own, after the bubble text and
+   before the footer; without this it lands beside the avatar at zero width. */
+@container chat-transcript (max-width: 560px) {
+    :root.cuttle-studio .message:not(.system) .work-panel {
+        flex: 1 1 100%;
+        order: 3;
+        min-width: 0;
+    }
+}

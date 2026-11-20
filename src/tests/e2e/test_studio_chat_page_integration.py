@@ -286,3 +286,27 @@ def test_flag_off_is_classic_with_no_studio_markup(browser, static_server):  # n
         assert not errors, errors
     finally:
         page.context.close()
+
+
+def test_studio_work_panel_takes_its_own_row_on_a_phone_width_pane(browser, static_server):  # noqa: F811
+    """Narrow panes lift a message's parts into one wrapping row; the panel must not land
+    beside the avatar at zero width (which stretched the header row down the screen)."""
+    world = ChatWorld(flag=True)
+    page, errors = _open(browser, static_server, world, pref="studio", cache="1")
+    try:
+        page.set_viewport_size({"width": 412, "height": 880})
+        page.wait_for_timeout(300)
+        box = page.evaluate("""() => {
+            const m = document.querySelector('#chatMessages .message.assistant');
+            const r = (s) => { const b = m.querySelector(s).getBoundingClientRect(); return { w: b.width, top: b.top, bottom: b.bottom }; };
+            return { panel: r('.work-panel'), header: r('.message-header-row'), content: r('.message-content'),
+                     footer: r('.message-footer') };
+        }""")
+        assert box["panel"]["w"] > 300, box
+        # Header, then the bubble, then the panel, then the footer: no gap, no overlap.
+        assert box["header"]["bottom"] <= box["content"]["top"] <= box["header"]["bottom"] + 16, box
+        assert box["content"]["bottom"] <= box["panel"]["top"] <= box["content"]["bottom"] + 24, box
+        assert box["panel"]["bottom"] <= box["footer"]["top"], box
+        assert not errors, errors
+    finally:
+        page.context.close()

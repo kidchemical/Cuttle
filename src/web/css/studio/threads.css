@@ -154,3 +154,16 @@
     box-shadow: var(--studio-bubble-user-shadow);
     padding: var(--studio-bubble-padding);
 }
+
+/* Narrow panes and phones: chat_page.css lifts a message's parts into one wrapping
+   flex row. The receipt label and the excerpt each take a full row, in DOM order
+   around the bubble (the label before it, the excerpt after it). */
+@container chat-transcript (max-width: 560px) {
+    :root.cuttle-studio .message:not(.system) .chat-thread-receipt,
+    :root.cuttle-studio .message:not(.system) .chat-thread-excerpt {
+        flex: 1 1 100%;
+        order: 2;
+        min-width: 0;
+        margin: 0;
+    }
+}
