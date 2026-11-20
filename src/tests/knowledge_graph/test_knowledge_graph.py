@@ -24,7 +24,7 @@ class FakeProvider:
     def index(self, store, *, force=False):
         from api.knowledge_graph.protocol import IndexResult
         store.root.mkdir(parents=True, exist_ok=True)
-        (store.root / "fake.json").write_text("{}")
+        (store.root / "fake.json").write_text("{}", encoding="utf-8")
         return IndexResult(ok=True, artifact=self.artifact(store), meta={"nodes": 1})
     def update(self, store): return self.index(store)
     def query(self, store, question, *, budget=100):
@@ -34,7 +34,7 @@ class FakeProvider:
     def export(self, store, target_dir):
         from api.knowledge_graph.protocol import ExportResult
         target_dir.mkdir(parents=True, exist_ok=True)
-        (target_dir / "fake.md").write_text("fake")
+        (target_dir / "fake.md").write_text("fake", encoding="utf-8")
         return ExportResult(ok=True, project_dir=str(target_dir.parent), graph_dir=str(target_dir))
 
 def build_provider():
