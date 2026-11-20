@@ -141,12 +141,16 @@ class Worktree:
     """Detached scratch checkout of one commit, removed on exit."""
 
     def __init__(self, sha: str, repo: Path = REPO):
-        # Under the project's gitignored temp/, not the system temp dir: tests
-        # treat programs under the system temp dir as fakes (vendor CLI guard).
-        scratch = repo / "temp" / "prepush"
+        # A real directory outside the system temp dir, named like CI's
+        # checkout: tests treat programs under the temp dir as fakes (vendor
+        # CLI guard), refuse symlinked ancestors (a checkout's temp/ may be a
+        # link) and rewrite paths ending in ``Cuttle/src``.
+        from core.runtime_paths import runtime_cache_path
+
+        scratch = runtime_cache_path("prepush")
         scratch.mkdir(parents=True, exist_ok=True)
         self.sha, self.repo = sha, repo
-        self.path = Path(tempfile.mkdtemp(prefix=f"{sha[:12]}-", dir=scratch)) / "wt"
+        self.path = Path(tempfile.mkdtemp(prefix=f"{sha[:12]}-", dir=scratch.resolve())) / "Cuttle"
 
     def __enter__(self) -> Path:
         proc = _git("worktree", "add", "--detach", str(self.path), self.sha, cwd=self.repo, timeout=120)

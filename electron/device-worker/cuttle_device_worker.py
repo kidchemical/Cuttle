@@ -191,6 +191,7 @@ def _cuttle_git_rev() -> str:
                 text=True,
                 timeout=4,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                encoding="utf-8", errors="replace",
             )
             if completed.returncode == 0:
                 rev = (completed.stdout or "").strip()
@@ -515,6 +516,7 @@ def _shell_recipe_local(params: Dict[str, Any]) -> Dict[str, Any]:
         timeout=int(params.get("timeout_seconds") or 120),
         cwd=str(repo) if repo.is_dir() else None,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        encoding="utf-8", errors="replace",
     )
     out = (completed.stdout or "").strip()
     err = (completed.stderr or "").strip()
@@ -711,6 +713,7 @@ def _git_update_checkout_local(repo: Path, log_path: Path | None = None, helper_
                 text=True,
                 timeout=30,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                encoding="utf-8", errors="replace",
             ).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             return ""
@@ -725,6 +728,7 @@ def _git_update_checkout_local(repo: Path, log_path: Path | None = None, helper_
             argv,
             capture_output=True, text=True, timeout=300, cwd=str(repo),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            encoding="utf-8", errors="replace",
         )
         output = (result.stdout or "") + (result.stderr or "")
         if log_path:
@@ -802,6 +806,7 @@ def _blender_render_local(params: Dict[str, Any]) -> Dict[str, Any]:
         text=True,
         timeout=int(params.get("timeout_seconds") or 0) or max(600, (fe - fs + 1) * 120),
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        encoding="utf-8", errors="replace",
     )
     if completed.returncode != 0:
         raise RuntimeError(
