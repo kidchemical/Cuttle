@@ -36,6 +36,11 @@ bcrypt>=5.0.0
 cryptography>=50.0.2
 # OS keyring (Windows Credential Manager / macOS Keychain / Secret Service) for the experimental secret vault
 keyring>=25.7.0
+# keyring's OS backends. Listed so the packaged-Host lock resolves them for every
+# target (pip evaluates transitive markers on the machine running --lock).
+pywin32-ctypes>=0.2.3; sys_platform == "win32"
+SecretStorage>=3.5.0; sys_platform == "linux"
+jeepney>=0.9.0; sys_platform == "linux"
 
 # Config parsing (agent catalogs, project commands/actions, dashboards)
 PyYAML>=6.0.3

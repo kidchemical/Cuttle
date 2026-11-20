@@ -114,6 +114,10 @@ function pythonExe(root, asset) {
 
 const PIP_QUIET = ['--disable-pip-version-check', '--no-input', '--no-cache-dir'];
 
+// Wheels installed on one target OS only (direct or via keyring / pystray).
+const WINDOWS_ONLY = new Set(['pywinpty', 'pywin32-ctypes']);
+const LINUX_ONLY = new Set(['python-xlib', 'secretstorage', 'jeepney']);
+
 /** Re-resolve exact pins for Linux and Windows (wheels only). */
 async function writeLock(py) {
     fs.mkdirSync(scratchDir, { recursive: true });
@@ -157,8 +161,8 @@ async function writeLock(py) {
         const hashes = [...new Set(release.urls.filter(f => f.packagetype === 'bdist_wheel')
             .map(f => f.digests.sha256))].sort();
         if (!hashes.length || hashes.some(h => !/^[a-f0-9]{64}$/.test(h))) fail(`no wheel hashes for ${name}==${version}`);
-        const marker = name === 'pywinpty' ? '; sys_platform == "win32"'
-            : name === 'python-xlib' ? '; sys_platform == "linux"' : '';
+        const marker = WINDOWS_ONLY.has(name) ? '; sys_platform == "win32"'
+            : LINUX_ONLY.has(name) ? '; sys_platform == "linux"' : '';
         lines.push(`${name}==${version}${marker} \\`);
         hashes.forEach((h, i) => lines.push(`    --hash=sha256:${h}${i < hashes.length - 1 ? ' \\' : ''}`));
     }
