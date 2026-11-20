@@ -62,6 +62,8 @@ class AgentManifest:
     pricing_benchmark: str = ""
     resume: bool = True
     capabilities_inject: str = "once_per_resume"  # once_per_resume | always | never
+    # full | bare. Bare sends the typed request only (api.cuttle_brain.bare).
+    context: str = "full"
     env_profile: str = "native"  # native | wsl | either
     activity: str = "heartbeat"  # none | heartbeat | jsonl | line_hints
     missing_cli_hint: str = ""

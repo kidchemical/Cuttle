@@ -265,3 +265,29 @@ html.is-cuttle-mobile {
 html.is-cuttle-mobile.keyboard-open {
     --cuttle-toast-safe-bottom: 0px;
 }
+
+/* Sub-agent peek drawer (chat_subagent_peek.js): fixed over the whole chat
+   iframe, which itself runs under the status bar (chat insets itself). Keep
+   the drawer header (Open chat / ✕) below the status bar. The nested chat
+   frame sits under that header, so it has no top inset of its own. */
+html.is-cuttle-mobile .subagent-peek-head {
+    padding-top: calc(8px + var(--cuttle-safe-top));
+    padding-right: calc(10px + var(--cuttle-safe-right));
+}
+
+html.is-cuttle-mobile .subagent-peek[data-layout="center"] {
+    padding:
+        calc(4vh + var(--cuttle-safe-top))
+        calc(4vw + var(--cuttle-safe-right))
+        calc(4vh + var(--cuttle-safe-bottom))
+        calc(4vw + var(--cuttle-safe-left));
+}
+
+html.is-cuttle-mobile .subagent-peek[data-layout="center"] .subagent-peek-head {
+    padding-top: 8px;
+    padding-right: 10px;
+}
+
+html.is-cuttle-mobile.cuttle-peek-frame {
+    --cuttle-safe-top: 0px;
+}

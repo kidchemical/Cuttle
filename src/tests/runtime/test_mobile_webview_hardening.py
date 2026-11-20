@@ -367,3 +367,23 @@ def test_transcript_has_no_dead_space_past_last_bubble():
     chat = (REPO / "src" / "web" / "css" / "chat_page.css").read_text(encoding="utf-8")
     base = chat.split("\n.chat-messages {", 1)[1].split("}", 1)[0]
     assert "overscroll-behavior: none" in base
+
+
+def test_subagent_peek_drawer_clears_status_bar():
+    safe = (REPO / "src" / "web" / "css" / "safe_area.css").read_text(encoding="utf-8")
+    # The drawer is fixed over the chat iframe, which runs under the status
+    # bar: its header (Open chat / ✕) needs the top inset; the nested chat
+    # under that header must not add it again.
+    head = safe.split("html.is-cuttle-mobile .subagent-peek-head {", 1)[1].split("}", 1)[0]
+    assert "--cuttle-safe-top" in head
+    frame = safe.split("html.is-cuttle-mobile.cuttle-peek-frame {", 1)[1].split("}", 1)[0]
+    assert "--cuttle-safe-top: 0px" in frame
+
+
+def test_quote_reply_panel_follows_the_keyboard():
+    js = (REPO / "src" / "web" / "js" / "chat" / "chat_quote_clips.js").read_text(encoding="utf-8")
+    # Editing a clip opens the panel at the composer; the phone keyboard then
+    # shrinks the viewport, so the reply panel re-places on resize too.
+    assert "else if (mode === 'reply') placeReply();" in js
+    assert "win.visualViewport.addEventListener('resize', onResize)" in js
+    assert "showReplyPanel(clip.quote, card, {" in js

@@ -85,6 +85,19 @@ fast path on, most turns call neither.
 `writing · normal → Writing & docs (matched “Write the release notes”)`. The
 brain's raw scores stay in the decision's `raw` details.
 
+## Behaviour invariants
+
+Moved from `AGENTS.md`; each names its tests. Read before changing the behaviour it covers.
+
+- Clean sessions with no sticky agent invoke the router; starred/manual sticky agents bypass it
+- **Classify, then pick**: `agent_router/classify.py` labels the turn (kind of work: chat/explain/coding/debugging/architecture/research/writing/ops; scope: low/medium/high) and skips the routing brain when confident; the `use_cases` table picks the harness per lane; `agent_router/quota.py` keeps out-of-usage accounts at the back of the chain across turns; `agent_router/budget.py` (opt-in `agent_router.budget.enabled`) does the same up front from live `/usage` plan windows. Chain targets may carry `effort` (manifest-validated, passed as the harness reasoning effort). Tests: `src/tests/router/test_agent_router_classify.py`, `src/tests/router/test_agent_router_budget.py`.
+- The star is applied **server-side** in `/api/chat` (`starred_slash.apply_default_sticky_prefix`), so a first turn sent without the client chip (LAN client, API caller) still runs the starred agent instead of falling through to the router. Star seeds new chats only; an existing chat follows its own history.
+- Removing the agent badge (chip ✕) is an explicit "route this myself": the composer sends `sticky_agent: "none"`, which beats both the star and the chat's earlier `/cursor` turns, and the removal is remembered in session prefs (`stickyCleared`) so a refresh does not infer the badge back from history. Tests: `src/tests/chat/test_starred_agent_removal.py`.
+- **Task failure is terminal** (the agent ran and reported failure): the reply shows its output plus `/retry` hints; the router never silently reruns it on another model. Only "never ran" failures (quota/usage, auth, missing CLI, connection) walk the fallback chain; a quota error skips that agent's other premium models for the turn (Cursor → `auto` first). Tests: `src/tests/router/test_agent_router.py`.
+- **Cancellation is terminal** (`FailureKind.CANCELLED`): a `[CANCELLED]` result from Stop / chat deletion never escalates and never spawns a fallback. Pressing Stop used to buy a Grok escalation plus a Codex run that outlived the turn.
+- **Mid-turn steering and background detach** (`src/api/agent_harness/steer.py`, `background_wait.py`): a follow-up sent while a Codex, Muse Code or Claude Code turn works goes into the live turn through `POST /api/chat-steer`; a Claude turn with background tasks detaches and later results land as new bubbles. Read [`docs/guides/AGENT_STEERING.md`](docs/guides/AGENT_STEERING.md) before touching either. Tests: `src/tests/harness/test_agent_steer.py`, `src/tests/harness/test_claude_background_detach.py`.
+- **Turn guard**: `chat_delivery` hands each turn a token (`current_turn` / `is_stale_turn`). A run whose turn was superseded (Stop → re-send) cannot persist its reply, park it for the client, release the live turn's busy lock, or start another routed target.
+
 ## Modes
 
 - `off` — routing disabled; starred sticky agents and explicit composer badges still apply

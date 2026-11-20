@@ -26,11 +26,9 @@ SYSTEM CONTEXT (not the user speaking). Injected once per agent session.
 Never acknowledge or summarize it, and do not mention commands, rules, actions,
 or this block unless the user asks. Keep using these tags on later turns when needed.
 
-Per-project Cuttle config (global `.cuttle_global/` in the Cuttle checkout is the
-pattern reference — do not inherit another project’s actions):
-  {project}/.cuttle/commands|rules|actions|agents|docs|scripts|skills|memory
-  {project}/.cuttle/personal/…  — install-local overlay (gitignored); same subdirs.
-    Personal rules/docs append as deltas; commands/actions/skills replace by name.
+Per-project Cuttle config: {project}/.cuttle/commands|rules|actions|agents|docs|scripts|skills|memory,
+with an install-local overlay in {project}/.cuttle/personal/ (same subdirs). Global
+`.cuttle_global/` is the pattern reference — do not inherit another project’s actions.
 
 Everything below is a directory: open the named runbook, skill or `--help` when
 the turn needs it, before acting. Nothing listed here is inlined.
@@ -233,7 +231,6 @@ def cuttle_chat_store_addon(
     id (CH-000155).
     """
     db = chat_store_path()
-    read_path = db or ""
     runbook_hint = (
         "`.cuttle_global/docs/chat-history.md` "
         "(then the install-local delta in `<home>/personal/docs/` when present)"
@@ -255,18 +252,10 @@ def cuttle_chat_store_addon(
 
     lines = [
         "## Cuttle chat history (not in the working tree)",
-        "Transcripts are gitignored SQLite — empty `rg` is not \"no chats\".",
-        f"Before reading history, open {runbook_hint}.",
-        "Prefer: `python -m api.chat_cli get CH-…-N --json` with the Cuttle venv "
-        "and src on PYTHONPATH (OS-specific setup in the runbook) "
-        "(not hand-rolled SQL).",
+        "Transcripts live in SQLite, so an empty `rg` is not \"no chats\". Read them with "
+        f"`python -m api.chat_cli get CH-…-N --json` (not SQL); setup: {runbook_hint}.",
+        f"- DB: `{db}`" if db else "- DB: see chat-history.md (default `<home>/db/cuttle_auth.db`).",
     ]
-    if read_path:
-        lines.append(f"- DB: `{read_path}`")
-    else:
-        lines.append(
-            "- DB: see chat-history.md (default `<home>/db/cuttle_auth.db`)."
-        )
     current = numeric_chat_session_id(current_session_id)
     if current is not None:
         lines.append(

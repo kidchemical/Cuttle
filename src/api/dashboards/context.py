@@ -28,6 +28,7 @@ MODES = (
     {"id": "resume_delta", "name": "Rules-changed note"},
     {"id": "resume_handoff", "name": "Handoff only"},
     {"id": "resume", "name": "Prompt only"},
+    {"id": "bare", "name": "Bare (no context)"},
 )
 
 LAYERS = (
@@ -131,6 +132,9 @@ def cuttle_context(
     handoff_modes: Counter = Counter()
     handoffs = compactions = 0
     full_all: List[int] = []
+    # Context ranking: how often the judge ran, pointed at something, and at what.
+    ranked_judged = ranked_injected = 0
+    ranked_picks: Counter = Counter()
 
     for t in turns:
         i = index.get(_day(t["ts"], tz_offset_minutes))
@@ -154,6 +158,12 @@ def cuttle_context(
                 layer_n[i] += 1
                 for key in layer_sum:
                     layer_sum[key][i] += int(layers.get(key) or 0)
+        ranked = t.get("ranked")
+        if isinstance(ranked, dict) and not ranked.get("skipped"):
+            ranked_judged += 1
+            for pick in ranked.get("injected") or []:
+                ranked_injected += 1
+                ranked_picks[str(pick)] += 1
         if t.get("handoff_messages"):
             handoffs += 1
             handoff_modes[str(t.get("handoff_mode") or "unrecorded")] += 1
@@ -188,6 +198,7 @@ def cuttle_context(
         "handoff_modes": [
             {"id": k, "count": v} for k, v in handoff_modes.most_common()
         ],
+        "ranked_picks": [{"id": k, "count": v} for k, v in ranked_picks.most_common(20)],
         "sessions": _session_series(turns),
         "rules": _rule_sizes(),
         "stats": {
@@ -198,6 +209,8 @@ def cuttle_context(
             "handoffs_reset": handoff_modes.get("reset", 0),
             "handoffs_switch": handoff_modes.get("switch", 0),
             "compactions": compactions,
+            "ranked_judged": ranked_judged,
+            "ranked_injected": ranked_injected,
             "median_fill_pct": round(median(fills), 1) if fills else None,
             "with_fill": sum(1 for t in turns if t.get("context_tokens")),
             "backfilled": sum(1 for t in turns if t.get("source") == "backfill"),

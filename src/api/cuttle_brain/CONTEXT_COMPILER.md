@@ -28,7 +28,7 @@ inspect the envelope. Day-to-day, Flask injects it — no extra round-trip.
 3. **Project rules** — `{project}/.cuttle/rules/*.md` (always-on guidelines for that project; for the Cuttle repo itself this is Cuttle-only rules, never guest etiquette).
 4. **Profile** — `standard` today; room for coordination / supervision later.
 5. **Runtime** — inventory of commands/docs/actions/skills (global + project); optional handoff delta; chat-store hint.
-6. **Ranked context (optional)** — one selected skill/doc snippet preloaded for this prompt. Judge: Jev by default (`python -m api.jev rank`), or the executor chosen for **Context ranking** in Settings → Background helpers (any model API, or a tool-less one-turn agent CLI; `api.background_helpers` task `context`). Always-on rules still win on conflict.
+6. **Ranked context (optional)** — one selected skill/doc named for this prompt as a pointer (title, one line, path; `jev/thresholds.py` `RANK_INJECT_MODE = "excerpt"` pastes the body instead). Judge: Jev by default (`python -m api.jev rank`), or the executor chosen for **Context ranking** in Settings → Background helpers (any model API, or a tool-less one-turn agent CLI; `api.background_helpers` task `context`). Always-on rules still win on conflict.
 7. **User request** — the actual turn prompt (never truncated by the compiler).
 
 ## The envelope is a directory
@@ -40,6 +40,14 @@ title/progress (a chat's own list adds its next open items; `python -m
 api.gizmos tasks get <id>` has the rest). A runbook named in the core contract's
 directory is not repeated in the inventory. Measure a fresh `hello` envelope
 before and after any change (`meta.layer_chars`).
+
+## Bare turns
+
+A plain-chat target gets the typed request and nothing else: no envelope,
+handoff, delta or prompt preference (`bare.py`). Switch it on per harness with
+`context: bare` in the agent manifest, or per model with `settings.json →
+context.bare_models` (`"agent:model-glob"`, e.g. `"opencode:g4f/*"`). The turn
+is recorded with mode `bare`.
 
 ## How this relates to `.cuttle/`
 
@@ -92,7 +100,8 @@ See `context_delta.py`.
 
 Every harness turn appends a row to `<home>/brain/context_metrics.db`
 (`metrics.py`): briefing mode, size per layer, handoff size, agent-reported
-window fill and limit, compaction. The **Context** dashboard reads it
+window fill and limit, compaction, and what the context ranker picked
+(`ranked`: choice, confidence, injected ids). The **Context** dashboard reads it
 (`python -m api.cuttle_brain metrics list|backfill`).
 
 ## Transport

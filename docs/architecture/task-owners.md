@@ -58,3 +58,9 @@ and `app_shell.js` (shell over `shell_panes` / `shell_spaces` / `shell_rail` /
 `shell_electron` / `shell_mobile` + `CuttleSpaces.*` + apps)
 compose; they do not own domain decisions. Details:
 `docs/architecture/extension-boundaries.md`.
+
+## Turn dispatch
+
+Moved from `AGENTS.md`.
+
+- Turn dispatch lives in owned services, not the entry module: `api.agent_harness.runners` (all harness CLI entries), `api.chat_turn` (request/selection seam), `api.chat_coordinator` (shared transport-neutral submit: `PreparedAgentTurn`/`select_agent_turn`/`submit_agent_turn`; route lanes submit claimed, legacy surfaces unclaimed), `api.chat_turn_workflow` (lane orchestration), `api.chat_turn_persist` (saver/user persist), `api.chat_turn_row` (the turn's assistant row + query-log record from turn start: `open_row` after the user row, the kernel tracks under its query id via `claim_query_id`, the saver `finalize`s into it, `close` turns a Stop/failure into the interrupted card or drops a skipped row when newest, `heal_orphans` on history reads after a crash; readers skip `in_progress` rows unless `get_messages(include_in_progress=True)`; also used by sub-agent child turns and background follow-ups), `api.chat_turn_id` (the turn id = the turn's query id: exported as `CUTTLE_TURN_ID` to every agent CLI of any harness, with `CUTTLE_TURN_MESSAGE` / `CUTTLE_TURN_MESSAGE_ID` naming the user bubble that started the turn, stamped as `metadata.turn_id` on every assistant row by `AuthDatabase` writes, stored on sub-agent batches/rounds; `AuthDatabase` calls `subagents.service.bind_turn_cards` after each assistant write so cards bind to their turn's row whatever path saved it; manual runs with no turn env: `--anchor CH-…-N`, else the parent's latest bubble; no timing windows). `process_message_with_bot` in `web_chat_api.py` is only the compat entry for `/api/sessions/send`.

@@ -424,10 +424,12 @@ def format_tasks_digest(widgets: List[Dict[str, Any]]) -> str:
         payload = normalize_tasks_payload(payload)
         done, total = count_tasks(payload.get("items") or [])
         lines.append(f"- **{title}** (`{wid}`, scope={scope}) {done}/{total} done")
-        if desc:
-            lines.append(f"  - intent: {_clip(desc, 240)}")
+        # Only this chat's own list carries its intent and next items; a
+        # project-wide list is a title here and `tasks get <id>` away.
         if scope != "session":
             continue
+        if desc:
+            lines.append(f"  - intent: {_clip(desc, 240)}")
         open_items: List[Dict[str, Any]] = []
 
         def walk(nodes: List[Dict[str, Any]]) -> None:

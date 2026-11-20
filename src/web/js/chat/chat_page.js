@@ -2529,6 +2529,8 @@
             u = u.slice(1, -1).trim();
         }
         if (/^(https?:|file:|vscode:|cursor:)/i.test(u)) return u;
+        // Cuttle-served files ([report](/output/…)) are web links on this origin.
+        if (/^\/output\//.test(u) && typeof location !== 'undefined') return location.origin + u;
         // Agents sometimes emit /g:/Dev/... (slash + drive)
         let m = u.match(/^\/([a-zA-Z]:)([\\/].*)$/);
         if (m) return windowsPathToFileUrl(m[1] + m[2]);

@@ -743,10 +743,11 @@
             const imageBlocks = [];
             if (d.buildMediaThumbHtml) {
                 text = text.replace(/!\[([^\]]*)]\(([^)]+)\)/g, function(_, label, dest) {
-                    const match = String(dest).match(/^(.*?)\s+["']([^"']*)["']\s*$/);
+                    // A "…" description may hold apostrophes (and '…' may hold double quotes).
+                    const match = String(dest).match(/^(.*?)\s+(?:"([^"]*)"|'([^']*)')\s*$/);
                     const url = (match ? match[1] : dest).trim().replace(/^<|>$/g, '');
                     const placeholder = '{{CUTTLE_IMAGE_' + imageBlocks.length + '}}';
-                    imageBlocks.push(d.buildMediaThumbHtml(url, { title: label, description: match ? match[2] : '' }));
+                    imageBlocks.push(d.buildMediaThumbHtml(url, { title: label, description: match ? (match[2] ?? match[3]) : '' }));
                     return placeholder;
                 });
             }

@@ -46,7 +46,8 @@ sandbox; containment is the opt-in gate plus the rules below.
   (lowercased, `_` → `-`, must match `[a-z0-9]+(-[a-z0-9]+)*`); `slash` is
   canonicalized the same way and must match `/[a-z0-9]+(-[a-z0-9]+)*`.
   Anything else (e.g. `slash: "/"`, `Evil Agent/`) is skipped **without
-  importing** `adapter.py`. Unknown `capabilities_inject` / `env_profile` /
+  importing** `adapter.py`. `context: bare` sends the typed request with no
+  Cuttle briefing (plain-chat targets; `api.cuttle_brain.bare`). Unknown `capabilities_inject` / `env_profile` /
   `activity` values fall back to defaults instead of failing.
 - **Load-once (source-keyed).** Each external `adapter.py` executes once per
   process; editing the manifest or any Python source (including nested helpers) reloads it on

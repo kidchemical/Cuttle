@@ -174,6 +174,7 @@
         let lastPointerTouch = false;
         let timer = 0;
         let barPressUntil = 0;
+        let replyAnchor = null; // { el?, rect }: what the reply panel sits next to
 
         // ---- clip state (per chat) ---------------------------------------
         const NEW_KEY = 'cuttle.quoteClips.new'; // a chat with no id yet: memory only
@@ -292,7 +293,7 @@
                     card.tabIndex = 0;
                     const edit = (e) => {
                         e.preventDefault();
-                        showReplyPanel(clip.quote, card.getBoundingClientRect(), { index: idx, reply: clip.reply });
+                        showReplyPanel(clip.quote, card, { index: idx, reply: clip.reply });
                     };
                     card.addEventListener('click', edit);
                     card.addEventListener('keydown', (e) => {
@@ -346,7 +347,9 @@
         function place(rect) {
             if (!bar) return;
             const size = { width: bar.offsetWidth, height: bar.offsetHeight };
-            const view = { width: doc.documentElement.clientWidth, height: win.innerHeight };
+            // The visual viewport excludes an overlaying phone keyboard.
+            const vv = win.visualViewport;
+            const view = { width: doc.documentElement.clientWidth, height: vv ? vv.offsetTop + vv.height : win.innerHeight };
             const pos = placeToolbar(rect, size, view, lastPointerTouch && mode === 'toolbar');
             bar.style.top = pos.top + 'px';
             bar.style.left = pos.left + 'px';
@@ -357,6 +360,18 @@
             bar = null;
             mode = '';
             pendingQuote = '';
+            replyAnchor = null;
+        }
+
+        /** Re-place the reply panel next to its anchor (the keyboard opening moves the composer). */
+        function placeReply() {
+            if (mode !== 'reply' || !replyAnchor) return;
+            const el = replyAnchor.el;
+            if (el && el.isConnected) {
+                const r = el.getBoundingClientRect();
+                if (r.width || r.height) replyAnchor.rect = r;
+            }
+            place(replyAnchor.rect);
         }
 
         function mount(className, label) {
@@ -448,10 +463,15 @@
             });
         }
 
-        /** Reply panel for a new clip, or with `editing` { index, reply } for a staged one. */
-        function showReplyPanel(quote, rect, editing) {
+        /**
+         * Reply panel for a new clip, or with `editing` { index, reply } for a
+         * staged one. `anchor` is the selection rect or the clip card element.
+         */
+        function showReplyPanel(quote, anchor, editing) {
             mode = 'reply';
             pendingQuote = quote;
+            const isEl = anchor && typeof anchor.getBoundingClientRect === 'function';
+            replyAnchor = isEl ? { el: anchor, rect: anchor.getBoundingClientRect() } : { rect: anchor };
             const el = mount('quote-reply-panel', 'dialog');
             const preview = doc.createElement('div');
             preview.className = 'quote-reply-quote';
@@ -492,7 +512,7 @@
             el.appendChild(preview);
             el.appendChild(input);
             el.appendChild(actions);
-            place(rect);
+            placeReply();
             try { input.focus({ preventScroll: true }); } catch (_) { input.focus(); }
             if (editing) input.setSelectionRange(input.value.length, input.value.length);
         }
@@ -545,7 +565,14 @@
             doc.addEventListener('keydown', (e) => { if (e.key === 'Escape' && mode === 'toolbar') hide(); });
             // The transcript scrolls under a fixed toolbar: follow the selection.
             doc.addEventListener('scroll', () => { if (mode === 'toolbar') schedule(0); }, true);
-            win.addEventListener('resize', () => { if (mode === 'toolbar') schedule(0); });
+            // A phone keyboard opening for the reply shrinks the viewport:
+            // keep the panel above it, next to its card / selection.
+            const onResize = () => {
+                if (mode === 'toolbar') schedule(0);
+                else if (mode === 'reply') placeReply();
+            };
+            win.addEventListener('resize', onResize);
+            if (win.visualViewport) win.visualViewport.addEventListener('resize', onResize);
             render();
         }
 

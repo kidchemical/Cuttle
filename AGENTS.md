@@ -152,14 +152,10 @@ Cuttle does **not** host an MCP tool server. Guest CLIs keep their own MCP. Cutt
 - **Guide**: `docs/guides/AGENT_ROUTER.md`
 - **Package**: `src/api/agent_router/` — sits above sticky `/cursor`/`/codex`/`/deepseek`/… selection
 - **Config**: `settings.json` → `agent_router` (mode `api` default; OpenAI `gpt-4o-mini` routing brain)
-- Clean sessions with no sticky agent invoke the router; starred/manual sticky agents bypass it
-- **Classify, then pick**: `agent_router/classify.py` labels the turn (kind of work: chat/explain/coding/debugging/architecture/research/writing/ops; scope: low/medium/high) and skips the routing brain when confident; the `use_cases` table picks the harness per lane; `agent_router/quota.py` keeps out-of-usage accounts at the back of the chain across turns; `agent_router/budget.py` (opt-in `agent_router.budget.enabled`) does the same up front from live `/usage` plan windows. Chain targets may carry `effort` (manifest-validated, passed as the harness reasoning effort). Tests: `src/tests/router/test_agent_router_classify.py`, `src/tests/router/test_agent_router_budget.py`.
-- The star is applied **server-side** in `/api/chat` (`starred_slash.apply_default_sticky_prefix`), so a first turn sent without the client chip (LAN client, API caller) still runs the starred agent instead of falling through to the router. Star seeds new chats only; an existing chat follows its own history.
-- Removing the agent badge (chip ✕) is an explicit "route this myself": the composer sends `sticky_agent: "none"`, which beats both the star and the chat's earlier `/cursor` turns, and the removal is remembered in session prefs (`stickyCleared`) so a refresh does not infer the badge back from history. Tests: `src/tests/chat/test_starred_agent_removal.py`.
-- **Task failure is terminal** (the agent ran and reported failure): the reply shows its output plus `/retry` hints; the router never silently reruns it on another model. Only "never ran" failures (quota/usage, auth, missing CLI, connection) walk the fallback chain; a quota error skips that agent's other premium models for the turn (Cursor → `auto` first). Tests: `src/tests/router/test_agent_router.py`.
-- **Cancellation is terminal** (`FailureKind.CANCELLED`): a `[CANCELLED]` result from Stop / chat deletion never escalates and never spawns a fallback. Pressing Stop used to buy a Grok escalation plus a Codex run that outlived the turn.
-- **Mid-turn steering and background detach** (`src/api/agent_harness/steer.py`, `background_wait.py`): a follow-up sent while a Codex, Muse Code or Claude Code turn works goes into the live turn through `POST /api/chat-steer`; a Claude turn with background tasks detaches and later results land as new bubbles. Read [`docs/guides/AGENT_STEERING.md`](docs/guides/AGENT_STEERING.md) before touching either. Tests: `src/tests/harness/test_agent_steer.py`, `src/tests/harness/test_claude_background_detach.py`.
-- **Turn guard**: `chat_delivery` hands each turn a token (`current_turn` / `is_stale_turn`). A run whose turn was superseded (Stop → re-send) cannot persist its reply, park it for the client, release the live turn's busy lock, or start another routed target.
+- Clean sessions with no sticky agent invoke the router; starred or manually pinned agents bypass it.
+- Before changing routing, failure handling, the star, cancellation or the turn guard, read the
+  "Behaviour invariants" section of the guide. Mid-turn steering and background detach:
+  [`docs/guides/AGENT_STEERING.md`](docs/guides/AGENT_STEERING.md).
 
 ### Cuttle chat controls
 
@@ -195,7 +191,11 @@ Record portable lessons in architecture docs or regression tests. Report public 
 
 ## Important Conventions
 
-- Turn dispatch lives in owned services, not the entry module: `api.agent_harness.runners` (all harness CLI entries), `api.chat_turn` (request/selection seam), `api.chat_coordinator` (shared transport-neutral submit: `PreparedAgentTurn`/`select_agent_turn`/`submit_agent_turn`; route lanes submit claimed, legacy surfaces unclaimed), `api.chat_turn_workflow` (lane orchestration), `api.chat_turn_persist` (saver/user persist), `api.chat_turn_row` (the turn's assistant row + query-log record from turn start: `open_row` after the user row, the kernel tracks under its query id via `claim_query_id`, the saver `finalize`s into it, `close` turns a Stop/failure into the interrupted card or drops a skipped row when newest, `heal_orphans` on history reads after a crash; readers skip `in_progress` rows unless `get_messages(include_in_progress=True)`; also used by sub-agent child turns and background follow-ups), `api.chat_turn_id` (the turn id = the turn's query id: exported as `CUTTLE_TURN_ID` to every agent CLI of any harness, with `CUTTLE_TURN_MESSAGE` / `CUTTLE_TURN_MESSAGE_ID` naming the user bubble that started the turn, stamped as `metadata.turn_id` on every assistant row by `AuthDatabase` writes, stored on sub-agent batches/rounds; `AuthDatabase` calls `subagents.service.bind_turn_cards` after each assistant write so cards bind to their turn's row whatever path saved it; manual runs with no turn env: `--anchor CH-…-N`, else the parent's latest bubble; no timing windows). `process_message_with_bot` in `web_chat_api.py` is only the compat entry for `/api/sessions/send`.
+- Turn dispatch lives in owned services, not the entry module (`api.agent_harness.runners`,
+  `api.chat_turn`, `api.chat_coordinator`, `api.chat_turn_workflow`, `api.chat_turn_persist`,
+  `api.chat_turn_row`, `api.chat_turn_id`). What each owns:
+  [`docs/architecture/task-owners.md`](docs/architecture/task-owners.md) → Turn dispatch.
+  `process_message_with_bot` in `web_chat_api.py` is only the compat entry for `/api/sessions/send`.
 - Flask's default HTTPS listener is port **8080** (not 5000); companion/phone ports come from `src/api/server_ports.py`
 - Discord token is read from `<home>/.env` — the daemon loads this before child processes; Discord is REST-only, with no inbound bot subprocess
 - **Project commands**: `{project}/.cuttle/commands/*.md` (YAML frontmatter + body) appear in the chat `/` palette for that project. See `.cuttle_global/skills/cuttle-project-commands/SKILL.md`. Invoke as `/{name}` or `/cmd {name}` (works after sticky `/cursor` too).

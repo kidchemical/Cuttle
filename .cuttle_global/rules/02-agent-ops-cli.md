@@ -1,26 +1,18 @@
 # Agent ops CLIs
 
-When you need Cuttle-owned data or platform verbs (chat transcripts, workers, brain,
-…), prefer **`python -m api.<module> <verb> …`** over hand-rolled SQL, ad-hoc curl, or
-throwaway scripts.
+Cuttle-owned data or platform verbs (chat transcripts, another chat, panes, workers,
+worktrees, dashboards, Discord reads, Jev, context compile) → `python -m api.<module>
+<verb>`, never hand-rolled SQL, ad-hoc curl, minted tokens or throwaway scripts. The
+verb table is in `agent-ops-cli.md`: open it instead of guessing a module.
 
-- Chat handles / history → `python -m api.chat_cli` (see `chat-history.md`)
-- Message, check on, or supervise another existing chat → `python -m api.chat_cli status|snapshot|send|supervise CH-…` (see `chat-history.md`); never mint tokens or curl chat routes
-- Multi-step agent work → create or reuse a Tasks gizmo early, then patch it as work progresses (`gizmos.md`); no Tasks markdown tags. Skip for quick questions or small edits.
-- Long-running OS jobs → start a real status-backed watch card with a progress bar (`action-forms.md` / `headless-turns.md`); use measured progress, not guessed percentages. A Tasks list tracks agent steps; it does not replace a job watch.
-- Before reporting work tracked in a Tasks gizmo complete, patch finished items and read back the list; leave unfinished items open with a reason (`gizmos.md`).
-- Discord reads → `python -m api.discord_cli` (see `discord.md`; posts stay on `discord.post`)
-- Forge issues → the active project's enabled integration runbook/CLI
-- Live panes → `python -m api.panes_cli` (see `chat-history.md`)
-- Workers mesh → `python -m api.device_workers.cli` (see `cuttle-workers.md`)
-- Context compile → `python -m api.cuttle_brain`
-- Sub-agent child chats → `python -m api.subagents` (see `subagents.md`)
-- Worktrees / a chat's active worktree → `python -m api.worktrees create --bind` / `bind`, never raw `git worktree add` (see `agent-ops-cli.md` → Worktrees)
-- Dashboards / Model Benchmarks → `python -m api.dashboards` (see `dashboards.md`)
-- Jev judgments → `python -m api.jev` (see `jev.md`)
-- Pattern / how to extend → `agent-ops-cli.md`
+- Multi-step agent work → create or reuse a Tasks gizmo early and patch it as work
+  progresses (`gizmos.md`); no Tasks markdown tags. Skip for quick questions or small edits.
+- Before reporting work tracked in a Tasks gizmo complete, patch finished items and
+  read back the list; leave unfinished items open with a reason.
+- Long-running OS jobs → a status-backed watch card with measured progress
+  (`action-forms.md` / `headless-turns.md`). A Tasks list does not replace it.
+- Worktrees → `python -m api.worktrees`, never raw `git worktree add`.
+- Sub-agent child chats → `python -m api.subagents` (`03-subagents.md`).
 
-This is the **agent toolkit**, not a product `cuttle` shell for humans. When adding
-agent-facing features, ship library + `python -m` verbs + update the runbook — do not
-teach raw DB recipes as the primary path. Do **not** add a Cuttle-hosted MCP tool
-server; guest harnesses own MCP, Cuttle ops stay on `python -m api.*`.
+Agent-facing features ship as library + `python -m` verb + runbook entry. Do **not**
+add a Cuttle-hosted MCP tool server; guest harnesses own MCP.

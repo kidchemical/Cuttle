@@ -216,6 +216,7 @@ def _manifest_from_dict(
         pricing_benchmark=str(data.get("pricing_benchmark") or "").strip().lower(),
         resume=bool(data.get("resume", True)),
         capabilities_inject=str(data.get("capabilities_inject") or "once_per_resume").strip(),
+        context=str(data.get("context") or "full").strip().lower(),
         env_profile=str(data.get("env_profile") or "native").strip(),
         activity=str(data.get("activity") or "heartbeat").strip(),
         missing_cli_hint=str(data.get("missing_cli_hint") or "").strip(),

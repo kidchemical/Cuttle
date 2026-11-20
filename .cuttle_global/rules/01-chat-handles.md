@@ -1,28 +1,10 @@
 # Cuttle chat handles (agent-agnostic)
 
-When the user pastes a `CH-…` token, treat it as a Cuttle web-chat pointer — not a
-repo path, Discord id, or mystery code.
+A `CH-…` token is a Cuttle web-chat pointer, not a repo path, Discord id or mystery
+code: `CH-000182` is chat session 182, `CH-000182-23` its 23rd bubble (user and
+assistant bubbles only). Look it up with `python -m api.chat_cli get CH-…-N --json`
+(`chat-history.md`), not hand-rolled SQL.
 
-| Token | Meaning |
-|---|---|
-| `CH-900001` | Chat session → numeric id `900001` |
-| `CH-900001-23` | Same session `900001`, 1-based bubble `23` among **user+assistant only** (system / Stop notices do not count) |
-
-Lookup: `.cuttle_global/docs/chat-history.md`. Prefer
-`python -m api.chat_cli get CH-…-N --json` (not hand-rolled SQL).
-
-## Citing handles in chat replies
-
-Emit the **bare token** as plain text (e.g. `CH-900002` or `CH-900002-12`).
-Cuttle linkifies it into a clickable chat-handle badge that opens that session.
-
-**Do not** wrap handles in markdown links — especially not file/editor URLs:
-
-| Bad | Why |
-|---|---|
-| `[CH-900002](file:////path/to/Cuttle)` | Becomes a file chip → reveal folder, not open chat |
-| `[CH-900002](vscode://file/…)` / `[CH-900002](https://…)` | Same — wrong chip / dead navigation |
-| `` `CH-900002` `` | Inline code skips linkify |
-
-`file://` / `vscode://` hyperlinks are only for **real file paths**, never for
-`CH-` tokens.
+In replies write the bare token as plain text (CH-000405-12): Cuttle turns it into
+a clickable badge. Never wrap a handle in a markdown link, a `file://` / `vscode://`
+URL or backticks: each of those breaks the badge.

@@ -227,6 +227,26 @@ def _assistant_identity_meta(
     return meta
 
 
+def _stage_reply_media(result: Dict[str, Any]) -> None:
+    """Local image/video paths in a child reply become ``/output/shared/`` URLs.
+
+    Same step the chat saver runs (``chat_turn_persist``), so the child bubble
+    and the result handed to the parent both carry a link that renders.
+    """
+    key = "response" if result.get("response") else "output"
+    text = result.get(key)
+    if not isinstance(text, str) or not text:
+        return
+    try:
+        from api.shared_media import rewrite_local_media_refs
+
+        staged_text, n_staged = rewrite_local_media_refs(text)
+        if n_staged:
+            result[key] = staged_text
+    except Exception as exc:
+        print(f"[SUBAGENTS] shared media rewrite failed: {exc}", flush=True)
+
+
 def _persist_assistant(
     db,
     session_id: int,
@@ -458,6 +478,7 @@ def run_child_turn(
     except Exception:
         pass
 
+    _stage_reply_media(result)
     text = str(result.get("response") or result.get("output") or "").strip()
     already = store.latest_assistant_text(db, child.session_id)
     if text and text != already:

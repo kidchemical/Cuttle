@@ -59,6 +59,14 @@ existing on disk or appearing in a tool preview does not verify the chat attachm
 Pass raw filesystem paths to the staging API, not URL-encoded paths. Local-path
 auto-staging remains a compatibility feature, not the agent delivery recipe.
 
+### Linking other Cuttle-served files (reports, HTML)
+
+A file under `<home>/output/` is served at `/output/…` to any signed-in client.
+Link it with the relative path, for example `[Trim plan](/output/reports/plan.html)`:
+chat turns it into a link on whatever address the user is on (localhost, LAN,
+Tailscale). Never hardcode a host or IP; the agent cannot see how the user is
+connected.
+
 ### Descriptions (optional)
 
 Add a short label **and** a longer description when context helps (what changed,
