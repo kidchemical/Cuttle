@@ -158,8 +158,8 @@ def _resolve_agent_cwd(adapter, project_path: Optional[str]) -> str:
     """Chip path wins for every agent. Adapters may only refine within that project.
 
     Cursor used to pin ``--workspace`` to whichever folder last saved a
-    ``--resume`` UUID for the chat, so an Escape Purgatory chip still launched
-    inside Cuttle (CH-000164). Future adapters that fall back to process cwd
+    ``--resume`` UUID for the chat, so a different project chip still launched
+    inside Cuttle. Future adapters that fall back to process cwd
     hit the same trap — constrain here so they cannot.
     """
     base = resolve_harness_cwd(

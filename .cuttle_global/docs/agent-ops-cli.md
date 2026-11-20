@@ -1,5 +1,7 @@
 # Agent ops CLIs (global)
 
+Chat handles in the examples are fictional. Substitute handles from the current installation.
+
 Cuttle’s product UI is the daemon + web/Electron chat. Separately, agents
 need **stable shell verbs** for local ops (transcripts, workers, brain, Discord REST, …).
 
@@ -59,7 +61,7 @@ Cuttle-as-MCP-server (`run_cuttle_mcp.py`, Tools-page pack toggles, pipeline MCP
 From the Cuttle repo root with the **project venv** (not bare `python`):
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.chat_cli get CH-000430-99 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli get CH-900003-99 --json
 ```
 
 Put flags after the verb. `PYTHONPATH=src` resolves the package under `src/api`;
@@ -80,7 +82,7 @@ the path and use the Windows interpreter; for example:
 
 ```powershell
 $env:PYTHONPATH = "src"
-.\.venv\Scripts\python.exe -m api.chat_cli get CH-000430-99 --json
+.\.venv\Scripts\python.exe -m api.chat_cli get CH-900003-99 --json
 ```
 
 Use PowerShell backticks for multiline continuation and single-quoted JSON

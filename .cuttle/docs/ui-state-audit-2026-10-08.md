@@ -3,7 +3,7 @@
 > **Status: historical dated audit.** Findings below describe pre-fix behavior at
 > `0b13b64`; do not cite them as current.
 
-Continuation of CH-001118-5 and Cursor's incomplete survey in CH-001118-6.
+Continuation of an earlier incomplete survey.
 Audited dev at `0b13b64`, including the detached completion fix `72a9b7d`.
 The survey below records the pre-fix behavior. Implementation and verification
 are recorded at the end.

@@ -22,7 +22,7 @@ expect = pw.expect
 
 REPO = Path(__file__).resolve().parents[3]
 SHOTS = REPO / "temp" / "studio_shots" / "l4"
-MOCK_SCENES = Path("/mnt/galaxy/Dev/Cuttle Promo/v4/project/film/scenes")
+MOCK_SCENES = REPO / "temp" / "studio-reference" / "film/scenes"
 
 SCRIPTS = [
     "/js/shared/chat_display.js",

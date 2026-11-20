@@ -108,6 +108,10 @@ domain decisions, and owned layers never import `web_chat_api`). Line ceilings
 and boundaries are enforced by `src/tests/quality/`. **Before working in a row,
 read its full entry (modules, entry interface, tests) in
 [`docs/architecture/task-owners.md`](docs/architecture/task-owners.md).**
+Building blocks (dropdowns, modals, agent/project pickers, toasts, model lists,
+helpers) have one implementation each: look them up in
+[`docs/architecture/canonical-components.md`](docs/architecture/canonical-components.md)
+and use or extend that owner — never a look-alike variant.
 
 | Task | Owner |
 |---|---|
@@ -187,7 +191,7 @@ Cuttle connects to user-managed servers and never owns their lifecycle.
 
 ## Self Improvement
 
-Portable lessons belong in `AGENTS.md`, architecture docs, or tests; public bugs and feature requests are GitHub issues. The maintainer's process backlog is install-local in `.cuttle/personal/learnings/` (`LEARNINGS.md`, `ERRORS.md`, `FEATURE_REQUESTS.md`; gitignored, absent on a fresh clone); use structured entries (`[LRN-YYYYMMDD-XXX]`, `[ERR-...]`, `[FEAT-...]`) with Priority, Status, Area, Metadata. Not Context Compiler `docs/` — open on demand only.
+Record portable lessons in architecture docs or regression tests. Report public bugs and feature requests through GitHub issues. Keep personal workflows in the install-local overlay.
 
 ## Important Conventions
 
@@ -198,7 +202,7 @@ Portable lessons belong in `AGENTS.md`, architecture docs, or tests; public bugs
 
 ### Chat attachments (images / PDFs / voice clips)
 
-No CLI harness accepts image input: `src/api/vision_prepass.py` turns uploads
+Cuttle sends attachment content to its CLI harnesses as text: `src/api/vision_prepass.py` turns uploads
 into a text digest that is **appended** (never prefixed) above every slash-agent
 handler; history keeps the short `[Attached: …]` note plus `metadata.attachments`.
 Speech to text is one setting (`api.voice_stt`). Details and tests:

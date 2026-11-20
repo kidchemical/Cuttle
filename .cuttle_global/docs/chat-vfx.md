@@ -1,5 +1,7 @@
 # Chat visual effects
 
+Chat handles in the examples are fictional. Substitute handles from the current installation.
+
 Agents publish transient effects through `api.chat_vfx`. No experimental flag is
 required. Effects target a numeric chat session or CH handle; confetti draws inside
 the open chat pane and honors reduced-motion, animation, and notification preferences.
@@ -7,9 +9,9 @@ the open chat pane and honors reduced-motion, animation, and notification prefer
 From the Cuttle checkout, with the project venv:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.chat_vfx confetti --session CH-000927 --count 120
-PYTHONPATH=src .venv/bin/python -m api.chat_vfx toast --session CH-000927 "Done" --variant success
-PYTHONPATH=src .venv/bin/python -m api.chat_vfx pending --session CH-000927
+PYTHONPATH=src .venv/bin/python -m api.chat_vfx confetti --session CH-900010 --count 120
+PYTHONPATH=src .venv/bin/python -m api.chat_vfx toast --session CH-900010 "Done" --variant success
+PYTHONPATH=src .venv/bin/python -m api.chat_vfx pending --session CH-900010
 ```
 
 Library: `spawn_confetti(session_id, count=120)`, `toast(session_id, message,
@@ -43,7 +45,7 @@ the path and use the Windows interpreter; for example:
 
 ```powershell
 $env:PYTHONPATH = "src"
-.\.venv\Scripts\python.exe -m api.chat_vfx pending --session CH-000927
+.\.venv\Scripts\python.exe -m api.chat_vfx pending --session CH-900010
 ```
 
 Use PowerShell backticks for multiline continuation and single-quoted JSON

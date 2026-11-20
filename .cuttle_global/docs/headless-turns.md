@@ -9,12 +9,18 @@ Cuttle harness agents (Cursor `agent -p`, etc.) are **one-shot** CLI runs per tu
   Exception — **Claude Code**: while your own background tasks (`Bash` with
   `run_in_background`, `Monitor`) are still running, Cuttle keeps the turn open
   (the chat shows "waiting on background task: …") and their completion
-  notification continues the **same reply**. The wait is capped (default 50 min,
-  `CLAUDE_BACKGROUND_WAIT_SEC`; `0` disables). At the cap the turn stops waiting, but
+  notification continues the **same reply**. The wait is capped: one idle budget for
+  the whole turn (default 50 min, `CLAUDE_BACKGROUND_WAIT_SEC`; `0` disables), which
+  a follow-up reply does not refill, and 5 min in a sub-agent child chat
+  (`CLAUDE_SUBAGENT_BACKGROUND_WAIT_SEC`), whose parent is blocked meanwhile. At the cap the turn stops waiting, but
   background shells that are still running keep going: Cuttle tells the chat when each
   one ends (a Cuttle notice turn with its output tail), so you pick the result up then.
   In-CLI tasks with no process of their own (Claude `Task` agents) end with the turn.
   Do not start background work you do not intend to wait for (dev servers).
+  A background task reports by itself when it exits: never add a second task
+  (`sleep` / `pgrep` loop, `Monitor`) to wait for it, since a waiter that never
+  exits holds the turn open to the cap (`pgrep -f <name>` matches the shell
+  running the loop). Stop tasks you no longer need (`TaskStop`) before the final reply.
 - Do **not** launch Cursor/Codex **CLI background** subagents or defer with “I'll dig into…”.
 - Independent parallel work belongs in **Cuttle child chats**:
   `python -m api.subagents` (see [subagents.md](subagents.md)). Those sessions

@@ -129,15 +129,15 @@ Per `(agent, model)` [and optionally `(task_type, difficulty)`]:
 
 1. Discover available targets (installed CLIs + configured API keys).
 2. Seed with **benchmark-backed priors** (our eval suites + published RouterBench-style difficulty bands) — not empty weights.
-3. Prefer cheapest capable tier for `low`/`basic_ask`; escalate on task fail; fallback on transport/budget.
+3. Prefer cheapest capable tier for `low`/`basic_ask`; treat task failure as terminal and use fallback for targets that never ran.
 4. After N local outcomes (e.g. 20+ per target), priors yield to **personal** EWMA.
 5. Surface a quiet health chip: green / yellow (“degraded — routing around”) / red (“unavailable”).
 
 ---
 
-## Awaiting your approval — who decides what
+## Proposed authority order
 
-Draft authority order (not locked — finalize before Phase 0 is coded):
+Historical proposal for adaptive routing. The current use-case table and bypass rules are documented in the [router guide](../../docs/guides/AGENT_ROUTER.md).
 
 1. **This message** — `/cursor …`, `/route …`. Always wins.
 2. **Pinned / starred agent** — the chat already has an agent. Router is bypassed.
@@ -145,13 +145,11 @@ Draft authority order (not locked — finalize before Phase 0 is coded):
 4. **Learned adjustments (Phases B–C)** — only inside the limits you allow, and only when adaptation is on.
 5. **Built-in defaults** — used only where you haven't expressed a preference.
 
-Also draft (same approval gate):
+Proposed adaptation settings:
 
 - Adaptation is a switch (`agent_router.adaptive`). Proposed default: **off** (telemetry reports only until you turn learning on).
 - Learned changes never silently rewrite the Phase 0 table — they stay suggestions until you accept them.
-- Exact edge cases to settle with you: starring CuttleRouter itself vs starring Cursor; whether the table may demote a target that was preferred but is currently failing; whether `/route` updates the table or is one-shot only.
-
-**Do not treat this section as decided.** When you approve (or rewrite) it, move the final version into Decisions and implement Phase 0 against that.
+- Open design questions include starring CuttleRouter itself vs starring Cursor; whether the table may demote a target that was preferred but is currently failing; whether `/route` updates the table or is one-shot only.
 
 ## Phased TODO
 
@@ -290,14 +288,14 @@ Reuse `<vega>` / fenced vega-lite already supported in Cuttle chat.
 ## Decisions
 
 1. **Name:** CuttleRouter.
-2. **Quality checks:** support both human feedback and an optional judge model. This install will use Cursor for judging.
+2. **Quality checks:** support both human feedback and an optional judge model.
 3. **Default behavior:** no starred/pinned agent or model means use CuttleRouter. A star/pin is an explicit bypass.
 4. **Router contract:** task + available targets go in; chosen target + reason come out. Cuttle’s shared agent harness runs it. A network proxy API is not required for the first version.
-5. **CuttleRouter is a harness agent** (a **router-harness**). It ships as a normal agent under the new harness pattern (`manifest.yaml` + `adapter.py`), so it can be invoked, pinned, and starred exactly like Cursor or OpenCode. It decides a target and delegates through the shared kernel.
-6. **Preferences exist as a first-class table (Phase 0).** How that table ranks against the brain, learning, pins, and defaults is **not decided yet** — see “Awaiting your approval.”
+5. **Proposed router adapter.** The proposal would expose routing as a normal agent under the new harness pattern (`manifest.yaml` + `adapter.py`), so it could be invoked, pinned, and starred like other agents. It would select a target and delegate through the shared kernel.
+6. **Preferences exist as a first-class table (Phase 0).** How that table ranks against the brain, learning, pins, and defaults is **not decided yet** — see “Proposed authority order.”
 7. **Pluggable routing brain.** CuttleRouter can think in more than one way; modularity is required:
    - **Programmatic** — regex / rules, and later CuttleBrain algorithms or specs you define
-   - **LLM API** — e.g. OpenAI `gpt-4o-mini` (planned default for this install)
+   - **LLM API** — e.g. OpenAI `gpt-4o-mini`
    - **Local LLM** — future experiment
    - **Harness agent as brain (experimental)** — e.g. Cursor Agent Auto while usage is free; another harness agent may be wired as the routing brain
 8. **Nested query reports are intentional.** When CuttleRouter delegates to Cursor (or any agent), two query reports / run registrations for one user turn are a feature: one for the routing decision, one for the delegated work. Do not collapse them away.
@@ -321,8 +319,6 @@ Reuse `<vega>` / fenced vega-lite already supported in Cuttle chat.
 | LLM brains | `openai/gpt-4o-mini`, future local model ids | Cheap/fast routing LLMs |
 | Harness brains (experimental) | `cursor/auto`, later other agents | Use another agent harness as CuttleRouter’s thinking step |
 
-Concrete planned configs for this install: OpenAI gpt-mini as the primary routing LLM; Cursor Agent Auto as an experimental free-window brain. Local LLMs later. Programmatic / CuttleBrain paths stay first-class so routing never *requires* an LLM.
-
 Implementation notes:
 
 - The adapter must refuse to select itself as the *execution* target (reuse the recursion guard). Selecting another harness as the *brain* is allowed and experimental.
@@ -332,10 +328,10 @@ Implementation notes:
 ## Still open
 
 1. Where should shared, opt-in health aggregation live if Phase F ships?
-2. Which exact Cursor model and sampling rate should judge completed work without wasting budget?
+2. Which judge model and sampling rate should judge completed work without wasting budget?
 3. **Slash name for the CuttleRouter agent** — still thinking. `/router` is already the config command. Options include `/cuttle`, `/auto`, or move config under `/router config …` and give the agent `/router`. No pick yet.
-4. Which task kinds should the Phase 0 table ship with? Current router vocabulary is `basic_ask`, `coding`, `debugging`, `architecture`, `research`, `other` — good enough to start, but the table is what you'll actually read, so the names should make sense to you.
-5. **Authority order + adaptation defaults** — draft lives under “Awaiting your approval.” Needs your finalize/approve before Phase 0 coding.
+4. Which additional kinds of work, if any, warrant their own row in the existing use-case table?
+5. **Authority order + adaptation defaults** — see the proposed authority order.
 6. How should policy modes and brain ids share the harness `models` list without looking confusing in the palette (namespacing? two fields?)?
 
 ---

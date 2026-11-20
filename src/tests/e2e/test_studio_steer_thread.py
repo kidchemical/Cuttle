@@ -12,6 +12,7 @@ re-paint receipts only; other rows keep their DOM nodes.
 import re
 from pathlib import Path
 
+import pytest
 from playwright.sync_api import expect
 
 from .test_shared_diff_modal import browser, static_server  # noqa: F401
@@ -25,7 +26,7 @@ GROUP_REPLY = "Got it: lowercase flag, and the vendored folder is skipped."
 IDLE_REPLY = "The build is green."
 REPO = Path(__file__).resolve().parents[3]
 SHOTS = REPO / "temp" / "studio_shots" / "L6"
-MOCK = Path("/mnt/galaxy/Dev/Cuttle Promo/v4/project/film/scenes/steer.html")
+MOCK = REPO / "temp" / "studio-reference" / "film/scenes/steer.html"
 
 ROW_JS = r'''
 window.mkRow = (o) => {
@@ -202,6 +203,7 @@ def test_steer_thread_classic_is_unchanged(browser, static_server):  # noqa: F81
         page.close()
 
 
+@pytest.mark.skipif(not MOCK.is_file(), reason="optional Studio reference scene unavailable")
 def test_mock_frame_for_the_side_by_side(browser):
     page = browser.new_page(viewport={"width": 1920, "height": 1080})
     # Offline: only the local scene is loaded (its web fonts are skipped).

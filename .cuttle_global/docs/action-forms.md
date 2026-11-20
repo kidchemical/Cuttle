@@ -82,6 +82,11 @@ The server (`rewrite_action_forms` → `merge_qa_resume_specs`) folds 2+ Q&A res
 cards in one reply into a single `form` with one Submit as a safety net, but
 emit the combined form yourself. Side-effect cards (real `action`) are never merged.
 
+**A typed reply closes the card.** When the user answers in chat instead of
+clicking, the earlier one-shot card locks as "Ignored". Treat their message as
+the answer, and never point back to an old card as still open. Anything still
+undecided goes on a new card in this reply (restart cards are exempt; see below).
+
 ```xml
 <cuttle_action_form>
 {

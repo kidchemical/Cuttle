@@ -1,8 +1,7 @@
 # Studio display mode — plan and gap inventory
 
 Status: **shipped behind the experimental flag `chat_studio_display` (default off), 2026-11-18.**
-Plan approved with changes by expert review (CH-002621 Codex, CH-002622 Claude),
-reconciled 2026-11-18 in CH-002620. Tasks list: `studio-display`.
+Plan approved with changes by expert review, reconciled 2026-11-18.
 **The "Decisions" section below overrides the gap inventory where they differ.**
 
 **Revised 2026-11-19 (theme and font rework):** Studio no longer has its own palette or
@@ -20,19 +19,15 @@ Feature entry and teardown list: [experimental-features.md](experimental-feature
 ## Goal
 
 A second chat display mode, **Studio**, that looks and behaves like the v4
-promo mocks. Classic stays as it is today. Switch: Settings → Chat → Display
+promo mocks. Classic stays as it is today. Switch: Settings → Appearance → Display
 (Classic | Studio), behind one experimental flag `chat_studio_display`
 (default off, `.cuttle/docs/experimental-features.md` practice).
 
 The visual spec is the promo scene HTML, not prose. Every surface finishes
 with a side-by-side screenshot (real UI vs the promo frame) for user review.
 
-- Scenes: `/mnt/galaxy/Dev/Cuttle Promo/v4/project/film/scenes/*.html`
-  (shared `../kit.css`, `../kit.js`), intro composer in
-  `project/intro/chat_template.html`.
-- Video: `/mnt/galaxy/Dev/Cuttle Promo/v4/cuttle-promo-v4.mp4`
-  (timestamps below refer to it).
-- Contact sheet: `project/sheet_v4.jpg`.
+The promo scenes, video, and contact sheet were external design references and
+are not included in this repository. Timestamps below refer to the promo video.
 
 ## Rules for the work
 

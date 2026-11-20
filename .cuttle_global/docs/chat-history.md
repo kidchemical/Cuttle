@@ -1,5 +1,7 @@
 # Cuttle chat history
 
+Chat handles in the examples are fictional. Substitute handles from the current installation.
+
 Transcripts live in a **gitignored SQLite DB**, not in the working tree. Empty
 `rg`/`grep` over the repo is **not** evidence that Cuttle has no chats — never
 answer “no traces of Cuttle chats found” on that basis alone.
@@ -15,12 +17,12 @@ library the UI uses for share indices):
 
 ```bash
 # From Cuttle repo root — always use the project venv (bcrypt + api on path)
-PYTHONPATH=src .venv/bin/python -m api.chat_cli get CH-000430-99 --json
-PYTHONPATH=src .venv/bin/python -m api.chat_cli get CH-000430 --json
-PYTHONPATH=src .venv/bin/python -m api.chat_cli session CH-000430 --limit 40 --json
-PYTHONPATH=src .venv/bin/python -m api.chat_cli session CH-000430 --all --json
-PYTHONPATH=src .venv/bin/python -m api.chat_cli search "flask restart" --from-chat CH-000465 --json
-PYTHONPATH=src .venv/bin/python -m api.chat_cli parse CH-000430-99 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli get CH-900003-99 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli get CH-900003 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli session CH-900003 --limit 40 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli session CH-900003 --all --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli search "flask restart" --from-chat CH-900004 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli parse CH-900003-99 --json
 ```
 
 Do **not** call a bare `python` / system interpreter — missing venv deps used to
@@ -58,11 +60,11 @@ The acting chat defaults to `CUTTLE_CHAT_SESSION_ID` (already set inside a
 Cuttle turn); pass `--as CH-…` otherwise. Both chats must have the same owner.
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.chat_cli status   CH-001548 --json
-PYTHONPATH=src .venv/bin/python -m api.chat_cli snapshot CH-001548 --usage codex --json
-PYTHONPATH=src .venv/bin/python -m api.chat_cli send     CH-001548 --text "Continue with the next open task." --json
-PYTHONPATH=src .venv/bin/python -m api.chat_cli stop     CH-001548 --json
-PYTHONPATH=src .venv/bin/python -m api.chat_cli supervise CH-001548 --every 900 --agent cursor \
+PYTHONPATH=src .venv/bin/python -m api.chat_cli status   CH-900011 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli snapshot CH-900011 --usage codex --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli send     CH-900011 --text "Continue with the next open task." --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli stop     CH-900011 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli supervise CH-900011 --every 900 --agent cursor \
   --involve blocked --require-branch dev/multiplayer --forbid-branch dev/core --forbid-branch master \
   --model-tiers '{"worker":["cursor auto","codex terra medium"],"expert":["claude opus"]}' --json
 PYTHONPATH=src .venv/bin/python -m api.chat_cli operations --json
@@ -140,11 +142,11 @@ not change the supervisor chat or its schedule. Use the target's harness prefix
 and a model/effort supported by that harness, for example:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.chat_cli send CH-001548 \
+PYTHONPATH=src .venv/bin/python -m api.chat_cli send CH-900011 \
   --text "/claude model claude-opus-5-5" --json
-PYTHONPATH=src .venv/bin/python -m api.chat_cli send CH-001548 \
+PYTHONPATH=src .venv/bin/python -m api.chat_cli send CH-900011 \
   --text "/claude effort medium" --json
-PYTHONPATH=src .venv/bin/python -m api.chat_cli send CH-001548 \
+PYTHONPATH=src .venv/bin/python -m api.chat_cli send CH-900011 \
   --text "/claude Continue with the next open task." --json
 ```
 
@@ -161,7 +163,7 @@ Sends and supervision need the host up (Flask on loopback); read-only `get` /
 
 ## Supervision timeline
 
-`PYTHONPATH=src .venv/bin/python -m api.chat_cli timeline CH-001548 --limit 50 --json`
+`PYTHONPATH=src .venv/bin/python -m api.chat_cli timeline CH-900011 --limit 50 --json`
 reads the supervisor chat's combined feed. Use `--before <next_before>` for the
 next page and `--include-quiet` to include skipped and unchanged checks. The
 owner-only route is `GET /api/chat-ops/sessions/<session>/timeline`, with the
@@ -192,7 +194,7 @@ Older telemetry contains only the fields originally recorded.
 - Never reuse a session id from an example or from this doc’s sample numbers — that
   reads a stranger’s conversation. Use the id named in your turn briefing, or the
   `CH-` handle the user gave you.
-- **In replies:** cite as bare `CH-000182` (Cuttle linkifies the badge). Do not wrap
+- **In replies:** cite as bare `CH-900001` (Cuttle linkifies the badge). Do not wrap
   in `[CH-…](file://…)` — that becomes a file chip. Rule: `.cuttle_global/rules/01-chat-handles.md`.
 
 ## Database
@@ -233,7 +235,7 @@ the path and use the Windows interpreter; for example:
 
 ```powershell
 $env:PYTHONPATH = "src"
-.\.venv\Scripts\python.exe -m api.chat_cli get CH-000430-99 --json
+.\.venv\Scripts\python.exe -m api.chat_cli get CH-900003-99 --json
 ```
 
 Use PowerShell backticks for multiline continuation and single-quoted JSON

@@ -6219,7 +6219,7 @@
      * Keep the in-memory auth session + last /messages hydrate in sync with the
      * chip the user just picked. reconcileChatProject() prefers
      * lastHydratedSessionProject over local prefs; leaving it stale (e.g. Cuttle
-     * from open) made /project → Escape Purgatory snap back on send/reload.
+     * from open) made /project → Demo Game snap back on send/reload.
      */
     function rememberSessionProject(sessionId, proj) {
         if (sessionId == null || sessionId === '') return;
@@ -6483,7 +6483,7 @@
             reconcileChatProject();
         }
         // Always re-bind path from the live projects list when we have an id/name.
-        // Stale localStorage often keeps name "Escape Purgatory" with path Cuttle.
+        // Stale localStorage often keeps name "Demo Game" with path Cuttle.
         const rebound = CuttleChatProject.rebindProjectToRegistry(currentProject, projects);
         assignChatProject(rebound.proj);
         if (rebound.changed && session.current()) persistProjectForCurrentSession();

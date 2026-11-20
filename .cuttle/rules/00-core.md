@@ -13,7 +13,6 @@ Applies only when the chat targets the Cuttle repo itself. Global etiquette
 | `electron/` | Host/Client shell (`electron/package.json` owns mesh `cuttle_version`) |
 | `.cuttle_global/` | Shared global config (rules/docs/actions/scripts for every project) |
 | `.cuttle/` | This repo's own commands/rules/actions/docs (this file's tree) |
-| `.cuttle/personal/learnings/` | Install-local FEAT/ERR/LRN backlog (gitignored; not Brain-injected) |
 
 ## Hard rules
 
@@ -63,3 +62,11 @@ Applies only when the chat targets the Cuttle repo itself. Global etiquette
    ceilings in `src/tests/quality/test_composition_root_growth.py` fail the build
    on regrowth. Owner map: `docs/architecture/repository-map.md`; principle:
    `docs/architecture/ARCHITECTURE_PRINCIPLES.md` §2 (composition roots compose).
+
+9. **Reuse the canonical building block (no parallel variants)** — when adding
+   or changing a UI control (dropdown, modal, picker, chip, toast), a data list
+   a picker shows, or a helper in Cuttle, look it up in
+   `docs/architecture/canonical-components.md` first and use or extend that
+   owner. Never ship a second implementation that looks or fetches
+   differently; a genuinely new primitive is built shared and registered there
+   in the same change. Not for one-off page layout or copy.

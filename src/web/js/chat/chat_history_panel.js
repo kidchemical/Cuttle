@@ -915,7 +915,7 @@
             return { token, start, before: text.slice(0, start) };
         }
 
-        /** True when project name/path matches a slash query like "esc" → Escape Purgatory. */
+        /** True when project name/path matches a slash query like "dem" → Demo Game. */
         function historyProjectMatchesQuery(proj, query) {
             const q = String(query || '').trim().toLowerCase();
             if (!q) return true;
@@ -924,10 +924,10 @@
             const hay = (name + ' ' + path).trim();
             if (!hay) return false;
             if (hay.includes(q)) return true;
-            // Word / path-segment prefixes: "esc" → "escape", "ep" → no unless present
+            // Word / path-segment prefixes: "dem" → "demo", "dg" → no unless present
             const parts = hay.split(/[^a-z0-9]+/).filter(Boolean);
             if (parts.some((w) => w.startsWith(q))) return true;
-            // Compact acronym-ish: "ep" from "Escape Purgatory"
+            // Compact acronym-ish: "dg" from "Demo Game"
             if (q.length >= 2) {
                 const initials = parts.map((w) => w[0]).join('');
                 if (initials.startsWith(q) || initials.includes(q)) return true;
@@ -1010,7 +1010,7 @@
             } else if (agentCmd) {
                 pushHistoryAgentPaletteItems(items, String(agentCmd[1] || '').trim());
             } else {
-                // Bare query: /esc → Escape Purgatory, /cur → Cursor, etc.
+                // Bare query: /dem → Demo Game, /cur → Cursor, etc.
                 pushHistoryProjectPaletteItems(items, q);
                 pushHistoryAgentPaletteItems(items, q);
             }

@@ -402,7 +402,7 @@ def test_user_row_stores_only_well_formed_op_ids(chats):
 
 
 def _snap(state, *, branch="dev/multiplayer", reply_id=1, done=0):
-    return {"handle": "CH-000002", "state": state, "branch": branch, "execution_path": "/galaxy/wt",
+    return {"handle": "CH-000002", "state": state, "branch": branch, "execution_path": "/example/worktrees/demo",
             "warnings": [], "live": {"status": "working"}, "latest_reply": {"id": reply_id, "content": "…"},
             "tasks": [{"id": "plan", "title": "Tasks", "done": done, "total": 3}]}
 
@@ -971,7 +971,7 @@ def test_checkin_text_is_markdown_without_raw_json():
     cfg = {"agent": "cursor", "instructions": "Keep going.", "model_tiers": {"worker": ["cursor auto"]}}
     text = worker.checkin_text(cfg, snap, ["target is on forbidden branch 'main'"])
     assert text.startswith("/cursor **Supervision check-in for CH-000002**: idle with open Tasks items.")
-    assert "Branch `dev/multiplayer` · checkout `/galaxy/wt`" in text
+    assert "Branch `dev/multiplayer` · checkout `/example/worktrees/demo`" in text
     assert "- target is on forbidden branch 'main'" in text and "- Tasks: 1/3 done" in text
     assert "> Line one\n>\n> Line two" in text and "- worker: cursor auto" in text
     assert "{" not in text and "\\n" not in text

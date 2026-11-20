@@ -41,7 +41,7 @@ Download the current release from [GitHub Releases](https://github.com/kidchemic
 
   If FUSE is unavailable, install `libfuse2` or run it with `--appimage-extract-and-run`. On distributions that restrict unprivileged user namespaces (Ubuntu 24.04+), the AppImage cannot start Chromium's sandbox and exits with a `chrome-sandbox` error; use the `.deb` there.
 
-Verify downloaded artifacts against `SHA256SUMS` from the same release (`sha256sum -c SHA256SUMS --ignore-missing` on Linux; use `Get-FileHash -Algorithm SHA256 <file>` on Windows and compare the result). Windows builds are not code-signed, so SmartScreen warns on first run: verify the checksum, then choose **More info → Run anyway**.
+Verify downloaded artifacts against `SHA256SUMS` from the same release (`sha256sum -c SHA256SUMS --ignore-missing` on Linux; use `Get-FileHash -Algorithm SHA256 <file>` on Windows and compare the result). For Windows executables, check the release notes for signing status and inspect the Authenticode signature when provided.
 
 Runtime data stays in your per-user Cuttle home: `%LOCALAPPDATA%\Cuttle` on Windows or `~/.local/share/cuttle` on Linux. Set `CUTTLE_HOME` to use another location. Packaged installs check GitHub Releases for new versions; install the new download to update (`sudo apt install ./Cuttle-<new>-amd64.deb` upgrades the deb in place). They do not update from Git. Vendor agent CLIs (Cursor, Codex, Claude Code, and others) are BYO and must be installed and authenticated separately.
 
@@ -75,8 +75,6 @@ The codebase is set up so an agent can do that well:
     <td width="50%"><img src="docs/media/dashboards.webp" alt="Know which model earns its cost: the Model Benchmarks dashboard plotting cost, pass rate, and duration in 3D"></td>
   </tr>
 </table>
-
-<img src="docs/media/ide.webp" alt="The editor you know, with every agent in it: the built-in IDE showing an agent's edits with Keep or Undo per hunk and the project chat beside the editor" width="100%">
 
 <img src="docs/media/customize.webp" alt="Make it yours, one prompt at a time: Matrix, Synthwave, Sakura, Nordic, RGB, Lavender, Graphite, and Mint themes, each with a matching video wallpaper and a different pane layout" width="100%">
 
@@ -136,7 +134,7 @@ Provider keys are optional; configure them in Settings when needed. You do not
 need to create an `.env` file before the first launch. Install and authenticate
 your chosen agent CLI separately.
 
-Cuttle never writes inside the folder you installed or cloned it to. Chats,
+Chats,
 settings, uploads, logs, keys and secrets live in your per-user **Cuttle home**
 (`~/.local/share/cuttle` or `%LOCALAPPDATA%\Cuttle`; set `CUTTLE_HOME` to move
 it), so a read-only install or an upgrade never touches your data. See
@@ -146,7 +144,7 @@ Open [https://127.0.0.1:8080](https://127.0.0.1:8080) (self-signed HTTPS). Confi
 
 Always-on Linux box with no desktop (spare laptop, mini PC)? Run it as a systemd service: [`docs/guides/HEADLESS_SERVER.md`](docs/guides/HEADLESS_SERVER.md).
 
-The daemon owns Flask (port **8080**), cron, the tray icon, and the local worker loop. It does **not** start a Discord gateway. To run Flask alone (no tray or cron), prefer `python src/api/web_chat_api.py` from the repo (see [`docs/architecture/repository-map.md`](docs/architecture/repository-map.md)).
+The daemon starts Flask (HTTPS port **8080** by default), manages restarts, and runs the tray and optional local worker loop. For isolated development against a second instance, see the [development instance guide](docs/architecture/development-instance-safety.md).
 
 ### Try it
 
@@ -157,7 +155,7 @@ Install and authenticate the chosen vendor CLI separately: Codex uses `codex log
 3. Click the Cuttle logo at the top of the left rail to open a chat on the right; **Alt**+click splits below. Drag the divider to resize.
 4. Open **Settings → Theme** to switch themes, or paste a YouTube link into the video wallpaper playlist.
 5. Open **Dashboards → Model Benchmarks** to compare providers by cost, pass rate, and duration.
-6. Launch the Electron Client on a second PC. It connects to your Host and enrolls as a Cuttle Workers node automatically.
+6. Launch the Electron Client on a second PC. Connect it to the Host, then approve its pairing code in **Jobs → Devices → Pending pairing** to enroll it as a worker.
 
 ### Electron desktop
 
@@ -201,9 +199,9 @@ flowchart LR
   subgraph AgentOps
     DiscordREST[Discord REST read/post]
   end
-  Daemon[cuttle_daemon<br/>tray · cron · hot reload] -. spawns .-> API
+  Daemon[cuttle_daemon<br/>tray · restart watchers] -. spawns .-> API
   Web & Desk & Phone --> API[Flask API :8080]
-  DiscordREST -.-> API
+  API -.-> DiscordREST
   API --> Router[Agent router]
   Router --> Harness[Agent harness adapters]
   Harness --> CLIs[Cursor · Codex · Claude · Muse · Hermes · DeepSeek · OpenCode]
@@ -216,7 +214,7 @@ flowchart LR
 
 | Path | Purpose |
 | --- | --- |
-| `src/scripts/cuttle_daemon.py` | Daemon: spawns Flask, runs cron, the tray icon, hot reload, and the local worker loop. |
+| `src/scripts/cuttle_daemon.py` | Daemon: starts and monitors Flask, manages the tray, and runs the local worker loop. |
 | `src/api/` | Flask API (`web_chat_api.py`), chat delivery, action forms, and the `python -m api.*` agent ops CLIs. |
 | `src/api/agent_harness/` | Harness adapters and the bundled agent catalog (`agents/`). |
 | `src/api/agent_router/` | Picks a harness per turn and handles escalation. |
@@ -234,13 +232,13 @@ flowchart LR
 
 | File | Purpose |
 |------|---------|
-| Cuttle home | All runtime state, per user: `~/.local/share/cuttle` (Linux/macOS) or `%LOCALAPPDATA%\Cuttle` (Windows); `CUTTLE_HOME` overrides. The install folder is never written. [Layout](docs/architecture/cuttle-home.md). |
+| Cuttle home | All runtime state, per user: `~/.local/share/cuttle` (Linux/macOS) or `%LOCALAPPDATA%\Cuttle` (Windows); `CUTTLE_HOME` overrides. [Layout](docs/architecture/cuttle-home.md). |
 | `<home>/.env` | Secrets. Start from `src/.env.example`. |
 | `<home>/config/settings.json` | Runtime preferences, agent router, steering toggles |
 | `<home>/personal/` | Install-local overlay of `.cuttle_global/`. |
 | `.cuttle_global/` | Shared configuration for all projects ([reference](.cuttle_global/README.md)). |
 | `.cuttle/` | Cuttle repository project configuration ([reference](.cuttle/README.md)). |
-| `.cuttle/personal/` | Install-local project overlay (gitignored). Rule/doc Markdown appends a delta; supported YAML overlays replace by basename. See the [overlay contract](docs/architecture/cuttle-home.md#personal-overlays). |
+| `.cuttle/personal/` | Install-local project overlay (gitignored). Rule/doc Markdown appends a delta; commands and actions replace by declared name, and skills replace by directory id. See the [overlay contract](docs/architecture/cuttle-home.md#personal-overlays). |
 | `_personal/` | **Deprecated** dogfood skills/docs (gitignored); not part of the product. Do not recreate — install-local material belongs in the Cuttle home. |
 | `/settings_page.html` | API keys and preferences in the UI |
 
@@ -319,7 +317,7 @@ Captures use the Light theme at 2x and are framed by [`readme_promo.py`](src/scr
 
 ## Code signing policy
 
-Windows release executables (`Cuttle-<version>-x64.exe`, `Cuttle-<version>-portable.exe`) are built by [GitHub Actions](.github/workflows/release.yml) from this repository and signed through SignPath's open-source program. Releases published before signing was approved are unsigned; verify those with `SHA256SUMS`.
+Windows release executables (`Cuttle-<version>-x64.exe`, `Cuttle-<version>-portable.exe`) are built by [GitHub Actions](.github/workflows/release.yml) from this repository and can be signed through SignPath when release signing is configured. Verify downloads against the release’s `SHA256SUMS`.
 
 Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
 

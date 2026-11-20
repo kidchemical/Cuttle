@@ -9,14 +9,11 @@ Do not open a public issue for a security problem.
 Include what you can: affected version or commit, how Cuttle was running
 (daemon, Electron Host/Client, Android app), steps to reproduce, and impact.
 
-Cuttle is maintained by one person. Expect an acknowledgement within about a
-week. Fixes land on `main` first; once releases exist, the advisory will name
-the first fixed release.
+Expect an acknowledgement within about a week. The advisory identifies the first release that includes the fix.
 
 ## Supported versions
 
-Only the latest `main` (and, once published, the latest GitHub Release) gets
-security fixes.
+Security fixes target the current `main` branch and the latest GitHub Release.
 
 ## Threat model
 

@@ -25,12 +25,12 @@ node_only = pytest.mark.skipif(
 HARNESS = """
 const P = require(process.env.MOD_JS);
 const CUTTLE = { id: 4, name: 'Cuttle', path: 'C:\\\\Projects\\\\Cuttle\\\\src' };
-const EP = { id: 7, name: 'Escape Purgatory', path: 'E:\\\\Projects\\\\DemoGame' };
-const projects = [CUTTLE, EP];
+const DEMO = { id: 7, name: 'Demo Game', path: 'E:\\\\Projects\\\\DemoGame' };
+const projects = [CUTTLE, DEMO];
 const out = {};
 out.byId = P.findProjectById(projects, '7');
 out.byIdMissing = P.findProjectById(projects, 999);
-out.byName = P.findProjectByName(projects, 'escape purgatory');
+out.byName = P.findProjectByName(projects, 'demo game');
 out.byPath = P.findProjectByPath(projects, 'e:/projects/demogame');
 out.fromPathNested = P.projectFromPath('E:\\\\Projects\\\\DemoGame\\\\sub\\\\dir', projects);
 out.fromPathUnknown = P.projectFromPath('/tmp/elsewhere', projects);
@@ -40,7 +40,7 @@ out.defaultEmpty = P.findDefaultProject([], null);
 out.storedFields = P.projectFieldsFromServerSession({ project_id: 7, project_name: '', project_path: '' });
 out.storedNull = P.projectFieldsFromServerSession({});
 out.storedObj = P.projectObjectFromStoredFields({ projectId: 7 }, projects);
-out.storedNameOnly = P.projectObjectFromStoredFields({ projectName: 'Escape Purgatory' }, projects);
+out.storedNameOnly = P.projectObjectFromStoredFields({ projectName: 'Demo Game' }, projects);
 out.storedGhost = P.projectObjectFromStoredFields({ projectId: 9, projectName: 'Ghost', projectPath: 'C:\\\\Ghost' }, projects);
 // reconcile matrix
 const base = { projects, currentSessionId: 204, currentProject: null, starred: null };
@@ -51,13 +51,13 @@ out.prefsIdWins = P.resolveChatProject(Object.assign({}, base, {
 out.prefsIdMissStillStored = P.resolveChatProject(Object.assign({}, base, {
   prefs: { projectId: 999 } }));
 out.prefsPathObj = P.resolveChatProject(Object.assign({}, base, {
-  prefs: { projectPath: 'E:/Projects/DemoGame', projectName: 'EP' } }));
+  prefs: { projectPath: 'E:/Projects/DemoGame', projectName: 'DEMO' } }));
 out.prefsNameBackfill = P.resolveChatProject(Object.assign({}, base, {
-  prefs: { projectName: 'Escape Purgatory' } }));
+  prefs: { projectName: 'Demo Game' } }));
 out.storedIdWins = P.resolveChatProject(Object.assign({}, base, {
   stored: { projectId: 7 } }));
 out.keepUnsaved = P.resolveChatProject({ projects, currentSessionId: null,
-  currentProject: EP, starred: null });
+  currentProject: DEMO, starred: null });
 out.defaultFallback = P.resolveChatProject(Object.assign({}, base, {}));
 out.spaceNewChat = P.resolveChatProject({ projects, currentSessionId: null,
   currentProject: null, starred: { id: 4 }, spaceProject: { id: 7 } });
@@ -66,35 +66,35 @@ out.spaceIgnoredForSession = P.resolveChatProject(Object.assign({}, base, {
 out.keepUnsavedBeatsSpace = P.resolveChatProject({ projects, currentSessionId: null,
   currentProject: CUTTLE, starred: { id: 4 }, spaceProject: { id: 7 } });
 out.backfillPath = P.resolveChatProject(Object.assign({}, base, {
-  prefs: { projectId: 7, projectName: 'Escape Purgatory' } }));
+  prefs: { projectId: 7, projectName: 'Demo Game' } }));
 // stale name repaired from the live registry
 out.rebindStale = P.rebindProjectToRegistry(
-  { id: 7, name: 'Escape Purgatory', path: 'C:\\\\Projects\\\\Cuttle\\\\src' }, projects);
+  { id: 7, name: 'Demo Game', path: 'C:\\\\Projects\\\\Cuttle\\\\src' }, projects);
 out.rebindClean = P.rebindProjectToRegistry(
-  { id: 7, name: 'Escape Purgatory', path: 'E:\\\\Projects\\\\DemoGame' }, projects);
+  { id: 7, name: 'Demo Game', path: 'E:\\\\Projects\\\\DemoGame' }, projects);
 const body = {};
-P.applyOutboundProjectToRequest(body, EP);
+P.applyOutboundProjectToRequest(body, DEMO);
 out.body = body;
-out.key = P.currentProjectPathKey(EP);
+out.key = P.currentProjectPathKey(DEMO);
 out.msgOpts = P.projectFromMessageOpts({ project_id: 7 }, projects, null);
 out.msgCwd = P.projectFromMessageOpts({ cursor_run: { cwd: 'E:\\\\Projects\\\\DemoGame' } }, projects, null);
 out.msgChip = P.projectFromMessageOpts(
   { slash_command: { chips: [{ meta: 'cwd E:/Projects/DemoGame' }] } }, projects, null);
-out.msgLive = P.projectFromMessageOpts({ live: true }, projects, EP);
+out.msgLive = P.projectFromMessageOpts({ live: true }, projects, DEMO);
 out.msgNone = P.projectFromMessageOpts({}, projects, null);
 // cwd / pending-changes resolution (Phase 3 slice 3E)
-out.gitPathCheckoutWins = P.effectiveGitPath('/worktrees/branch', EP);
-out.gitPathProjectOnly = P.effectiveGitPath('', EP);
+out.gitPathCheckoutWins = P.effectiveGitPath('/worktrees/branch', DEMO);
+out.gitPathProjectOnly = P.effectiveGitPath('', DEMO);
 out.gitPathNone = P.effectiveGitPath('', null);
 out.pendingNoProject = P.pendingChangesProject(null, '/p', 'main', 'uid-1');
-out.pendingLocal = P.pendingChangesProject(EP, 'E:\\\\Projects\\\\DemoGame', '', '');
-out.pendingWorktreeBranch = P.pendingChangesProject(EP, '/worktrees/b', 'main', 'uid-1');
-out.pendingWorktreeNoBranch = P.pendingChangesProject(EP, '/worktrees/b', '', 'uid-1');
+out.pendingLocal = P.pendingChangesProject(DEMO, 'E:\\\\Projects\\\\DemoGame', '', '');
+out.pendingWorktreeBranch = P.pendingChangesProject(DEMO, '/worktrees/b', 'main', 'uid-1');
+out.pendingWorktreeNoBranch = P.pendingChangesProject(DEMO, '/worktrees/b', '', 'uid-1');
 out.pendingKeepsExtraFields = P.pendingChangesProject(
-  Object.assign({}, EP, { type: 'local', starred: true }), 'E:\\\\Projects\\\\DemoGame', '', '');
-const DISPLAY = [CUTTLE, Object.assign({}, EP, { display_name: 'EP' })];
-out.chipDisplay = P.projectChipLabel({ id: 7, name: 'Old EP name', path: '' }, DISPLAY);
-out.chipDisplayByPath = P.projectChipLabel({ id: null, name: '', path: EP.path }, DISPLAY);
+  Object.assign({}, DEMO, { type: 'local', starred: true }), 'E:\\\\Projects\\\\DemoGame', '', '');
+const DISPLAY = [CUTTLE, Object.assign({}, DEMO, { display_name: 'DEMO' })];
+out.chipDisplay = P.projectChipLabel({ id: 7, name: 'Old DEMO name', path: '' }, DISPLAY);
+out.chipDisplayByPath = P.projectChipLabel({ id: null, name: '', path: DEMO.path }, DISPLAY);
 out.chipFallbackName = P.projectChipLabel({ id: 4, name: 'Cuttle', path: '' }, DISPLAY);
 out.chipUnregistered = P.projectChipLabel({ id: 99, name: 'Ghost', path: '' }, DISPLAY);
 out.chipNone = P.projectChipLabel(null, DISPLAY);
@@ -116,7 +116,7 @@ def _run():
 @node_only
 def test_lookups_and_mappers():
     res = _run()
-    assert res["byId"] == {"id": 7, "name": "Escape Purgatory", "path": "E:\\Projects\\DemoGame"}
+    assert res["byId"] == {"id": 7, "name": "Demo Game", "path": "E:\\Projects\\DemoGame"}
     assert res["byIdMissing"] is None
     assert res["byName"]["id"] == 7
     assert res["byPath"]["id"] == 7
@@ -129,7 +129,7 @@ def test_lookups_and_mappers():
         "projectId": 7, "projectName": "", "projectPath": "", "checkoutUid": ""
     }
     assert res["storedNull"] is None
-    assert res["storedObj"] == {"id": 7, "name": "Escape Purgatory", "path": "E:\\Projects\\DemoGame"}
+    assert res["storedObj"] == {"id": 7, "name": "Demo Game", "path": "E:\\Projects\\DemoGame"}
     assert res["storedNameOnly"]["id"] == 7
     assert res["storedGhost"] == {"id": 9, "name": "Ghost", "path": "C:\\Ghost"}
 
@@ -137,8 +137,8 @@ def test_lookups_and_mappers():
 @node_only
 def test_project_chip_label_prefers_registry_display_name():
     res = _run()
-    assert res["chipDisplay"] == "EP"
-    assert res["chipDisplayByPath"] == "EP"
+    assert res["chipDisplay"] == "DEMO"
+    assert res["chipDisplayByPath"] == "DEMO"
     assert res["chipFallbackName"] == "Cuttle"
     assert res["chipUnregistered"] == "Ghost"
     assert res["chipNone"] == ""
@@ -147,7 +147,7 @@ def test_project_chip_label_prefers_registry_display_name():
 @node_only
 def test_reconcile_priority_chain():
     res = _run()
-    assert res["serverWins"] == {"proj": {"id": 7, "name": "Escape Purgatory",
+    assert res["serverWins"] == {"proj": {"id": 7, "name": "Demo Game",
                                           "path": "E:\\Projects\\DemoGame"}, "hadStored": True}
     assert res["prefsIdWins"]["proj"]["id"] == 7
     assert res["prefsIdWins"]["hadStored"] is True
@@ -158,7 +158,7 @@ def test_reconcile_priority_chain():
     assert res["prefsNameBackfill"]["proj"]["id"] == 7  # name repaired to registry
     assert res["storedIdWins"]["proj"]["id"] == 7
     # Unsaved new chat keeps the picked project instead of the default.
-    assert res["keepUnsaved"] == {"proj": EP_OUT, "hadStored": False}
+    assert res["keepUnsaved"] == {"proj": DEMO_OUT, "hadStored": False}
     assert res["defaultFallback"]["proj"]["id"] == 4
     assert res["spaceNewChat"]["proj"]["id"] == 7
     assert res["spaceIgnoredForSession"]["proj"]["id"] == 4
@@ -166,7 +166,7 @@ def test_reconcile_priority_chain():
     assert res["backfillPath"]["proj"]["path"] == "E:\\Projects\\DemoGame"
 
 
-EP_OUT = {"id": 7, "name": "Escape Purgatory", "path": "E:\\Projects\\DemoGame"}
+DEMO_OUT = {"id": 7, "name": "Demo Game", "path": "E:\\Projects\\DemoGame"}
 
 
 @node_only
@@ -175,7 +175,7 @@ def test_rebind_and_outbound():
     assert res["rebindStale"]["proj"]["path"] == "E:\\Projects\\DemoGame"
     assert res["rebindStale"]["changed"] is True
     assert res["rebindClean"]["changed"] is False
-    assert res["body"] == {"project_id": 7, "project_name": "Escape Purgatory",
+    assert res["body"] == {"project_id": 7, "project_name": "Demo Game",
                            "project_path": "E:\\Projects\\DemoGame"}
     assert res["key"] == "E:\\Projects\\DemoGame"
 
@@ -186,7 +186,7 @@ def test_message_opts_mapping():
     assert res["msgOpts"]["id"] == 7
     assert res["msgCwd"]["id"] == 7
     assert res["msgChip"]["id"] == 7
-    assert res["msgLive"] == EP_OUT
+    assert res["msgLive"] == DEMO_OUT
     assert res["msgNone"] is None
 
 
@@ -205,11 +205,11 @@ def test_pending_changes_project_snapshot():
     res = _run()
     assert res["pendingNoProject"] is None
     assert res["pendingLocal"] == {
-        "id": 7, "name": "Escape Purgatory",
+        "id": 7, "name": "Demo Game",
         "path": "E:\\Projects\\DemoGame", "worktree": "",
     }
     assert res["pendingWorktreeBranch"] == {
-        "id": 7, "name": "Escape Purgatory",
+        "id": 7, "name": "Demo Game",
         "path": "/worktrees/b", "worktree": "main",
     }
     # Bound checkout with no known branch labels the worktree with `true`.

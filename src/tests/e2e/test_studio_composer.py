@@ -25,7 +25,7 @@ from .test_shared_diff_modal import IsolatedAPI, apply_request_guard, browser, s
 REPO = Path(__file__).resolve().parents[3]
 WEB = REPO / "src" / "web"
 SHOTS = REPO / "temp" / "studio_shots" / "L7"
-MOCK = Path("/mnt/galaxy/Dev/Cuttle Promo/v4/project/intro/chat_template.html")
+MOCK = REPO / "temp" / "studio-reference" / "intro/chat_template.html"
 
 # Until chat_page.html links these (integration step), the test adds them.
 STUDIO_CSS = [WEB / "css" / "studio" / "studio_tokens.css", WEB / "css" / "studio" / "composer.css"]

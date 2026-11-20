@@ -46,7 +46,7 @@ before and after any change (`meta.layer_chars`).
 | Path | Role vs compiler |
 |---|---|
 | `{Cuttle}/.cuttle_global/rules/` | **Always-on global** guidelines — compiled for every registered project. |
-| `<home>/personal/` (Cuttle home) | **Install-local global overlay** (gitignored) — same layout; personal markdown appends as a delta, other files win by basename. A personal rule with no tracked twin compiles whole under an `Install-local (personal/rules/…)` marker, so an agent can say where it came from. Role-specific guidance (supervisors, sub-agents) is not a rule: see `rule-authoring.md`. |
+| `<home>/personal/` (Cuttle home) | **Install-local global overlay** (gitignored) — same layout; rule and doc Markdown appends as a delta, commands and actions replace by declared name, and skills replace by directory id. A personal rule with no tracked twin compiles whole under an `Install-local (personal/rules/…)` marker, so an agent can say where it came from. Role-specific guidance (supervisors, sub-agents) is not a rule: see `rule-authoring.md`. |
 | `{project}/.cuttle/rules/` | **Always-on project** guidelines — compiled after global rules. |
 | `{Cuttle}/.cuttle/rules/` | **Cuttle-repo-only** rules — compiled only when the chat targets Cuttle itself. |
 | `commands/*.md` | **On-demand** via `/name` expand (`project_commands`). Listed in inventory; not dumped every turn. |
@@ -58,8 +58,7 @@ before and after any change (`meta.layer_chars`).
 
 Native vendor files (Cursor skills, etc.) stay optional compatibility —
 never the Cuttle source of truth. The repo-level agent brief `AGENTS.md` is
-**not a compiler layer**: the Brain never injects it; only vendor CLIs that read
-it natively (e.g. Claude Code, Hermes) see it.
+**not a compiler layer**: the Brain never injects it; it is available to harnesses that load repository instructions or open the file.
 
 ## Hot-swap / resume
 
@@ -108,7 +107,7 @@ When the CLI has no separate system channel, the compiler still demarcates:
   speaking / do not acknowledge” contract
 * user text under `## User request`
 
-Live smoke `test_live_no_envelope_narration` (CH-000150-8) fails replies that
+Live smoke `test_live_no_envelope_narration` fails replies that
 meta-talk the briefing instead of answering the short user ask.
 
 

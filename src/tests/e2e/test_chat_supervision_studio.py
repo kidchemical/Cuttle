@@ -30,7 +30,7 @@ from tests.e2e.test_shared_diff_modal import apply_request_guard, browser, stati
 REPO = Path(__file__).resolve().parents[3]
 SHOTS = REPO / "temp" / "studio_shots" / "L5b"
 WEB = REPO / "src" / "web"
-MOCK = Path("/mnt/galaxy/Dev/Cuttle Promo/v4/project/film/scenes/supervise.html")
+MOCK = REPO / "temp" / "studio-reference" / "film/scenes/supervise.html"
 PAGE = 5
 STUDIO_INIT = ("localStorage.setItem('cuttleChatDisplay', 'studio');"
                "localStorage.setItem('cuttleChatStudioFlag', '1');")

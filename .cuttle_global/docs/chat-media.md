@@ -52,9 +52,9 @@ For example, if the returned URL is `/output/shared/before-after-abc123.png`:
 ![Before and after](/output/shared/before-after-abc123.png)
 ```
 
-**Do not rely on local-path auto-staging for delivery.** In CH-002597, an image
-link containing a local path with URL-encoded spaces (`Game%20Dev/...`) was dead;
-explicit staging and the returned `/output/shared/…` URL fixed delivery. A file
+**Do not rely on local-path auto-staging for delivery.** A local path with
+URL-encoded spaces can produce a dead link; explicitly stage it and use the
+returned `/output/shared/…` URL. A file
 existing on disk or appearing in a tool preview does not verify the chat attachment.
 Pass raw filesystem paths to the staging API, not URL-encoded paths. Local-path
 auto-staging remains a compatibility feature, not the agent delivery recipe.

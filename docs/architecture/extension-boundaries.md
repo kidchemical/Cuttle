@@ -39,7 +39,7 @@ response builders are transport-only adapters over it. The compat entry
 with no persist. The pipeline savers route through the shared
 `make_assistant_saver`, so `[CANCELLED]`/system rows never become assistant
 history while user cancellation feedback is retained independently
-(`[ERR-20261001-001]`, fixed by B1; pinned by the updated pipeline oracle
+(fixed by B1; pinned by the updated pipeline oracle
 and `test_chat_persistence_policy.py`). No surface implements an independent
 execution path or its own executor — the declared sync/stream
 serialization, error, and delivery distinctions are pinned by HTTP tests.

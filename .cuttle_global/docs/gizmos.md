@@ -1,5 +1,7 @@
 # Tasks gizmos
 
+Chat handles in the examples are fictional. Substitute handles from the current installation.
+
 Tasks are established chat functionality, available independently of experimental features.
 
 ## Tasks gizmos (composer dock)
@@ -32,15 +34,15 @@ rejected. Set it on create/add, or later with `--label <item>=<label>`
 (op `set_label {item: label}`; an empty label clears it).
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.gizmos tasks list --session CH-000465
-PYTHONPATH=src .venv/bin/python -m api.gizmos tasks create --session CH-000465 --id auth-refactor --title "Auth refactor" --description "Ship the auth fix" --items '[{"id":"api","text":"Fix the token refresh in the API client","label":"Fix API"},{"id":"test","text":"Run the auth tests and a manual login","label":"Verify"}]'
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks list --session CH-900004
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks create --session CH-900004 --id auth-refactor --title "Auth refactor" --description "Ship the auth fix" --items '[{"id":"api","text":"Fix the token refresh in the API client","label":"Fix API"},{"id":"test","text":"Run the auth tests and a manual login","label":"Verify"}]'
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --working api
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --set-done api --working test
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --ops '{"add":[{"item":{"id":"docs","text":"Update the auth docs","label":"Docs"}}],"description":"Validation remains"}'
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --label api="Token refresh"
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks get auth-refactor
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks history auth-refactor
-PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --link CH-000470,CH-000471 --unlink CH-000468
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --link CH-900006,CH-900007 --unlink CH-900005
 ```
 
 Flags go after the verb. JSON output; exit `0` success, `2` invalid/not found.
@@ -76,7 +78,7 @@ including archives, while the agent is working.
 
 Authenticated REST (each caller can access only their own tasks/chats):
 
-- `GET /api/gizmos/tasks?session_id=465` → `{success, gizmos, revision}` (home, project and linked lists)
+- `GET /api/gizmos/tasks?session_id=900004` → `{success, gizmos, revision}` (home, project and linked lists)
 - `GET /api/gizmos/tasks?all=1` → `{success, lists, chats, revision}`: every list (active + archived) with `home_chat`/`linked_chats`, for the Tasks App
 - `POST /api/gizmos/tasks` `{id?, session_id, title?, items, description?, scope?, edit_mode?, linked_sessions?}`
 - `GET|PATCH|DELETE /api/gizmos/tasks/<id>` → `{success, gizmo}`; PATCH accepts task ops, `session_id`, and
@@ -94,7 +96,7 @@ plain text up to 60 characters, `agent` is a harness id. `in_progress` is a flag
 a done item is never in progress. Colours and markup are not stored.
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --owner api=CH-000470 --working api
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --owner api=CH-900006 --working api
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --owner test=user --owner docs=agent:claude
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --not-working api --owner api=none
 ```

@@ -42,10 +42,9 @@ User-visible changes to Cuttle. The format follows
   there. Exit from the tray and relaunch; a Flask-only restart refuses to start
   until then.
 - The Android app now enforces TLS certificate validation and no longer falls
-  back from HTTPS to HTTP silently. Self-signed HTTPS needs its CA installed on
-  the phone; plain HTTP on the LAN still works.
+  back from HTTPS to HTTP silently. For the Host's self-signed certificate, compare and confirm the key fingerprint on the phone. LAN HTTP requires explicit opt-in.
 - Android builds use the project's own `.venv` and document their real
-  prerequisites (Node 20+, JDK 21, Android SDK 35).
+  prerequisites (Node 22.12+, JDK 21, Android SDK 36).
 - Queued local-LLM (Ollama) requests honor Stop and give up after
   `LOCAL_LLM_QUEUE_TIMEOUT_SEC` (default 120 s) instead of waiting forever.
 

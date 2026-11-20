@@ -1111,13 +1111,13 @@ def test_session_project_persist_and_isolation(tmp_path, monkeypatch):
     ctx["client"].set_cookie("session_token", ctx["other_token"])
     res = ctx["client"].patch(
         f"/api/auth/sessions/{ctx['other_sid']}",
-        json={"project_id": 7, "project_name": "Epochs", "project_path": "E:\\Game Dev\\Epochs"},
+        json={"project_id": 7, "project_name": "Sample Project", "project_path": "E:\\Game Dev\\Sample Project"},
         environ_base=LAN,
     )
     assert res.status_code == 200, res.get_json()
     stored = get_auth_db().get_session_project(ctx["other_sid"])
     assert stored and stored.get("project_id") == 7
-    assert stored.get("project_name") == "Epochs"
+    assert stored.get("project_name") == "Sample Project"
     res = ctx["client"].patch(
         f"/api/auth/sessions/{ctx['sid']}",
         json={"project_id": 9},
